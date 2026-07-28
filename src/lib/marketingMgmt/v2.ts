@@ -614,6 +614,56 @@ export const CAMPAIGN_CLASS_LABEL: Record<string, { ar: string; en: string }> = 
 export const CLASS_MISSING_LABEL = { ar: 'النوع غير محدد', en: 'Type not set' };
 export const CONTEXT_MISSING_LABEL = { ar: 'السياق الاستراتيجي ناقص', en: 'Strategic context incomplete' };
 
+/** PURPOSE — what the campaign is FOR. Deliberately separate from the class:
+ *  organic/paid is how a campaign operates, not what it is trying to achieve,
+ *  and the two used to share the `campaign_type` column. These keys match the
+ *  mkt_internal_campaigns_campaign_type_check constraint exactly; the older
+ *  PURPOSE_LABEL in labels.ts describes CONTENT and does not. */
+export const CAMPAIGN_PURPOSE_LABEL: Record<string, { ar: string; en: string }> = {
+  project_launch:      { ar: 'إطلاق مشروع', en: 'Project launch' },
+  promotional_offer:   { ar: 'عرض ترويجي', en: 'Promotional offer' },
+  awareness:           { ar: 'وعي بالعلامة', en: 'Awareness' },
+  lead_generation:     { ar: 'جذب عملاء محتملين', en: 'Lead generation' },
+  retargeting:         { ar: 'إعادة استهداف', en: 'Retargeting' },
+  construction_update: { ar: 'تحديث الإنشاء', en: 'Construction update' },
+  investor:            { ar: 'مستثمرين', en: 'Investor' },
+  seasonal:            { ar: 'موسمية', en: 'Seasonal' },
+  custom:              { ar: 'أخرى', en: 'Custom' },
+};
+
+/** Platforms, split by class. A paid campaign runs on ad platforms, an organic
+ *  one on the accounts themselves — the same brand on Instagram is a different
+ *  operational surface from Meta Ads. */
+export const ORGANIC_PLATFORM_LABEL: Record<string, { ar: string; en: string }> = {
+  instagram: { ar: 'إنستغرام', en: 'Instagram' },
+  tiktok:    { ar: 'تيك توك', en: 'TikTok' },
+  snapchat:  { ar: 'سناب شات', en: 'Snapchat' },
+  linkedin:  { ar: 'لينكدإن', en: 'LinkedIn' },
+  x:         { ar: 'إكس', en: 'X' },
+};
+
+export const PAID_PLATFORM_LABEL: Record<string, { ar: string; en: string }> = {
+  meta_ads:     { ar: 'إعلانات ميتا', en: 'Meta Ads' },
+  tiktok_ads:   { ar: 'إعلانات تيك توك', en: 'TikTok Ads' },
+  snapchat_ads: { ar: 'إعلانات سناب', en: 'Snapchat Ads' },
+  google_ads:   { ar: 'إعلانات جوجل', en: 'Google Ads' },
+};
+
+/** What blocks a campaign from being planned or activated. Mirrors
+ *  mkt_campaign_activation_blockers() so the screen and the trigger agree. */
+export const CAMPAIGN_BLOCKER_LABEL: Record<string, { ar: string; en: string }> = {
+  campaign_class:    { ar: 'نوع الحملة (عضوية/مدفوعة)', en: 'Organic or paid' },
+  plan:              { ar: 'الخطة', en: 'Plan' },
+  primary_goal:      { ar: 'الهدف الرئيسي', en: 'Primary goal' },
+  owner:             { ar: 'المسؤول', en: 'Owner' },
+  start_date:        { ar: 'تاريخ البداية', en: 'Start date' },
+  end_date:          { ar: 'تاريخ النهاية', en: 'End date' },
+  objective:         { ar: 'الهدف التجاري', en: 'Business objective' },
+  deliverables:      { ar: 'المخرجات', en: 'Deliverables' },
+  platform_campaign: { ar: 'حملة منصة واحدة على الأقل', en: 'At least one platform campaign' },
+  not_found:         { ar: 'السجل غير موجود', en: 'Record not found' },
+};
+
 export const FUNNEL_STAGE_LABEL: Record<string, { ar: string; en: string }> = {
   awareness:     { ar: 'وعي', en: 'Awareness' },
   consideration: { ar: 'تفكير', en: 'Consideration' },

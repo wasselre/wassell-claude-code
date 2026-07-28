@@ -196,9 +196,16 @@ const USAGE_EDITABLE = [
  *  `campaign_class` IS settable so creation can declare organic or paid, but a
  *  NULL class is refused on insert by the database — and a legacy null is
  *  cleared through campaign_classify, not through a plain edit. */
+// `status` is NOT here, and `channel_mix` is NOT here.
+//
+//   status       moves only through campaign_transition, which asks the database
+//                which moves are legal and refuses the rest. Leaving it in this
+//                list is what allowed archived → active from a generic save.
+//   channel_mix  is derived from campaign_class by trigger. It is a legacy
+//                column kept for old readers, never a question for a user.
 const CAMPAIGN_EDITABLE = [
   // v1
-  'name_ar', 'name_en', 'campaign_type', 'channel_mix', 'status', 'priority',
+  'name_ar', 'name_en', 'campaign_type', 'priority',
   'start_date', 'end_date', 'objective', 'offer', 'main_message', 'hooks', 'cta',
   'landing_url', 'positioning', 'content_pillars', 'target_audience', 'budget',
   'target_leads', 'target_revenue', 'target_sales', 'target_appointments',
@@ -236,16 +243,18 @@ interface Body {
   // content_create
   title?: string;
   content_type?: string;
-  // transitions
+  // transitions (also carries the campaign status machine's target status)
   to_status?: string;
-  reason?: string;
   // versions / approvals
   version_type?: string;
   payload?: Record<string, unknown>;
   change_summary?: string;
   file_id?: string;
   approval_id?: string;
-  decision?: 'approved' | 'changes_requested' | 'rejected' | 'cancelled';
+  // 'pending' is a real decision value: mkt_approvals CHECKs
+  // (decision = 'pending' OR decided_at IS NOT NULL), and the handler leaves
+  // decided_at null for it. Omitting it here made that branch look unreachable.
+  decision?: 'pending' | 'approved' | 'changes_requested' | 'rejected' | 'cancelled';
   stage?: string;
   comment?: string;
   requested_changes?: string;
@@ -352,6 +361,20 @@ const DB_MESSAGES: Record<string, Msg> = {
     en: 'Your marketing role does not permit this action.',
   },
   'MKT:not_found': { ar: 'السجل غير موجود.', en: 'That record no longer exists.' },
+  'MKT:invalid_status_transition': {
+    ar: 'لا يمكن الانتقال إلى هذه الحالة من الحالة الحالية.',
+    en: 'That status cannot be reached from the campaign’s current status.',
+  },
+  // The blocker list is appended to this token by the trigger, and the endpoint
+  // expands it into named, translated items before the message is sent.
+  'MKT:campaign_incomplete': {
+    ar: 'الحملة غير مكتملة بعد.',
+    en: 'This campaign is not complete yet.',
+  },
+  'MKT:history_append_only': {
+    ar: 'سجل الحالات لا يُعدَّل ولا يُحذف.',
+    en: 'Status history cannot be edited or deleted.',
+  },
 
   // named constraints, in the same words the forms use
   mkt_camp_active_complete: {
@@ -448,6 +471,22 @@ const GENERIC: Msg = {
   en: 'The change could not be saved. The details have been logged for review.',
 };
 
+/** The names mkt_campaign_activation_blockers() returns, in the user's words.
+ *  Shared by the error path and the campaign_next_statuses payload so a blocker
+ *  reads identically whether it is shown ahead of time or after a refusal. */
+const BLOCKER_LABELS: Record<string, Msg> = {
+  campaign_class:    { ar: 'نوع الحملة (عضوية/مدفوعة)', en: 'organic or paid' },
+  plan:              { ar: 'الخطة', en: 'plan' },
+  primary_goal:      { ar: 'الهدف الرئيسي', en: 'primary goal' },
+  owner:             { ar: 'المسؤول', en: 'owner' },
+  start_date:        { ar: 'تاريخ البداية', en: 'start date' },
+  end_date:          { ar: 'تاريخ النهاية', en: 'end date' },
+  objective:         { ar: 'الهدف التجاري', en: 'business objective' },
+  deliverables:      { ar: 'المخرجات', en: 'deliverables' },
+  platform_campaign: { ar: 'حملة منصة واحدة على الأقل', en: 'at least one platform campaign' },
+  not_found:         { ar: 'السجل غير موجود', en: 'record not found' },
+};
+
 /** Bilingual error body. The client picks a side by the interface language, so
  *  neither the server nor the UI has to guess which one the reader wants. */
 function jsonErrorBi(status: number, m: Msg): Response {
@@ -475,6 +514,22 @@ function dbError(error: PgErr | null, where: string): Response | null {
   });
 
   const token = raw.match(/MKT:[a-z_]+/)?.[0];
+
+  // The completeness trigger appends the blocker list after the token
+  // (MKT:campaign_incomplete:plan,owner). Naming the missing pieces is the whole
+  // value of the message — "not complete yet" alone gives the user nothing to do.
+  if (token === 'MKT:campaign_incomplete') {
+    const items = (raw.split('MKT:campaign_incomplete:')[1] ?? '')
+      .split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+    if (items.length) {
+      const ar = items.map((k) => BLOCKER_LABELS[k]?.ar ?? k).join('، ');
+      const en = items.map((k) => BLOCKER_LABELS[k]?.en ?? k).join(', ');
+      return jsonErrorBi(409, {
+        ar: `لا يمكن تفعيل الحملة قبل استكمال: ${ar}.`,
+        en: `This campaign cannot be activated until these are set: ${en}.`,
+      });
+    }
+  }
   // Permission is checked FIRST: it is also in DB_MESSAGES, and answering 409
   // for it would tell the caller "your data is wrong" when the truth is "you are
   // not allowed", which is the one distinction this endpoint exists to keep.
@@ -569,15 +624,61 @@ export default async function handler(req: Request): Promise<Response> {
       case 'campaign_detail': {
         const id = str(body.id ?? body.campaign_id);
         if (!id) return jsonError(400, 'id required');
-        const [c, items, tasks, perf] = await Promise.all([
+        // Content is fetched by RELATIONSHIP, not by one ambiguous embed.
+        // mkt_content_items reaches campaigns through two foreign keys
+        // (campaign_id, origin_campaign_id) plus mkt_content_usage and the paid
+        // hierarchy — four different meanings of "campaign content" that the old
+        // single `campaign_id` query silently flattened into one list.
+        const CONTENT_COLS = 'id,content_number,title,content_type,status,due_date,owner_user_id,campaign_id,origin_campaign_id';
+        const [c, produced, legacy, usage, tasks, perf, counts, progress, history, next] = await Promise.all([
           sb.from('mkt_internal_campaigns').select('*, mkt_internal_campaign_projects(project_id), mkt_internal_campaign_members(user_id,role_in_campaign)').eq('id', id).maybeSingle(),
-          sb.from('mkt_content_items').select('id,content_number,title,content_type,status,due_date,owner_user_id').eq('campaign_id', id).is('archived_at', null),
+          sb.from('mkt_content_items').select(CONTENT_COLS).eq('origin_campaign_id', id).is('archived_at', null),
+          sb.from('mkt_content_items').select(CONTENT_COLS).eq('campaign_id', id).is('archived_at', null),
+          sb.from('mkt_content_usage')
+            .select(`id,usage_kind,note,created_at,mkt_content_items!content_item_id(${CONTENT_COLS})`)
+            .eq('campaign_id', id),
           sb.from('mkt_content_tasks').select('id,title,status,due_date,assigned_user_id,content_item_id').eq('campaign_id', id),
           sb.from('mkt_performance_snapshots').select('*').eq('campaign_id', id).order('captured_at', { ascending: false }).limit(200),
+          sb.rpc('mkt_campaign_content_counts', { p_campaign_id: id }),
+          sb.rpc('mkt_campaign_progress', { p_campaign_id: id }),
+          sb.from('mkt_campaign_status_history').select('*').eq('campaign_id', id)
+            .order('changed_at', { ascending: false }).limit(100),
+          sb.rpc('mkt_campaign_next_statuses', { p_campaign_id: id }),
         ]);
-        const bad = rlsAware(c.error ?? items.error ?? tasks.error ?? perf.error); if (bad) return bad;
-        if (!c.data) return jsonError(404, 'campaign not found');
-        return jsonOk({ campaign: c.data, content: items.data ?? [], tasks: tasks.data ?? [], performance: perf.data ?? [] });
+        const bad = rlsAware(c.error ?? produced.error ?? legacy.error ?? tasks.error ?? perf.error); if (bad) return bad;
+        if (!c.data) return jsonErrorBi(404, DB_MESSAGES['MKT:not_found']!);
+
+        type ContentRow = Record<string, unknown> & { id: string };
+        const producedRows = (produced.data ?? []) as ContentRow[];
+        const producedIds = new Set(producedRows.map((r) => r.id));
+        const reusedRows = (usage.data ?? [])
+          .map((u): ContentRow | null => {
+            // PostgREST returns an embedded to-one as an object, but as an array
+            // when it cannot prove the relationship is to-one. Accept both.
+            const ci = (u as { mkt_content_items?: unknown }).mkt_content_items;
+            const item = (Array.isArray(ci) ? ci[0] : ci) as ContentRow | undefined;
+            return item ? { ...item, usage_kind: u.usage_kind, usage_id: u.id } : null;
+          })
+          .filter((r): r is ContentRow => r !== null && !producedIds.has(r.id));
+        const reusedIds = new Set(reusedRows.map((r) => r.id));
+        // Legacy = joined by the old campaign_id and NOT already explained by a
+        // newer relationship. Kept visible; just no longer the only definition.
+        const legacyRows = ((legacy.data ?? []) as ContentRow[]).filter(
+          (r) => !producedIds.has(r.id) && !reusedIds.has(r.id));
+
+        return jsonOk({
+          campaign: c.data,
+          // `content` stays for existing readers: the deduplicated union.
+          content: [...producedRows, ...reusedRows, ...legacyRows],
+          produced_content: producedRows,
+          reused_content: reusedRows,
+          legacy_content: legacyRows,
+          counts: counts.data ?? null,
+          progress: progress.data ?? null,
+          status_history: history.data ?? [],
+          next_statuses: next.data ?? [],
+          tasks: tasks.data ?? [], performance: perf.data ?? [],
+        });
       }
       case 'campaign_save': {
         const patch = pick(body.patch, CAMPAIGN_EDITABLE);
@@ -591,6 +692,34 @@ export default async function handler(req: Request): Promise<Response> {
         const { data, error } = await q;
         const bad = rlsAware(error); if (bad) return bad;
         return jsonOk({ campaign: data });
+      }
+
+      case 'campaign_transition': {
+        // The ONLY way a campaign's status moves. The database holds the legal
+        // transitions and the activation blockers; this just carries the request
+        // and lets the trigger refuse it.
+        const id = str(body.id); const to = str(body.to_status);
+        if (!id || !to) return jsonError(400, 'id and to_status required');
+        const { data, error } = await sb.from('mkt_internal_campaigns')
+          .update({ status: to }).eq('id', id).select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        if (!data) return jsonErrorBi(404, DB_MESSAGES['MKT:not_found']!);
+        const { data: next } = await sb.rpc('mkt_campaign_next_statuses', { p_campaign_id: id });
+        return jsonOk({ campaign: data, next_statuses: next ?? [] });
+      }
+
+      case 'campaign_next_statuses': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const [next, blockers] = await Promise.all([
+          sb.rpc('mkt_campaign_next_statuses', { p_campaign_id: id }),
+          sb.rpc('mkt_campaign_activation_blockers', { p_campaign_id: id }),
+        ]);
+        const bad = rlsAware(next.error); if (bad) return bad;
+        return jsonOk({
+          next_statuses: next.data ?? [],
+          blockers: blockers.data ?? [],
+          blocker_labels: BLOCKER_LABELS,
+        });
       }
 
       // ── Content ──────────────────────────────────────────────────────────

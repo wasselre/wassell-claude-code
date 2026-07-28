@@ -21,10 +21,11 @@ import { Target, Repeat, Megaphone, Coins } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { CaveatStrip } from '@/pages/MarketingIntelligence/components/shared';
-import { lbl } from '@/lib/marketingMgmt/labels';
+import { lbl, PRIORITY_LABEL } from '@/lib/marketingMgmt/labels';
 import {
   saveInitiative, saveProgram, setCampaignProjects,
   CADENCE_UNIT_LABEL, FUNNEL_STAGE_LABEL, BUDGET_KIND_LABEL, GOAL_CLASS_LABEL,
+  CAMPAIGN_PURPOSE_LABEL,
   commitmentSentence,
   type PlanRef, type MktGoal, type Initiative,
 } from '@/lib/marketingMgmt/v2';
@@ -130,17 +131,21 @@ export function CreateDrawer({
           // No code: the database issues it. A form that asked for one was
           // asking the user to invent an identifier.
           name_ar: (f.name_ar ?? "").trim(),
-          // campaign_class is the organic/paid operating structure.
-          // campaign_type is a DIFFERENT question — what the campaign is FOR (a
-          // launch, an offer, retargeting) — and this form does not ask it, so
-          // it is not sent. Writing the class into it was wrong on its own
-          // terms, and since the campaign-lifecycle migration the CHECK
-          // constraint refuses 'organic'/'paid' there, which made every create
-          // from this drawer fail with 23514. channel_mix is derived from the
-          // class by trigger; sending it too would be a second place for the
-          // same fact to go stale.
+          // campaign_class is the organic/paid operating structure, which the
+          // drawer already knows from the kind the user picked. Writing that
+          // into campaign_type was wrong on its own terms, and since the
+          // campaign-lifecycle migration the CHECK constraint refuses
+          // 'organic'/'paid' there, which made every create from this drawer
+          // fail with 23514. channel_mix is derived from the class by trigger;
+          // sending it too would be a second place for the same fact to go stale.
           campaign_class: cls,
-          status: 'draft',
+          // PURPOSE — a genuinely different question (a launch, an offer,
+          // retargeting), now asked as its own field above.
+          campaign_type: f.campaign_type || null,
+          priority: f.priority || 'normal',
+          // status is not sent: it is not in the API's save allow-list (it moves
+          // only through campaign_transition) and the column already defaults to
+          // 'draft'. Every new campaign therefore starts as a draft.
           plan_id: f.plan_id, primary_goal_id: f.primary_goal_id,
           initiative_id: f.initiative_id || null, program_id: f.program_id || null,
           start_date: f.start_date || null, end_date: f.end_date || null,
@@ -347,7 +352,27 @@ export function CreateDrawer({
                 </Field>
               </div>
             )}
-            <Field label={isAr ? 'الهدف من الحملة' : 'Objective'} span="sm:col-span-2">
+            {/* PURPOSE — what the campaign is for. A separate question from the
+                organic/paid class the drawer already knows, and never mixed
+                into the same list again. */}
+            <Field label={isAr ? 'غرض الحملة' : 'Campaign purpose'}
+              hint={isAr ? 'ما الذي تخدمه الحملة — غير كونها عضوية أو مدفوعة.'
+                         : 'What the campaign is for — separate from organic vs paid.'}>
+              <select value={f.campaign_type ?? ''} onChange={(e) => set('campaign_type', e.target.value)} className={FIELD}>
+                <option value="">{isAr ? '— غير محدد —' : '— not set —'}</option>
+                {Object.keys(CAMPAIGN_PURPOSE_LABEL).map((p) => (
+                  <option key={p} value={p}>{lbl(CAMPAIGN_PURPOSE_LABEL, p, isAr)}</option>))}
+              </select>
+            </Field>
+            <Field label={isAr ? 'الأولوية' : 'Priority'}>
+              <select value={f.priority ?? 'normal'} onChange={(e) => set('priority', e.target.value)} className={FIELD}>
+                {Object.keys(PRIORITY_LABEL).map((p) => (
+                  <option key={p} value={p}>{lbl(PRIORITY_LABEL, p, isAr)}</option>))}
+              </select>
+            </Field>
+            <Field label={isAr ? 'الهدف التجاري' : 'Business objective'} span="sm:col-span-2"
+              hint={isAr ? 'النتيجة المتوقعة، مثل: جذب عملاء مؤهلين لمشروع مينا 52.'
+                         : 'The expected result, e.g. generate qualified leads for Mina 52.'}>
               <input value={f.objective ?? ''} onChange={(e) => set('objective', e.target.value)} className={FIELD} />
             </Field>
             <Field label={isAr ? 'مرحلة القمع' : 'Funnel stage'}>

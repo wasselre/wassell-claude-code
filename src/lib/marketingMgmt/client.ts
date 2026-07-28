@@ -196,8 +196,81 @@ export const fetchOverview = (limit = 12) => call<{ overview: MgmtOverview }>('o
 export const generateAlerts = () => call<{ rules: Array<{ kind: string; emitted: number }> }>('generate_alerts');
 
 export const fetchCampaigns = (limit = 100) => call<{ campaigns: Campaign[] }>('campaign_list', { limit });
-export const fetchCampaign = (id: string) => call<{ campaign: Campaign; content: ContentItem[]; tasks: ContentTask[]; performance: unknown[] }>('campaign_detail', { id });
+
+/** One progress measure. The three states are deliberately distinct:
+ *
+ *   no_target      nobody has said what "done" means — not 0%
+ *   awaiting_data  a target exists but nothing has been measured yet — not 0%
+ *   measured       a real reading, which may legitimately be zero
+ *
+ * Collapsing these into one percentage is what made every campaign read 0%. */
+export type ProgressState =
+  | { state: 'no_target' }
+  | { state: 'awaiting_data'; total: number }
+  | { state: 'measured'; done: number; total: number };
+
+/** The four ways a content item can belong to a campaign, counted separately
+ *  and then deduplicated — the same item reached three ways is one item. */
+export interface CampaignCounts {
+  produced_content_count: number;
+  reused_content_count: number;
+  legacy_content_count: number;
+  paid_creative_count: number;
+  unique_content_count: number;
+  approved_content_count: number;
+  published_content_count: number;
+}
+
+export interface CampaignProgress {
+  deliverables: ProgressState;
+  publication: ProgressState;
+  outcome: ProgressState;
+  metric: string;
+  counts: CampaignCounts;
+}
+
+/** A legal next status, and — when it is not currently reachable — exactly what
+ *  is missing. Offering the action greyed out with its reason beats hiding it. */
+export interface NextStatus {
+  status: string;
+  allowed: boolean;
+  blockers: string[];
+}
+
+export interface CampaignStatusEvent {
+  id: string; campaign_id: string;
+  from_status: string | null; to_status: string;
+  reason: string | null; changed_by_user_id: string | null; changed_at: string;
+}
+
+export type CampaignContentRow = ContentItem & {
+  origin_campaign_id?: string | null;
+  usage_kind?: string; usage_id?: string;
+};
+
+export const fetchCampaign = (id: string) => call<{
+  campaign: Campaign;
+  /** The deduplicated union, for readers that just want "the content". */
+  content: CampaignContentRow[];
+  produced_content: CampaignContentRow[];
+  reused_content: CampaignContentRow[];
+  legacy_content: CampaignContentRow[];
+  counts: CampaignCounts | null;
+  progress: CampaignProgress | null;
+  status_history: CampaignStatusEvent[];
+  next_statuses: NextStatus[];
+  tasks: ContentTask[]; performance: unknown[];
+}>('campaign_detail', { id });
+
 export const saveCampaign = (patch: Record<string, unknown>, id?: string) => call<{ campaign: Campaign }>('campaign_save', { id, patch });
+
+/** The ONLY way a campaign's status moves. `status` is not in the save
+ *  allow-list, so a generic save cannot jump a campaign from archived to active. */
+export const transitionCampaign = (id: string, to_status: string) =>
+  call<{ campaign: Campaign; next_statuses: NextStatus[] }>('campaign_transition', { id, to_status });
+
+export const fetchCampaignNextStatuses = (id: string) =>
+  call<{ next_statuses: NextStatus[]; blockers: string[] }>('campaign_next_statuses', { id });
 
 export const fetchContentList = (filters: Record<string, unknown> = {}) => call<{ content: ContentItem[] }>('content_list', filters);
 export const fetchContentDetail = (id: string) => call<ContentDetail>('content_detail', { id });
