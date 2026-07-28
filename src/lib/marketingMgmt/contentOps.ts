@@ -260,6 +260,48 @@ export const markPublished = (id: string, patch: Record<string, unknown>) =>
 export const recordResult = (patch: Record<string, unknown>, id?: string) =>
   call<{ result: ContentResult; attainment: Attainment | null }>('result_record', { id, patch });
 
+// ── bulk operations and duplication ────────────────────────────────────────
+/** What mkt_content_duplicate() returns. A copy inherits the strategic argument
+ *  and the shape of every output; it inherits no approval, no schedule and no
+ *  progress, and it starts at `idea`. */
+export interface DuplicateResult {
+  id: string; content_number: string;
+  source_id: string; source_number: string;
+  deliverables: number; tasks: number;
+  artifacts_copied: number; assets_linked: number;
+}
+
+/** `refused` is the gap between what was asked for and what RLS allowed. It is
+ *  reported rather than swallowed: "12 updated" when 15 were selected is the
+ *  quiet partial success this codebase has been bitten by before. */
+export interface BulkAssignResult {
+  requested: number; items_updated: number;
+  deliverables_updated: number; refused: number;
+}
+
+/** Bulk scheduling sets the planned time; it does NOT push anything through the
+ *  publish gate. `still_blocked` names what each unready deliverable is waiting
+ *  on, so the result cannot read as "all done". */
+export interface BulkScheduleResult {
+  requested: number; scheduled: number; ready_to_publish: number;
+  refused: number;
+  still_blocked: Array<{ deliverable_id: string; label: string; blockers: string[] }>;
+}
+
+export const duplicateContent = (
+  id: string, title?: string, reuse_kind?: string, copy_artifacts = false,
+) => call<{ result: DuplicateResult }>('content_duplicate',
+  { id, title, patch: { reuse_kind, copy_artifacts } });
+
+/** `owner_user_id` may be null — "unassign these" is a real bulk action. */
+export const bulkAssign = (ids: string[], owner_user_id: string | null, also_deliverables = false) =>
+  call<{ result: BulkAssignResult }>('content_bulk_assign',
+    { ids, user_id: owner_user_id, patch: { also_deliverables } });
+
+export const bulkSchedule = (ids: string[], start_at: string, interval_mins = 1440) =>
+  call<{ result: BulkScheduleResult }>('deliverable_bulk_schedule',
+    { ids, start_at, interval_mins });
+
 export const linkAsset = (asset_id: string, target_id: string,
                           target_type = 'deliverable', role?: string) =>
   call<{ link: AssetLink }>('content_asset_link', { asset_id, target_id, target_type, patch: { role } });

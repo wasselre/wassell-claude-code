@@ -308,6 +308,10 @@ interface Body {
   review_comment?: string;
   target_type?: string;
   target_id?: string;
+  // bulk operations
+  ids?: unknown[];
+  start_at?: string;
+  interval_mins?: number;
   approval_id?: string;
   // 'pending' is a real decision value: mkt_approvals CHECKs
   // (decision = 'pending' OR decided_at IS NOT NULL), and the handler leaves
@@ -2028,6 +2032,53 @@ export default async function handler(req: Request): Promise<Response> {
           .select('asset_id, target_type, target_id, role, mkt_raw_assets(*)').maybeSingle();
         const bad = rlsAware(error); if (bad) return bad;
         return jsonOk({ link: data });
+      }
+
+      case 'content_duplicate': {
+        // One RPC, one transaction. Doing this here would be a dozen
+        // un-transacted round trips, and a failure halfway would leave a
+        // half-copied package that looks real.
+        const id = str(body.id ?? body.content_item_id);
+        if (!id) return jsonError(400, 'id required');
+        const { data, error } = await sb.rpc('mkt_content_duplicate', {
+          p_source_id: id,
+          p_title: str(body.title) ?? null,
+          p_reuse_kind: str(body.patch?.reuse_kind as string | undefined) ?? 'refresh',
+          p_copy_artifacts: body.patch?.copy_artifacts === true,
+          p_actor: appUserId,
+        });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ result: data });
+      }
+
+      case 'content_bulk_assign': {
+        const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === 'string') : [];
+        if (ids.length === 0) return jsonError(400, 'ids required');
+        // owner_user_id may legitimately be null — "unassign these" is a real
+        // bulk action, not a missing argument.
+        const { data, error } = await sb.rpc('mkt_content_bulk_assign', {
+          p_ids: ids,
+          p_owner_user_id: str(body.user_id) ?? null,
+          p_also_deliverables: body.patch?.also_deliverables === true,
+        });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ result: data });
+      }
+
+      case 'deliverable_bulk_schedule': {
+        const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === 'string') : [];
+        const startAt = str(body.start_at);
+        if (ids.length === 0) return jsonError(400, 'ids required');
+        if (!startAt) return jsonError(400, 'start_at required');
+        const { data, error } = await sb.rpc('mkt_deliverable_bulk_schedule', {
+          p_ids: ids,
+          p_start_at: startAt,
+          p_interval_mins: cap(body.interval_mins, 1440, 60 * 24 * 30),
+        });
+        const bad = rlsAware(error); if (bad) return bad;
+        // The result carries `still_blocked` — the caller must show it rather
+        // than reporting a clean success for work that cannot publish.
+        return jsonOk({ result: data });
       }
 
       case 'content_asset_unlink': {

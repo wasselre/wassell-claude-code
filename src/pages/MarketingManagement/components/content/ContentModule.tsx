@@ -30,6 +30,7 @@ import {
   fetchContentBoard, fetchContentDetail, saveBrief, saveDeliverable,
   generateDeliverableTasks, fetchArtifactTypes, saveArtifact, decideArtifact,
   saveContentTask, savePublication, markPublished, recordResult,
+  bulkAssign, bulkSchedule, duplicateContent,
   SCOPE_LABEL, DELIVERABLE_STATUS_LABEL, FORMAT_LABEL, PLATFORM_LABEL,
   DISTRIBUTION_LABEL, APPROVAL_LABEL, TASK_STATUS_LABEL, RECOMMENDATION_LABEL,
   BRIEF_MISSING_LABEL, blockerLabel,
@@ -133,6 +134,11 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [sheet, setSheet] = useState<'assign' | 'schedule' | 'duplicate' | null>(null);
+  /** Kept on screen rather than toasted: a bulk run reports per-row outcomes,
+   *  and a toast that vanishes cannot show which rows are still blocked. */
+  const [report, setReport] = useState<React.ReactNode>(null);
 
   const load = useCallback((spinner = false) => {
     if (spinner) setLoading(true);
@@ -171,13 +177,28 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
     } catch (e) { onError(err(e)); } finally { setBusy(false); }
   };
 
+  const toggle = (id: string) => setSel((s) => {
+    const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n;
+  });
+  const clearSel = () => { setSel(new Set()); setSheet(null); };
+
   if (loading) return <Spinner label={isAr ? 'جارٍ التحميل…' : 'Loading…'} />;
 
   const card = (c: ContentBrief) => {
     const dels = c.mkt_content_deliverables ?? [];
+    const picked = sel.has(c.id);
     return (
-      <button type="button" key={c.id} onClick={() => onOpen(c.id)}
-        className="w-full rounded-xl border border-sand/50 bg-white p-2.5 text-start hover:border-copper/50">
+      <div key={c.id} className={`relative rounded-xl border bg-white ${
+        picked ? 'border-copper ring-1 ring-copper/30' : 'border-sand/50'}`}>
+        {/* Outside the button: a checkbox nested in a button is invalid markup
+            and the click would fight the card's own handler. */}
+        <label className="absolute top-2 z-10 flex cursor-pointer items-center end-2"
+          onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={picked} onChange={() => toggle(c.id)}
+            aria-label={isAr ? `تحديد ${c.content_number}` : `Select ${c.content_number}`} />
+        </label>
+      <button type="button" onClick={() => onOpen(c.id)}
+        className="w-full rounded-xl p-2.5 pe-8 text-start hover:bg-cream-light/60">
         <div className="flex items-start justify-between gap-2">
           <span className="text-[12.5px] font-medium leading-snug text-charcoal line-clamp-2">{c.title}</span>
           <Ltr className="shrink-0 text-[10px] tabular-nums text-charcoal/50">{c.content_number}</Ltr>
@@ -214,6 +235,7 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
           </div>
         )}
       </button>
+      </div>
     );
   };
 
@@ -278,6 +300,18 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
           <span className="text-[11.5px] tabular-nums text-charcoal/50">{filtered.length}/{rows.length}</span>
         </div>
 
+        {sel.size > 0 && (
+          <BulkBar
+            selected={[...sel]} rows={filtered} isAr={isAr}
+            sheet={sheet} setSheet={setSheet}
+            onClear={clearSel}
+            onError={onError} onToast={onToast}
+            onReport={setReport}
+            onDone={() => { clearSel(); load(); }} />
+        )}
+
+        {report && <div className="mb-3">{report}</div>}
+
         {filtered.length === 0 ? (
           <EmptyHint>{isAr ? 'لا محتوى مطابق' : 'Nothing matches'}</EmptyHint>
         ) : view === 'pipeline' ? (
@@ -305,6 +339,13 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
             <table className="w-full text-[12px]">
               <thead>
                 <tr className="border-b border-sand/60 text-[11px] text-charcoal/60">
+                  <th className="w-8 py-2">
+                    <input type="checkbox"
+                      checked={filtered.length > 0 && filtered.every((c) => sel.has(c.id))}
+                      aria-label={isAr ? 'تحديد الكل' : 'Select all'}
+                      onChange={(e) => setSel(e.target.checked
+                        ? new Set(filtered.map((c) => c.id)) : new Set())} />
+                  </th>
                   <th className="py-2 text-start font-medium">{isAr ? 'الرقم' : 'ID'}</th>
                   <th className="py-2 text-start font-medium">{isAr ? 'العنوان' : 'Title'}</th>
                   <th className="py-2 text-start font-medium">{isAr ? 'المرحلة' : 'Stage'}</th>
@@ -317,7 +358,12 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
               </thead>
               <tbody className="divide-y divide-sand/30">
                 {filtered.map((c) => (
-                  <tr key={c.id} className="cursor-pointer hover:bg-cream-light" onClick={() => onOpen(c.id)}>
+                  <tr key={c.id} className={`cursor-pointer hover:bg-cream-light ${
+                    sel.has(c.id) ? 'bg-copper/5' : ''}`} onClick={() => onOpen(c.id)}>
+                    <td className="py-2" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" checked={sel.has(c.id)} onChange={() => toggle(c.id)}
+                        aria-label={isAr ? `تحديد ${c.content_number}` : `Select ${c.content_number}`} />
+                    </td>
                     <td className="py-2"><Ltr className="tabular-nums text-charcoal/60">{c.content_number}</Ltr></td>
                     <td className="max-w-[16rem] truncate py-2 text-charcoal">{c.title}</td>
                     <td className="py-2 text-charcoal/70">{lbl(STAGE_LABEL, c.status, isAr)}</td>
@@ -337,6 +383,210 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
           <CalendarView rows={filtered} isAr={isAr} onOpen={onOpen} />
         )}
       </Section>
+    </div>
+  );
+}
+
+/**
+ * Bulk actions.
+ *
+ * Assignment operates on BRIEFS; scheduling operates on their DELIVERABLES,
+ * because a deliverable is the thing that goes out on a date. Selecting three
+ * briefs that carry five outputs schedules five slots, and the bar says so
+ * before you commit rather than after.
+ *
+ * Nothing here reports a clean success it did not earn: the RPCs return how
+ * many rows RLS actually moved and which deliverables are still blocked, and
+ * both are rendered.
+ */
+function BulkBar({ selected, rows, isAr, sheet, setSheet, onClear, onError, onToast, onReport, onDone }: {
+  selected: string[]; rows: ContentBrief[]; isAr: boolean;
+  sheet: 'assign' | 'schedule' | 'duplicate' | null;
+  setSheet: (s: 'assign' | 'schedule' | 'duplicate' | null) => void;
+  onClear: () => void; onError: (m: string) => void; onToast: (m: string) => void;
+  onReport: (n: React.ReactNode) => void; onDone: () => void;
+}) {
+  const users = useAppStore((s) => s.users);
+  const [busy, setBusy] = useState(false);
+  const [owner, setOwner] = useState('');
+  const [alsoDel, setAlsoDel] = useState(true);
+  const [startAt, setStartAt] = useState(() => {
+    // Tomorrow 19:00 — a sane default for a posting slot, not "now".
+    const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(19, 0, 0, 0);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T19:00`;
+  });
+  const [everyMins, setEveryMins] = useState(1440);
+  const [dupTitle, setDupTitle] = useState('');
+  const [dupKind, setDupKind] = useState('refresh');
+  const [dupCopy, setDupCopy] = useState(false);
+
+  const picked = rows.filter((r) => selected.includes(r.id));
+  const delIds = picked.flatMap((r) => (r.mkt_content_deliverables ?? []).map((d) => d.id));
+  const one = picked.length === 1 ? picked[0] : null;
+
+  const run = async (fn: () => Promise<React.ReactNode>) => {
+    setBusy(true);
+    try { onReport(await fn()); onDone(); }
+    catch (e) { onError(err(e)); }
+    finally { setBusy(false); }
+  };
+
+  const doAssign = () => run(async () => {
+    const { result } = await bulkAssign(selected, owner || null, alsoDel);
+    onToast(isAr ? 'حُدّث التعيين' : 'Assignment updated');
+    if (result.refused > 0) {
+      return (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-800">
+          {isAr
+            ? `حُدِّث ${result.items_updated} من ${result.requested}. رُفض ${result.refused} — صلاحياتك لا تسمح بتعديلها.`
+            : `${result.items_updated} of ${result.requested} updated. ${result.refused} refused — your permissions do not cover them.`}
+        </div>
+      );
+    }
+    return null;
+  });
+
+  const doSchedule = () => run(async () => {
+    const iso = new Date(startAt).toISOString();
+    const { result } = await bulkSchedule(delIds, iso, everyMins);
+    onToast(isAr ? `جُدولت ${result.scheduled} مخرجات` : `${result.scheduled} deliverable(s) scheduled`);
+    if (result.still_blocked.length === 0) return null;
+    // The important half of the answer: a time is set, but these cannot publish.
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+        <div className="mb-1 text-[11.5px] font-semibold text-amber-900">
+          {isAr
+            ? `حُدِّد الموعد لـ${result.scheduled}، لكن ${result.still_blocked.length} منها لا يمكن نشرها بعد:`
+            : `${result.scheduled} given a time, but ${result.still_blocked.length} cannot publish yet:`}
+        </div>
+        <ul className="space-y-0.5">
+          {result.still_blocked.map((b) => (
+            <li key={b.deliverable_id} className="text-[11px] text-amber-800">
+              <Ltr className="font-medium">{b.label}</Ltr>{' — '}{b.blockers.join('، ')}
+            </li>))}
+        </ul>
+      </div>
+    );
+  });
+
+  const doDuplicate = () => run(async () => {
+    if (!one) return null;
+    const { result } = await duplicateContent(one.id, dupTitle.trim() || undefined, dupKind, dupCopy);
+    onToast(isAr
+      ? `أُنشئت ${result.content_number} — ${result.deliverables} مخرجات و${result.tasks} مهمة`
+      : `${result.content_number} created — ${result.deliverables} deliverables, ${result.tasks} tasks`);
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11.5px] text-emerald-800">
+        {isAr
+          ? `نُسخت ${result.source_number} إلى ${result.content_number}: ${result.deliverables} مخرجات، ${result.tasks} مهمة جديدة، ${result.artifacts_copied} نص منسوخ كمسودة. لم تُنسخ أي اعتمادات أو مواعيد — النسخة تبدأ من مرحلة الفكرة.`
+          : `${result.source_number} copied to ${result.content_number}: ${result.deliverables} deliverables, ${result.tasks} fresh tasks, ${result.artifacts_copied} text(s) copied as drafts. No approvals or schedules were carried over — the copy starts at the idea stage.`}
+      </div>
+    );
+  });
+
+  return (
+    <div className="mb-3 rounded-xl border border-copper/40 bg-copper/5 p-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[12px] font-medium text-charcoal">
+          {isAr ? `${picked.length} محدَّد` : `${picked.length} selected`}
+          <span className="text-charcoal/50">
+            {' · '}{isAr ? `${delIds.length} مخرَج` : `${delIds.length} deliverable(s)`}
+          </span>
+        </span>
+        <span className="grow" />
+        <Button variant="secondary" onClick={() => setSheet(sheet === 'assign' ? null : 'assign')}>
+          {isAr ? 'تعيين مسؤول' : 'Assign owner'}
+        </Button>
+        <Button variant="secondary" disabled={delIds.length === 0}
+          onClick={() => setSheet(sheet === 'schedule' ? null : 'schedule')}>
+          {isAr ? 'جدولة' : 'Schedule'}
+        </Button>
+        <Button variant="secondary" disabled={!one}
+          title={one ? undefined : (isAr ? 'اختر عنصراً واحداً' : 'Pick exactly one')}
+          onClick={() => setSheet(sheet === 'duplicate' ? null : 'duplicate')}>
+          {isAr ? 'نسخ إلى حزمة جديدة' : 'Duplicate into a new package'}
+        </Button>
+        <button type="button" onClick={onClear} className="text-[11.5px] text-charcoal/55 hover:underline">
+          {isAr ? 'إلغاء التحديد' : 'Clear'}
+        </button>
+      </div>
+
+      {sheet === 'assign' && (
+        <div className="mt-2.5 flex flex-wrap items-end gap-2 border-t border-copper/20 pt-2.5">
+          <Field label={isAr ? 'المسؤول' : 'Owner'}>
+            <select value={owner} onChange={(e) => setOwner(e.target.value)} className={FIELD}>
+              <option value="">{isAr ? '— إزالة المسؤول —' : '— unassign —'}</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{(isAr ? u.name_ar : u.name_en) || u.name_en}</option>))}
+            </select>
+          </Field>
+          <label className="mb-1.5 inline-flex items-center gap-1.5 text-[11.5px] text-charcoal/70">
+            <input type="checkbox" checked={alsoDel} onChange={(e) => setAlsoDel(e.target.checked)} />
+            {isAr ? 'والمخرجات أيضاً' : 'and their deliverables'}
+          </label>
+          <div className="mb-1"><Button onClick={doAssign} disabled={busy}>{isAr ? 'تطبيق' : 'Apply'}</Button></div>
+        </div>
+      )}
+
+      {sheet === 'schedule' && (
+        <div className="mt-2.5 space-y-2 border-t border-copper/20 pt-2.5">
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label={isAr ? 'أول موعد (بتوقيت الرياض)' : 'First slot (Riyadh time)'}>
+              <input type="datetime-local" value={startAt} className={FIELD}
+                onChange={(e) => setStartAt(e.target.value)} />
+            </Field>
+            <Field label={isAr ? 'الفاصل بين المخرجات' : 'Gap between deliverables'}>
+              <select value={everyMins} className={FIELD}
+                onChange={(e) => setEveryMins(Number(e.target.value))}>
+                <option value={60}>{isAr ? 'ساعة' : '1 hour'}</option>
+                <option value={180}>{isAr ? '3 ساعات' : '3 hours'}</option>
+                <option value={1440}>{isAr ? 'يوم' : '1 day'}</option>
+                <option value={2880}>{isAr ? 'يومان' : '2 days'}</option>
+                <option value={10080}>{isAr ? 'أسبوع' : '1 week'}</option>
+              </select>
+            </Field>
+            <div className="mb-1"><Button onClick={doSchedule} disabled={busy}>{isAr ? 'جدولة' : 'Schedule'}</Button></div>
+          </div>
+          <p className="text-[10.5px] leading-snug text-charcoal/55">
+            {isAr
+              ? 'يحدد موعد النشر المخطط لكل مخرَج بالتتابع. لا يتجاوز شروط النشر — المخرَج بلا مادة أو نص معتمد يبقى محجوباً وسيُذكر بعد التنفيذ.'
+              : 'Sets each deliverable’s planned time in sequence. It does not bypass the publish gate — anything without approved media or copy stays blocked and is listed afterwards.'}
+          </p>
+        </div>
+      )}
+
+      {sheet === 'duplicate' && one && (
+        <div className="mt-2.5 space-y-2 border-t border-copper/20 pt-2.5">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[220px] flex-1">
+              <Field label={isAr ? 'عنوان النسخة' : 'Title of the copy'}>
+                <input value={dupTitle} className={FIELD}
+                  placeholder={`${one.title} — ${isAr ? 'نسخة' : 'copy'}`}
+                  onChange={(e) => setDupTitle(e.target.value)} />
+              </Field>
+            </div>
+            <Field label={isAr ? 'نوع إعادة الاستخدام' : 'Reuse kind'}>
+              <select value={dupKind} onChange={(e) => setDupKind(e.target.value)} className={FIELD}>
+                <option value="refresh">{isAr ? 'تحديث' : 'Refresh'}</option>
+                <option value="series_episode">{isAr ? 'حلقة من سلسلة' : 'Series episode'}</option>
+                <option value="platform_variant">{isAr ? 'نسخة لمنصة أخرى' : 'Platform variant'}</option>
+                <option value="translation">{isAr ? 'ترجمة' : 'Translation'}</option>
+                <option value="recut">{isAr ? 'إعادة مونتاج' : 'Recut'}</option>
+              </select>
+            </Field>
+            <label className="mb-1.5 inline-flex items-center gap-1.5 text-[11.5px] text-charcoal/70">
+              <input type="checkbox" checked={dupCopy} onChange={(e) => setDupCopy(e.target.checked)} />
+              {isAr ? 'انسخ النصوص المعتمدة كمسودات' : 'copy approved text as drafts'}
+            </label>
+            <div className="mb-1"><Button onClick={doDuplicate} disabled={busy}>{isAr ? 'نسخ' : 'Duplicate'}</Button></div>
+          </div>
+          <p className="text-[10.5px] leading-snug text-charcoal/55">
+            {isAr
+              ? 'تنتقل الحجّة الاستراتيجية وشكل كل مخرَج والأدوار. لا تنتقل الاعتمادات ولا المواعيد ولا التقدّم — النسخة تبدأ من مرحلة الفكرة، ويُسجَّل أصلها كعلاقة أب لا كملاحظة.'
+              : 'The strategic argument, the shape of each deliverable and the role assignments carry over. Approvals, schedules and progress do not — the copy starts at the idea stage, and its origin is recorded as a parent relationship rather than a note.'}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
