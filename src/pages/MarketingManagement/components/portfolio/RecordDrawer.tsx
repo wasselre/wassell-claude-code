@@ -38,6 +38,7 @@ import {
 import { useProjectOptions } from '@/lib/marketingMgmt/projects';
 import { PaidTreePanel } from '../PaidTreePanel';
 import { CampaignStatusBar } from './StatusBar';
+import { DeliverablesEditor } from './Deliverables';
 import {
   Drawer, Field, FIELD, MissingChips, Pill, ClassMissingBadge, err, dash, ownerName,
 } from './shared';
@@ -303,6 +304,15 @@ export function RecordDrawer({
               </p>
             )}
           </div>
+
+          {/* Deliverables are an ACTIVATION BLOCKER, so they have to be
+              authorable here — otherwise the blocker is unsatisfiable from the
+              interface and nothing can ever leave draft. */}
+          {kind === 'campaign' && (
+            <DeliverablesEditor value={d.row.deliverables} isAr={isAr} disabled={busy}
+              onSave={(rows) => void persist({ deliverables: rows },
+                isAr ? 'حُفظت المخرجات' : 'Deliverables saved')} />
+          )}
 
           {/* ── context ── */}
           <section className="grid gap-2.5 sm:grid-cols-2">
