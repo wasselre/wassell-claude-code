@@ -240,6 +240,14 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+/** Snapshot metrics live in a `metrics` jsonb column, NOT as top-level columns.
+ *  An earlier version read s.views / s.likes directly, so every figure resolved
+ *  to null and the panel reported "no data" even when snapshots existed — and
+ *  the browser test missed it because the stub was written from the same wrong
+ *  assumption as the code. Read through here, never off the row. */
+const met = (s: Record<string, unknown>): Record<string, unknown> =>
+  (s.metrics && typeof s.metrics === 'object' ? s.metrics : {}) as Record<string, unknown>;
+
 export function ContentResults({ detail, isAr }: { detail: ContentDetail; isAr: boolean }) {
   const pubs = detail.publications;
   const snaps = detail.performance;
@@ -255,9 +263,10 @@ export function ContentResults({ detail, isAr }: { detail: ContentDetail; isAr: 
   const totals = { views: 0, engagement: 0, clicks: 0 };
   let measured = 0;
   for (const s of latestByPub.values()) {
-    const v = num(s.views) ?? num(s.impressions);
-    const likes = num(s.likes) ?? 0, comments = num(s.comments) ?? 0, shares = num(s.shares) ?? 0;
-    const clicks = num(s.link_clicks);
+    const mm = met(s);
+    const v = num(mm.views) ?? num(mm.impressions);
+    const likes = num(mm.likes) ?? 0, comments = num(mm.comments) ?? 0, shares = num(mm.shares) ?? 0;
+    const clicks = num(mm.link_clicks);
     if (v != null) { totals.views += v; measured += 1; }
     totals.engagement += likes + comments + shares;
     if (clicks != null) totals.clicks += clicks;
@@ -295,7 +304,7 @@ export function ContentResults({ detail, isAr }: { detail: ContentDetail; isAr: 
           <ul className="mt-3 divide-y divide-sand/40">
             {pubs.map((p) => {
               const s = latestByPub.get(p.id);
-              const v = s ? (num(s.views) ?? num(s.impressions)) : null;
+              const v = s ? (num(met(s).views) ?? num(met(s).impressions)) : null;
               return (
                 <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-[12px]">
                   <span className="flex min-w-0 items-center gap-2">
