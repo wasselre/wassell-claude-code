@@ -92,6 +92,10 @@ const OCR_POSTS_PER_BATCH = 7;
 /** Stop enqueueing entirely above this backlog so the sweep can't outrun the workers. */
 const QUEUE_HIGH_WATER = 900;
 const OCR_QUEUE_HIGH_WATER = 150;
+/** Minimum gap before re-attempting a post whose media download already failed.
+ *  Long enough that a permanently-dead URL costs ~4 attempts a day instead of
+ *  288, short enough that a transient outage still self-heals the same day. */
+const RETRY_AFTER_MS = 6 * 60 * 60 * 1000;
 /** How many 'collected' posts to examine per tick. Must stay comfortably ABOVE
  *  the real backlog or the tail of the scan is never even considered — at 1,000
  *  it was already below the 1,135 posts actually sitting in 'collected'. */
@@ -128,13 +132,21 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   // ── current state of those posts: media + visual text + already-queued jobs ─
   const storedAny = new Set<string>();
   const storedImagey = new Set<string>();
+  const lastAttemptAt = new Map<string, number>();
   for (const ids of chunk(postIds, 200)) {
+    // Failed rows are read too, not just stored ones: their timestamp is how we
+    // know a post was already ATTEMPTED. Selecting only stored rows would make
+    // a permanently-dead URL look identical to a post nobody has tried yet.
     const { data, error } = await sb.from('mkt_content_media')
-      .select('content_post_id, media_kind').in('content_post_id', ids).eq('download_status', 'stored');
+      .select('content_post_id, media_kind, download_status, updated_at').in('content_post_id', ids);
     if (error) throw new Error(`sweep: media scan failed: ${error.message}`);
     for (const m of data ?? []) {
-      storedAny.add(m.content_post_id as string);
-      if (m.media_kind === 'image' || m.media_kind === 'thumbnail') storedImagey.add(m.content_post_id as string);
+      const pid = m.content_post_id as string;
+      const at = Date.parse((m.updated_at as string) ?? '') || 0;
+      if (at > (lastAttemptAt.get(pid) ?? 0)) lastAttemptAt.set(pid, at);
+      if (m.download_status !== 'stored') continue;
+      storedAny.add(pid);
+      if (m.media_kind === 'image' || m.media_kind === 'thumbnail') storedImagey.add(pid);
     }
   }
   const hasVisualText = new Set<string>();
@@ -156,7 +168,14 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   }
 
   // ── stage 1: media recovery ───────────────────────────────────────────────
-  const needMedia = postIds.filter((id) => !storedAny.has(id) && !inFlight.has(id));
+  // A post whose download genuinely cannot succeed — a YouTube video the
+  // datacenter IP is bot-checked out of, an image URL that is simply dead —
+  // would otherwise be re-enqueued every single tick, forever, because it never
+  // acquires stored media. Retrying is right (most failures ARE transient), but
+  // it has to be bounded: re-attempt at most once per RETRY_AFTER_MS.
+  const retryCutoff = Date.now() - RETRY_AFTER_MS;
+  const needMedia = postIds.filter((id) =>
+    !storedAny.has(id) && !inFlight.has(id) && (lastAttemptAt.get(id) ?? 0) < retryCutoff);
   for (const id of needMedia.slice(0, MAX_MEDIA_ENQUEUE)) {
     await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: id, from: 'sweep', media_only: true }, p_priority: 30, p_requested_by: null, p_fallback_of: null });
     stats.media_recover++;

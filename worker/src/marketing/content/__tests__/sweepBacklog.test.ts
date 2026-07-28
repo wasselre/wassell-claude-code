@@ -53,7 +53,9 @@ function fakeSb(c: Canned) {
 }
 
 const post = (id: string) => ({ id, post_type: 'image' });
-const stored = (id: string, kind: string) => ({ content_post_id: id, media_kind: kind });
+const stored = (id: string, kind: string) => ({ content_post_id: id, media_kind: kind, download_status: 'stored', updated_at: new Date(0).toISOString() });
+const failed = (id: string, kind: string, ageMs: number) => ({ content_post_id: id, media_kind: kind, download_status: 'failed', updated_at: new Date(Date.now() - ageMs).toISOString() });
+const HOUR = 60 * 60 * 1000;
 
 describe('sweepContentBacklog', () => {
   it('enqueues media recovery for a collected post with no stored media', async () => {
@@ -92,6 +94,21 @@ describe('sweepContentBacklog', () => {
     const stats = await sweepContentBacklog(sb, 'w1');
     expect(stats.content_process).toBe(1);
     expect(stats.visual_ocr).toBe(0);
+  });
+
+  it('does not re-attempt a recently failed download every tick', async () => {
+    // A YouTube video the datacenter IP is bot-checked out of never acquires
+    // stored media, so without a cooldown it would be re-enqueued forever.
+    const { sb, enqueued } = fakeSb({ posts: [post('p1')], media: [failed('p1', 'video', 1 * HOUR)] });
+    const stats = await sweepContentBacklog(sb, 'w1');
+    expect(stats.media_recover).toBe(0);
+    expect(enqueued).toHaveLength(0);
+  });
+
+  it('does re-attempt a failed download once the cooldown has passed', async () => {
+    const { sb } = fakeSb({ posts: [post('p1')], media: [failed('p1', 'video', 9 * HOUR)] });
+    const stats = await sweepContentBacklog(sb, 'w1');
+    expect(stats.media_recover).toBe(1);
   });
 
   it('never enqueues a post that already has a job in flight', async () => {
