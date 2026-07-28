@@ -66,24 +66,63 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([p, new Promise<T>((res) => setTimeout(() => res(fallback), ms))]);
 }
 
-/** Resolve the provider for a device id. Defaults to 'haberchat' when unknown. */
+/**
+ * Last provider we RESOLVED successfully for a device, kept without a TTL.
+ *
+ * Separate from `providerCache` on purpose: that one expires so a provider flip
+ * is picked up quickly, this one is the memory of the last verified answer and
+ * is only consulted when the lookup itself fails.
+ */
+const lastKnownProvider = new Map<string, Provider>();
+
+/**
+ * Resolve the provider for a device id.
+ *
+ * A lookup timeout used to resolve to 'haberchat' and CACHE that for 60
+ * seconds. Haberchat is retired — its account 403s every request — so a slow
+ * database turned into a minute of sends routed to a dead gateway, silently
+ * (WA-18, audit 2026-07-28). The default was chosen when Haberchat was the live
+ * provider and the safe answer; it stopped being either.
+ *
+ * On failure we now reuse the last VERIFIED answer for that device, and if
+ * there is none we throw. A send that fails loudly can be retried; a send
+ * handed to a dead provider is just gone.
+ */
 export async function providerFor(deviceId: string | null | undefined): Promise<Provider> {
   if (!deviceId || !wahaConfigured()) return 'haberchat';
   const hit = providerCache.get(deviceId);
   if (hit && Date.now() - hit.at < PROVIDER_TTL_MS) return hit.provider;
 
-  const provider = await withTimeout((async (): Promise<Provider> => {
+  const TIMED_OUT = Symbol('timeout');
+  const resolved = await withTimeout<Provider | typeof TIMED_OUT>((async () => {
     const svc = svcClient();
-    if (!svc) return 'haberchat';
-    const { data } = await svc
+    if (!svc) return TIMED_OUT;
+    const { data, error } = await svc
       .from('whatsapp_numbers')
       .select('provider')
       .eq('device_id', deviceId)
       .maybeSingle();
+    if (error) return TIMED_OUT;
+    // An unknown device id is a real answer, not a failure: it predates the
+    // numbers table, so Haberchat remains the correct reading of it.
     return data?.provider === 'waha' ? 'waha' : 'haberchat';
-  })(), 2500, 'haberchat');
-  providerCache.set(deviceId, { provider, at: Date.now() });
-  return provider;
+  })(), 2500, TIMED_OUT);
+
+  if (resolved === TIMED_OUT) {
+    const remembered = lastKnownProvider.get(deviceId);
+    if (remembered) {
+      console.warn(`[wa-gateway] provider lookup failed for "${deviceId}" — reusing last verified provider "${remembered}"`);
+      return remembered;
+    }
+    throw new HaberchatError(
+      503,
+      `cannot determine the WhatsApp provider for "${deviceId}" (lookup unavailable) — refusing to guess`,
+    );
+  }
+
+  providerCache.set(deviceId, { provider: resolved, at: Date.now() });
+  lastKnownProvider.set(deviceId, resolved);
+  return resolved;
 }
 
 /**

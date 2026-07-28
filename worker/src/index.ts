@@ -1918,6 +1918,28 @@ async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
       const result = await runScheduledWhatsappJob(wahaSend, job);
       const { error: doneErr } = await supabase.rpc('scheduled_whatsapp_complete', { p_job_id: job.id, p_result: result });
       if (doneErr) console.error(`[worker] scheduled_whatsapp_complete failed: ${doneErr.message}`);
+
+      // WA-10 — give the AI audit row the REAL message id.
+      //
+      // /api/whatsapp/ai-send writes whatsapp_ai_replies keyed `sched:<job>`
+      // because the true id does not exist until we send. Nothing ever went
+      // back to fix it, so whatsapp_ai_should_reply's `message_wid = m.id`
+      // branch could never match and it fell through to "same body within 600
+      // seconds". Any queue delay past ten minutes — a requeue, a 463 retry,
+      // a backlog — then reclassified the agent's OWN message as a human
+      // reply, tripping `human_active` and silencing the AI in that chat for
+      // human_quiet_hours. Already happened once: audit at 07:20:47, echo at
+      // 07:38:12, 17.5 minutes apart.
+      const realWid = Array.isArray((result as { ids?: unknown }).ids)
+        ? ((result as { ids: unknown[] }).ids[0] as string | undefined)
+        : undefined;
+      if (realWid) {
+        const { error: aiErr } = await supabase
+          .from('whatsapp_ai_replies')
+          .update({ message_wid: realWid })
+          .eq('message_wid', `sched:${job.id}`);
+        if (aiErr) console.error(`[worker] ai-reply wid reconcile failed: ${aiErr.message}`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[worker] scheduled WhatsApp job=${job.id} FAILED (attempt ${job.attempts}):`, msg);
