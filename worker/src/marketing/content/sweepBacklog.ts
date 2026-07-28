@@ -88,7 +88,12 @@ async function acquireSweepLease(sb: SupabaseClient, workerId: string): Promise<
 const MAX_MEDIA_ENQUEUE = 400;
 const MAX_PROCESS_ENQUEUE = 150;
 const MAX_OCR_BATCHES = 20;
-const OCR_POSTS_PER_BATCH = 7;
+/** Posts per OCR job. Sized to FILL the runner's OCR_BATCH_MAX (24 images), not
+ *  guessed: stored images average 1.61 per post, so 15 posts = ~24 images. At the
+ *  previous 7 a batch offered ~11 images and never even reached the old cap of
+ *  12, so raising that cap alone would have changed nothing. If OCR_BATCH_MAX
+ *  moves again, move this with it - they are one setting expressed in two units. */
+const OCR_POSTS_PER_BATCH = 15;
 /** Stop enqueueing entirely above this backlog so the sweep can't outrun the workers. */
 const QUEUE_HIGH_WATER = 900;
 const OCR_QUEUE_HIGH_WATER = 150;
@@ -129,6 +134,33 @@ async function pageAll<T>(
     if (rows.length < PAGE) break;
   }
   return out;
+}
+
+/**
+ * Every post holding at least one stored image nobody has read yet — across the
+ * WHOLE corpus, at any processing_status.
+ *
+ * Two full scans (~5k rows each on today's corpus) rather than a join, because
+ * PostgREST cannot join. Cheap enough for a 5-minute tick, and the alternative —
+ * inferring OCR work from the post lifecycle — is what stranded 625 images.
+ */
+async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
+  const media = await pageAll<{ id: string; content_post_id: string }>(
+    (from, to) => sb.from('mkt_content_media').select('id, content_post_id')
+      .eq('download_status', 'stored').in('media_kind', ['image', 'thumbnail'])
+      .order('id', { ascending: true }).range(from, to),
+    50_000, 'ocr media scan');
+  const read = new Set<string>();
+  for (const batch of chunk(media.map((m) => m.id), 1000)) {
+    const rows = await pageAll<{ content_media_id: string }>(
+      (from, to) => sb.from('mkt_visual_text').select('content_media_id')
+        .in('content_media_id', batch).order('id', { ascending: true }).range(from, to),
+      50_000, 'ocr visual-text scan');
+    for (const r of rows) read.add(r.content_media_id);
+  }
+  const out = new Set<string>();
+  for (const m of media) if (!read.has(m.id)) out.add(m.content_post_id);
+  return [...out];
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
@@ -255,7 +287,18 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
       OCR_QUEUE_HIGH_WATER + PAGE, 'ocr in-flight scan');
     for (const r of rows) for (const pid of r.payload?.post_ids ?? []) ocrInFlight.add(pid);
   }
-  const needOcr = postIds.filter((id) => postsNeedingOcr.has(id) && !ocrInFlight.has(id));
+  // Stage 2's scope is GLOBAL, not the 'collected' set the other stages use.
+  // Whether an image has been read has nothing to do with its post's processing
+  // status — but scoping OCR to 'collected' meant that the moment stage 3
+  // promoted a post out of 'collected', any image still unread inside it became
+  // invisible to this sweep forever. Measured when the queue drained to zero
+  // with work outstanding: 625 unread images, and NOT ONE of them in a
+  // 'collected' post — 411 sat in posts marked 'failed', 134 in
+  // 'awaiting_intelligence', 80 in 'processed'.
+  //
+  // `postsNeedingOcr` (the 'collected'-scoped set) is still computed above and
+  // still drives stage 3's readiness test; it is simply not the OCR scope.
+  const needOcr = (await postsWithUnreadImages(sb)).filter((id) => !ocrInFlight.has(id));
   if (needOcr.length > 0) {
     const { count: ocrQueued } = await sb.from('claude_jobs')
       .select('id', { count: 'exact', head: true })

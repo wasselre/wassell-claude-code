@@ -390,7 +390,16 @@ async function handleMktContentEnrichment(job) {
 // Same shape as content-enrichment: the handler prepares local inputs, the Skill
 // reads them and writes ONE result file, the handler validates and persists.
 // Claude Code reads image files natively, so the images are staged to disk first.
-const OCR_BATCH_MAX = 12;         // images per session; keeps one run bounded
+// Images per session. Raised 12 -> 24 to amortise session startup over more
+// images: the poll gap plus container/session warm-up is roughly fixed per job,
+// so doubling the payload nearly halves that overhead per image. 24 images runs
+// ~4 min, comfortably inside MAX_JOB_MS (25 min).
+//
+// This cap only bites if the batch actually SUPPLIES that many images. Posts
+// average 1.61 stored images each, so the sweep sends OCR_POSTS_PER_BATCH = 15
+// to fill it; at the old 7 posts a batch offered ~11 images and never reached
+// even the old cap of 12.
+const OCR_BATCH_MAX = 24;         // images per session; keeps one run bounded
 const OCR_FIELDS = ['project_names','developer_names','prices','payment_plans','unit_types',
   'districts','locations','phones','urls','offers','amenities','selling_points','dates','ctas'];
 

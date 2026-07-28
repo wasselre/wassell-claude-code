@@ -22,12 +22,27 @@ function fakeSb(c: Canned) {
     const b: Record<string, unknown> = {};
     const chain = () => b;
     let range: [number, number] | null = null;
-    for (const m of ['select', 'eq', 'in', 'lt', 'order', 'limit', 'neq']) b[m] = chain;
+    // Column filters are RECORDED and applied. A fake that ignores .eq/.in lets
+    // a query prove nothing — the OCR media scan filters on download_status and
+    // media_kind, so without this a VIDEO row satisfies an images-only query and
+    // the video-only test passes while the production query would not.
+    const filters: Array<{ col: string; vals: unknown[] }> = [];
+    for (const m of ['select', 'lt', 'order', 'limit', 'neq']) b[m] = chain;
+    b.eq = (col: string, val: unknown) => { filters.push({ col, vals: [val] }); return b; };
+    b.in = (col: string, vals: unknown[]) => { filters.push({ col, vals }); return b; };
     b.range = (from: number, to: number) => { range = [from, to]; return b; };
-    // Emulates the server: honour .range() and NEVER return more than the cap.
+    // Emulates the server: apply filters, honour .range(), and NEVER return more
+    // than the cap.
     const page = (rows: unknown[]) => {
+      const kept = rows.filter((row) => filters.every((f) => {
+        const r = row as Record<string, unknown>;
+        // A filter on a column this fixture does not model is not evaluated —
+        // e.g. `.eq('kind', 'mkt_visual_ocr')` against a canned job row.
+        if (!(f.col in r)) return true;
+        return f.vals.includes(r[f.col]);
+      }));
       const [from, to] = range ?? [0, DB_MAX_ROWS - 1];
-      return rows.slice(from, Math.min(to + 1, from + DB_MAX_ROWS));
+      return kept.slice(from, Math.min(to + 1, from + DB_MAX_ROWS));
     };
     b.then = (resolve: (v: unknown) => unknown) => {
       if (table === 'mkt_settings') return resolve({ data: c.leaseWon === false ? [] : [{ key: 'x' }], error: null });
