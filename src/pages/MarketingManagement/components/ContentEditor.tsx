@@ -17,7 +17,8 @@ import { FileText, Plus, Lock, ChevronDown, Send, Check } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { Section, EmptyHint, fmtDate } from '@/pages/MarketingIntelligence/components/shared';
-import { useProjectOptions } from '@/lib/marketingMgmt/projects';
+import { useProjectOptions, useOurProjectOptions } from '@/lib/marketingMgmt/projects';
+import { ProjectSelect } from './portfolio/ProjectPicker';
 import {
   CONTENT_TYPE_LABEL, PURPOSE_LABEL, PRIORITY_LABEL, ORGANIC_PAID_LABEL,
   FUNNEL_STAGE_LABEL, CTA_DESTINATION_LABEL, LANGUAGE_LABEL, PLATFORM_LABEL,
@@ -68,6 +69,11 @@ export function ContentFields({ item, assets, isAr, onSaved, onError }: {
   onError: (m: string) => void;
 }) {
   const users = useAppStore((s) => s.users);
+  // Two lists on purpose: `ourProjects` is what may be CHOSEN, `projects` is
+  // every project and is used only to NAME a value the record already holds
+  // and to derive its developer. Narrowing the resolver too would make an
+  // item linked to a market project read as "no project".
+  const ourProjects = useOurProjectOptions();
   const projects = useProjectOptions();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   // In-flight and just-saved fields, NOT one global "busy". An earlier version
@@ -185,11 +191,9 @@ export function ContentFields({ item, assets, isAr, onSaved, onError }: {
       <Group title={isAr ? 'التوجيه التسويقي' : 'Marketing direction'}
         hint={isAr ? 'لأي مشروع، لأي مرحلة، وعلى أي منصة' : 'Which project, which funnel stage, which platforms'}>
         {F('project', isAr ? 'المشروع' : 'Project',
-          <select defaultValue={item.project_id ?? ''} className={FIELD}
-            onChange={(e) => void save({ project_id: e.target.value || null }, 'project')}>
-            <option value="">{isAr ? '— بلا مشروع —' : '— no project —'}</option>
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>)}
+          <ProjectSelect options={ourProjects} resolve={(id) => projects.find((p) => p.id === id)}
+            value={item.project_id ?? null} isAr={isAr}
+            onChange={(id) => void save({ project_id: id }, 'project')} />)}
         {/* Derived, never stored: the project stays the source of truth. */}
         {F('developer', isAr ? 'المطوّر' : 'Developer',
           <div className={`${FIELD} flex items-center bg-cream-light text-charcoal/70`}>
