@@ -135,6 +135,7 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
   const [newTitle, setNewTitle] = useState('');
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [types, setTypes] = useState<ArtifactType[]>([]);
   const [sheet, setSheet] = useState<'assign' | 'schedule' | 'duplicate' | null>(null);
   /** Kept on screen rather than toasted: a bulk run reports per-row outcomes,
    *  and a toast that vanishes cannot show which rows are still blocked. */
@@ -147,6 +148,7 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
       .finally(() => { if (spinner) setLoading(false); });
   }, [onError]);
   useEffect(() => { load(true); }, [load]);
+  useEffect(() => { fetchArtifactTypes().then((r) => setTypes(r.types)).catch(() => {}); }, []);
 
   const ownerName = (id: string | null) => {
     if (!id) return null;
@@ -302,7 +304,7 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
 
         {sel.size > 0 && (
           <BulkBar
-            selected={[...sel]} rows={filtered} isAr={isAr}
+            selected={[...sel]} rows={filtered} isAr={isAr} types={types}
             sheet={sheet} setSheet={setSheet}
             onClear={clearSel}
             onError={onError} onToast={onToast}
@@ -399,8 +401,8 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
  * many rows RLS actually moved and which deliverables are still blocked, and
  * both are rendered.
  */
-function BulkBar({ selected, rows, isAr, sheet, setSheet, onClear, onError, onToast, onReport, onDone }: {
-  selected: string[]; rows: ContentBrief[]; isAr: boolean;
+function BulkBar({ selected, rows, isAr, types, sheet, setSheet, onClear, onError, onToast, onReport, onDone }: {
+  selected: string[]; rows: ContentBrief[]; isAr: boolean; types: ArtifactType[];
   sheet: 'assign' | 'schedule' | 'duplicate' | null;
   setSheet: (s: 'assign' | 'schedule' | 'duplicate' | null) => void;
   onClear: () => void; onError: (m: string) => void; onToast: (m: string) => void;
@@ -462,7 +464,10 @@ function BulkBar({ selected, rows, isAr, sheet, setSheet, onClear, onError, onTo
         <ul className="space-y-0.5">
           {result.still_blocked.map((b) => (
             <li key={b.deliverable_id} className="text-[11px] text-amber-800">
-              <Ltr className="font-medium">{b.label}</Ltr>{' — '}{b.blockers.join('، ')}
+              <Ltr className="font-medium">{b.label}</Ltr>{' — '}
+              {/* Same translation the board chips use. Raw keys like
+                  approved_final_media are for the database, not the reader. */}
+              {b.blockers.map((x) => blockerLabel(x, isAr, types)).join(isAr ? '، ' : ', ')}
             </li>))}
         </ul>
       </div>
