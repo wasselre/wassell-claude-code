@@ -265,6 +265,8 @@ export async function recordOutboundMessage(args: {
   mediaCaption?: string | null;
   quotedWid?: string | null;
   reference: string;
+  /** Which surface produced this — decides whether it retires call tasks (WA-24). */
+  sendSource?: string | null;
   /** The gateway's message id when it accepted; absent when it did not. */
   messageWid?: string | null;
   outcome: 'accepted' | 'failed';
@@ -294,6 +296,7 @@ export async function recordOutboundMessage(args: {
     media_size: null,
     media_caption: args.mediaCaption ?? null,
     reference: args.reference,
+    send_source: args.sendSource ?? null,
     quoted: args.quotedWid ? { wid: args.quotedWid, body: null, kind: 'text' } : null,
   }, { onConflict: 'id', ignoreDuplicates: false });
 

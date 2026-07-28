@@ -1995,6 +1995,9 @@ async function persistQueuedOutbound(
     ack: 'sent',
     date: new Date().toISOString(),
     reference: job.reference,
+    // An `ai:` reference is written by /api/whatsapp/ai-send; anything else
+    // reaching this queue is a scheduled or fanned-out send (WA-24).
+    send_source: job.reference?.startsWith('ai:') ? 'ai' : 'media_batch',
   }));
 
   const { error } = await supabase.from('chat_messages').upsert(rows, { onConflict: 'id', ignoreDuplicates: false });

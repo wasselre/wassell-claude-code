@@ -263,9 +263,27 @@ export async function bumpConversationRecord(args: {
   if (clientLink && UUID_RE.test(clientLink)) {
     const rpcName = args.lastFlow === 'in' ? 'reconcile_inbound_whatsapp' : 'reconcile_outbound_whatsapp';
     try {
+      // WA-24 — the OUTBOUND reconcile retires the client's open call tasks, so
+      // it must know whether this was a rep talking to them or a document/bulk
+      // send that happens to have left the building. The send paths stamp
+      // `send_source` on the row at send time; the webhook echo merges onto
+      // that same row, so by the time we get here the answer is on it.
+      let sendSource: string | null = null;
+      if (args.lastFlow === 'out') {
+        const { data: srcRow } = await supa
+          .from('chat_messages')
+          .select('send_source')
+          .eq('chat_wid', args.chatWid)
+          .eq('flow', 'out')
+          .order('date', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        sendSource = (srcRow as { send_source?: string | null } | null)?.send_source ?? null;
+      }
       const { error: rpcErr } = await supa.rpc(rpcName, {
         p_client_id: clientLink,
         p_message_at: args.lastAt,
+        ...(args.lastFlow === 'out' ? { p_source: sendSource ?? 'composer' } : {}),
       });
       if (rpcErr) console.error(`[chatIngest] ${rpcName} failed:`, rpcErr.message);
     } catch (err) {

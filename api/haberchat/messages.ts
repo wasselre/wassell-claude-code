@@ -122,7 +122,7 @@ export default async function handler(req: Request): Promise<Response> {
         // The message now exists for the CRM whether or not the echo returns.
         await recordOutboundMessage({
           chatWid: auth.chatWid, deviceId, body, mediaFileId, mediaCaption, quotedWid,
-          reference, messageWid: result.wid, outcome: 'accepted',
+          reference, messageWid: result.wid, outcome: 'accepted', sendSource: source,
         });
         await logSendAttempt({
           user, chatWid: auth.chatWid, clientId: auth.clientId, conversationId: auth.conversationId,
@@ -135,7 +135,7 @@ export default async function handler(req: Request): Promise<Response> {
         // the browser's memory only and disappear entirely on reload.
         await recordOutboundMessage({
           chatWid: auth.chatWid, deviceId, body, mediaFileId, mediaCaption, quotedWid,
-          reference, outcome: 'failed',
+          reference, outcome: 'failed', sendSource: source,
         });
         // Recorded BEFORE returning: a send that failed at the gateway is
         // exactly the event that previously left no trace anywhere.
