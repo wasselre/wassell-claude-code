@@ -57,11 +57,11 @@ export default async function handler(req: Request): Promise<Response> {
   if (error) return jsonError(500, `shared file lookup failed: ${error.message}`);
 
   const rows = (data ?? []) as SharedFileRow[];
-  if (rows.length === 0) {
-    // Not found / inactive / expired — uniform response.
-    return jsonError(404, 'link not available');
-  }
+  // Checking the element rather than the length narrows the type AND covers the
+  // case a length check cannot: a first element that is itself absent.
+  // Not found / inactive / expired all get the same uniform response.
   const row = rows[0];
+  if (!row) return jsonError(404, 'link not available');
   if (row.requires_password) {
     return jsonOk({
       requires_password: true,

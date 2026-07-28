@@ -61,7 +61,9 @@ interface ParsedImage {
 
 function parseDataUrl(input: string): ParsedImage | { error: string } {
   const m = /^data:([a-z]+\/[a-z0-9+.-]+);base64,(.+)$/i.exec(input.trim());
-  if (!m) return { error: 'image_data_url must be a base64 data URL' };
+  // Both groups are checked individually: a regex can match while a group does
+  // not, and reading m[1] as a plain string hid that.
+  if (!m || !m[1] || !m[2]) return { error: 'image_data_url must be a base64 data URL' };
   const mediaType = m[1].toLowerCase();
   const allowed: Record<string, string> = {
     'image/jpeg': 'jpg',
@@ -69,7 +71,8 @@ function parseDataUrl(input: string): ParsedImage | { error: string } {
     'image/webp': 'webp',
     'image/gif': 'gif',
   };
-  if (!(mediaType in allowed)) return { error: `unsupported image type: ${mediaType}` };
+  const ext = allowed[mediaType];
+  if (!ext) return { error: `unsupported image type: ${mediaType}` };
   const base64 = m[2];
   const approxBytes = Math.floor((base64.length * 3) / 4);
   if (approxBytes > MAX_IMAGE_BYTES) {
@@ -78,7 +81,7 @@ function parseDataUrl(input: string): ParsedImage | { error: string } {
   return {
     base64,
     mediaType: mediaType as ParsedImage['mediaType'],
-    ext: allowed[mediaType],
+    ext,
     contentType: mediaType,
   };
 }

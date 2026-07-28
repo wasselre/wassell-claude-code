@@ -105,7 +105,12 @@ async function parseFromBody(res: Response): Promise<{ lat: number; lng: number 
   }
 }
 
-function toLatLng(latStr: string, lngStr: string): { lat: number; lng: number } | null {
+/** Takes the capture groups straight from a regex match, which are
+ *  `string | undefined` — a pattern can match while a group does not. Number()
+ *  turns undefined into NaN, so the finite check below already rejected that
+ *  case; accepting the honest type just makes it visible. */
+function toLatLng(latStr: string | undefined, lngStr: string | undefined): { lat: number; lng: number } | null {
+  if (latStr === undefined || lngStr === undefined) return null;
   const lat = Number(latStr);
   const lng = Number(lngStr);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;

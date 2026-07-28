@@ -1005,9 +1005,12 @@ async function updateSection(supabase: SupabaseClient, input: UpdateSectionInput
   if (frozen) return frozen;
   const sections = m.schema?.sections ?? [];
   const idx = sections.findIndex((s) => s.id === input.section_id);
-  if (idx < 0) return JSON.stringify({ ok: false, error: 'section not found' });
+  const existing = sections[idx];
+  // `idx < 0` alone does not narrow sections[idx]; spreading a possibly-absent
+  // section would have produced an object with no id.
+  if (idx < 0 || !existing) return JSON.stringify({ ok: false, error: 'section not found' });
 
-  const updated: SectionShape = { ...sections[idx] };
+  const updated: SectionShape = { ...existing };
   if (input.label_ar !== undefined) updated.label_ar = input.label_ar;
   if (input.label_en !== undefined) updated.label_en = input.label_en;
   if (input.color !== undefined) updated.color = input.color;
@@ -1114,6 +1117,7 @@ async function addField(supabase: SupabaseClient, input: AddFieldInput): Promise
   }
 
   const targetSection = sections[sectionIdx];
+  if (!targetSection) return JSON.stringify({ ok: false, error: 'section not found' });
   const order = (targetSection.fields ?? []).length;
   const newField = buildField(input as Record<string, unknown>, input.section_id, order);
 
@@ -1162,7 +1166,7 @@ async function updateField(supabase: SupabaseClient, input: UpdateFieldInput): P
   let currentSectionIdx = -1;
   let currentField: FieldShape | null = null;
   for (let i = 0; i < sections.length; i++) {
-    const found = (sections[i].fields ?? []).find((f) => f.id === input.field_id);
+    const found = (sections[i]?.fields ?? []).find((f) => f.id === input.field_id);
     if (found) { currentSectionIdx = i; currentField = found; break; }
   }
   if (!currentField) return JSON.stringify({ ok: false, error: 'field not found' });

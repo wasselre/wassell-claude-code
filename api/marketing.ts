@@ -44,6 +44,13 @@ interface Body {
   job_id?: string;
   paused?: boolean;
   collection_enabled?: boolean;
+  // date-window + feed params used by project_intelligence,
+  // organization_intelligence and insight_dismiss. They were read from the body
+  // but never declared, so the endpoint had six untyped reads.
+  from?: string;
+  to?: string;
+  insight_id?: string;
+  dismissed?: boolean;
   // paid ads
   active?: boolean;
   advertiser?: string;

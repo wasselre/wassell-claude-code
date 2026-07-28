@@ -22,7 +22,7 @@ export default async function handler(req: Request): Promise<Response> {
   return withAuth(req, async () => {
     const url = new URL(req.url);
     const match = url.pathname.match(/\/api\/haberchat\/chats\/([^/]+)\/?$/);
-    const chatWid = match ? decodeURIComponent(match[1]) : '';
+    const chatWid = match?.[1] ? decodeURIComponent(match[1]) : '';
     if (!chatWid) return jsonError(400, 'chatWid is missing from path');
 
     const deviceId = url.searchParams.get('deviceId') ?? (await resolveDefaultDeviceId());

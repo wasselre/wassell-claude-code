@@ -12,7 +12,14 @@
 
 import { getServiceSupabase } from './supabaseServer.js';
 
-export type ServerActivityCategory = 'auth' | 'record' | 'workflow' | 'ai_agent' | 'api' | 'webhook' | 'system';
+/** The categories activity_log actually holds. There is no CHECK constraint on
+ *  the column, so a category missing from this union never failed at runtime —
+ *  it just made the call site a type error that nothing ran. Verified against
+ *  production: 'file' (14,942 rows) and 'whatsapp' (14) were both in use and
+ *  both absent here. */
+export type ServerActivityCategory =
+  | 'auth' | 'record' | 'workflow' | 'ai_agent' | 'api' | 'webhook' | 'system'
+  | 'file' | 'whatsapp';
 export type ServerActivityStatus = 'success' | 'error' | 'warning' | 'info';
 
 interface ServerActivityInput {

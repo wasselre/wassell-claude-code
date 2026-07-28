@@ -294,9 +294,13 @@ export function parseCallLengthSeconds(callLength: string | null | undefined): n
   if (!callLength) return null;
   const parts = callLength.split(':').map((p) => Number.parseInt(p, 10));
   if (parts.some((n) => Number.isNaN(n))) return null;
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 1) return parts[0];
+  // Destructured rather than indexed: a length check does not narrow an element
+  // type, and the arithmetic below silently produced NaN if one were absent.
+  const [a, b, c] = parts;
+  if (a === undefined) return null;
+  if (parts.length === 3 && b !== undefined && c !== undefined) return a * 3600 + b * 60 + c;
+  if (parts.length === 2 && b !== undefined) return a * 60 + b;
+  if (parts.length === 1) return a;
   return null;
 }
 

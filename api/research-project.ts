@@ -61,7 +61,6 @@ interface ParsedRow {
 }
 
 const TARGETED_PROJECTS_MODEL_NAME = 'targeted_projects';
-const ALL_PROJECTS_MODEL_NAME = 'all_projects';
 
 /**
  * The Arabic prompt sent to Paseet. The 9 columns we ask for align 1:1 with

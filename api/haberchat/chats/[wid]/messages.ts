@@ -26,7 +26,7 @@ export default async function handler(req: Request): Promise<Response> {
     // We pull it from the URL rather than relying on params because the edge
     // runtime's request object doesn't expose Next-style params.
     const match = url.pathname.match(/\/api\/haberchat\/chats\/([^/]+)\/messages\/?$/);
-    const chatWid = match ? decodeURIComponent(match[1]) : '';
+    const chatWid = match?.[1] ? decodeURIComponent(match[1]) : '';
     if (!chatWid) {
       return jsonError(400, 'chatWid is missing from path');
     }

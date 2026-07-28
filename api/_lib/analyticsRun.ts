@@ -61,8 +61,13 @@ function collectNeeds(
   if (model) {
     const fields = flattenFields(model);
     for (const gb of q.group_by ?? []) {
-      if (gb.field.kind !== 'field') continue;
-      const f = fields.find((x) => x.id === gb.field.field_id);
+      // Bound to a const before the guard: narrowing a mutable PROPERTY does not
+      // survive into a closure, so `gb.field.field_id` inside the callback was
+      // still the whole union — including the synthetic refs that have no
+      // field_id at all.
+      const ref = gb.field;
+      if (ref.kind !== 'field') continue;
+      const f = fields.find((x) => x.id === ref.field_id);
       if (!f) continue;
       if (f.type === 'lookup' && f.lookup_model_id) needModels.add(f.lookup_model_id);
       if (f.type === 'unit_picker' && f.unit_picker_unit_model_id) needModels.add(f.unit_picker_unit_model_id);

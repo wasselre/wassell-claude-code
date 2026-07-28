@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "check:service-clients": "node scripts/check-service-clients.mjs",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && npm run typecheck:api && vite build",
     "preview": "vite preview",
     "sync:prds": "node scripts/sync-model-workflow-prds.mjs",
     "backfill:reels": "node scripts/backfill-reel-analysis.mjs",
