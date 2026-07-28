@@ -616,13 +616,39 @@ order).
 | `src/pages/MarketingManagement/components/portfolio/progress.tsx` | the three measures |
 | `src/pages/MarketingManagement/components/portfolio/StatusBar.tsx` | legal transitions + blocker reasons |
 
-### Known limitation found while doing this
+### 14.5 The rest of the workspace
 
-`api/` is **not typechecked**: `tsconfig.json` has `include: ["src"]`. `api/marketing-mgmt.ts` alone
-had three type errors, one of them real — `Body.decision` omitted `'pending'`, making the branch
-that leaves `decided_at` null look unreachable even though `mkt_approvals` explicitly allows that
-value. Fixed there, but **48 errors remain across the other 25 files in `api/`**, so wiring the
-directory into CI is its own piece of work.
+**Schedule.** A campaign's flight dates say when it is *allowed* to run; they say nothing about when
+its content goes out. Separate blocks: the flight window, then production deadlines and publications
+side by side. A task with no due date says so rather than being omitted — omitting it reads as
+nothing outstanding.
+
+**Reviews and decisions.** continue / change / scale / pause / stop with rationale, plus lessons.
+`portfolio_detail` already read these; the execution view — where you would act on them — could not.
+An unreviewed campaign says *no decision means unreviewed, not approved*.
+
+**Content actions.** Producing and reusing are different acts. Create prefills the campaign's plan,
+goal, objective, audience and origin so new content starts attached. Reuse offers only
+approved-or-later items and filters out ones already linked. `content_usage_remove` deletes the
+**usage row, never the item** — and the control appears only on the reused group, because an origin
+is not detachable; that is what makes it the origin.
+
+**Deliverables** are authored in the campaign drawer (`Deliverables.tsx`). They are an activation
+blocker, so without an editor the blocker was unsatisfiable and nothing could leave draft.
+
+### 14.6 api/ is now typechecked
+
+`tsconfig.api.json` and `npm run typecheck:api` existed but were wired into nothing, so 26 endpoints
+compiled only under Vercel's esbuild transpile, which does not fail on type errors. `build` now runs
+it. Fixing the 46 errors it found surfaced two real defects:
+
+| | |
+|---|---|
+| `ServerActivityCategory` | missing `'file'` and `'whatsapp'`. Production holds 14,942 and 14 rows of those, and the column has no CHECK — the type was wrong about what the system writes, and the WhatsApp send-audit call site was a type error nothing ran. |
+| `analyticsRun` | `gb.field.kind !== 'field'` narrows a mutable **property**, and that narrowing does not survive into the `.find()` closure — so `field_id` was read off the whole union, including the synthetic refs that have none. |
+
+The check immediately earned itself: the very next commit to land (`c33225f7`) failed its Vercel
+build on duplicate `Body` members, instead of shipping.
 
 ---
 
