@@ -14,6 +14,7 @@ import { ChevronUp, ChevronDown, Copy, Plus, Clock } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { Section, EmptyHint, Stat } from '@/pages/MarketingIntelligence/components/shared';
 import { saveScene, saveSlide, reorderScenes, reorderSlides } from '@/lib/marketingMgmt/client';
+import { SCENE_TYPE_LABEL, SLIDE_TYPE_LABEL, lbl } from '@/lib/marketingMgmt/labels';
 
 const SCENE_TYPES = ['presenter','b_roll','drone','ai_visual','animation','screen_recording',
   'property_shot','floor_plan','text_only','testimonial','custom'] as const;
@@ -103,7 +104,7 @@ export function SceneEditor({ contentItemId, scenes, isAr, onChanged, onError }:
                   <div className="grid gap-2 border-t border-sand/40 p-3 sm:grid-cols-2">
                     <select defaultValue={s(r, 'scene_type')} onBlur={(e) => persist({ scene_type: e.target.value }, id)}
                       className="rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-[12.5px]">
-                      {SCENE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      {SCENE_TYPES.map((t) => <option key={t} value={t}>{lbl(SCENE_TYPE_LABEL, t, isAr)}</option>)}
                     </select>
                     <input type="number" defaultValue={s(r, 'planned_seconds')} placeholder={isAr ? 'ثوانٍ' : 'seconds'}
                       onBlur={(e) => persist({ planned_seconds: Number(e.target.value) || null }, id)}
@@ -198,7 +199,7 @@ export function SlideEditor({ contentItemId, slides, isAr, onChanged, onError }:
                   <div className="grid gap-2 border-t border-sand/40 p-3 sm:grid-cols-2">
                     <select defaultValue={s(r, 'slide_type')} onBlur={(e) => persist({ slide_type: e.target.value }, id)}
                       className="rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-[12.5px]">
-                      {SLIDE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      {SLIDE_TYPES.map((t) => <option key={t} value={t}>{lbl(SLIDE_TYPE_LABEL, t, isAr)}</option>)}
                     </select>
                     <input defaultValue={s(r, 'cta')} placeholder={isAr ? 'دعوة الإجراء' : 'CTA'}
                       onBlur={(e) => persist({ cta: e.target.value }, id)}

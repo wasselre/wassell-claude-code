@@ -69,6 +69,13 @@ export interface ContentItem {
   caption: string | null; hashtags: string[]; created_at: string;
   target_audience: string | null; content_pillar: string | null;
   reference_links: string[]; production_notes: string | null;
+  // 2026-08-21 marketing fields. Optional on the type because a deployment
+  // whose migration has not run yet simply will not return them.
+  organic_or_paid?: string | null; funnel_stage?: string | null;
+  content_angle?: string | null; offer_message?: string | null;
+  cta_destination?: string | null; tracking_link?: string | null;
+  next_action?: string | null; blocker?: string | null;
+  final_asset_id?: string | null;
   source_insight_id: string | null; source_url: string | null;
   mkt_content_platforms?: Array<{ platform: string }>;
 }
@@ -140,6 +147,12 @@ export interface ContentDetail {
   scenes: Array<Record<string, unknown>>; slides: Array<Record<string, unknown>>;
   video: Record<string, unknown> | null; post: Record<string, unknown> | null;
   assets: Array<{ asset_id: string; mkt_raw_assets: Record<string, unknown> | null }>;
+  performance: Array<Record<string, unknown>>;
+  attributions: Array<Record<string, unknown>>;
+  /** Legal next statuses, computed by the database from the same rule the
+   *  trigger enforces. `null` means the deployment is missing the RPC — the UI
+   *  must say so rather than silently offering nothing or everything. */
+  allowed_transitions: string[] | null;
 }
 
 // ── actions ────────────────────────────────────────────────────────────────
@@ -156,6 +169,9 @@ export const createContent = (title: string, content_type: ContentType, patch: R
   call<{ item: ContentItem; tasks_generated: number }>('content_create', { title, content_type, patch });
 export const updateContent = (id: string, patch: Record<string, unknown>) => call<{ item: ContentItem }>('content_update', { id, patch });
 export const transitionContent = (id: string, to_status: ContentStatus) => call<{ item: ContentItem }>('content_transition', { id, to_status });
+/** Replace the target-platform set for a content item. */
+export const setPlatforms = (content_item_id: string, platforms: string[]) =>
+  call<{ platforms: string[] }>('platform_set', { content_item_id, platforms });
 
 export const createVersion = (content_item_id: string, version_type: string, payload: Record<string, unknown>, change_summary?: string, file_id?: string) =>
   call<{ version: ContentVersion }>('version_create', { content_item_id, version_type, payload, change_summary, file_id });

@@ -19,20 +19,23 @@ import Button from '@/components/ui/Button';
 import {
   ClipboardList, RefreshCw, AlertTriangle, Plus, Search, ArrowLeft, Clock,
   CheckCircle2, Send, Layers, Target, CalendarDays, Image as ImageIcon,
-  BadgeCheck, BarChart3, Clapperboard,
+  BadgeCheck, BarChart3, Clapperboard, CalendarPlus, Link as LinkIcon,
 } from 'lucide-react';
 import CampaignsTab from './components/CampaignsTab';
 import { ApprovalsTab, PublishingTab, PerformanceTab } from './components/QueueTabs';
 import { CalendarTab, AssetsTab } from './components/PlanningTabs';
 import { SceneEditor, SlideEditor } from './components/ProductionEditor';
 import { ContentFields, VersionWriter } from './components/ContentEditor';
+import { ContentSummary, ContentResults } from './components/ContentSummary';
+import { useProjectOptions } from '@/lib/marketingMgmt/projects';
+import { PRIORITY_LABEL, PLATFORM_LABEL, ASSET_TYPE_LABEL, CONTENT_TYPE_LABEL, lbl } from '@/lib/marketingMgmt/labels';
 // Generic presentation primitives shared with the intelligence page — importing
 // rather than duplicating; they carry no intelligence-specific types.
 import { Section, Stat, CaveatStrip, EmptyHint, Spinner, fmtDate } from '@/pages/MarketingIntelligence/components/shared';
 import {
   fetchOverview, generateAlerts, fetchContentList, fetchContentDetail,
-  createContent, transitionContent, updateTask,
-  CONTENT_STATUSES, STATUS_LABEL, CONTENT_TYPES,
+  createContent, transitionContent, updateTask, savePublication, fetchAssets, linkAsset,
+  STATUS_LABEL, CONTENT_TYPES, PLATFORMS,
   type MgmtOverview, type ContentItem, type ContentDetail, type ContentStatus, type ContentType,
 } from '@/lib/marketingMgmt/client';
 
@@ -46,7 +49,7 @@ const BOARD: ContentStatus[] = ['idea','brief','writing','awaiting_script_approv
   'awaiting_final_approval','approved','ready_to_publish','scheduled','published'];
 
 export default function MarketingManagementPage() {
-  const { language, addToast } = useAppStore();
+  const { language, users, addToast } = useAppStore();
   const isAr = language === 'ar';
 
   const [tab, setTab] = useState<Tab>('overview');
@@ -57,6 +60,7 @@ export default function MarketingManagementPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [projectFilter, setProjectFilter] = useState('');
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newType, setNewType] = useState<ContentType>('reel');
@@ -120,6 +124,18 @@ export default function MarketingManagementPage() {
     finally { setBusy(false); }
   };
 
+  // Board cards need a project name and an owner name; both come from data the
+  // store already holds, so neither costs a request.
+  const projectOptions = useProjectOptions();
+  const projectName = useCallback(
+    (id: string | null) => (id ? projectOptions.find((p) => p.id === id)?.name ?? null : null),
+    [projectOptions]);
+  const ownerName = useCallback((id: string | null) => {
+    if (!id) return null;
+    const u = users.find((x) => x.id === id);
+    return u ? ((isAr ? u.name_ar : u.name_en) || u.name_en || u.name_ar) : null;
+  }, [users, isAr]);
+
   const inProduction = useMemo(
     () => content.filter((c) => ['approved_for_production','raw_assets_required','recording',
       'designing','editing','internal_review','revision_requested'].includes(c.status)),
@@ -127,8 +143,12 @@ export default function MarketingManagementPage() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? content.filter((c) => c.title.toLowerCase().includes(q) || c.content_number.toLowerCase().includes(q)) : content;
-  }, [content, query]);
+    return content.filter((c) => {
+      if (projectFilter && c.project_id !== projectFilter) return false;
+      if (!q) return true;
+      return c.title.toLowerCase().includes(q) || c.content_number.toLowerCase().includes(q);
+    });
+  }, [content, query, projectFilter]);
 
   const k = ov?.kpis;
   const money = (v: number | null | undefined) =>
@@ -376,16 +396,32 @@ export default function MarketingManagementPage() {
                       className="min-w-[200px] flex-1 rounded-lg border border-sand/60 bg-white px-3 py-1.5 text-[13px] focus:border-copper focus:outline-none" />
                     <select value={newType} onChange={(e) => setNewType(e.target.value as ContentType)}
                       className="rounded-lg border border-sand/60 bg-white px-3 py-1.5 text-[13px]">
-                      {CONTENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      {CONTENT_TYPES.map((t) => <option key={t} value={t}>{lbl(CONTENT_TYPE_LABEL, t, isAr)}</option>)}
                     </select>
                     <Button onClick={create} disabled={busy || !newTitle.trim()}>{isAr ? 'إنشاء' : 'Create'}</Button>
                   </div>
                 )}
-                <div className="relative mb-3">
-                  <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-charcoal/30 start-3" />
-                  <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
-                    placeholder={isAr ? 'بحث…' : 'Search…'}
-                    className="w-full rounded-xl border border-sand/60 bg-white py-2 text-[13px] focus:border-copper focus:outline-none ps-9 pe-3" />
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <div className="relative min-w-[180px] flex-1">
+                    <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-charcoal/30 start-3" />
+                    <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
+                      placeholder={isAr ? 'بحث…' : 'Search…'}
+                      className="w-full rounded-xl border border-sand/60 bg-white py-2 text-[13px] focus:border-copper focus:outline-none ps-9 pe-3" />
+                  </div>
+                  <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
+                    className="rounded-xl border border-sand/60 bg-white px-3 py-2 text-[13px] focus:border-copper focus:outline-none">
+                    <option value="">{isAr ? 'كل المشاريع' : 'All projects'}</option>
+                    {projectOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  {(projectFilter || query) && (
+                    <button type="button" onClick={() => { setProjectFilter(''); setQuery(''); }}
+                      className="text-[12px] text-copper hover:underline">
+                      {isAr ? 'مسح' : 'Clear'}
+                    </button>
+                  )}
+                  <span className="text-[11.5px] tabular-nums text-charcoal/45">
+                    {filtered.length}/{content.length}
+                  </span>
                 </div>
                 {filtered.length === 0 ? (
                   <EmptyHint>{isAr ? 'لا يوجد محتوى بعد — ابدأ بإنشاء واحد' : 'No content yet — create one to begin'}</EmptyHint>
@@ -409,9 +445,25 @@ export default function MarketingManagementPage() {
                                   <button type="button" onClick={() => void openItem(c.id)}
                                     className="w-full rounded-xl border border-sand/50 bg-white p-2.5 text-start hover:border-copper/40">
                                     <div className="text-[12.5px] font-medium text-charcoal line-clamp-2">{c.title}</div>
-                                    <div className="mt-1 flex items-center justify-between text-[10.5px] text-charcoal/45">
-                                      <span>{c.content_number}</span>
-                                      <span>{c.due_date ? fmtDate(c.due_date, isAr) : '—'}</span>
+                                    {/* enough to triage from the board without opening the item */}
+                                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                                      {projectName(c.project_id) && (
+                                        <span className="max-w-full truncate rounded bg-cream px-1.5 py-0.5 text-[10px] text-charcoal/60">
+                                          {projectName(c.project_id)}
+                                        </span>
+                                      )}
+                                      {c.priority !== 'normal' && (
+                                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${
+                                          c.priority === 'urgent' ? 'bg-red-50 text-red-700'
+                                          : c.priority === 'high' ? 'bg-amber-50 text-amber-800'
+                                          : 'bg-charcoal/5 text-charcoal/50'}`}>
+                                          {lbl(PRIORITY_LABEL, c.priority, isAr)}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="mt-1 flex items-center justify-between gap-2 text-[10.5px] text-charcoal/45">
+                                      <span className="truncate">{ownerName(c.owner_user_id) ?? c.content_number}</span>
+                                      <span className="shrink-0">{c.due_date ? fmtDate(c.due_date, isAr) : '—'}</span>
                                     </div>
                                   </button>
                                 </li>
@@ -432,6 +484,8 @@ export default function MarketingManagementPage() {
   );
 }
 
+type DetailTab = 'overview' | 'write' | 'produce' | 'tasks' | 'publish';
+
 function ContentDetailPanel({
   detail, isAr, busy, onBack, onMove, onCompleteTask, onChanged, onError,
 }: {
@@ -440,112 +494,277 @@ function ContentDetailPanel({
   onChanged: () => void; onError: (m: string) => void;
 }) {
   const i = detail.item;
+  const [sub, setSub] = useState<DetailTab>('overview');
   // One central content entity, different production surface by type — this is
   // the specialisation point, NOT a second parallel system for video vs posts.
   const isVideo = ['reel','tiktok_video','snapchat_video','long_form_video','paid_video_ad',
     'property_tour','drone_video','presenter_video','ai_video','motion_graphics'].includes(i.content_type);
   const isCarousel = ['carousel','static_image','infographic','paid_image_ad'].includes(i.content_type);
-  const done = detail.tasks.filter((t) => t.status === 'completed').length;
+  const openTasks = detail.tasks.filter((t) => t.status !== 'completed').length;
+
+  // The panel used to be one endless scroll: header, 17 status chips, 20 fields,
+  // versions, scenes, checklist, history, publications. Same content, grouped by
+  // the job you came to do, so the part you want is never five screens down.
+  const SUBTABS: Array<[DetailTab, string, string, number | null]> = [
+    ['overview', 'نظرة', 'Overview', null],
+    ['write',    'الكتابة', 'Write', detail.versions.length || null],
+    ['produce',  'الإنتاج', 'Produce', (isVideo ? detail.scenes.length : detail.slides.length) || null],
+    ['tasks',    'المهام', 'Tasks', openTasks || null],
+    ['publish',  'النشر والنتيجة', 'Publish & results', detail.publications.length || null],
+  ];
+
   return (
     <div className="space-y-4">
       <Button variant="secondary" onClick={onBack}>
         <ArrowLeft className={`h-4 w-4 ${isAr ? 'rotate-180' : ''}`} />{isAr ? 'رجوع' : 'Back'}
       </Button>
 
-      <Section title={`${i.content_number} · ${i.title}`}
-        subtitle={`${i.content_type} · ${isAr ? STATUS_LABEL[i.status].ar : STATUS_LABEL[i.status].en}`}>
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-          <Stat label={isAr ? 'المهام' : 'Tasks'} value={`${done}/${detail.tasks.length}`} />
-          <Stat label={isAr ? 'النسخ' : 'Versions'} value={detail.versions.length} />
-          <Stat label={isAr ? 'المنشورات' : 'Publications'} value={detail.publications.length} />
-          <Stat label={isAr ? 'الاستحقاق' : 'Due'} value={i.due_date ? fmtDate(i.due_date, isAr) : null} />
-        </div>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {CONTENT_STATUSES.filter((s) => s !== i.status).slice(0, 18).map((s) => (
-            <button key={s} type="button" disabled={busy} onClick={() => onMove(i.id, s)}
-              className="rounded-lg border border-sand/60 bg-white px-2 py-1 text-[11px] text-charcoal/70 hover:border-copper/50 hover:text-charcoal disabled:opacity-40">
-              → {isAr ? STATUS_LABEL[s].ar : STATUS_LABEL[s].en}
-            </button>
-          ))}
-        </div>
-        <p className="mt-2 text-[11px] text-charcoal/45">
-          {isAr ? 'الانتقالات غير المسموحة سترفضها قاعدة البيانات.' : 'Invalid transitions are rejected by the database.'}
-        </p>
-      </Section>
+      <ContentSummary detail={detail} isAr={isAr} busy={busy} onMove={onMove} onError={onError} />
 
-      <ContentFields item={i} isAr={isAr} onSaved={onChanged} onError={onError} />
-
-      <VersionWriter item={i} versions={detail.versions} isAr={isAr}
-        onChanged={onChanged} onError={onError} />
-
-      {isVideo && (
-        <SceneEditor contentItemId={i.id} scenes={detail.scenes} isAr={isAr}
-          onChanged={onChanged} onError={onError} />
-      )}
-      {isCarousel && (
-        <SlideEditor contentItemId={i.id} slides={detail.slides} isAr={isAr}
-          onChanged={onChanged} onError={onError} />
-      )}
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Section title={isAr ? 'قائمة الإنتاج' : 'Production checklist'}>
-          {detail.tasks.length === 0 ? <EmptyHint>{isAr ? 'لا مهام' : 'No tasks'}</EmptyHint> : (
-            <ul className="divide-y divide-sand/40">
-              {detail.tasks.map((t) => (
-                <li key={t.id} className="flex items-center justify-between gap-2 py-2">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <CheckCircle2 className={`h-4 w-4 shrink-0 ${t.status === 'completed' ? 'text-emerald-600' : 'text-charcoal/20'}`} />
-                    <span className={`truncate text-[12.5px] ${t.status === 'completed' ? 'text-charcoal/40 line-through' : 'text-charcoal'}`}>{t.title}</span>
-                  </span>
-                  {t.status === 'blocked' ? (
-                    <span className="shrink-0 text-[11px] text-amber-700">{isAr ? 'محجوب' : 'blocked'}</span>
-                  ) : t.status !== 'completed' ? (
-                    <button type="button" disabled={busy} onClick={() => onCompleteTask(t.id)}
-                      className="shrink-0 text-[11.5px] font-medium text-copper hover:underline disabled:opacity-40">
-                      {isAr ? 'إنهاء' : 'Complete'}
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-
-        <Section title={isAr ? 'سجل الحالة' : 'Status history'}
-          subtitle={isAr ? 'غير قابل للتعديل' : 'Append-only'}>
-          {detail.history.length === 0 ? <EmptyHint>—</EmptyHint> : (
-            <ul className="divide-y divide-sand/40">
-              {detail.history.slice(0, 12).map((h) => (
-                <li key={h.id} className="flex items-center justify-between gap-2 py-2 text-[12px]">
-                  <span className="text-charcoal/75">
-                    {h.from_status ? `${isAr ? STATUS_LABEL[h.from_status as ContentStatus]?.ar : STATUS_LABEL[h.from_status as ContentStatus]?.en} → ` : ''}
-                    {isAr ? STATUS_LABEL[h.to_status as ContentStatus]?.ar : STATUS_LABEL[h.to_status as ContentStatus]?.en}
-                  </span>
-                  <span className="shrink-0 text-[11px] text-charcoal/40">{fmtDate(h.changed_at, isAr)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-
-        {/* Versions are written and listed in VersionWriter above — a second,
-            read-only copy here would just drift from it. */}
-
-        <Section title={isAr ? 'النشر' : 'Publications'}>
-          {detail.publications.length === 0 ? <EmptyHint>{isAr ? 'لم يُجدول بعد' : 'Not scheduled yet'}</EmptyHint> : (
-            <ul className="divide-y divide-sand/40">
-              {detail.publications.map((p) => (
-                <li key={p.id} className="flex items-center justify-between gap-2 py-2 text-[12.5px]">
-                  <span className="flex items-center gap-1.5 capitalize text-charcoal/80"><Send className="h-3 w-3" />{p.platform}</span>
-                  <span className="shrink-0 text-[11px] text-charcoal/50">
-                    {p.status} · {p.published_at ? fmtDate(p.published_at, isAr) : p.scheduled_for ? fmtDate(p.scheduled_for, isAr) : '—'}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
+      <div className="flex flex-wrap gap-1.5 border-b border-sand/50 pb-2">
+        {SUBTABS.map(([key, ar, en, count]) => (
+          <button key={key} type="button" onClick={() => setSub(key)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] transition-colors ${
+              sub === key ? 'bg-copper text-white' : 'text-charcoal/60 hover:bg-cream-light hover:text-charcoal'}`}>
+            {isAr ? ar : en}
+            {count != null && (
+              <span className={`rounded-full px-1.5 text-[10px] tabular-nums ${
+                sub === key ? 'bg-white/25' : 'bg-charcoal/10'}`}>{count}</span>
+            )}
+          </button>
+        ))}
       </div>
+
+      {sub === 'overview' && (
+        <ContentFields item={i} assets={detail.assets} isAr={isAr} onSaved={onChanged} onError={onError} />
+      )}
+
+      {sub === 'write' && (
+        <VersionWriter item={i} versions={detail.versions} isAr={isAr}
+          onChanged={onChanged} onError={onError} />
+      )}
+
+      {sub === 'produce' && (
+        <div className="space-y-4">
+          {isVideo && (
+            <SceneEditor contentItemId={i.id} scenes={detail.scenes} isAr={isAr}
+              onChanged={onChanged} onError={onError} />
+          )}
+          {isCarousel && (
+            <SlideEditor contentItemId={i.id} slides={detail.slides} isAr={isAr}
+              onChanged={onChanged} onError={onError} />
+          )}
+          {!isVideo && !isCarousel && (
+            <Section title={isAr ? 'الإنتاج' : 'Production'}>
+              <EmptyHint>
+                {isAr ? 'هذا النوع لا يحتاج مشاهد أو شرائح.' : 'This content type needs neither scenes nor slides.'}
+              </EmptyHint>
+            </Section>
+          )}
+          <LinkedAssets detail={detail} isAr={isAr} onChanged={onChanged} onError={onError} />
+        </div>
+      )}
+
+      {sub === 'tasks' && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Section title={isAr ? 'قائمة الإنتاج' : 'Production checklist'}>
+            {detail.tasks.length === 0 ? <EmptyHint>{isAr ? 'لا مهام' : 'No tasks'}</EmptyHint> : (
+              <ul className="divide-y divide-sand/40">
+                {detail.tasks.map((t) => (
+                  <li key={t.id} className="flex items-center justify-between gap-2 py-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <CheckCircle2 className={`h-4 w-4 shrink-0 ${t.status === 'completed' ? 'text-emerald-600' : 'text-charcoal/20'}`} />
+                      <span className={`truncate text-[12.5px] ${t.status === 'completed' ? 'text-charcoal/40 line-through' : 'text-charcoal'}`}>{t.title}</span>
+                    </span>
+                    {t.status === 'blocked' ? (
+                      <span className="shrink-0 text-[11px] text-amber-700">{isAr ? 'محجوب' : 'blocked'}</span>
+                    ) : t.status !== 'completed' ? (
+                      <button type="button" disabled={busy} onClick={() => onCompleteTask(t.id)}
+                        className="shrink-0 text-[11.5px] font-medium text-copper hover:underline disabled:opacity-40">
+                        {isAr ? 'إنهاء' : 'Complete'}
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+
+          <Section title={isAr ? 'سجل الحالة' : 'Status history'}
+            subtitle={isAr ? 'غير قابل للتعديل' : 'Append-only'}>
+            {detail.history.length === 0 ? <EmptyHint>—</EmptyHint> : (
+              <ul className="divide-y divide-sand/40">
+                {detail.history.slice(0, 12).map((h) => (
+                  <li key={h.id} className="flex items-center justify-between gap-2 py-2 text-[12px]">
+                    <span className="text-charcoal/75">
+                      {h.from_status ? `${isAr ? STATUS_LABEL[h.from_status as ContentStatus]?.ar : STATUS_LABEL[h.from_status as ContentStatus]?.en} → ` : ''}
+                      {isAr ? STATUS_LABEL[h.to_status as ContentStatus]?.ar : STATUS_LABEL[h.to_status as ContentStatus]?.en}
+                    </span>
+                    <span className="shrink-0 text-[11px] text-charcoal/40">{fmtDate(h.changed_at, isAr)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+        </div>
+      )}
+
+      {sub === 'publish' && (
+        <div className="space-y-4">
+          <ScheduleForm detail={detail} isAr={isAr} onChanged={onChanged} onError={onError} />
+          <ContentResults detail={detail} isAr={isAr} />
+        </div>
+      )}
     </div>
+  );
+}
+
+/**
+ * Scheduling — the step that did not exist.
+ *
+ * Nothing in the app created a publication: the Publishing tab could only mark
+ * an EXISTING row published, so approved → scheduled → published was a chain
+ * with no first link, and the Calendar and Performance tabs depended on rows
+ * that could never appear. publication_save already inserted when given no id;
+ * only the UI was missing.
+ */
+function ScheduleForm({ detail, isAr, onChanged, onError }: {
+  detail: ContentDetail; isAr: boolean; onChanged: () => void; onError: (m: string) => void;
+}) {
+  const i = detail.item;
+  const targeted = (i.mkt_content_platforms ?? []).map((p) => p.platform);
+  const [platform, setPlatform] = useState<string>(targeted[0] ?? 'instagram');
+  const [when, setWhen] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const scheduled = new Set(detail.publications.map((p) => p.platform));
+  const remaining = (targeted.length ? targeted : [...PLATFORMS]).filter((p) => !scheduled.has(p));
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await savePublication({
+        content_item_id: i.id,
+        platform,
+        status: when ? 'scheduled' : 'draft',
+        scheduled_for: when ? new Date(when).toISOString() : null,
+        caption: i.caption ?? null,
+      });
+      setWhen(''); onChanged();
+    } catch (e) { onError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const field = 'rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-[12.5px] focus:border-copper focus:outline-none';
+
+  return (
+    <Section title={isAr ? 'جدولة النشر' : 'Schedule a publication'}
+      subtitle={isAr ? 'ينشئ صفاً لكل منصة — النشر نفسه يدوي'
+                     : 'Creates one row per platform — the posting itself is manual'}>
+      {targeted.length === 0 && (
+        <div className="mb-2.5">
+          <CaveatStrip>
+            {isAr ? 'لم تُحدَّد منصات مستهدفة لهذا المحتوى — اخترها من «التوجيه التسويقي» أو اختر منصة يدوياً هنا.'
+                  : 'No target platforms set on this content — pick them under Marketing direction, or choose one manually here.'}
+          </CaveatStrip>
+        </div>
+      )}
+      {remaining.length === 0 ? (
+        <EmptyHint>{isAr ? 'كل المنصات المستهدفة مجدولة' : 'Every target platform is scheduled'}</EmptyHint>
+      ) : (
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-medium text-charcoal/55">{isAr ? 'المنصة' : 'Platform'}</span>
+            <select value={platform} onChange={(e) => setPlatform(e.target.value)} className={field}>
+              {remaining.map((p) => <option key={p} value={p}>{lbl(PLATFORM_LABEL, p, isAr)}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-medium text-charcoal/55">
+              {isAr ? 'موعد النشر (اختياري)' : 'Publish at (optional)'}
+            </span>
+            <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className={field} />
+          </label>
+          <Button onClick={submit} disabled={busy}>
+            <CalendarPlus className="h-4 w-4" />
+            {when ? (isAr ? 'جدولة' : 'Schedule') : (isAr ? 'إضافة كمسودة' : 'Add as draft')}
+          </Button>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/**
+ * Linked raw material. content_detail already returned this on every open and
+ * nothing rendered it, so the asset library was a library nothing borrowed from.
+ */
+function LinkedAssets({ detail, isAr, onChanged, onError }: {
+  detail: ContentDetail; isAr: boolean; onChanged: () => void; onError: (m: string) => void;
+}) {
+  const [all, setAll] = useState<Array<Record<string, unknown>>>([]);
+  const [pick, setPick] = useState('');
+  const [busy, setBusy] = useState(false);
+  const linked = new Set(detail.assets.map((a) => a.asset_id));
+
+  useEffect(() => {
+    fetchAssets({ limit: 200 }).then((r) => setAll(r.assets)).catch(() => {});
+  }, []);
+
+  const attach = async () => {
+    if (!pick) return;
+    setBusy(true);
+    try { await linkAsset(pick, 'content_item', detail.item.id); setPick(''); onChanged(); }
+    catch (e) { onError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const available = all.filter((a) => !linked.has(String(a.id)));
+
+  return (
+    <Section title={isAr ? 'المواد المرتبطة' : 'Linked assets'}
+      subtitle={isAr ? 'من مكتبة المواد الخام — الملف واحد ويُستخدم في أكثر من مكان'
+                     : 'From the raw asset library — one file, reused in many places'}>
+      {detail.assets.length === 0 ? (
+        <EmptyHint>{isAr ? 'لا مواد مرتبطة بعد' : 'No assets linked yet'}</EmptyHint>
+      ) : (
+        <ul className="divide-y divide-sand/40">
+          {detail.assets.map((a) => {
+            const raw = a.mkt_raw_assets ?? {};
+            const isFinal = detail.item.final_asset_id === a.asset_id;
+            return (
+              <li key={a.asset_id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-[12.5px]">
+                <span className="flex min-w-0 items-center gap-2">
+                  <ImageIcon className="h-3.5 w-3.5 shrink-0 text-charcoal/30" />
+                  <span className="truncate text-charcoal">{String(raw.asset_name ?? a.asset_id)}</span>
+                  {isFinal && (
+                    <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700">
+                      {isAr ? 'الملف النهائي' : 'final'}
+                    </span>
+                  )}
+                </span>
+                <span className="shrink-0 text-[11px] text-charcoal/45">
+                  {lbl(ASSET_TYPE_LABEL, String(raw.asset_type ?? ''), isAr)}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-sand/40 pt-3">
+        <select value={pick} onChange={(e) => setPick(e.target.value)}
+          className="min-w-[200px] flex-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-[12.5px] focus:border-copper focus:outline-none">
+          <option value="">{isAr ? '— اختر مادة لربطها —' : '— pick an asset to link —'}</option>
+          {available.map((a) => (
+            <option key={String(a.id)} value={String(a.id)}>
+              {String(a.asset_name ?? a.id)} · {lbl(ASSET_TYPE_LABEL, String(a.asset_type ?? ''), isAr)}
+            </option>
+          ))}
+        </select>
+        <Button onClick={attach} disabled={busy || !pick}>
+          <LinkIcon className="h-4 w-4" />{isAr ? 'ربط' : 'Link'}
+        </Button>
+      </div>
+    </Section>
   );
 }

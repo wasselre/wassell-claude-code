@@ -49,11 +49,15 @@ const CONTENT_EDITABLE = [
   'due_date', 'planned_publish_at', 'language', 'target_audience', 'content_pillar',
   'hook', 'main_idea', 'cta', 'caption', 'hashtags', 'reference_links',
   'production_notes', 'archived_at',
+  // 2026-08-21 marketing fields
+  'organic_or_paid', 'funnel_stage', 'content_angle', 'offer_message',
+  'cta_destination', 'tracking_link', 'next_action', 'blocker', 'final_asset_id',
 ] as const;
 
 interface Body {
   action?: string;
   id?: string;
+  platforms?: unknown[];
   campaign_id?: string;
   content_item_id?: string;
   project_id?: string;
@@ -137,6 +141,13 @@ function rlsAware(error: { message: string; code?: string } | null): Response | 
     return jsonError(409, m);   // invalid status jump, locked version, etc.
   }
   if (error.code === '23503') return jsonError(409, 'referenced record is missing or still in use');
+  // 42703 = undefined_column / 42883 = undefined_function. In this codebase that
+  // means the app deployed ahead of its migration, which otherwise surfaces as a
+  // bare 500 and reads like a bug in the form. Name the actual remedy.
+  if (error.code === '42703' || error.code === '42883') {
+    return jsonError(503, `${m} — the database is missing an object this build expects. `
+      + 'Apply the latest supabase/migrations file, then retry.');
+  }
   return jsonError(500, m || 'database error');
 }
 
@@ -230,12 +241,50 @@ export default async function handler(req: Request): Promise<Response> {
         ]);
         const bad = rlsAware(item.error); if (bad) return bad;
         if (!item.data) return jsonError(404, 'content item not found');
+
+        // Performance and attribution for THIS item, so the detail page can show
+        // a result summary without a second round trip. Attribution is joined
+        // through this item's publications — a lead can be credited to the
+        // publication, the content or the campaign, and all three must count.
+        const pubIds = (pubs.data ?? []).map((p: { id: string }) => p.id);
+        const [perf, attrib, nextStatuses] = await Promise.all([
+          pubIds.length
+            ? sb.from('mkt_performance_snapshots').select('*')
+                .in('publication_id', pubIds).order('captured_at', { ascending: false })
+            : Promise.resolve({ data: [], error: null }),
+          pubIds.length
+            ? sb.from('mkt_lead_attributions').select('*')
+                .or(`content_item_id.eq.${id},publication_id.in.(${pubIds.join(',')})`)
+            : sb.from('mkt_lead_attributions').select('*').eq('content_item_id', id),
+          sb.rpc('mkt_content_next_statuses', { p_from: (item.data as { status: string }).status }),
+        ]);
+
         return jsonOk({
           item: item.data, versions: versions.data ?? [], tasks: tasks.data ?? [],
           approvals: approvals.data ?? [], publications: pubs.data ?? [], history: history.data ?? [],
           scenes: scenes.data ?? [], slides: slides.data ?? [],
           video: video.data ?? null, post: post.data ?? null, assets: links.data ?? [],
+          performance: perf.data ?? [], attributions: attrib.data ?? [],
+          // null (not []) when the RPC is missing, so the UI can tell "no legal
+          // moves" apart from "this build is ahead of the database".
+          allowed_transitions: (nextStatuses.data as string[] | null) ?? null,
         });
+      }
+      case 'platform_set': {
+        // Target platforms are a set, so the write is a replace. Delete-then-
+        // insert rather than upsert because removing a platform is the common
+        // edit and upsert alone would never drop one.
+        const id = str(body.content_item_id ?? body.id);
+        if (!id) return jsonError(400, 'content_item_id required');
+        const list = Array.isArray(body.platforms) ? body.platforms.filter((p): p is string => typeof p === 'string') : [];
+        const del = await sb.from('mkt_content_platforms').delete().eq('content_item_id', id);
+        const badDel = rlsAware(del.error); if (badDel) return badDel;
+        if (list.length) {
+          const ins = await sb.from('mkt_content_platforms')
+            .insert(list.map((platform) => ({ content_item_id: id, platform })));
+          const badIns = rlsAware(ins.error); if (badIns) return badIns;
+        }
+        return jsonOk({ platforms: list });
       }
       case 'content_create': {
         const title = str(body.title); const ctype = str(body.content_type);
