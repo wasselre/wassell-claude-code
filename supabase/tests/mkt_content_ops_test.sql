@@ -27,6 +27,7 @@ DECLARE
   v_acc_ig uuid; v_acc_tt uuid;
   v_art uuid; v_art2 uuid; v_cap uuid; v_media uuid; v_asset uuid; v_file uuid;
   v_pub_ig uuid; m text[]; j jsonb;
+  v_copy uuid; v_dels uuid[]; v_when timestamptz; n int;
 BEGIN
   SELECT id INTO v_user FROM public.users LIMIT 1;
   SELECT id INTO v_org FROM public.mkt_organizations LIMIT 1;
@@ -223,6 +224,91 @@ BEGIN
   IF (j->>'is_activatable')::boolean IS NOT TRUE THEN RAISE EXCEPTION 'FAILED state'; END IF;
   IF j->'next_action' IS NULL THEN RAISE EXCEPTION 'FAILED state: no next action computed'; END IF;
   RAISE NOTICE 'PASS: next action and progress computed from real records';
+
+  -- ══ Q. Duplicate into a new package ═══════════════════════════════════════
+  -- The copy must carry the ARGUMENT and refuse the EVIDENCE.
+  UPDATE public.mkt_content_deliverables SET due_date = current_date + 5 WHERE id = v_ig;
+  UPDATE public.mkt_content_tasks SET status='completed' WHERE deliverable_id=v_ig AND step_key='brief';
+  SELECT planned_publish_at INTO v_when FROM public.mkt_content_deliverables WHERE id = v_ig;
+
+  j := public.mkt_content_duplicate(v_item, NULL, 'series_episode', true, v_user);
+  v_copy := (j->>'id')::uuid;
+
+  IF (SELECT parent_content_item_id FROM public.mkt_content_items WHERE id=v_copy) <> v_item
+     OR (SELECT reuse_kind FROM public.mkt_content_items WHERE id=v_copy) <> 'series_episode' THEN
+    RAISE EXCEPTION 'FAILED Q: lineage is not a real parent edge';
+  END IF;
+  IF (SELECT strategy_version_id FROM public.mkt_content_items WHERE id=v_copy) <> v_sv THEN
+    RAISE EXCEPTION 'FAILED Q: the copy lost its strategic source';
+  END IF;
+  RAISE NOTICE 'PASS Q: copy % carries the argument and a parent edge', j->>'content_number';
+
+  IF (SELECT status FROM public.mkt_content_items WHERE id=v_copy) <> 'idea' THEN
+    RAISE EXCEPTION 'FAILED Q2: the copy did not start at the idea stage';
+  END IF;
+  -- The one that matters most: an approval is a statement about a person and a
+  -- moment. Copying it would put someone's name on work they never saw.
+  IF EXISTS (SELECT 1 FROM public.mkt_content_versions
+              WHERE content_item_id=v_copy AND approval_state='approved') THEN
+    RAISE EXCEPTION 'FAILED Q2: the copy inherited an APPROVAL';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.mkt_content_deliverables
+              WHERE content_item_id=v_copy AND (planned_publish_at IS NOT NULL OR due_date IS NOT NULL)) THEN
+    RAISE EXCEPTION 'FAILED Q2: the copy inherited a schedule';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.mkt_content_tasks
+              WHERE content_item_id=v_copy AND status='completed') THEN
+    RAISE EXCEPTION 'FAILED Q2: the copy opened already part-done';
+  END IF;
+  RAISE NOTICE 'PASS Q2: no approval, no schedule, no progress carried over';
+
+  IF NOT EXISTS (SELECT 1 FROM public.mkt_content_versions
+                  WHERE content_item_id=v_copy AND version_type='script'
+                    AND approval_state='draft' AND parent_version_id = v_art2) THEN
+    RAISE EXCEPTION 'FAILED Q3: copied text is missing, or is not a draft pointing at its origin';
+  END IF;
+  RAISE NOTICE 'PASS Q3: approved text copied as a DRAFT that names the version it came from';
+
+  -- Duplicating must never touch what it copied from.
+  IF (SELECT planned_publish_at FROM public.mkt_content_deliverables WHERE id=v_ig) IS DISTINCT FROM v_when
+     OR (SELECT approval_state FROM public.mkt_content_versions WHERE id=v_art2) <> 'approved'
+     OR NOT EXISTS (SELECT 1 FROM public.mkt_content_tasks WHERE deliverable_id=v_ig AND status='completed') THEN
+    RAISE EXCEPTION 'FAILED Q4: duplicating mutated its source';
+  END IF;
+  RAISE NOTICE 'PASS Q4: the source keeps its schedule, approval and progress';
+
+  -- ══ R. Bulk assign ════════════════════════════════════════════════════════
+  j := public.mkt_content_bulk_assign(ARRAY[v_item, v_copy], v_user, true);
+  IF (j->>'items_updated')::int <> 2 OR (j->>'refused')::int <> 0 THEN
+    RAISE EXCEPTION 'FAILED R: %', j;
+  END IF;
+  -- `refused` exists so a partial run cannot read as a clean success.
+  IF (j->>'deliverables_updated')::int < 2 THEN
+    RAISE EXCEPTION 'FAILED R2: deliverables were not reassigned: %', j;
+  END IF;
+  RAISE NOTICE 'PASS R: bulk assign moved both briefs and their deliverables, 0 refused';
+
+  -- ══ S. Bulk schedule ══════════════════════════════════════════════════════
+  SELECT array_agg(id) INTO v_dels FROM public.mkt_content_deliverables WHERE content_item_id = v_copy;
+  j := public.mkt_deliverable_bulk_schedule(v_dels, '2032-03-01 19:00+03'::timestamptz, 1440);
+  IF (j->>'scheduled')::int <> array_length(v_dels,1) THEN
+    RAISE EXCEPTION 'FAILED S: %', j;
+  END IF;
+  SELECT count(DISTINCT planned_publish_at) INTO n
+    FROM public.mkt_content_deliverables WHERE content_item_id = v_copy;
+  IF n <> array_length(v_dels,1) THEN
+    RAISE EXCEPTION 'FAILED S2: the stagger collapsed % deliverables into % slots', array_length(v_dels,1), n;
+  END IF;
+  RAISE NOTICE 'PASS S: times set and staggered, one slot each';
+
+  -- Setting a time is not the same as being publishable, and the result says so.
+  IF (j->>'ready_to_publish')::int <> 0 THEN
+    RAISE EXCEPTION 'FAILED S3: claimed unapproved work was ready to publish: %', j;
+  END IF;
+  IF jsonb_array_length(j->'still_blocked') <> array_length(v_dels,1) THEN
+    RAISE EXCEPTION 'FAILED S3: blockers not reported per deliverable: %', j;
+  END IF;
+  RAISE NOTICE 'PASS S3: bulk scheduling reported what still cannot publish, per deliverable';
 
   RAISE NOTICE 'ALL CONTENT-OPS TESTS PASSED';
 END $$;
