@@ -43,7 +43,12 @@
  *   --rate N           Listings enqueued per minute (default 20). The real
  *                      ceiling is the worker fleet, but this keeps the queue
  *                      shallow so a user-facing clean-text or video-convert job
- *                      is never stuck behind thousands of mirror jobs.
+ *                      is never stuck behind thousands of mirror jobs. It also
+ *                      keeps Realtime quiet: every mirrored listing is one
+ *                      UPDATE on `records`, which fans out to every open SPA
+ *                      tab (slimmed by slimSummaryData — image_mirror_map is
+ *                      not a summary key — but still a message per listing).
+ *                      20/min is invisible; do not crank this to thousands.
  *   --include-sold     Also mirror inactive/sold listings (default: skip them —
  *                      a sold listing is never sent to a client, so it is not
  *                      worth the storage).
