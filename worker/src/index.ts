@@ -1063,9 +1063,20 @@ async function claimAndRunPushBatch(): Promise<boolean> {
   for (const job of rows) {
     try {
       const result = await runPushJob(supabase, job);
-      // A job with no registered devices is "done", not failed — but the note
-      // is recorded so "why no notification?" is answerable from the row.
-      await supabase.rpc('push_outbox_complete', { p_id: job.id, p_error: result.note ?? null });
+      // delivered > 0 → 'sent'; delivered === 0 → 'no_devices'. The rep simply
+      // not having enabled notifications is a distinct outcome from delivery
+      // breaking, and must not be recorded as a failure.
+      const { error: completeErr } = await supabase.rpc('push_outbox_complete', {
+        p_id: job.id,
+        p_delivered: result.delivered,
+        p_note: result.note ?? null,
+      });
+      // Surface this rather than assuming it landed: an unrecorded completion
+      // leaves the row 'running' until the watchdog requeues it, and the rep
+      // gets the same notification again a few minutes later.
+      if (completeErr) {
+        console.error(`[push] could not record completion for ${job.id}:`, completeErr.message);
+      }
       console.log(
         `[push] ${job.kind} job=${job.id} delivered=${result.delivered}` +
           (result.pruned ? ` pruned=${result.pruned}` : '') +

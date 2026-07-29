@@ -82,9 +82,15 @@ CREATE TABLE IF NOT EXISTS public.push_outbox (
   -- Guards against the same real-world event being enqueued twice (a retried
   -- write, a workflow re-running). NULL opts a row out of deduplication.
   dedupe_key  text,
-  status      text NOT NULL DEFAULT 'pending',  -- pending|running|sent|failed
+  -- pending | running | sent | no_devices | failed.
+  -- `no_devices` is deliberately NOT `failed`: a rep who hasn't enabled
+  -- notifications is the normal case, and folding it into the failure status
+  -- would make any alerting on failures fire constantly on nothing.
+  status      text NOT NULL DEFAULT 'pending',
   attempts    integer NOT NULL DEFAULT 0,
-  error       text,
+  delivered   integer NOT NULL DEFAULT 0,
+  error       text,                    -- set only on real delivery failures
+  note        text,                    -- diagnostics for non-failure outcomes
   created_at  timestamptz NOT NULL DEFAULT now(),
   claimed_at  timestamptz,
   sent_at     timestamptz
@@ -279,15 +285,21 @@ $$;
 -- Terminal writes only touch rows still 'running', so a late completion after
 -- the watchdog has already swept the job is a no-op instead of an overwrite.
 -- Same posture as the other seven queues.
-CREATE OR REPLACE FUNCTION public.push_outbox_complete(p_id uuid, p_error text DEFAULT NULL)
+CREATE OR REPLACE FUNCTION public.push_outbox_complete(
+  p_id uuid,
+  p_delivered integer DEFAULT 0,
+  p_note text DEFAULT NULL
+)
 RETURNS void
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
   UPDATE push_outbox
-     SET status = CASE WHEN p_error IS NULL THEN 'sent' ELSE 'failed' END,
-         sent_at = now(), error = p_error
+     SET status    = CASE WHEN p_delivered > 0 THEN 'sent' ELSE 'no_devices' END,
+         delivered = p_delivered,
+         note      = p_note,
+         sent_at   = now()
    WHERE id = p_id AND status = 'running';
 $$;
 
@@ -354,7 +366,7 @@ $$;
 
 REVOKE ALL ON FUNCTION public.increment_push_failure(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.push_outbox_claim_next(integer) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.push_outbox_complete(uuid, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.push_outbox_complete(uuid, integer, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.push_outbox_fail(uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.push_outbox_watchdog() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.push_outbox_expire_stale() FROM PUBLIC, anon, authenticated;
