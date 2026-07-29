@@ -1,7 +1,7 @@
 # دليل الموظف — حاسبة التمويل العقاري
 # Employee guide — the financing calculator
 
-_آخر تحديث / Last updated: 2026-07-28_
+_آخر تحديث / Last updated: 2026-08-30 (النسخة المبسطة V2)_
 
 ---
 
@@ -16,6 +16,37 @@ _آخر تحديث / Last updated: 2026-07-28_
 **It is** an indicative estimate from officially published data.
 **It is not** a bank approval, and it cannot become one — we have no SIMAH
 access, no bank internal credit policy, and no approved-employer lists.
+
+---
+
+## ١أ. النموذج المبسط · The simplified form
+
+النموذج الآن **أربع خطوات** لا ست، وحوالي **٢٠ حقلًا** لا ٤٧:
+
+1. **العميل** — الجنسية، تاريخ الميلاد، نوع التوظيف، القطاع، جهة العمل (اختياري)، موافقة تحويل الراتب
+2. **الدخل والالتزامات** — الراتب الإجمالي، دخل إضافي (مع تأشير التوثيق)، الالتزامات وحدود البطاقات
+3. **العقار والدعم** — سعر العقار، النوع، الدفعة الأولى المتاحة، المسكن الأول، حالة الدعم ومبلغه المؤكد
+4. **التمويل** — المدة، وسعر عرض البنك إن توفر
+
+**حقل واحد مطلوب فعلًا:** الراتب الشهري الإجمالي. وسعر العقار إن أردت قسطًا لعقار محدد.
+
+The form is now **four steps** and about **20 fields**. Only **gross monthly
+salary** is truly required; add the property price if you want a payment for a
+specific property.
+
+---
+
+## ١ب. جديد: إدخال سعر من عرض البنك · New: entering a bank quotation
+
+أهم إضافة عملية: إن حصلت على **عرض سعر فعلي من البنك**، أدخله في الخطوة الرابعة
+مع اختيار البنك. عندها يتحول التقدير إلى **حساب دقيق لذلك البنك** بدل رسالة
+«يتطلب عرض سعر».
+
+هذا هو الطريق الوحيد — إلى جانب السعر التعاقدي المنشور — للحصول على قسط دقيق.
+
+If you have an actual bank quotation, enter it in step 4 with the bank. That
+product then calculates exactly instead of saying "requires a quotation". This
+and a published contractual rate are the only two routes to an exact payment.
 
 ---
 

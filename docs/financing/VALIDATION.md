@@ -1,6 +1,14 @@
 # Validation against official bank disclosures
 
-_Last updated: 2026-07-29_
+_Last updated: 2026-08-30 (revised for V2)_
+
+> **V2 note.** V1 shipped a SAMA cash-flow IRR APR engine, and the round-trip
+> test below was its strongest evidence. **V2 has no APR engine** — APR is
+> displayed exactly as the bank publishes it. The round-trip result is kept here
+> as the historical record of why we trust the *published* figures we display,
+> and because the payment comparison still validates V2's one calculation
+> method. It is no longer a test of shipped code; the shipped tests are in
+> `src/lib/financing/__tests__/financing.test.ts`.
 
 The spec asks that, where official bank calculators or disclosures are publicly
 accessible, we compare their published output against our implementation,
@@ -87,11 +95,11 @@ others do, and the system says so rather than guessing.
 
 ## Reproducing
 
-The comparison is arithmetic over the published figures in
-`scripts/financing/sources/providerData.mjs` (each carries its `example_*`
-fields and an `evidence` quote). Re-run it against
-`src/lib/financing/payment.ts` and `src/lib/financing/apr.ts`; both are pure and
-need no database.
+The published example assumptions now live in `financing_rates.example` (one
+JSON column per rate). The payment comparison can be re-run against
+`src/lib/financing/payment.ts`, which is pure and needs no database. The
+`scripts/financing/**` collection pipeline and `apr.ts` were removed in the V2
+simplification.
 
 ## What this does and does not establish
 

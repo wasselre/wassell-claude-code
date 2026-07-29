@@ -121,3 +121,15 @@ export function ageOn(dateOfBirthIso: string, onIso: string): number | null {
   if (!Number.isFinite(months)) return null;
   return Math.floor(months / 12);
 }
+
+/**
+ * Thousands separators for a whole number, without `toLocaleString`.
+ *
+ * These strings go into the frozen `result_snapshot`, so they must not depend on
+ * the ICU data of whichever runtime happened to render them.
+ */
+export function groupDigits(value: number): string {
+  const n = Math.round(value);
+  const sign = n < 0 ? '-' : '';
+  return sign + String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
