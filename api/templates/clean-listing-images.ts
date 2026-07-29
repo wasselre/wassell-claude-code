@@ -61,6 +61,29 @@ interface CleaningEntry {
   error?: string;
 }
 
+/**
+ * Read a listing's scan-time photo mirror.
+ *
+ * data.image_mirror_map = { "<aqar url>": "<our listing-photos url>" }, written
+ * by the listing-mirror worker lane (2026-07-29). Resolving it HERE — where we
+ * already hold the full listing row — means the worker never has to re-read the
+ * listing just to find out where the bytes live, and a job's input URL is
+ * frozen at enqueue time like every other param.
+ *
+ * A missing entry is normal (a listing imported before the mirror lane, or a
+ * photo whose mirror failed); the worker then falls back to fetching from Aqar
+ * and enqueues a mirror so the next clean is covered.
+ */
+function readMirrorMap(ld: Record<string, unknown>): Record<string, string> {
+  const raw = ld.image_mirror_map;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'string' && /^https?:\/\//i.test(v)) out[k] = v;
+  }
+  return out;
+}
+
 /* ─── Node ↔ Web Request adapter (copied from image-chat/generate.ts) ── */
 async function nodeToWebRequest(nodeReq: IncomingMessage): Promise<Request> {
   const host = (nodeReq.headers.host as string | undefined) ?? 'localhost';
@@ -348,6 +371,28 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         return jsonError(500, `failed to reset entries: ${err instanceof Error ? err.message : String(err)}`);
       }
 
+      // Resolve this listing's scan-time photo mirror, same as `start` does, so
+      // a redo is CDN-independent too. Redo is exactly the button a user reaches
+      // for when photos failed — which, before the mirror lane, was usually the
+      // Aqar 403 — so it is the LAST place that should still depend on Aqar.
+      const redoListingId =
+        typeof (draftRow.data as Record<string, unknown>)?.listing_id === 'string'
+          ? ((draftRow.data as Record<string, unknown>).listing_id as string)
+          : '';
+      let redoMirrorMap: Record<string, string> = {};
+      if (redoListingId) {
+        const { data: lRow, error: lErr } = await svc
+          .from('records')
+          .select('data')
+          .eq('id', redoListingId)
+          .maybeSingle();
+        if (lErr) {
+          console.error(`[clean-listing-images] redo mirror lookup failed (non-fatal): ${lErr.message}`);
+        } else if (lRow?.data) {
+          redoMirrorMap = readMirrorMap(lRow.data as Record<string, unknown>);
+        }
+      }
+
       const jobs = targets.map((t) => ({
         id: crypto.randomUUID(),
         record_id: recordId,
@@ -357,12 +402,31 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         kind: 'clean-text',
         status: 'queued',
         prompt: null,
-        params: { source_url: t.source_url, image_index: t.image_index },
+        params: {
+          source_url: t.source_url,
+          image_index: t.image_index,
+          ...(redoListingId ? { listing_id: redoListingId } : {}),
+          ...(redoMirrorMap[t.source_url] ? { fetch_url: redoMirrorMap[t.source_url] } : {}),
+        },
       }));
       const { error: insErr } = await svc.from('generation_jobs').insert(jobs);
       if (insErr) return jsonError(500, `failed to enqueue redo jobs: ${insErr.message}`);
+
+      const redoMirrored = targets.filter((t) => !!redoMirrorMap[t.source_url]).length;
+      if (redoListingId && redoMirrored < targets.length) {
+        const { error: mirrorErr } = await svc.rpc('listing_mirror_enqueue', {
+          p_listing_id: redoListingId,
+          p_reason: 'clean-redo',
+        });
+        if (mirrorErr) {
+          console.error(`[clean-listing-images] redo mirror enqueue failed (non-fatal): ${mirrorErr.message}`);
+        }
+      }
+
       await wakeWorker(jobs.length);
-      console.log(`[clean-listing-images] redo record=${recordId} jobs=${jobs.length}`);
+      console.log(
+        `[clean-listing-images] redo record=${recordId} jobs=${jobs.length} mirrored=${redoMirrored}/${targets.length}`,
+      );
       return jsonOk({ record_id: recordId, job_ids: jobs.map((j) => j.id) }, 202);
     }
 
@@ -454,6 +518,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     });
     if (saveErr) return jsonError(500, `failed to create draft: ${saveErr.message}`);
 
+    const mirrorMap = readMirrorMap(ld);
     const jobs = entries.map((e) => ({
       id: crypto.randomUUID(),
       record_id: draftId,
@@ -463,8 +528,14 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       kind: 'clean-text',
       status: 'queued',
       prompt: null,
-      params: { source_url: e.source_url, image_index: e.image_index },
+      params: {
+        source_url: e.source_url,
+        image_index: e.image_index,
+        listing_id: listingId,
+        ...(mirrorMap[e.source_url] ? { fetch_url: mirrorMap[e.source_url] } : {}),
+      },
     }));
+    const mirroredCount = entries.filter((e) => !!mirrorMap[e.source_url]).length;
     const { error: insErr } = await svc.from('generation_jobs').insert(jobs);
     if (insErr) {
       // Mark the draft failed so it doesn't hang on "generating" (best-effort).
@@ -538,9 +609,25 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       );
     }
 
+    // If any photo has no scan-time mirror, ask for one now. Idempotent RPC —
+    // no-ops when a mirror job is already in flight or nothing is missing. The
+    // clean itself doesn't wait on it (the worker falls back to Aqar for this
+    // run); this just makes the NEXT clean of this listing CDN-independent.
+    if (mirroredCount < entries.length) {
+      const { error: mirrorErr } = await svc.rpc('listing_mirror_enqueue', {
+        p_listing_id: listingId,
+        p_reason: 'clean-start',
+      });
+      if (mirrorErr) {
+        console.error(
+          `[clean-listing-images] mirror enqueue failed (non-fatal): ${mirrorErr.message}`,
+        );
+      }
+    }
+
     await wakeWorker(jobs.length + videoJobCount);
     console.log(
-      `[clean-listing-images] start listing=${listingId} draft=${draftId} jobs=${jobs.length} video_jobs=${videoJobCount}`,
+      `[clean-listing-images] start listing=${listingId} draft=${draftId} jobs=${jobs.length} mirrored=${mirroredCount}/${entries.length} video_jobs=${videoJobCount}`,
     );
     return jsonOk(
       { record_id: draftId, image_count: entries.length, job_ids: jobs.map((j) => j.id) },

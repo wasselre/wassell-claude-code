@@ -60,10 +60,29 @@ fly secrets set --app wassel-deck-worker `
   LISTING_IMAGE_PROXY_TOKEN=<TOKEN>
 ```
 
-The worker tries the CDN **directly first** and only falls back to this proxy on
-refusal (log line: `[run-clean] direct fetch refused (source fetch 403) —
+Callers try the CDN **directly first** and only fall back to this proxy on
+refusal (log line: `[aqar-fetch] direct fetch refused (source fetch 403) —
 retrying via image proxy`). With both secrets unset the fallback self-disables
 and a blocked fetch fails loudly, exactly as before.
+
+## Status: KEEP (decided 2026-07-29)
+
+The durable fix landed the same day — listing photos are now mirrored into the
+public `listing-photos` bucket at scan time, and the clean-text lane reads our
+copy (`records.data.image_mirror_map`) instead of Aqar. That was the point of
+this proxy's existence, so the obvious question is whether to delete it.
+
+**It stays, and it is now load-bearing rather than a stopgap.** Every Fly region
+we run in is blocked (sin, fra *and* sjc — measured above), so the mirror job
+itself has no other way to reach Aqar: this proxy is the download path the
+mirror is built on. It is also still the clean lane's fallback for any photo
+without a mirror yet — a listing imported before 2026-07-29, or one whose mirror
+failed. Removing it would break both.
+
+What DID change is the load shape: instead of one fetch per photo per *cleaning*
+(repeated every redo), it is now one fetch per photo *ever*. Aqar blocklisting
+this IP would no longer take the feature down — it would only stall new mirrors,
+while everything already mirrored keeps working.
 
 ## Caveats
 
@@ -71,9 +90,13 @@ and a blocked fetch fails loudly, exactly as before.
   If the VM's external IP changes, update `/etc/caddy/Caddyfile` *and* the
   `LISTING_IMAGE_PROXY_URL` secret. Original config is backed up at
   `/etc/caddy/Caddyfile.bak.preimgproxy`.
-- This is a **stopgap.** The durable fix is to re-host listing photos into
-  `marketing-assets` at scan time, so the cleaning lane never touches Aqar's CDN
-  and no proxy is needed. Aqar could blocklist this IP too.
-- `market_listings` also stopped gaining rows after 2026-07-23 — possibly the
-  same block hitting the scanner (`aqar-sync-rayan`, region `sjc`). Not
-  root-caused; investigate separately.
+- **This VM also runs the WhatsApp gateway.** The historical backfill (408k
+  photos) therefore runs through `scripts/backfill-listing-mirrors.mjs` at an
+  operator-chosen rate rather than automatically — do not point the whole worker
+  fleet at this box for hours.
+- `market_listings` stopping after 2026-07-23 was **NOT** this block. Root-caused
+  2026-07-29: the scanner's Claude detail-extraction was returning
+  `400 invalid_request_error — "Your credit balance is too low"` for every
+  listing (2,083 of 2,096 on the 07-28 run; 2,121 listings now discovered but
+  un-extracted). The scanner's Browserbase page loads were fine. It needs
+  Anthropic credit, not a proxy.

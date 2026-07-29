@@ -29,6 +29,7 @@ import { loadEnv } from './env.js';
 import { makeServiceClient } from './lib/serviceClient.js';
 import { runCleanTextJob, type CleanTextJob } from './runCleanTextJob.js';
 import { runVideoConvertJob, type VideoConvertJob } from './runVideoConvertJob.js';
+import { runListingMirrorJob, type ListingMirrorJob } from './runListingMirrorJob.js';
 import { runCompressJob, type CompressJob } from './runCompressJob.js';
 import { configurePush, runPushJob, type PushOutboxRow } from './runPushJob.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
@@ -76,6 +77,14 @@ let cleanWakeRequested = false;
 // image loop's watchdog sweeps stale jobs of ALL kinds.
 let videoBusy = false;
 let videoWakeRequested = false;
+// Listing-photo mirroring (generation_jobs kind='listing-mirror') gets its own
+// loop too. A mirror job downloads a whole listing's photos through the
+// me-central1 proxy (Aqar 403s Fly), which is slow and bursty; running it on
+// the clean-text loop would head-of-line-block the user-facing cleaning it
+// exists to protect. Shares the generation_jobs RPCs; the image loop's
+// watchdog sweeps stale jobs of ALL kinds.
+let mirrorBusy = false;
+let mirrorWakeRequested = false;
 // Office-preview conversions (file_preview_jobs) get a THIRD independent loop
 // for the same reason — a 2-10s soffice run should never wait behind a deck.
 let previewBusy = false;
@@ -509,6 +518,98 @@ async function videoConvertPollLoop(): Promise<void> {
     }
     const wokeAt = Date.now();
     while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !videoWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Listing-photo mirroring — generation_jobs (kind='listing-mirror') queue.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued listing-mirror job (if any) and run it to completion.
+ * Mirrors claimAndRunOneVideoConvert against kind='listing-mirror'. Note
+ * user_id is NULL for these jobs by design (they are enqueued by a DB trigger
+ * on a scanner write, not by a person) — see the 2026-07-29 migration.
+ */
+async function claimAndRunOneListingMirror(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('generation_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+    p_kind: 'listing-mirror',
+  });
+  if (error) {
+    console.error(`[worker] listing-mirror claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string;
+    record_id: string;
+    message_id: string | null;
+    user_id: string | null;
+    kind: string;
+    prompt: string | null;
+    params: Record<string, unknown>;
+    attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: ListingMirrorJob = {
+    id: row.job_id,
+    recordId: row.record_id,
+    params: row.params ?? {},
+    attempts: row.attempts,
+  };
+  console.log(
+    `[worker] claimed listing-mirror job=${job.id} listing=${job.recordId} attempts=${job.attempts}`,
+  );
+  try {
+    const result = await runListingMirrorJob({ supabase, env, job });
+    const { error: doneErr } = await supabase.rpc('generation_job_complete', {
+      p_job_id: job.id,
+      p_result: result ?? {},
+    });
+    if (doneErr) {
+      console.error(`[worker] generation_job_complete (listing-mirror) RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(`[worker] completed listing-mirror job=${job.id}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] listing-mirror job=${job.id} FAILED:`, msg);
+    try {
+      const { error: failErr } = await supabase.rpc('generation_job_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) {
+        console.error(`[worker] generation_job_fail (listing-mirror) RPC failed: ${failErr.message}`);
+      }
+    } catch (innerErr) {
+      console.error(`[worker] could not mark listing-mirror job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true;
+}
+
+/** Listing-mirror twin of videoConvertPollLoop (own busy/wake flags). */
+async function listingMirrorPollLoop(): Promise<void> {
+  while (!shuttingDown) {
+    mirrorBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneListingMirror();
+    } catch (err) {
+      console.error('[worker] listing-mirror poll iteration error:', err);
+    }
+    mirrorBusy = false;
+
+    if (didClaim || mirrorWakeRequested) {
+      mirrorWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !mirrorWakeRequested && !shuttingDown) {
       await sleep(200);
     }
   }
@@ -1856,6 +1957,7 @@ const server = http.createServer((req, res) => {
         image_busy: imageBusy,
         clean_busy: cleanBusy,
         video_busy: videoBusy,
+        mirror_busy: mirrorBusy,
         preview_busy: previewBusy,
         compress_busy: compressBusy,
         push_busy: pushBusy,
@@ -1887,6 +1989,7 @@ const server = http.createServer((req, res) => {
     imageWakeRequested = true;
     cleanWakeRequested = true;
     videoWakeRequested = true;
+    mirrorWakeRequested = true;
     previewWakeRequested = true;
     compressWakeRequested = true;
     documentWakeRequested = true;
@@ -2466,6 +2569,7 @@ if (env.WORKFLOW_PROOF_ONLY) {
     imagePollLoop(),
     cleanTextPollLoop(),
     videoConvertPollLoop(),
+    listingMirrorPollLoop(),
     previewPollLoop(),
     compressPollLoop(),
     documentPollLoop(),

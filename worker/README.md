@@ -139,8 +139,15 @@ fly secrets set --app wassel-deck-worker `
   LISTING_IMAGE_PROXY_TOKEN=...
 ```
 
-This is a **stopgap**. The durable fix is to re-host listing photos into
-`marketing-assets` at scan time so cleaning never touches Aqar's CDN at all.
+**No longer a stopgap — KEEP these set (decided 2026-07-29).** The durable fix
+landed the same day: listing photos are mirrored into the public
+`listing-photos` bucket at scan time (`kind='listing-mirror'`,
+`src/runListingMirrorJob.ts`), and the clean lane now reads our copy. But EVERY
+Fly region we run in is blocked — `sin`, `fra` and `sjc` all measured 403 — so
+this proxy is the download path **the mirror itself** uses, and it remains the
+clean lane's fallback for any photo not yet mirrored. Unsetting these would
+break both. What changed is the load: one fetch per photo *ever*, instead of one
+per photo per cleaning. See `infra/imgproxy/README.md`.
 
 `FAL_KEY` is the **one new secret since the image queue was added** — the worker
 now boots-fail if it's missing (the same fal key already lives in the Vercel

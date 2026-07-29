@@ -135,6 +135,7 @@ whatsapp_numbers  — local overlay on Haberchat devices: friendly name + defaul
 deck_jobs         — queue for the Fly.io deck generation worker (see "Decks generation pipeline")
 document_templates— binds a wassel_doc to a record model = the doc-generation template registry
 document_jobs     — queue for the templated-PDF generation worker (see "Document generation pipeline")
+listing_mirror_settings — kill switch + optional photo cap for the listing-photo mirror (see "Listing photo mirror")
 ```
 
 ## Frozen models (added 2026-05-05)
@@ -425,6 +426,28 @@ SEVENTH queue on the same Fly worker: `data_migration_jobs` runs the Data Migrat
 2. **`worker/src/migrateAgent.ts` is a VERBATIM COPY of `api/_lib/migrateAgent.ts`** (the worker is standalone — same posture as `worker/src/imageGen.ts`). Change BOTH when you touch extraction logic, model IDs, prompts, tools, or `ExtractionTruncatedError`. The orchestration wrapper (fuse auto-split, fusion summary, `applyDiscussColumns`) lives in `worker/src/runMigrationJob.ts` and must stay in sync with the deleted client logic / `StepReviewRaw.applyDiscussColumns`.
 3. **SOLE-WRITER rule (echo-dedup):** during a job the BROWSER must never write the migration record via the store — a browser write registers a null-`updated_at` entry in the realtime echo-dedup (`src/lib/realtime/dedup.ts`) that would SUPPRESS the worker's next update. So the busy/status flip + message append happen server-side in `/api/migrate` (service role), and all job-time writes are the worker's. **Those worker writes use `record_save` with `p_expected_version: null` (VERSION-UNAWARE) — do NOT use optimistic concurrency here.** The data_migration draft is a single-logical-owner record that the browser wizard ALSO writes version-unaware (`MigrationWizard` `patch` + `jobRunner.patchMigrationRecord`, `expectedVersion:null`), which freely bumps the row's `version`; an optimistic worker write therefore loses every race and tight-loops on the 40001 retry → **Postgres CPU storm** (the 2026-06-23 الماجدية 174 incident — `runMigrationJob.patchRecord` originally copied the image_chats `p_expected_version`+retry posture; fixed to version-unaware in commit 44d0200). `p_expected_version`+retry is correct ONLY for image_chats (where every writer is optimistic), NOT here. The browser only reads via Realtime. (The `import` step is the lone exception — it writes the record from the tab, but no worker touches the record then.)
 4. **complete/fail RPCs only touch `status='running'` jobs; the cancel/watchdog patch the record per-kind** (extract → `status='failed'`; plan/discuss → clear `prep_busy`/`discuss_busy`, status untouched). `data_migration_jobs_watchdog()` sweeps running >45 min (well above the worst-case sequential multi-batch run) — so a crashed worker can never leave a record stuck forever.
+
+## Listing photo mirror (Aqar → our bucket) (added 2026-07-29)
+
+Market-listing photos are copied into a bucket we own **at scan/import time**, so nothing user-facing ever downloads from `images.aqar.fm`. Rides the existing `generation_jobs` queue as `kind='listing-mirror'` (the same shape as `video-convert`).
+
+**Why:** Aqar's Cloudflare blocklists datacenter egress **by ASN** and began 403-ing Fly's ranges around 2026-07-24. The clean-text lane downloaded each photo before calling fal, so every photo showed «فشل» with `source re-host failed: source fetch 403` — no fal/Anthropic spend involved. Measured 2026-07-29: laptop 200, me-central1 VM 200, Fly bom 200, but Fly **sin** (4 of 5 machines), a fresh Fly **fra**, and Fly **sjc** all 403. **Region-hopping is not a fix.**
+
+**Architecture:**
+- `records.data.image_mirror_map = { "<aqar url>": "<our listing-photos url>" }`, keyed by SOURCE URL (same convention as `video_mp4_map`) → order-independent and idempotent on re-scan.
+- Trigger `records_enqueue_listing_mirror` (AFTER INSERT/UPDATE on `records`) enqueues one job per market listing whose `image_urls` actually changed. `IS DISTINCT FROM` makes the weekly reconcile's ~3,000 price/sold updates free.
+- Worker `worker/src/runListingMirrorJob.ts` downloads via `worker/src/lib/aqarFetch.ts` (direct → me-central1 proxy), uploads to `listing-photos` at `<listing_id>/<sha256(source_url)>.<ext>` with `upsert:true`, and merges the map via the row-locked `listing_mirror_map_patch` RPC.
+- `api/templates/clean-listing-images.ts` resolves the map into each clean-text job's `params.fetch_url`; `runCleanTextJob` hands that straight to fal (no Aqar download, no re-host).
+- Migration: `supabase/migrations/2026-07-29_listing_photo_mirror.sql`. Backfill: `scripts/backfill-listing-mirrors.mjs`. PRD detail: `docs/prd/chats.md` (Listing Message bullet).
+
+**Hard rules — never violate:**
+
+1. **Never make the historical backfill automatic, and never remove `max_queue_depth`.** 408,399 photos currently download through the me-central1 proxy, which shares a small VM with the **WhatsApp gateway**. Two guards keep that bounded: the backfill is an operator-run, throttled, resumable script (`--dry-run` first), and `listing_mirror_enqueue` refuses to queue past `listing_mirror_settings.max_queue_depth` (default 200) **for every caller including the trigger** — otherwise one scanner catch-up run (the 2,121 listings pending on 2026-07-29) would queue ~16,000 downloads in a single batch. Turning a listing away costs nothing: the backlog lives in the DATA (`image_mirror_map`), not in the queue, so it is picked up by the next scan-update, the backfill, or the clean lane's self-heal.
+2. **Never delete the `LISTING_IMAGE_PROXY_*` fallback.** It is no longer a stopgap — it is the only working egress from Fly, so it is the path the mirror itself downloads through, AND the clean lane's fallback for un-mirrored photos. Removing it breaks both. (Decision + rationale recorded in `infra/imgproxy/README.md`.)
+3. **A missing mirror must always degrade, never fail.** The clean lane falls back to the direct→proxy download and enqueues a mirror for next time. Never make `fetch_url` required.
+4. **Partial mirroring is success.** One refused photo stays un-mirrored (and falls back); the job fails only when EVERY photo failed, which is the real signal that egress is broken. Don't "fix" this by failing the whole listing.
+5. **Keep the map write on `listing_mirror_map_patch`.** It merges one sub-object inside a single row-locked UPDATE — no version check, so it can never convoy against the scanner's merge, the REGA lookup worker, or the video-convert cache on the same listing row (same lesson as `clean_text_entry_patch`, 2026-07-18).
+6. **The scanner must keep updating listings through `market_listing_merge`** (`data = data || jsonb_strip_nulls(patch)`). A raw `PATCH /records {data:…}` replaces the whole JSONB column and would wipe `image_mirror_map`, `video_mp4_map`, `original_image_urls`, and the REGA fields.
 
 ## Documents real-time collaboration (Yjs CRDT) (added 2026-06-11)
 

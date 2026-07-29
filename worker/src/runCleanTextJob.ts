@@ -6,7 +6,9 @@
  * all of a listing's photos so they clean in parallel.
  *
  * Pipeline (mirrors runImageJob, single-image variant):
- *   1. Stamp the cleaning entry status='cleaning' (Realtime → per-photo spinner).
+ *   1. Resolve the input URL: params.fetch_url (this photo's scan-time mirror in
+ *      the listing-photos bucket) when present, else the slow path — download
+ *      from Aqar and re-host to marketing-assets.
  *   2. Cancel pre-check.
  *   3. fal text-removal (imageGenTextRemoval → pollImageGen). No per-request cap;
  *      the 15-min generation_jobs_watchdog is the backstop.
@@ -14,6 +16,12 @@
  *   5. Re-host the cleaned output to marketing-assets/listing-clean/... .
  *   6. Insert one media_assets row (first-class library asset) + fill the entry
  *      (status='completed', output_url, asset_id).
+ *
+ * Since 2026-07-29 step 1 normally touches NOTHING outside our own storage:
+ * listing photos are mirrored into the listing-photos bucket at scan time (see
+ * runListingMirrorJob.ts), because Aqar's Cloudflare 403s Fly's egress and a
+ * user-facing clean must not depend on that. The Aqar download survives only as
+ * a fallback for photos with no mirror yet, and it self-heals by enqueueing one.
  *
  * On any fal/network/storage error we write status='failed' + a humanized error
  * onto the SAME cleaning entry FIRST so its spinner exits (siblings stay live),
@@ -40,6 +48,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
 import { retryRecordSave, type SaveError } from './lib/recordSaveRetry.js';
+import { fetchListingImage } from './lib/aqarFetch.js';
 import { imageGenTextRemoval, pollImageGen } from './imageGen.js';
 
 /** Shape of a claimed generation_jobs row (kind='clean-text'). */
@@ -52,7 +61,12 @@ export interface CleanTextJob {
   entryId: string;
   /** auth.users.id of the submitter (scopes the output storage path + asset). */
   userId: string;
-  /** Frozen request snapshot — { source_url, image_index }. */
+  /**
+   * Frozen request snapshot — { source_url, image_index, listing_id?, fetch_url? }.
+   * `source_url` stays the canonical Aqar URL (the photo's identity, used for
+   * the cleaning entry and for re-sourcing); `fetch_url` is where the bytes are
+   * actually read from when a scan-time mirror exists.
+   */
   params: Record<string, unknown>;
   attempts: number;
 }
@@ -137,20 +151,36 @@ export async function runCleanTextJob({ supabase, env, job }: RunArgs): Promise<
     return { cancelled: true };
   }
 
-  // ── Re-host the source into our public bucket BEFORE calling fal ──────
+  // ── Get fal an input URL it can actually fetch ────────────────────────
   // fal pulls the input bytes from the URL server-side, and the Aqar CDN
   // (images.aqar.fm) blocks fal's fetcher (file_download_error / IP rate-limit
-  // — see CLAUDE.md memory on Aqar). So we fetch the photo ourselves (with a
-  // browser-like UA) and upload it to marketing-assets, which fal CAN fetch
-  // (every other fal flow sources images from this bucket), then hand fal that
-  // URL. Verified live 2026-06-30: passing the raw Aqar URL 422'd here.
+  // — see CLAUDE.md memory on Aqar), so the URL we hand fal must be ours.
+  //
+  // FAST PATH (since 2026-07-29): the photo was already mirrored into the
+  // listing-photos bucket at scan time, and the endpoint resolved that mirror
+  // into params.fetch_url. It is already a public URL of ours, so we hand it
+  // straight to fal — no Aqar download, no re-upload. This is the durable fix
+  // for the 403s: the user-facing clean no longer depends on Aqar serving us.
+  //
+  // SLOW PATH: no mirror yet (a listing imported before the mirror lane, or a
+  // photo whose mirror failed). Fall back to downloading it ourselves —
+  // direct, then through the me-central1 proxy — and re-host to
+  // marketing-assets exactly as before, so behaviour never regresses. We also
+  // enqueue a mirror job so the NEXT clean of this listing takes the fast path.
+  const mirrorUrl = typeof job.params?.fetch_url === 'string' ? (job.params.fetch_url as string) : '';
   let falInputUrl: string;
-  try {
-    falInputUrl = await rehostSource(supabase, env, sourceUrl, job.userId, job.recordId);
-  } catch (err) {
-    const msg = `source re-host failed: ${err instanceof Error ? err.message : String(err)}`;
-    await patchEntry({ status: 'failed', error: msg }).catch(() => undefined);
-    throw new Error(msg);
+  if (mirrorUrl) {
+    falInputUrl = mirrorUrl;
+    console.log(`[run-clean] using mirrored source job=${job.id}`);
+  } else {
+    try {
+      falInputUrl = await rehostSource(supabase, env, sourceUrl, job.userId, job.recordId);
+    } catch (err) {
+      const msg = `source re-host failed: ${err instanceof Error ? err.message : String(err)}`;
+      await patchEntry({ status: 'failed', error: msg }).catch(() => undefined);
+      throw new Error(msg);
+    }
+    void selfHealMirror(supabase, job.params?.listing_id);
   }
 
   // ── fal text-removal ─────────────────────────────────────────────────
@@ -243,10 +273,10 @@ export async function runCleanTextJob({ supabase, env, job }: RunArgs): Promise<
 }
 
 /**
- * Fetch a source photo (e.g. an Aqar CDN URL the listing carries) and re-host it
- * to the public marketing-assets bucket so fal can fetch it. Sends a browser-like
- * User-Agent + Referer because some CDNs (Aqar) hotlink-block datacenter/bot
- * fetchers. Throws loudly on any failure (CLAUDE.md — never silent).
+ * SLOW-PATH fallback: fetch a source photo straight from the Aqar CDN (direct,
+ * then through the me-central1 proxy — see lib/aqarFetch.ts) and re-host it to
+ * the public marketing-assets bucket so fal can fetch it. Only reached for a
+ * photo with no scan-time mirror. Throws loudly on any failure (CLAUDE.md).
  */
 async function rehostSource(
   supabase: SupabaseClient,
@@ -255,7 +285,7 @@ async function rehostSource(
   userId: string,
   recordId: string,
 ): Promise<string> {
-  const { bytes, contentType } = await fetchSourceImage(env, sourceUrl);
+  const { bytes, contentType } = await fetchListingImage(env, sourceUrl);
   const ext = contentType.includes('png')
     ? 'png'
     : contentType.includes('webp')
@@ -273,69 +303,26 @@ async function rehostSource(
   return pub.publicUrl;
 }
 
-const BROWSER_FETCH_HEADERS = {
-  'User-Agent':
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-  Referer: 'https://sa.aqar.fm/',
-  Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-} as const;
-
 /**
- * Download a listing photo's bytes — directly if the CDN allows it, otherwise
- * through the allowlisted me-central1 image proxy.
+ * Ask for this listing's photos to be mirrored, so the next clean takes the
+ * fast path instead of downloading from Aqar again.
  *
- * Aqar's Cloudflare blocklists datacenter egress by ASN, not by header: the
- * browser UA + Referer below were ALREADY being sent when 4 of the 5 Fly sin
- * machines (and a freshly-provisioned fra machine) started getting a blanket
- * 403 around 2026-07-24, while a laptop got 200 with no headers at all. Only
- * the machine on a different upstream range still worked, which is why roughly
- * 1 photo in 5 kept cleaning successfully and redo "sometimes" fixed it.
- *
- * Direct-first, not proxy-first: when the CDN is willing to serve us we keep
- * the bytes on the short path and off the WhatsApp VM. The proxy is a fallback,
- * and when it isn't configured we throw the original CDN error exactly as
- * before — no silent degradation (CLAUDE.md "fail loudly").
+ * Fire-and-forget on purpose: the clean this job is running has ALREADY got its
+ * bytes by the time we get here, so a failure to enqueue must not fail the
+ * photo. listing_mirror_enqueue is idempotent (it no-ops when a job is already
+ * in flight or nothing is missing), so calling it once per un-mirrored photo of
+ * the same listing costs one cheap RPC each and enqueues at most one job.
+ * Errors are logged, never swallowed silently (CLAUDE.md).
  */
-async function fetchSourceImage(
-  env: WorkerEnv,
-  sourceUrl: string,
-): Promise<{ bytes: Uint8Array; contentType: string }> {
-  let directError: string;
-  try {
-    const res = await fetch(sourceUrl, { headers: BROWSER_FETCH_HEADERS });
-    if (res.ok) {
-      return {
-        bytes: new Uint8Array(await res.arrayBuffer()),
-        contentType: res.headers.get('content-type') ?? 'image/jpeg',
-      };
-    }
-    directError = `source fetch ${res.status}`;
-  } catch (err) {
-    directError = `source fetch failed: ${err instanceof Error ? err.message : String(err)}`;
-  }
-
-  const proxyUrl = env.LISTING_IMAGE_PROXY_URL;
-  const proxyToken = env.LISTING_IMAGE_PROXY_TOKEN;
-  if (!proxyUrl || !proxyToken) throw new Error(directError);
-
-  console.log(`[run-clean] direct fetch refused (${directError}) — retrying via image proxy`);
-  const viaProxy = `${proxyUrl}?url=${encodeURIComponent(sourceUrl)}`;
-  let res: Response;
-  try {
-    res = await fetch(viaProxy, { headers: { Authorization: `Bearer ${proxyToken}` } });
-  } catch (err) {
-    throw new Error(
-      `${directError}; image proxy unreachable: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  if (!res.ok) {
-    const detail = (await res.text().catch(() => '')).slice(0, 200);
-    throw new Error(`${directError}; image proxy ${res.status}${detail ? `: ${detail}` : ''}`);
-  }
-  return {
-    bytes: new Uint8Array(await res.arrayBuffer()),
-    contentType: res.headers.get('content-type') ?? 'image/jpeg',
-  };
+function selfHealMirror(supabase: SupabaseClient, listingId: unknown): void {
+  if (typeof listingId !== 'string' || !listingId) return;
+  void supabase
+    .rpc('listing_mirror_enqueue', { p_listing_id: listingId, p_reason: 'clean-miss' })
+    .then(({ error }) => {
+      if (error) {
+        console.error(`[run-clean] mirror self-heal enqueue failed (non-fatal): ${error.message}`);
+      }
+    });
 }
 
 /** Translate raw fal.ai / network errors into plain text for the per-photo error box. */
