@@ -2011,9 +2011,11 @@ async function withSessionRemediationLock(session: string, fn: () => Promise<voi
 }
 
 /** How long to give a restarted session to actually reach WORKING before we
- *  conclude it did not. A healthy session recovers in ~10s (POC-measured); a
- *  refused one is still flapping at 30s. */
-const WAHA_RECOVERY_GRACE_MS = 30_000;
+ *  conclude it did not. A healthy session recovers in ~10s (POC-measured), but a
+ *  large account resyncing after a long outage can take longer — so this is a
+ *  generous ceiling that we exit early from, not a fixed wait. */
+const WAHA_RECOVERY_GRACE_MS = 90_000;
+const WAHA_RECOVERY_POLL_MS = 5_000;
 
 /**
  * Restart a session, then VERIFY it recovered — and stop it if it did not.
@@ -2046,12 +2048,23 @@ async function maybeRestartWahaSessionAfterSendFailure(session: string, reason: 
     // Did it actually come back? The old code logged success right here, on the
     // strength of the HTTP call alone — which is how 78 consecutive restarts of
     // a session that never reached WORKING were all recorded as 'success'.
-    await new Promise((r) => setTimeout(r, WAHA_RECOVERY_GRACE_MS));
+    //
+    // POLL rather than sleep-once: a healthy session normally reaches WORKING in
+    // ~10s, but one resyncing a large account after a long outage can take
+    // longer, and a single fixed-deadline check would stop a session that was
+    // about to succeed — turning the safety net into the outage. Exiting the
+    // moment it reports WORKING also keeps the common case fast.
     let observed = 'UNKNOWN';
-    try {
-      observed = (await getSessionStatus(wahaSend!, session)).status ?? 'UNKNOWN';
-    } catch (err) {
-      console.error(`[worker] post-restart probe '${session}' failed:`, (err as Error).message);
+    const deadline = Date.now() + WAHA_RECOVERY_GRACE_MS;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, WAHA_RECOVERY_POLL_MS));
+      try {
+        observed = (await getSessionStatus(wahaSend!, session)).status ?? 'UNKNOWN';
+      } catch (err) {
+        console.error(`[worker] post-restart probe '${session}' failed:`, (err as Error).message);
+        continue;
+      }
+      if (observed === 'WORKING' || observed === 'FAILED') break;
     }
 
     if (observed === 'WORKING') {
