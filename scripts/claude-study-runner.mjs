@@ -587,12 +587,122 @@ async function handleMktCampaignSummary(job) {
   }
 }
 
+// The 16 scalar fields the Aqar scraper has always extracted. Kept in the same
+// order as aqar-scraper/src/schema.ts TEXT_FIELDS — if that list changes, this
+// one and .claude/skills/listing-extract/SKILL.md change with it.
+const AQAR_TEXT_FIELDS = [
+  'title', 'price', 'city', 'district', 'street', 'property_type', 'area',
+  'bedrooms', 'bathrooms', 'living_rooms', 'floors', 'frontage', 'age',
+  'description', 'advertiser_name', 'phone_number',
+];
+
+// Listings per session. Deliberately small: unlike OCR images, each listing
+// carries a whole scraped page (visible text + embedded JSON + features), so
+// the binding constraint here is context, not wall-clock. Raise only with a
+// measured run behind it.
+const AQAR_BATCH_MAX = Number(process.env.AQAR_BATCH_MAX || 4);
+
+/**
+ * Turn scraped Aqar page bundles into structured listing fields.
+ *
+ * Replaces the per-listing Anthropic API call in aqar-scraper. That call ran out
+ * of credit on 2026-07-24 and returned `400 invalid_request_error` for five days
+ * while discovery kept succeeding, so the scraper printed "SYNC DONE" and pushed
+ * nothing. On this lane an exhausted subscription raises RateLimitError and the
+ * job is retried later — it cannot fail silently.
+ *
+ * Claude never writes to the database: it writes one result file, this handler
+ * validates it against the manifest, and a scoped RPC does the upsert.
+ */
+async function handleAqarListingExtract(job) {
+  const ids = Array.isArray(job.payload?.listing_ids)
+    ? job.payload.listing_ids.map(String)
+    : [];
+  if (ids.length === 0) throw new Error('payload.listing_ids is required');
+  const todo = ids.slice(0, AQAR_BATCH_MAX);
+
+  const { data: evidence, error: eErr } = await supa.rpc('aqar_evidence_fetch', {
+    p_listing_ids: todo,
+  });
+  if (eErr) throw new Error(`evidence fetch failed: ${eErr.message}`);
+  if (!evidence || evidence.length === 0) {
+    throw new Error(`no evidence rows for listings ${todo.join(',')}`);
+  }
+
+  const workDir = mkdtempSync(path.join(tmpdir(), 'aqar-extract-'));
+  const manifestFile = path.join(workDir, 'manifest.json').replace(/\\/g, '/');
+  const resultFile = path.join(workDir, 'result.json').replace(/\\/g, '/');
+
+  try {
+    const manifest = evidence.map((e) => ({
+      listing_id: String(e.listing_id), url: e.url, bundle: e.bundle,
+    }));
+    writeFileSync(manifestFile, JSON.stringify(manifest));
+
+    const prompt = [
+      `/listing-extract ${manifestFile} ${resultFile}`,
+      '',
+      'Run headless — read every entry in the manifest and write ONLY the result',
+      'JSON file. Do not ask questions. Do not print the JSON to stdout.',
+    ].join('\n');
+
+    const wanted = new Set(manifest.map((m) => m.listing_id));
+    let rows = null, lastErr = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { code, out, err } = await runClaude(prompt, ROOT);
+      const combined = `${out}\n${err}`;
+      if (isSubscriptionLimit(combined)) throw new RateLimitError('Claude subscription/usage limit reached');
+      if (!existsSync(resultFile)) { lastErr = `session ended (code ${code}) without result file: ${combined.slice(-300)}`; continue; }
+      let parsed;
+      try { parsed = JSON.parse(readFileSync(resultFile, 'utf-8')); }
+      catch (e) { lastErr = `result JSON parse failed: ${e.message}`; continue; }
+      if (!Array.isArray(parsed) || parsed.length === 0) { lastErr = 'result was not a non-empty array'; continue; }
+      // Drop anything whose listing_id was not in the manifest — a hallucinated
+      // or reformatted id would otherwise be upserted as a brand-new listing.
+      const kept = parsed.filter((r) => r && wanted.has(String(r.listing_id)));
+      if (kept.length === 0) { lastErr = 'no result row matched a manifest listing_id'; continue; }
+      rows = kept;
+      break;
+    }
+    if (!rows) throw new Error(`listing-extract failed after retry: ${lastErr}`);
+
+    // Normalise before storing: every scalar field becomes string|null and
+    // features becomes string[]|null, so downstream consumers never have to
+    // guess whether a field is missing or genuinely absent.
+    const payload = rows.map((r) => {
+      const data = {};
+      for (const f of AQAR_TEXT_FIELDS) {
+        const v = r[f];
+        data[f] = (v === null || v === undefined || v === '') ? null : String(v);
+      }
+      data.features = Array.isArray(r.features) ? r.features.map(String) : null;
+      return { listing_id: String(r.listing_id), data };
+    });
+
+    const { data: written, error: uErr } = await supa.rpc('aqar_extractions_upsert', {
+      p_rows: payload, p_job_id: job.id,
+    });
+    if (uErr) throw new Error(`extraction upsert failed: ${uErr.message}`);
+
+    // A short result means a listing was silently dropped. Report it rather
+    // than swallowing it — the scraper re-enqueues whatever has no extraction.
+    const missing = manifest.filter((m) => !payload.some((p) => p.listing_id === m.listing_id))
+                            .map((m) => m.listing_id);
+    if (missing.length > 0) console.warn(`[runner] aqar: no result for ${missing.join(',')}`);
+
+    return { requested: todo.length, extracted: payload.length, written, missing };
+  } finally {
+    try { rmSync(workDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+
 const HANDLERS = {
   ping: handlePing,
   client_study: handleClientStudy,
   mkt_content_enrichment: handleMktContentEnrichment,
   mkt_campaign_summary: handleMktCampaignSummary,
   mkt_visual_ocr: handleMktVisualOcr,
+  aqar_listing_extract: handleAqarListingExtract,
 };
 
 // Upper bound on ONE job. Must sit ABOVE the slowest legitimate session

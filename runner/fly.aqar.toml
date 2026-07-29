@@ -1,0 +1,65 @@
+# Fifth Claude Code runner — the Aqar listing-extraction lane.
+#
+# Same image and same code as the other runners; only RUNNER_LEASE differs:
+#
+#   wassel-claude-runner      lease 'marketing_intelligence' → mkt_content_enrichment,
+#                                                              mkt_campaign_summary
+#   wassel-claude-interactive lease 'interactive'            → ping, client_study
+#   wassel-claude-ocr         lease 'ocr'                    → mkt_visual_ocr
+#   wassel-claude-aqar        lease 'aqar#<machine-id>'      → aqar_listing_extract  ← this
+#
+# WHY A LANE OF ITS OWN. Listing extraction is high-volume batch work that
+# arrives in a nightly lump (a normal day is 10–50 listings; a catch-up run is
+# thousands). Sharing a lane with client_study or whatsapp_reply would put a rep
+# or a customer behind a scrape backlog — the exact starvation the OCR lane was
+# split out to avoid. A lane of its own means a backlog of any depth cannot
+# delay a human-waiting job by more than the current job in ITS OWN lane.
+#
+# SLOTS FROM DAY ONE. RUNNER_LEASE ends in '#', so each machine appends its own
+# id and N machines are N concurrent sessions (scripts/claude-study-runner.mjs
+# → SLOTS). Scaling is `flyctl scale count N` with no migration, because
+# claude_job_claim_next matches this lane by pattern:
+#   lease_name = 'aqar' OR starts_with(lease_name, 'aqar#')
+# (supabase/migrations/2026-07-29_aqar_listing_extract_lane.sql).
+#
+# CAPACITY, READ BEFORE RAISING N. These sessions share ONE Claude subscription
+# with the lanes that serve people: whatsapp_reply (customers, at any hour) and
+# interactive (reps). There is no per-lane quota, so a large N does not create
+# capacity — it consumes the shared pool faster and can park those lanes. Steady
+# state here is 3–13 jobs a night; run at count 1. Scale up only to drain a
+# backlog, off-peak, and scale back down when it is clear.
+#
+# ORDERING TRAP ON FIRST DEPLOY. Until a machine here holds an 'aqar#…' lease,
+# the lane looks orphaned, and claude_job_claim_next lets any other lease-holder
+# pick up its work (the deliberate orphan-takeover path). Deploy and confirm the
+# lease is live BEFORE enqueuing the first aqar_listing_extract job — otherwise
+# the OCR or interactive runner claims it and fails on an unknown kind.
+#
+# Deploy from the repo root (the build context must include scripts/ and .claude/):
+#   flyctl deploy --config runner/fly.aqar.toml --app wassel-claude-aqar
+app = 'wassel-claude-aqar'
+
+# MUST stay above the runner's SHUTDOWN_GRACE_MS (60s) — Fly's 5s default would
+# SIGKILL mid-shutdown and orphan the in-flight session. With slots this matters
+# more, not less: a rolling deploy restarts every one of them.
+kill_timeout = '90s'
+primary_region = 'sin'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  POLL_MS = '10000'
+  RUNNER_ENV = 'fly'
+  # The whole point of this app. Trailing '#' = one session PER MACHINE.
+  RUNNER_LEASE = 'aqar#'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'
+
+[deploy]
+  strategy = 'immediate'
+
+[processes]
+  app = 'node scripts/claude-study-runner.mjs'
