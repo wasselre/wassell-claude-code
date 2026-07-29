@@ -52,6 +52,59 @@ Postgres advisory lock — five machines cannot all restart it). Every restart i
 in `activity_log` as `session_remediation`. If it is still wedged, restart the
 container on the VM; the VM self-heals on boot via its startup script.
 
+## Sessions flap STARTING → FAILED, whole CRM WhatsApp goes silent
+
+Symptom: no inbound, and messages sent from the **phone** never appear either.
+That combination means ingestion is dead, not that phone sync is broken — the
+CRM thread renders from `chat_messages`, so if the gateway is down nothing at all
+arrives. Confirm first:
+
+```sql
+select max(date) from chat_messages;   -- hours old = gateway down, stop looking at sync
+```
+
+Default `info` logging hides the reason behind a generic `Error: Connection
+Failure`. Get the real code — rebuild the container with debug (creds live in a
+volume and survive it), then grep `lastDisconnect`:
+
+```bash
+ssh -i ~/.ssh/google_compute_engine rayan@34.18.15.250   # gcloud reauth NOT needed
+```
+
+`{"reason":"401"}` logged out → re-pair. `"515"` restart required. `"440"`
+replaced. **`"405"` = login refused: WhatsApp is rejecting the stored companion
+credentials.** The varying `location` (frc/lla/…) is just WhatsApp edge nodes,
+not the fault. A session in this state never advances to `SCAN_QR_CODE`, so "it
+isn't asking for a QR" does **not** prove the pairing is alive — check **WhatsApp
+→ Linked Devices** on the phone. Device still listed + 405 = a WhatsApp-side
+block, not dead credentials, and **re-pairing will not fix it** (you would trade
+a valid link for none). Two different numbers failing at once = environment or
+credential-class, never one dead pairing.
+
+**Contain it before diagnosing** — Baileys retries a refused login every 2
+seconds, so an unattended outage bills tens of thousands of rejected logins
+against the number and risks a real ban:
+
+```sql
+update whatsapp_numbers set is_active=false where device_id in ('sales','bridge');
+```
+
+That one lever gates both the watchdog and scheduled sends. Record `is_active` /
+`is_default` first — restoring means setting them back to `true`. Then
+`POST /api/sessions/<name>/stop` — **`/stop`, never `/logout`**: stop keeps the
+credentials, logout unpairs and forces a physical re-scan. Verify quiet with
+`docker logs --since 60s wassel-waha | grep -c 'logging in'` → 0.
+
+Recovery is to wait the block out (hours, not minutes) and retry ONE controlled
+start, stopping immediately if it does not reach WORKING.
+
+Since WA-32 the worker does this itself: restart → wait 30 s → verify → **stop the
+session if it did not reach WORKING**, with exponential backoff (10 m → 6 h cap)
+and a one-per-outage `session_unrecoverable` alert in `activity_log`. Before that
+fix a refused session was restarted every 10 minutes forever and every restart
+was logged `status='success'` on the strength of the HTTP call alone — which is
+how the 2026-07-29 outage ran 13 hours through business hours looking healthy.
+
 ## Error 463 — cold-outreach lock
 
 **Do not retry and do not restart the session.** 463 is WhatsApp refusing first

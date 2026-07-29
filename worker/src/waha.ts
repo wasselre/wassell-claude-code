@@ -69,6 +69,23 @@ export async function restartSession(cfg: WahaSendConfig, session: string): Prom
   if (!res.ok) throw new Error(`WAHA restart ${session}: ${res.status}`);
 }
 
+/**
+ * Take a session down. Used to end Baileys' 2-second reconnect loop when a
+ * restart failed to bring the session back (WA-32) — an unrecovered session left
+ * running hammers WhatsApp's login endpoint until it earns a ban.
+ *
+ * `/stop` HALTS the session but keeps its credentials on disk, so `/start` (or
+ * the next watchdog pass) brings it straight back. This must never be `/logout`,
+ * which unpairs the device and forces a physical re-scan on the owner's phone.
+ */
+export async function stopSession(cfg: WahaSendConfig, session: string): Promise<void> {
+  const res = await fetch(`${cfg.url.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(session)}/stop`, {
+    method: 'POST',
+    headers: { 'X-Api-Key': cfg.apiKey },
+  });
+  if (!res.ok) throw new Error(`WAHA stop ${session}: ${res.status}`);
+}
+
 const EXT_KIND: Record<string, NonNullable<ScheduledMediaItem['kind']>> = {
   jpg: 'image', jpeg: 'image', png: 'image', webp: 'image', gif: 'image',
   mp4: 'video', mov: 'video', webm: 'video', m4v: 'video',

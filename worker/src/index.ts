@@ -41,7 +41,7 @@ import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runSchedul
 import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
 import { runCreativeCleanup } from './marketing/creativeCleanup.js';
 import { sweepContentBacklog } from './marketing/content/sweepBacklog.js';
-import { getSessionStatus, restartSession, type WahaSendConfig } from './waha.js';
+import { getSessionStatus, restartSession, stopSession, type WahaSendConfig } from './waha.js';
 
 const env = loadEnv();
 
@@ -2010,19 +2010,119 @@ async function withSessionRemediationLock(session: string, fn: () => Promise<voi
   return true;
 }
 
+/** How long to give a restarted session to actually reach WORKING before we
+ *  conclude it did not. A healthy session recovers in ~10s (POC-measured); a
+ *  refused one is still flapping at 30s. */
+const WAHA_RECOVERY_GRACE_MS = 30_000;
+
+/**
+ * Restart a session, then VERIFY it recovered — and stop it if it did not.
+ *
+ * The verify-and-stop is the whole point (WA-32, incident 2026-07-29). WhatsApp
+ * refused both sessions with stream reason 405 for 13 hours. Every restart put
+ * the session back into Baileys' internal reconnect loop, which retries a
+ * REFUSED LOGIN EVERY 2 SECONDS — so the old "restart and walk away" behaviour
+ * produced ~23,000 rejected logins per session against the company's main
+ * WhatsApp number. That is how a temporary refusal earns a permanent ban.
+ *
+ * Stopping a session that failed to recover costs nothing (it was not serving
+ * traffic) and caps a total outage at ONE login attempt per backoff window.
+ * The session is left STOPPED deliberately: the next watchdog pass will start it
+ * again when the (now exponential) backoff is due.
+ */
 async function maybeRestartWahaSessionAfterSendFailure(session: string, reason: string): Promise<void> {
   if (!wahaSend) return;
   await withSessionRemediationLock(session, async () => {
     try {
       await restartSession(wahaSend!, session);
-      console.warn(`[worker] restarted WAHA session '${session}' (${reason})`);
-      await logWahaRemediation(session, reason, 'restarted', null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[worker] WAHA session restart '${session}' failed:`, msg);
+      await recordRemediationOutcome(session, false, 'restart_call_failed');
       await logWahaRemediation(session, reason, 'failed', msg);
+      return;
     }
+
+    // Did it actually come back? The old code logged success right here, on the
+    // strength of the HTTP call alone — which is how 78 consecutive restarts of
+    // a session that never reached WORKING were all recorded as 'success'.
+    await new Promise((r) => setTimeout(r, WAHA_RECOVERY_GRACE_MS));
+    let observed = 'UNKNOWN';
+    try {
+      observed = (await getSessionStatus(wahaSend!, session)).status ?? 'UNKNOWN';
+    } catch (err) {
+      console.error(`[worker] post-restart probe '${session}' failed:`, (err as Error).message);
+    }
+
+    if (observed === 'WORKING') {
+      console.warn(`[worker] restarted WAHA session '${session}' -> WORKING (${reason})`);
+      await recordRemediationOutcome(session, true, 'WORKING');
+      await logWahaRemediation(session, reason, 'restarted', null);
+      return;
+    }
+
+    // Not recovered — take it back down so Baileys stops hammering WhatsApp.
+    try {
+      await stopSession(wahaSend!, session);
+    } catch (err) {
+      console.error(`[worker] could not stop unrecovered '${session}':`, (err as Error).message);
+    }
+    const attempts = await recordRemediationOutcome(session, false, observed);
+    console.error(
+      `[worker] WAHA session '${session}' did NOT recover (status=${observed}) after restart ` +
+      `— stopped it; consecutive failures=${attempts}`,
+    );
+    await logWahaRemediation(session, reason, 'not_recovered', `status after restart: ${observed}`);
+    await maybeAlertUnrecoverable(session, observed, attempts);
   });
+}
+
+/** Records the VERIFIED outcome and returns the consecutive-failure count that
+ *  drives the exponential backoff in waha_try_remediation_lock. */
+async function recordRemediationOutcome(session: string, recovered: boolean, outcome: string): Promise<number> {
+  const { data, error } = await supabase.rpc('waha_remediation_record_outcome', {
+    p_session: session,
+    p_recovered: recovered,
+    p_outcome: outcome,
+  });
+  if (error) {
+    console.error(`[worker] remediation outcome rpc failed for '${session}':`, error.message);
+    return 0;
+  }
+  return typeof data === 'number' ? data : 0;
+}
+
+/**
+ * A session that has failed to recover repeatedly is not going to fix itself —
+ * it needs a human (re-pair, or wait out a WhatsApp-side block). Raised once per
+ * outage, fleet-wide, and re-armed automatically when the session recovers.
+ *
+ * This is the alarm whose absence let the 2026-07-29 outage run 13 hours through
+ * business hours with every restart logged as a success.
+ */
+async function maybeAlertUnrecoverable(session: string, observed: string, attempts: number): Promise<void> {
+  const { data, error } = await supabase.rpc('waha_should_alert_unrecoverable', {
+    p_session: session,
+    p_min_attempts: 3,
+  });
+  if (error) {
+    console.error(`[worker] unrecoverable-alert rpc failed for '${session}':`, error.message);
+    return;
+  }
+  if (data !== true) return;
+
+  console.error(`[worker] 🚨 WhatsApp session '${session}' UNRECOVERABLE after ${attempts} attempts (status=${observed}) — needs a human`);
+  const { error: logErr } = await supabase.from('activity_log').insert({
+    category: 'whatsapp',
+    event_type: 'session_unrecoverable',
+    target_label: `waha session: ${session}`,
+    summary_ar: `جلسة واتساب ${session} متوقفة ولا تستعيد نفسها — تحتاج تدخلاً يدوياً`,
+    summary_en: `WhatsApp session ${session} is down and not self-recovering — needs manual intervention`,
+    details: { session, observed_status: observed, consecutive_failures: attempts, worker: env.WORKER_ID },
+    status: 'error',
+    error: `session did not reach WORKING after ${attempts} restart attempts (last status: ${observed})`,
+  });
+  if (logErr) console.error('[worker] unrecoverable alert log failed:', logErr.message);
 }
 
 /** Every restart is recorded — who, why, and whether it worked. Restarts were
