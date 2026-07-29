@@ -10,7 +10,7 @@ import { calculateCapacity, existingObligations, qualifyingIncome, selectBand } 
 import { monthlyPayment, principalFromPayment, upfrontCash } from '../payment';
 import { isRateStale, matchProduct, regulatoryLtv, resolveRate } from '../matching';
 import { runFinancing } from '../engine';
-import { confidenceLabel, isLegacySnapshot, rateBasisLabel, statusLabel, statusTone } from '../client';
+import { confidenceLabel, disclosureLabel, isLegacySnapshot, rateBasisLabel, statusLabel, statusTone } from '../client';
 import type { FinancingInput, FinancingProduct, Note, RuleSet } from '../types';
 
 // ── Fixtures: the values actually stored in `financing_rules` ──────────────
@@ -248,6 +248,14 @@ describe('a frozen snapshot from an earlier engine must never crash the page', (
     expect(isLegacySnapshot({ status: 'indicative_match', engine_version: '1.4.0' })).toBe(true);
     expect(isLegacySnapshot({ status: 'requires_bank_review', calculation_version: '2.0.0' })).toBe(false);
     expect(isLegacySnapshot(null)).toBe(false);
+  });
+
+  it('no internal slug reaches the screen', () => {
+    // The same defect class as the bank-key dropdown and the scenario status:
+    // an enum value the rep cannot interpret.
+    expect(disclosureLabel('exact_rate', false)).toBe('Published contractual rate');
+    expect(disclosureLabel('representative_example', true)).toBe('مثال توضيحي منشور');
+    expect(disclosureLabel('some_future_kind', false)).toBe('some_future_kind');
   });
 
   it('a V2 result always carries the version that makes it recognisable', () => {

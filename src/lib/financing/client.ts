@@ -128,6 +128,22 @@ export function confidenceLabel(c: string): { ar: string; en: string } {
 }
 
 /**
+ * How a bank disclosed its pricing — the field that decides whether an exact
+ * payment is possible at all, so it must read as a sentence in the admin table
+ * rather than as a raw enum value.
+ */
+export function disclosureLabel(kind: string, isAr: boolean): string {
+  const map: Record<string, { ar: string; en: string }> = {
+    exact_rate: { ar: 'سعر تعاقدي منشور', en: 'Published contractual rate' },
+    starting_from: { ar: '"يبدأ من" — ليس سعر العميل', en: '"Starting from" — not the customer’s rate' },
+    representative_example: { ar: 'مثال توضيحي منشور', en: 'Published representative example' },
+    none: { ar: 'لا إفصاح — يتطلب عرض سعر', en: 'No disclosure — quotation required' },
+  };
+  const l = map[kind];
+  return l ? (isAr ? l.ar : l.en) : kind;
+}
+
+/**
  * True when a snapshot predates V2. V2 always stamps `calculation_version`;
  * V1 stamped `engine_version` and used a different status vocabulary and match
  * shape, so its results must be shown as recorded rather than re-rendered.

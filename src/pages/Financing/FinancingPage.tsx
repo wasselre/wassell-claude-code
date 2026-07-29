@@ -13,7 +13,7 @@ import { AlertTriangle, Calculator, Check, ChevronLeft, ChevronRight, Database, 
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import {
-  confidenceLabel, financingApi, formatPct, formatSar, formatYears,
+  confidenceLabel, disclosureLabel, financingApi, formatPct, formatSar, formatYears,
   isLegacySnapshot, rateBasisLabel, statusLabel, statusTone,
 } from '@/lib/financing/client';
 import type { FinancingInput, FinancingResult, ProductMatch, ResultStatus } from '@/lib/financing/types';
@@ -989,7 +989,7 @@ function AdminPanel({ isAr }: { isAr: boolean }) {
               {data.rates.map((r) => (
                 <tr key={String(r.id)} className={`border-b border-sand/10 ${r.is_active ? '' : 'opacity-40'}`}>
                   <td className="p-2 text-charcoal/80">{productLabel(r.product_id)}</td>
-                  <td className="p-2 text-charcoal/80">{String(r.disclosure_type)}</td>
+                  <td className="p-2 text-charcoal/80">{disclosureLabel(String(r.disclosure_type), isAr)}</td>
                   <td className="p-2 text-end text-charcoal/70">{pctCell(r.contractual_rate_pct)}</td>
                   <td className="p-2 text-end text-charcoal/70">
                     {r.published_apr_pct !== null && r.published_apr_pct !== undefined
