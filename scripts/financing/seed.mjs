@@ -908,6 +908,28 @@ async function flushIssuesAndReviews(runId) {
     for (const i of issues.slice(0, 40)) log(`  [${i.severity}] ${i.issue_type}: ${i.message_en.slice(0, 150)}`);
     return;
   }
+
+  // Close the PREVIOUS run's open issues before writing this run's.
+  //
+  // An issue is a statement about what the LATEST refresh found, not an
+  // immutable event. Without this the queue grows by ~17 rows per scheduled
+  // run: the same "SAMA's register was unreachable" sentence three times over,
+  // burying anything genuinely new. Observed on production after three seeds —
+  // 40 open issues where 17 were current.
+  //
+  // Resolved rather than deleted: the fact that a source was unreadable last
+  // month is still history worth keeping, it is just no longer a to-do.
+  const { error: closeErr } = await db
+    .from('fin_data_validation_issues')
+    .update({
+      status: 'resolved',
+      resolved_at: new Date().toISOString(),
+      resolution_note: 'Superseded by a later refresh run that re-evaluated the same source.',
+    })
+    .eq('status', 'open')
+    .neq('refresh_run_id', runId);
+  if (closeErr) console.error('[seed] closing superseded issues failed:', closeErr.message);
+
   if (issues.length > 0) {
     const rows = issues.map((i) => ({ ...i, refresh_run_id: runId }));
     // Chunked: a single 500-row insert is one all-or-nothing statement, and
