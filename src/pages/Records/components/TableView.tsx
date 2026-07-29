@@ -60,9 +60,19 @@ interface TableViewProps {
   sortField?: string | null;
   sortDir?: 'asc' | 'desc';
   onToggleSort?: (fieldName: string) => void;
+  /**
+   * Optional leading badge column, rendered between the selection checkbox and
+   * the first field column. Returning null for a row leaves its cell empty.
+   *
+   * Deliberately generic — TableView stays a schema-driven table and knows
+   * nothing about what the badge means. The market listings page uses it to mark
+   * a row that represents several broker ads for one property; anything else
+   * that needs a per-row affordance can reuse it.
+   */
+  rowBadge?: (record: AppRecord) => React.ReactNode;
 }
 
-export default function TableView({ model, records, onRowClick, onDelete, view, selectedIds, onToggleSelect, onToggleSelectAll, readOnly = false, sortField: controlledSortField, sortDir: controlledSortDir, onToggleSort }: TableViewProps) {
+export default function TableView({ model, records, onRowClick, onDelete, view, selectedIds, onToggleSelect, onToggleSelectAll, readOnly = false, sortField: controlledSortField, sortDir: controlledSortDir, onToggleSort, rowBadge }: TableViewProps) {
   const { t } = useTranslation();
   const { language, records: allRecords, saveRecord, addToast, models, currentUserId, users, profiles, roles, previewProfileId } = useAppStore();
   const isAr = language === 'ar';
@@ -280,6 +290,7 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                 />
               </th>
             )}
+            {rowBadge && <th className="w-10" />}
             {columns.map((ef) => {
               const field = ef.field;
               const sortable = ef.kind === 'local' && field.type !== 'mirror';
@@ -333,6 +344,11 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                       className="w-4 h-4 rounded border-sand text-copper focus:ring-copper/30 cursor-pointer"
                     />
                   </td>
+                )}
+                {rowBadge && (
+                  // stopPropagation: the badge opens its own detail modal; the
+                  // row's click starts inline edit, which would fight it.
+                  <td onClick={(e) => e.stopPropagation()}>{rowBadge(record)}</td>
                 )}
                 {columns.map((ef) => {
                   const field = ef.field;

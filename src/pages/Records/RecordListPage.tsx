@@ -30,6 +30,9 @@ import {
 import { useApplyViewScope, useApplyVisibleViews, useModelPermissions } from '@/hooks/usePermission';
 import { sortRecordsByFieldName, type SortCtx } from '@/lib/recordSort';
 import { isSummaryModel } from '@/lib/lazyModels';
+import { groupRecordsByProperty, type PropertyGroup } from '@/lib/marketListings/propertyGroups';
+import PropertyGroupModal from './components/PropertyGroupModal';
+import { Users } from 'lucide-react';
 import type { AppRecord, ModelView } from '@/types';
 
 // Stable empty array reference. Returned when a model has no records yet
@@ -93,6 +96,8 @@ export default function RecordListPage() {
   const [search, setSearch] = useState('');
   const [searchField, setSearchField] = useState<string>('all'); // 'all' or an expanded field id
   const [deletingRecord, setDeletingRecord] = useState<AppRecord | null>(null);
+  /** The property group whose member listings are being inspected, if any. */
+  const [openGroup, setOpenGroup] = useState<PropertyGroup | null>(null);
   const [showImport, setShowImport] = useState(false);
 
   // Saved-view state: null = "Default view" (show_in_table fallback).
@@ -320,23 +325,37 @@ export default function RecordListPage() {
     return sortRecordsByFieldName(filteredRecords, model, sortFieldName, sortDir, ctx);
   }, [filteredRecords, model, sortFieldName, sortDir, isAr, records, models, users]);
 
+  // One property, many broker listings: collapse rows the database resolved to
+  // the same property_key into a single representative row carrying the agent
+  // count and price spread. Runs AFTER the sort (the representative is whichever
+  // member sorts first, so the user's ordering still decides placement) and
+  // BEFORE pagination (so a page holds N properties, not N ad rows).
+  //
+  // Only market_listings is keyed today; every other model passes straight
+  // through with an empty group map and no behavioural change.
+  const { rows: groupedRecords, groups: propertyGroups, collapsed: collapsedCount } = useMemo(
+    () => groupRecordsByProperty(orderedFilteredRecords),
+    [orderedFilteredRecords],
+  );
+
   // Publish the currently-visible, sorted record IDs so the record form can
   // offer prev/next navigation in the same order the user was browsing.
+  // Uses the GROUPED rows so prev/next walks properties, matching the page.
   useEffect(() => {
     if (!model) return;
-    setRecordNavContext(model.id, orderedFilteredRecords.map((r) => r.id));
-  }, [model, orderedFilteredRecords, setRecordNavContext]);
+    setRecordNavContext(model.id, groupedRecords.map((r) => r.id));
+  }, [model, groupedRecords, setRecordNavContext]);
 
   // Reset to first page whenever the filter pipeline changes its output size
   // (new search, different view, ad-hoc filter edits, records added/deleted).
   useEffect(() => {
     setCurrentPage(1);
-  }, [orderedFilteredRecords.length, activeViewId]);
+  }, [groupedRecords.length, activeViewId]);
 
   const pagedRecords = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
-    return orderedFilteredRecords.slice(start, start + pageSize);
-  }, [orderedFilteredRecords, currentPage, pageSize]);
+    return groupedRecords.slice(start, start + pageSize);
+  }, [groupedRecords, currentPage, pageSize]);
 
   if (!model) {
     return (
@@ -605,6 +624,20 @@ export default function RecordListPage() {
         );
       })()}
 
+      {/* Grouping is never silent: if rows were collapsed, say how many and why.
+          A count that quietly shrinks is exactly the kind of thing nobody
+          notices until they distrust the whole number. */}
+      {collapsedCount > 0 && (
+        <div className="mb-2 flex items-center gap-2 text-xs text-charcoal/60">
+          <Users size={13} className="text-copper shrink-0" />
+          <span>
+            {isAr
+              ? `${groupedRecords.length} عقار — تم دمج ${collapsedCount} إعلاناً مكرراً لنفس العقارات من معلنين مختلفين`
+              : `${groupedRecords.length} properties — ${collapsedCount} duplicate listings from different advertisers merged in`}
+          </span>
+        </div>
+      )}
+
       {/* Page size selector — sits just above the list (hidden in maps mode) */}
       {viewMode !== 'maps' && filteredRecords.length > 0 && (
         <div className="flex items-center justify-end mb-2">
@@ -647,6 +680,39 @@ export default function RecordListPage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}
+          rowBadge={
+            propertyGroups.size === 0
+              ? undefined
+              : (rec) => {
+                  const g = propertyGroups.get(rec.id);
+                  if (!g) return null;
+                  return (
+                    <button
+                      onClick={() => setOpenGroup(g)}
+                      title={
+                        isAr
+                          ? `${g.members.length} إعلانات لنفس العقار`
+                          : `${g.members.length} listings for this property`
+                      }
+                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-bold transition-colors ${
+                        // Tier 3 has no deed behind it — a probable match. Gold
+                        // says "check me"; copper says "confirmed".
+                        g.tier === 3
+                          ? 'bg-gold/15 text-gold-dark hover:bg-gold/25'
+                          : 'bg-copper/10 text-copper hover:bg-copper/20'
+                      }`}
+                    >
+                      <Users size={11} />
+                      {/* The COUNT OF LISTINGS, not of agents. When one agent
+                          re-posts the same property the agent count is 1, and a
+                          chip reading "1" next to a people icon says nothing —
+                          the number that explains why this row stands for
+                          several is how many ads it absorbed. */}
+                      {g.members.length}
+                    </button>
+                  );
+                }
+          }
         />
       )}
       {viewMode === 'cards' && (
@@ -669,7 +735,9 @@ export default function RecordListPage() {
         >
           <MapsView
             model={model}
-            records={filteredRecords}
+            // Grouped: one pin per property, not one per broker ad — otherwise
+            // five agents on the same plot stack five markers on one point.
+            records={groupedRecords}
             onCardClick={(rec) => navigate(`/model/${model.name}/${rec.id}`)}
           />
 
@@ -700,10 +768,23 @@ export default function RecordListPage() {
       {/* Page navigator — sits below the list (not shown in maps view) */}
       {viewMode !== 'maps' && (
         <PageNavigator
-          totalCount={filteredRecords.length}
+          // Counts PROPERTIES (grouped rows), which is what the page shows.
+          totalCount={groupedRecords.length}
           currentPage={currentPage}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
+        />
+      )}
+
+      {/* Member listings behind one grouped property. */}
+      {openGroup && (
+        <PropertyGroupModal
+          group={openGroup}
+          onOpenListing={(rec) => {
+            setOpenGroup(null);
+            navigate(`/model/${model.name}/${rec.id}`);
+          }}
+          onClose={() => setOpenGroup(null)}
         />
       )}
 
