@@ -71,6 +71,17 @@ CREATE POLICY "listing_photos_public_read"
 -- No insert/update/delete policies on purpose: only the Fly worker writes here,
 -- and it uses the service role (which bypasses RLS). A browser must never be
 -- able to write into the mirror.
+--
+-- KNOWN GAP — orphans. generation_jobs.record_id CASCADEs when a listing is
+-- deleted, but storage objects do NOT: a deleted listing leaves its mirrored
+-- photos in the bucket forever. Same for a listing whose photos change (the old
+-- objects stay, since the map only ever gains keys). This is a slow leak, not a
+-- correctness problem — everything is namespaced under `<listing_id>/`, so a
+-- prune is "delete the prefixes with no matching record". Deliberately NOT
+-- automatic: deleting bytes on a trigger is how you lose data to a bad join.
+-- Reclaim with a Storage-API pass when it is worth ~36 KB/photo (verified
+-- 2026-07-29: SQL DELETE on storage.objects is refused by storage.protect_delete
+-- — the Storage API is the only supported path).
 
 -- ────────────────────────────────────────────────────────────────────────
 -- 2. generation_jobs gains kind='listing-mirror'
@@ -351,9 +362,17 @@ GRANT EXECUTE ON FUNCTION public.listing_mirror_backlog(int, boolean) TO service
 -- ────────────────────────────────────────────────────────────────────────
 -- 9. listing_mirror_stats — whole-backlog totals for reporting
 -- ────────────────────────────────────────────────────────────────────────
--- One aggregate over the model, so the backfill script's --dry-run stays
--- instant on 51k listings and does not have to walk rows (or borrow the
--- ops-only claude_runner_sql backdoor) just to print a number.
+-- One aggregate over the model, so the backfill script's --dry-run does not
+-- have to walk rows (or borrow the ops-only claude_runner_sql backdoor) just to
+-- print a number.
+--
+-- ONE PASS, not two correlated subqueries. Computing `total` and `missing` as
+-- separate scalar subqueries detoasts and re-expands each listing's image_urls
+-- TWICE, which on the live 44k active listings exceeded the statement timeout
+-- outright. The LATERAL form expands once and aggregates: 7.0s over 362,191
+-- photo rows / 40,606 listings (measured 2026-07-29). A reporting call may be
+-- slow, but it must not FAIL — hence the timeout raised on the function itself
+-- rather than left to whatever the caller's role happens to have.
 CREATE OR REPLACE FUNCTION public.listing_mirror_stats(
   p_active_only boolean DEFAULT true
 ) RETURNS TABLE (
@@ -363,22 +382,23 @@ CREATE OR REPLACE FUNCTION public.listing_mirror_stats(
   photos_mirrored    int,
   photos_pending     int
 )
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public', 'pg_temp'
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+SET statement_timeout TO '120s'
 AS $$
   WITH per_listing AS (
-    SELECT
-      (SELECT count(*)
-         FROM jsonb_array_elements_text(r.data->'image_urls') AS u(url)
-        WHERE u.url ~ '^https?://')::int AS total,
-      (SELECT count(*)
-         FROM jsonb_array_elements_text(r.data->'image_urls') AS u(url)
-        WHERE u.url ~ '^https?://'
-          AND COALESCE(r.data->'image_mirror_map','{}'::jsonb) -> u.url IS NULL)::int AS missing
+    SELECT r.id,
+           count(*) FILTER (WHERE u.url ~ '^https?://')::int AS total,
+           count(*) FILTER (
+             WHERE u.url ~ '^https?://'
+               AND COALESCE(r.data->'image_mirror_map','{}'::jsonb) -> u.url IS NULL
+           )::int AS missing
     FROM public.records r
+    CROSS JOIN LATERAL jsonb_array_elements_text(r.data->'image_urls') AS u(url)
     WHERE r.model_id = public._listing_mirror_model_id()
       AND jsonb_typeof(r.data->'image_urls') = 'array'
-      AND jsonb_array_length(r.data->'image_urls') > 0
       AND (NOT p_active_only OR COALESCE((r.data->>'is_active')::boolean, true))
+    GROUP BY r.id
   )
   SELECT count(*)::int,
          count(*) FILTER (WHERE missing > 0)::int,
