@@ -1,0 +1,625 @@
+<title>دليل حقول حاسبة التمويل العقاري — وصل العقارية</title>
+<style>
+  :root{
+    --cream:#F8F5E9; --sand:#E8D9C0; --bronze:#B8734F; --terracotta:#A6482A;
+    --chocolate:#6B4226; --charcoal:#3F3F3F; --gold:#D9B57F;
+    --ground:var(--cream); --panel:#FFFDF7; --ink:var(--charcoal);
+    --ink-soft:#6E6A64; --ink-faint:#8C877F; --rule:var(--sand);
+    --head:var(--chocolate); --accent:var(--bronze); --accent-strong:var(--terracotta);
+    --req:#8A2F1D; --req-bg:#F6E4DE; --money:#7A5410; --money-bg:#F7ECD4;
+    --filter:#2C5A63; --filter-bg:#DDECEE; --note:#5A5750; --note-bg:#EFEBE0;
+    --shadow:0 1px 2px rgba(107,66,38,.06), 0 8px 24px -16px rgba(107,66,38,.28);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --ground:#1C1713; --panel:#241D18; --ink:#EDE5D6; --ink-soft:#B6ABA0;
+      --ink-faint:#8E8478; --rule:#3A2F26; --head:#E0BE9A; --accent:#D08D64;
+      --accent-strong:#E0A07A;
+      --req:#F0A897; --req-bg:#3E241E; --money:#E3C285; --money-bg:#3A2E1A;
+      --filter:#A8D2DA; --filter-bg:#1E3236; --note:#B8B0A4; --note-bg:#2C251E;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#1C1713; --panel:#241D18; --ink:#EDE5D6; --ink-soft:#B6ABA0;
+    --ink-faint:#8E8478; --rule:#3A2F26; --head:#E0BE9A; --accent:#D08D64;
+    --accent-strong:#E0A07A;
+    --req:#F0A897; --req-bg:#3E241E; --money:#E3C285; --money-bg:#3A2E1A;
+    --filter:#A8D2DA; --filter-bg:#1E3236; --note:#B8B0A4; --note-bg:#2C251E;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+  :root[data-theme="light"]{
+    --ground:#F8F5E9; --panel:#FFFDF7; --ink:#3F3F3F; --ink-soft:#6E6A64;
+    --ink-faint:#8C877F; --rule:#E8D9C0; --head:#6B4226; --accent:#B8734F;
+    --accent-strong:#A6482A;
+    --req:#8A2F1D; --req-bg:#F6E4DE; --money:#7A5410; --money-bg:#F7ECD4;
+    --filter:#2C5A63; --filter-bg:#DDECEE; --note:#5A5750; --note-bg:#EFEBE0;
+    --shadow:0 1px 2px rgba(107,66,38,.06), 0 8px 24px -16px rgba(107,66,38,.28);
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth; scroll-padding-top:1.5rem}
+  @media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto} *{transition:none!important} }
+
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"Segoe UI","Noto Naskh Arabic","Geeza Pro",Tahoma,system-ui,sans-serif;
+    font-size:16px; line-height:1.7; direction:rtl;
+    font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;
+  }
+  .en{direction:ltr; unicode-bidi:isolate}
+  .wrap{max-width:1180px; margin:0 auto; padding:2.5rem 1.25rem 5rem}
+
+  /* ---------- masthead ---------- */
+  .masthead{border-bottom:2px solid var(--rule); padding-bottom:1.75rem; margin-bottom:2rem}
+  .eyebrow{
+    font-size:.7rem; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--accent-strong); font-weight:700; margin:0 0 .6rem
+  }
+  h1{
+    font-size:clamp(1.6rem,4vw,2.4rem); line-height:1.25; margin:0 0 .5rem;
+    color:var(--head); font-weight:700; text-wrap:balance; letter-spacing:-.01em
+  }
+  .sub{margin:0; color:var(--ink-soft); max-width:62ch; font-size:1.02rem}
+  .meta{
+    display:flex; flex-wrap:wrap; gap:.5rem 1.25rem; margin-top:1.1rem;
+    font-size:.8rem; color:var(--ink-faint)
+  }
+  .meta b{color:var(--ink-soft); font-weight:600}
+
+  /* ---------- callout ---------- */
+  .callout{
+    background:var(--panel); border:1px solid var(--rule);
+    border-inline-start:3px solid var(--accent);
+    border-radius:4px; padding:1.1rem 1.25rem; margin:1.5rem 0;
+    box-shadow:var(--shadow)
+  }
+  .callout h3{margin:0 0 .4rem; font-size:.95rem; color:var(--head)}
+  .callout p{margin:0; color:var(--ink-soft); font-size:.92rem}
+  .callout.warn{border-inline-start-color:var(--req)}
+
+  /* ---------- layout ---------- */
+  .cols{display:grid; grid-template-columns:1fr; gap:2rem}
+  @media (min-width:940px){ .cols{grid-template-columns:230px 1fr; gap:2.75rem; align-items:start} }
+
+  nav.index{position:sticky; top:1.25rem; align-self:start}
+  nav.index h2{
+    font-size:.7rem; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--ink-faint); margin:0 0 .75rem; font-weight:700
+  }
+  nav.index ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:1px}
+  nav.index a{
+    display:flex; gap:.6rem; align-items:baseline; padding:.45rem .55rem;
+    color:var(--ink-soft); text-decoration:none; font-size:.88rem; border-radius:3px;
+    transition:background .15s, color .15s
+  }
+  nav.index a:hover,nav.index a:focus-visible{background:var(--note-bg); color:var(--head)}
+  nav.index a:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  nav.index .n{
+    font-size:.72rem; font-weight:700; color:var(--accent);
+    min-width:1.15rem; font-variant-numeric:tabular-nums
+  }
+
+  /* ---------- sections ---------- */
+  section{margin-bottom:3rem; scroll-margin-top:1.5rem}
+  .sec-head{display:flex; gap:.85rem; align-items:baseline; margin-bottom:.35rem}
+  .sec-num{
+    font-size:.78rem; font-weight:700; color:var(--accent);
+    border:1px solid var(--rule); border-radius:3px; padding:.1rem .45rem;
+    background:var(--panel); flex-shrink:0
+  }
+  h2.sec{font-size:1.28rem; color:var(--head); margin:0; font-weight:700; letter-spacing:-.01em}
+  .sec-note{color:var(--ink-soft); font-size:.9rem; margin:0 0 1.35rem; max-width:66ch}
+
+  /* ---------- field entries ---------- */
+  .fields{display:flex; flex-direction:column; gap:.6rem}
+  .f{
+    background:var(--panel); border:1px solid var(--rule); border-radius:5px;
+    padding:.95rem 1.1rem; box-shadow:var(--shadow)
+  }
+  .f-top{display:flex; flex-wrap:wrap; gap:.5rem .85rem; align-items:baseline; margin-bottom:.5rem}
+  .f-ar{font-weight:700; color:var(--head); font-size:1rem}
+  .f-en{font-size:.78rem; color:var(--ink-faint); font-weight:600}
+  .f dl{margin:0; display:grid; grid-template-columns:auto 1fr; gap:.3rem .8rem; font-size:.9rem}
+  @media (max-width:560px){ .f dl{grid-template-columns:1fr; gap:.1rem} .f dd{margin-bottom:.5rem} }
+  .f dt{
+    color:var(--ink-faint); font-size:.72rem; font-weight:700;
+    letter-spacing:.06em; text-transform:uppercase; padding-top:.28rem; white-space:nowrap
+  }
+  .f dd{margin:0; color:var(--ink-soft)}
+  .f dd b{color:var(--ink); font-weight:600}
+
+  /* ---------- chips ---------- */
+  .chip{
+    display:inline-block; font-size:.68rem; font-weight:700; padding:.14rem .5rem;
+    border-radius:3px; letter-spacing:.02em; white-space:nowrap; margin-inline-start:auto
+  }
+  .c-req{background:var(--req-bg); color:var(--req)}
+  .c-money{background:var(--money-bg); color:var(--money)}
+  .c-filter{background:var(--filter-bg); color:var(--filter)}
+  .c-note{background:var(--note-bg); color:var(--note)}
+
+  .legend{display:flex; flex-wrap:wrap; gap:.75rem; margin:1.1rem 0 0}
+  .legend div{display:flex; gap:.45rem; align-items:center; font-size:.82rem; color:var(--ink-soft)}
+
+  /* ---------- tables ---------- */
+  .scroll{overflow-x:auto; margin:1rem 0; border:1px solid var(--rule); border-radius:5px; background:var(--panel)}
+  table{border-collapse:collapse; width:100%; min-width:560px; font-size:.86rem}
+  th,td{padding:.6rem .8rem; text-align:start; border-bottom:1px solid var(--rule); vertical-align:top}
+  th{
+    background:var(--note-bg); color:var(--head); font-weight:700;
+    font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; white-space:nowrap
+  }
+  tr:last-child td{border-bottom:none}
+  td b{color:var(--ink)}
+  .num{font-variant-numeric:tabular-nums; white-space:nowrap}
+
+  a.src{color:var(--accent-strong); text-decoration:none; border-bottom:1px solid var(--rule)}
+  a.src:hover{border-bottom-color:var(--accent-strong)}
+  a.src:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+  code{
+    font-family:ui-monospace,"Cascadia Mono",Consolas,monospace; font-size:.85em;
+    background:var(--note-bg); padding:.08rem .3rem; border-radius:3px; color:var(--head)
+  }
+  hr{border:none; border-top:1px solid var(--rule); margin:2.5rem 0}
+  footer{margin-top:3rem; padding-top:1.5rem; border-top:2px solid var(--rule); color:var(--ink-faint); font-size:.82rem}
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">وصل العقارية · دليل تشغيلي</p>
+    <h1>دليل حقول حاسبة التمويل العقاري</h1>
+    <p class="sub">
+      ما معنى كل حقل، وماذا يفعل بالنتيجة، ومن أين نأخذ المعلومة.
+      الحاسبة تعطي <b>تقديرًا استرشاديًا</b> — وليست موافقة تمويلية، ولا يمكنها أن تكون كذلك.
+    </p>
+    <div class="meta">
+      <span><b>٤٧</b> حقلًا في <b>٦</b> خطوات</span>
+      <span><b>المصدر النظامي:</b> البنك المركزي السعودي · هيئة الزكاة والضريبة · مواقع البنوك الرسمية</span>
+      <span><b>آخر تحديث:</b> ٢٩ يوليو ٢٠٢٦</span>
+    </div>
+  </header>
+
+  <div class="callout warn">
+    <h3>القاعدة الأهم قبل أي شيء</h3>
+    <p>
+      حقل واحد فقط <b>لا بد</b> من تعبئته لتخرج نتيجة: <b>الراتب الأساسي</b>.
+      وإن أردت قسطًا لعقار محدد، أضف <b>سعر العقار</b>.
+      كل ما تبقى يجعل التقدير أدق أو يحدد أي البنوك تظهر — لكنه لا يمنع ظهور النتيجة.
+      لذا لا تتوقف عند حقل لا تعرف إجابته: اتركه فارغًا، والنظام سيقول لك صراحةً إن نقصه أثّر على الدقة.
+    </p>
+  </div>
+
+  <div class="callout">
+    <h3>كيف تقرأ هذا الدليل</h3>
+    <p>كل حقل يحمل شارة تخبرك بأثره الفعلي على النتيجة:</p>
+    <div class="legend">
+      <div><span class="chip c-req">مطلوب</span> بدونه لا تخرج نتيجة</div>
+      <div><span class="chip c-money">يغيّر الرقم</span> يؤثر مباشرة على القسط أو المبلغ</div>
+      <div><span class="chip c-filter">يرشّح البنوك</span> يحدد أي المنتجات تظهر</div>
+      <div><span class="chip c-note">للسجل</span> لا يدخل في أي حساب</div>
+    </div>
+  </div>
+
+  <div class="cols">
+
+    <nav class="index" aria-label="فهرس الخطوات">
+      <h2>الخطوات</h2>
+      <ol>
+        <li><a href="#s0"><span class="n">٠</span> كيف تعمل الحاسبة</a></li>
+        <li><a href="#s1"><span class="n">١</span> بيانات العميل</a></li>
+        <li><a href="#s2"><span class="n">٢</span> الدخل</a></li>
+        <li><a href="#s3"><span class="n">٣</span> الالتزامات</a></li>
+        <li><a href="#s4"><span class="n">٤</span> الدعم والمسكن الأول</a></li>
+        <li><a href="#s5"><span class="n">٥</span> العقار</a></li>
+        <li><a href="#s6"><span class="n">٦</span> تفضيلات التمويل</a></li>
+        <li><a href="#src"><span class="n">◆</span> مصادر المعلومات</a></li>
+        <li><a href="#read"><span class="n">◆</span> قراءة النتيجة</a></li>
+      </ol>
+    </nav>
+
+    <main>
+
+      <!-- ================= 0 ================= -->
+      <section id="s0">
+        <div class="sec-head"><span class="sec-num">٠</span><h2 class="sec">كيف تعمل الحاسبة</h2></div>
+        <p class="sec-note">
+          النظام يمر بأربع مراحل بالترتيب. فهمها يجعل معنى كل حقل واضحًا تلقائيًا.
+        </p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>المرحلة</th><th>ماذا يحدث</th><th>الحقول التي تغذيها</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><b>١. الدخل المؤهل</b></td>
+                <td>يحسب الدخل الذي <b>يسمح النظام باحتسابه</b> — وهو غالبًا أقل مما يقوله العميل.</td>
+                <td>خطوة ٢ كاملة</td>
+              </tr>
+              <tr>
+                <td><b>٢. الالتزامات</b></td>
+                <td>يحسب ما هو مشغول شهريًا من دخله فعلًا، بقواعد البنك المركزي لا بما يدفعه العميل.</td>
+                <td>خطوة ٣ كاملة</td>
+              </tr>
+              <tr>
+                <td><b>٣. السقوف</b></td>
+                <td>يطبّق أربعة سقوف منفصلة ويأخذ <b>أشدها</b> ← أقصى قسط شهري.</td>
+                <td>خطوات ١، ٢، ٣، ٦</td>
+              </tr>
+              <tr>
+                <td><b>٤. المنتجات</b></td>
+                <td>يحوّل القسط إلى مبلغ تمويل، يطبّق سقف نسبة التمويل، ثم يقارن بنوكًا يطابق العميل شروطها المنشورة.</td>
+                <td>خطوات ١، ٤، ٥، ٦</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout">
+          <h3>لماذا يظهر أحيانًا "بيانات المنتج غير متوفرة"؟</h3>
+          <p>
+            لأن أغلب البنوك السعودية <b>لا تنشر أسعار الربح التعاقدية علنًا</b>.
+            من ٢١ منتجًا مسجلًا لدينا، ٤ فقط تنشر أي سعر، وواحد منها فقط سعر تعاقدي دقيق.
+            حين لا يوجد سعر منشور، النظام <b>يرفض</b> أن يعطي قسطًا — لأن اشتقاق قسط من رقم تسويقي
+            يعطي دقة زائفة تُحرج الموظف أمام العميل. المنتج يظهر، لكن بلا رقم، مع طلب عرض سعر من البنك.
+          </p>
+        </div>
+      </section>
+
+      <!-- ================= 1 ================= -->
+      <section id="s1">
+        <div class="sec-head"><span class="sec-num">١</span><h2 class="sec">بيانات العميل</h2></div>
+        <p class="sec-note">
+          هذه الخطوة تحدد بشكل رئيسي <b>أي البنوك تقبل هذا العميل أصلًا</b>، وتؤثر على سقفين مهمين:
+          نسبة التمويل إلى قيمة العقار، ونسبة الاستقطاع من الراتب.
+          يمكن إضافة <b>مقترض مشارك</b> بنفس الحقول.
+        </p>
+        <div class="fields">
+
+          <div class="f"><div class="f-top"><span class="f-ar">عنوان السيناريو</span><span class="f-en en">Scenario title</span><span class="chip c-note">للسجل</span></div>
+          <dl><dt>ما هو</dt><dd>اسم تكتبه أنت لتجد الحساب لاحقًا.</dd>
+          <dt>اكتب</dt><dd>وصفًا يميّزه، مثل «شقة الياسمين — ٢٠ سنة» أو «مقارنة ٢٥ مقابل ٣٠ سنة».</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">الجنسية</span><span class="f-en en">Nationality</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>ما هو</dt><dd>مواطن سعودي أم مقيم.</dd>
+          <dt>أثره</dt><dd><b>كبير جدًا.</b> سقف تمويل المسكن الأول ٩٠٪ <b>للمواطنين فقط</b>. المقيم ينزل إلى ٧٠٪ لدى البنوك — أي دفعة أولى تقفز من ١٠٪ إلى ٣٠٪. كما أن منتجات كاملة (مثل «قوة العقار» و«شراء المديونية» من الراجحي) مخصصة للسعوديين فقط.</dd>
+          <dt>لا تعرف؟</dt><dd>اتركه «غير محدد» — النظام يطبّق السقف الأقل تحفظًا وينبّهك.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">تاريخ الميلاد</span><span class="f-en en">Date of birth</span><span class="chip c-filter">يرشّح البنوك</span></div>
+          <dl><dt>ما هو</dt><dd>تاريخ ميلاد العميل.</dd>
+          <dt>أثره</dt><dd>يُستخدم لحدّين: أقل عمر للتقديم (١٨ عادة)، و<b>العمر عند نهاية التمويل</b> (٧٠ عادة). عميل عمره ٤٥ يطلب ٣٠ سنة سينتهي تمويله وعمره ٧٥ ← يُستبعد من أغلب المنتجات. هنا يظهر أثر تقصير المدة.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">مدينة الإقامة</span><span class="f-en en">City of residence</span><span class="chip c-note">للسجل</span></div>
+          <dl><dt>أثره</dt><dd>لا شيء حاليًا — لا يوجد بنك ينشر شرطًا يعتمد على مدينة السكن. يُحفظ للسياق فقط.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">نوع التوظيف</span><span class="f-en en">Employment type</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>الخيارات</dt><dd>موظف · عسكري · متقاعد · عمل حر · صاحب عمل</dd>
+          <dt>أثره</dt><dd><b>المتقاعد يختلف جوهريًا:</b> سقف الاستقطاع ينزل من ٣٣٫٣٣٪ إلى <b>٢٥٪</b> من المعاش. أي متقاعد براتب ١٠٬٠٠٠ قدرته ٢٬٥٠٠ لا ٣٬٣٣٣. <br><b>العسكري:</b> منتج البلاد العسكري يمتد حتى سن ٧٠ بدل تاريخ التقاعد حسب الرتبة.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">قطاع جهة العمل</span><span class="f-en en">Employer sector</span><span class="chip c-filter">يرشّح البنوك</span></div>
+          <dl><dt>الخيارات</dt><dd>حكومي · شبه حكومي · عسكري · قطاع خاص</dd>
+          <dt>أثره</dt><dd>يُستبعد المنتج إذا نشر البنك قائمة قطاعات ولم يكن قطاع العميل ضمنها.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">جهة العمل</span><span class="f-en en">Employer name</span><span class="chip c-note">للسجل</span></div>
+          <dl><dt>أثره</dt><dd>لا شيء حسابيًا. <b>مهم أن تعرف:</b> قوائم جهات العمل المعتمدة لدى البنوك <b>غير منشورة</b>، فلا يمكن للنظام التحقق منها. أي منتج يشترط جهة عمل معتمدة يظهر دائمًا بحالة «يتطلب مراجعة البنك».</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">مدة الخدمة (بالأشهر)</span><span class="f-en en">Length of service</span><span class="chip c-filter">يرشّح البنوك</span></div>
+          <dl><dt>ما هو</dt><dd>كم شهرًا أمضاه العميل لدى جهة عمله الحالية.</dd>
+          <dt>أثره</dt><dd>الراجحي يشترط ٣ أشهر كحد أدنى في منتجاته المنشورة. موظف جديد قد يُستبعد.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">بنك تحويل الراتب الحالي</span><span class="f-en en">Current salary-transfer bank</span><span class="chip c-note">للسجل</span></div>
+          <dl><dt>أثره</dt><dd>سياق مفيد للمفاوضة، لكنه لا يدخل الحساب.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">هل يوافق على تحويل الراتب؟</span><span class="f-en en">Willing to transfer salary?</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd><b>يبدّل عتبة الراتب المطلوبة.</b> مثال حقيقي من الراجحي: الحد الأدنى <b>٧٬٠٠٠</b> مع تحويل الراتب و<b>١٠٬٠٠٠</b> بدونه. إجابة «لا» قد تُخرج العميل من منتج كان مؤهلًا له.</dd>
+          <dt>نصيحة</dt><dd>اسأل صراحةً؛ كثير من العملاء يوافقون إذا عرفوا أن الرفض يكلفهم خيارات.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">تاريخ التقاعد</span><span class="f-en en">Retirement date</span><span class="chip c-note">للسجل</span></div>
+          <dl><dt>يظهر</dt><dd>فقط عند اختيار «متقاعد».</dd><dt>أثره</dt><dd>سياق للمراجعة البنكية.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">الرتبة العسكرية</span><span class="f-en en">Military rank</span><span class="chip c-note">للسجل</span></div>
+          <dl><dt>يظهر</dt><dd>فقط عند اختيار «عسكري».</dd>
+          <dt>لماذا نسأل</dt><dd>سن التقاعد العسكري مرتبط بالرتبة، والبنك يحتاجه لتحديد أقصى مدة.</dd></dl></div>
+
+        </div>
+        <div class="callout">
+          <h3>المقترض المشارك</h3>
+          <p>
+            دخله <b>يُضاف</b> إلى الدخل المؤهل، لكنه <b>لا يُضاف</b> إلى قاعدة راتب المتقدم الرئيسي
+            التي يُحسب عليها سقف الاستقطاع (٣٣٫٣٣٪). لذا إضافته ترفع القدرة، لكن ليس بنفس نسبة رفع الراتب.
+          </p>
+        </div>
+      </section>
+
+      <!-- ================= 2 ================= -->
+      <section id="s2">
+        <div class="sec-head"><span class="sec-num">٢</span><h2 class="sec">الدخل</h2></div>
+        <p class="sec-note">
+          أهم خطوة على الإطلاق. النظام يفرّق بين <b>ثلاثة أرقام مختلفة</b> ويعرضها كلها،
+          لأن دمجها هو ما يجعل الموظف يعد العميل بقدرة لن يعترف بها البنك.
+        </p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>الرقم</th><th>معناه</th><th>مثال</th></tr></thead>
+            <tbody>
+              <tr><td><b>المُقر</b></td><td>ما قاله العميل شفويًا</td><td class="num">٢٤٬٠٠٠</td></tr>
+              <tr><td><b>الموثق</b></td><td>ما يثبته مستند فعلي</td><td class="num">٢٠٬٠٠٠</td></tr>
+              <tr><td><b>المؤهل نظاميًا</b></td><td>ما يسمح البنك المركزي باحتسابه</td><td class="num">٢٢٬٠٠٠</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="sec-note">يمكنك إضافة أي عدد من مصادر الدخل. لكل مصدر خمسة حقول:</p>
+        <div class="fields">
+
+          <div class="f"><div class="f-top"><span class="f-ar">النوع</span><span class="f-en en">Income type</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>هو ما يحدد <b>نسبة الاحتساب</b>، وهذا أهم ما في الخطوة:</dd></dl>
+          <div class="scroll" style="margin-top:.7rem">
+            <table>
+              <thead><tr><th>النوع</th><th>يُحتسب</th><th>السبب النظامي</th></tr></thead>
+              <tbody>
+                <tr><td>الراتب الأساسي · بدل السكن · بدلات أخرى</td><td><b>١٠٠٪</b></td><td>مادة ١٤(أ)</td></tr>
+                <tr><td>معاش · عمولات · مكافآت · إيجارات · استثمارات · دخل تجاري · دخل متكرر آخر</td><td><b>٥٠٪</b></td><td>مادة ١٤(ب)</td></tr>
+                <tr><td>دعم حكومي</td><td><b>صفر</b> — إلا دعم سكني/صندوق التنمية في تمويل عقاري فيُحتسب ١٠٠٪</td><td>مادة ١٤(ج)</td></tr>
+              </tbody>
+            </table>
+          </div></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">المبلغ المُقر</span><span class="f-en en">Declared amount</span><span class="chip c-req">مطلوب</span></div>
+          <dl><dt>ما هو</dt><dd>الرقم الذي ذكره العميل.</dd>
+          <dt>أثره</dt><dd>الراتب الأساسي هو <b>الحقل الوحيد الذي بدونه لا تخرج نتيجة</b>.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">المبلغ الموثق</span><span class="f-en en">Verified amount</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>ما هو</dt><dd>الرقم الذي يثبته مستند بين يديك.</dd>
+          <dt>أثره</dt><dd>إن تُرك فارغًا، يُستخدم المُقر ويوسم التقدير بأنه <b>معتمد على إقرار العميل</b>. وهذا ما ستقوله للعميل بصراحة.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">التوثيق</span><span class="f-en en">Documentation</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>الخيارات</dt><dd>غير موثق · إقرار العميل · مسير راتب · كشف حساب بنكي · خطاب تعريف · التأمينات · عقد · أخرى</dd>
+          <dt>أثره</dt><dd><b>حاسم للدخل غير الراتبي.</b> الدخل الإضافي غير الموثق يُحتسب <b>صفرًا</b> — لا ٥٠٪. لأن النظام يشترط ما يثبت استمراريته لمدة سنتين على الأقل. أي إيجار بلا كشف حساب لن يضيف ريالًا واحدًا.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">التكرار</span><span class="f-en en">Frequency</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>الخيارات</dt><dd>شهري · ربع سنوي · نصف سنوي · سنوي · غير منتظم</dd>
+          <dt>أثره</dt><dd>يحوّل المبلغ إلى شهري تلقائيًا. مكافأة سنوية ١٢٠٬٠٠٠ تصبح ١٠٬٠٠٠ شهريًا ثم تُحتسب ٥٠٪ ← ٥٬٠٠٠.</dd>
+          <dt>انتبه</dt><dd>لا تُدخل مبلغًا سنويًا وتتركه «شهري» — سيضاعف القدرة اثني عشر ضعفًا.</dd></dl></div>
+
+        </div>
+      </section>
+
+      <!-- ================= 3 ================= -->
+      <section id="s3">
+        <div class="sec-head"><span class="sec-num">٣</span><h2 class="sec">الالتزامات</h2></div>
+        <p class="sec-note">
+          كل التزام قائم يأكل من قدرة العميل. القاعدة النظامية هنا تفاجئ أغلب الموظفين،
+          خصوصًا في البطاقات الائتمانية.
+        </p>
+        <div class="callout warn">
+          <h3>البطاقة الائتمانية: أدخل حد البطاقة لا الرصيد</h3>
+          <p>
+            البنك المركزي يحتسب البطاقة كنسبة من <b>حد البطاقة</b> وليس من المستخدم منها.
+            عميل لديه بطاقة بحد <b>٥٠٬٠٠٠</b> ورصيدها <b>صفر</b> يحمل التزامًا شهريًا قدره <b>٢٬٥٠٠</b>.
+            هذا وحده قد يخفض قدرته بمئات الآلاف من مبلغ التمويل — وهو أكثر سبب لتفاجؤ العملاء بالرفض.
+          </p>
+        </div>
+        <div class="fields">
+
+          <div class="f"><div class="f-top"><span class="f-ar">النوع</span><span class="f-en en">Obligation type</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>الخيارات</dt><dd>تمويل شخصي · تمويل عقاري قائم · تمويل سيارة · تأجير سيارة · بطاقة ائتمانية · اشترِ الآن وادفع لاحقًا · قرض من جهة العمل · صندوق تنمية · تمويل دراسي · كفالة · نفقة · أخرى</dd>
+          <dt>أثره</dt><dd>يحدد طريقة الاحتساب، ويحدد أي سقف يُحتسب عليه (عقاري أم غير عقاري). <b>لا تنسَ الكفالات</b> — كفالة قرض شخص آخر التزام على العميل.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">الجهة</span><span class="f-en en">Provider</span><span class="chip c-note">للسجل</span></div>
+          <dl><dt>أثره</dt><dd>اسم البنك أو الجهة الدائنة. للسياق فقط.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">حد البطاقة</span><span class="f-en en">Card limit</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>يظهر</dt><dd>فقط عند اختيار «بطاقة ائتمانية».</dd>
+          <dt>أثره</dt><dd>يُحتسب <b>٥٪ من الحد</b> التزامًا شهريًا، بغض النظر عن الرصيد.</dd>
+          <dt>لا تعرف الحد؟</dt><dd>النظام يقبل قسطًا بديلًا، لكنه ينبّه أن الرقم قد يكون أقل من الواقع النظامي.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">القسط الشهري</span><span class="f-en en">Monthly payment</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>يظهر</dt><dd>لكل الأنواع عدا البطاقة الائتمانية.</dd>
+          <dt>أثره</dt><dd>يُخصم مباشرة من القدرة الشهرية.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">تاريخ الانتهاء</span><span class="f-en en">End date</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>حقل ذكي ومفيد جدًا في البيع:
+            إن كان <b>قبل</b> بدء التمويل ← يُستبعد من الحساب (مع إظهار سبب الاستبعاد).
+            إن كان <b>بعده</b> ← يُحتسب اليوم، <b>ويُنتج النظام سيناريو ثانيًا</b> يبيّن قدرة العميل بعد انتهائه.</dd>
+          <dt>استخدمه</dt><dd>«قدرتك اليوم ٢٬٢٠٠، وبعد انتهاء قسط سيارتك في ٢٠٢٨ ترتفع إلى ٤٬٠٠٠» — رسالة بيعية قوية وصادقة.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">سيُسدد قبل التمويل</span><span class="f-en en">Settled before financing</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>يستبعد الالتزام من حساب اليوم.</dd>
+          <dt>تحذير</dt><dd>لا تؤشّره إلا إذا كان العميل <b>جادًا وقادرًا</b> على السداد فعلًا. تأشيره يرفع القدرة على الورق، والبنك سيكتشف الحقيقة في سجل سمة.</dd></dl></div>
+
+        </div>
+      </section>
+
+      <!-- ================= 4 ================= -->
+      <section id="s4">
+        <div class="sec-head"><span class="sec-num">٤</span><h2 class="sec">الدعم والمسكن الأول</h2></div>
+        <p class="sec-note">
+          أقصر خطوة، وأكبر أثر على الرقم النهائي. حقل واحد هنا («المسكن الأول»)
+          قد يغيّر الدفعة الأولى بمئات الآلاف.
+        </p>
+        <div class="fields">
+
+          <div class="f"><div class="f-top"><span class="f-ar">هل هو المسكن الأول؟</span><span class="f-en en">Is this the first home?</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd><b>الأكبر في النظام كله، ومن جهتين:</b><br>
+            ١. سقف التمويل يرتفع من <b>٧٠٪ إلى ٩٠٪</b> (للمواطنين). على عقار بمليون ريال: الدفعة الأولى تنزل من ٣٠٠٬٠٠٠ إلى ١٠٠٬٠٠٠.<br>
+            ٢. الدولة تتحمل ضريبة التصرفات العقارية (٥٪) حتى مليون ريال ← توفير يصل إلى <b>٥٠٬٠٠٠</b> نقدًا.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">مؤهل لدعم سكني؟</span><span class="f-en en">Eligible for Sakani?</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>المستفيد من الدعم يحصل على سقف التزامات <b>٦٥٪</b> بدل ٥٥٪ في شريحة الدخل الأدنى — أي قدرة أعلى.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">مؤهل لصندوق التنمية العقارية؟</span><span class="f-en en">Eligible for REDF?</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>مثل سابقه، <b>بالإضافة</b> إلى أنه يسمح باحتساب الدعم السكني ضمن الدخل (وهو استثناء نظامي صريح لتمويل العقار فقط).</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">حالة الدعم</span><span class="f-en en">Support status</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>الخيارات</dt><dd>غير معروف · إقرار العميل · <b>مؤكد بشهادة</b> · غير مؤهل</dd>
+          <dt>أثره</dt><dd>«مؤكد» تعني أنك <b>اطلعت على شهادة الأهلية بنفسك</b>. أي خيار آخر يجعل النظام يوسم النتيجة بأنها تعتمد على دعم غير مؤكد.</dd>
+          <dt>لا تجامل</dt><dd>لا تختر «مؤكد» لأن العميل قال ذلك — اختر «إقرار العميل».</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">نوع التمويل</span><span class="f-en en">Financing kind</span><span class="chip c-filter">يرشّح البنوك</span></div>
+          <dl><dt>الخيارات</dt><dd>مدعوم · غير مدعوم · غير محدد</dd>
+          <dt>أثره</dt><dd>بعض المنتجات للمدعومين فقط، وبعضها لغير المدعومين فقط (مثل «التمويل المرن» من الراجحي).</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">سبق استخدام إعفاء ضريبة المسكن الأول؟</span><span class="f-en en">Already used first-home tax relief?</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>إجابة «نعم» تُلغي إعفاء الـ٥٪ ← العميل يحتاج حتى <b>٥٠٬٠٠٠ ريال نقدًا إضافية</b>. لا تتجاهل هذا الحقل.</dd></dl></div>
+
+        </div>
+      </section>
+
+      <!-- ================= 5 ================= -->
+      <section id="s5">
+        <div class="sec-head"><span class="sec-num">٥</span><h2 class="sec">العقار</h2></div>
+        <p class="sec-note">
+          اترك هذه الخطوة فارغة إن كنت تريد معرفة <b>قدرة العميل فقط</b>؛
+          املأها إن أردت قسطًا لعقار محدد.
+        </p>
+        <div class="fields">
+
+          <div class="f"><div class="f-top"><span class="f-ar">سعر العقار</span><span class="f-en en">Property price</span><span class="chip c-req">مطلوب للقسط</span></div>
+          <dl><dt>أثره</dt><dd>بدونه تحصل على أقصى قدرة وأقصى قيمة عقار فقط، بلا قسط لعقار بعينه.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">نوع العقار</span><span class="f-en en">Property type</span><span class="chip c-filter">يرشّح البنوك</span></div>
+          <dl><dt>الخيارات</dt><dd>شقة · فيلا · تاون هاوس · دبلكس · دور · أرض</dd>
+          <dt>أثره</dt><dd>يُستبعد المنتج إن نشر البنك قائمة أنواع لا تشمل نوع العقار.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">حالة العقار</span><span class="f-en en">Property status</span><span class="chip c-filter">يرشّح البنوك</span></div>
+          <dl><dt>الخيارات</dt><dd>جاهز · على الخارطة · بناء ذاتي · أرض وبناء · إعادة تمويل</dd>
+          <dt>أثره</dt><dd><b>مهم.</b> هذه منتجات مختلفة تمامًا لدى البنوك، بشروط وأسعار مختلفة. اختيار «جاهز» لعقار على الخارطة يعطيك مقارنة خاطئة.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">المدينة</span><span class="f-en en">City</span><span class="chip c-note">للسجل</span></div>
+          <dl><dt>أثره</dt><dd>لا شيء حسابيًا حاليًا.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">الحي</span><span class="f-en en">District</span><span class="chip c-note">للسجل</span></div>
+          <dl><dt>أثره</dt><dd>لا شيء حسابيًا حاليًا.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">النقد المتاح لدى العميل</span><span class="f-en en">Available cash</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>يحدد أقصى قيمة عقار يستطيع شراءه فعلًا، ويكشف <b>العجز النقدي</b> إن كان ما لديه أقل مما يحتاجه يوم الإفراغ.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">الدفعة الأولى المرغوبة</span><span class="f-en en">Desired down payment</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>دفعة أكبر ← تمويل أقل ← قسط أقل. اتركه فارغًا ليستخدم النظام أقل دفعة يسمح بها السقف النظامي.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">التقييم المتوقع</span><span class="f-en en">Expected valuation</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>ما هو</dt><dd>تقديرك لقيمة العقار في نظر <b>مقيّم البنك</b>، إن اختلفت عن سعر البيع.</dd>
+          <dt>أثره</dt><dd><b>أكثر مفاجأة نقدية شيوعًا.</b> البنك يموّل على تقييمه لا على سعر البيع. عقار بيع بمليون وقُيّم بـ٩٥٠٬٠٠٠ ← على العميل تدبير <b>٥٠٬٠٠٠ إضافية نقدًا</b> فوق الدفعة الأولى.</dd>
+          <dt>لا تعرف؟</dt><dd>اتركه فارغًا؛ النظام يفترض التقييم مساويًا لسعر البيع.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">مصاريف إضافية</span><span class="f-en en">Additional expenses</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>تُضاف إلى النقد المطلوب مقدمًا (سعي، رسوم مكتب، نقل، أي مصروف يعرفه العميل).</dd></dl></div>
+
+        </div>
+      </section>
+
+      <!-- ================= 6 ================= -->
+      <section id="s6">
+        <div class="sec-head"><span class="sec-num">٦</span><h2 class="sec">تفضيلات التمويل</h2></div>
+        <p class="sec-note">ما يريده العميل — وبعضه يصبح قيدًا حاكمًا على النتيجة.</p>
+        <div class="fields">
+
+          <div class="f"><div class="f-top"><span class="f-ar">المدة المفضلة (بالأشهر)</span><span class="f-en en">Preferred term</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>المدة الأطول تخفض القسط وترفع التكلفة الإجمالية. الافتراضي ٢٤٠ شهرًا (٢٠ سنة). أقصى المنشور ٣٦٠ شهرًا.</dd>
+          <dt>تذكّر</dt><dd>المدة الطويلة قد تصطدم بحد «العمر عند نهاية التمويل».</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">نوع السعر</span><span class="f-en en">Rate type</span><span class="chip c-note">تفضيل</span></div>
+          <dl><dt>الخيارات</dt><dd>ثابت · متغير · لا تفضيل</dd>
+          <dt>أثره</dt><dd>المنتج المتغير يُسعّر بالمؤشر + هامش البنك، ويعرض له النظام <b>سيناريوهات حساسية</b> عند ارتفاع المؤشر ١ و٢ و٣ نقاط.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">الصيغة الشرعية</span><span class="f-en en">Islamic structure</span><span class="chip c-note">تفضيل</span></div>
+          <dl><dt>الخيارات</dt><dd>مرابحة · إجارة · غير متأكد</dd>
+          <dt>أثره</dt><dd>تفضيل يُسجَّل ويُستخدم في الترشيح عند توفر البيانات.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">أقصى قسط مقبول</span><span class="f-en en">Max acceptable installment</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>يصبح <b>سقفًا خامسًا</b> إلى جانب السقوف النظامية، وقد يكون هو <b>القيد الحاكم</b>. مفيد جدًا حين يقول العميل «لا أريد قسطًا يتجاوز ٤٬٠٠٠».</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">الأولوية</span><span class="f-en en">Priority</span><span class="chip c-note">ترتيب</span></div>
+          <dl><dt>الخيارات</dt><dd>أقل قسط شهري · أقل تكلفة إجمالية · أقل نقد مقدم · أقصر مدة</dd>
+          <dt>أثره</dt><dd>يغيّر <b>ترتيب</b> جدول المقارنة لا الأرقام. ملاحظة: النظام يقدّم دائمًا المنتج <b>الأوثق بيانات</b> على الأرخص — حتى لا يتصدر الجدول رقم غير موثوق.</dd></dl></div>
+
+          <div class="f"><div class="f-top"><span class="f-ar">تاريخ بدء التمويل المخطط</span><span class="f-en en">Planned financing start</span><span class="chip c-money">يغيّر الرقم</span></div>
+          <dl><dt>أثره</dt><dd>يحدد أي الالتزامات ستكون قد انتهت عند البدء، ويضبط تواريخ جدول السداد.</dd></dl></div>
+
+        </div>
+      </section>
+
+      <hr>
+
+      <!-- ================= SOURCES ================= -->
+      <section id="src">
+        <div class="sec-head"><span class="sec-num">◆</span><h2 class="sec">من أين تأتي الأرقام</h2></div>
+        <p class="sec-note">
+          لا يوجد رقم واحد في هذا النظام كُتب من الذاكرة أو من موقع وسيط.
+          كل قاعدة مخزّنة مع <b>النص الحرفي</b> من الصفحة الرسمية التي تنص عليها،
+          والنظام يعيد التحقق من وجود ذلك النص قبل استخدام الرقم.
+        </p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>القاعدة</th><th>القيمة</th><th>المصدر الرسمي</th></tr></thead>
+            <tbody>
+              <tr><td>نسبة الاستقطاع من الراتب</td><td class="num">٣٣٫٣٣٪ للموظف · ٢٥٪ للمتقاعد</td><td>مبادئ الإقراض المسؤول، الفصل الرابع، المواد ١٥–١٧ — <a class="src" href="https://rulebook.sama.gov.sa/en/chapter-iv-quantitative-principles-responsible-lending" target="_blank" rel="noreferrer">البنك المركزي</a></td></tr>
+              <tr><td>سقف إجمالي الالتزامات</td><td class="num">٥٥٪ / ٦٥٪ للمدعومين</td><td>المادة ١٥(ج) — تعميم ٤٦٥٣٨٠٠٠٠٠٩٩</td></tr>
+              <tr><td>سقف الالتزامات غير العقارية</td><td class="num">٤٥٪</td><td>المادتان ١٥(ب) و١٦(ب)</td></tr>
+              <tr><td>الدخل ٢٥٬٠٠٠ فأكثر</td><td>يخضع للسياسة الائتمانية للبنك</td><td>المادة ١٧(ب) — لذا يظهر «يتطلب مراجعة البنك»</td></tr>
+              <tr><td>احتساب البطاقة الائتمانية</td><td>الحد الأدنى للسداد من <b>حد البطاقة</b></td><td>المادة ١٣(أ)</td></tr>
+              <tr><td>احتساب الدخل</td><td class="num">راتب ١٠٠٪ · دخل آخر ٥٠٪</td><td>المادة ١٤(أ) و(ب)</td></tr>
+              <tr><td>سقف تمويل المسكن الأول</td><td class="num">٩٠٪ للمواطنين</td><td>تعميم ٣٩١٠٠٠٠٤٨٣٦٢ (٢٧/٤/١٤٣٩هـ) — <a class="src" href="https://rulebook.sama.gov.sa/en/increase-maximum-mortgage-citizens-own-first-home" target="_blank" rel="noreferrer">البنك المركزي</a></td></tr>
+              <tr><td>سقف المسكن الثاني</td><td class="num">٧٠٪ للبنوك · ٨٥٪ لشركات التمويل</td><td>التعميم نفسه + تعميم ٣٧١٠٠٠٠٦٤٠٨٧</td></tr>
+              <tr><td>سقف الرسوم الإدارية</td><td class="num">١٪ أو ٥٬٠٠٠ ريال، أيهما أقل</td><td>لائحة التمويل الاستهلاكي، المادة ٩</td></tr>
+              <tr><td>احتساب معدل النسبة السنوية</td><td>التدفقات النقدية المخصومة</td><td>تعميم ٤٥٠٢٥٧٠٧ (١٧/٤/١٤٤٥هـ)</td></tr>
+              <tr><td>ضريبة التصرفات العقارية</td><td class="num">٥٪ · إعفاء المسكن الأول حتى مليون</td><td>هيئة الزكاة والضريبة والجمارك</td></tr>
+              <tr><td>بيانات المنتجات والشروط</td><td>٢١ منتجًا من ٦ جهات</td><td>المواقع الرسمية للبنوك مباشرة</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout warn">
+          <h3>ما لا نملكه — وقُل ذلك للعميل بصراحة</h3>
+          <p>
+            <b>سجل سمة:</b> لا وصول لنا إليه؛ الالتزامات كما ذكرها العميل.<br>
+            <b>اعتماد البنك للمشاريع:</b> غير منشور، لذا لا تقل أبدًا «البنك يموّل هذا المشروع».<br>
+            <b>جهات العمل المعتمدة:</b> غير منشورة.<br>
+            <b>أسعار الربح:</b> أغلب البنوك لا تنشرها؛ الرقم النهائي يحتاج عرضًا من البنك.<br>
+            <b>مبالغ دعم سكني/الصندوق:</b> لم نتمكن من جمعها من مصدر رسمي، فهي فارغة عمدًا — لا تذكر مبلغًا.
+          </p>
+        </div>
+      </section>
+
+      <!-- ================= READING ================= -->
+      <section id="read">
+        <div class="sec-head"><span class="sec-num">◆</span><h2 class="sec">قراءة النتيجة</h2></div>
+        <p class="sec-note">شارة واحدة بجانب كل قسط تحدد ما يحق لك قوله للعميل.</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>الشارة</th><th>معناها</th><th>ما تقوله للعميل</th></tr></thead>
+            <tbody>
+              <tr><td><b>سعر تعاقدي منشور</b> 🟢</td><td>سعر حقيقي نشره البنك</td><td>يمكنك ذكر القسط كتقدير قوي</td></tr>
+              <tr><td><b>«يبدأ من»</b> 🟠</td><td>رقم تسويقي، وسعر العميل قد يكون <b>أعلى</b></td><td>«التقدير في هذا النطاق، والرقم النهائي يحتاج عرضًا من البنك»</td></tr>
+              <tr><td><b>من مثال توضيحي</b> 🟠</td><td>سعر مرتبط بمثال البنك بمبلغ ومدة محددين</td><td>المِثل نفسه، مع ذكر أن البنك نشره كمثال</td></tr>
+              <tr><td><b>متوسط نطاق</b> 🟠</td><td>البنك نشر نطاقًا وأخذنا وسطه</td><td>اذكر النطاق لا الرقم الواحد</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn">
+          <h3>ثلاث جمل ممنوعة</h3>
+          <p>
+            ❌ «تمويلك موافق عليه» — النظام <b>لا يستطيع</b> إصدار موافقة، ولا يوجد فيه أصلًا حالة اسمها «موافق».<br>
+            ❌ «قسطك سيكون بالضبط كذا» — إلا إذا كانت الشارة خضراء، وحتى حينها العرض النهائي من البنك.<br>
+            ❌ «معدل النسبة السنوية هو نسبة الربح» — <b>مختلفان دائمًا</b>؛ النسبة السنوية تشمل الرسوم وتكون أعلى دومًا، حتى بلا رسوم.
+          </p>
+        </div>
+        <div class="callout">
+          <h3>الجملة التي تُقال دائمًا في النهاية</h3>
+          <p>
+            «هذا تقدير استرشادي مبني على البيانات المنشورة رسميًا. التمويل الفعلي يخضع لدراسة البنك
+            وسجل سمة وتقييم العقار واعتماد المشروع والمستندات النهائية.»
+          </p>
+        </div>
+      </section>
+
+      <footer>
+        وصل العقارية — دليل داخلي لموظفي المبيعات. النسخة الكاملة للمطورين في
+        <code>docs/financing/ARCHITECTURE.md</code>، ودليل الموظف النصي في
+        <code>docs/financing/EMPLOYEE-GUIDE.md</code>.
+      </footer>
+
+    </main>
+  </div>
+</div>
