@@ -1,7 +1,7 @@
 {
- "source_key": "aljazira_real_estate",
- "url": "https://www.bankaljazira.com/Personal-Banking/Finance/Real-Estate-Finance-Application",
- "final_url": "https://www.aljazirabank.com.sa/ar-sa/",
+ "source_key": "aljazira_subsidized_offplan",
+ "url": "https://www.bankaljazira.com/ar-sa/Personal-Banking/Finance/Real-Estate-Finance/Subsidized-Funding-Program/-Off-plan-Program",
+ "final_url": "https://www.aljazirabank.com.sa/ar-sa/personal/-Off-plan-Program",
  "http_status": 200,
  "status": "ok",
  "blocked_reason": null,
@@ -478,7 +478,7 @@
   },
   {
    "text": "تواصل معنا",
-   "href": "https://www.aljazirabank.com.sa/ar-sa/#reach-out-form"
+   "href": "https://www.aljazirabank.com.sa/ar-sa/personal/-Off-plan-Program#reach-out-form"
   },
   {
    "text": "",
@@ -799,8 +799,8 @@
  ],
  "tables": [],
  "content_hash": "96c9e9cfd217cbd4ee9d7285a0e40506a918a28ed69475464f1cf11d02de1df5",
- "fetched_at": "2026-07-29T08:54:48.466Z",
- "session_id": "ec426d3a-a3a7-4c5f-9b29-f675533276ad",
+ "fetched_at": "2026-07-29T08:54:48.467Z",
+ "session_id": "fbce9914-240a-4464-b100-362947a87004",
  "error": null,
- "duration_ms": 23400
+ "duration_ms": 22963
 }

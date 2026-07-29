@@ -205,6 +205,9 @@ export const PROVIDER_SOURCES = [
     title_en: 'Property Power', url: 'https://www.alrajhibank.com.sa/en/Personal/Finance/Real-Estate-Finance/Property-Power' },
   { key: 'alrajhi_tharwa', provider_key: 'alrajhi', kind: 'provider', publisher: 'Al Rajhi Bank',
     title_en: 'Tharwa real estate financing', url: 'https://www.alrajhibank.com.sa/en/Personal/Finance/Real-Estate-Finance/Tharwa' },
+  // Surfaced 2026-07-29 — a resident-specific product the first pass missed.
+  { key: 'alrajhi_expat', provider_key: 'alrajhi', kind: 'provider', publisher: 'Al Rajhi Bank',
+    title_en: 'Expat Home Finance', url: 'https://www.alrajhibank.com.sa/en/Personal/Finance/Real-Estate-Finance/Expat-Home-Finance' },
 
   // ── Saudi National Bank ─────────────────────────────────────────────────
   { key: 'snb_home_finance', provider_key: 'snb', kind: 'provider', publisher: 'Saudi National Bank',
@@ -217,10 +220,26 @@ export const PROVIDER_SOURCES = [
     title_en: '2-in-1 residential finance products', url: 'https://www.alahli.com/en/pages/personal-banking/finance/home-finance/residential-finance-products' },
 
   // ── Riyad Bank ──────────────────────────────────────────────────────────
-  { key: 'riyad_real_estate', provider_key: 'riyad', kind: 'provider', publisher: 'Riyad Bank',
-    title_en: 'Real estate finance', url: 'https://www.riyadbank.com/en/personal-banking/financing/real-estate-finance' },
-  { key: 'riyad_personal_financing', provider_key: 'riyad', kind: 'provider', publisher: 'Riyad Bank',
-    title_en: 'Financing products index', url: 'https://www.riyadbank.com/en/personal-banking/financing' },
+  // URL paths corrected 2026-07-29. The earlier guesses 404'd; these came from
+  // searching riyadbank.com itself after a comparison site confirmed the bank
+  // does publish residential products (the aggregator was useless as DATA, but
+  // useful as a pointer to go look again).
+  { key: 'riyad_home_finance', provider_key: 'riyad', kind: 'provider', publisher: 'Riyad Bank',
+    title_en: 'Home finance', url: 'https://www.riyadbank.com/personal-banking/home-finance' },
+  { key: 'riyad_readymade', provider_key: 'riyad', kind: 'provider', publisher: 'Riyad Bank',
+    title_en: 'Purchasing ready-made property', url: 'https://www.riyadbank.com/personal-banking/home-loan/readymade-property-finance' },
+  { key: 'riyad_off_plan', provider_key: 'riyad', kind: 'provider', publisher: 'Riyad Bank',
+    title_en: 'Off-plan programs (Housing Ministry)', url: 'https://www.riyadbank.com/personal/borrow/home-loan/off-plan-programs-housing-ministry' },
+  { key: 'riyad_home_equity', provider_key: 'riyad', kind: 'provider', publisher: 'Riyad Bank',
+    title_en: 'Home equity program', url: 'https://www.riyadbank.com/personal-banking/home-loan/home-equity-program' },
+  { key: 'riyad_redf', provider_key: 'riyad', kind: 'provider', publisher: 'Riyad Bank',
+    title_en: 'REDF-supported financing', url: 'https://www.riyadbank.com/redf' },
+  // The bank's OWN APR disclosure — the highest-value kind of provider source,
+  // because a published APR schedule is a pricing disclosure rather than
+  // marketing copy. Linked from the product page as "Home Finance APR disclosure".
+  { key: 'riyad_apr_disclosure', provider_key: 'riyad', kind: 'provider', publisher: 'Riyad Bank',
+    title_en: 'Prices of financing and savings products (APR disclosure)',
+    url: 'https://www.riyadbank.com/information/special-pages/arp-disclosure', settle_ms: 12000, timeout_ms: 120000 },
 
   // ── Alinma Bank ─────────────────────────────────────────────────────────
   { key: 'alinma_real_estate', provider_key: 'alinma', kind: 'provider', publisher: 'Alinma Bank',
@@ -233,8 +252,29 @@ export const PROVIDER_SOURCES = [
     title_en: 'Personal financing index', url: 'https://www.bankalbilad.com/en/personal/financing' },
 
   // ── Banque Saudi Fransi ─────────────────────────────────────────────────
-  { key: 'bsf_real_estate', provider_key: 'bsf', kind: 'provider', publisher: 'Banque Saudi Fransi',
-    title_en: 'Real estate finance', url: 'https://bsf.sa/en/personal/finance/real-estate-finance' },
+  // The English path was permission-denied; the ARABIC tree serves the product
+  // pages fine. Corrected 2026-07-29.
+  { key: 'bsf_home_finance_products', provider_key: 'bsf', kind: 'provider', publisher: 'Banque Saudi Fransi',
+    title_en: 'Home finance products index', title_ar: 'التمويل العقاري',
+    url: 'https://bsf.sa/arabic/personal/finance/home-finance-products' },
+  { key: 'bsf_mortgage', provider_key: 'bsf', kind: 'provider', publisher: 'Banque Saudi Fransi',
+    title_en: 'Mortgage product', title_ar: 'منتج الرهن العقاري',
+    url: 'https://bsf.sa/arabic/personal/finance/home-finance-products/mortgage' },
+  { key: 'bsf_off_plan', provider_key: 'bsf', kind: 'provider', publisher: 'Banque Saudi Fransi',
+    title_en: 'Off-plan units', title_ar: 'منتج الوحدات تحت الإنشاء',
+    url: 'https://bsf.sa/arabic/personal/finance/home-finance-products/off-plan-product' },
+  { key: 'bsf_incomplete', provider_key: 'bsf', kind: 'provider', publisher: 'Banque Saudi Fransi',
+    title_en: 'Incomplete property', title_ar: 'منتجات التمويل العقاري — العقار غير المكتمل',
+    url: 'https://bsf.sa/arabic/personal/finance/home-finance-products/incomplete-property' },
+  { key: 'bsf_buyout', provider_key: 'bsf', kind: 'provider', publisher: 'Banque Saudi Fransi',
+    title_en: 'Buyout of real estate debt', title_ar: 'منتج سداد المديونية العقارية',
+    url: 'https://bsf.sa/arabic/personal/finance/home-finance-products/buyout-home-loan-product' },
+  { key: 'bsf_subsidized', provider_key: 'bsf', kind: 'provider', publisher: 'Banque Saudi Fransi',
+    title_en: 'Subsidised financing / Al Moyassar mortgage', title_ar: 'برنامج القرض العقاري المدعوم',
+    url: 'https://bsf.sa/arabic/personal/finance/home-finance-products/subsidized-financing-amp-al-moyassar-mortgage' },
+  { key: 'bsf_ready_units', provider_key: 'bsf', kind: 'provider', publisher: 'Banque Saudi Fransi',
+    title_en: 'Ready units purchase', title_ar: 'منتج شراء الوحدات الجاهزة',
+    url: 'https://bsf.sa/arabic/personal/finance/home-finance-products/tawaruq-personal-finance' },
   { key: 'bsf_saibor', provider_key: 'bsf', kind: 'benchmark', publisher: 'Banque Saudi Fransi',
     title_en: 'SAIBOR index (bank disclosure)', url: 'https://bsf.sa/english/personal/finance/saibor-index' },
 
@@ -245,16 +285,41 @@ export const PROVIDER_SOURCES = [
     title_en: 'REDF-subsidised mortgage', url: 'https://www.sab.com/en/personal/finance/home-finance-products/ministry-products/government-subsides-product/subsidized-mortgage/' },
 
   // ── Arab National Bank ──────────────────────────────────────────────────
+  // Paths corrected 2026-07-29 (the earlier guess hit a maintenance page).
   { key: 'anb_real_estate', provider_key: 'anb', kind: 'provider', publisher: 'Arab National Bank',
-    title_en: 'Real estate finance', url: 'https://anb.com.sa/en/web/anb/real-estate-finance' },
+    title_en: 'Real estate finance solutions', title_ar: 'حلول التمويل العقاري',
+    url: 'https://anb.com.sa/web/anb/real-estate' },
+  { key: 'anb_mubarak_home', provider_key: 'anb', kind: 'provider', publisher: 'Arab National Bank',
+    title_en: 'Al Mubarak Home Finance', title_ar: 'تمويل المنزل المبارك',
+    url: 'https://www.anb.com.sa/ar/Personal/FinancePrograms/RealEstateFinance' },
 
   // ── Bank AlJazira ───────────────────────────────────────────────────────
   { key: 'aljazira_real_estate', provider_key: 'aljazira', kind: 'provider', publisher: 'Bank AlJazira',
-    title_en: 'Real estate finance', url: 'https://www.bankaljazira.com/personal/finance/real-estate-finance' },
+    title_en: 'Real estate finance application', title_ar: 'التمويل العقاري',
+    url: 'https://www.bankaljazira.com/Personal-Banking/Finance/Real-Estate-Finance-Application' },
+  { key: 'aljazira_adjustable', provider_key: 'aljazira', kind: 'provider', publisher: 'Bank AlJazira',
+    title_en: 'Adjustable-repayment mortgage', title_ar: 'التمويل العقاري بقسط متغير',
+    url: 'https://www.bankaljazira.com/ar-sa/Personal-Banking/Finance/Real-Estate-Finance/Adjustable-Repayment-Mortgage' },
+  { key: 'aljazira_subsidized_offplan', provider_key: 'aljazira', kind: 'provider', publisher: 'Bank AlJazira',
+    title_en: 'Subsidised housing programs — off-plan', title_ar: 'برامج التمويل السكني المدعوم — البيع على الخارطة',
+    url: 'https://www.bankaljazira.com/ar-sa/Personal-Banking/Finance/Real-Estate-Finance/Subsidized-Funding-Program/-Off-plan-Program' },
 
   // ── The Saudi Investment Bank ───────────────────────────────────────────
-  { key: 'saib_real_estate', provider_key: 'saib', kind: 'provider', publisher: 'The Saudi Investment Bank',
-    title_en: 'Real estate finance', url: 'https://www.saib.com.sa/en/real-estate-finance' },
+  { key: 'saib_alasalah_home', provider_key: 'saib', kind: 'provider', publisher: 'The Saudi Investment Bank',
+    title_en: 'Alasalah Home Finance', title_ar: 'تمويل الأصالة العقاري',
+    url: 'https://www.saib.com.sa/en/al-asalah-home-finance' },
+  { key: 'saib_rates', provider_key: 'saib', kind: 'provider', publisher: 'The Saudi Investment Bank',
+    title_en: 'Prices of financing & savings products',
+    url: 'https://www.saib.com.sa/en/prices-financing-and-savings-products', settle_ms: 9000 },
+
+  // ── First Abu Dhabi Bank (foreign bank licensed in KSA) ─────────────────
+  // Added 2026-07-29. The spec asked for foreign banks offering eligible retail
+  // financing; FAB was missing from the provider list entirely until a
+  // comparison listing surfaced it and its own KSA site confirmed a presence.
+  { key: 'fab_ksa_personal', provider_key: 'fab', kind: 'provider', publisher: 'First Abu Dhabi Bank',
+    title_en: 'FAB Saudi Arabia — personal banking', url: 'https://www.bankfab.com/en-sa/personal' },
+  { key: 'fab_ksa_about', provider_key: 'fab', kind: 'provider', publisher: 'First Abu Dhabi Bank',
+    title_en: 'FAB Saudi Arabia', url: 'https://www.bankfab.com/en-sa/about-us' },
 
   // ── Licensed real-estate finance companies ──────────────────────────────
   { key: 'bidaya_products', provider_key: 'bidaya', kind: 'provider', publisher: 'Bidaya Home Finance',

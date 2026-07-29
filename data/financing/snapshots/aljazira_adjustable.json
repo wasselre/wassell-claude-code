@@ -1,7 +1,7 @@
 {
- "source_key": "aljazira_real_estate",
- "url": "https://www.bankaljazira.com/Personal-Banking/Finance/Real-Estate-Finance-Application",
- "final_url": "https://www.aljazirabank.com.sa/ar-sa/",
+ "source_key": "aljazira_adjustable",
+ "url": "https://www.bankaljazira.com/ar-sa/Personal-Banking/Finance/Real-Estate-Finance/Adjustable-Repayment-Mortgage",
+ "final_url": "https://www.aljazirabank.com.sa/ar-sa/personal/Real-Estate-Finance/Adjustable-Repayment-Mortgage",
  "http_status": 200,
  "status": "ok",
  "blocked_reason": null,
@@ -14,7 +14,7 @@
   },
   {
    "text": "English",
-   "href": "https://www.aljazirabank.com.sa/en-us/personal"
+   "href": "https://www.aljazirabank.com.sa/en-us/personal/Real-Estate-Finance/Adjustable-Repayment-Mortgage"
   },
   {
    "text": "الأفراد",
@@ -270,7 +270,7 @@
   },
   {
    "text": "English",
-   "href": "https://www.aljazirabank.com.sa/en-us/personal"
+   "href": "https://www.aljazirabank.com.sa/en-us/personal/Real-Estate-Finance/Adjustable-Repayment-Mortgage"
   },
   {
    "text": "افتح حسابًا!",
@@ -478,7 +478,7 @@
   },
   {
    "text": "تواصل معنا",
-   "href": "https://www.aljazirabank.com.sa/ar-sa/#reach-out-form"
+   "href": "https://www.aljazirabank.com.sa/ar-sa/personal/Real-Estate-Finance/Adjustable-Repayment-Mortgage#reach-out-form"
   },
   {
    "text": "",
@@ -766,7 +766,7 @@
   },
   {
    "text": "English",
-   "href": "https://www.aljazirabank.com.sa/en-us/personal"
+   "href": "https://www.aljazirabank.com.sa/en-us/personal/Real-Estate-Finance/Adjustable-Repayment-Mortgage"
   },
   {
    "text": "سياسة الخصوصية",
@@ -800,7 +800,7 @@
  "tables": [],
  "content_hash": "96c9e9cfd217cbd4ee9d7285a0e40506a918a28ed69475464f1cf11d02de1df5",
  "fetched_at": "2026-07-29T08:54:48.466Z",
- "session_id": "ec426d3a-a3a7-4c5f-9b29-f675533276ad",
+ "session_id": "4a8fd774-db82-488a-8244-621546b3ed13",
  "error": null,
- "duration_ms": 23400
+ "duration_ms": 23215
 }

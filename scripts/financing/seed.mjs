@@ -28,7 +28,12 @@ import {
   SUPPORT_PROGRAMS,
   TAX_RULES,
 } from './sources/regulatoryData.mjs';
-import { PRODUCTS, PROVIDERS, UNREACHABLE_PROVIDERS } from './sources/providerData.mjs';
+import { PRODUCTS, PROVIDERS, SECOND_PASS_PRODUCTS, UNREACHABLE_PROVIDERS } from './sources/providerData.mjs';
+
+// One list from here on. The second pass is kept as its own export purely so
+// the diff shows what the 2026-07-29 re-collection added; the seeder treats
+// every product identically.
+const ALL_PRODUCTS = [...PRODUCTS, ...SECOND_PASS_PRODUCTS];
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -664,7 +669,7 @@ async function seedProviders(sourceIds) {
 }
 
 async function seedProducts(sourceIds, providerIds) {
-  for (const prod of PRODUCTS) {
+  for (const prod of ALL_PRODUCTS) {
     const v = prod.version;
     checkEvidenceOrFlag('product', `${prod.provider_key}/${prod.product_key}`, prod.source_key, v.evidence, null);
     if (DRY_RUN) continue;
@@ -815,7 +820,14 @@ async function seedProducts(sourceIds, providerIds) {
     // ── Rate version (only when the provider actually published pricing) ────
     if (v.rate) {
       const r = v.rate;
-      checkEvidenceOrFlag('rate_version', `${prod.provider_key}/${prod.product_key} pricing`, prod.source_key, r.evidence, null);
+      // A rate may come from a DIFFERENT source than the product. Riyad Bank and
+      // BSF both publish eligibility on the product page and pricing on a
+      // separate APR-disclosure page, so pinning a rate's provenance to the
+      // product's source would both fail the evidence check and, worse, cite the
+      // wrong page in the admin "where did this come from" drawer.
+      const rateSourceKey = r.source_key ?? prod.source_key;
+      checkEvidenceOrFlag('rate_version', `${prod.provider_key}/${prod.product_key} pricing`, rateSourceKey, r.evidence, null);
+      const rateSrc = ALL_SOURCES.find((x) => x.key === rateSourceKey);
       const rateRow = {
         product_id: productRow.id,
         product_version_id: result.id,
@@ -841,9 +853,9 @@ async function seedProducts(sourceIds, providerIds) {
         rate_assumptions: r.rate_assumptions ?? null,
         applicability_notes: r.applicability_notes ?? null,
         campaign_end_date: r.campaign_end_date ?? null,
-        source_id: sourceIds.get(prod.source_key),
-        source_url: src?.url ?? '',
-        source_title: src?.title_en ?? null,
+        source_id: sourceIds.get(rateSourceKey),
+        source_url: rateSrc?.url ?? '',
+        source_title: rateSrc?.title_en ?? null,
         extraction_method: 'manual_review',
         confidence: r.confidence ?? 'low',
         verified_at: new Date().toISOString(),
@@ -980,7 +992,7 @@ try {
         issues_opened: issues.length,
         summary: {
           providers: PROVIDERS.length,
-          products: PRODUCTS.length,
+          products: ALL_PRODUCTS.length,
           regulatory_rules: REGULATORY_RULES.length,
           tax_rules: TAX_RULES.length,
           support_programs: SUPPORT_PROGRAMS.length,

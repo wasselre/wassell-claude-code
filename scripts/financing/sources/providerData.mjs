@@ -142,6 +142,16 @@ export const PROVIDERS = [
     provider_type: 'real_estate_finance_company',
     website_url: 'https://www.dgf.com.sa',
   },
+  {
+    // Added 2026-07-29. The spec asked for foreign banks offering eligible
+    // retail financing in KSA; FAB was missing entirely from the first pass.
+    provider_key: 'fab',
+    name_ar: 'بنك أبوظبي الأول',
+    name_en: 'First Abu Dhabi Bank',
+    short_name_en: 'FAB',
+    provider_type: 'foreign_bank',
+    website_url: 'https://www.bankfab.com/en-sa',
+  },
 ];
 
 /**
@@ -717,19 +727,406 @@ export const PRODUCTS = [
 ];
 
 /**
+ * SECOND COLLECTION PASS (2026-07-29).
+ *
+ * A comparison site was useless as DATA - it rendered every missing figure as
+ * zero (0% down payments, 0 SAR monthly payments) and showed Al Rajhi at 0.5%
+ * against that bank's own published "starts from 7.75%". But it NAMED banks the
+ * first pass had written off as unreachable, and searching THOSE banks' own
+ * domains found the correct paths. That is the sanctioned use of a third-party
+ * source: discovery only, never truth.
+ *
+ * The most valuable find: Riyad Bank and BSF both publish formal APR DISCLOSURE
+ * pages - full representative examples with property value, LTV, term, APR,
+ * monthly payment and early-settlement terms all stated. That is the strongest
+ * provider evidence available in this market, and it let us validate the engine
+ * against real published figures. See docs/financing/VALIDATION.md.
+ */
+export const SECOND_PASS_PRODUCTS = [
+  {
+    "provider_key": "riyad",
+    "product_key": "readymade_property",
+    "name_ar": "شراء وحدة جاهزة",
+    "name_en": "Purchasing Ready-made Property",
+    "category": "residential_purchase",
+    "structure": "murabaha",
+    "source_key": "riyad_readymade",
+    "official_url": "https://www.riyadbank.com/personal-banking/home-loan/readymade-property-finance",
+    "version": {
+      "effective_from": "2026-07-29",
+      "applies_to_saudi": true,
+      "applies_to_resident": false,
+      "property_status": [
+        "completed"
+      ],
+      "employer_sectors": [
+        "government",
+        "semi_government",
+        "private"
+      ],
+      "requires_salary_transfer": true,
+      "min_salary": 5000,
+      "calculation_method": "fixed_amortizing",
+      "early_settlement_terms": "Early payment charges: profit of future 3 installments.",
+      "confidence": "high",
+      "required_documents": [
+        "Copy of valid Saudi national ID",
+        "Completed application form for Home Finance",
+        "Completed applicant undertaking form",
+        "Completed applicant health declaration",
+        "Salary certificate with salary details",
+        "Bank statement",
+        "Deposit of valuation fees"
+      ],
+      "conditions_notes": "Saudis only. Salary transfer is mandatory EXCEPT for employees of other banks. Open to government, semi-government and private sector employees.",
+      "evidence": [
+        "For Saudis only",
+        "Salary transfer is a must",
+        "Bank statement"
+      ],
+      "rate": {
+        "effective_from": "2026-07-29",
+        "rate_type": "fixed",
+        "rate_disclosure_type": "representative_example",
+        "contractual_rate_pct": null,
+        "source_key": "riyad_apr_disclosure",
+        "published_apr_pct": 6.9,
+        "example_property_price": 850000,
+        "example_term_months": 300,
+        "example_ltv_pct": 90,
+        "example_monthly_payment": 5221.3,
+        "rate_assumptions": "Riyad Bank published example - Murabaha finance, first home: property SAR 850,000, 90% LTV, fixed rate, APR 6.90%, 25-year maturity, principal + profit, monthly repayment SAR 5,221.30, early payment charges = profit of future 3 installments.",
+        "applicability_notes": "The bank states: APR may differ depending on the amount and the maturity period different from above and subject to credit scoring of each customer.",
+        "confidence": "high",
+        "evidence": [
+          "6.90%",
+          "5221.3",
+          "850,000"
+        ]
+      }
+    }
+  },
+  {
+    "provider_key": "riyad",
+    "product_key": "self_construction",
+    "name_ar": "البناء الذاتي",
+    "name_en": "Self-construction finance",
+    "category": "self_build",
+    "structure": "murabaha",
+    "source_key": "riyad_apr_disclosure",
+    "official_url": "https://www.riyadbank.com/information/special-pages/arp-disclosure",
+    "version": {
+      "effective_from": "2026-07-29",
+      "property_status": [
+        "self_build"
+      ],
+      "calculation_method": "staged_construction",
+      "confidence": "medium",
+      "conditions_notes": "Terms taken from the Riyad Bank APR disclosure page rather than a dedicated product page.",
+      "evidence": [
+        "self-construction"
+      ],
+      "rate": {
+        "effective_from": "2026-07-29",
+        "rate_type": "fixed",
+        "rate_disclosure_type": "representative_example",
+        "contractual_rate_pct": null,
+        "published_apr_pct": 6.71,
+        "example_property_price": 1000000,
+        "example_term_months": 132,
+        "example_ltv_pct": 90,
+        "example_monthly_payment": 9510.68,
+        "rate_assumptions": "Riyad Bank published example - self-construction: property SAR 1,000,000, 90% LTV, fixed, APR 6.71%, 11-year maturity, monthly repayment SAR 9,510.68.",
+        "confidence": "high",
+        "evidence": [
+          "6.71%",
+          "9510.68"
+        ]
+      }
+    }
+  },
+  {
+    "provider_key": "riyad",
+    "product_key": "home_equity",
+    "name_ar": "برنامج تمويل بضمان العقار",
+    "name_en": "Home Equity Program",
+    "category": "equity_release",
+    "structure": "tawarruq",
+    "source_key": "riyad_home_equity",
+    "official_url": "https://www.riyadbank.com/personal-banking/home-loan/home-equity-program",
+    "version": {
+      "effective_from": "2026-07-29",
+      "max_amount": 5000000,
+      "calculation_method": "manual_quotation",
+      "confidence": "medium",
+      "conditions_notes": "Covers ready-made and incomplete property. The published example does not reconcile with a standard amortising schedule at the stated 46% LTV (our engine derives about SAR 1,987 against a published SAR 2,468.84), so an exact installment requires a bank quotation rather than an assumed method. See docs/financing/VALIDATION.md.",
+      "evidence": [
+        "Financing amount up to",
+        "million"
+      ],
+      "rate": {
+        "effective_from": "2026-07-29",
+        "rate_type": "fixed",
+        "rate_disclosure_type": "representative_example",
+        "contractual_rate_pct": null,
+        "source_key": "riyad_apr_disclosure",
+        "published_apr_pct": 7.17,
+        "example_property_price": 500000,
+        "example_term_months": 192,
+        "example_ltv_pct": 46,
+        "example_monthly_payment": 2468.84,
+        "rate_assumptions": "Riyad Bank published example - Tawarruq home equity, first home: property SAR 500,000, 46% LTV, fixed, APR 7.17%, 16-year maturity, monthly repayment SAR 2,468.84.",
+        "confidence": "medium",
+        "evidence": [
+          "7.17%",
+          "2,468.84"
+        ]
+      }
+    }
+  },
+  {
+    "provider_key": "riyad",
+    "product_key": "off_plan",
+    "name_ar": "برامج البيع على الخارطة",
+    "name_en": "Off-Plan Programs",
+    "category": "off_plan",
+    "structure": null,
+    "source_key": "riyad_off_plan",
+    "official_url": "https://www.riyadbank.com/personal/borrow/home-loan/off-plan-programs-housing-ministry",
+    "version": {
+      "effective_from": "2026-07-29",
+      "property_status": [
+        "off_plan"
+      ],
+      "max_term_months": 240,
+      "supported_financing": true,
+      "calculation_method": "off_plan_staged",
+      "confidence": "medium",
+      "conditions_notes": "In collaboration with the Housing Ministry and the Off-Plan Sales Committee (WAFI). Finances housing-support recipients. Cooperative insurance; exemption on death or permanent disability.",
+      "evidence": [
+        "The payment period is up to 20 years",
+        "WAFI"
+      ],
+      "rate": null
+    }
+  },
+  {
+    "provider_key": "bsf",
+    "product_key": "ready_units",
+    "name_ar": "شراء الوحدات الجاهزة",
+    "name_en": "Ready Units Purchase",
+    "category": "residential_purchase",
+    "structure": "murabaha",
+    "source_key": "bsf_ready_units",
+    "official_url": "https://bsf.sa/arabic/personal/finance/home-finance-products/tawaruq-personal-finance",
+    "version": {
+      "effective_from": "2026-07-29",
+      "property_status": [
+        "completed"
+      ],
+      "max_amount": 5000000,
+      "max_term_months": 300,
+      "max_age_at_maturity": 75,
+      "min_salary": 5000,
+      "calculation_method": "fixed_amortizing",
+      "confidence": "high",
+      "conditions_notes": "Murabaha: the bank buys the property at actual value and sells it at a deferred price including an approved profit margin. Minimum NET monthly income SAR 5,000 (net, not gross). Financing possible up to age 75 - the highest maturity age found in this collection.",
+      "evidence": [
+        "مدة تمويل تصل إلى 25 سنة",
+        "إمكانية التمويل حتى عمر 75 سنة."
+      ],
+      "rate": {
+        "effective_from": "2026-07-29",
+        "rate_type": "fixed",
+        "rate_disclosure_type": "representative_example",
+        "contractual_rate_pct": null,
+        "published_apr_pct": 7.62,
+        "example_property_price": 1000000,
+        "example_term_months": 300,
+        "example_ltv_pct": 90,
+        "example_monthly_payment": 6525.0,
+        "rate_assumptions": "BSF published example - 25-year first-home real estate finance: property SAR 1,000,000, 90%, fixed rate, APR 7.62%, monthly SAR 6,525.00, early settlement = profit of 3 future installments.",
+        "confidence": "high",
+        "evidence": [
+          "7.62%",
+          "6,525.00"
+        ]
+      }
+    }
+  },
+  {
+    "provider_key": "bsf",
+    "product_key": "off_plan",
+    "name_ar": "الوحدات تحت الإنشاء",
+    "name_en": "Off-plan units",
+    "category": "off_plan",
+    "structure": "murabaha",
+    "source_key": "bsf_off_plan",
+    "official_url": "https://bsf.sa/arabic/personal/finance/home-finance-products/off-plan-product",
+    "version": {
+      "effective_from": "2026-07-29",
+      "property_status": [
+        "off_plan"
+      ],
+      "max_amount": 5000000,
+      "max_term_months": 300,
+      "min_salary": 5000,
+      "calculation_method": "off_plan_staged",
+      "confidence": "high",
+      "conditions_notes": "Minimum NET monthly income SAR 5,000. BSF publishes a NAMED LIST of approved off-plan projects on this page - the only bank in this collection that does, which makes it the one place project approval can be evidenced rather than guessed.",
+      "evidence": [
+        "مبلغ تمويل يصل إلى 5 مليون ريال سعودي.",
+        "ألاَّ يقل صافي دخل العميل الشهري عن 5.000 ريال سعودي."
+      ],
+      "rate": {
+        "effective_from": "2026-07-29",
+        "rate_type": "fixed",
+        "rate_disclosure_type": "representative_example",
+        "contractual_rate_pct": null,
+        "published_apr_pct": 7.62,
+        "example_property_price": 1000000,
+        "example_term_months": 300,
+        "example_ltv_pct": 90,
+        "example_monthly_payment": 6525.0,
+        "rate_assumptions": "BSF published example - 25-year first-home finance, property SAR 1,000,000, 90%, APR 7.62%, monthly SAR 6,525.00.",
+        "confidence": "high",
+        "evidence": [
+          "7.62%"
+        ]
+      }
+    }
+  },
+  {
+    "provider_key": "bsf",
+    "product_key": "incomplete_property",
+    "name_ar": "العقار غير المكتمل",
+    "name_en": "Incomplete property",
+    "category": "self_build",
+    "structure": "tawarruq",
+    "source_key": "bsf_incomplete",
+    "official_url": "https://bsf.sa/arabic/personal/finance/home-finance-products/incomplete-property",
+    "version": {
+      "effective_from": "2026-07-29",
+      "max_amount": 5000000,
+      "max_term_months": 300,
+      "min_salary": 6000,
+      "calculation_method": "staged_construction",
+      "confidence": "high",
+      "conditions_notes": "For a residential property whose structural phase is complete. Tawarruq-based. Minimum NET monthly income SAR 6,000 - HIGHER than the other BSF products, a real eligibility difference worth catching.",
+      "evidence": [
+        "ألاَّ يقل صافي دخل العميل الشهري عن 6.000 ريال سعودي.",
+        "مدة تمويل تصل إلى 25 سنة"
+      ],
+      "rate": null
+    }
+  },
+  {
+    "provider_key": "saib",
+    "product_key": "alasalah_home_finance",
+    "name_ar": "تمويل الأصالة العقاري بالمرابحة",
+    "name_en": "Al Asalah Murabaha Home Finance",
+    "category": "residential_purchase",
+    "structure": "murabaha",
+    "source_key": "saib_alasalah_home",
+    "official_url": "https://www.saib.com.sa/en/al-asalah-home-finance",
+    "version": {
+      "effective_from": "2026-07-29",
+      "property_types": [
+        "villa",
+        "apartment",
+        "duplex",
+        "land"
+      ],
+      "property_status": [
+        "completed"
+      ],
+      "calculation_method": "fixed_amortizing",
+      "confidence": "medium",
+      "conditions_notes": "Murabaha with a fixed profit rate for the entire financing period. Covers a completed villa, apartment, duplex, or urban land ready for occupancy. SAIB also runs REDF-cooperation programs. No eligibility figures or pricing published.",
+      "evidence": [
+        "Al Asalah Murabaha Home Finance",
+        "fixed profit rate for the entire financing period"
+      ],
+      "rate": null
+    }
+  },
+  {
+    "provider_key": "alrajhi",
+    "product_key": "expat_home_finance",
+    "name_ar": "التمويل العقاري للمقيمين",
+    "name_en": "Expat Home Finance",
+    "category": "residential_purchase",
+    "structure": "murabaha",
+    "source_key": "alrajhi_expat",
+    "official_url": "https://www.alrajhibank.com.sa/en/Personal/Finance/Real-Estate-Finance/Expat-Home-Finance",
+    "version": {
+      "effective_from": "2026-07-29",
+      "applies_to_saudi": false,
+      "applies_to_resident": true,
+      "max_amount": 5000000,
+      "max_term_months": 240,
+      "max_age_at_maturity": 70,
+      "requires_salary_transfer": false,
+      "calculation_method": "fixed_amortizing",
+      "confidence": "medium",
+      "conditions_notes": "For expatriates holding PREMIUM or REGULAR residency. Regular-residency holders additionally require Ministry of Interior approval - a real gate to raise with the customer early rather than at submission. Co-borrower feature available for regular-iqama holders. Financing with or without salary transfer.",
+      "evidence": [
+        "Financing period up to 20 years.",
+        "Financing amount up to 5 million riyals.",
+        "Possibility of financing up to the age of 70 years.",
+        "the approval of the Ministry of Interior is provided for customers holding regular residency"
+      ],
+      "rate": null
+    }
+  }
+];
+
+
+// Added in the 2026-07-29 pass after correcting the ANB path.
+SECOND_PASS_PRODUCTS.push({
+  "provider_key": "anb",
+  "product_key": "real_estate_finance",
+  "name_ar": "التمويل العقاري",
+  "name_en": "Real Estate Finance",
+  "category": "residential_purchase",
+  "structure": null,
+  "source_key": "anb_real_estate",
+  "official_url": "https://anb.com.sa/web/anb/real-estate",
+  "version": {
+    "effective_from": "2026-07-29",
+    "max_amount": 5000000,
+    "max_term_months": 360,
+    "calculation_method": "fixed_amortizing",
+    "confidence": "medium",
+    "conditions_notes": "ANB publishes a family of real-estate programs on one page (ready property, land, self-build, REDF-supported, Al Mubarak Home) rather than separate product pages, so this is seeded as one product carrying the limits common to them. Two details worth knowing: the bank advertises a deduction rate \"up to 75%\", which is ABOVE the SAMA total-obligation ceiling for most income bands — the engine applies the regulatory ceiling regardless; and up to 3 lands or 3 apartments may be purchased under one financing, subject to eligibility.",
+    "evidence": [
+      "Financing up to 5 million SR",
+      "The repayment in fixed and affordable installments for a period of 30 years",
+      "Up to 3 lands or 3 apartments can be purchased under the same financing"
+    ],
+    "rate": null
+  }
+});
+
+/**
  * Products the collection run could NOT reach. Recorded so the coverage report
  * distinguishes "this provider has no residential product" from "we could not
  * read the page" — a distinction that decides whether a rep should phone the
  * bank.
  */
 export const UNREACHABLE_PROVIDERS = [
-  { provider_key: 'riyad', source_key: 'riyad_real_estate', reason: 'not_found', note: 'Riyad Bank real-estate finance URLs returned 404 during collection; the correct product path must be rediscovered.' },
-  { provider_key: 'bsf', source_key: 'bsf_real_estate', reason: 'access_denied', note: 'bsf.sa returned "You do not have permissions to access this page" for the real-estate finance path.' },
-  { provider_key: 'anb', source_key: 'anb_real_estate', reason: 'empty_body', note: 'Arab National Bank site was under maintenance during collection.' },
-  { provider_key: 'saib', source_key: 'saib_real_estate', reason: 'not_found', note: 'The Saudi Investment Bank real-estate finance path returned 404.' },
-  { provider_key: 'aljazira', source_key: 'aljazira_real_estate', reason: 'no_product_detail', note: 'Bank AlJazira’s page rendered the personal-banking landing content only; the real-estate detail page must be rediscovered.' },
-  { provider_key: 'bidaya', source_key: 'bidaya_products', reason: 'no_product_detail', note: 'Bidaya’s products page rendered only "Retail Financing — Mortgage Finance" with no detail.' },
-  { provider_key: 'amlak', source_key: 'amlak_products', reason: 'not_found', note: 'Amlak International individuals path returned 404.' },
-  { provider_key: 'deutsche_gulf', source_key: 'dgf_products', reason: 'fetch_failed', note: 'dgf.com.sa was unreachable (tunnel connection failed) during collection.' },
-  { provider_key: 'snb', source_key: 'snb_pricing', reason: 'no_residential_pricing', note: 'SNB’s "Finance & Saving Pricing" page publishes LEASE finance pricing only; residential pricing is not published there.' },
+  // Resolved in the 2026-07-29 pass: riyad, bsf, saib, anb, alrajhi (expat).
+  // What remains genuinely unreadable:
+  { provider_key: 'aljazira', source_key: 'aljazira_real_estate', reason: 'spa_no_product_detail',
+    note: 'Bank AlJazira: all three real-estate paths return byte-identical generic landing content (5,237 chars) — the SPA does not render product detail to a fetcher. Needs a human to read the pages, or a JSON endpoint.' },
+  { provider_key: 'fab', source_key: 'fab_ksa_personal', reason: 'fetch_failed',
+    note: 'First Abu Dhabi Bank KSA: the personal-banking page redirects mid-load and destroys the execution context. FAB is seeded as a PROVIDER (a foreign bank with a KSA presence) with no products, pending a readable product page.' },
+  { provider_key: 'snb', source_key: 'snb_pricing', reason: 'no_residential_pricing',
+    note: 'SNB publishes product names and a calculator but its "Finance & Saving Pricing" page carries LEASE finance pricing only; no residential rate is published.' },
+  { provider_key: 'bidaya', source_key: 'bidaya_products', reason: 'no_product_detail',
+    note: 'Bidaya\'s products page renders only "Retail Financing — Mortgage Finance" with no detail.' },
+  { provider_key: 'amlak', source_key: 'amlak_products', reason: 'not_found',
+    note: 'Amlak International individuals path returned 404; the correct path was not found.' },
+  { provider_key: 'deutsche_gulf', source_key: 'dgf_products', reason: 'fetch_failed',
+    note: 'dgf.com.sa unreachable (tunnel connection failed) on every attempt.' },
 ];
