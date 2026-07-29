@@ -15,10 +15,12 @@
     "@anthropic-ai/sdk": "^0.91.0",
     "@supabase/supabase-js": "^2.49.1",
     "docx": "^9.7.1",
-    "playwright-core": "^1.61.1"
+    "playwright-core": "^1.61.1",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
+    "@types/web-push": "^3.6.4",
     "tsx": "^4.19.2",
     "typescript": "~5.7.2"
   },

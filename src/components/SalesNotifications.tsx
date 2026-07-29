@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
+import { isDeviceSubscribed } from '@/lib/push/client';
 
 /**
  * App-level watcher for the two sales moments where seconds matter
@@ -27,6 +28,17 @@ export default function SalesNotifications() {
 
   // followupId → last-seen "signal" state; null until first seeding pass.
   const seenRef = useRef<Map<string, string> | null>(null);
+
+  // When this device has a push subscription, the server already delivers
+  // these same two events to the OS (see the records_enqueue_push trigger), so
+  // ALSO firing a local Notification here would show every alert twice. The
+  // in-app toast still fires either way — that one is not a duplicate.
+  const pushOwnsOsNotifications = useRef(false);
+  useEffect(() => {
+    void isDeviceSubscribed().then((sub) => {
+      pushOwnsOsNotifications.current = sub;
+    });
+  }, []);
 
   const followupsModel = models.find((m) => m.name === 'followups');
   const clientsModel = models.find((m) => m.name === 'clients');
@@ -72,7 +84,13 @@ export default function SalesNotifications() {
     const seen = seenRef.current;
     const notify = (title: string, body: string, followupId: string) => {
       addToast(`${title} — ${body}`, 'info');
+      // Push already covers the OS-level alert on this device.
+      if (pushOwnsOsNotifications.current) return;
       try {
+        // NOTE: `new Notification(...)` below is unsupported on iOS entirely —
+        // iOS can only show notifications via the service worker. That path is
+        // the push subscription above; this fallback exists for desktop
+        // browsers where the user has granted permission but not subscribed.
         if (typeof Notification !== 'undefined') {
           if (Notification.permission === 'default') void Notification.requestPermission();
           if (Notification.permission === 'granted') {

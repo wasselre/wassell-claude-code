@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "ignoreCommand": "git diff --quiet \"${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}\" HEAD -- . ':!docs/prd/models' ':!docs/prd/workflows'",
   "rewrites": [
-    { "source": "/((?!api/)(?!assets/)(?!manifest\\.webmanifest$).*)", "destination": "/index.html" }
+    { "source": "/((?!api/)(?!assets/)(?!manifest\\.webmanifest$)(?!sw\\.js$).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
@@ -15,6 +15,13 @@
       "source": "/assets/:name(.+\\.(?:png|jpg|jpeg|gif|webp|svg|ico))",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=3600, s-maxage=3600, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/sw.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+        { "key": "Service-Worker-Allowed", "value": "/" }
       ]
     }
   ],

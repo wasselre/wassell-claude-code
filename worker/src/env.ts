@@ -75,6 +75,15 @@ export interface WorkerEnv {
    *  no local Chromium). */
   BROWSERBASE_API_KEY: string | null;
   BROWSERBASE_PROJECT_ID: string | null;
+  /** Web Push / VAPID (push_outbox queue). When either key is UNSET the
+   *  worker's push loop self-disables, so deploying this code is a no-op for
+   *  the queue until the secrets exist. The PUBLIC key must match the
+   *  VITE_VAPID_PUBLIC_KEY the SPA was built with — a mismatch makes every
+   *  send fail with 403 from the push service. VAPID_SUBJECT is a mailto:/https:
+   *  URL identifying us; Apple rejects pushes without a valid one. */
+  VAPID_PUBLIC_KEY: string | null;
+  VAPID_PRIVATE_KEY: string | null;
+  VAPID_SUBJECT: string | null;
   /** Self-hosted WAHA gateway (scheduled_whatsapp_jobs queue + zombie watchdog).
    *  When EITHER is UNSET the worker's scheduled-WhatsApp + WAHA-watchdog loops
    *  self-disable (boots fine before any number is moved to provider='waha').
@@ -121,6 +130,9 @@ export function loadEnv(): WorkerEnv {
     WORKFLOW_PROOF_ONLY: process.env.WORKFLOW_PROOF_ONLY === '1',
     BROWSERBASE_API_KEY: process.env.BROWSERBASE_API_KEY ?? null,
     BROWSERBASE_PROJECT_ID: process.env.BROWSERBASE_PROJECT_ID ?? null,
+    VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY ?? null,
+    VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY ?? null,
+    VAPID_SUBJECT: process.env.VAPID_SUBJECT ?? null,
     WAHA_URL: process.env.WAHA_URL ?? null,
     WAHA_API_KEY: process.env.WAHA_API_KEY ?? null,
     APIFY_API_TOKEN: process.env.APIFY_API_TOKEN ?? null,

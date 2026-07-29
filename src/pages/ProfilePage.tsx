@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { useTranslation } from 'react-i18next';
 import Button from '@/components/ui/Button';
+import NotificationSettings from '@/components/NotificationSettings';
 import { Loader2, ShieldCheck, KeyRound, UserCircle, ShieldAlert } from 'lucide-react';
 import {
   updatePassword,
@@ -176,6 +177,10 @@ export default function ProfilePage() {
           value={me.is_active ? (isAr ? 'نشط' : 'Active') : (isAr ? 'معطّل' : 'Inactive')}
         />
       </div>
+
+      {/* Push notifications — per device, so it lives with the user rather
+          than in admin settings. */}
+      <NotificationSettings />
 
       {/* Name (editable) */}
       <div className="card p-4">

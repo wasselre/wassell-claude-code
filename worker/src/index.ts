@@ -30,6 +30,7 @@ import { makeServiceClient } from './lib/serviceClient.js';
 import { runCleanTextJob, type CleanTextJob } from './runCleanTextJob.js';
 import { runVideoConvertJob, type VideoConvertJob } from './runVideoConvertJob.js';
 import { runCompressJob, type CompressJob } from './runCompressJob.js';
+import { configurePush, runPushJob, type PushOutboxRow } from './runPushJob.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
 import { runDocumentJob, type DocumentJob } from './runDocumentJob.js';
 import { runImageJob, type ImageJob } from './runImageJob.js';
@@ -83,6 +84,8 @@ let previewWakeRequested = false;
 // compress fan-outs should drain at full speed regardless of deck/image load.
 let compressBusy = false;
 let compressWakeRequested = false;
+let pushBusy = false;
+let pushWakeRequested = false;
 // Scheduled Reports (2026-06-17) get a FIFTH independent, time-gated loop:
 // claim due reports (next_run_at passed) and trigger the owner-scoped runner on
 // the app. Self-disables when REPORTS_RUNNER_SECRET is unset.
@@ -1041,6 +1044,82 @@ async function compressPollLoop(): Promise<void> {
 }
 
 /**
+ * Claim and deliver one batch of queued push notifications.
+ *
+ * Batched rather than one-at-a-time because a burst of inbound WhatsApp
+ * replies enqueues several rows at once and each send is a short HTTPS
+ * request — claiming them individually would add a poll interval of latency
+ * per notification, on the one queue where latency is the entire point.
+ */
+async function claimAndRunPushBatch(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('push_outbox_claim_next', { p_limit: 20 });
+  if (error) {
+    console.error(`[worker] push claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as PushOutboxRow[];
+  if (rows.length === 0) return false;
+
+  for (const job of rows) {
+    try {
+      const result = await runPushJob(supabase, job);
+      // A job with no registered devices is "done", not failed — but the note
+      // is recorded so "why no notification?" is answerable from the row.
+      await supabase.rpc('push_outbox_complete', { p_id: job.id, p_error: result.note ?? null });
+      console.log(
+        `[push] ${job.kind} job=${job.id} delivered=${result.delivered}` +
+          (result.pruned ? ` pruned=${result.pruned}` : '') +
+          (result.note ? ` note="${result.note}"` : ''),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[push] job ${job.id} failed:`, message);
+      // push_outbox_fail requeues until attempts >= 5, then gives up.
+      const { error: failErr } = await supabase.rpc('push_outbox_fail', {
+        p_id: job.id,
+        p_error: message.slice(0, 500),
+      });
+      if (failErr) console.error(`[push] could not record failure for ${job.id}:`, failErr.message);
+    }
+  }
+  return true;
+}
+
+/** Push-queue twin of the other poll loops, with its own busy/wake flags. */
+async function pushPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    pushBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunPushBatch();
+    } catch (err) {
+      console.error('[worker] push poll iteration error:', err);
+    }
+    pushBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      // Recover jobs a crashed worker left claimed, and drop ones too old to
+      // still be worth showing ("call within 5 minutes" an hour late is noise).
+      const { error: wdErr } = await supabase.rpc('push_outbox_watchdog');
+      if (wdErr) console.error('[worker] push watchdog failed:', wdErr.message);
+      const { error: exErr } = await supabase.rpc('push_outbox_expire_stale');
+      if (exErr) console.error('[worker] push expire-stale failed:', exErr.message);
+    }
+
+    if (didClaim || pushWakeRequested) {
+      pushWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !pushWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+/**
  * Document-queue twin of the other poll loops. Runs concurrently with its own
  * busy/wake flags. Ticks document_jobs_watchdog() on the same interval.
  */
@@ -1768,6 +1847,8 @@ const server = http.createServer((req, res) => {
         video_busy: videoBusy,
         preview_busy: previewBusy,
         compress_busy: compressBusy,
+        push_busy: pushBusy,
+        push_enabled: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),
         document_busy: documentBusy,
         migration_busy: migrationBusy,
         reports_busy: reportsBusy,
@@ -2283,6 +2364,16 @@ if (env.WORKFLOW_PROOF_ONLY) {
     loops.push(workflowPollLoop());
   } else {
     console.log('[worker] workflow runner loop disabled (WORKFLOW_RUNNER_SECRET unset)');
+  }
+  // Web Push loop — self-disabled until the VAPID pair is set on the worker,
+  // so deploying this code is a no-op for the queue until then. The public key
+  // here MUST match the VITE_VAPID_PUBLIC_KEY the SPA was built with; a
+  // mismatch fails every send with 403 at the push service.
+  if (configurePush(env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY, env.VAPID_SUBJECT)) {
+    console.log('[worker] web-push loop enabled');
+    loops.push(pushPollLoop());
+  } else {
+    console.log('[worker] web-push loop disabled (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY unset)');
   }
   // REGA advertiser-phone lookup loop — only when Browserbase creds are set
   // (deploying this code is a no-op for the queue until both secrets exist).
