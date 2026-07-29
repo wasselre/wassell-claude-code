@@ -2518,6 +2518,11 @@ export interface SummaryLoadState {
   loaded: boolean;
   /** Last background-load error message, or null on success. */
   error: string | null;
+  /** How many rows the last successful load landed. Used to tell a model
+   *  that genuinely has NO rows (never re-fetch) apart from one whose rows
+   *  were landed and then wiped by a later wholesale `records` replace
+   *  (re-fetch). Absent until a load completes. */
+  count?: number;
 }
 
 export interface AppState {

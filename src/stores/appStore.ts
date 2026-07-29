@@ -2509,6 +2509,26 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
 
+    // Boot-excluded models (SUMMARY — market_listings) are deliberately absent
+    // from the boot query, so `migratedRecords` has no key for them. The set
+    // below REPLACES `records` wholesale, which silently DROPPED any slice the
+    // background summary load had already landed while boot was still running.
+    //
+    // Not hypothetical: landing DIRECTLY on /model/market_listings makes the
+    // list page kick the summary load immediately; the 53k slim rows arrive
+    // before boot finishes, and this set then threw them away — leaving the
+    // page permanently empty (summaryLoadState said "loaded", so nothing ever
+    // retried) while every signal claimed success. Reproduced on production
+    // 2026-07-29. Client-side navigation hid it because boot had already
+    // finished, which is why it never showed up in normal use.
+    const bootExcluded = bootExcludedModelIds(models);
+    for (const excludedId of bootExcluded) {
+      const landed = get().records[excludedId];
+      if (landed && landed.length > 0 && !migratedRecords[excludedId]?.length) {
+        migratedRecords = { ...migratedRecords, [excludedId]: landed };
+      }
+    }
+
     set({
       models,
       groups,
@@ -3070,7 +3090,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     const model = get().models.find((m) => m.id === modelId);
     if (!model || !isSummaryModelName(model.name)) return;
     const existing = get().summaryLoadState[modelId];
-    if (!force && existing && (existing.loading || existing.loaded)) return;
+    // A load that COMPLETED WITH ROWS but whose slice is now empty means
+    // something replaced the whole `records` map after we landed them. That
+    // used to be permanent: `loaded` stayed true, so this function no-op'd on
+    // every later visit and the list showed "0 سجل" forever with no spinner,
+    // no error and a network log full of 200s. `initialize` now carries these
+    // slices forward (see the boot carry-forward there), so this is the safety
+    // net for any other wholesale writer. Gated on `count > 0` so a model that
+    // genuinely returned zero rows is never re-fetched in a loop.
+    const wiped =
+      !!existing?.loaded &&
+      (existing.count ?? 0) > 0 &&
+      (get().records[modelId]?.length ?? 0) === 0;
+    if (!force && existing && (existing.loading || (existing.loaded && !wiped))) return;
     if (!supabase) return;
 
     set((s) => ({
@@ -3102,7 +3134,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       records: { ...s.records, [modelId]: rows },
       summaryLoadState: {
         ...s.summaryLoadState,
-        [modelId]: { loading: false, loaded: true, error: null },
+        [modelId]: { loading: false, loaded: true, error: null, count: rows.length },
       },
     }));
   },
