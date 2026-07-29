@@ -54,6 +54,35 @@ container on the VM; the VM self-heals on boot via its startup script.
 
 ## Sessions flap STARTING → FAILED, whole CRM WhatsApp goes silent
 
+**Answer first (2026-07-29 incident): the NOWEB engine gets refused by WhatsApp.
+Switch `WHATSAPP_DEFAULT_ENGINE` to `GOWS` and re-pair.** `405` is not about
+credentials, the account, the IP or geography — every session on the engine dies
+at once, including one with no credentials.
+
+Confirm it in two minutes before changing anything, on the SAME host:
+
+1. Create a credential-free session on the current engine → expect refused.
+2. Run a second WAHA container on another port with `-e WHATSAPP_DEFAULT_ENGINE=GOWS`
+   and create a credential-free session there → if it reaches `SCAN_QR_CODE`, the
+   network is fine and the engine is the fault.
+
+Then: edit the engine in the container's env-file, recreate the container, and
+**recreate each session** — the registry is PER-ENGINE, so sessions disappear from
+`GET /api/sessions` and `/restart` returns 404. Re-supply the FULL webhook config
+(url + 7 events + `hmac.key` = `WAHA_WEBHOOK_SECRET` + retries) or the CRM goes
+deaf. Pause the watchdog first (`is_active=false`) — `SCAN_QR_CODE` is not
+`WORKING`, so it will restart the session and kill the pairing code mid-entry.
+Pair with `POST /api/<session>/auth/request-code {"phoneNumber":"9665…"}`.
+NOWEB credentials survive under `/app/.sessions/noweb/`, so it is reversible.
+
+**Test the engine BEFORE touching the IP.** Swapping the VM's ephemeral IP is
+irreversible — GCP will not give it back ("not allocated to the project") — and
+doing it first permanently destroys the ability to tell whether it mattered.
+
+---
+
+### Older triage (kept — still how you tell the failure modes apart)
+
 Symptom: no inbound, and messages sent from the **phone** never appear either.
 That combination means ingestion is dead, not that phone sync is broken — the
 CRM thread renders from `chat_messages`, so if the gateway is down nothing at all
