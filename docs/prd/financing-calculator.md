@@ -49,6 +49,16 @@ affordability are public and precise.
   `result_snapshot` once `completed_at` is set. Recalculating means duplicating.
 - **The snapshot carries the rule values used**, so a historical result stays
   readable without a version graph.
+- **A product the customer fails on published criteria shows NO figures.** A row
+  reading "does not meet published criteria — SAR 2,199/mo" invites a rep to
+  quote the 2,199.
+- **The cash shortfall is stated.** When the cash needed at closing exceeds the
+  stated available down payment, the gap is shown on the stat and in the caveats
+  rather than left for the rep to subtract.
+- **An unpriced product's financing amount is labelled not-capacity-tested.**
+  Without a rate there is no way to convert a monthly ceiling into a principal,
+  so that figure reflects only the down payment and the LTV ceiling and is not
+  comparable to a priced product's amount.
 
 ## User flows
 
@@ -83,6 +93,7 @@ affordability are public and precise.
 | `api/financing.ts` | One action-dispatch endpoint on the caller's JWT |
 | `src/pages/Financing/FinancingPage.tsx` | Scenarios, wizard, results, admin |
 | `supabase/migrations/2026-08-30_0{1,2,3}_*.sql` | V2 schema, data migration, V1 deprecation |
+| `scripts/verify-financing-v2.mjs` | 26 live checks against production |
 
 ## Access control
 
