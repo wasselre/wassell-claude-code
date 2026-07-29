@@ -598,9 +598,14 @@ export default async function handler(req: Request): Promise<Response> {
       switch (action) {
         // ── Dashboard ────────────────────────────────────────────────────
         case 'dashboard': {
-          const [scenarios, issues, runs, products, staleRates] = await Promise.all([
+          const [scenarios, issues, issueCount, runs, products, staleRates] = await Promise.all([
             db.from('fin_scenarios').select('id, scenario_number, title, status, client_record_id, project_record_id, unit_record_id, is_preferred, updated_at, owner_user_id, assigned_specialist_user_id').is('deleted_at', null).order('updated_at', { ascending: false }).limit(30),
             db.from('fin_data_validation_issues').select('id, severity, issue_type, message_en, message_ar, entity_type, created_at').eq('status', 'open').order('severity').order('created_at', { ascending: false }).limit(40),
+            // A SEPARATE count. The list above is capped at 40 for display, and
+            // using its length as the KPI silently under-reports the moment a
+            // 41st issue appears — telling an admin the queue is smaller than it
+            // is, which is the one direction this number must never be wrong in.
+            db.from('fin_data_validation_issues').select('id', { count: 'exact', head: true }).eq('status', 'open'),
             db.from('fin_data_refresh_runs').select('*').order('started_at', { ascending: false }).limit(5),
             db.from('fin_products').select('id, is_active').eq('is_active', true).is('deleted_at', null),
             db.from('fin_product_rate_versions').select('id, verified_at, collected_at').eq('is_active', true).is('effective_to', null),
@@ -614,16 +619,20 @@ export default async function handler(req: Request): Promise<Response> {
           }).length;
 
           const productCount = (products.data ?? []).length;
+          const openIssueTotal = issueCount.count ?? (issues.data ?? []).length;
           return jsonOk({
             scenarios: scenarios.data ?? [],
             issues: issues.data ?? [],
+            // Tell the client the list was truncated instead of letting it infer
+            // completeness from an array that quietly stops at 40.
+            issues_truncated: openIssueTotal > (issues.data ?? []).length,
             runs: runs.data ?? [],
             health: {
               active_products: productCount,
               products_with_pricing: rateRows.length,
               pricing_coverage_pct: productCount > 0 ? Math.round((rateRows.length / productCount) * 100) : 0,
               stale_pricing: stale,
-              open_issues: (issues.data ?? []).length,
+              open_issues: openIssueTotal,
               last_refresh: (runs.data ?? [])[0] ?? null,
             },
           });

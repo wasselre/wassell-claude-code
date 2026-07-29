@@ -153,6 +153,9 @@ export interface DashboardResponse {
     id: string; severity: 'info' | 'warning' | 'error'; issue_type: string;
     message_en: string; message_ar: string | null; entity_type: string; created_at: string;
   }>;
+  /** True when `issues` is a capped slice — the UI must say so rather than
+   *  letting the visible list read as the whole queue. */
+  issues_truncated: boolean;
   runs: Array<Record<string, unknown>>;
   health: {
     active_products: number;

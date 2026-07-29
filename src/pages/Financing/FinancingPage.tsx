@@ -348,6 +348,14 @@ export default function FinancingPage() {
           {dashboard.issues.length > 0 && (
             <div className="card p-5">
               <h2 className="mb-3 font-bold text-charcoal">{t('صحة البيانات المرجعية', 'Reference-data health')}</h2>
+              {dashboard.issues_truncated && (
+                <p className="mb-2 text-[11px] text-charcoal/50">
+                  {t(
+                    `يُعرض ${dashboard.issues.length} من أصل ${health?.open_issues ?? '—'} ملاحظة مفتوحة — افتح "إدارة البيانات" لعرض القائمة كاملة.`,
+                    `Showing ${dashboard.issues.length} of ${health?.open_issues ?? '—'} open issues — open "Data administration" for the full list.`,
+                  )}
+                </p>
+              )}
               <div className="space-y-1.5">
                 {dashboard.issues.slice(0, 15).map((i) => (
                   <div
