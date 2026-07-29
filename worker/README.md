@@ -116,6 +116,32 @@ fly secrets set `
   # FAL_CHAT_GPT_IMAGE_2_MODEL_ID=openai/gpt-image-2/edit
 ```
 
+### `LISTING_IMAGE_PROXY_URL` / `LISTING_IMAGE_PROXY_TOKEN` (clean-text lane)
+
+Optional pair. Aqar's Cloudflare blocklists datacenter egress by ASN, and around
+2026-07-24 it started answering **403** to Fly's ranges — verified on 4 of the 5
+`sin` machines and on a freshly-provisioned `fra` machine, while a laptop and the
+me-central1 VM both got 200 with no special headers. That killed the clean-text
+lane inside `rehostSource()` (before fal was ever called), so listing photos all
+showed `فشل`. Only the one machine on a different upstream range still worked,
+which is why roughly 1 photo in 5 kept succeeding.
+
+When both vars are set, `fetchSourceImage()` retries a refused download through
+the allowlisted `/imgproxy/fetch` endpoint on the me-central1 WhatsApp VM
+(`34-18-239-19.sslip.io`, a `python3` systemd unit behind the existing Caddy —
+bearer-gated, host-allowlisted to `*.aqar.fm`, https-only, 25 MB cap). When
+EITHER is unset the fallback self-disables and a blocked fetch fails loudly
+exactly as before.
+
+```powershell
+fly secrets set --app wassel-deck-worker `
+  LISTING_IMAGE_PROXY_URL=https://34-18-239-19.sslip.io/imgproxy/fetch `
+  LISTING_IMAGE_PROXY_TOKEN=...
+```
+
+This is a **stopgap**. The durable fix is to re-host listing photos into
+`marketing-assets` at scan time so cleaning never touches Aqar's CDN at all.
+
 `FAL_KEY` is the **one new secret since the image queue was added** — the worker
 now boots-fail if it's missing (the same fal key already lives in the Vercel
 project). Use `FAL_KEY=stub` on a throwaway/CI worker to return canned picsum

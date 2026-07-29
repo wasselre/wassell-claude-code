@@ -96,6 +96,16 @@ export interface WorkerEnv {
    *  Set via `fly secrets set` to enable the corresponding provider. */
   APIFY_API_TOKEN: string | null;
   YOUTUBE_DATA_API_KEY: string | null;
+  /** Allowlisted image proxy used as a FALLBACK when a listing photo's CDN
+   *  refuses this worker's datacenter IP. Aqar's Cloudflare started answering
+   *  403 to Fly egress ranges around 2026-07-24 (verified: 4 of 5 sin machines
+   *  and a fresh fra machine all 403; a laptop and the me-central1 VM both 200),
+   *  which killed the clean-text lane in rehostSource() before fal was ever
+   *  called. LISTING_IMAGE_PROXY_URL points at the /imgproxy/fetch endpoint on
+   *  the me-central1 VM (host-allowlisted + bearer-gated). When EITHER is UNSET
+   *  the fallback self-disables and a blocked fetch fails loudly as before. */
+  LISTING_IMAGE_PROXY_URL: string | null;
+  LISTING_IMAGE_PROXY_TOKEN: string | null;
   /** Master switch for the marketing collection loop. Default OFF — the loop
    *  only drains mkt_collection_jobs when '1'. (The DB also has a global pause +
    *  per-account enable; this is the worker-process-level gate.) */
@@ -137,6 +147,8 @@ export function loadEnv(): WorkerEnv {
     WAHA_API_KEY: process.env.WAHA_API_KEY ?? null,
     APIFY_API_TOKEN: process.env.APIFY_API_TOKEN ?? null,
     YOUTUBE_DATA_API_KEY: process.env.YOUTUBE_DATA_API_KEY ?? null,
+    LISTING_IMAGE_PROXY_URL: process.env.LISTING_IMAGE_PROXY_URL ?? null,
+    LISTING_IMAGE_PROXY_TOKEN: process.env.LISTING_IMAGE_PROXY_TOKEN ?? null,
     MARKETING_COLLECTION_ENABLED: process.env.MARKETING_COLLECTION_ENABLED === '1',
   };
 }

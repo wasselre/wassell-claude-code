@@ -79,7 +79,7 @@ interface RunArgs {
   job: CleanTextJob;
 }
 
-export async function runCleanTextJob({ supabase, job }: RunArgs): Promise<Record<string, unknown>> {
+export async function runCleanTextJob({ supabase, env, job }: RunArgs): Promise<Record<string, unknown>> {
   const sourceUrl = typeof job.params?.source_url === 'string' ? (job.params.source_url as string) : '';
   const imageIndex = Number(job.params?.image_index) || 0;
   if (!sourceUrl) {
@@ -146,7 +146,7 @@ export async function runCleanTextJob({ supabase, job }: RunArgs): Promise<Recor
   // URL. Verified live 2026-06-30: passing the raw Aqar URL 422'd here.
   let falInputUrl: string;
   try {
-    falInputUrl = await rehostSource(supabase, sourceUrl, job.userId, job.recordId);
+    falInputUrl = await rehostSource(supabase, env, sourceUrl, job.userId, job.recordId);
   } catch (err) {
     const msg = `source re-host failed: ${err instanceof Error ? err.message : String(err)}`;
     await patchEntry({ status: 'failed', error: msg }).catch(() => undefined);
@@ -250,21 +250,12 @@ export async function runCleanTextJob({ supabase, job }: RunArgs): Promise<Recor
  */
 async function rehostSource(
   supabase: SupabaseClient,
+  env: WorkerEnv,
   sourceUrl: string,
   userId: string,
   recordId: string,
 ): Promise<string> {
-  const res = await fetch(sourceUrl, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-      Referer: 'https://sa.aqar.fm/',
-      Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-    },
-  });
-  if (!res.ok) throw new Error(`source fetch ${res.status}`);
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  const contentType = res.headers.get('content-type') ?? 'image/jpeg';
+  const { bytes, contentType } = await fetchSourceImage(env, sourceUrl);
   const ext = contentType.includes('png')
     ? 'png'
     : contentType.includes('webp')
@@ -280,6 +271,71 @@ async function rehostSource(
   const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
   if (!pub?.publicUrl) throw new Error('source uploaded but public URL not resolved');
   return pub.publicUrl;
+}
+
+const BROWSER_FETCH_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+  Referer: 'https://sa.aqar.fm/',
+  Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+} as const;
+
+/**
+ * Download a listing photo's bytes — directly if the CDN allows it, otherwise
+ * through the allowlisted me-central1 image proxy.
+ *
+ * Aqar's Cloudflare blocklists datacenter egress by ASN, not by header: the
+ * browser UA + Referer below were ALREADY being sent when 4 of the 5 Fly sin
+ * machines (and a freshly-provisioned fra machine) started getting a blanket
+ * 403 around 2026-07-24, while a laptop got 200 with no headers at all. Only
+ * the machine on a different upstream range still worked, which is why roughly
+ * 1 photo in 5 kept cleaning successfully and redo "sometimes" fixed it.
+ *
+ * Direct-first, not proxy-first: when the CDN is willing to serve us we keep
+ * the bytes on the short path and off the WhatsApp VM. The proxy is a fallback,
+ * and when it isn't configured we throw the original CDN error exactly as
+ * before — no silent degradation (CLAUDE.md "fail loudly").
+ */
+async function fetchSourceImage(
+  env: WorkerEnv,
+  sourceUrl: string,
+): Promise<{ bytes: Uint8Array; contentType: string }> {
+  let directError: string;
+  try {
+    const res = await fetch(sourceUrl, { headers: BROWSER_FETCH_HEADERS });
+    if (res.ok) {
+      return {
+        bytes: new Uint8Array(await res.arrayBuffer()),
+        contentType: res.headers.get('content-type') ?? 'image/jpeg',
+      };
+    }
+    directError = `source fetch ${res.status}`;
+  } catch (err) {
+    directError = `source fetch failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  const proxyUrl = env.LISTING_IMAGE_PROXY_URL;
+  const proxyToken = env.LISTING_IMAGE_PROXY_TOKEN;
+  if (!proxyUrl || !proxyToken) throw new Error(directError);
+
+  console.log(`[run-clean] direct fetch refused (${directError}) — retrying via image proxy`);
+  const viaProxy = `${proxyUrl}?url=${encodeURIComponent(sourceUrl)}`;
+  let res: Response;
+  try {
+    res = await fetch(viaProxy, { headers: { Authorization: `Bearer ${proxyToken}` } });
+  } catch (err) {
+    throw new Error(
+      `${directError}; image proxy unreachable: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).slice(0, 200);
+    throw new Error(`${directError}; image proxy ${res.status}${detail ? `: ${detail}` : ''}`);
+  }
+  return {
+    bytes: new Uint8Array(await res.arrayBuffer()),
+    contentType: res.headers.get('content-type') ?? 'image/jpeg',
+  };
 }
 
 /** Translate raw fal.ai / network errors into plain text for the per-photo error box. */
