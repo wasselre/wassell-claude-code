@@ -10,6 +10,7 @@ import { calculateCapacity, existingObligations, qualifyingIncome, selectBand } 
 import { monthlyPayment, principalFromPayment, upfrontCash } from '../payment';
 import { isRateStale, matchProduct, regulatoryLtv, resolveRate } from '../matching';
 import { runFinancing } from '../engine';
+import { confidenceLabel, isLegacySnapshot, rateBasisLabel, statusLabel, statusTone } from '../client';
 import type { FinancingInput, FinancingProduct, Note, RuleSet } from '../types';
 
 // ── Fixtures: the values actually stored in `financing_rules` ──────────────
@@ -217,6 +218,45 @@ describe('LTV ceilings', () => {
 });
 
 // ── Down payment and upfront cash ──────────────────────────────────────────
+describe('a frozen snapshot from an earlier engine must never crash the page', () => {
+  it('an unknown status label degrades to the raw value', () => {
+    // V1 wrote statuses like `indicative_match` that V2 does not know. A map
+    // lookup returning undefined and then reading `.ar` white-screened the app
+    // on the two real scenarios migrated from V1.
+    expect(statusLabel('indicative_match', false)).toBe('indicative_match');
+    expect(statusLabel('appears_outside_published_criteria', true)).toBe('appears_outside_published_criteria');
+    expect(statusTone('indicative_match')).toBe('neutral');
+  });
+
+  it('a known status still translates', () => {
+    expect(statusLabel('requires_bank_review', false)).not.toBe('requires_bank_review');
+    expect(statusTone('meets_published_criteria')).not.toBe('neutral');
+  });
+
+  it('an unknown rate basis is never presented as exact', () => {
+    const l = rateBasisLabel('some_old_basis');
+    expect(l.exact).toBe(false);
+    expect(l.en).toBe('some_old_basis');
+  });
+
+  it('an unknown confidence degrades to the raw value', () => {
+    expect(confidenceLabel('bizarre').en).toBe('bizarre');
+    expect(confidenceLabel('high').en).not.toBe('high');
+  });
+
+  it('identifies a pre-V2 snapshot by the absence of calculation_version', () => {
+    expect(isLegacySnapshot({ status: 'indicative_match', engine_version: '1.4.0' })).toBe(true);
+    expect(isLegacySnapshot({ status: 'requires_bank_review', calculation_version: '2.0.0' })).toBe(false);
+    expect(isLegacySnapshot(null)).toBe(false);
+  });
+
+  it('a V2 result always carries the version that makes it recognisable', () => {
+    const r = runFinancing(input(), [product()], RULES);
+    expect(r.calculation_version).toBe('2.0.0');
+    expect(isLegacySnapshot(r)).toBe(false);
+  });
+});
+
 describe('the shortfall a rep would otherwise have to infer', () => {
   it('flags when the cash needed exceeds what the customer said they have', () => {
     // Capacity-limited financing on an expensive property implies a down payment

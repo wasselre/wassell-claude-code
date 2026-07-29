@@ -103,7 +103,36 @@ export const financingApi = {
     call<{ ok: true }>('admin_product_retire', { product_id: productId, restore }),
 };
 
-export function statusLabel(status: MatchStatus | ResultStatus, isAr: boolean): string {
+/**
+ * A saved `result_snapshot` is frozen forever, including snapshots written by an
+ * engine whose vocabulary no longer exists. Every label lookup below must
+ * therefore be TOTAL: an unrecognised value shows the raw value, it does not
+ * throw. A blank page is a far worse outcome than an untranslated word.
+ */
+export function statusLabel(status: MatchStatus | ResultStatus | string, isAr: boolean): string {
   const l = STATUS_LABEL[status as ResultStatus];
+  if (!l) return String(status);
   return isAr ? l.ar : l.en;
+}
+
+export function statusTone(status: MatchStatus | ResultStatus | string): 'good' | 'warn' | 'bad' | 'neutral' {
+  return STATUS_TONE[status as ResultStatus] ?? 'neutral';
+}
+
+export function rateBasisLabel(basis: RateBasis | string): { ar: string; en: string; exact: boolean } {
+  return RATE_BASIS_LABEL[basis as RateBasis] ?? { ar: String(basis), en: String(basis), exact: false };
+}
+
+export function confidenceLabel(c: string): { ar: string; en: string } {
+  return (CONFIDENCE_LABEL as Record<string, { ar: string; en: string }>)[c] ?? { ar: String(c), en: String(c) };
+}
+
+/**
+ * True when a snapshot predates V2. V2 always stamps `calculation_version`;
+ * V1 stamped `engine_version` and used a different status vocabulary and match
+ * shape, so its results must be shown as recorded rather than re-rendered.
+ */
+export function isLegacySnapshot(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false;
+  return !('calculation_version' in (result as Record<string, unknown>));
 }

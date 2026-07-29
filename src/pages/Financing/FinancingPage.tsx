@@ -13,8 +13,8 @@ import { AlertTriangle, Calculator, Check, ChevronLeft, ChevronRight, Database, 
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import {
-  CONFIDENCE_LABEL, RATE_BASIS_LABEL, STATUS_TONE,
-  financingApi, formatPct, formatSar, formatYears, statusLabel,
+  confidenceLabel, financingApi, formatPct, formatSar, formatYears,
+  isLegacySnapshot, rateBasisLabel, statusLabel, statusTone,
 } from '@/lib/financing/client';
 import type { FinancingInput, FinancingResult, ProductMatch, ResultStatus } from '@/lib/financing/types';
 
@@ -26,9 +26,9 @@ const TONE: Record<'good' | 'warn' | 'bad' | 'neutral', string> = {
   neutral: 'bg-charcoal/5 text-charcoal/70 border-charcoal/15',
 };
 
-function StatusChip({ status, isAr }: { status: ResultStatus; isAr: boolean }) {
+function StatusChip({ status, isAr }: { status: ResultStatus | string; isAr: boolean }) {
   return (
-    <span className={`inline-block rounded-lg border px-2.5 py-1 text-xs font-bold ${TONE[STATUS_TONE[status]]}`}>
+    <span className={`inline-block rounded-lg border px-2.5 py-1 text-xs font-bold ${TONE[statusTone(status)]}`}>
       {statusLabel(status, isAr)}
     </span>
   );
@@ -36,13 +36,26 @@ function StatusChip({ status, isAr }: { status: ResultStatus; isAr: boolean }) {
 
 /** The load-bearing honesty component: green only for a contractual rate or a
  *  bank quotation. Everything else is visibly an approximation. */
-function RateBasisChip({ basis, isAr }: { basis: ProductMatch['rate_basis']; isAr: boolean }) {
-  const l = RATE_BASIS_LABEL[basis];
+function RateBasisChip({ basis, isAr }: { basis: ProductMatch['rate_basis'] | string; isAr: boolean }) {
+  const l = rateBasisLabel(basis);
   return (
     <span className={`inline-block rounded-lg border px-2 py-0.5 text-[11px] font-bold ${l.exact ? TONE.good : TONE.warn}`}>
       {isAr ? l.ar : l.en}
     </span>
   );
+}
+
+/** Scenario lifecycle, not a result status — its own small vocabulary. */
+function scenarioStatusLabel(status: string, isAr: boolean): string {
+  const map: Record<string, { ar: string; en: string }> = {
+    draft: { ar: 'مسودة', en: 'Draft' },
+    calculated: { ar: 'محسوبة', en: 'Calculated' },
+    shared: { ar: 'تمت المشاركة', en: 'Shared' },
+    converted: { ar: 'حُوّلت إلى معاملة', en: 'Converted' },
+    archived: { ar: 'مؤرشفة', en: 'Archived' },
+  };
+  const l = map[status];
+  return l ? (isAr ? l.ar : l.en) : status;
 }
 
 const inputCls = 'w-full rounded-lg border border-sand/40 bg-white px-3 py-2 text-sm text-charcoal outline-none focus:border-copper focus:ring-2 focus:ring-copper/20';
@@ -155,7 +168,10 @@ export default function FinancingPage() {
               {String(scenario.title ?? t('نتيجة التمويل', 'Financing result'))}
             </h1>
             <p className="text-xs text-charcoal/50">
-              {t('سيناريو', 'Scenario')} #{String(scenario.scenario_number ?? '')} · {t('نسخة الحساب', 'calc')} v{result.calculation_version}
+              {t('سيناريو', 'Scenario')} #{String(scenario.scenario_number ?? '')}
+              {result.calculation_version
+                ? ` · ${t('نسخة الحساب', 'calc')} v${result.calculation_version}`
+                : ` · ${t('إصدار سابق', 'earlier version')}`}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -262,7 +278,7 @@ export default function FinancingPage() {
                       <tr key={String(s.id)} className="cursor-pointer border-b border-sand/10 hover:bg-cream/40" onClick={() => void open(String(s.id))}>
                         <td className="p-2 text-charcoal/60">{String(s.scenario_number ?? '')}</td>
                         <td className="p-2 font-medium text-charcoal">{String(s.title ?? t('بدون عنوان', 'Untitled'))}</td>
-                        <td className="p-2 text-charcoal/70">{String(s.status)}</td>
+                        <td className="p-2 text-charcoal/70">{scenarioStatusLabel(String(s.status), isAr)}</td>
                         <td className="p-2 text-end text-charcoal/70">{formatSar(snap?.capacity?.max_installment ?? null, isAr)}</td>
                         <td className="p-2 text-charcoal/50">{String(s.updated_at ?? '').slice(0, 10)}</td>
                       </tr>
@@ -616,8 +632,96 @@ function Stat({ label, value, sub, emphasis }: { label: string; value: string; s
   );
 }
 
+/**
+ * A scenario calculated before V2, shown exactly as it was recorded.
+ *
+ * These snapshots are frozen customer history — what the rep was actually told
+ * on that date — so they are NOT re-computed or translated into the V2
+ * vocabulary. Only the fields common to both engines are read, defensively, and
+ * the banner tells the reader why the layout is different.
+ */
+function LegacyResult({ result, isAr }: { result: FinancingResult; isAr: boolean }) {
+  const t = (ar: string, en: string) => (isAr ? ar : en);
+  const r = result as unknown as Record<string, unknown>;
+  const cap = (r.capacity ?? {}) as Record<string, unknown>;
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const matches = Array.isArray(r.matches) ? (r.matches as Array<Record<string, unknown>>) : [];
+
+  return (
+    <div className="space-y-4">
+      <div className="card border-l-4 border-l-amber-400 p-5">
+        <div className="mb-2 flex items-center gap-2">
+          <AlertTriangle size={16} className="text-amber-600" />
+          <h3 className="font-bold text-charcoal">{t('نتيجة محفوظة من إصدار سابق', 'Result saved by an earlier version')}</h3>
+        </div>
+        <p className="text-xs leading-relaxed text-charcoal/60">
+          {t('هذه النتيجة حُسبت قبل تبسيط النظام، وتُعرض كما سُجّلت في حينها دون إعادة حساب — فهي سجل لما أُبلغ به العميل. لإجراء حساب بالنموذج الحالي أنشئ سيناريو جديدًا.',
+             'This result was calculated before the system was simplified. It is shown exactly as recorded rather than recalculated, because it is the record of what the customer was told. For a calculation on the current model, create a new scenario.')}
+        </p>
+      </div>
+
+      <div className="card p-5">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <StatusChip status={String(r.status ?? '')} isAr={isAr} />
+          <span className="text-xs text-charcoal/50">{String(r.as_of_date ?? '')}</span>
+          {typeof r.engine_version === 'string' && (
+            <span className="text-xs text-charcoal/40">{t('محرّك', 'engine')} {r.engine_version}</span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Stat label={t('أقصى قسط شهري', 'Max monthly installment')} value={formatSar(num(cap.max_installment), isAr)} emphasis />
+          <Stat label={t('الدخل المؤهل', 'Qualifying income')} value={formatSar(num(cap.qualifying_income), isAr)} />
+          <Stat label={t('الالتزامات القائمة', 'Existing obligations')} value={formatSar(num(cap.existing_obligations), isAr)} />
+          <Stat label={t('أقصى قيمة عقار', 'Max property value')} value={formatSar(num(r.max_property_value), isAr)} />
+        </div>
+      </div>
+
+      {matches.length > 0 && (
+        <div className="card p-5">
+          <h3 className="mb-3 font-bold text-charcoal">
+            {t('المنتجات كما سُجّلت', 'Products as recorded')} ({matches.length})
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-xs">
+              <thead>
+                <tr className="border-b border-sand/30 text-charcoal/50">
+                  <th className="p-2 text-start">{t('المنتج', 'Product')}</th>
+                  <th className="p-2 text-start">{t('الحالة المسجلة', 'Recorded status')}</th>
+                  <th className="p-2 text-end">{t('القسط', 'Monthly')}</th>
+                  <th className="p-2 text-end">{t('التمويل', 'Financing')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {matches.map((m, i) => {
+                  const prod = (m.product ?? {}) as Record<string, unknown>;
+                  const name = String((isAr ? prod.name_ar : prod.name_en) ?? prod.product_key ?? '—');
+                  const bank = String((isAr ? prod.provider_name_ar : prod.provider_name_en) ?? '');
+                  return (
+                    <tr key={i} className="border-b border-sand/10">
+                      <td className="p-2 text-charcoal/80">{bank ? `${bank} · ${name}` : name}</td>
+                      <td className="p-2 text-charcoal/60">{statusLabel(String(m.status ?? ''), isAr)}</td>
+                      <td className="p-2 text-end text-charcoal/70">{formatSar(num(m.monthly_payment), isAr)}</td>
+                      <td className="p-2 text-end text-charcoal/70">{formatSar(num(m.financing_amount), isAr)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Results({ result, isAr }: { result: FinancingResult; isAr: boolean }) {
   const t = (ar: string, en: string) => (isAr ? ar : en);
+
+  // A result frozen by an earlier engine has a different match shape and status
+  // vocabulary. Forcing it through this renderer white-screened the page on the
+  // two scenarios migrated from V1, so show it as recorded instead.
+  if (isLegacySnapshot(result)) return <LegacyResult result={result} isAr={isAr} />;
+
   const cap = result.capacity;
   const sel = result.selected;
 
@@ -627,7 +731,7 @@ function Results({ result, isAr }: { result: FinancingResult; isAr: boolean }) {
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <StatusChip status={result.status} isAr={isAr} />
           <span className={`rounded-lg border px-2 py-0.5 text-[11px] font-bold ${TONE[result.confidence === 'high' ? 'good' : result.confidence === 'medium' ? 'warn' : 'neutral']}`}>
-            {isAr ? CONFIDENCE_LABEL[result.confidence].ar : CONFIDENCE_LABEL[result.confidence].en}
+            {isAr ? confidenceLabel(result.confidence).ar : confidenceLabel(result.confidence).en}
           </span>
           <span className="text-xs text-charcoal/50">{result.as_of_date}</span>
         </div>
