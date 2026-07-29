@@ -134,6 +134,7 @@ export default function NodeDrawer({
         embedded
         actions={actions}
         triggerFields={triggerFields}
+        triggerModelId={workflow.trigger_model_id}
         onChange={(next) => onReplaceBranchActions(node.branchId, next)}
       />
     );

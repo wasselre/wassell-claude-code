@@ -39,6 +39,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   AppModel, AppRecord, User, Workflow, WorkflowBranch, WorkflowAction,
   WorkflowActionCreateRecord, WorkflowActionUpdateRecord, WorkflowActionSendWhatsAppMessage,
+  WorkflowActionSendNotification,
   OutboundIvrDestination, FieldMapping, WorkflowConditionTrace, WorkflowBranchTrace,
 } from '../../src/types/index.js';
 import {
@@ -52,7 +53,7 @@ import { sendMessage as haberchatSendMessage, resolveDefaultDeviceId } from './w
 import { resolveActorPublicUserId } from './actorMapping.js';
 
 export const SUPPORTED_ACTION_TYPES = new Set<WorkflowAction['type']>([
-  'create_record', 'update_record', 'send_whatsapp_message',
+  'create_record', 'update_record', 'send_whatsapp_message', 'send_notification',
 ]);
 
 /** The DB-authoritative captured event. Source of truth is the workflow_jobs row. */
@@ -434,6 +435,114 @@ async function resolveDestinationPhone(dest: OutboundIvrDestination, ctx: Resolv
   }
 }
 
+/* ── send_notification ────────────────────────────────────────────────────────
+   Enqueues onto push_outbox; the Fly worker's push loop does the delivery. The
+   action stays cheap and synchronous here, and a push service being slow can
+   never hold up a workflow run.
+
+   MIRRORED IN src/lib/workflowEngine.ts — the client engine runs this same
+   action for models NOT yet enrolled in workflow_capture_models. Change both
+   together (same posture as worker/src/imageGen.ts). */
+
+/** Resolve an action's recipient to public.users ids. Empty ⇒ nobody to notify. */
+async function resolveNotificationRecipients(
+  action: WorkflowActionSendNotification,
+  ctx: ResolveCtx,
+): Promise<{ userIds: string[]; reason?: string }> {
+  switch (action.recipient_mode) {
+    case 'specific_user':
+      return action.recipient_user_id
+        ? { userIds: [action.recipient_user_id] }
+        : { userIds: [], reason: 'no_recipient_user_configured' };
+
+    case 'record_field': {
+      if (!action.recipient_field_id) return { userIds: [], reason: 'no_recipient_field_configured' };
+      const raw = ctx.triggerData[action.recipient_field_id];
+      // Assignee/lookup fields are written as a bare string by some paths and a
+      // single-element array by others; accept both.
+      const id = Array.isArray(raw) ? raw[0] : raw;
+      return typeof id === 'string' && id
+        ? { userIds: [id] }
+        : { userIds: [], reason: `field_empty:${action.recipient_field_id}` };
+    }
+
+    case 'role': {
+      if (!action.recipient_role_id) return { userIds: [], reason: 'no_recipient_role_configured' };
+      // role_assignments is a jsonb array of role ids on public.users.
+      const members = ctx.users.filter(
+        (u) => u.is_active && Array.isArray(u.role_assignments) &&
+          (u.role_assignments as unknown[]).includes(action.recipient_role_id),
+      );
+      return members.length
+        ? { userIds: members.map((u) => u.id) }
+        : { userIds: [], reason: 'role_has_no_active_members' };
+    }
+
+    default:
+      // No recipient configured at all ⇒ this is a legacy toast-only action.
+      return { userIds: [], reason: 'toast_only_no_recipient' };
+  }
+}
+
+async function execSendNotification(
+  action: WorkflowActionSendNotification,
+  job: CapturedJob,
+  runId: string,
+  ctx: ResolveCtx,
+): Promise<ActionResult> {
+  const { userIds, reason } = await resolveNotificationRecipients(action, ctx);
+
+  if (reason === 'toast_only_no_recipient') {
+    // Not a failure: the action predates push (or the author deliberately left
+    // it as an in-app message). The server has no browser to toast into, so
+    // there is genuinely nothing to do here.
+    return { action_id: action.id, type: 'send_notification', status: 'skipped', reason };
+  }
+  if (userIds.length === 0) {
+    // A configured recipient that resolved to nobody IS a failure — the author
+    // asked for someone to be told and nobody was.
+    return { action_id: action.id, type: 'send_notification', status: 'failed', reason: reason ?? 'no_recipients' };
+  }
+
+  const triggerModel = ctx.models.find((m) => m.id === ctx.triggerModelId);
+  const asRecord = { id: ctx.recordId, model_id: ctx.triggerModelId, data: ctx.triggerData } as AppRecord;
+  const subst = (tpl: string) => substituteFieldTokens(tpl, asRecord, { triggerModel, recordsByModel: {} });
+
+  const body = subst(action.message_ar || action.message_en || '');
+  const title = subst(action.title_ar || action.title_en || 'وصل العقارية');
+  const url = action.url
+    ? subst(action.url)
+    : `/model/${ctx.models.find((m) => m.id === job.model_id)?.name ?? ''}/${job.record_id}`;
+
+  if (!body.trim()) {
+    return { action_id: action.id, type: 'send_notification', status: 'failed', reason: 'empty_body_after_substitution' };
+  }
+
+  const rows = userIds.map((uid) => ({
+    user_id: uid,
+    kind: 'workflow',
+    title,
+    body,
+    url,
+    // Collapse repeat notifications about the same record on the device rather
+    // than stacking them.
+    tag: `wf-${job.record_id}`,
+    // One notification per recipient per run — a retried job must not notify
+    // the same person twice for the same run.
+    dedupe_key: `wf:${runId}:${action.id}:${uid}`,
+  }));
+
+  const { error } = await ctx.supabase.from('push_outbox').insert(rows);
+  if (error) {
+    return { action_id: action.id, type: 'send_notification', status: 'failed', reason: 'push_enqueue_error', detail: { message: error.message } };
+  }
+
+  return {
+    action_id: action.id, type: 'send_notification', status: 'executed',
+    detail: { recipients: userIds.length, title, url },
+  };
+}
+
 async function execSendWhatsApp(action: WorkflowActionSendWhatsAppMessage, runId: string, ctx: ResolveCtx): Promise<ActionResult> {
   // Unlike the sweeper (which 'skips' a missing destination/body), the runner
   // treats these as FAILURES — a follow-up's WhatsApp that can't send must not
@@ -608,7 +717,9 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
           ? await execCreate(action as WorkflowActionCreateRecord, job, runId, w.id, ctx)
           : action.type === 'update_record'
             ? await execUpdate(action as WorkflowActionUpdateRecord, job, runId, ctx)
-            : await execSendWhatsApp(action as WorkflowActionSendWhatsAppMessage, runId, ctx);
+            : action.type === 'send_notification'
+              ? await execSendNotification(action as WorkflowActionSendNotification, job, runId, ctx)
+              : await execSendWhatsApp(action as WorkflowActionSendWhatsAppMessage, runId, ctx);
         actionsTrace.push(r);
         if (r.status === 'failed') anyFailed = true;
         if (r.status === 'executed') anyExecuted = true;

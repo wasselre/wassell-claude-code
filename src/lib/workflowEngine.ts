@@ -828,6 +828,20 @@ async function executeAction(
         const lang = document.documentElement.lang === 'ar' ? 'ar' : 'en';
         const message = lang === 'ar' ? action.message_ar : action.message_en;
         showToast(message);
+
+        // PUSH IS NOT SENT FROM HERE, and cannot be: `push_outbox` has RLS with
+        // no policies, so only the service role may insert — deliberately, since
+        // a browser able to write that table could push anything to anyone.
+        //
+        // This is also unreachable-by-construction for an enrolled model: the
+        // store skips this whole engine when a model is in
+        // workflow_capture_models (see appStore.saveRecord), so if we are
+        // running, the Fly worker is NOT the executor for this model.
+        //
+        // So an action with a recipient configured is recorded as a PARTIAL
+        // outcome rather than silently appearing to have notified someone. The
+        // fix is to enrol the model, not to widen RLS.
+        const wantsPush = !!action.recipient_mode;
         return {
           ...traceBase,
           type: 'send_notification',
@@ -837,6 +851,13 @@ async function executeAction(
           message_en: action.message_en,
           shown_message: message,
           shown_language: lang,
+          ...(wantsPush
+            ? {
+                push_skipped_reason:
+                  'model_not_server_enrolled — in-app toast shown; no phone notification sent. ' +
+                  'Enrol this model in workflow_capture_models so the Fly worker executes it.',
+              }
+            : {}),
         };
       }
 

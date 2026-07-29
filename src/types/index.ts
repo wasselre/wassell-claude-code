@@ -955,11 +955,37 @@ export interface WorkflowActionUpdateRecord {
   field_mappings: FieldMapping[];
 }
 
+/** Where the person to notify comes from.
+ *  - record_field   — a field on the trigger record holding a user id (e.g. `sales_rep`)
+ *  - specific_user  — always the same person
+ *  - role           — everyone holding a role */
+export type NotificationRecipientMode = 'record_field' | 'specific_user' | 'role';
+
 export interface WorkflowActionSendNotification {
   id: string;
   type: 'send_notification';
+  /** Body text. Supports {field_slug} tokens from the trigger record. */
   message_ar: string;
   message_en: string;
+
+  // ── Push (added 2026-07-29) ───────────────────────────────────────────────
+  // All optional. An action saved BEFORE push existed has no recipient_mode,
+  // and keeps its original behaviour exactly: an in-app toast and nothing
+  // else. Push is opt-in per action by choosing a recipient.
+  /** Notification title. Falls back to the app name when unset. */
+  title_ar?: string;
+  title_en?: string;
+  /** Absent ⇒ in-app toast only, no push sent. */
+  recipient_mode?: NotificationRecipientMode;
+  /** recipient_mode='record_field': slug of a field holding a user id. */
+  recipient_field_id?: string;
+  /** recipient_mode='specific_user' */
+  recipient_user_id?: string;
+  /** recipient_mode='role' — every active member of the role is notified. */
+  recipient_role_id?: string;
+  /** In-app path opened when the notification is tapped. Supports
+   *  {field_slug} tokens. Defaults to the trigger record's form. */
+  url?: string;
 }
 
 export type AssignmentMode = 'specific_user' | 'role_based';
@@ -1343,6 +1369,9 @@ export interface WorkflowActionTraceNotify extends WorkflowActionTraceBase {
   message_en: string;
   shown_message: string;
   shown_language: 'ar' | 'en';
+  /** Set when the action asked for a push but the client engine ran it, which
+   *  can only show an in-app toast. Explains why no phone was notified. */
+  push_skipped_reason?: string;
 }
 
 export interface WorkflowActionTraceAssign extends WorkflowActionTraceBase {

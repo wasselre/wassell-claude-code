@@ -2,12 +2,12 @@ import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { Plus, Trash2, Play, UserCheck, ChevronDown, ChevronUp, Phone, Upload, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Play, UserCheck, ChevronDown, ChevronUp, Phone, Upload, Loader2, AlertTriangle } from 'lucide-react';
 import FieldValueInput from './FieldValueInput';
 import PaseetQueryConfig from './PaseetQueryConfig';
 import { supabase } from '@/lib/supabase';
 import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
-import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, WorkflowActionOutboundIvr, WorkflowActionSendWhatsAppMessage, WorkflowActionPaseetQuery, WorkflowIvrOption, OutboundIvrDestination, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator, AppModel } from '@/types';
+import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, WorkflowActionOutboundIvr, WorkflowActionSendWhatsAppMessage, WorkflowActionPaseetQuery, WorkflowIvrOption, OutboundIvrDestination, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator, AppModel, NotificationRecipientMode } from '@/types';
 
 type DateOffsetUnit = 'min' | 'h' | 'd' | 'w' | 'mo' | 'y';
 interface DateOffsetRow {
@@ -71,6 +71,9 @@ function serializeDateOffsets(
 interface ActionListProps {
   actions: WorkflowAction[];
   triggerFields: ModelField[];
+  /** Trigger model id — used to tell the author whether notifications from
+   *  this workflow can actually reach a phone yet. */
+  triggerModelId?: string;
   onChange: (actions: WorkflowAction[]) => void;
   // When true, drop the outer card / "Then..." header so this nests inside a
   // branch card.
@@ -235,10 +238,16 @@ export function summarizeAction(action: WorkflowAction, models: AppModel[], isAr
   }
 }
 
-export default function ActionList({ actions, triggerFields, onChange, embedded = false }: ActionListProps) {
+export default function ActionList({ actions, triggerFields, triggerModelId, onChange, embedded = false }: ActionListProps) {
   const { t } = useTranslation();
-  const { models, language } = useAppStore();
+  const { models, language, users, roles, serverEnrolledModelIds } = useAppStore();
   const isAr = language === 'ar';
+
+  // Notifications only reach a phone when the Fly worker executes the workflow;
+  // while a model still runs in the browser the action can only toast. The
+  // editor says so rather than letting someone build a rule that silently
+  // never reaches anyone.
+  const triggerModelIsServerEnrolled = !!triggerModelId && serverEnrolledModelIds.has(triggerModelId);
 
   // Per-action collapse — keyed by action.id so it survives reorders. Default
   // expanded. Collapsed actions show just the header bar (number + type).
@@ -354,23 +363,148 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
                 {!isActionCollapsed(action.id) && (
                 <div className="p-3">
                   {action.type === 'send_notification' && (
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={action.message_ar}
-                        onChange={(e) => updateAction(action.id, { ...action, message_ar: e.target.value })}
-                        className="form-input text-sm"
-                        placeholder={isAr ? 'الرسالة (عربي)' : 'Message (Arabic)'}
-                        dir="rtl"
-                      />
-                      <input
-                        type="text"
-                        value={action.message_en}
-                        onChange={(e) => updateAction(action.id, { ...action, message_en: e.target.value })}
-                        className="form-input text-sm"
-                        placeholder={isAr ? 'الرسالة (إنجليزي)' : 'Message (English)'}
-                        dir="ltr"
-                      />
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <label className="block text-xs font-bold text-charcoal/40">
+                          {isAr ? 'العنوان' : 'Title'}
+                        </label>
+                        <input
+                          type="text"
+                          value={action.title_ar ?? ''}
+                          onChange={(e) => updateAction(action.id, { ...action, title_ar: e.target.value })}
+                          className="form-input text-sm"
+                          placeholder={isAr ? 'العنوان (عربي)' : 'Title (Arabic)'}
+                          dir="rtl"
+                        />
+                        <input
+                          type="text"
+                          value={action.title_en ?? ''}
+                          onChange={(e) => updateAction(action.id, { ...action, title_en: e.target.value })}
+                          className="form-input text-sm"
+                          placeholder={isAr ? 'العنوان (إنجليزي)' : 'Title (English)'}
+                          dir="ltr"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-xs font-bold text-charcoal/40">
+                          {isAr ? 'الرسالة' : 'Message'}
+                        </label>
+                        <input
+                          type="text"
+                          value={action.message_ar}
+                          onChange={(e) => updateAction(action.id, { ...action, message_ar: e.target.value })}
+                          className="form-input text-sm"
+                          placeholder={isAr ? 'الرسالة (عربي)' : 'Message (Arabic)'}
+                          dir="rtl"
+                        />
+                        <input
+                          type="text"
+                          value={action.message_en}
+                          onChange={(e) => updateAction(action.id, { ...action, message_en: e.target.value })}
+                          className="form-input text-sm"
+                          placeholder={isAr ? 'الرسالة (إنجليزي)' : 'Message (English)'}
+                          dir="ltr"
+                        />
+                      </div>
+
+                      {/* Recipient — this is what turns an in-app message into a
+                          notification that reaches a phone. Left unset, the
+                          action behaves exactly as it always has. */}
+                      <div className="space-y-2 pt-1 border-t border-sand/25">
+                        <label className="block text-xs font-bold text-charcoal/40 pt-2">
+                          {isAr ? 'من يُشعَر؟' : 'Who gets notified?'}
+                        </label>
+                        <select
+                          value={action.recipient_mode ?? ''}
+                          onChange={(e) => {
+                            const mode = e.target.value as NotificationRecipientMode | '';
+                            updateAction(action.id, {
+                              ...action,
+                              recipient_mode: mode === '' ? undefined : mode,
+                              // Clear the other modes' values so a switched
+                              // recipient can't silently keep a stale target.
+                              recipient_field_id: undefined,
+                              recipient_user_id: undefined,
+                              recipient_role_id: undefined,
+                            });
+                          }}
+                          className="form-input text-sm"
+                        >
+                          <option value="">{isAr ? 'لا أحد — رسالة داخل التطبيق فقط' : 'Nobody — in-app message only'}</option>
+                          <option value="record_field">{isAr ? 'الشخص في حقل بالسجل' : 'The person in a record field'}</option>
+                          <option value="specific_user">{isAr ? 'شخص محدَّد' : 'A specific person'}</option>
+                          <option value="role">{isAr ? 'كل من لديه دور' : 'Everyone with a role'}</option>
+                        </select>
+
+                        {action.recipient_mode === 'record_field' && (() => {
+                          // ONLY `assignee` fields hold a user id (verified: both
+                          // sales_rep and client_owner are assignee). Offering
+                          // text or lookup fields here would let someone build a
+                          // rule that can only ever fail with field_empty.
+                          const assigneeFields = triggerFields.filter((f) => f.type === 'assignee');
+                          if (assigneeFields.length === 0) {
+                            // An unexplained empty select reads as a broken
+                            // feature; say which of the two reasons it is.
+                            return (
+                              <div className="text-[11px] text-charcoal/60 bg-sand/15 rounded-lg p-2">
+                                {isAr
+                                  ? 'لا يحتوي هذا النموذج على حقل «مسؤول» يحمل مستخدماً. اختر شخصاً محدَّداً أو دوراً بدلاً من ذلك.'
+                                  : 'This model has no assignee field holding a user. Pick a specific person or a role instead.'}
+                              </div>
+                            );
+                          }
+                          return (
+                            <select
+                              value={action.recipient_field_id ?? ''}
+                              onChange={(e) => updateAction(action.id, { ...action, recipient_field_id: e.target.value })}
+                              className="form-input text-sm"
+                            >
+                              <option value="">—</option>
+                              {assigneeFields.map((f) => (
+                                <option key={f.id} value={f.name}>{isAr ? f.label_ar : f.label_en}</option>
+                              ))}
+                            </select>
+                          );
+                        })()}
+
+                        {action.recipient_mode === 'specific_user' && (
+                          <select
+                            value={action.recipient_user_id ?? ''}
+                            onChange={(e) => updateAction(action.id, { ...action, recipient_user_id: e.target.value })}
+                            className="form-input text-sm"
+                          >
+                            <option value="">—</option>
+                            {users.filter((u) => u.is_active).map((u) => (
+                              <option key={u.id} value={u.id}>{isAr ? u.name_ar : u.name_en} — {u.email}</option>
+                            ))}
+                          </select>
+                        )}
+
+                        {action.recipient_mode === 'role' && (
+                          <select
+                            value={action.recipient_role_id ?? ''}
+                            onChange={(e) => updateAction(action.id, { ...action, recipient_role_id: e.target.value })}
+                            className="form-input text-sm"
+                          >
+                            <option value="">—</option>
+                            {roles.map((r) => (
+                              <option key={r.id} value={r.id}>{isAr ? r.label_ar : r.label_en}</option>
+                            ))}
+                          </select>
+                        )}
+
+                        {action.recipient_mode && !triggerModelIsServerEnrolled && (
+                          <div className="flex items-start gap-2 text-[11px] text-amber-800 bg-amber-500/10 rounded-lg p-2">
+                            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                            <span>
+                              {isAr
+                                ? 'لن تصل هذه الإشعارات إلى الجوال بعد. هذا النموذج ما زال يُنفَّذ داخل المتصفح، فتظهر الرسالة داخل التطبيق فقط لمن يفتحه. لتصل إلى الجوال، يجب تفعيل التنفيذ من الخادم لهذا النموذج.'
+                                : 'These will not reach a phone yet. This model still runs in the browser, so the message only appears in-app for whoever has it open. Server-side execution must be enabled for this model first.'}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
