@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-07-30T13:29:36.198Z",
+ "generated_at": "2026-07-30T13:37:31.890Z",
  "source": "OpenStreetMap via Overpass API (© OpenStreetMap contributors, ODbL)",
  "country": {
   "iso_code": "AE",
@@ -47,7 +47,7 @@
    "region_id": "AE-AJM",
    "code": "AJM",
    "osm_id": 3766482,
-   "name_ar": "إمارة عجمان",
+   "name_ar": "عجمان",
    "name_en": "Ajman",
    "centroid": [
     55.6746067,

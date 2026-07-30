@@ -30,8 +30,23 @@ node data/source/geo-uae/process-admin.mjs     # re-run: attaches boundaries
 node data/source/geo-uae/process-anchors.mjs   # re-run: attaches geometry
 ```
 
-Then import (see `scripts/geo-uae/import-uae-geography.mjs` and
-`scripts/import-geo-intelligence.mjs`).
+Then import:
+
+```bash
+node scripts/geo-uae/import-uae-geography.mjs --dry-run   # regions/cities/districts
+node scripts/geo-uae/import-uae-geography.mjs
+node scripts/import-geo-intelligence.mjs data/source/geo-uae/uae-geo-intelligence.json
+```
+
+**The admin import may run before pass B; the anchor import may NOT.**
+`regions`/`cities`/`districts` carry a centroid and no geometry, so they import fine with
+zero boundaries and pick them up on a later re-run (`district_boundaries` is a separate
+table, and the importer is idempotent). But **`geo_elements.geom` is `NOT NULL`** — the
+schema's way of saying an element without geometry isn't ready. Do not satisfy that by
+synthesising a point from the centroid: for a mall or a road it would assert a geometry
+that was never fetched and make `geom_kind` lie, and the client-facing rule builder keys
+its available rule types off `geom_kind` (point → within-distance only; line → the four
+cardinal directions; polygon → inside-area).
 
 Everything is **cached and resumable**: raw Overpass responses land in `raw/` (gitignored
 — reproducible and large), and the process scripts read *only* from `raw/`, never the

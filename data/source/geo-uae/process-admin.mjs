@@ -23,7 +23,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { elementGeometry, representativePoint, geomKind, coordCount } from './lib/overpass.mjs';
 import {
-  normalizeAr, normalizeEn, stripHayy, stripEmirate,
+  normalizeAr, normalizeEn, stripHayy, stripEmirate, stripEmirateAr,
   pointInGeometry, bboxOf, haversineKm, locateEmirate, nearestCity,
   isMappingArtifactName, nameAr, nameEn, extId,
 } from './lib/classify.mjs';
@@ -55,7 +55,7 @@ for (const em of EMIRATES) {
     region_id: `AE-${em.code}`,
     code: em.code,
     osm_id: em.osm_id,
-    name_ar: (rel && nameAr(rel.tags)) || em.name_ar,
+    name_ar: stripEmirateAr((rel && nameAr(rel.tags)) || em.name_ar),
     name_en: stripEmirate((rel && nameEn(rel.tags)) || em.name_en),
     geometry,
     bbox: bboxOf(geometry),

@@ -21,7 +21,6 @@
  * NOTE: this script never lives inside api/_lib/geoMatch.ts — the 725 anchors
  * are runtime DB data, not matching logic.
  */
-import { createClient } from '@supabase/supabase-js';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname, isAbsolute, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,9 +36,14 @@ const BATCH = 100;
 const CONFIDENCE_FLOOR = 0.5; // keep in sync with the SQL matcher + geoMatch.ts
 
 // ── minimal .env loader (no dotenv dependency — mirrors sync-model-workflow-prds.mjs)
+// Falls back to the MAIN checkout because git worktrees don't carry the untracked
+// .env.local, and this script is normally run from one.
 function loadEnv() {
-  for (const f of ['.env.local', '.env']) {
-    const p = join(ROOT, f);
+  for (const p of [
+    join(ROOT, '.env.local'), join(ROOT, '.env'),
+    'C:/Users/rayan/Claude/wassell-claude-code/.env.local',
+    'C:/Users/rayan/Claude/wassell-claude-code/.env',
+  ]) {
     if (!existsSync(p)) continue;
     for (const line of readFileSync(p, 'utf8').split(/\r?\n/)) {
       const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
@@ -63,7 +67,27 @@ if (!existsSync(SRC)) {
   process.exit(1);
 }
 
-const supabase = createClient(url, key, { auth: { persistSession: false } });
+/**
+ * Raw fetch against PostgREST rather than @supabase/supabase-js.
+ *
+ * The client crashes this script outright on Node 24 / Windows —
+ * `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c` —
+ * reproducibly, before the first batch lands. This script only ever makes two RPC
+ * calls, so the client was never earning its keep; the sibling importer
+ * (scripts/geo-uae/import-uae-geography.mjs) has always used raw fetch and is
+ * unaffected.
+ */
+async function rpc(fn, args) {
+  const res = await fetch(`${url}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args ?? {}),
+  });
+  const text = await res.text();
+  if (!res.ok) return { data: null, error: new Error(`${res.status} ${text.slice(0, 400)}`) };
+  return { data: text ? JSON.parse(text) : null, error: null };
+}
+const supabase = { rpc };
 
 const rows = JSON.parse(readFileSync(SRC, 'utf8'));
 if (!Array.isArray(rows)) {

@@ -190,10 +190,11 @@ async function geometry() {
   console.log('\n── pass B: geometry by id ──');
   const planPath = join(HERE, 'geometry-plan.json');
   if (!existsSync(planPath)) {
-    console.log('  (no geometry-plan.json — run plan-geometry.mjs after the survey)');
+    console.log('  (no geometry-plan.json — run the process scripts first)');
     return;
   }
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));
+  const failed = [];
   for (const [batch, byType] of Object.entries(plan)) {
     for (const [osmType, ids] of Object.entries(byType)) {
       if (!Array.isArray(ids) || !ids.length) continue;
@@ -201,12 +202,31 @@ async function geometry() {
       for (let i = 0; i < ids.length; i += size) {
         const slice = ids.slice(i, i + size);
         const name = `geom-${batch}-${osmType}-${String(Math.floor(i / size)).padStart(3, '0')}`;
-        await cached(name, () =>
-          overpass(`[out:json][timeout:${TIMEOUT}];${osmType}(id:${slice.join(',')});out geom;`,
-            { label: name, attempts: 6 }),
-        );
+        try {
+          await cached(name, () =>
+            overpass(`[out:json][timeout:${TIMEOUT}];${osmType}(id:${slice.join(',')});out geom;`,
+              { label: name, attempts: 10 }),
+          );
+        } catch (err) {
+          // A chunk that won't fetch must NOT abort the run. Geometry is an
+          // enhancement: a district with no polygon keeps its centroid and still works
+          // everywhere except containment, and the app already handles that (the Saudi
+          // layer has 3,733 boundaries for 3,734 districts). Sibling chunks succeeded
+          // where this one didn't, so the cause is usually one pathological relation
+          // rather than load — and grinding the whole run to a halt over it would cost
+          // every other boundary. Reported loudly, cached files untouched, so a re-run
+          // retries ONLY what is missing.
+          console.error(`  ✗ ${name}: giving up after 10 attempts — ${err.message}`);
+          failed.push({ name, osmType, count: slice.length });
+        }
       }
     }
+  }
+  if (failed.length) {
+    const missing = failed.reduce((n, f) => n + f.count, 0);
+    console.error(`\n  ${failed.length} chunk(s) failed — ${missing} element(s) have no geometry this run:`);
+    for (const f of failed) console.error(`    ${f.name} (${f.count} ${f.osmType}s)`);
+    console.error('  Re-run `fetch.mjs geometry` later; cached chunks are skipped, so only these are retried.');
   }
 }
 

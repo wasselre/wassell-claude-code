@@ -1,6 +1,6 @@
 # UAE administrative geography — build report
 
-- Generated: 2026-07-30T13:29:36.198Z
+- Generated: 2026-07-30T13:37:31.890Z
 - Source: OpenStreetMap via Overpass (© OpenStreetMap contributors, ODbL)
 - **Regions (emirates): 7 · Cities: 38 · Districts: 1947 · Boundaries: 120**
 

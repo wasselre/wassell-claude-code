@@ -41,6 +41,17 @@ export const stripHayy = (s) => String(s ?? '').replace(/^\s*حي\s+/, '').trim(
  */
 export const stripEmirate = (s) => String(s ?? '').replace(/\s*Emirate\s*$/i, '').trim();
 
+/**
+ * Arabic side of the same trim. OSM is inconsistent: six emirates carry a bare name
+ * («دبي», «أبو ظبي», «الشارقة») but Ajman is tagged «إمارة عجمان», so the region
+ * dropdown listed one entry in a different form from its neighbours. Never strips a
+ * name that is ONLY «إمارة».
+ */
+export const stripEmirateAr = (s) => {
+  const out = String(s ?? '').replace(/^\s*إمارة\s+/, '').trim();
+  return out || String(s ?? '').trim();
+};
+
 // ── geometry predicates ─────────────────────────────────────────────────────
 
 /** Ray-casting point-in-ring. */
