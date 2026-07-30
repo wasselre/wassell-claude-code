@@ -177,20 +177,64 @@ export function locateEmirate(point, emirates, { country = null, fallbackKm = 0 
 
 /**
  * Assign a district to a city: the nearest settlement IN THE SAME EMIRATE, capped.
+ *
  * Emirate-first matters — Ajman city sits ~2 km from Sharjah's built-up edge, so a
  * plain nearest-neighbour would scatter Ajman communities into Sharjah.
+ *
+ * A `place=city` OUTRANKS a nearer `place=town`, and that is the load-bearing part.
+ * OSM tags dozens of UAE hamlets as towns, and pure proximity let the nearest one
+ * steal whole districts from the real city: Dubai South, Emaar South Golf District and
+ * Urbana I–III all landed under «Qaraytaysah», a hamlet in southern Dubai, instead of
+ * Dubai. Preferring cities fixes those while still leaving genuinely remote districts
+ * with their local town — nothing in Al Dhafra is within the cap of Abu Dhabi city, so
+ * Madinat Zayed keeps its own.
+ *
  * Returns null when nothing is close enough; the caller falls back to the emirate's
- * principal city so no district is ever left cityless (the cascade filters the
- * district list by city, so a cityless district is an invisible district).
+ * principal city, because the cascade filters the district list by city and a cityless
+ * district is an invisible district.
  */
 export function nearestCity(point, cities, emirateCode, { capKm = 60 } = {}) {
-  let best = null;
-  for (const c of cities) {
-    if (c.emirate_code !== emirateCode || !c.point) continue;
-    const d = haversineKm(point, c.point);
-    if (!best || d < best.km) best = { city: c, km: d };
-  }
-  return best && best.km <= capKm ? best : null;
+  const pool = cities.filter((c) => c.emirate_code === emirateCode && c.point);
+  const nearestIn = (list) => {
+    let best = null;
+    for (const c of list) {
+      const d = haversineKm(point, c.point);
+      if (!best || d < best.km) best = { city: c, km: d };
+    }
+    return best && best.km <= capKm ? best : null;
+  };
+  const byCity = nearestIn(pool.filter((c) => c.place === 'city'));
+  if (byCity) return { ...byCity, tier: 'city' };
+  const byAny = nearestIn(pool);
+  return byAny ? { ...byAny, tier: 'town' } : null;
+}
+
+/**
+ * Is this "district name" actually an OSM mapping artifact rather than a place?
+ *
+ * `landuse=residential` polygons are the richest source of real Dubai community
+ * boundaries, but the same tag also carries plot numbers and site descriptions. These
+ * would otherwise reach a customer-facing dropdown: «410 VILLA COMPOUND UNDER
+ * CONSTRUCTION», «29 Dubai South», «16 buildings», «1000 Villas», «52 | 42 Tower».
+ *
+ * Deliberately narrow — a LEADING digit plus an explicit descriptor blocklist. Trailing
+ * digits are legitimate and common («Al Barsha 1», «Urbana III», «Jumeirah Village
+ * Circle 2»), so they are never touched.
+ */
+export function isMappingArtifactName(nameEn, nameAr) {
+  const names = [nameEn, nameAr].filter(Boolean).map((s) => String(s).trim());
+  if (!names.length) return false;
+  // A pipe means OSM packed several labels into one name field — «52 | 42 Tower» /
+  // «برج 42 | 52», a single building carrying two plot numbers. No real UAE community
+  // name contains one, and this catches the case where only ONE language looks like an
+  // artifact (the Arabic there begins with «برج», not a digit, so the digit rule below
+  // misses it). Checked across all names rather than requiring every name to match.
+  if (names.some((n) => n.includes('|'))) return true;
+  return names.every(
+    (n) =>
+      /^\d+\s*[,-]?\s/.test(n) ||
+      /under construction|villa compound|^\d+\s*(buildings?|villas?|towers?|plots?)$/i.test(n),
+  );
 }
 
 // ── OSM tag helpers ─────────────────────────────────────────────────────────

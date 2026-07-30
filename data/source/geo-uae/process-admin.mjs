@@ -25,7 +25,7 @@ import { elementGeometry, representativePoint, geomKind, coordCount } from './li
 import {
   normalizeAr, normalizeEn, stripHayy, stripEmirate,
   pointInGeometry, bboxOf, haversineKm, locateEmirate, nearestCity,
-  nameAr, nameEn, extId,
+  isMappingArtifactName, nameAr, nameEn, extId,
 } from './lib/classify.mjs';
 import { EMIRATES } from './lib/emirates.mjs';
 
@@ -245,14 +245,18 @@ const districtCands = [
 ];
 
 let asCity = 0;
+let asArtifact = 0;
 const districtPool = districtCands.filter((c) => {
   const kAr = `${c.emirate_code}|${normalizeAr(c.name_ar)}`;
   const kEn = `${c.emirate_code}|${normalizeEn(c.name_en)}`;
   const isCity = (c.name_ar && cityNameKeys.has(kAr)) || (c.name_en && cityNameKeys.has(kEn));
   if (isCity) { asCity++; return false; }
+  // OSM mapping artifacts — plot numbers and site descriptions carried on
+  // landuse=residential polygons. These would reach a customer-facing dropdown.
+  if (isMappingArtifactName(c.name_en, c.name_ar)) { asArtifact++; return false; }
   return true;
 });
-console.log(`  candidates: ${districtCands.length} → ${districtPool.length} (dropped ${asCity} that name a city)`);
+console.log(`  candidates: ${districtCands.length} → ${districtPool.length} (dropped ${asCity} naming a city, ${asArtifact} mapping artifacts)`);
 
 // Rank sources so dedup keeps the one that can carry a real boundary.
 const SOURCE_RANK = { 'admin-8': 60, 'admin-10': 50, 'admin-7': 45, landuse: 30, place: 20 };
@@ -277,16 +281,16 @@ const dedupDistricts = (() => {
 })();
 console.log(`  after dedup: ${dedupDistricts.kept.length} (merged ${dedupDistricts.dropped.length} duplicates)`);
 
-// City assignment: nearest settlement in the SAME emirate, capped; else the
-// emirate's principal city.
-let byNearest = 0, byPrincipal = 0;
+// City assignment: nearest place=city in the SAME emirate, else the nearest town,
+// else the emirate's principal city. See nearestCity for why cities outrank towns.
+let byCity = 0, byTown = 0, byPrincipal = 0;
 const districts = dedupDistricts.kept
   .sort((a, b) => a.emirate_code.localeCompare(b.emirate_code) ||
                   (a.name_ar || a.name_en).localeCompare(b.name_ar || b.name_en, 'ar'))
   .map((c, i) => {
     const hit = nearestCity(c.point, cities, c.emirate_code);
     const city = hit?.city ?? principalCity.get(c.emirate_code);
-    if (hit) byNearest++; else byPrincipal++;
+    if (hit?.tier === 'city') byCity++; else if (hit) byTown++; else byPrincipal++;
     return {
       district_id: extId(c.emirate_code, 'D', i + 1),
       city_id: city?.city_id ?? null,
@@ -298,7 +302,7 @@ const districts = dedupDistricts.kept
       centroid_lng: c.point[0],
       centroid_lat: c.point[1],
       city_distance_km: hit ? Math.round(hit.km * 100) / 100 : null,
-      city_assignment: hit ? 'nearest_settlement' : 'emirate_principal_city',
+      city_assignment: hit ? `nearest_${hit.tier}` : 'emirate_principal_city',
       osm: c.osm,
       osm_type: c.osm_type,
       osm_id: c.osm_id,
@@ -307,7 +311,7 @@ const districts = dedupDistricts.kept
       place: c.place,
     };
   });
-console.log(`  city assignment: ${byNearest} nearest settlement, ${byPrincipal} fell back to the principal city`);
+console.log(`  city assignment: ${byCity} nearest place=city, ${byTown} nearest town, ${byPrincipal} fell back to the principal city`);
 
 // ── 5. boundaries (run 2) ───────────────────────────────────────────────────
 // Districts mapped as a relation or a closed way can carry a real polygon. Nodes
@@ -408,9 +412,10 @@ const md = [
   '',
   '## Derivations (not source data — verify these)',
   '',
-  `- City assignment: **${byNearest}** nearest settlement in the same emirate (cap 60 km), **${byPrincipal}** fell back to the emirate's principal city.`,
+  `- City assignment (cap 60 km, same emirate): **${byCity}** to the nearest \`place=city\`, **${byTown}** to the nearest town (no city in range), **${byPrincipal}** fell back to the emirate's principal city.`,
   `- Dropped **${outsideUae}** candidates whose centroid fell outside every emirate polygon (bbox spill into Oman/Saudi).`,
   `- Dropped **${asCity}** district candidates whose name matches a city in the same emirate.`,
+  `- Dropped **${asArtifact}** OSM mapping artifacts (leading plot numbers, "under construction", building counts).`,
   `- Merged **${dedupDistricts.dropped.length}** duplicate district candidates (same emirate + normalized name).`,
   `- Districts with no polygon: **${districts.length - boundaries.length}** (point-only in OSM, or geometry not yet fetched).`,
   '',
