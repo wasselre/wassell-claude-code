@@ -22,9 +22,9 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { elementGeometry, representativePoint, geomKind, coordCount } from './lib/overpass.mjs';
-import { normalizeAr, normalizeEn, bboxOf, locateEmirate, nearestCity, nameAr, nameEn } from './lib/classify.mjs';
-import { EMIRATES } from './lib/emirates.mjs';
+import { elementGeometry, representativePoint, geomKind, coordCount } from '../geo-lib/overpass.mjs';
+import { normalizeAr, normalizeEn, bboxOf, locateEmirate, nearestCity, nameAr, nameEn } from '../geo-lib/classify.mjs';
+import { EMIRATES } from '../geo-lib/emirates.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RAW = join(HERE, 'raw');

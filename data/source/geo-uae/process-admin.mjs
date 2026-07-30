@@ -21,13 +21,13 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { elementGeometry, representativePoint, geomKind, coordCount } from './lib/overpass.mjs';
+import { elementGeometry, representativePoint, geomKind, coordCount } from '../geo-lib/overpass.mjs';
 import {
   normalizeAr, normalizeEn, stripHayy, stripEmirate, stripEmirateAr,
   pointInGeometry, bboxOf, haversineKm, locateEmirate, nearestCity,
   isMappingArtifactName, nameAr, nameEn, extId,
-} from './lib/classify.mjs';
-import { EMIRATES } from './lib/emirates.mjs';
+} from '../geo-lib/classify.mjs';
+import { EMIRATES } from '../geo-lib/emirates.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RAW = join(HERE, 'raw');

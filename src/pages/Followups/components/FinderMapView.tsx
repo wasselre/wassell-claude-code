@@ -6,6 +6,7 @@ import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { markActivity } from '@/lib/perf/freezeDetector';
 import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, buildColoredPinIcon, buildClusterIcon } from '@/lib/locationUtils';
 import type { FinderMatch, FinderSource } from '@/lib/matching/projectFinder';
+import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 
 /**
  * MAP view for the Project Finder results — the alternative to the card list.
@@ -57,6 +58,9 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
   const keyMissing = !isMapsKeyConfigured();
 
   const [map, setMap] = useState<google.maps.Map | null>(null);
+  // Administrative context under the result pins — country/region/city/district by
+  // zoom, plus main roads and landmarks. See useGeoBoundaryLayer.
+  useGeoBoundaryLayer(map);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const clustererRef = useRef<MarkerClusterer | null>(null);
   // OUR-project markers are placed on the map directly (NEVER in the clusterer) so

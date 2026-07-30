@@ -34,8 +34,8 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from 'no
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { overpass } from './lib/overpass.mjs';
-import { EMIRATES } from './lib/emirates.mjs';
+import { overpass } from '../geo-lib/overpass.mjs';
+import { EMIRATES } from '../geo-lib/emirates.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RAW = join(HERE, 'raw');

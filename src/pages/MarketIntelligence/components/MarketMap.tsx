@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { WASSEL_MAP_STYLE } from '@/lib/locationUtils';
+import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 import type { MapDistrict } from '@/lib/market/client';
 
 export type MapMetric = 'price_per_sqm' | 'our_units' | 'demand';
@@ -78,6 +79,13 @@ export default function MarketMap({
   const dataRef = useRef<google.maps.Data | null>(null);
   const areaDataRef = useRef<google.maps.Data | null>(null);
   const [hover, setHover] = useState<MapDistrict | null>(null);
+  // The hook needs a RENDER-visible map, but this component keeps its map in a ref
+  // (the Data-layer callbacks are imperative). Mirror it into state purely to drive
+  // the layer.
+  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  // Boundaries OFF: the district choropleth IS this screen, and drawing our outlines
+  // under it would double every edge. Roads and landmarks are the context it lacks.
+  useGeoBoundaryLayer(mapInstance, { boundaries: false });
 
   const scale = useMemo(
     () => quantileScale(districts.map((d) => metricValue(d, metric) ?? NaN)),
@@ -114,6 +122,7 @@ export default function MarketMap({
       clickableIcons: false,
     });
     mapRef.current = map;
+    setMapInstance(map);
 
     const data = new google.maps.Data({ map });
     dataRef.current = data;

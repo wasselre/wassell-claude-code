@@ -15,6 +15,7 @@ import {
   resolveMapStyles,
 } from '@/lib/locationUtils';
 import { isSummaryModel } from '@/lib/lazyModels';
+import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 import { useResolvedLocations, type ResolvedPin } from '@/hooks/useResolvedLocations';
 import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
@@ -250,6 +251,8 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
   const persisted = mapsViewState[model.id];
   const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  // Administrative context under the record pins — see useGeoBoundaryLayer.
+  useGeoBoundaryLayer(mapInstance);
 
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
   const keyMissing = !isMapsKeyConfigured();
@@ -680,6 +683,8 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
   const persisted = mapsViewState[model.id];
   const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  // Administrative context under the record pins — see useGeoBoundaryLayer.
+  useGeoBoundaryLayer(mapInstance);
 
   const styles = useMemo(() => resolveMapStyles(cfg.map_style_json), [cfg.map_style_json]);
   const firstPoint = points[0];

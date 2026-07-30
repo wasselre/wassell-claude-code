@@ -15,9 +15,9 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { elementGeometry, coordCount } from './lib/overpass.mjs';
-import { bboxOf, locateEmirate, pointInGeometry } from './lib/classify.mjs';
-import { EMIRATES } from './lib/emirates.mjs';
+import { elementGeometry, coordCount } from '../geo-lib/overpass.mjs';
+import { bboxOf, locateEmirate, pointInGeometry } from '../geo-lib/classify.mjs';
+import { EMIRATES } from '../geo-lib/emirates.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RAW = join(HERE, 'raw');

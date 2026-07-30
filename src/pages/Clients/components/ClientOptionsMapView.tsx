@@ -4,6 +4,7 @@ import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markercluste
 import { Loader2, MapPin, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
+import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 import {
   DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE,
   buildColoredPinIcon, buildPillIcon, buildClusterIcon,
@@ -61,6 +62,8 @@ export default function ClientOptionsMapView({ options, isAr, renderCard, height
   const records = useAppStore((s) => s.records);
 
   const [map, setMap] = useState<google.maps.Map | null>(null);
+  // Administrative context under the option pins. See useGeoBoundaryLayer.
+  useGeoBoundaryLayer(map);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const clustererRef = useRef<MarkerClusterer | null>(null);
   // The MAIN option's pill marker is placed on the map directly (never in the

@@ -6,6 +6,7 @@ import { useAppStore } from '@/stores/appStore';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, buildClusterIcon } from '@/lib/locationUtils';
 import { adminGeoGeoJSON, type GeoListFilters, type GeoFeatureCollection, type GeoFeature } from '@/lib/geo/adminClient';
+import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 
 const mapContainerStyle = { width: '100%', height: '68vh' };
 
@@ -64,6 +65,10 @@ export default function GeoElementsMap({ filters, isAr, selected, onSelect }: Pr
   const [fc, setFc] = useState<GeoFeatureCollection | null>(null);
   const [loading, setLoading] = useState(false);
   const [map, setMap] = useState<google.maps.Map | null>(null);
+  // Boundaries ONLY here. This screen already renders every geo_element itself —
+  // roads, metro lines and landmarks included — so letting the shared layer draw them
+  // too would paint each one twice, in two different styles.
+  useGeoBoundaryLayer(map, { roads: false, landmarks: false });
   const [enabled, setEnabled] = useState<Set<string>>(new Set());
   const enabledRef = useRef(enabled);
   useEffect(() => { enabledRef.current = enabled; }, [enabled]);
