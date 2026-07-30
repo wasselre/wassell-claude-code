@@ -104,11 +104,16 @@ const CLASSIFIERS = [
   // commercial anchor class — so they get their own `type` inside business_zones.
   [(t) => /free\s*zone|المنطقة الحرة|منطقة حرة/i.test(`${t.name ?? ''} ${t['name:en'] ?? ''} ${t['name:ar'] ?? ''}`), 'business_zones', 'free_zone'],
   [(t) => t.landuse === 'commercial', 'business_zones', 'commercial_zone'],
+  // "near Al Quoz Industrial" is genuinely how Dubai property gets described, so
+  // industrial land stays. `office=government` does NOT — it contributed 499 anchors
+  // nobody locates a home by, and every one of them would show up in the client-facing
+  // element search.
   [(t) => t.landuse === 'industrial', 'business_zones', 'industrial_zone'],
-  [(t) => t.office === 'government', 'business_zones', 'government_office'],
-  // islands
+  // Islands: only `place=island`. `place=islet` added 227 natural sandbars — the
+  // anchors that matter are the master-planned developments (Palm Jumeirah, Yas,
+  // Saadiyat, Al Reem, Al Maryah, Bluewaters), and OSM tags every one of those as
+  // `island`.
   [(t) => t.place === 'island', 'islands', 'island'],
-  [(t) => t.place === 'islet', 'islands', 'islet'],
 ];
 
 function classify(tags) {
@@ -141,7 +146,10 @@ function confidence({ category, type }, kind, tags, segments) {
 // ── collect + group ─────────────────────────────────────────────────────────
 // The survey arrives as four grouped responses (see fetch.mjs SURVEY_GROUPS); the
 // per-element category comes from CLASSIFIERS below, not from which file it was in.
-const SURVEYS = ['survey-anchor-roads', 'survey-anchor-transit', 'survey-anchor-places', 'survey-anchor-zones'];
+const SURVEYS = [
+  'survey-anchor-roads', 'survey-anchor-transit', 'survey-anchor-retail',
+  'survey-anchor-leisure', 'survey-anchor-landmarks', 'survey-anchor-zones',
+];
 
 const raw = [];
 const seenOsm = new Set();
@@ -174,16 +182,75 @@ console.log(`  collected: ${raw.length} (skipped ${unnamed} unnamed, ${unclassif
  * disjoint stretches that happen to share a name.
  */
 const LINE_CATEGORIES = new Set(['roads_major', 'ring_roads']);
-const groups = new Map();
-for (const r of raw) {
-  const key = LINE_CATEGORIES.has(r.cls.category)
-    ? `${r.cls.category}|${r.emirate.code}|${normalizeAr(r.ar) || normalizeEn(r.en)}`
-    : `${r.osm_type}/${r.osm_id}`;
-  const g = groups.get(key);
-  if (g) { g.members.push(r); }
-  else groups.set(key, { key, lead: r, members: [r] });
+
+/**
+ * Road grouping is a UNION over BOTH names, not a single key.
+ *
+ * Keying on one language splits a road whenever OSM disagrees with itself in that
+ * language. Measured: 13 of 352 road groups were split, including Sheikh Zayed Road —
+ * one segment carries «شارع الشيخ زاي», a typo missing the final د, while every
+ * segment's English is identical. Keying on English instead would just move the
+ * failure to roads whose English varies.
+ *
+ * So a segment joins a group if EITHER its normalized Arabic OR its normalized English
+ * already belongs to one, and if the two land in different groups those groups merge.
+ * Scoped per (category, emirate), so «Corniche Road» in Abu Dhabi and Sharjah stay
+ * separate anchors.
+ */
+function groupRoads(items) {
+  const arIndex = new Map();
+  const enIndex = new Map();
+  const groupsById = new Map();
+  let nextId = 0;
+
+  for (const r of items) {
+    const scope = `${r.cls.category}|${r.emirate.code}`;
+    const arKey = normalizeAr(r.ar) ? `${scope}|ar:${normalizeAr(r.ar)}` : null;
+    const enKey = normalizeEn(r.en) ? `${scope}|en:${normalizeEn(r.en)}` : null;
+    const hits = [arKey && arIndex.get(arKey), enKey && enIndex.get(enKey)].filter((x) => x != null);
+
+    let gid;
+    if (!hits.length) {
+      gid = nextId++;
+      groupsById.set(gid, { lead: r, members: [] });
+    } else {
+      gid = hits[0];
+      // Both names already known but in DIFFERENT groups → fold the second into the
+      // first. This is the case that actually merges the Sheikh Zayed Road halves.
+      for (const other of hits.slice(1)) {
+        if (other === gid) continue;
+        const from = groupsById.get(other);
+        if (!from) continue;
+        groupsById.get(gid).members.push(...from.members);
+        groupsById.delete(other);
+        for (const idx of [arIndex, enIndex]) {
+          for (const [k, v] of idx) if (v === other) idx.set(k, gid);
+        }
+      }
+    }
+    groupsById.get(gid).members.push(r);
+    if (arKey) arIndex.set(arKey, gid);
+    if (enKey) enIndex.set(enKey, gid);
+  }
+
+  // The lead should be the member with the fullest bilingual name, so the anchor isn't
+  // titled by the typo'd variant.
+  for (const g of groupsById.values()) {
+    g.lead = g.members.reduce((best, m) =>
+      ((m.ar ? 1 : 0) + (m.en ? 1 : 0) + m.ar.length / 1000) >
+      ((best.ar ? 1 : 0) + (best.en ? 1 : 0) + best.ar.length / 1000) ? m : best, g.members[0]);
+  }
+  return [...groupsById.values()];
 }
-console.log(`  grouped: ${groups.size} anchors (roads merged by name within an emirate)`);
+
+const groups = new Map();
+for (const r of raw.filter((x) => !LINE_CATEGORIES.has(x.cls.category))) {
+  groups.set(`${r.osm_type}/${r.osm_id}`, { key: `${r.osm_type}/${r.osm_id}`, lead: r, members: [r] });
+}
+for (const g of groupRoads(raw.filter((x) => LINE_CATEGORIES.has(x.cls.category)))) {
+  groups.set(`road:${g.lead.osm_type}/${g.lead.osm_id}`, { key: `road:${g.lead.osm_id}`, ...g });
+}
+console.log(`  grouped: ${groups.size} anchors (roads merged by name across both languages, within an emirate)`);
 
 // ── geometry (run 2) ────────────────────────────────────────────────────────
 const geomFiles = existsSync(RAW) ? readdirSync(RAW).filter((f) => /^geom-anchors-/.test(f)) : [];

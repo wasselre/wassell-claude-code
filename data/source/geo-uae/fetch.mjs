@@ -142,20 +142,26 @@ const SURVEY_GROUPS = {
     + `nwr[railway=station];nwr[station~"^(subway|light_rail|monorail)$"];nwr[railway=tram_stop][name];`
     + `nwr[aeroway=aerodrome][name];nwr[amenity=bus_station][name];nwr[amenity=ferry_terminal][name];`,
 
-  // Destinations, institutions and islands. `islands` is the one category added to
-  // Riyadh's 13: in the UAE the master-planned islands (Palm Jumeirah, Yas, Saadiyat,
-  // Al Reem, Al Maryah) are primary real-estate anchors, not scenery.
-  'survey-anchor-places': `nwr[shop=mall];nwr[shop=department_store][name];`
+  // Destinations were originally one group and it exhausted all 8 retries against
+  // every mirror — too many `nwr` clauses in one request. Split three ways. The
+  // splitting axis is request weight, not meaning; process-anchors.mjs assigns the
+  // category per element from its tags, so regrouping never changes the output.
+  'survey-anchor-retail': `nwr[shop=mall];nwr[shop=department_store][name];`
     + `nwr[amenity~"^(university|college)$"][name];`
-    + `nwr[amenity=hospital][name];nwr[healthcare=hospital][name];`
-    + `nwr[leisure~"^(park|garden)$"][name];`
-    + `nwr[tourism~"^(attraction|museum|theme_park|zoo|aquarium)$"][name];`
+    + `nwr[amenity=hospital][name];nwr[healthcare=hospital][name];`,
+
+  'survey-anchor-leisure': `nwr[leisure~"^(park|garden|water_park|beach_resort|marina|golf_course)$"][name];`
+    + `nwr[natural=beach][name];`,
+
+  // `islands` is the one category added to Riyadh's 13: in the UAE the master-planned
+  // islands (Palm Jumeirah, Yas, Saadiyat, Al Reem, Al Maryah) are primary real-estate
+  // anchors, not scenery.
+  'survey-anchor-landmarks': `nwr[tourism~"^(attraction|museum|theme_park|zoo|aquarium)$"][name];`
     + `nwr[man_made=tower][name];nwr[historic][name];`
-    + `nwr[leisure~"^(water_park|beach_resort|marina|golf_course)$"][name];nwr[natural=beach][name];`
-    + `nwr[place~"^(island|islet)$"][name];`,
+    + `nwr[place=island][name];`,
 
   // Commercial/industrial land and free zones — the UAE's answer to KAFD.
-  'survey-anchor-zones': `nwr[landuse~"^(commercial|industrial)$"][name];nwr[office=government][name];`
+  'survey-anchor-zones': `nwr[landuse~"^(commercial|industrial)$"][name];`
     + `nwr[name~"[Ff]ree [Zz]one"];nwr["name:en"~"[Ff]ree [Zz]one"];`,
 };
 
