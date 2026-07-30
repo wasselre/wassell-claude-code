@@ -221,7 +221,7 @@ export default function MarketingOSPage() {
                         </span>
                       </td>
                       <td className="p-3 text-xs">
-                        {r.current_role ? (isAr ? ROLE_LABELS[r.current_role].ar : ROLE_LABELS[r.current_role].en) : '—'}
+                        {r.owner_role ? (isAr ? ROLE_LABELS[r.owner_role].ar : ROLE_LABELS[r.owner_role].en) : '—'}
                       </td>
                       <td className="p-3 text-xs">
                         {PURPOSE_LABELS[r.purpose]

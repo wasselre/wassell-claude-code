@@ -125,7 +125,7 @@ const CONTENT_LIST_COLUMNS = [
   'id', 'ref', 'title', 'content_type_key', 'content_type_label_ar', 'content_type_label_en',
   'project_id', 'campaign_id', 'purpose',
   'status_key', 'current_step_label_ar', 'current_step_label_en',
-  'current_role', 'current_assignee_user_id', 'current_task_due_at', 'current_round',
+  'owner_role', 'current_assignee_user_id', 'current_task_due_at', 'current_round',
   'due_at', 'target_publish_at', 'updated_at',
 ].join(', ');
 
@@ -192,7 +192,7 @@ export default async function handler(req: Request): Promise<Response> {
         if (typeKey) q = q.eq('content_type_key', typeKey);
         if (statusKey) q = q.eq('status_key', statusKey);
         if (projectId) q = q.eq('project_id', projectId);
-        if (role) q = q.eq('current_role', role);
+        if (role) q = q.eq('owner_role', role);
         if (search) q = q.ilike('title', `%${search}%`);
 
         // Items with a due date first, soonest first; undated fall to the end.

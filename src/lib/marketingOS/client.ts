@@ -35,9 +35,13 @@ export interface MosContentType {
 }
 
 /**
- * A row of `mos_content_v`. `status_key` and `current_role` are DERIVED from the
+ * A row of `mos_content_v`. `status_key` and `owner_role` are DERIVED from the
  * open task by the view — they are not columns anyone can set, which is why the
  * list can never disagree with the task queue.
+ *
+ * The role field is `owner_role`, NOT `current_role`: the latter is a reserved
+ * SQL niladic function, so a view column of that name is silently shadowed and
+ * returns the database role ('postgres') to every caller.
  */
 export interface MosContentRow {
   id: string;
@@ -52,7 +56,7 @@ export interface MosContentRow {
   status_key: string;
   current_step_label_ar: string | null;
   current_step_label_en: string | null;
-  current_role: MosRole | null;
+  owner_role: MosRole | null;
   current_assignee_user_id: string | null;
   current_task_due_at: string | null;
   current_round: number | null;

@@ -384,7 +384,7 @@ SELECT
   ct.label_ar    AS content_type_label_ar,
   ct.label_en    AS content_type_label_en,
   t.id           AS open_task_id,
-  t.role         AS current_role,
+  t.role         AS owner_role,
   t.assignee_user_id AS current_assignee_user_id,
   t.due_at       AS current_task_due_at,
   t.round        AS current_round,
