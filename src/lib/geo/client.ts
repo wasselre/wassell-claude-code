@@ -28,6 +28,12 @@ export interface GeoSearchOptions {
   category?: string;
   type?: string;
   city?: string;
+  /**
+   * ISO-3166-1 alpha-2. `geo_elements` holds BOTH Saudi and UAE anchors, so an
+   * unscoped search will happily offer a Dubai mall for a Riyadh client. Callers
+   * should pass the country they mean; omit only for a deliberate all-countries browse.
+   */
+  country?: string;
   limit?: number;
 }
 
@@ -37,6 +43,7 @@ export async function searchGeoElements(q: string, opts: GeoSearchOptions = {}):
   if (opts.category) params.set('category', opts.category);
   if (opts.type) params.set('type', opts.type);
   if (opts.city) params.set('city', opts.city);
+  if (opts.country) params.set('country', opts.country);
   params.set('limit', String(opts.limit ?? 20));
 
   const token = supabase ? (await supabase.auth.getSession()).data.session?.access_token : undefined;

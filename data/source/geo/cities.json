@@ -1,0 +1,122 @@
+[
+  {
+    "prefix": "JED", "spl_city_id": "18", "name_ar": "جدة", "name_en": "Jeddah",
+    "region": "Makkah Province", "region_name_en": "Makkah",
+    "centre": { "lat": 21.54562, "lng": 39.20838 },
+    "bbox": { "south": 21.067, "west": 38.976, "north": 22.031, "east": 39.481 }
+  },
+  {
+    "prefix": "MKH", "spl_city_id": "6", "name_ar": "مكة المكرمة", "name_en": "Makkah",
+    "region": "Makkah Province", "region_name_en": "Makkah",
+    "centre": { "lat": 21.42947, "lng": 39.82962 },
+    "bbox": { "south": 21.247, "west": 39.640, "north": 21.603, "east": 40.048 }
+  },
+  {
+    "prefix": "MED", "spl_city_id": "14", "name_ar": "المدينة المنورة", "name_en": "Madinah",
+    "region": "Madinah Province", "region_name_en": "Madinah",
+    "centre": { "lat": 24.46039, "lng": 39.61003 },
+    "bbox": { "south": 24.040, "west": 39.176, "north": 24.793, "east": 40.237 }
+  },
+  {
+    "prefix": "TIF", "spl_city_id": "5", "name_ar": "الطائف", "name_en": "At Taif",
+    "region": "Makkah Province", "region_name_en": "Makkah",
+    "centre": { "lat": 21.33184, "lng": 40.45411 },
+    "bbox": { "south": 21.130, "west": 40.288, "north": 21.651, "east": 40.772 }
+  },
+  {
+    "prefix": "YNB", "spl_city_id": "483", "name_ar": "ينبع", "name_en": "Yanbu",
+    "region": "Madinah Province", "region_name_en": "Madinah",
+    "centre": { "lat": 24.12220, "lng": 38.05771 },
+    "bbox": { "south": 24.001, "west": 37.898, "north": 24.315, "east": 38.233 }
+  },
+  {
+    "prefix": "DMM", "spl_city_id": "13", "name_ar": "الدمام", "name_en": "Dammam",
+    "region": "Eastern Province", "region_name_en": "Eastern Province",
+    "centre": { "lat": 26.41496, "lng": 50.08897 },
+    "bbox": { "south": 26.107, "west": 49.853, "north": 26.537, "east": 50.262 }
+  },
+  {
+    "prefix": "KHB", "spl_city_id": "31", "name_ar": "الخبر", "name_en": "Al Khobar",
+    "region": "Eastern Province", "region_name_en": "Eastern Province",
+    "centre": { "lat": 26.25679, "lng": 50.19861 },
+    "bbox": { "south": 26.056, "west": 50.058, "north": 26.421, "east": 50.282 }
+  },
+  {
+    "prefix": "DHA", "spl_city_id": "227", "name_ar": "الظهران", "name_en": "Dhahran",
+    "region": "Eastern Province", "region_name_en": "Eastern Province",
+    "centre": { "lat": 26.33641, "lng": 50.14971 },
+    "bbox": { "south": 26.204, "west": 50.014, "north": 26.427, "east": 50.233 }
+  },
+  {
+    "prefix": "QTF", "spl_city_id": "67", "name_ar": "القطيف", "name_en": "Al Qatif",
+    "region": "Eastern Province", "region_name_en": "Eastern Province",
+    "centre": { "lat": 26.56083, "lng": 50.00267 },
+    "bbox": { "south": 26.477, "west": 49.908, "north": 26.660, "east": 50.105 }
+  },
+  {
+    "prefix": "HOF", "spl_city_id": "12", "name_ar": "الهفوف", "name_en": "Al Hafuf",
+    "region": "Eastern Province", "region_name_en": "Eastern Province",
+    "centre": { "lat": 25.34883, "lng": 49.58753 },
+    "bbox": { "south": 25.218, "west": 49.458, "north": 25.447, "east": 49.719 }
+  },
+  {
+    "prefix": "JUB", "spl_city_id": "113", "name_ar": "الجبيل", "name_en": "Al Jubail",
+    "region": "Eastern Province", "region_name_en": "Eastern Province",
+    "centre": { "lat": 27.01992, "lng": 49.62087 },
+    "bbox": { "south": 26.793, "west": 49.449, "north": 27.222, "east": 49.853 }
+  },
+  {
+    "prefix": "BUR", "spl_city_id": "11", "name_ar": "بريدة", "name_en": "Buraidah",
+    "region": "Qassim Province", "region_name_en": "Qassim",
+    "centre": { "lat": 26.33019, "lng": 43.96842 },
+    "bbox": { "south": 26.172, "west": 43.809, "north": 26.489, "east": 44.110 }
+  },
+  {
+    "prefix": "UNZ", "spl_city_id": "80", "name_ar": "عنيزة", "name_en": "Unayzah",
+    "region": "Qassim Province", "region_name_en": "Qassim",
+    "centre": { "lat": 26.08775, "lng": 43.99372 },
+    "bbox": { "south": 25.951, "west": 43.809, "north": 26.249, "east": 44.162 }
+  },
+  {
+    "prefix": "TUU", "spl_city_id": "1", "name_ar": "تبوك", "name_en": "Tabuk",
+    "region": "Tabuk Province", "region_name_en": "Tabuk",
+    "centre": { "lat": 28.40356, "lng": 36.54424 },
+    "bbox": { "south": 28.291, "west": 36.393, "north": 28.551, "east": 36.692 }
+  },
+  {
+    "prefix": "AHB", "spl_city_id": "15", "name_ar": "ابها", "name_en": "Abha",
+    "region": "Asir Province", "region_name_en": "Asir",
+    "centre": { "lat": 18.22284, "lng": 42.50731 },
+    "bbox": { "south": 18.114, "west": 42.374, "north": 18.361, "east": 42.716 }
+  },
+  {
+    "prefix": "KMX", "spl_city_id": "62", "name_ar": "خميس مشيط", "name_en": "Khamis Mushayt",
+    "region": "Asir Province", "region_name_en": "Asir",
+    "centre": { "lat": 18.29883, "lng": 42.73404 },
+    "bbox": { "south": 18.167, "west": 42.612, "north": 18.414, "east": 42.866 }
+  },
+  {
+    "prefix": "HAL", "spl_city_id": "10", "name_ar": "حائل", "name_en": "Hail",
+    "region": "Hail Province", "region_name_en": "Hail",
+    "centre": { "lat": 27.52076, "lng": 41.69882 },
+    "bbox": { "south": 27.362, "west": 41.551, "north": 27.705, "east": 41.828 }
+  },
+  {
+    "prefix": "NJR", "spl_city_id": "3417", "name_ar": "نجران", "name_en": "Najran",
+    "region": "Najran Province", "region_name_en": "Najran",
+    "centre": { "lat": 17.53872, "lng": 44.29538 },
+    "bbox": { "south": 17.375, "west": 44.003, "north": 17.800, "east": 44.640 }
+  },
+  {
+    "prefix": "JAZ", "spl_city_id": "17", "name_ar": "جازان", "name_en": "Jazan",
+    "region": "Jazan Province", "region_name_en": "Jazan",
+    "centre": { "lat": 16.89359, "lng": 42.59226 },
+    "bbox": { "south": 16.771, "west": 42.487, "north": 17.010, "east": 42.767 }
+  },
+  {
+    "prefix": "KRJ", "spl_city_id": "1061", "name_ar": "الخرج", "name_en": "Al Kharj",
+    "region": "Riyadh Province", "region_name_en": "Riyadh",
+    "centre": { "lat": 24.15746, "lng": 47.29922 },
+    "bbox": { "south": 23.968, "west": 47.164, "north": 24.294, "east": 47.633 }
+  }
+]

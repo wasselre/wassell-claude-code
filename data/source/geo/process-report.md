@@ -1,0 +1,44 @@
+# Multi-city geo-intelligence build report
+- Generated: 2026-07-30T15:52:03.825Z
+- Cities: **20** · anchors: **1833**
+- OSM-backed: **1833** · generated directional zones: **0** · fabricated geometry: **0**
+- Approximate: 474 · below the 0.5 matcher confidence floor: 0
+- Missing raw files: none
+- Dropped while classifying: {"unclassified":0,"no_geometry":0,"no_name":134,"no_city":0}
+## By city
+- Jeddah: 351
+- Makkah: 275
+- Madinah: 207
+- Dhahran: 129
+- At Taif: 97
+- Dammam: 87
+- Buraidah: 79
+- Al Hafuf: 73
+- Al Khobar: 72
+- Hail: 62
+- Al Jubail: 52
+- Unayzah: 51
+- Yanbu: 51
+- Najran: 48
+- Jazan: 45
+- Al Qatif: 34
+- Abha: 32
+- Khamis Mushayt: 31
+- Tabuk: 31
+- Al Kharj: 26
+## By category
+- landmarks: 390
+- roads_major: 338
+- hospitals: 333
+- parks: 278
+- malls: 180
+- universities: 108
+- business_zones: 92
+- airports_transport: 79
+- ring_roads: 24
+- metro_stations: 9
+- metro_lines: 2
+## By geometry type
+- point: 619
+- polygon: 815
+- linestring: 399

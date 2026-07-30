@@ -83,3 +83,22 @@ Desktop.ini
 .env*.local
 tmp/
 dbq.tmp.mjs
+
+# Cached raw Overpass responses for the geo-intelligence builds — regenerable
+# via `node data/source/geo/fetch.mjs` (12 MB+, and re-fetching is the point of
+# having the cache locally, not of shipping it).
+data/source/geo/raw/
+data/source/geo-uae/raw/
+
+# Cached OSM admin-boundary relations (country/region) — regenerable via
+# `node data/source/geo/fetch-admin.mjs`.
+data/source/geo/raw-admin/
+
+# Geo build outputs that are pure derivatives of
+# data/source/geo/saudi-cities-geo-intelligence.json (which IS committed — it is
+# what the importer consumes). Regenerate with `node data/source/geo/process.mjs`.
+data/source/geo/saudi-cities-geo-intelligence.geojson
+data/source/geo/saudi-cities-geo-intelligence.csv
+# 9.6 MB intermediate: the OSM admin relations are already imported into
+# geo_admin_boundaries, and `node data/source/geo/fetch-admin.mjs` rebuilds it.
+data/source/geo/admin-boundaries.json

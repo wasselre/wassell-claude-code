@@ -1,7 +1,65 @@
-# Riyadh Geographic Intelligence Dataset
+# Saudi Geographic Intelligence Datasets
 
-Structured, **source-traceable** geographic anchors for Riyadh, built to power a deterministic
-GIS-based project/listing matching engine (PostGIS distance/containment queries — no LLM).
+Structured, **source-traceable** geographic anchors, built to power a deterministic GIS-based
+project/listing matching engine (PostGIS distance/containment queries — no LLM).
+
+Two datasets, one schema, one importer:
+
+| Dataset | Cities fetched | Anchors | Built | Id form |
+|---|---|--:|---|---|
+| `riyadh-geo-intelligence.json` | Riyadh | 725 (651 active) | 2026-06-30 | `RUH-<CAT>-<seq>` |
+| `saudi-cities-geo-intelligence.json` | 20 further cities | 1,833 | 2026-07-30 | `<PREFIX>-<CAT>-<hash>` |
+
+Live result after import: **2,484 active Saudi anchors across 41 cities**, 3,983 aliases, 0 unlinked.
+41 rather than 21 because polygon containment reassigns anchors to their *true* city — Al Mubarraz
+next to Hafuf, Yanbu Al Sinaiyah, the Qatif-area towns (Sayhat, Safwa, Tarut, Darin). The 74
+inactive Riyadh rows are the road-merge losers retired by `2026-07-27_merge_fragmented_roads.sql`.
+
+Import with `node scripts/import-geo-intelligence.mjs [file|--all]`. It upserts by `external_id`,
+rebuilds aliases, **and** calls `wassell_link_geo_elements_geography()` to attach `city_id`/`region_id`
+by polygon containment and sync the text city label — all idempotent, so re-running is safe.
+
+> `geo_elements` is SHARED with the UAE dataset (`data/source/geo-uae/`, 3,237 anchors). Rows carry
+> `country_code`; pass `p_country` / `?country=` when searching or you will mix Riyadh and Dubai.
+
+> **The `fetch.mjs` / `process.mjs` in this folder are a 2026-07-30 reconstruction.** The original
+> pair that produced `riyadh-geo-intelligence.json` was never committed — only its outputs were —
+> so re-running the current scripts will **not** reproduce the Riyadh file byte-for-byte. The
+> taxonomy, confidence rules and 18-field schema were rebuilt from this README; the id scheme
+> deliberately differs (see "Stable ids" below). Riyadh's file is treated as immutable history:
+> its sequential ids are already referenced by live client rules.
+
+## The multi-city build (2026-07-30)
+
+`cities.json` drives everything — 20 cities, each with an SPL city id, bilingual names, an Overpass
+bbox and a stable id prefix. The bboxes are **derived from the live database**, not hand-drawn: each
+is the 2nd–98th percentile extent of that city's own `district_boundaries` centroids, padded 0.06°.
+Percentiles rather than `ST_Extent` because several SPL cities own far-flung outlying districts —
+Madinah's raw extent is ~200 km across, which would have made a needlessly enormous extract.
+
+**Stable ids.** New anchors use `<PREFIX>-<CAT>-<6 hex of sha1(identity)>`, where identity is the
+immutable OSM `type/id` (discrete features), the normalized name (grouped roads), or the direction
+(generated zones). *Not* a sequence: client element rules reference `external_id`, so renumbering on
+a future OSM refresh would silently break live rules by compiling them to `needs_review`.
+`process.mjs` aborts on any id collision rather than letting one anchor overwrite another.
+
+**One element, one city.** The Eastern Province bboxes (Dammam / Khobar / Dhahran / Qatif) overlap
+heavily, so the same OSM feature comes back for several cities. Features are deduped by OSM identity
+and assigned to the nearest city centre (the median district centroid from the DB).
+
+**Deliberate gaps, not oversights:**
+- **`lifestyle` is empty** for the new cities. Riyadh's 10 were hand-curated; no OSM tag reliably
+  means "lifestyle destination", and inventing one would put noise in a curated dataset.
+- **`office=*` is excluded** from `business_zones`. It marks a single office building, not a business
+  district — including it filled the category with government departments (31 of Jazan's first 77
+  anchors were things like the labour office and the tax authority). A business zone must be a named
+  commercial/retail *land use* area.
+- **Metro is Riyadh-only in reality.** The queries run everywhere; most cities return nothing because
+  they have no metro. Empty is the honest answer, not a bug.
+
+## Riyadh dataset (2026-06-30)
+
+**725 records · 716 from OpenStreetMap (real geometry) · 9 informal zones (flagged approximate).**
 
 **725 records · 716 from OpenStreetMap (real geometry) · 9 informal zones (flagged approximate).**
 Geometry: 290 polygons · 232 points · 203 linestrings. **0 fabricated geometries.**
@@ -13,8 +71,12 @@ Geometry: 290 polygons · 232 points · 203 linestrings. **0 fabricated geometri
   POIs, Polygons for malls/campuses/parks/airports. Every OSM record links back to its element
   (`source_url` = `openstreetmap.org/<type>/<id>`).
 - **Bounding box:** `24.30,46.30 → 25.20,47.20` (Riyadh metropolitan area).
-- **Reproducible:** `node fetch.mjs` (caches raw Overpass JSON under `raw/`) then
-  `node process.mjs` (normalizes → CSV/JSON/GeoJSON + reports). Re-running is idempotent.
+- **Originally reproducible via** `node fetch.mjs` then `node process.mjs`. Those original scripts
+  were never committed and are lost — the current `fetch.mjs`/`process.mjs` are the 2026-07-30
+  reconstruction described at the top of this file, and they target `cities.json` (which does **not**
+  include Riyadh). Treat `riyadh-geo-intelligence.json` as immutable history; to refresh Riyadh,
+  add it to `cities.json` and accept the new hashed id scheme, which means re-pointing any live
+  client element rule that references an `RUH-<CAT>-<seq>` id.
 
 ### What is *not* fabricated
 - Roads & metro lines are **assembled from real OSM way geometry**, grouped by name (roads) or by

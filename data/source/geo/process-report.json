@@ -1,0 +1,56 @@
+{
+  "generated_at": "2026-07-30T15:52:03.825Z",
+  "cities": 20,
+  "total": 1833,
+  "osm_backed": 1833,
+  "generated_zones": 0,
+  "approximate": 474,
+  "low_confidence": 0,
+  "missing_raw_files": [],
+  "dropped": {
+    "unclassified": 0,
+    "no_geometry": 0,
+    "no_name": 134,
+    "no_city": 0
+  },
+  "by_city": {
+    "Abha": 32,
+    "Al Hafuf": 73,
+    "Al Jubail": 52,
+    "Al Kharj": 26,
+    "Al Khobar": 72,
+    "Al Qatif": 34,
+    "At Taif": 97,
+    "Buraidah": 79,
+    "Dammam": 87,
+    "Dhahran": 129,
+    "Hail": 62,
+    "Jazan": 45,
+    "Jeddah": 351,
+    "Khamis Mushayt": 31,
+    "Madinah": 207,
+    "Makkah": 275,
+    "Najran": 48,
+    "Tabuk": 31,
+    "Unayzah": 51,
+    "Yanbu": 51
+  },
+  "by_category": {
+    "airports_transport": 79,
+    "hospitals": 333,
+    "landmarks": 390,
+    "malls": 180,
+    "parks": 278,
+    "roads_major": 338,
+    "universities": 108,
+    "business_zones": 92,
+    "ring_roads": 24,
+    "metro_lines": 2,
+    "metro_stations": 9
+  },
+  "by_geometry_type": {
+    "point": 619,
+    "polygon": 815,
+    "linestring": 399
+  }
+}

@@ -12,7 +12,13 @@
  *   q        free-text term (matched against names + aliases)
  *   category dataset category (e.g. malls, metro_stations, hospitals)
  *   type     finer type (e.g. metro_station, mall, ring_road)
- *   city     city label (default 'Riyadh' in the data)
+ *   city     English city label, e.g. 'Riyadh' / 'Jeddah' / 'Dammam'. Anchors are
+ *            NATIONWIDE since 2026-07-30 (41 cities), so callers should pass this
+ *            whenever a city is known — `limit` is a single budget shared across
+ *            every city, and an unscoped search spends it on the whole country.
+ *   country  ISO-3166-1 alpha-2 ('SA' / 'AE'). geo_elements holds BOTH Saudi and
+ *            UAE anchors, so without this an unscoped search can offer a Dubai
+ *            mall for a Riyadh client. Omit only for a deliberate cross-border browse.
  *   limit    1..100 (default 30)
  *   include_unapproved=1  admin curation view (returns pending/non-searchable too)
  *
@@ -53,6 +59,7 @@ export default async function handler(req: Request): Promise<Response> {
       p_city: str(u.searchParams.get('city')),
       p_limit: limit,
       p_include_unapproved: includeUnapproved,
+      p_country: str(u.searchParams.get('country')),
     });
 
     if (error) {

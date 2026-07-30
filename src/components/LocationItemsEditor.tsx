@@ -92,7 +92,7 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
 
   // Resolve the district model + its city-lookup field + the selected city id
   // from the location field's level config (same source the cascade uses).
-  const { districtModelId, districtCityField, cityId } = useMemo(() => {
+  const { districtModelId, districtCityField, cityId, cityModelId } = useMemo(() => {
     const levels = locationField?.location_levels ?? [];
     const districtLevel = levels[levels.length - 1];
     const cityLevel = levels[levels.length - 2];
@@ -106,8 +106,38 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
     const compound = locationValue && typeof locationValue === 'object' ? (locationValue as Record<string, unknown>) : {};
     const cv = compound.city;
     const cId = Array.isArray(cv) ? ((cv[0] as string) ?? null) : typeof cv === 'string' ? cv : null;
-    return { districtModelId: dModelId, districtCityField: cityField, cityId: cId };
+    return {
+      districtModelId: dModelId,
+      districtCityField: cityField,
+      cityId: cId,
+      cityModelId: cityLevel?.model_id ?? null,
+    };
   }, [locationField, locationValue, models]);
+
+  /**
+   * English city label for the selected city, used to scope the geo-element
+   * search. `geo_elements.city` stores the English name ('Riyadh', 'Jeddah'),
+   * so we match on name_en rather than the Arabic display_name.
+   *
+   * Scoping matters now that anchors are nationwide (21 cities): an unscoped
+   * search shares one result limit across the whole country, so a Jeddah client
+   * would be offered Riyadh landmarks. When no city is picked yet we
+   * deliberately search everywhere — that is a browse, not a mis-scope.
+   */
+  const { cityNameEn, countryCode } = useMemo(() => {
+    const rec = cityModelId && cityId
+      ? (records[cityModelId] ?? []).find((r) => r.id === cityId)
+      : undefined;
+    const en = rec?.data?.name_en;
+    const cc = rec?.data?.country_code;
+    return {
+      cityNameEn: typeof en === 'string' && en.trim() ? en.trim() : undefined,
+      // geo_elements holds Saudi AND UAE anchors. Without a country the "no city
+      // picked yet" browse would offer Dubai landmarks for a Riyadh client. Fall
+      // back to the app's home country, matching DEFAULT_GEO_COUNTRY in matchAgent.
+      countryCode: typeof cc === 'string' && cc.trim() ? cc.trim() : 'SA',
+    };
+  }, [cityModelId, cityId, records]);
 
   const districtName = (data: Record<string, unknown>, id: string): string => {
     const dn = data.display_name ?? (isAr ? data.name_ar : data.name_en) ?? data.name_en ?? data.name_ar;
@@ -154,7 +184,7 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
     setElemError(null);
     const t = setTimeout(async () => {
       try {
-        const hits = await searchGeoElements(elemQuery, { limit: 20 });
+        const hits = await searchGeoElements(elemQuery, { limit: 20, city: cityNameEn, country: countryCode });
         if (!cancelled) setElemResults(hits);
       } catch (e) {
         if (!cancelled) setElemError(e instanceof Error ? e.message : 'search failed');
@@ -166,7 +196,7 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
       cancelled = true;
       clearTimeout(t);
     };
-  }, [elemQuery, mode, picked]);
+  }, [elemQuery, mode, picked, cityNameEn, countryCode]);
 
   const resetAdd = () => {
     setMode(null);
@@ -468,7 +498,13 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
                         <span className="block truncate text-xs font-semibold text-charcoal/80">
                           {(isAr ? g.name_ar || g.name_en : g.name_en || g.name_ar) || g.external_id}
                         </span>
-                        <span className="block truncate text-[10px] text-charcoal/40">{g.category}{g.type ? ` · ${g.type}` : ''}</span>
+                        <span className="block truncate text-[10px] text-charcoal/40">
+                          {g.category}{g.type ? ` · ${g.type}` : ''}
+                          {/* City shown because anchors are nationwide — without it
+                              two identically-named roads in different cities are
+                              indistinguishable in this list. */}
+                          {!cityNameEn && g.city ? ` · ${g.city}` : ''}
+                        </span>
                       </span>
                       {g.is_verified ? (
                         <BadgeCheck size={13} className="shrink-0 text-emerald-600" />

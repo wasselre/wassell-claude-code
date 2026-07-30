@@ -113,6 +113,14 @@ const { data: aliasRes, error: aliasErr } = await supabase.rpc('wassell_rebuild_
 if (aliasErr) { console.error('[import] alias rebuild failed:', aliasErr.message); process.exit(1); }
 console.log(`[import] aliases: +${aliasRes?.aliases_added}`);
 
+// Attach the new anchors to the geography layer: city_id / region_id by polygon
+// containment, and the free-text city label synced to the resolved city so the two
+// can never disagree. Idempotent, and it MUST run after every import — an anchor
+// left unlinked is invisible to city-filtered element search.
+const { data: linkRes, error: linkErr } = await supabase.rpc('wassell_link_geo_elements_geography', {});
+if (linkErr) { console.error('[import] geography link failed:', linkErr.message); process.exit(1); }
+console.log(`[import] geography link: ${JSON.stringify(linkRes)}`);
+
 // ── validation report (from the source rows) ────────────────────────────────
 const by = (fn) => rows.reduce((a, r) => { const k = fn(r) ?? '∅'; a[k] = (a[k] || 0) + 1; return a; }, {});
 const num = (v) => (v == null || v === '' ? null : Number(v));

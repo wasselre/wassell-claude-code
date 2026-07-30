@@ -1,6 +1,6 @@
 # Market Intelligence
 
-**Last updated:** 2026-07-29
+**Last updated:** 2026-07-30 (geo-element anchors are nationwide — the Map tab's embedded `LocationItemsEditor` now searches 21 cities instead of Riyadh alone, scoped to the selected city so one result limit isn't shared across the country. Note the market-listing corpus itself is still **Riyadh-only** (all 53,488 listings), because the Aqar scanner is Riyadh-scoped — element coverage outside Riyadh helps *project* matching, not comparables. See `docs/prd/project-matching-assistant.md` for the full build.) | 2026-07-29
 
 ## What it is
 A brokerage **command center** built on a deterministic benchmark precompute layer over the data Wassel already holds — **46,561 market listings** (Aqar asking ads), **our verified units**, and **client demand**. It answers: where are prices, where is demand strong, where is supply weak, which of our projects are mispriced, and which districts to source inventory from. It also powers **deal-quality badges** inside the Project Finder and generates **branded PDF reports** (client market snapshot + our-project pricing).
