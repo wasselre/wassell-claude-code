@@ -26,6 +26,21 @@ import { money, num, shortDate } from './lib/format';
 
 type Tab = 'overview' | 'content' | 'executions' | 'results';
 
+/**
+ * Sum the values that were actually measured, and return null when NONE were.
+ *
+ * `reduce((a, x) => a + (x ?? 0), 0)` would print ٠ for a column nobody has
+ * filled in yet, which is the same lie as saving a blank box as zero: it says
+ * "measured, and it was nothing" when the truth is "not measured".
+ */
+function sumOrNull(
+  rows: MosExecution[],
+  pick: (row: MosExecution) => number | null,
+): number | null {
+  const values = rows.map(pick).filter((v): v is number => v !== null && Number.isFinite(v));
+  return values.length === 0 ? null : values.reduce((a, b) => a + b, 0);
+}
+
 const PLATFORMS = ['instagram', 'tiktok', 'snapchat', 'x', 'youtube'] as const;
 
 export default function CampaignDetailPage() {
@@ -396,8 +411,8 @@ export default function CampaignDetailPage() {
                             return acc;
                           }, {}),
                         ).map(([platform, list]) => {
-                          const s = list.reduce((a, x) => a + (x.spend ?? 0), 0);
-                          const l = list.reduce((a, x) => a + (x.leads ?? 0), 0);
+                          const s = sumOrNull(list, (x) => x.spend);
+                          const l = sumOrNull(list, (x) => x.leads);
                           return (
                             <tr key={platform}>
                               <td>
@@ -405,11 +420,13 @@ export default function CampaignDetailPage() {
                                   {(isAr ? PLATFORM_LABELS[platform]?.ar : PLATFORM_LABELS[platform]?.en) ?? platform}
                                 </span>
                               </td>
-                              <td className="num">{num(Math.round(s), isAr)}</td>
-                              <td className="num">{num(list.reduce((a, x) => a + (x.impressions ?? 0), 0), isAr)}</td>
-                              <td className="num">{num(list.reduce((a, x) => a + (x.clicks ?? 0), 0), isAr)}</td>
+                              <td className="num">{num(s === null ? null : Math.round(s), isAr)}</td>
+                              <td className="num">{num(sumOrNull(list, (x) => x.impressions), isAr)}</td>
+                              <td className="num">{num(sumOrNull(list, (x) => x.clicks), isAr)}</td>
                               <td className="num">{num(l, isAr)}</td>
-                              <td className="num">{l > 0 ? num(Math.round(s / l), isAr) : '—'}</td>
+                              <td className="num">
+                                {s !== null && l !== null && l > 0 ? num(Math.round(s / l), isAr) : '—'}
+                              </td>
                             </tr>
                           );
                         })}
