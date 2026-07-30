@@ -74,19 +74,29 @@ export default function LocationCascadeField({ field, value, onChange, maxLevelK
     if (Array.isArray(v)) return v.filter(isStr);
     return isStr(v) ? [v] : [];
   };
-  // True only when NOTHING is picked yet — the default applies in this state only,
-  // so once the user picks (e.g. changes the region) the الرياض default stops
-  // forcing the city.
-  const isEmpty = levels.every((lv) => idsOf(lv.key).length === 0);
-  // Effective ids for a level: the real selection, else (only while totally empty)
-  // the default for the non-deepest levels — region/city — so the deepest (district)
-  // stays an explicit choice.
+  // Index of the shallowest level that carries a REAL selection (levels.length when
+  // nothing is picked). The default only applies ABOVE it — see effIds.
+  const firstRealIdx = (() => {
+    const i = levels.findIndex((lv) => idsOf(lv.key).length > 0);
+    return i < 0 ? levels.length : i;
+  })();
+  // Effective ids for a level: the real selection, else the configured default —
+  // but ONLY for levels shallower than the first real selection, and never for the
+  // deepest shown level.
+  //
+  // Two things ride on that "shallower than the first real selection" rule:
+  //   · Once the user picks a region, the الرياض *city* default must stop applying
+  //     (it would force a city that isn't in the chosen region).
+  //   · Values saved before a level existed omit it entirely — 64k records carry
+  //     region/city/district but no `country`. Those must still fall back to the
+  //     default country, or the region step (which filters by country_lookup) would
+  //     render an empty list on every legacy record.
   const effIds = (idx: number): string[] => {
     const lv = levels[idx];
     if (!lv) return [];
     const real = idsOf(lv.key);
     if (real.length) return real;
-    if (isEmpty && idx < navLastIdx && isStr(def[lv.key])) return [def[lv.key] as string];
+    if (idx < firstRealIdx && idx < navLastIdx && isStr(def[lv.key])) return [def[lv.key] as string];
     return [];
   };
 

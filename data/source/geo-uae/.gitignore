@@ -1,0 +1,4 @@
+# Cached raw Overpass responses. Reproducible from fetch.mjs and large (hundreds of
+# MB once the geometry pass runs), so they stay out of git — same posture as the
+# Riyadh dataset, which committed only the processed deliverables.
+raw/
