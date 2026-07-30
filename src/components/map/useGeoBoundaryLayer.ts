@@ -10,10 +10,12 @@ import { supabase } from '@/lib/supabase';
  *
  * THREE THINGS THAT LOOK LIKE STYLE BUT ARE NOT:
  *
- *  1. It listens to `bounds_changed`, NOT just `idle`. Measured on the deployed app:
- *     panning and zooming fired bounds_changed/center_changed/zoom_changed while
- *     `idle` and `tilesloaded` fired ZERO times, so an idle-only trigger fetched once
- *     at mount and never again. See the listener block below.
+ *  1. It listens to `bounds_changed`, NOT just `idle`. `idle` and `tilesloaded` are
+ *     RENDER-completion events, so they don't fire when the map never finishes a paint
+ *     cycle — measured on the deployed app under an automated browser, panning and
+ *     zooming fired bounds_changed/center_changed/zoom_changed while idle and
+ *     tilesloaded fired ZERO times, and an idle-only trigger fetched once at mount and
+ *     never again. `bounds_changed` is geometry-only and always fires.
  *  2. It creates its OWN `google.maps.Data` layers rather than using `map.data`.
  *     GeoElementsMap calls `map.data.addGeoJson` and DistrictMapPicker keeps its own
  *     casing/core layers there; sharing `map.data` would have this layer's features
@@ -33,12 +35,20 @@ const COLORS = {
   landmark: '#C09B5F', // subtle gold
 };
 
-/** Stroke weight per tier: coarser tiers read as the frame, districts as fine mesh. */
+/**
+ * Stroke weight per tier: coarser tiers read as the frame, districts as fine mesh.
+ *
+ * Tuned UP from the first pass, which used 0.9 px at 45% with a 3% fill for districts.
+ * That was invisible against the cream WASSEL_MAP_STYLE basemap — over a Riyadh
+ * viewport returning 244 boundaries, the outlines could not be picked out from the
+ * basemap's own landuse shading. Context should be quiet, but it has to be legible:
+ * the whole point is to see which district a pin sits in.
+ */
 const TIER_STROKE: Record<string, { weight: number; opacity: number; fill: number }> = {
-  country: { weight: 2.2, opacity: 0.75, fill: 0.04 },
-  region: { weight: 1.6, opacity: 0.65, fill: 0.04 },
-  city: { weight: 1.3, opacity: 0.6, fill: 0.05 },
-  district: { weight: 0.9, opacity: 0.45, fill: 0.03 },
+  country: { weight: 2.4, opacity: 0.85, fill: 0.05 },
+  region: { weight: 1.8, opacity: 0.8, fill: 0.05 },
+  city: { weight: 1.5, opacity: 0.75, fill: 0.06 },
+  district: { weight: 1.2, opacity: 0.7, fill: 0.06 },
 };
 
 export interface GeoBoundaryLayerState {
@@ -216,15 +226,18 @@ export function useGeoBoundaryLayer(
 
     // BOTH events, and `bounds_changed` is the load-bearing one.
     //
-    // `idle` is the textbook trigger and it is NOT reliable here — measured on the
-    // deployed app, panning and zooming the Project Finder map fired bounds_changed ×2,
-    // center_changed ×1 and zoom_changed ×1 while `idle` and `tilesloaded` fired ZERO
-    // times. Hanging the only trigger on `idle` meant the layer fetched once at mount
-    // and then never again, which looked exactly like "the feature doesn't work".
+    // `idle` is the textbook trigger for "the user stopped moving the map", but it is a
+    // RENDER-completion event: no completed paint, no event. Measured on the deployed
+    // Project Finder map, panBy + setZoom produced bounds_changed ×2, center_changed ×1
+    // and zoom_changed ×1 while `idle` and `tilesloaded` produced ZERO. That was under
+    // an automated browser whose tab reports hidden — a real user's map very likely does
+    // fire idle — but the layer must not depend on a paint having completed, and an
+    // idle-only trigger meant it fetched once at mount and never again.
     //
-    // Listening to both is not belt-and-braces: bounds_changed guarantees we react to
-    // every viewport change, and idle (where it does fire) gives one settled repaint.
-    // The debounce plus the identical-viewport guard in `load` make the overlap free.
+    // `bounds_changed` is geometry-only and fires regardless. Listening to both is not
+    // belt-and-braces: bounds_changed guarantees a reaction to every viewport change,
+    // and idle (where it fires) gives one settled repaint. The 300 ms debounce plus the
+    // identical-viewport guard in `load` make the overlap free.
     const listeners = [
       map.addListener('bounds_changed', schedule),
       map.addListener('idle', schedule),
