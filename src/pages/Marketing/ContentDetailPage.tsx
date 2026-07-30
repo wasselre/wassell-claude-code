@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   MosAccount, MosComment, MosContentRow, MosPublication, MosScene, MosStep, MosTask,
-  PURPOSE_LABELS, ROLE_LABELS,
+  PLATFORM_LABELS, PUB_STATUS_LABELS, PURPOSE_LABELS, ROLE_LABELS,
   fetchComments, fetchContentDetail, fetchPublications, isOverdue, updateContent,
 } from '@/lib/marketingOS/client';
 import { useAppStore } from '@/stores/appStore';
@@ -294,14 +294,20 @@ export default function ContentDetailPage() {
                       <tbody>
                         {publications.map((p) => (
                           <tr key={p.id}>
-                            <td style={{ width: 140 }}><span className="tag">{p.platform}</span></td>
+                            <td style={{ width: 140 }}>
+                              <span className="tag">
+                                {(isAr ? PLATFORM_LABELS[p.platform]?.ar : PLATFORM_LABELS[p.platform]?.en) ?? p.platform}
+                              </span>
+                            </td>
                             <td className="ltr" style={{ color: 'var(--mute)' }}>{p.account_handle ?? '—'}</td>
                             <td style={{ width: 170, color: 'var(--mute)' }}>
-                              {shortDate(p.published_at ?? p.scheduled_at, isAr)}
+                              {p.published_at || p.scheduled_at
+                                ? shortDate(p.published_at ?? p.scheduled_at, isAr)
+                                : (isAr ? 'بلا موعد' : 'no time set')}
                             </td>
                             <td style={{ width: 110 }}>
                               <Pill tone={p.status === 'published' ? 'live' : p.status === 'scheduled' ? 'go' : 'idle'}>
-                                {p.status}
+                                {(isAr ? PUB_STATUS_LABELS[p.status]?.ar : PUB_STATUS_LABELS[p.status]?.en) ?? p.status}
                               </Pill>
                             </td>
                           </tr>
