@@ -1,27 +1,27 @@
 # UAE geo-intelligence anchors — build report
 
-- Generated: 2026-07-30T13:26:54.891Z
+- Generated: 2026-07-30T15:43:53.957Z
 - Source: OpenStreetMap via Overpass (© OpenStreetMap contributors, ODbL)
-- **3237 anchors** · 0 with real geometry · 3237 flagged approximate
-- Geometry: 0 polygons · 3237 points · 0 lines
+- **3237 anchors** · 3224 with real geometry · 838 flagged approximate
+- Geometry: 1715 polygons · 1174 points · 348 lines
 
 ## By category
 
 | category | anchors | approximate |
 |----------|--------:|------------:|
-| landmarks | 615 | 615 |
-| business_zones | 506 | 506 |
-| malls | 424 | 424 |
-| parks | 406 | 406 |
-| roads_major | 344 | 344 |
-| hospitals | 282 | 282 |
-| lifestyle | 185 | 185 |
-| airports_transport | 149 | 149 |
-| universities | 124 | 124 |
-| metro_stations | 104 | 104 |
-| islands | 78 | 78 |
-| metro_lines | 13 | 13 |
-| ring_roads | 7 | 7 |
+| landmarks | 615 | 0 |
+| business_zones | 506 | 69 |
+| malls | 424 | 204 |
+| parks | 406 | 49 |
+| roads_major | 344 | 198 |
+| hospitals | 282 | 168 |
+| lifestyle | 185 | 1 |
+| airports_transport | 149 | 85 |
+| universities | 124 | 43 |
+| metro_stations | 104 | 0 |
+| islands | 78 | 16 |
+| metro_lines | 13 | 0 |
+| ring_roads | 7 | 5 |
 
 ## By emirate
 

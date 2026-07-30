@@ -294,9 +294,26 @@ for (const g of [...groups.values()].sort((a, b) =>
   const { lead, members } = g;
   const geoms = members.map((m) => {
     const el = geomById.get(`${m.osm_type}/${m.osm_id}`);
-    return el ? elementGeometry(el) : null;
+    if (el) return elementGeometry(el);
+    // A NODE's geometry is its own coordinates — nothing to fetch. The geometry plan
+    // only lists relations and ways (they need their member/child geometry expanded),
+    // so node-mapped anchors would otherwise arrive with geom NULL and be rejected by
+    // the NOT NULL constraint on geo_elements.geom. This is the real OSM geometry, not
+    // a synthesised stand-in: metro stations, landmarks and many POIs are legitimately
+    // mapped as nodes, and Riyadh's dataset carries 232 such points.
+    if (m.osm_type === 'node' && m.point) return { type: 'Point', coordinates: m.point };
+    return null;
   });
-  const geometry = mergeGeometries(geoms);
+  const fetched = mergeGeometries(geoms);
+  // `geo_elements.geom` is NOT NULL, and a handful of OSM relations expose no usable
+  // member geometry at all (13 of 3,237 — including real anchors like Dubai Airport
+  // Free Zone). Rather than drop them, fall back to the survey's representative point,
+  // which is the only spatial fact OSM offers for them. This mirrors the Riyadh
+  // dataset, whose 9 informal zones are stored the same way — and like those, the row
+  // must NOT claim to be verified: `is_verified` means "real geometry sourced from
+  // OSM", so it stays false and `is_approximate` stays true.
+  const geometry = fetched ?? (lead.point ? { type: 'Point', coordinates: lead.point } : null);
+  const geometryIsFallback = !fetched && !!geometry;
   const kind = geomKind(geometry);
   const point = representativePoint(geometry, null) ?? lead.point;
   const segments = members.length;
@@ -309,13 +326,13 @@ for (const g of [...groups.values()].sort((a, b) =>
   // a road merged from >8 segments may join disjoint stretches. Both are usable for
   // distance matching and both must be labelled as weaker than ideal.
   const wantsArea = ['malls', 'parks', 'universities', 'hospitals', 'business_zones', 'islands', 'airports_transport'].includes(lead.cls.category);
-  const isApproximate = (wantsArea && kind !== 'polygon') || segments > 8 || !geometry;
+  const isApproximate = (wantsArea && kind !== 'polygon') || segments > 8 || geometryIsFallback;
 
   const notes = [
     `osm:${members.map((m) => `${m.osm_type}/${m.osm_id}`).slice(0, 5).join(',')}${segments > 5 ? `,+${segments - 5}` : ''}`,
     segments > 8 ? `merged from ${segments} OSM segments sharing this name — may include disjoint stretches` : null,
     wantsArea && kind !== 'polygon' ? `mapped as ${kind} in OSM; a footprint polygon is wanted for containment` : null,
-    !geometry ? 'no geometry cached — centroid only' : null,
+    geometryIsFallback ? 'OSM exposes no usable geometry for this element — approximate centroid point' : null,
     lead.tags.wikidata ? `wikidata:${lead.tags.wikidata}` : null,
   ].filter(Boolean).join(' | ');
 
@@ -338,7 +355,7 @@ for (const g of [...groups.values()].sort((a, b) =>
     source_url: `https://www.openstreetmap.org/${lead.osm_type}/${lead.osm_id}`,
     source_type: 'openstreetmap',
     confidence_score: confidence(lead.cls, kind, lead.tags, segments),
-    is_verified: !!geometry,
+    is_verified: !!fetched,
     is_approximate: isApproximate,
     notes,
   });
