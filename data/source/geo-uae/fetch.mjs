@@ -103,63 +103,76 @@ async function emirates() {
 }
 
 // ── pass A: survey (tags + centroid) ────────────────────────────────────────
-// Levels below 4 vary by emirate — Abu Dhabi uses 5/6 for its city region and its
-// three regions, Dubai uses 7 for rural sectors, and the community tier is 8 (374)
-// with sub-communities at 10 (129). Every level is surveyed and process.mjs decides
-// which tier each one lands in.
-const ADMIN_LEVELS = [4, 5, 6, 7, 8, 9, 10];
+//
+// FEW FAT QUERIES, not many small ones. Measured against the public mirrors: one bbox
+// survey query costs 100–375s wall clock including 504 retries, and that cost is
+// dominated by per-request overhead — Overpass walks the bbox index and the member
+// ways regardless of how many tag filters ride along. Twenty-four separate queries
+// projected to ~2.5 hours; the same coverage in six is minutes. The responses stay
+// small because `out tags center;` emits no geometry (pass B fetches that by id).
+//
+// Still grouped rather than one single query, so a 504 on the roads group doesn't cost
+// the admin group — each group caches independently and the run is resumable.
+//
+// Admin levels vary by emirate (surveyed live 2026-07-30): 4 = the 7 emirates,
+// 5/6 = Abu Dhabi's city region and its three regions, 7 = Dubai's rural sectors,
+// 8 = the community tier (374), 10 = sub-communities (129), 9 = unused. All of 4..10
+// come back in one request and process-admin.mjs decides which tier each lands in.
+const SURVEY_GROUPS = {
+  'survey-admin-all': `relation[boundary=administrative][admin_level~"^(4|5|6|7|8|9|10)$"];`,
 
-const PLACE_QUERIES = {
-  'places-settlements': `nwr[place~"^(city|town|village)$"][name];`,
-  // The district tier in the UAE is mapped predominantly as place=suburb /
-  // neighbourhood (Dubai "communities"), frequently WITHOUT an administrative
-  // relation — this is the long tail of names buyers actually use.
-  'places-districts': `nwr[place~"^(suburb|neighbourhood|quarter|city_block)$"][name];`,
-  // Named residential landuse polygons — the fallback boundary for a community
-  // mapped only as a point.
-  'places-residential': `nwr[landuse=residential][name];`,
-};
+  // Named places: the settlement tier (city/town/village) and the district tier. The
+  // UAE's district tier is mapped predominantly as place=suburb / neighbourhood (Dubai
+  // "communities"), frequently WITHOUT an administrative relation — that is the long
+  // tail of names buyers actually use. landuse=residential supplies a fallback
+  // boundary where a community exists only as a point.
+  'survey-places': `nwr[place~"^(city|town|village|suburb|neighbourhood|quarter|city_block)$"][name];`
+    + `nwr[landuse=residential][name];`,
 
-// Mirrors the Riyadh category set, plus `islands`: in the UAE the master-planned
-// islands (Palm Jumeirah, Yas, Saadiyat, Al Reem, Al Maryah) are primary real-estate
-// anchors with real polygons, so they earn their own category.
-const ANCHOR_QUERIES = {
-  roads_major: `way[highway~"^(motorway|trunk|primary)$"][name];`,
-  secondary_roads: `way[highway=secondary][name];`,
-  metro_lines: `relation[route~"^(subway|light_rail|monorail|tram)$"];`,
-  metro_stations: `nwr[railway=station];nwr[station~"^(subway|light_rail|monorail)$"];nwr[railway=tram_stop][name];`,
-  malls: `nwr[shop=mall];nwr[shop=department_store][name];`,
-  universities: `nwr[amenity~"^(university|college)$"][name];`,
-  hospitals: `nwr[amenity=hospital][name];nwr[healthcare=hospital][name];`,
-  airports_transport: `nwr[aeroway=aerodrome][name];nwr[amenity=bus_station][name];nwr[amenity=ferry_terminal][name];`,
-  parks: `nwr[leisure~"^(park|garden)$"][name];`,
-  landmarks: `nwr[tourism~"^(attraction|museum|theme_park|zoo|aquarium)$"][name];nwr[man_made=tower][name];nwr[historic][name];`,
-  business_zones: `nwr[landuse~"^(commercial|industrial)$"][name];nwr[office=government][name];`,
-  free_zones: `nwr[name~"[Ff]ree [Zz]one"];nwr["name:en"~"[Ff]ree [Zz]one"];`,
-  lifestyle: `nwr[leisure~"^(water_park|beach_resort|marina|golf_course)$"][name];nwr[natural=beach][name];`,
-  islands: `nwr[place~"^(island|islet)$"][name];`,
+  // Anchors in groups by expected volume, so the heaviest class can't sink the rest.
+  //
+  // `secondary` is deliberately EXCLUDED. Measured over the UAE bbox: motorway 2,340 +
+  // trunk 4,638 + primary 7,190 = 14,168 ways carrying 452 distinct road names, which
+  // is the same order as Riyadh's 191 road anchors — while secondary alone adds 9,424
+  // ways for anchors nobody describes a property by. Riyadh's dataset drew the line in
+  // the same place (roads_major = motorway/trunk/primary, plus ring_roads).
+  'survey-anchor-roads': `way[highway~"^(motorway|trunk|primary)$"][name];`,
+
+  'survey-anchor-transit': `relation[route~"^(subway|light_rail|monorail|tram)$"];`
+    + `nwr[railway=station];nwr[station~"^(subway|light_rail|monorail)$"];nwr[railway=tram_stop][name];`
+    + `nwr[aeroway=aerodrome][name];nwr[amenity=bus_station][name];nwr[amenity=ferry_terminal][name];`,
+
+  // Destinations, institutions and islands. `islands` is the one category added to
+  // Riyadh's 13: in the UAE the master-planned islands (Palm Jumeirah, Yas, Saadiyat,
+  // Al Reem, Al Maryah) are primary real-estate anchors, not scenery.
+  'survey-anchor-places': `nwr[shop=mall];nwr[shop=department_store][name];`
+    + `nwr[amenity~"^(university|college)$"][name];`
+    + `nwr[amenity=hospital][name];nwr[healthcare=hospital][name];`
+    + `nwr[leisure~"^(park|garden)$"][name];`
+    + `nwr[tourism~"^(attraction|museum|theme_park|zoo|aquarium)$"][name];`
+    + `nwr[man_made=tower][name];nwr[historic][name];`
+    + `nwr[leisure~"^(water_park|beach_resort|marina|golf_course)$"][name];nwr[natural=beach][name];`
+    + `nwr[place~"^(island|islet)$"][name];`,
+
+  // Commercial/industrial land and free zones — the UAE's answer to KAFD.
+  'survey-anchor-zones': `nwr[landuse~"^(commercial|industrial)$"][name];nwr[office=government][name];`
+    + `nwr[name~"[Ff]ree [Zz]one"];nwr["name:en"~"[Ff]ree [Zz]one"];`,
 };
 
 async function survey() {
   console.log('\n── pass A: survey (tags + centroid, bbox-scoped) ──');
-  for (const lvl of ADMIN_LEVELS) {
-    await cached(`survey-admin-${lvl}`, () =>
-      overpass(bboxQuery(`relation[boundary=administrative][admin_level=${lvl}];`, 'out tags center;'),
-        { label: `admin-${lvl}`, attempts: 6 }),
-    );
-  }
-  for (const [name, sel] of Object.entries(PLACE_QUERIES)) {
-    await cached(`survey-${name}`, () =>
-      overpass(bboxQuery(sel, 'out tags center;'), { label: name, attempts: 6 }));
-  }
-  for (const [name, sel] of Object.entries(ANCHOR_QUERIES)) {
-    await cached(`survey-anchor-${name}`, () =>
-      overpass(bboxQuery(sel, 'out tags center;'), { label: `anchor-${name}`, attempts: 6 }));
+  for (const [name, selector] of Object.entries(SURVEY_GROUPS)) {
+    await cached(name, () =>
+      overpass(bboxQuery(selector, 'out tags center;'), { label: name, attempts: 8 }));
   }
 }
 
 // ── pass B: geometry for an explicit id list ────────────────────────────────
-const CHUNK = { relation: 40, way: 200, node: 500 };
+// Relations stay small — `out geom;` on a boundary relation expands every member way,
+// which is what 504s. Plain ways are cheap by comparison (~700 KB per 800), and roads
+// alone are 14,168 ways: at 200 per request that would be 71 round trips against
+// mirrors that take minutes each.
+const CHUNK = { relation: 40, way: 800, node: 800 };
 
 /**
  * `geometry-plan.json` is written by plan-geometry.mjs:

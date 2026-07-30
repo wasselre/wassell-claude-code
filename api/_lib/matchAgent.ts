@@ -531,6 +531,27 @@ function normalizeForSearch(s: string): string {
   return out.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Canonical place-name form for EXACT comparison — strips the "حي" prefix and the
+ * trailing "Dist." suffix, folds the Arabic letter variants that spellings disagree on
+ * (أإآ→ا, ة→ه, ى→ي, tatweel), and lowercases.
+ *
+ * A behavioural mirror of `normalizeArabicDistrictName` + `normalizeEnglishDistrictName`
+ * in `src/lib/locationUtils.ts` — the api bundle can't import from `src/`, so this is a
+ * deliberate copy. Change both together (same posture as `geoMatch.ts` ↔ its SQL twin).
+ */
+export function canonicalPlaceName(s: string): string {
+  return normalizeForSearch(
+    String(s ?? '')
+      .replace(/^\s*حي\s+/, '')
+      .replace(/\s*Dist\.?\s*$/i, '')
+      .replace(/ـ/g, '')
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ة/g, 'ه')
+      .replace(/ى/g, 'ي'),
+  );
+}
+
 /** Bidirectional substring match after normalization (so "النرجس" matches
  *  "حي النرجس" and vice-versa). Empty needle → false. */
 function fuzzyContains(haystack: string, needle: string): boolean {
@@ -1486,9 +1507,53 @@ export function reconcileRecommendationPayload(
  *  district_lookup equals this id is an EXACT match. City-aware when req.city is given
  *  (the same district name can exist in multiple cities). Returns null when the district
  *  isn't in the SPL set. */
+/**
+ * The country a free-text place name is assumed to belong to when nothing in the
+ * request says otherwise. Saudi Arabia is the operating market; UAE geography exists
+ * in the same tables (see the "UAE geography" section of docs/prd/data-storage.md) and
+ * must not be reachable by accident.
+ */
+export const DEFAULT_GEO_COUNTRY = 'SA';
+
+/**
+ * Rank name-resolution candidates DETERMINISTICALLY, most-wanted first.
+ *
+ * The old code took `pool[0]` off an unordered PostgREST result. That was already
+ * wrong within one country — «حي الخالدية» exists in 49 different Saudi cities,
+ * «حي النهضة» in 46 — so which one you got depended on Postgres row order. With UAE
+ * rows in the same table it becomes cross-border: a Saudi client asking for النخيل
+ * could resolve to a Dubai community and the whole match would be scored against the
+ * wrong geography, with nothing in the output saying so.
+ *
+ * Precedence: exact name > right city > right country > lowest id (a stable tiebreak,
+ * so an unresolvable tie at least returns the SAME answer every time).
+ */
+export function rankGeoCandidates<T extends { id: string; data: Record<string, unknown> }>(
+  rows: T[],
+  opts: { name: string; city?: string; country: string; cityFields: [string, string] },
+): T[] {
+  const [cityAr, cityEn] = opts.cityFields;
+  const score = (r: T): number => {
+    let s = 0;
+    const nAr = asStr(r.data.name_ar);
+    const nEn = asStr(r.data.name_en);
+    const want = canonicalPlaceName(opts.name);
+    if (want && (canonicalPlaceName(nAr) === want || canonicalPlaceName(nEn) === want)) s += 8;
+    else if (fuzzyContains(nAr, opts.name) || fuzzyContains(nEn, opts.name)) s += 4;
+    if (opts.city && (fuzzyContains(asStr(r.data[cityAr]), opts.city) || fuzzyContains(asStr(r.data[cityEn]), opts.city))) s += 2;
+    // Rows predating the country stamp are treated as the default country rather than
+    // dropped — the backfill covered every row, but a new row written by some other
+    // path must not become unresolvable.
+    if ((asStr(r.data.country_code) || DEFAULT_GEO_COUNTRY) === opts.country) s += 1;
+    return s;
+  };
+  return [...rows].sort((a, b) => score(b) - score(a) || a.id.localeCompare(b.id));
+}
+
 async function resolveRequestedDistrict(
   supabase: SupabaseClient,
   req: MatchRequirements,
+  preferCountry: string = DEFAULT_GEO_COUNTRY,
 ): Promise<{ id: string; cityId: string | null; lat: number | null; lng: number | null } | null> {
   if (!req.district) return null;
   const dm = await getModelByName(supabase, 'districts');
@@ -1503,22 +1568,11 @@ async function resolveRequestedDistrict(
     .or(`data->>name_ar.ilike.${pat},data->>name_en.ilike.${pat}`)
     .limit(60);
   if (error || !data || data.length === 0) return null;
-  const named = data.filter(
-    (r) =>
-      fuzzyContains(asStr(r.data.name_ar), req.district!) ||
-      fuzzyContains(asStr(r.data.name_en), req.district!),
-  );
-  const pool = named.length ? named : data;
-  let pick = pool[0];
+  const pick = rankGeoCandidates(data, {
+    name: token, city: req.city, country: preferCountry,
+    cityFields: ['city_name_ar', 'city_name_en'],
+  })[0];
   if (!pick) return null;
-  if (req.city) {
-    const byCity = pool.find(
-      (r) =>
-        fuzzyContains(asStr(r.data.city_name_ar), req.city!) ||
-        fuzzyContains(asStr(r.data.city_name_en), req.city!),
-    );
-    if (byCity) pick = byCity;
-  }
   return {
     id: pick.id,
     cityId: asStr(pick.data.city_lookup) || null,
@@ -1532,7 +1586,8 @@ async function resolveRequestedDistrict(
 async function resolveRequestedCity(
   supabase: SupabaseClient,
   req: MatchRequirements,
-): Promise<string | null> {
+  preferCountry: string = DEFAULT_GEO_COUNTRY,
+): Promise<{ id: string; countryCode: string } | null> {
   if (!req.city) return null;
   const cm = await getModelByName(supabase, 'cities');
   if (!cm) return null;
@@ -1546,13 +1601,16 @@ async function resolveRequestedCity(
     .or(`data->>name_ar.ilike.${pat},data->>name_en.ilike.${pat}`)
     .limit(30);
   if (error || !data || data.length === 0) return null;
-  const pick =
-    data.find(
-      (r) =>
-        fuzzyContains(asStr(r.data.name_ar), req.city!) ||
-        fuzzyContains(asStr(r.data.name_en), req.city!),
-    ) ?? data[0];
-  return pick ? pick.id : null;
+  const pick = rankGeoCandidates(data, {
+    name: token, country: preferCountry,
+    // Cities carry their parent REGION's name, not a city name — passing the city
+    // fields here would score every row against itself.
+    cityFields: ['region_name_ar', 'region_name_en'],
+  })[0];
+  if (!pick) return null;
+  // The resolved city's country becomes the preference for district resolution, so
+  // "دبي / مرسى دبي" resolves inside the UAE without anyone having to say "UAE".
+  return { id: pick.id, countryCode: asStr(pick.data.country_code) || DEFAULT_GEO_COUNTRY };
 }
 
 /** Resolve an array of lookup record ids (districts/cities) to their display names. */
@@ -1769,10 +1827,23 @@ export async function matchProjectsCore(
   const districtNames = reqDistrictIds.length
     ? []
     : (req.districts && req.districts.length ? req.districts : req.district ? [req.district] : []);
+
+  // Resolve the CITY first, and only to learn its country. District names repeat
+  // across countries as freely as they repeat across Saudi cities, so "مرسى دبي" has
+  // to be resolved knowing the request is about Dubai — otherwise a same-named Saudi
+  // district can outrank it. Costs one extra query only when a city name was given
+  // and a district still needs resolving.
+  let preferCountry = DEFAULT_GEO_COUNTRY;
+  let resolvedCity: { id: string; countryCode: string } | null = null;
+  if (req.city && (districtNames.length || reqCityId == null)) {
+    resolvedCity = await resolveRequestedCity(supabase, req);
+    if (resolvedCity) preferCountry = resolvedCity.countryCode;
+  }
+
   for (const dn of districtNames) {
     const token = (dn ?? '').trim();
     if (!token) continue;
-    const resolved = await resolveRequestedDistrict(supabase, { ...req, district: token });
+    const resolved = await resolveRequestedDistrict(supabase, { ...req, district: token }, preferCountry);
     if (!resolved) continue;
     if (!reqDistrictIds.includes(resolved.id)) reqDistrictIds.push(resolved.id);
     if (resolved.cityId && !reqCityIds.includes(resolved.cityId)) reqCityIds.push(resolved.cityId);
@@ -1785,7 +1856,7 @@ export async function matchProjectsCore(
     }
   }
   if (reqCityId == null && req.city) {
-    reqCityId = await resolveRequestedCity(supabase, req);
+    reqCityId = (resolvedCity ?? await resolveRequestedCity(supabase, req))?.id ?? null;
   }
   if (reqCityId && !reqCityIds.includes(reqCityId)) reqCityIds.push(reqCityId);
   // Multiple acceptable cities (alternatives — OR): resolve EACH into the city-match
@@ -1795,8 +1866,10 @@ export async function matchProjectsCore(
     for (const cn of req.cities) {
       const token = (cn ?? '').trim();
       if (!token || (req.city && token === req.city.trim())) continue;
-      const cid = await resolveRequestedCity(supabase, { ...req, city: token });
-      if (cid && !reqCityIds.includes(cid)) reqCityIds.push(cid);
+      // Same country preference as the primary city, so a list of alternatives can't
+      // wander across the border mid-request.
+      const alt = await resolveRequestedCity(supabase, { ...req, city: token }, preferCountry);
+      if (alt && !reqCityIds.includes(alt.id)) reqCityIds.push(alt.id);
     }
   }
 

@@ -77,7 +77,9 @@ const CLASSIFIERS = [
   [(t) => t.highway && /ring\s*road|الدائري/i.test(t.name ?? ''), 'ring_roads', 'ring_road'],
   [(t) => t.highway === 'motorway', 'roads_major', 'highway'],
   [(t) => t.highway === 'trunk' || t.highway === 'primary', 'roads_major', 'arterial_road'],
-  [(t) => t.highway === 'secondary', 'roads_major', 'secondary_road'],
+  // No `secondary` rule on purpose — see fetch.mjs SURVEY_GROUPS. Any secondary way
+  // still sitting in an older cached survey falls through to `unclassified` and is
+  // counted in the report rather than silently becoming an anchor.
   // retail / institutions
   [(t) => t.shop === 'mall', 'malls', 'mall'],
   [(t) => t.shop === 'department_store', 'malls', 'department_store'],
@@ -137,17 +139,15 @@ function confidence({ category, type }, kind, tags, segments) {
 }
 
 // ── collect + group ─────────────────────────────────────────────────────────
-const SURVEYS = [
-  'roads_major', 'secondary_roads', 'metro_lines', 'metro_stations', 'malls',
-  'universities', 'hospitals', 'airports_transport', 'parks', 'landmarks',
-  'business_zones', 'free_zones', 'lifestyle', 'islands',
-];
+// The survey arrives as four grouped responses (see fetch.mjs SURVEY_GROUPS); the
+// per-element category comes from CLASSIFIERS below, not from which file it was in.
+const SURVEYS = ['survey-anchor-roads', 'survey-anchor-transit', 'survey-anchor-places', 'survey-anchor-zones'];
 
 const raw = [];
 const seenOsm = new Set();
 let unclassified = 0, outside = 0, unnamed = 0;
 for (const s of SURVEYS) {
-  for (const el of elementsOf(`survey-anchor-${s}`)) {
+  for (const el of elementsOf(s)) {
     const key = `${el.type}/${el.id}`;
     if (seenOsm.has(key)) continue; // the same element matches several surveys
     seenOsm.add(key);

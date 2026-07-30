@@ -84,36 +84,45 @@ const emirateOf = (point) => locateEmirate(point, withPoly, { country: countryGe
 // ── 2. collect every candidate place ────────────────────────────────────────
 // Each candidate keeps its provenance so the report can explain where a name came
 // from and so dedup can prefer the richer source.
-const ADMIN_SURVEYS = [4, 5, 6, 7, 8, 9, 10].map((l) => ({ src: `survey-admin-${l}`, admin_level: l }));
-
-function candidatesFrom(name, kind) {
+/** OSM element → candidate. `kind` is set per element from its tags, not per file,
+ *  because the survey now arrives as a few fat grouped responses. */
+function candidatesFrom(name) {
   return elementsOf(name).map((el) => {
     const tags = el.tags ?? {};
-    const point = representativePoint(null, el);
+    const admin_level = tags.admin_level ? Number(tags.admin_level) : null;
+    const source_kind =
+      tags.boundary === 'administrative' && admin_level ? `admin-${admin_level}`
+      : tags.place ? 'place'
+      : tags.landuse === 'residential' ? 'landuse'
+      : 'other';
     return {
       osm: `${el.type}/${el.id}`,
       osm_type: el.type,
       osm_id: el.id,
-      source_kind: kind,
-      admin_level: tags.admin_level ? Number(tags.admin_level) : null,
+      source_kind,
+      admin_level,
       place: tags.place ?? null,
       name: tags.name ?? '',
       name_ar: nameAr(tags),
       name_en: nameEn(tags),
-      point,
+      point: representativePoint(null, el),
       tags,
     };
   }).filter((c) => c.point && (c.name_ar || c.name_en || c.name));
 }
 
-const admin = ADMIN_SURVEYS.flatMap(({ src, admin_level }) =>
-  candidatesFrom(src, `admin-${admin_level}`).map((c) => ({ ...c, admin_level })));
-const settlements = candidatesFrom('survey-places-settlements', 'place');
-const placeDistricts = candidatesFrom('survey-places-districts', 'place');
-const residential = candidatesFrom('survey-places-residential', 'landuse');
+const adminAll = candidatesFrom('survey-admin-all').filter((c) => c.admin_level);
+const placesAll = candidatesFrom('survey-places');
+// The settlement tier and the district tier come back in one response; split by tag.
+const SETTLEMENT_PLACES = new Set(['city', 'town', 'village']);
+const DISTRICT_PLACES = new Set(['suburb', 'neighbourhood', 'quarter', 'city_block']);
+const admin = adminAll;
+const settlements = placesAll.filter((c) => SETTLEMENT_PLACES.has(c.place));
+const placeDistricts = placesAll.filter((c) => DISTRICT_PLACES.has(c.place));
+const residential = placesAll.filter((c) => !c.place && c.tags.landuse === 'residential');
 
 console.log(`\n── candidates ──`);
-console.log(`  admin relations: ${admin.length} (${[...new Set(admin.map((a) => a.admin_level))].sort((a, b) => a - b).join(', ')})`);
+console.log(`  admin relations: ${admin.length} (levels ${[...new Set(admin.map((a) => a.admin_level))].sort((a, b) => a - b).join(', ')})`);
 console.log(`  place=city|town|village: ${settlements.length}`);
 console.log(`  place=suburb|neighbourhood|quarter: ${placeDistricts.length}`);
 console.log(`  landuse=residential (named): ${residential.length}`);
