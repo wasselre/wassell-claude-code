@@ -428,6 +428,215 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ item: full.data });
       }
 
+      /* -------------------------------------------------------- */
+      /* Scenes — the shoot list is derived from these             */
+      /* -------------------------------------------------------- */
+      case 'scene_save': {
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        const raw = (body.scene ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+
+        const patch: Record<string, unknown> = {};
+        for (const k of ['position', 'start_sec', 'end_sec', 'visual', 'voiceover',
+                         'on_screen_text', 'footage_status', 'note'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+
+        if (id) {
+          const upd = await sb.from('mos_scenes').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'scene not found');
+        } else {
+          patch.content_id = contentId;
+          if (patch.position === undefined) {
+            const last = await sb.from('mos_scenes').select('position')
+              .eq('content_id', contentId).order('position', { ascending: false }).limit(1).maybeSingle();
+            const f = dbFail(last.error);
+            if (f) return f;
+            patch.position = ((last.data as { position: number } | null)?.position ?? 0) + 1;
+          }
+          const ins = await sb.from('mos_scenes').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+        }
+
+        const list = await sb.from('mos_scenes').select('*')
+          .eq('content_id', contentId).order('position', { ascending: true });
+        const f = dbFail(list.error);
+        if (f) return f;
+        return jsonOk({ scenes: list.data ?? [] });
+      }
+
+      case 'scene_delete': {
+        const id = str(body.id);
+        const contentId = str(body.content_id);
+        if (!id || !contentId) return jsonError(400, 'id and content_id are required');
+        const del = await sb.from('mos_scenes').delete().eq('id', id);
+        const f = dbFail(del.error);
+        if (f) return f;
+        const list = await sb.from('mos_scenes').select('*')
+          .eq('content_id', contentId).order('position', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ scenes: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Publications — one row per platform                       */
+      /* -------------------------------------------------------- */
+      case 'publication_list': {
+        const contentId = str(body.content_id);
+        const [pubs, accounts] = await Promise.all([
+          contentId
+            ? sb.from('mos_publication_v').select('*').eq('content_id', contentId)
+                .order('scheduled_at', { ascending: true, nullsFirst: false })
+            : sb.from('mos_publication_v').select('*')
+                .order('scheduled_at', { ascending: true, nullsFirst: false })
+                .limit(cap(body.limit, 200, 500)),
+          sb.from('mos_platform_accounts').select('*').is('archived_at', null)
+            .order('sort_order', { ascending: true }),
+        ]);
+        const f = dbFail(pubs.error) ?? dbFail(accounts.error);
+        if (f) return f;
+        return jsonOk({ publications: pubs.data ?? [], accounts: accounts.data ?? [] });
+      }
+
+      case 'publication_save': {
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        const raw = (body.publication ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+
+        const patch: Record<string, unknown> = {};
+        for (const k of ['platform', 'account_id', 'status', 'scheduled_at', 'published_at',
+                         'caption', 'external_url', 'external_id', 'note'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+
+        // Marking published stamps who and when, so "who posted this" is never a
+        // guess. The DB also refuses published without a timestamp.
+        if (patch.status === 'published') {
+          if (!patch.published_at) patch.published_at = new Date().toISOString();
+          patch.published_by_user_id = await resolveAppUserId(sb, user.userId);
+        }
+
+        if (id) {
+          const upd = await sb.from('mos_publications').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'publication not found');
+        } else {
+          if (!patch.platform) return jsonError(400, 'platform is required');
+          patch.content_id = contentId;
+          const ins = await sb.from('mos_publications').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+        }
+
+        const list = await sb.from('mos_publication_v').select('*').eq('content_id', contentId)
+          .order('scheduled_at', { ascending: true, nullsFirst: false });
+        const f = dbFail(list.error);
+        if (f) return f;
+        return jsonOk({ publications: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Metric snapshots — append-only, never overwritten         */
+      /* -------------------------------------------------------- */
+      case 'metrics_record': {
+        const publicationId = str(body.publication_id);
+        if (!publicationId) return jsonError(400, 'publication_id is required');
+
+        const num = (v: unknown): number | null =>
+          typeof v === 'number' && Number.isFinite(v) ? Math.floor(v) : null;
+        const views = num(body.views);
+        const engagement = num(body.engagement);
+        const enquiries = num(body.enquiries);
+
+        // Mirrors mos_snap_not_empty_check so the user gets a sentence rather
+        // than a constraint violation.
+        if (views === null && engagement === null && enquiries === null) {
+          return new Response(
+            JSON.stringify({
+              error: 'Enter at least one number, or skip this publication.',
+              error_ar: 'أدخل رقمًا واحدًا على الأقل، أو تخطَّ هذا المنشور.',
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+
+        const ins = await sb.from('mos_metric_snapshots').insert({
+          publication_id: publicationId,
+          source: 'manual',
+          views, engagement, enquiries,
+          entered_by_user_id: await resolveAppUserId(sb, user.userId),
+        }).select('id').maybeSingle();
+        const f = dbFail(ins.error);
+        if (f) return f;
+
+        const hist = await sb.from('mos_metric_snapshots').select('*')
+          .eq('publication_id', publicationId).order('captured_at', { ascending: true });
+        const hf = dbFail(hist.error);
+        if (hf) return hf;
+        return jsonOk({ snapshots: hist.data ?? [] });
+      }
+
+      case 'metrics_history': {
+        const publicationId = str(body.publication_id);
+        if (!publicationId) return jsonError(400, 'publication_id is required');
+        const hist = await sb.from('mos_metric_snapshots').select('*')
+          .eq('publication_id', publicationId).order('captured_at', { ascending: true });
+        const f = dbFail(hist.error);
+        if (f) return f;
+        return jsonOk({ snapshots: hist.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Role grants — steps point at roles, this maps role→person */
+      /* -------------------------------------------------------- */
+      case 'roles_list': {
+        const [users, grants] = await Promise.all([
+          sb.from('users').select('id, name_ar, name_en, email, is_active')
+            .eq('is_active', true).order('name_en', { ascending: true }).limit(500),
+          sb.from('mos_role_grants').select('user_id, mos_role'),
+        ]);
+        const f = dbFail(users.error) ?? dbFail(grants.error);
+        if (f) return f;
+        return jsonOk({ users: users.data ?? [], grants: grants.data ?? [] });
+      }
+
+      case 'role_grant': {
+        const targetUserId = str(body.user_id);
+        const mosRole = str(body.mos_role);
+        if (!targetUserId) return jsonError(400, 'user_id is required');
+        const VALID = ['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage', 'viewer'];
+        if (mosRole && !VALID.includes(mosRole)) return jsonError(400, 'unknown role');
+
+        if (!mosRole) {
+          const del = await sb.from('mos_role_grants').delete().eq('user_id', targetUserId);
+          const f = dbFail(del.error);
+          if (f) return f;
+        } else {
+          const up = await sb.from('mos_role_grants').upsert(
+            {
+              user_id: targetUserId,
+              mos_role: mosRole,
+              granted_by_user_id: await resolveAppUserId(sb, user.userId),
+            },
+            { onConflict: 'user_id' },
+          );
+          const f = dbFail(up.error);
+          if (f) return f;
+        }
+
+        const grants = await sb.from('mos_role_grants').select('user_id, mos_role');
+        const gf = dbFail(grants.error);
+        if (gf) return gf;
+        return jsonOk({ grants: grants.data ?? [] });
+      }
+
       default:
         return jsonError(400, `unknown action: ${action}`);
     }

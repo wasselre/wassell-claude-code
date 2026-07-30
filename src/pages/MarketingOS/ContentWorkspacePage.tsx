@@ -26,8 +26,11 @@ import {
 } from '@/lib/marketingOS/client';
 import StageRail from './components/StageRail';
 import TaskPanel from './components/TaskPanel';
+import ContentFields from './components/ContentFields';
+import SceneEditor from './components/SceneEditor';
+import PublishingTab from './components/PublishingTab';
 
-type Tab = 'overview' | 'content' | 'scenes' | 'tasks';
+type Tab = 'overview' | 'content' | 'scenes' | 'publishing' | 'tasks';
 
 export default function ContentWorkspacePage() {
   const { contentId } = useParams<{ contentId: string }>();
@@ -40,6 +43,7 @@ export default function ContentWorkspacePage() {
   const [scenes, setScenes] = useState<MosScene[]>([]);
   const [steps, setSteps] = useState<MosStep[]>([]);
   const [myRole, setMyRole] = useState<MosRole>('viewer');
+  const [fieldSchema, setFieldSchema] = useState<string[]>([]);
 
   const [tab, setTab] = useState<Tab>('overview');
   const [loading, setLoading] = useState(true);
@@ -57,6 +61,9 @@ export default function ContentWorkspacePage() {
       setScenes(detail.scenes);
       setSteps(detail.steps);
       setMyRole(boot.role);
+      // The type's field_schema decides which writing surfaces this item shows.
+      const t = boot.content_types.find((c) => c.key === detail.item.content_type_key);
+      setFieldSchema(Array.isArray(t?.field_schema) ? t!.field_schema : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -73,6 +80,14 @@ export default function ContentWorkspacePage() {
     () => (openTask ? steps.find((s) => s.id === openTask.step_id) ?? null : null),
     [openTask, steps],
   );
+
+  // Writing surfaces and scenes are editable only by whoever owns the open
+  // step — plus the manager and admins, who carry every capability. RLS is the
+  // real gate; this just avoids showing a field that will be refused on save.
+  const canEditNow =
+    myRole === 'administrator' ||
+    myRole === 'marketing_manager' ||
+    (openStep !== null && myRole === openStep.role);
 
   const onComplete = async (
     result: 'submitted' | 'approved' | 'changes_requested',
@@ -141,6 +156,7 @@ export default function ContentWorkspacePage() {
     { id: 'overview', ar: 'نظرة عامة', en: 'Overview' },
     { id: 'content', ar: 'المحتوى', en: 'Content' },
     { id: 'scenes', ar: 'المشاهد', en: 'Scenes', count: scenes.length },
+    { id: 'publishing', ar: 'النشر', en: 'Publishing' },
     { id: 'tasks', ar: 'المهام', en: 'Tasks', count: tasks.length },
   ];
 
@@ -247,61 +263,31 @@ export default function ContentWorkspacePage() {
           )}
 
           {tab === 'content' && (
-            <div className="rounded-xl border border-sand bg-white p-5">
-              <p className="text-sm text-charcoal/55">
-                {isAr
-                  ? 'أسطح الكتابة (العناوين، الكابشن، النص، التعليق الصوتي) قادمة في الدفعة التالية.'
-                  : 'The writing surfaces (headlines, caption, script, voice-over) land in the next batch.'}
-              </p>
-            </div>
+            <ContentFields
+              contentId={item.id}
+              schema={fieldSchema}
+              data={(item as unknown as { data?: Record<string, unknown> }).data ?? {}}
+              canEdit={canEditNow}
+              isAr={isAr}
+              onSaved={(d) =>
+                setItem((prev) =>
+                  prev ? ({ ...prev, data: d } as unknown as MosContentRow) : prev,
+                )
+              }
+            />
           )}
 
           {tab === 'scenes' && (
-            <div className="overflow-hidden rounded-xl border border-sand bg-white">
-              {scenes.length === 0 ? (
-                <p className="p-8 text-center text-sm text-charcoal/55">
-                  {isAr ? 'لا توجد مشاهد بعد.' : 'No scenes yet.'}
-                </p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-sand bg-cream/50 text-xs text-charcoal/60">
-                      <th className="p-3 text-start font-semibold">#</th>
-                      <th className="p-3 text-start font-semibold">{isAr ? 'الصورة' : 'Visual'}</th>
-                      <th className="p-3 text-start font-semibold">{isAr ? 'التعليق' : 'Voice-over'}</th>
-                      <th className="p-3 text-start font-semibold">{isAr ? 'التصوير' : 'Footage'}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scenes.map((s) => (
-                      <tr key={s.id} className="border-b border-sand/50 last:border-0">
-                        <td className="p-3 text-xs text-charcoal/50">{s.position}</td>
-                        <td className="p-3">{s.visual ?? '—'}</td>
-                        <td className="p-3 text-charcoal/70">{s.voiceover ?? '—'}</td>
-                        <td className="p-3">
-                          <span
-                            className={`rounded px-2 py-1 text-xs font-semibold ${
-                              s.footage_status === 'have'
-                                ? 'bg-green-50 text-green-800'
-                                : s.footage_status === 'to_make'
-                                  ? 'bg-amber-50 text-amber-800'
-                                  : 'bg-red-50 text-red-800'
-                            }`}
-                          >
-                            {s.footage_status === 'have'
-                              ? isAr ? 'متوفرة' : 'Have it'
-                              : s.footage_status === 'to_make'
-                                ? isAr ? 'تُصنع' : 'To be made'
-                                : isAr ? 'ناقصة' : 'Missing'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+            <SceneEditor
+              contentId={item.id}
+              scenes={scenes}
+              canEdit={canEditNow}
+              isAr={isAr}
+              onChange={setScenes}
+            />
           )}
+
+          {tab === 'publishing' && <PublishingTab contentId={item.id} isAr={isAr} />}
 
           {tab === 'tasks' && (
             <div className="overflow-hidden rounded-xl border border-sand bg-white">

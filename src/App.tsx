@@ -72,6 +72,7 @@ import MarketingIntelligencePage from '@/pages/MarketingIntelligence/MarketingIn
 // lib are deleted once the rebuild covers them.
 import MarketingOSPage from '@/pages/MarketingOS/MarketingOSPage';
 import ContentWorkspacePage from '@/pages/MarketingOS/ContentWorkspacePage';
+import MarketingRolesPage from '@/pages/MarketingOS/RolesPage';
 import ProjectFinderPage from '@/pages/ProjectFinder/ProjectFinderPage';
 import FinancingPage from '@/pages/Financing/FinancingPage';
 import PostsContentPage from '@/pages/PostsContent/PostsContentPage';
@@ -337,6 +338,8 @@ export default function App() {
           <Route path="/marketing-management" element={<RequirePageAccess pageId="marketing_management"><MarketingOSPage /></RequirePageAccess>} />
           {/* Deep-linkable workspace. Flat sibling route sharing the same guard —
               the repo convention for feature sub-pages (see /sales/studio/...). */}
+          <Route path="/marketing-management/roles" element={<RequirePageAccess pageId="marketing_management"><MarketingRolesPage /></RequirePageAccess>} />
+          {/* Literal segment must precede the :param route or "roles" is read as an id. */}
           <Route path="/marketing-management/:contentId" element={<RequirePageAccess pageId="marketing_management"><ContentWorkspacePage /></RequirePageAccess>} />
           {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
           <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />

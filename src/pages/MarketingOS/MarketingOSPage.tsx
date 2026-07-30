@@ -119,6 +119,11 @@ export default function MarketingOSPage() {
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
+          {(role === 'administrator' || role === 'marketing_manager') && (
+            <Button variant="secondary" onClick={() => navigate('/marketing-management/roles')}>
+              {isAr ? 'الأدوار' : 'Roles'}
+            </Button>
+          )}
           {canCreate && (
             <Button onClick={() => setCreating(true)}>
               <Plus className="h-4 w-4" />

@@ -161,9 +161,108 @@ export const completeTask = (
   note?: string,
 ) => call<{ item: MosContentRow }>('task_complete', { task_id: taskId, result, note });
 
+export interface MosPublication {
+  id: string;
+  content_id: string;
+  platform: string;
+  account_id: string | null;
+  status: 'draft' | 'scheduled' | 'published' | 'cancelled';
+  scheduled_at: string | null;
+  published_at: string | null;
+  caption: string | null;
+  external_url: string | null;
+  note: string | null;
+  account_label_ar: string | null;
+  account_label_en: string | null;
+  account_handle: string | null;
+  account_connected: boolean | null;
+  latest_captured_at: string | null;
+  latest_source: 'manual' | 'api' | null;
+  latest_views: number | null;
+  latest_engagement: number | null;
+  latest_enquiries: number | null;
+  snapshot_count: number;
+}
+
+export interface MosAccount {
+  id: string;
+  platform: string;
+  handle: string | null;
+  label_ar: string;
+  label_en: string;
+  is_connected: boolean;
+  can_publish: boolean;
+  can_read_metrics: boolean;
+}
+
+export interface MosSnapshot {
+  id: string;
+  publication_id: string;
+  captured_at: string;
+  source: 'manual' | 'api';
+  views: number | null;
+  engagement: number | null;
+  enquiries: number | null;
+}
+
+export interface MosUser {
+  id: string;
+  name_ar: string | null;
+  name_en: string | null;
+  email: string | null;
+}
+
+export interface MosGrant {
+  user_id: string;
+  mos_role: MosRole;
+}
+
+export const saveScene = (contentId: string, scene: Record<string, unknown>) =>
+  call<{ scenes: MosScene[] }>('scene_save', { content_id: contentId, scene });
+
+export const deleteScene = (contentId: string, id: string) =>
+  call<{ scenes: MosScene[] }>('scene_delete', { content_id: contentId, id });
+
+export const fetchPublications = (contentId?: string) =>
+  call<{ publications: MosPublication[]; accounts: MosAccount[] }>('publication_list',
+    contentId ? { content_id: contentId } : {});
+
+export const savePublication = (contentId: string, publication: Record<string, unknown>) =>
+  call<{ publications: MosPublication[] }>('publication_save', {
+    content_id: contentId,
+    publication,
+  });
+
+export const recordMetrics = (
+  publicationId: string,
+  values: { views?: number | null; engagement?: number | null; enquiries?: number | null },
+) => call<{ snapshots: MosSnapshot[] }>('metrics_record', { publication_id: publicationId, ...values });
+
+export const fetchMetricsHistory = (publicationId: string) =>
+  call<{ snapshots: MosSnapshot[] }>('metrics_history', { publication_id: publicationId });
+
+export const fetchRoles = () =>
+  call<{ users: MosUser[]; grants: MosGrant[] }>('roles_list');
+
+export const grantRole = (userId: string, mosRole: MosRole | null) =>
+  call<{ grants: MosGrant[] }>('role_grant', { user_id: userId, mos_role: mosRole });
+
 /* ------------------------------------------------------------------ */
 /* bilingual labels — one map, never inline strings in JSX            */
 /* ------------------------------------------------------------------ */
+
+export const PUB_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
+  draft:     { ar: 'مسودة',  en: 'Draft' },
+  scheduled: { ar: 'مجدول',  en: 'Scheduled' },
+  published: { ar: 'منشور',  en: 'Published' },
+  cancelled: { ar: 'ملغى',   en: 'Cancelled' },
+};
+
+export const FOOTAGE_LABELS: Record<string, { ar: string; en: string }> = {
+  have:    { ar: 'متوفرة', en: 'Have it' },
+  to_make: { ar: 'تُصنع',  en: 'To be made' },
+  missing: { ar: 'ناقصة',  en: 'Missing' },
+};
 
 export const ROLE_LABELS: Record<MosRole, { ar: string; en: string }> = {
   administrator:     { ar: 'مدير النظام',    en: 'Administrator' },
