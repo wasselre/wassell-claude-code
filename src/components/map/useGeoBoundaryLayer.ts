@@ -5,16 +5,20 @@ import { supabase } from '@/lib/supabase';
  * Draws the administrative context every map was missing: a country / region / city /
  * district outline appropriate to the current zoom, plus main roads and landmark pins.
  *
- * Attach it to any `google.maps.Map` and it manages itself — one RPC per viewport on
- * `idle`, debounced, with the previous request abandoned when the user keeps panning.
+ * Attach it to any `google.maps.Map` and it manages itself — one debounced RPC per
+ * viewport change, with the previous request abandoned when the user keeps panning.
  *
- * TWO THINGS THAT LOOK LIKE STYLE BUT ARE NOT:
+ * THREE THINGS THAT LOOK LIKE STYLE BUT ARE NOT:
  *
- *  1. It creates its OWN `google.maps.Data` layers rather than using `map.data`.
+ *  1. It listens to `bounds_changed`, NOT just `idle`. Measured on the deployed app:
+ *     panning and zooming fired bounds_changed/center_changed/zoom_changed while
+ *     `idle` and `tilesloaded` fired ZERO times, so an idle-only trigger fetched once
+ *     at mount and never again. See the listener block below.
+ *  2. It creates its OWN `google.maps.Data` layers rather than using `map.data`.
  *     GeoElementsMap calls `map.data.addGeoJson` and DistrictMapPicker keeps its own
  *     casing/core layers there; sharing `map.data` would have this layer's features
  *     collide with, restyle, and clear theirs.
- *  2. The server decides which tier belongs at which zoom (`geo_map_tier_for_zoom`).
+ *  3. The server decides which tier belongs at which zoom (`geo_map_tier_for_zoom`).
  *     Six map components each guessing would drift apart the first time anyone tuned
  *     one of them.
  */
@@ -77,6 +81,9 @@ export function useGeoBoundaryLayer(
   // Monotonic request id. A slow response for a viewport the user already left must not
   // repaint the map — panning fires `idle` far faster than the RPC returns.
   const reqRef = useRef(0);
+  // Last viewport actually requested, so a repeated bounds_changed for the same view
+  // is a no-op rather than a repeat download.
+  const lastKeyRef = useRef<string | null>(null);
   const onSelectRef = useRef(onSelect);
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
 
@@ -153,6 +160,19 @@ export function useGeoBoundaryLayer(
       }
       const sw = b.getSouthWest();
       const ne = b.getNorthEast();
+
+      // Skip an identical viewport. `bounds_changed` fires far more often than the view
+      // meaningfully moves (and `idle`, where it fires, lands on the same view), so
+      // without this the same 200–400 kB response would be re-fetched for no change.
+      // Rounded to ~10 m, which is finer than a pixel at max zoom.
+      const key = [
+        Math.round(zoom),
+        sw.lng().toFixed(4), sw.lat().toFixed(4),
+        ne.lng().toFixed(4), ne.lat().toFixed(4),
+      ].join('|');
+      if (key === lastKeyRef.current) return;
+      lastKeyRef.current = key;
+
       const id = ++reqRef.current;
       setState((s) => ({ ...s, loading: true }));
 
@@ -167,6 +187,9 @@ export function useGeoBoundaryLayer(
         // Loud, per the repo's silent-failure rule. The map keeps whatever it drew last
         // rather than clearing, so a transient error doesn't blank the context.
         console.error('[geo-boundaries] geo_map_layers failed:', error.message);
+        // Clear the guard: a failed viewport must stay retryable, or one transient
+        // error would freeze this view's layer for as long as the user stays put.
+        lastKeyRef.current = null;
         setState({ tier: null, truncated: false, error: error.message, loading: false });
         return;
       }
@@ -186,15 +209,29 @@ export function useGeoBoundaryLayer(
 
     const schedule = () => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      // `idle` still fires repeatedly during a flick-pan; 250 ms collapses a gesture
-      // into one request.
-      timerRef.current = setTimeout(() => { void load(); }, 250);
+      // `bounds_changed` fires on every frame of a drag; 300 ms collapses a whole
+      // gesture into one request.
+      timerRef.current = setTimeout(() => { void load(); }, 300);
     };
 
-    const listener = map.addListener('idle', schedule);
+    // BOTH events, and `bounds_changed` is the load-bearing one.
+    //
+    // `idle` is the textbook trigger and it is NOT reliable here — measured on the
+    // deployed app, panning and zooming the Project Finder map fired bounds_changed ×2,
+    // center_changed ×1 and zoom_changed ×1 while `idle` and `tilesloaded` fired ZERO
+    // times. Hanging the only trigger on `idle` meant the layer fetched once at mount
+    // and then never again, which looked exactly like "the feature doesn't work".
+    //
+    // Listening to both is not belt-and-braces: bounds_changed guarantees we react to
+    // every viewport change, and idle (where it does fire) gives one settled repaint.
+    // The debounce plus the identical-viewport guard in `load` make the overlap free.
+    const listeners = [
+      map.addListener('bounds_changed', schedule),
+      map.addListener('idle', schedule),
+    ];
     schedule(); // draw immediately on mount rather than waiting for the first pan
     return () => {
-      listener.remove();
+      for (const l of listeners) l.remove();
       if (timerRef.current) clearTimeout(timerRef.current);
       // Abandon any in-flight response so it can't paint into an unmounted layer.
       reqRef.current++;
