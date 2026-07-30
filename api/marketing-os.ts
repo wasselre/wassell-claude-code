@@ -637,8 +637,663 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ grants: grants.data ?? [] });
       }
 
+      /* -------------------------------------------------------- */
+      /* Overview — four numbers and the two lists that need a     */
+      /* decision today. Counts are COUNTS, not a fetched page     */
+      /* trimmed client-side, so they stay true past 1,000 rows.   */
+      /* -------------------------------------------------------- */
+      case 'overview': {
+        const nowIso = new Date().toISOString();
+        const { weekStart, weekEnd } = weekBounds(str(body.week_of));
+        const roleRes = await sb.rpc('wassell_mos_role', { p_auth_uid: user.userId });
+        const roleFail = dbFail(roleRes.error);
+        if (roleFail) return roleFail;
+        const myRole = (roleRes.data as string | null) ?? 'viewer';
+
+        const live = sb.from('mos_content_v').select('id', { count: 'exact', head: true })
+          .is('archived_at', null).not('status_key', 'in', '("draft","done")');
+        const mine = sb.from('mos_content_v').select('id', { count: 'exact', head: true })
+          .is('archived_at', null).eq('owner_role', myRole);
+        const late = sb.from('mos_content_v').select('id', { count: 'exact', head: true })
+          .is('archived_at', null).not('status_key', 'in', '("draft","done")')
+          .lt('current_task_due_at', nowIso);
+
+        const [liveRes, mineRes, lateRes, stalled, week, spend, byType] = await Promise.all([
+          live,
+          mine,
+          late,
+          // Oldest-touched open work first — the bottleneck, by definition.
+          sb.from('mos_content_v')
+            .select('id, ref, title, status_key, current_step_label_ar, current_step_label_en, owner_role, current_task_due_at, updated_at, content_type_key')
+            .is('archived_at', null).not('status_key', 'in', '("draft","done")')
+            .order('updated_at', { ascending: true }).limit(8),
+          sb.from('mos_publication_v')
+            .select('id, content_id, platform, status, scheduled_at, published_at')
+            .gte('scheduled_at', weekStart).lte('scheduled_at', weekEnd)
+            .order('scheduled_at', { ascending: true }).limit(60),
+          sb.from('mos_campaign_v')
+            .select('id, ref, name, status, budget_total, total_spend, total_leads, total_qualified')
+            .in('status', ['active', 'planning']).limit(20),
+          sb.from('mos_content_v').select('content_type_key, status_key')
+            .is('archived_at', null).not('status_key', 'in', '("draft","done")').limit(1000),
+        ]);
+
+        const f = dbFail(liveRes.error) ?? dbFail(mineRes.error) ?? dbFail(lateRes.error)
+          ?? dbFail(stalled.error) ?? dbFail(week.error) ?? dbFail(spend.error) ?? dbFail(byType.error);
+        if (f) return f;
+
+        return jsonOk({
+          role: myRole,
+          counts: {
+            in_production: liveRes.count ?? 0,
+            waiting_on_me: mineRes.count ?? 0,
+            publishing_this_week: (week.data ?? []).length,
+            late: lateRes.count ?? 0,
+          },
+          stalled: stalled.data ?? [],
+          week: week.data ?? [],
+          campaigns: spend.data ?? [],
+          mix: byType.data ?? [],
+          week_start: weekStart,
+          week_end: weekEnd,
+        });
+      }
+
+      /* -------------------------------------------------------- */
+      /* My work / Team work — the task queue, by role             */
+      /* -------------------------------------------------------- */
+      case 'work_list': {
+        const scope = str(body.scope) === 'team' ? 'team' : 'mine';
+        const roleRes = await sb.rpc('wassell_mos_role', { p_auth_uid: user.userId });
+        const roleFail = dbFail(roleRes.error);
+        if (roleFail) return roleFail;
+        const myRole = (roleRes.data as string | null) ?? 'viewer';
+
+        let q = sb.from('mos_content_v')
+          .select(CONTENT_LIST_COLUMNS)
+          .is('archived_at', null)
+          .not('status_key', 'in', '("draft","done")');
+        // 'mine' filters to the role the open task sits with. An administrator
+        // has no queue of their own, so they see the team board instead of an
+        // empty screen that would read as "nothing to do".
+        if (scope === 'mine' && myRole !== 'administrator') q = q.eq('owner_role', myRole);
+
+        const rows = await q.order('current_task_due_at', { ascending: true, nullsFirst: false })
+          .limit(cap(body.limit, 300, 500));
+        const f = dbFail(rows.error);
+        if (f) return f;
+
+        // The item's own open task carries the step id we need to name the action.
+        const ids = (rows.data ?? []).map((r) => (r as unknown as Row).id);
+        let tasks: unknown[] = [];
+        if (ids.length > 0) {
+          const t = await sb.from('mos_tasks').select('*').in('content_id', ids).eq('status', 'open');
+          const tf = dbFail(t.error);
+          if (tf) return tf;
+          tasks = t.data ?? [];
+        }
+        return jsonOk({ role: myRole, content: rows.data ?? [], tasks });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Calendar — what is scheduled, and what is merely due       */
+      /* -------------------------------------------------------- */
+      case 'calendar': {
+        const from = str(body.from);
+        const to = str(body.to);
+        if (!from || !to) return jsonError(400, 'from and to are required');
+
+        const [pubs, due] = await Promise.all([
+          sb.from('mos_publication_v')
+            .select('id, content_id, platform, status, scheduled_at, published_at, caption')
+            .or(`and(scheduled_at.gte.${from},scheduled_at.lte.${to}),and(published_at.gte.${from},published_at.lte.${to})`)
+            .limit(500),
+          sb.from('mos_content_v')
+            .select('id, ref, title, content_type_key, status_key, due_at, target_publish_at, owner_role')
+            .is('archived_at', null)
+            .gte('due_at', from).lte('due_at', to)
+            .limit(500),
+        ]);
+        const f = dbFail(pubs.error) ?? dbFail(due.error);
+        if (f) return f;
+
+        // Titles for the publication chips — one extra query beats N.
+        const ids = Array.from(new Set((pubs.data ?? []).map((p) => (p as unknown as Row).content_id as string)));
+        let titles: unknown[] = [];
+        if (ids.length > 0) {
+          const t = await sb.from('mos_content_v').select('id, ref, title, content_type_key').in('id', ids);
+          const tf = dbFail(t.error);
+          if (tf) return tf;
+          titles = t.data ?? [];
+        }
+        return jsonOk({ publications: pubs.data ?? [], due: due.data ?? [], titles });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Campaigns — the spend side                                */
+      /* -------------------------------------------------------- */
+      case 'campaign_list': {
+        const rows = await sb.from('mos_campaign_v').select('*')
+          .is('archived_at', null)
+          .order('starts_on', { ascending: false, nullsFirst: false })
+          .limit(cap(body.limit, 200, 500));
+        const f = dbFail(rows.error);
+        if (f) return f;
+        return jsonOk({ campaigns: rows.data ?? [] });
+      }
+
+      case 'campaign_detail': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+        const [item, execs, content, comments] = await Promise.all([
+          sb.from('mos_campaign_v').select('*').eq('id', id).maybeSingle(),
+          sb.from('mos_campaign_executions').select('*').eq('campaign_id', id)
+            .order('created_at', { ascending: true }),
+          sb.from('mos_content_v').select(CONTENT_LIST_COLUMNS).eq('campaign_id', id)
+            .is('archived_at', null).limit(300),
+          sb.from('mos_comments').select('*').eq('campaign_id', id)
+            .order('created_at', { ascending: true }).limit(200),
+        ]);
+        const f = dbFail(item.error) ?? dbFail(execs.error) ?? dbFail(content.error) ?? dbFail(comments.error);
+        if (f) return f;
+        if (!item.data) return jsonError(404, 'campaign not found');
+        return jsonOk({
+          item: item.data,
+          executions: execs.data ?? [],
+          content: content.data ?? [],
+          comments: comments.data ?? [],
+        });
+      }
+
+      case 'campaign_save': {
+        const raw = (body.campaign ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['name', 'project_id', 'objective', 'status', 'starts_on',
+                         'ends_on', 'budget_total', 'note'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        if (id) {
+          const upd = await sb.from('mos_campaigns').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'campaign not found');
+        } else {
+          if (!str(patch.name)) return jsonError(400, 'name is required');
+          patch.created_by_user_id = await resolveAppUserId(sb, user.userId);
+          const ins = await sb.from('mos_campaigns').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+          const created = ins.data as unknown as Row | null;
+          const one = await sb.from('mos_campaign_v').select('*').eq('id', created?.id ?? '').maybeSingle();
+          const of_ = dbFail(one.error);
+          if (of_) return of_;
+          return jsonOk({ item: one.data });
+        }
+        const one = await sb.from('mos_campaign_v').select('*').eq('id', id).maybeSingle();
+        const f = dbFail(one.error);
+        if (f) return f;
+        return jsonOk({ item: one.data });
+      }
+
+      case 'execution_save': {
+        const campaignId = str(body.campaign_id);
+        if (!campaignId) return jsonError(400, 'campaign_id is required');
+        const raw = (body.execution ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['content_id', 'platform', 'account_id', 'label', 'status',
+                         'starts_on', 'ends_on', 'budget', 'spend', 'impressions',
+                         'clicks', 'leads', 'qualified', 'note'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        if (id) {
+          const upd = await sb.from('mos_campaign_executions').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'execution not found');
+        } else {
+          if (!str(patch.platform)) return jsonError(400, 'platform is required');
+          patch.campaign_id = campaignId;
+          const ins = await sb.from('mos_campaign_executions').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+        }
+        const list = await sb.from('mos_campaign_executions').select('*')
+          .eq('campaign_id', campaignId).order('created_at', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ executions: list.data ?? [] });
+      }
+
+      case 'execution_delete': {
+        const id = str(body.id);
+        const campaignId = str(body.campaign_id);
+        if (!id || !campaignId) return jsonError(400, 'id and campaign_id are required');
+        const del = await sb.from('mos_campaign_executions').delete().eq('id', id);
+        const f = dbFail(del.error);
+        if (f) return f;
+        const list = await sb.from('mos_campaign_executions').select('*')
+          .eq('campaign_id', campaignId).order('created_at', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ executions: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Assets — the material library                             */
+      /* -------------------------------------------------------- */
+      case 'asset_list': {
+        let q = sb.from('mos_assets').select('*').is('archived_at', null);
+        const kind = str(body.kind);
+        const projectId = str(body.project_id);
+        const search = str(body.q);
+        if (kind) q = q.eq('kind', kind);
+        if (projectId) q = q.eq('project_id', projectId);
+        if (search) q = q.ilike('title', `%${search}%`);
+        const rows = await q.order('created_at', { ascending: false }).limit(cap(body.limit, 200, 500));
+        const f = dbFail(rows.error);
+        if (f) return f;
+
+        // Usage comes from the link table, so "unused" is a fact rather than a
+        // counter somebody has to remember to decrement.
+        const links = await sb.from('mos_asset_links').select('asset_id, content_id, role').limit(2000);
+        const lf = dbFail(links.error);
+        if (lf) return lf;
+        return jsonOk({ assets: rows.data ?? [], links: links.data ?? [] });
+      }
+
+      case 'asset_save': {
+        const raw = (body.asset ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['title', 'kind', 'source', 'project_id', 'file_id', 'url',
+                         'thumb_url', 'shot_on', 'tags', 'note'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        if (id) {
+          const upd = await sb.from('mos_assets').update(patch).eq('id', id).select('*').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'asset not found');
+          return jsonOk({ asset: upd.data });
+        }
+        if (!str(patch.title)) return jsonError(400, 'title is required');
+        patch.created_by_user_id = await resolveAppUserId(sb, user.userId);
+        const ins = await sb.from('mos_assets').insert(patch).select('*').maybeSingle();
+        const f = dbFail(ins.error);
+        if (f) return f;
+        return jsonOk({ asset: ins.data });
+      }
+
+      case 'asset_delete': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+        // Archive rather than destroy: an asset referenced by shipped content
+        // should stop appearing without breaking the record of what was used.
+        const upd = await sb.from('mos_assets')
+          .update({ archived_at: new Date().toISOString() }).eq('id', id).select('id').maybeSingle();
+        const f = dbFail(upd.error);
+        if (f) return f;
+        if (!upd.data) return jsonError(404, 'asset not found');
+        return jsonOk({ ok: true });
+      }
+
+      case 'asset_link': {
+        const assetId = str(body.asset_id);
+        const contentId = str(body.content_id);
+        if (!assetId || !contentId) return jsonError(400, 'asset_id and content_id are required');
+        const role = str(body.role) ?? 'source';
+        const up = await sb.from('mos_asset_links')
+          .upsert({ asset_id: assetId, content_id: contentId, role }, { onConflict: 'asset_id,content_id' });
+        const f = dbFail(up.error);
+        if (f) return f;
+        const list = await sb.from('mos_asset_links').select('asset_id, content_id, role').eq('content_id', contentId);
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ links: list.data ?? [] });
+      }
+
+      case 'asset_unlink': {
+        const assetId = str(body.asset_id);
+        const contentId = str(body.content_id);
+        if (!assetId || !contentId) return jsonError(400, 'asset_id and content_id are required');
+        const del = await sb.from('mos_asset_links').delete()
+          .eq('asset_id', assetId).eq('content_id', contentId);
+        const f = dbFail(del.error);
+        if (f) return f;
+        const list = await sb.from('mos_asset_links').select('asset_id, content_id, role').eq('content_id', contentId);
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ links: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Shoot requests — what missing scenes turn into            */
+      /* -------------------------------------------------------- */
+      case 'shoot_list': {
+        const [reqs, items] = await Promise.all([
+          sb.from('mos_shoot_requests').select('*')
+            .order('created_at', { ascending: false }).limit(cap(body.limit, 100, 300)),
+          sb.from('mos_shoot_items').select('*').limit(1000),
+        ]);
+        const f = dbFail(reqs.error) ?? dbFail(items.error);
+        if (f) return f;
+
+        // Every scene still marked missing, whether or not it has been requested
+        // yet — the backlog IS the pending shoot list.
+        const missing = await sb.from('mos_scenes')
+          .select('id, content_id, position, visual, footage_status')
+          .eq('footage_status', 'missing').limit(500);
+        const mf = dbFail(missing.error);
+        if (mf) return mf;
+
+        const contentIds = Array.from(new Set((missing.data ?? [])
+          .map((s) => (s as unknown as Row).content_id as string)));
+        let owners: unknown[] = [];
+        if (contentIds.length > 0) {
+          const o = await sb.from('mos_content_v')
+            .select('id, ref, title, project_id, content_type_key').in('id', contentIds);
+          const of_ = dbFail(o.error);
+          if (of_) return of_;
+          owners = o.data ?? [];
+        }
+        return jsonOk({
+          requests: reqs.data ?? [],
+          items: items.data ?? [],
+          missing_scenes: missing.data ?? [],
+          scene_owners: owners,
+        });
+      }
+
+      case 'shoot_save': {
+        const raw = (body.request ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['title', 'project_id', 'status', 'scheduled_at',
+                         'location', 'note', 'assigned_role'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        let requestId = id;
+        if (id) {
+          const upd = await sb.from('mos_shoot_requests').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'shoot request not found');
+        } else {
+          if (!str(patch.title)) return jsonError(400, 'title is required');
+          patch.requested_by_user_id = await resolveAppUserId(sb, user.userId);
+          const ins = await sb.from('mos_shoot_requests').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+          requestId = (ins.data as unknown as Row | null)?.id ?? null;
+
+          // Requests raised from the shoot backlog carry their scenes with them,
+          // so the person filming sees the actual shot list.
+          const scenes = Array.isArray(body.scene_ids) ? (body.scene_ids as unknown[]) : [];
+          if (requestId && scenes.length > 0) {
+            const sceneRows = await sb.from('mos_scenes')
+              .select('id, content_id, visual, position')
+              .in('id', scenes.filter((s): s is string => typeof s === 'string'));
+            const sf = dbFail(sceneRows.error);
+            if (sf) return sf;
+            const payload = (sceneRows.data ?? []).map((s) => {
+              const sc = s as unknown as Row;
+              return {
+                request_id: requestId,
+                scene_id: sc.id,
+                content_id: sc.content_id,
+                description: (sc.visual as string | null) ?? `#${String(sc.position)}`,
+              };
+            });
+            if (payload.length > 0) {
+              const itemsIns = await sb.from('mos_shoot_items').insert(payload);
+              const itf = dbFail(itemsIns.error);
+              if (itf) return itf;
+            }
+          }
+        }
+        const list = await sb.from('mos_shoot_requests').select('*')
+          .order('created_at', { ascending: false }).limit(300);
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ requests: list.data ?? [], request_id: requestId });
+      }
+
+      case 'shoot_item_toggle': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+        const done = body.done === true;
+        const upd = await sb.from('mos_shoot_items').update({ done }).eq('id', id).select('*').maybeSingle();
+        const f = dbFail(upd.error);
+        if (f) return f;
+        if (!upd.data) return jsonError(404, 'shoot item not found');
+        return jsonOk({ item: upd.data });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Comments — the thread                                     */
+      /* -------------------------------------------------------- */
+      case 'comment_add': {
+        const contentId = str(body.content_id);
+        const campaignId = str(body.campaign_id);
+        const bodyText = str(body.body);
+        if (!bodyText) return jsonError(400, 'body is required');
+        if (!contentId && !campaignId) return jsonError(400, 'content_id or campaign_id is required');
+        const ins = await sb.from('mos_comments').insert({
+          content_id: contentId,
+          campaign_id: campaignId,
+          body: bodyText,
+          author_user_id: await resolveAppUserId(sb, user.userId),
+        }).select('id').maybeSingle();
+        const f = dbFail(ins.error);
+        if (f) return f;
+
+        let q = sb.from('mos_comments').select('*').order('created_at', { ascending: true }).limit(200);
+        q = contentId ? q.eq('content_id', contentId) : q.eq('campaign_id', campaignId ?? '');
+        const list = await q;
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ comments: list.data ?? [] });
+      }
+
+      case 'comment_list': {
+        const contentId = str(body.content_id);
+        const campaignId = str(body.campaign_id);
+        if (!contentId && !campaignId) return jsonError(400, 'content_id or campaign_id is required');
+        let q = sb.from('mos_comments').select('*').order('created_at', { ascending: true }).limit(200);
+        q = contentId ? q.eq('content_id', contentId) : q.eq('campaign_id', campaignId ?? '');
+        const list = await q;
+        const f = dbFail(list.error);
+        if (f) return f;
+        return jsonOk({ comments: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Settings — workflows, steps, types, platforms             */
+      /* -------------------------------------------------------- */
+      case 'settings_data': {
+        const [workflows, steps, types, accounts] = await Promise.all([
+          sb.from('mos_workflows').select('*').is('archived_at', null).order('key', { ascending: true }),
+          sb.from('mos_workflow_steps').select('*').order('position', { ascending: true }),
+          sb.from('mos_content_types').select('*').is('archived_at', null)
+            .order('sort_order', { ascending: true }),
+          sb.from('mos_platform_accounts').select('*').is('archived_at', null)
+            .order('sort_order', { ascending: true }),
+        ]);
+        const f = dbFail(workflows.error) ?? dbFail(steps.error)
+          ?? dbFail(types.error) ?? dbFail(accounts.error);
+        if (f) return f;
+        return jsonOk({
+          workflows: workflows.data ?? [],
+          steps: steps.data ?? [],
+          content_types: types.data ?? [],
+          accounts: accounts.data ?? [],
+        });
+      }
+
+      case 'step_save': {
+        const raw = (body.step ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['workflow_id', 'position', 'key', 'label_ar', 'label_en', 'role',
+                         'due_days', 'is_approval', 'approval_kind'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        if (id) {
+          const upd = await sb.from('mos_workflow_steps').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'step not found');
+        } else {
+          if (!str(patch.workflow_id)) return jsonError(400, 'workflow_id is required');
+          const ins = await sb.from('mos_workflow_steps').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+        }
+        const list = await sb.from('mos_workflow_steps').select('*').order('position', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ steps: list.data ?? [] });
+      }
+
+      case 'content_type_save': {
+        const raw = (body.content_type ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['key', 'label_ar', 'label_en', 'prefix', 'workflow_id',
+                         'field_schema', 'sort_order', 'is_active'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        if (id) {
+          const upd = await sb.from('mos_content_types').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'content type not found');
+        } else {
+          if (!str(patch.key) || !str(patch.prefix)) return jsonError(400, 'key and prefix are required');
+          const ins = await sb.from('mos_content_types').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+        }
+        const list = await sb.from('mos_content_types').select('*').is('archived_at', null)
+          .order('sort_order', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ content_types: list.data ?? [] });
+      }
+
+      case 'account_save': {
+        const raw = (body.account ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['platform', 'handle', 'label_ar', 'label_en', 'sort_order'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        // `is_connected` / `can_publish` / `can_read_metrics` are deliberately NOT
+        // editable here. Publishing stays manual until a real OAuth flow sets them;
+        // a checkbox that claims a connection would be a lie in the UI.
+        if (id) {
+          const upd = await sb.from('mos_platform_accounts').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'account not found');
+        } else {
+          if (!str(patch.platform)) return jsonError(400, 'platform is required');
+          const ins = await sb.from('mos_platform_accounts').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+        }
+        const list = await sb.from('mos_platform_accounts').select('*').is('archived_at', null)
+          .order('sort_order', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ accounts: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Projects — names for the brief, from the live CRM          */
+      /* -------------------------------------------------------- */
+      case 'projects_list': {
+        const rows = await sb.from('v_all_projects').select('id, project_name')
+          .order('project_name', { ascending: true }).limit(1000);
+        const f = dbFail(rows.error);
+        if (f) return f;
+        return jsonOk({ projects: rows.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Weekly numbers — everything published that has no reading  */
+      /* since the given date. This is the Friday data-entry queue. */
+      /* -------------------------------------------------------- */
+      case 'metrics_queue': {
+        const since = str(body.since)
+          ?? new Date(Date.now() - 7 * 86_400_000).toISOString();
+        const pubs = await sb.from('mos_publication_v').select('*')
+          .eq('status', 'published')
+          .order('published_at', { ascending: false })
+          .limit(cap(body.limit, 200, 500));
+        const f = dbFail(pubs.error);
+        if (f) return f;
+
+        const rows = (pubs.data ?? []) as unknown as Array<Row & { latest_captured_at: string | null }>;
+        const ids = Array.from(new Set(rows.map((p) => p.content_id as string)));
+        let titles: unknown[] = [];
+        if (ids.length > 0) {
+          const t = await sb.from('mos_content_v').select('id, ref, title, content_type_key').in('id', ids);
+          const tf = dbFail(t.error);
+          if (tf) return tf;
+          titles = t.data ?? [];
+        }
+        return jsonOk({ publications: rows, titles, since });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Search — one box, three kinds of object                   */
+      /* -------------------------------------------------------- */
+      case 'search': {
+        const raw = str(body.q);
+        // PostgREST's `or=` is a comma/parenthesis-delimited grammar, so a term
+        // containing those characters would produce a malformed filter rather
+        // than a search. Strip them instead of shipping a broken query.
+        const term = raw ? raw.replace(/[(),*]/g, ' ').trim() : null;
+        if (!term) return jsonOk({ content: [], campaigns: [], assets: [] });
+        const like = `%${term}%`;
+        const [content, campaigns, assets] = await Promise.all([
+          sb.from('mos_content_v').select(CONTENT_LIST_COLUMNS)
+            .is('archived_at', null).or(`title.ilike.${like},ref.ilike.${like}`).limit(40),
+          sb.from('mos_campaign_v').select('*')
+            .is('archived_at', null).or(`name.ilike.${like},ref.ilike.${like}`).limit(20),
+          sb.from('mos_assets').select('*')
+            .is('archived_at', null).or(`title.ilike.${like},ref.ilike.${like}`).limit(20),
+        ]);
+        const f = dbFail(content.error) ?? dbFail(campaigns.error) ?? dbFail(assets.error);
+        if (f) return f;
+        return jsonOk({
+          content: content.data ?? [],
+          campaigns: campaigns.data ?? [],
+          assets: assets.data ?? [],
+        });
+      }
+
       default:
         return jsonError(400, `unknown action: ${action}`);
     }
   });
+}
+
+/**
+ * Saturday→Friday week containing `iso` (or today). The Saudi working week
+ * starts on Sunday, but the publishing week the team plans around runs to
+ * Friday, which is the day the numbers get entered.
+ */
+function weekBounds(iso: string | null): { weekStart: string; weekEnd: string } {
+  const base = iso ? new Date(iso) : new Date();
+  const day = base.getUTCDay(); // 0 = Sunday
+  const start = new Date(base);
+  start.setUTCDate(base.getUTCDate() - day);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 7);
+  return { weekStart: start.toISOString(), weekEnd: end.toISOString() };
 }

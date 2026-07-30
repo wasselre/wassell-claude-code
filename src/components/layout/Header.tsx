@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { isAuthAvailable } from '@/lib/auth';
-import { Languages, Menu, User, LogOut, Loader2, Eye, X } from 'lucide-react';
+import { useCanAccessPage } from '@/hooks/usePermission';
+import { Languages, Menu, User, LogOut, Loader2, Eye, X, ArrowLeftRight } from 'lucide-react';
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -31,6 +32,10 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
   const [signingOut, setSigningOut] = useState(false);
 
   const authOn = isAuthAvailable();
+  // The Marketing workspace is a separate shell at /m. The switcher only shows
+  // for people who actually have it, so it never advertises a door that would
+  // bounce them straight back home.
+  const canMarketing = useCanAccessPage('marketing_management');
   const currentUser = users.find((u) => u.id === currentUserId) ?? null;
   const displayName = currentUser
     ? (isAr ? currentUser.name_ar : currentUser.name_en)
@@ -115,6 +120,23 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
           </h1>
         </div>
         <div className="flex items-center gap-2 md:gap-3 shrink-0">
+          {/* ── Workspace switcher — Sales ⇄ Marketing ─────────────── */}
+          {canMarketing && (
+            <button
+              onClick={() => navigate('/m')}
+              className="flex items-center gap-2 pill hover:bg-white/80 transition-colors"
+              title={isAr ? 'الانتقال إلى مساحة التسويق' : 'Switch to the Marketing workspace'}
+            >
+              <ArrowLeftRight size={14} className="text-charcoal/40" />
+              <span className="text-sm font-bold text-charcoal">
+                {isAr ? 'المبيعات' : 'Sales'}
+              </span>
+              <span className="hidden sm:inline text-xs text-charcoal/45">
+                {isAr ? '→ التسويق' : '→ Marketing'}
+              </span>
+            </button>
+          )}
+
           {/* ── Profile preview switcher (explicit per-user grant only) ── */}
           {canPreview && previewOptions.length > 0 && (
             <div

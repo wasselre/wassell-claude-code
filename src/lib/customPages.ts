@@ -145,11 +145,14 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     // only OBSERVES competitors, hence Radar rather than another Megaphone.
     // Arabic keeps the first pair apart: ذكاء التسويق here vs ذكاء السوق there.
     id: 'marketing_management',
-    route: '/marketing-management',
+    // Points at the Marketing WORKSPACE, which lives outside the Sales shell.
+    // Following this link leaves the Sales workspace entirely — that is the
+    // intent, and the switcher in either header brings you back.
+    route: '/m',
     // إدارة التسويق = OUR execution pipeline. Distinct from ذكاء التسويق below,
     // which watches competitors. Different verb, different data, different job.
-    label_ar: 'إدارة التسويق',
-    label_en: 'Marketing Management',
+    label_ar: 'مساحة التسويق',
+    label_en: 'Marketing Workspace',
     icon: ClipboardListIcon,
     default_access: 'admin',
   },

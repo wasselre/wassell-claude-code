@@ -67,12 +67,23 @@ import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage'
 import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
 import MarketIntelligencePage from '@/pages/MarketIntelligence/MarketIntelligencePage';
 import MarketingIntelligencePage from '@/pages/MarketingIntelligence/MarketingIntelligencePage';
-// Marketing OS replaces the old MarketingManagementPage on the same route and
-// page id, so no profile has to be re-granted access. The old page + its API and
-// lib are deleted once the rebuild covers them.
-import MarketingOSPage from '@/pages/MarketingOS/MarketingOSPage';
-import ContentWorkspacePage from '@/pages/MarketingOS/ContentWorkspacePage';
-import MarketingRolesPage from '@/pages/MarketingOS/RolesPage';
+// ── The Marketing WORKSPACE ────────────────────────────────────────────
+// A second workspace, not a page inside the Sales one: it mounts OUTSIDE
+// AppLayout with its own shell, rail and visual system, under /m. The switcher
+// in each shell's header is how you move between the two.
+import MarketingWorkspace from '@/pages/Marketing/MarketingWorkspace';
+import MarketingOverviewPage from '@/pages/Marketing/OverviewPage';
+import MarketingWorkPage from '@/pages/Marketing/WorkPage';
+import MarketingContentListPage from '@/pages/Marketing/ContentListPage';
+import MarketingSearchPage from '@/pages/Marketing/SearchPage';
+import MarketingContentDetailPage from '@/pages/Marketing/ContentDetailPage';
+import MarketingCalendarPage from '@/pages/Marketing/CalendarPage';
+import MarketingCampaignsPage from '@/pages/Marketing/CampaignsPage';
+import MarketingCampaignDetailPage from '@/pages/Marketing/CampaignDetailPage';
+import MarketingLibraryPage from '@/pages/Marketing/LibraryPage';
+import MarketingShootsPage from '@/pages/Marketing/ShootsPage';
+import MarketingNumbersPage from '@/pages/Marketing/NumbersPage';
+import MarketingSettingsPage, { SettingsSectionPage } from '@/pages/Marketing/SettingsPage';
 import ProjectFinderPage from '@/pages/ProjectFinder/ProjectFinderPage';
 import FinancingPage from '@/pages/Financing/FinancingPage';
 import PostsContentPage from '@/pages/PostsContent/PostsContentPage';
@@ -335,12 +346,11 @@ export default function App() {
           <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
           <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
           <Route path="/marketing-intelligence" element={<RequirePageAccess pageId="marketing_intelligence"><MarketingIntelligencePage /></RequirePageAccess>} />
-          <Route path="/marketing-management" element={<RequirePageAccess pageId="marketing_management"><MarketingOSPage /></RequirePageAccess>} />
-          {/* Deep-linkable workspace. Flat sibling route sharing the same guard —
-              the repo convention for feature sub-pages (see /sales/studio/...). */}
-          <Route path="/marketing-management/roles" element={<RequirePageAccess pageId="marketing_management"><MarketingRolesPage /></RequirePageAccess>} />
-          {/* Literal segment must precede the :param route or "roles" is read as an id. */}
-          <Route path="/marketing-management/:contentId" element={<RequirePageAccess pageId="marketing_management"><ContentWorkspacePage /></RequirePageAccess>} />
+          {/* The old in-Sales marketing page is gone. Anyone with a bookmark
+              (or a profile whose sidebar still points here) lands in the new
+              workspace instead of on a blank route. */}
+          <Route path="/marketing-management" element={<Navigate to="/m" replace />} />
+          <Route path="/marketing-management/*" element={<Navigate to="/m" replace />} />
           {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
           <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />
           {/* Financing calculator. Query params let a client / project / unit
@@ -412,6 +422,39 @@ export default function App() {
           <Route path="/settings/project-details" element={<RequireAdmin><ProjectDetailsListPage /></RequireAdmin>} />
           <Route path="/settings/project-details/:projectId" element={<RequireAdmin><ProjectDetailsBridgePage /></RequireAdmin>} />
           <Route path="/logs" element={<RequireAdmin><LogsPage /></RequireAdmin>} />
+        </Route>
+
+        {/* ── The Marketing workspace ────────────────────────────────────
+            Mounted OUTSIDE AppLayout on purpose: it brings its own shell,
+            rail, header and design system, and the Sales workspace is left
+            exactly as it was. Same auth gate, same page-access id, so
+            nobody's permissions have to be re-granted. */}
+        <Route
+          element={
+            <RequireAuth>
+              <RequirePageAccess pageId="marketing_management">
+                <MarketingWorkspace />
+              </RequirePageAccess>
+            </RequireAuth>
+          }
+        >
+          <Route path="/m" element={<MarketingOverviewPage />} />
+          <Route path="/m/my-work" element={<MarketingWorkPage scope="mine" />} />
+          <Route path="/m/team" element={<MarketingWorkPage scope="team" />} />
+          <Route path="/m/search" element={<MarketingSearchPage />} />
+          <Route path="/m/content" element={<MarketingContentListPage />} />
+          <Route path="/m/content/:contentId" element={<MarketingContentDetailPage />} />
+          <Route path="/m/calendar" element={<MarketingCalendarPage />} />
+          <Route path="/m/library" element={<MarketingLibraryPage />} />
+          <Route path="/m/shoots" element={<MarketingShootsPage />} />
+          <Route path="/m/campaigns" element={<MarketingCampaignsPage />} />
+          <Route path="/m/campaigns/:campaignId" element={<MarketingCampaignDetailPage />} />
+          <Route path="/m/numbers" element={<MarketingNumbersPage />} />
+          <Route path="/m/settings" element={<MarketingSettingsPage />} />
+          <Route path="/m/settings/:section" element={<SettingsSectionPage />} />
+          {/* A wrong /m/* path lands on the workspace's own front door rather
+              than on a blank screen inside a shell that already rendered. */}
+          <Route path="/m/*" element={<Navigate to="/m" replace />} />
         </Route>
       </Routes>
       <ToastContainer />

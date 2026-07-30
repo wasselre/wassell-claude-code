@@ -1,0 +1,1724 @@
+/*
+ * Marketing Workspace — design system.
+ *
+ * This is the approved 52-screen design's stylesheet, lifted verbatim from the
+ * artifact and made real: same tokens, same class names, same spacing. Writing
+ * the pages against these classes is what makes the shipped workspace look like
+ * the design instead of like an approximation of it.
+ *
+ * EVERYTHING is scoped under `.mos-root`. The Sales workspace keeps its own
+ * Tailwind theme untouched — the two never share a variable. That scoping is
+ * the whole reason a second visual system can exist in one app.
+ *
+ * RTL/LTR: every directional rule uses logical properties (margin-inline-*,
+ * border-inline-*, inset-inline-*), so the same CSS serves Arabic and English
+ * off the <html dir> the app already sets.
+ */
+
+.mos-root {
+  --cream: #f8f5e9;
+  --paper: #fffdf8;
+  --sand: #e8d9c0;
+  --sand-2: #f2e9d9;
+  --line: #e3d5bc;
+  --line-soft: #efe5d2;
+  --copper: #b8734f;
+  --terracotta: #a6482a;
+  --choc: #6b4226;
+  --gold: #d9b57f;
+  --ink: #2e2a26;
+  --ink-2: #3f3f3f;
+  --mute: #8a7f72;
+  --go: #3f6b52;
+  --wait: #a8781f;
+  --late: #8e2f45;
+  --calm: #5a6570;
+  --rail: #6b4226;
+  --rail-ink: #f4e9d9;
+  --rail-mute: #c4a98c;
+  --shadow: 0 1px 2px rgba(70, 50, 30, 0.06), 0 8px 24px rgba(70, 50, 30, 0.07);
+  --serif: 'Amiri', 'Noto Naskh Arabic', 'Traditional Arabic', Georgia, serif;
+  --sans: 'Amiri', 'Noto Naskh Arabic', 'Traditional Arabic', 'Segoe UI', Tahoma, sans-serif;
+
+  background: var(--cream);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  display: flex;
+  align-items: stretch;
+}
+
+.mos-root *,
+.mos-root *::before,
+.mos-root *::after {
+  box-sizing: border-box;
+}
+.mos-root button {
+  font-family: inherit;
+  color: inherit;
+}
+.mos-root .ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+  display: inline-block;
+}
+
+/* ── Rail ─────────────────────────────────────────────────────────────── */
+.mos-rail {
+  width: 214px;
+  flex: 0 0 214px;
+  background: var(--rail);
+  color: var(--rail-ink);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  z-index: 40;
+}
+.mos-root .brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 8px 18px;
+}
+.mos-root .brand-mark {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+}
+.mos-root .brand-txt b {
+  display: block;
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.mos-root .brand-txt span {
+  font-size: 10px;
+  color: var(--rail-mute);
+}
+.mos-root .nav-sec {
+  font-size: 10px;
+  color: var(--rail-mute);
+  padding: 14px 9px 6px;
+  font-weight: 700;
+}
+.mos-root .navi {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  color: var(--rail-ink);
+  opacity: 0.74;
+  font-size: 12.5px;
+  text-decoration: none;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: start;
+  cursor: pointer;
+}
+.mos-root .navi:hover {
+  opacity: 0.95;
+  background: rgba(255, 255, 255, 0.07);
+}
+.mos-root .navi svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  stroke-width: 1.6;
+}
+.mos-root .navi .ct {
+  margin-inline-start: auto;
+  font-size: 10.5px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+.mos-root .navi.on {
+  background: rgba(255, 255, 255, 0.13);
+  opacity: 1;
+  font-weight: 700;
+  box-shadow: inset -2px 0 0 var(--gold);
+}
+[dir='ltr'] .mos-root .navi.on {
+  box-shadow: inset 2px 0 0 var(--gold);
+}
+.mos-root .rail-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 11.5px;
+}
+.mos-root .rail-foot .av {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--copper);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  flex: 0 0 24px;
+}
+.mos-root .rail-foot small {
+  display: block;
+  color: var(--rail-mute);
+  font-size: 10px;
+}
+
+/* Workspace switcher — the control that makes two workspaces one app. */
+.mos-root .ws-switch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 9px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.16);
+  color: var(--rail-ink);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.mos-root .ws-switch:hover {
+  background: rgba(0, 0, 0, 0.28);
+}
+.mos-root .ws-switch svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.9;
+  flex: 0 0 13px;
+}
+.mos-root .ws-switch .sw-sub {
+  color: var(--rail-mute);
+  font-weight: 400;
+  font-size: 10px;
+  display: block;
+}
+
+/* ── Main canvas ──────────────────────────────────────────────────────── */
+.mos-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--cream);
+  /* The mobile burger is absolutely positioned against this, not the viewport. */
+  position: relative;
+}
+.mos-root .phead {
+  padding: 20px 26px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.mos-root .phead h3 {
+  font-family: var(--serif);
+  font-size: 23px;
+  margin: 0;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.mos-root .phead .sub {
+  font-size: 12px;
+  color: var(--mute);
+  margin-top: 4px;
+}
+.mos-root .phead .acts {
+  margin-inline-start: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.mos-root .crumb {
+  font-size: 11px;
+  color: var(--mute);
+  margin-bottom: 6px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.mos-root .crumb .sep {
+  opacity: 0.5;
+}
+.mos-root .crumb button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  color: var(--mute);
+  cursor: pointer;
+}
+.mos-root .crumb button:hover {
+  color: var(--copper);
+}
+.mos-root .body {
+  padding: 22px 26px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Controls ─────────────────────────────────────────────────────────── */
+.mos-root .btn {
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 7px 13px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mos-root .btn:hover:not(:disabled) {
+  border-color: var(--copper);
+}
+.mos-root .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mos-root .btn svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.8;
+}
+.mos-root .btn-p {
+  background: var(--copper);
+  border-color: var(--copper);
+  color: #fff9f2;
+  font-weight: 700;
+}
+.mos-root .btn-p:hover:not(:disabled) {
+  background: var(--terracotta);
+  border-color: var(--terracotta);
+}
+.mos-root .btn-d {
+  background: transparent;
+  border-color: transparent;
+  color: var(--mute);
+  font-weight: 500;
+}
+.mos-root .btn-go {
+  background: var(--go);
+  border-color: var(--go);
+  color: #f4fbf7;
+  font-weight: 700;
+}
+.mos-root .btn-late {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--late) 45%, transparent);
+  color: var(--late);
+  font-weight: 700;
+}
+.mos-root .btn-sm {
+  padding: 4px 9px;
+  font-size: 11.5px;
+  border-radius: 6px;
+}
+.mos-root .seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--paper);
+}
+.mos-root .seg button {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--mute);
+  border: 0;
+  border-inline-end: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mos-root .seg button:last-child {
+  border-inline-end: 0;
+}
+.mos-root .seg button.on {
+  background: var(--sand-2);
+  color: var(--ink);
+  font-weight: 700;
+}
+.mos-root .search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 11px;
+  background: var(--paper);
+  color: var(--mute);
+  font-size: 12px;
+  min-width: 215px;
+}
+.mos-root .search svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.8;
+  flex: 0 0 13px;
+}
+.mos-root .search input {
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  width: 100%;
+  min-width: 0;
+}
+.mos-root .filt {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.mos-root .fbtn {
+  font-size: 12px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--paper);
+  color: var(--ink-2);
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mos-root .fbtn.on {
+  background: var(--copper);
+  border-color: var(--copper);
+  color: #fff9f2;
+  font-weight: 700;
+}
+.mos-root .fbtn .x {
+  opacity: 0.7;
+  font-size: 13px;
+  line-height: 1;
+}
+.mos-root select.fsel {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--paper);
+  color: var(--ink-2);
+  cursor: pointer;
+  max-width: 190px;
+}
+
+/* ── Status vocabulary ────────────────────────────────────────────────── */
+.mos-root .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.mos-root .pill svg {
+  width: 10px;
+  height: 10px;
+  stroke-width: 2.2;
+}
+.mos-root .p-now {
+  background: var(--copper);
+  color: #fff9f2;
+}
+.mos-root .p-go {
+  background: color-mix(in srgb, var(--go) 14%, transparent);
+  color: var(--go);
+  border-color: color-mix(in srgb, var(--go) 34%, transparent);
+}
+.mos-root .p-wait {
+  background: color-mix(in srgb, var(--wait) 13%, transparent);
+  color: var(--wait);
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--wait) 45%, transparent);
+}
+.mos-root .p-late {
+  background: color-mix(in srgb, var(--late) 12%, transparent);
+  color: var(--late);
+  border-color: color-mix(in srgb, var(--late) 36%, transparent);
+}
+.mos-root .p-idle {
+  background: var(--sand-2);
+  color: var(--mute);
+  border-color: var(--line);
+}
+.mos-root .p-live {
+  background: var(--choc);
+  color: var(--cream);
+}
+.mos-root .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--sand-2);
+  color: var(--ink-2);
+  border: 1px solid var(--line-soft);
+}
+.mos-root .tag-t {
+  background: transparent;
+  border-style: dashed;
+  color: var(--mute);
+}
+.mos-root .kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.mos-root .kind svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 1.9;
+  color: var(--copper);
+  flex: 0 0 12px;
+}
+
+/* ── Cards, grids, tables ─────────────────────────────────────────────── */
+.mos-root .card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.mos-root .card-h {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mos-root .card-h h4 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.mos-root .card-h .r {
+  margin-inline-start: auto;
+  font-size: 11.5px;
+  color: var(--mute);
+}
+.mos-root .card-b {
+  padding: 16px;
+}
+.mos-root .lbl {
+  font-size: 11px;
+  color: var(--mute);
+  font-weight: 700;
+}
+.mos-root .grid {
+  display: grid;
+  gap: 16px;
+}
+.mos-root .g2 {
+  grid-template-columns: 1fr 1fr;
+}
+.mos-root .g3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.mos-root .g4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+.mos-root .tbl-wrap {
+  overflow-x: auto;
+}
+.mos-root .tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.mos-root .tbl th {
+  text-align: start;
+  font-size: 11px;
+  color: var(--mute);
+  font-weight: 700;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  background: var(--sand-2);
+}
+.mos-root .tbl td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: middle;
+}
+.mos-root .tbl tr:last-child td {
+  border-bottom: 0;
+}
+.mos-root .tbl tr.click {
+  cursor: pointer;
+}
+.mos-root .tbl tr.click:hover td {
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
+}
+.mos-root .tbl .num {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.mos-root .tbl .id {
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--mute);
+  font-weight: 700;
+  direction: ltr;
+  text-align: start;
+}
+.mos-root .tbl .ttl {
+  font-weight: 700;
+  color: var(--ink);
+}
+.mos-root .tbl tr.hl td {
+  background: color-mix(in srgb, var(--gold) 9%, transparent);
+}
+.mos-root .av {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff9f2;
+  flex: 0 0 22px;
+}
+.mos-root .a-m {
+  background: #7a5c86;
+}
+.mos-root .a-s {
+  background: #3f6b52;
+}
+.mos-root .a-n {
+  background: #2f5d7a;
+}
+.mos-root .a-r {
+  background: var(--terracotta);
+}
+.mos-root .a-c {
+  background: #5a6570;
+}
+.mos-root .who {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+/* Role × capability matrix (screen 33). */
+.mos-root .mx {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.mos-root .mx th {
+  padding: 9px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--mute);
+  background: var(--sand-2);
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+  white-space: nowrap;
+}
+.mos-root .mx th:first-child {
+  text-align: start;
+  width: 210px;
+}
+.mos-root .mx td {
+  padding: 8px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: center;
+}
+.mos-root .mx td:first-child {
+  text-align: start;
+  font-weight: 600;
+}
+.mos-root .mx tr:last-child td {
+  border-bottom: 0;
+}
+.mos-root .mx .sec td {
+  background: var(--sand-2);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--copper);
+  text-align: start;
+  padding: 6px 8px;
+}
+.mos-root .mk2 {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.mos-root .mk-f {
+  background: color-mix(in srgb, var(--go) 16%, transparent);
+  color: var(--go);
+}
+.mos-root .mk-r {
+  background: var(--sand-2);
+  color: var(--mute);
+  border: 1px solid var(--line);
+}
+.mos-root .mk-n {
+  color: var(--line);
+  font-weight: 400;
+}
+
+/* ── Stats ────────────────────────────────────────────────────────────── */
+.mos-root .stat {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 15px;
+  position: relative;
+  overflow: hidden;
+}
+.mos-root .stat .k {
+  font-size: 11px;
+  color: var(--mute);
+  font-weight: 700;
+}
+.mos-root .stat .v {
+  font-family: var(--serif);
+  font-size: 33px;
+  line-height: 1.2;
+  margin-top: 7px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.mos-root .stat .d {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 3px;
+}
+.mos-root .meter {
+  height: 3px;
+  background: var(--sand);
+  border-radius: 2px;
+  margin-top: 11px;
+  overflow: hidden;
+  display: flex;
+}
+.mos-root .meter i {
+  display: block;
+  height: 100%;
+}
+.mos-root .stat.alert {
+  border-color: color-mix(in srgb, var(--late) 40%, transparent);
+}
+.mos-root .stat.alert .v {
+  color: var(--late);
+}
+.mos-root .stat::after {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--copper);
+  opacity: 0;
+}
+.mos-root .stat.alert::after {
+  opacity: 1;
+  background: var(--late);
+}
+
+/* ── Stage rail (workflow steps) ──────────────────────────────────────── */
+.mos-root .steps {
+  display: flex;
+  flex-direction: column;
+}
+.mos-root .step {
+  display: flex;
+  gap: 11px;
+  padding: 0 0 2px;
+  position: relative;
+}
+.mos-root .step .dot {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: var(--paper);
+  flex: 0 0 17px;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  z-index: 1;
+}
+.mos-root .step .dot svg {
+  width: 9px;
+  height: 9px;
+  stroke-width: 3;
+  color: var(--go);
+}
+.mos-root .step.done .dot {
+  border-color: var(--go);
+  background: color-mix(in srgb, var(--go) 15%, transparent);
+}
+.mos-root .step.cur .dot {
+  border-color: var(--copper);
+  background: var(--copper);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--copper) 22%, transparent);
+}
+.mos-root .step .bar {
+  position: absolute;
+  inset-inline-start: 8px;
+  top: 17px;
+  bottom: 0;
+  width: 1.5px;
+  background: var(--line);
+}
+.mos-root .step.done .bar {
+  background: var(--go);
+  opacity: 0.45;
+}
+.mos-root .step:last-child .bar {
+  display: none;
+}
+.mos-root .step .txt {
+  padding-bottom: 14px;
+  min-width: 0;
+}
+.mos-root .step .nm {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.mos-root .step.pend .nm {
+  color: var(--mute);
+  font-weight: 500;
+}
+.mos-root .step .sub {
+  font-size: 11px;
+  color: var(--mute);
+  margin-top: 2px;
+}
+.mos-root .step.cur .nm {
+  color: var(--copper);
+}
+
+/* ── Record header + tabs + split ─────────────────────────────────────── */
+.mos-root .rhead {
+  padding: 16px 24px 0;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+.mos-root .rhead .top {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.mos-root .rhead h3 {
+  font-family: var(--serif);
+  font-size: 24px;
+  margin: 5px 0 0;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.mos-root .rhead .chips {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin-top: 9px;
+  flex-wrap: wrap;
+}
+.mos-root .rhead .acts {
+  margin-inline-start: auto;
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+  flex-wrap: wrap;
+}
+.mos-root .tabs {
+  display: flex;
+  gap: 2px;
+  margin-top: 16px;
+  overflow-x: auto;
+}
+.mos-root .tabs button {
+  padding: 9px 13px;
+  font-size: 12.5px;
+  color: var(--mute);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mos-root .tabs button.on {
+  color: var(--copper);
+  border-bottom-color: var(--copper);
+  font-weight: 700;
+}
+.mos-root .tabs button .b {
+  display: inline-block;
+  margin-inline-start: 5px;
+  background: var(--copper);
+  color: #fff9f2;
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-weight: 700;
+  vertical-align: 1px;
+}
+.mos-root .wsplit {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: flex-start;
+}
+.mos-root .wmain {
+  flex: 1;
+  min-width: 0;
+  padding: 20px 24px;
+}
+.mos-root .wside {
+  width: 264px;
+  flex: 0 0 264px;
+  border-inline-start: 1px solid var(--line);
+  background: var(--paper);
+  padding: 16px 16px 20px;
+  align-self: stretch;
+}
+.mos-root .wside.wide {
+  width: 300px;
+  flex: 0 0 300px;
+}
+.mos-root .fld {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mos-root .fld:last-child {
+  border-bottom: 0;
+}
+.mos-root .fld .k {
+  font-size: 11px;
+  color: var(--mute);
+  font-weight: 700;
+}
+.mos-root .fld .v {
+  font-size: 13px;
+  margin-top: 3px;
+  color: var(--ink);
+}
+
+/* ── The task card — the one action the current stage asks for ────────── */
+.mos-root .task-card {
+  background: color-mix(in srgb, var(--copper) 7%, var(--paper));
+  border: 1px solid color-mix(in srgb, var(--copper) 34%, transparent);
+  border-radius: 10px;
+  padding: 15px 16px;
+}
+.mos-root .task-card .hd {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.mos-root .task-card h4 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 700;
+}
+.mos-root .chk {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  padding: 4px 0;
+  color: var(--ink-2);
+}
+.mos-root .chk svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.4;
+  flex: 0 0 13px;
+  margin-top: 3px;
+}
+.mos-root .chk.ok svg {
+  color: var(--go);
+}
+.mos-root .chk.no {
+  color: var(--mute);
+}
+.mos-root .chk.no svg {
+  color: var(--late);
+}
+
+/* ── Writing surfaces ─────────────────────────────────────────────────── */
+.mos-root .write {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px 24px;
+}
+.mos-root .write .doc-lbl {
+  font-size: 11px;
+  color: var(--mute);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.mos-root .inp {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 11px;
+  font-size: 13px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: inherit;
+  width: 100%;
+  line-height: 1.8;
+}
+.mos-root .inp:focus {
+  outline: none;
+  border-color: var(--copper);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--copper) 14%, transparent);
+}
+.mos-root .inp:disabled {
+  background: var(--sand-2);
+  color: var(--mute);
+}
+.mos-root textarea.inp {
+  resize: vertical;
+}
+.mos-root .inp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ── Timeline / scenes / files ────────────────────────────────────────── */
+.mos-root .timeline {
+  display: flex;
+  height: 26px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.mos-root .timeline i {
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff9f2;
+  border-inline-end: 1px solid rgba(255, 255, 255, 0.25);
+  font-variant-numeric: tabular-nums;
+}
+.mos-root .timeline i:last-child {
+  border-inline-end: 0;
+}
+.mos-root .drop {
+  border: 1.5px dashed var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  text-align: center;
+  color: var(--mute);
+  font-size: 12.5px;
+}
+.mos-root .file {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  margin-bottom: 7px;
+}
+.mos-root .file .th {
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  background: var(--sand-2);
+  border: 1px solid var(--line-soft);
+  color: var(--mute);
+  overflow: hidden;
+}
+.mos-root .file .th img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mos-root .file .th svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.7;
+}
+.mos-root .file .nm {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.mos-root .file .mt {
+  font-size: 11px;
+  color: var(--mute);
+  margin-top: 2px;
+}
+.mos-root .file .rt {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* ── Comment thread ───────────────────────────────────────────────────── */
+.mos-root .thread {
+  display: flex;
+  gap: 9px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mos-root .thread:last-child {
+  border-bottom: 0;
+}
+.mos-root .thread .bd {
+  min-width: 0;
+}
+.mos-root .thread .who2 {
+  font-size: 12px;
+  font-weight: 700;
+}
+.mos-root .thread .tm {
+  font-size: 10.5px;
+  color: var(--mute);
+  margin-inline-start: 5px;
+  font-weight: 400;
+}
+.mos-root .thread .msg {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin-top: 3px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mos-root .thread .sys {
+  font-size: 12px;
+  color: var(--mute);
+}
+.mos-root .thread .sys b {
+  color: var(--ink-2);
+  font-weight: 700;
+}
+
+/* ── Board ────────────────────────────────────────────────────────────── */
+.mos-root .board {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  align-items: flex-start;
+}
+.mos-root .col {
+  width: 214px;
+  flex: 0 0 214px;
+  background: var(--sand-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 10px;
+}
+.mos-root .col-h {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+  padding: 0 2px;
+}
+.mos-root .col-h .nm {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.mos-root .col-h .ct {
+  margin-inline-start: auto;
+  font-size: 11px;
+  color: var(--mute);
+  font-variant-numeric: tabular-nums;
+}
+.mos-root .tile {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 7px;
+  cursor: pointer;
+  text-align: start;
+  width: 100%;
+  display: block;
+}
+.mos-root .tile:hover {
+  border-color: var(--copper);
+}
+.mos-root .tile .id2 {
+  font-size: 10.5px;
+  color: var(--mute);
+  font-weight: 700;
+  direction: ltr;
+  text-align: start;
+}
+.mos-root .tile .t2 {
+  font-size: 12.5px;
+  font-weight: 700;
+  margin: 3px 0 7px;
+  line-height: 1.55;
+}
+.mos-root .tile .f2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mos-root .tile .f2 .dt {
+  margin-inline-start: auto;
+  font-size: 10.5px;
+  color: var(--mute);
+}
+.mos-root .col.wip {
+  background: color-mix(in srgb, var(--copper) 8%, transparent);
+  border-color: color-mix(in srgb, var(--copper) 25%, transparent);
+}
+
+/* ── Calendar ─────────────────────────────────────────────────────────── */
+.mos-root .cal {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--paper);
+}
+.mos-root .cal-h {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  background: var(--sand-2);
+  border-bottom: 1px solid var(--line);
+}
+.mos-root .cal-h div {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--mute);
+  font-weight: 700;
+}
+.mos-root .cal-g {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+.mos-root .cal-c {
+  min-height: 106px;
+  border-inline-end: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  padding: 6px 7px;
+}
+.mos-root .cal-c:nth-child(7n) {
+  border-inline-end: 0;
+}
+.mos-root .cal-c .d {
+  font-size: 11.5px;
+  color: var(--mute);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+.mos-root .cal-c.out {
+  background: var(--sand-2);
+}
+.mos-root .cal-c.out .d {
+  opacity: 0.45;
+}
+.mos-root .cal-c.today .d {
+  color: #fff9f2;
+  background: var(--copper);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10.5px;
+}
+.mos-root .ev {
+  font-size: 10.5px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  margin-bottom: 3px;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  background: var(--sand-2);
+  border-inline-start: 2.5px solid var(--copper);
+  color: var(--ink-2);
+  line-height: 1.5;
+  cursor: pointer;
+  width: 100%;
+  text-align: start;
+  border-top: 0;
+  border-bottom: 0;
+  border-inline-end: 0;
+  overflow: hidden;
+}
+.mos-root .ev.ig {
+  border-inline-start-color: #c13584;
+}
+.mos-root .ev.tt {
+  border-inline-start-color: #111;
+}
+.mos-root .ev.sc {
+  border-inline-start-color: #c8b400;
+}
+.mos-root .ev.x {
+  border-inline-start-color: #1d9bf0;
+}
+.mos-root .ev.due {
+  border-inline-start-color: var(--late);
+  background: transparent;
+  border-inline-start-style: dotted;
+  color: var(--late);
+}
+
+/* ── Asset library ────────────────────────────────────────────────────── */
+.mos-root .agrid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+}
+.mos-root .ass {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--paper);
+  cursor: pointer;
+  text-align: start;
+  padding: 0;
+  display: block;
+  width: 100%;
+}
+.mos-root .ass:hover {
+  border-color: var(--copper);
+}
+.mos-root .ass .im {
+  height: 96px;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  font-weight: 700;
+  position: relative;
+  overflow: hidden;
+}
+.mos-root .ass .im img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mos-root .ass .im .bd {
+  position: absolute;
+  top: 6px;
+  inset-inline-start: 6px;
+}
+.mos-root .ass .mt2 {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--mute);
+}
+.mos-root .ass .mt2 b {
+  display: block;
+  font-size: 12px;
+  color: var(--ink);
+  font-weight: 700;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mos-root .badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+
+/* ── Workflow step editor ─────────────────────────────────────────────── */
+.mos-root .wstep {
+  display: flex;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  margin-bottom: 8px;
+  align-items: flex-start;
+}
+.mos-root .wstep .n2 {
+  width: 21px;
+  height: 21px;
+  border-radius: 5px;
+  background: var(--sand-2);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--mute);
+  flex: 0 0 21px;
+  font-variant-numeric: tabular-nums;
+}
+.mos-root .wstep .bd2 {
+  flex: 1;
+  min-width: 0;
+}
+.mos-root .wstep .nm3 {
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.mos-root .wstep .rowx {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+}
+.mos-root .wstep .cell .k2 {
+  font-size: 10.5px;
+  color: var(--mute);
+  font-weight: 700;
+}
+.mos-root .wstep .cell .v2 {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+/* ── Modal ────────────────────────────────────────────────────────────── */
+.mos-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(46, 42, 38, 0.42);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  z-index: 80;
+  overflow-y: auto;
+}
+.mos-root .modal,
+.mos-scrim .modal {
+  position: relative;
+  width: 620px;
+  max-width: 100%;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(40, 25, 15, 0.3);
+  overflow: hidden;
+  font-family: var(--sans);
+  color: var(--ink);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+.mos-scrim .modal.wide {
+  width: 860px;
+}
+.mos-scrim .modal-h {
+  padding: 18px 22px 15px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mos-scrim .modal-h h4 {
+  font-family: var(--serif);
+  font-size: 20px;
+  margin: 0;
+  font-weight: 700;
+}
+.mos-scrim .modal-h p {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  color: var(--mute);
+}
+.mos-scrim .modal-b {
+  padding: 20px 22px;
+  display: grid;
+  gap: 15px;
+  overflow-y: auto;
+}
+.mos-scrim .modal-f {
+  padding: 14px 22px;
+  border-top: 1px solid var(--line-soft);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--sand-2);
+  flex-wrap: wrap;
+}
+.mos-scrim .modal-f .note {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-inline-end: auto;
+  max-width: 44ch;
+  line-height: 1.6;
+}
+.mos-scrim .pick2 {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mos-scrim .pick2 .p2 {
+  flex: 1 1 120px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 10px;
+  text-align: center;
+  background: var(--paper);
+  cursor: pointer;
+}
+.mos-scrim .pick2 .p2 svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 1.6;
+  color: var(--mute);
+  margin-bottom: 5px;
+}
+.mos-scrim .pick2 .p2 .n4 {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.mos-scrim .pick2 .p2 .s4 {
+  font-size: 10.5px;
+  color: var(--mute);
+  margin-top: 2px;
+}
+.mos-scrim .pick2 .p2.on {
+  border-color: var(--copper);
+  background: color-mix(in srgb, var(--copper) 9%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--copper) 18%, transparent);
+}
+.mos-scrim .pick2 .p2.on svg {
+  color: var(--copper);
+}
+
+/* ── Empty + loading states ───────────────────────────────────────────── */
+.mos-root .empty {
+  border: 1.5px dashed var(--line);
+  border-radius: 11px;
+  padding: 34px 30px;
+  text-align: center;
+  background: var(--paper);
+}
+.mos-root .empty svg {
+  width: 26px;
+  height: 26px;
+  stroke-width: 1.4;
+  color: var(--gold);
+}
+.mos-root .empty h4 {
+  font-family: var(--serif);
+  font-size: 19px;
+  margin: 12px 0 0;
+  font-weight: 700;
+}
+.mos-root .empty p {
+  margin: 8px auto 0;
+  max-width: 48ch;
+  font-size: 13px;
+  color: var(--mute);
+  line-height: 1.85;
+}
+.mos-root .empty .opts {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+.mos-root .notice {
+  border: 1px solid color-mix(in srgb, var(--wait) 45%, transparent);
+  background: color-mix(in srgb, var(--wait) 10%, transparent);
+  color: var(--ink-2);
+  border-radius: 10px;
+  padding: 12px 15px;
+  font-size: 12.5px;
+  line-height: 1.8;
+}
+.mos-root .notice.bad {
+  border-color: color-mix(in srgb, var(--late) 45%, transparent);
+  background: color-mix(in srgb, var(--late) 9%, transparent);
+  color: var(--late);
+}
+
+/* Skeleton — a shape, so a slow load never reads as an empty system. */
+.mos-root .sk {
+  background: linear-gradient(90deg, var(--sand-2) 25%, var(--line-soft) 37%, var(--sand-2) 63%);
+  background-size: 400% 100%;
+  animation: mos-sk 1.3s ease-in-out infinite;
+  border-radius: 6px;
+}
+@keyframes mos-sk {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+.mos-root .sk-row {
+  height: 44px;
+  margin-bottom: 8px;
+}
+
+/* ── Mobile — every screen, no exceptions (user decision 6: الجميع) ────── */
+.mos-burger {
+  display: none;
+}
+.mos-rail-scrim {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .mos-root .agrid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .mos-root .g4 {
+    grid-template-columns: 1fr 1fr;
+  }
+  .mos-root .g3 {
+    grid-template-columns: 1fr;
+  }
+  .mos-root .wsplit {
+    flex-direction: column;
+  }
+  .mos-root .wside,
+  .mos-root .wside.wide {
+    width: 100%;
+    flex: 1 1 auto;
+    border-inline-start: 0;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 760px) {
+  .mos-rail {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    transform: translateX(-105%);
+    transition: transform 0.22s ease;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.35);
+  }
+  [dir='rtl'] .mos-rail {
+    inset-inline-start: auto;
+    inset-inline-end: 0;
+    transform: translateX(105%);
+  }
+  .mos-rail.open {
+    transform: translateX(0);
+  }
+  .mos-rail-scrim.on {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(46, 42, 38, 0.45);
+    z-index: 39;
+  }
+  .mos-burger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    cursor: pointer;
+    position: absolute;
+    top: 14px;
+    inset-inline-start: 12px;
+    z-index: 6;
+  }
+  /* Leave room for the burger so it never sits on top of the page title. */
+  .mos-root .phead,
+  .mos-root .rhead {
+    padding-inline-start: 56px;
+    padding-inline-end: 14px;
+  }
+  .mos-root .body,
+  .mos-root .wmain {
+    padding: 16px 14px;
+  }
+  .mos-root .phead h3 {
+    font-size: 20px;
+  }
+  .mos-root .rhead h3 {
+    font-size: 20px;
+  }
+  .mos-root .phead .acts {
+    margin-inline-start: 0;
+    width: 100%;
+  }
+  .mos-root .search {
+    min-width: 0;
+    flex: 1;
+  }
+  .mos-root .g2,
+  .mos-root .g4 {
+    grid-template-columns: 1fr;
+  }
+  .mos-root .agrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .mos-root .stat .v {
+    font-size: 27px;
+  }
+  .mos-root .cal-c {
+    min-height: 76px;
+    padding: 4px;
+  }
+  .mos-root .cal-h div {
+    padding: 6px 4px;
+    font-size: 10px;
+  }
+  /* Wide tables scroll inside their card rather than the page. */
+  .mos-root .card {
+    overflow: hidden;
+  }
+}

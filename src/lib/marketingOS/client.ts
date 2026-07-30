@@ -63,6 +63,15 @@ export interface MosContentRow {
   due_at: string | null;
   target_publish_at: string | null;
   updated_at: string;
+  /** Only present on `content_detail` (the list select names its columns). */
+  data?: Record<string, unknown>;
+  goal?: string | null;
+  audience?: string | null;
+  angle?: string | null;
+  cta?: string | null;
+  language?: string | null;
+  workflow_id?: string | null;
+  archived_at?: string | null;
 }
 
 export interface MosTask {
@@ -91,6 +100,11 @@ export interface MosStep {
   due_days: number;
   is_approval: boolean;
   approval_kind: 'creative' | 'process' | 'budget' | null;
+  /** Field slugs the step expects to be filled — drives the task checklist. */
+  required_fields?: string[] | null;
+  required_files?: string[] | null;
+  require_note_on_reject?: boolean;
+  creates_revision?: boolean;
 }
 
 export interface MosScene {
@@ -248,6 +262,264 @@ export const grantRole = (userId: string, mosRole: MosRole | null) =>
   call<{ grants: MosGrant[] }>('role_grant', { user_id: userId, mos_role: mosRole });
 
 /* ------------------------------------------------------------------ */
+/* the rest of the workspace                                          */
+/* ------------------------------------------------------------------ */
+
+export interface MosCampaign {
+  id: string;
+  ref: string | null;
+  name: string;
+  project_id: string | null;
+  objective: 'awareness' | 'leads' | 'traffic' | 'sales' | 'other';
+  status: 'planning' | 'active' | 'paused' | 'done' | 'cancelled';
+  starts_on: string | null;
+  ends_on: string | null;
+  budget_total: number | null;
+  note: string | null;
+  created_at: string;
+  execution_count: number;
+  total_spend: number | null;
+  total_leads: number | null;
+  total_qualified: number | null;
+  total_impressions: number | null;
+  total_clicks: number | null;
+  content_count: number;
+}
+
+export interface MosExecution {
+  id: string;
+  campaign_id: string;
+  content_id: string | null;
+  platform: string;
+  account_id: string | null;
+  label: string | null;
+  status: 'draft' | 'running' | 'paused' | 'ended';
+  starts_on: string | null;
+  ends_on: string | null;
+  budget: number | null;
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  leads: number | null;
+  qualified: number | null;
+  source: 'manual' | 'api';
+  note: string | null;
+}
+
+export interface MosAsset {
+  id: string;
+  ref: string | null;
+  title: string;
+  kind: 'photo' | 'video' | 'design' | 'audio' | 'document';
+  source: 'shoot' | 'design' | 'developer' | 'stock' | 'ugc';
+  project_id: string | null;
+  file_id: string | null;
+  url: string | null;
+  thumb_url: string | null;
+  shot_on: string | null;
+  tags: string[];
+  note: string | null;
+  created_at: string;
+}
+
+export interface MosAssetLink {
+  asset_id: string;
+  content_id: string;
+  role: 'source' | 'final' | 'reference';
+}
+
+export interface MosShootRequest {
+  id: string;
+  ref: string | null;
+  title: string;
+  project_id: string | null;
+  status: 'requested' | 'scheduled' | 'shot' | 'delivered' | 'cancelled';
+  scheduled_at: string | null;
+  location: string | null;
+  note: string | null;
+  assigned_role: string | null;
+  created_at: string;
+}
+
+export interface MosShootItem {
+  id: string;
+  request_id: string;
+  scene_id: string | null;
+  content_id: string | null;
+  description: string;
+  done: boolean;
+}
+
+export interface MosComment {
+  id: string;
+  content_id: string | null;
+  campaign_id: string | null;
+  body: string;
+  author_user_id: string | null;
+  created_at: string;
+}
+
+export interface MosWorkflow {
+  id: string;
+  key: string;
+  label_ar: string;
+  label_en: string;
+  is_active: boolean;
+}
+
+export interface MosProject {
+  id: string;
+  project_name: string | null;
+}
+
+export interface MosOverview {
+  role: MosRole;
+  counts: {
+    in_production: number;
+    waiting_on_me: number;
+    publishing_this_week: number;
+    late: number;
+  };
+  stalled: Array<{
+    id: string;
+    ref: string | null;
+    title: string;
+    status_key: string;
+    current_step_label_ar: string | null;
+    current_step_label_en: string | null;
+    owner_role: MosRole | null;
+    current_task_due_at: string | null;
+    updated_at: string;
+    content_type_key: string;
+  }>;
+  week: Array<{
+    id: string;
+    content_id: string;
+    platform: string;
+    status: string;
+    scheduled_at: string | null;
+    published_at: string | null;
+  }>;
+  campaigns: Array<Pick<MosCampaign,
+    'id' | 'ref' | 'name' | 'status' | 'budget_total' | 'total_spend' | 'total_leads' | 'total_qualified'>>;
+  mix: Array<{ content_type_key: string; status_key: string }>;
+  week_start: string;
+  week_end: string;
+}
+
+export interface MosTitleRef {
+  id: string;
+  ref: string | null;
+  title: string;
+  content_type_key: string;
+}
+
+export const fetchOverview = (weekOf?: string) =>
+  call<MosOverview>('overview', weekOf ? { week_of: weekOf } : {});
+
+export const fetchWork = (scope: 'mine' | 'team') =>
+  call<{ role: MosRole; content: MosContentRow[]; tasks: MosTask[] }>('work_list', { scope });
+
+export const fetchCalendar = (from: string, to: string) =>
+  call<{
+    publications: Array<MosPublication & { caption: string | null }>;
+    due: Array<Pick<MosContentRow,
+      'id' | 'ref' | 'title' | 'content_type_key' | 'status_key' | 'due_at' | 'target_publish_at' | 'owner_role'>>;
+    titles: MosTitleRef[];
+  }>('calendar', { from, to });
+
+export const fetchCampaigns = () => call<{ campaigns: MosCampaign[] }>('campaign_list');
+
+export const fetchCampaignDetail = (id: string) =>
+  call<{
+    item: MosCampaign;
+    executions: MosExecution[];
+    content: MosContentRow[];
+    comments: MosComment[];
+  }>('campaign_detail', { id });
+
+export const saveCampaign = (campaign: Record<string, unknown>) =>
+  call<{ item: MosCampaign }>('campaign_save', { campaign });
+
+export const saveExecution = (campaignId: string, execution: Record<string, unknown>) =>
+  call<{ executions: MosExecution[] }>('execution_save', { campaign_id: campaignId, execution });
+
+export const deleteExecution = (campaignId: string, id: string) =>
+  call<{ executions: MosExecution[] }>('execution_delete', { campaign_id: campaignId, id });
+
+export const fetchAssets = (filters: Record<string, unknown> = {}) =>
+  call<{ assets: MosAsset[]; links: MosAssetLink[] }>('asset_list', filters);
+
+export const saveAsset = (asset: Record<string, unknown>) =>
+  call<{ asset: MosAsset }>('asset_save', { asset });
+
+export const archiveAsset = (id: string) => call<{ ok: true }>('asset_delete', { id });
+
+export const linkAsset = (assetId: string, contentId: string, role = 'source') =>
+  call<{ links: MosAssetLink[] }>('asset_link', { asset_id: assetId, content_id: contentId, role });
+
+export const unlinkAsset = (assetId: string, contentId: string) =>
+  call<{ links: MosAssetLink[] }>('asset_unlink', { asset_id: assetId, content_id: contentId });
+
+export const fetchShoots = () =>
+  call<{
+    requests: MosShootRequest[];
+    items: MosShootItem[];
+    missing_scenes: Array<Pick<MosScene, 'id' | 'content_id' | 'position' | 'visual' | 'footage_status'>>;
+    scene_owners: Array<MosTitleRef & { project_id: string | null }>;
+  }>('shoot_list');
+
+export const saveShoot = (request: Record<string, unknown>, sceneIds?: string[]) =>
+  call<{ requests: MosShootRequest[]; request_id: string | null }>('shoot_save', {
+    request,
+    scene_ids: sceneIds ?? [],
+  });
+
+export const toggleShootItem = (id: string, done: boolean) =>
+  call<{ item: MosShootItem }>('shoot_item_toggle', { id, done });
+
+export const fetchComments = (target: { contentId?: string; campaignId?: string }) =>
+  call<{ comments: MosComment[] }>('comment_list', {
+    content_id: target.contentId,
+    campaign_id: target.campaignId,
+  });
+
+export const addComment = (target: { contentId?: string; campaignId?: string }, body: string) =>
+  call<{ comments: MosComment[] }>('comment_add', {
+    content_id: target.contentId,
+    campaign_id: target.campaignId,
+    body,
+  });
+
+export const fetchSettings = () =>
+  call<{
+    workflows: MosWorkflow[];
+    steps: MosStep[];
+    content_types: MosContentType[];
+    accounts: MosAccount[];
+  }>('settings_data');
+
+export const saveStep = (step: Record<string, unknown>) =>
+  call<{ steps: MosStep[] }>('step_save', { step });
+
+export const saveContentType = (contentType: Record<string, unknown>) =>
+  call<{ content_types: MosContentType[] }>('content_type_save', { content_type: contentType });
+
+export const saveAccount = (account: Record<string, unknown>) =>
+  call<{ accounts: MosAccount[] }>('account_save', { account });
+
+export const fetchProjects = () => call<{ projects: MosProject[] }>('projects_list');
+
+export const fetchMetricsQueue = (since?: string) =>
+  call<{ publications: MosPublication[]; titles: MosTitleRef[]; since: string }>(
+    'metrics_queue',
+    since ? { since } : {},
+  );
+
+export const searchAll = (q: string) =>
+  call<{ content: MosContentRow[]; campaigns: MosCampaign[]; assets: MosAsset[] }>('search', { q });
+
+/* ------------------------------------------------------------------ */
 /* bilingual labels — one map, never inline strings in JSX            */
 /* ------------------------------------------------------------------ */
 
@@ -300,6 +572,71 @@ export function statusLabel(row: MosContentRow, isAr: boolean): string {
   if (synthetic) return isAr ? synthetic.ar : synthetic.en;
   return row.status_key;
 }
+
+export const CAMPAIGN_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
+  planning:  { ar: 'تخطيط',  en: 'Planning' },
+  active:    { ar: 'نشطة',   en: 'Active' },
+  paused:    { ar: 'موقوفة', en: 'Paused' },
+  done:      { ar: 'منتهية', en: 'Ended' },
+  cancelled: { ar: 'ملغاة',  en: 'Cancelled' },
+};
+
+export const OBJECTIVE_LABELS: Record<string, { ar: string; en: string }> = {
+  awareness: { ar: 'وعي',      en: 'Awareness' },
+  leads:     { ar: 'عملاء',    en: 'Leads' },
+  traffic:   { ar: 'زيارات',   en: 'Traffic' },
+  sales:     { ar: 'مبيعات',   en: 'Sales' },
+  other:     { ar: 'أخرى',     en: 'Other' },
+};
+
+export const EXEC_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
+  draft:   { ar: 'مسودة',  en: 'Draft' },
+  running: { ar: 'تعمل',   en: 'Running' },
+  paused:  { ar: 'موقوفة', en: 'Paused' },
+  ended:   { ar: 'منتهية', en: 'Ended' },
+};
+
+export const ASSET_KIND_LABELS: Record<string, { ar: string; en: string }> = {
+  photo:    { ar: 'صورة',   en: 'Photo' },
+  video:    { ar: 'فيديو',  en: 'Video' },
+  design:   { ar: 'تصميم',  en: 'Design' },
+  audio:    { ar: 'صوت',    en: 'Audio' },
+  document: { ar: 'مستند',  en: 'Document' },
+};
+
+export const ASSET_SOURCE_LABELS: Record<string, { ar: string; en: string }> = {
+  shoot:     { ar: 'تصوير',        en: 'Shoot' },
+  design:    { ar: 'تصميم داخلي',  en: 'In-house design' },
+  developer: { ar: 'من المطوّر',   en: 'From developer' },
+  stock:     { ar: 'مكتبة',        en: 'Stock' },
+  ugc:       { ar: 'من العملاء',   en: 'UGC' },
+};
+
+export const SHOOT_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
+  requested: { ar: 'مطلوب',   en: 'Requested' },
+  scheduled: { ar: 'مجدول',   en: 'Scheduled' },
+  shot:      { ar: 'صُوِّر',   en: 'Shot' },
+  delivered: { ar: 'سُلِّم',   en: 'Delivered' },
+  cancelled: { ar: 'ملغى',    en: 'Cancelled' },
+};
+
+export const PLATFORM_LABELS: Record<string, { ar: string; en: string }> = {
+  instagram: { ar: 'انستقرام',  en: 'Instagram' },
+  tiktok:    { ar: 'تيك توك',   en: 'TikTok' },
+  snapchat:  { ar: 'سناب شات',  en: 'Snapchat' },
+  x:         { ar: 'إكس',       en: 'X' },
+  youtube:   { ar: 'يوتيوب',    en: 'YouTube' },
+  whatsapp:  { ar: 'واتساب',    en: 'WhatsApp' },
+  website:   { ar: 'الموقع',    en: 'Website' },
+};
+
+/** The platform's own colour, used for the calendar spine and account chips. */
+export const PLATFORM_CLASS: Record<string, string> = {
+  instagram: 'ig',
+  tiktok: 'tt',
+  snapchat: 'sc',
+  x: 'x',
+};
 
 /** Overdue = has a due date, it has passed, and the item is still open. */
 export function isOverdue(row: MosContentRow): boolean {
