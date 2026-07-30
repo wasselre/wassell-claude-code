@@ -600,6 +600,10 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     decimated: google.maps.LatLngLiteral[];
     pathListeners: google.maps.MapsEventListener[];
     editTimer?: ReturnType<typeof setTimeout>;
+    /** Precomputed extent, so viewport culling is O(1) per district per pan. */
+    bbox?: { minLat: number; maxLat: number; minLng: number; maxLng: number };
+    /** Whether the polygon is currently attached to the map (culling state). */
+    shown?: boolean;
   }
   const districtMetaRef = useRef<Map<string, DistrictMeta>>(new Map());
   const drawModeRef = useRef(false);
@@ -684,7 +688,15 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         clickable: true,
         ...styleFor(s.district_id, false),
       });
-      const meta: DistrictMeta = { poly, fullPaths: paths, decimated, pathListeners: [] };
+      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+      for (const path of paths) for (const pt of path) {
+        if (pt.lat < minLat) minLat = pt.lat; if (pt.lat > maxLat) maxLat = pt.lat;
+        if (pt.lng < minLng) minLng = pt.lng; if (pt.lng > maxLng) maxLng = pt.lng;
+      }
+      const meta: DistrictMeta = {
+        poly, fullPaths: paths, decimated, pathListeners: [],
+        bbox: { minLat, maxLat, minLng, maxLng }, shown: true,
+      };
       metas.set(s.district_id, meta);
 
       poly.addListener('click', () => {
@@ -749,8 +761,51 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       });
     };
 
+    // ── viewport culling ──────────────────────────────────────────────────
+    //
+    // Every district of the city gets its own google.maps.Polygon with click,
+    // rightclick and hover listeners. That was fine at Riyadh's 189; Dubai has 513
+    // and the map became an unreadable mass of overlapping outlines that lagged on
+    // every zoom — reported from the live app.
+    //
+    // The polygons are NOT rebuilt: selection state, edit handles and listeners all
+    // live on them. They are just detached from the map when they cannot be seen —
+    // off-screen, or too small to make out at this zoom. A SELECTED district always
+    // stays attached, because the user is working on it and it may well be off-screen
+    // while they pan.
+    const MIN_SPAN_PX = 8; // below this a district is a speck; drawing it only costs
+    const cull = () => {
+      const b = map.getBounds();
+      const zoom = map.getZoom();
+      if (!b || typeof zoom !== 'number') return;
+      const sw = b.getSouthWest(), ne = b.getNorthEast();
+      // Degrees per pixel at this zoom (world is 256 px at z0).
+      const degPerPx = 360 / (256 * Math.pow(2, zoom));
+      const minSpan = degPerPx * MIN_SPAN_PX;
+      metas.forEach((m, id) => {
+        if (!m.bbox) return;
+        const keep =
+          selectedRef.current.has(id) ||
+          (m.bbox.maxLat >= sw.lat() && m.bbox.minLat <= ne.lat() &&
+           m.bbox.maxLng >= sw.lng() && m.bbox.minLng <= ne.lng() &&
+           Math.max(m.bbox.maxLat - m.bbox.minLat, m.bbox.maxLng - m.bbox.minLng) >= minSpan);
+        if (keep !== m.shown) { m.poly.setMap(keep ? map : null); m.shown = keep; }
+      });
+    };
+    let cullTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleCull = () => {
+      if (cullTimer) clearTimeout(cullTimer);
+      cullTimer = setTimeout(cull, 120);
+    };
+    // bounds_changed, not idle: idle is a render-completion event and does not fire
+    // in every environment (see useGeoBoundaryLayer for the measurements).
+    const cullListener = map.addListener('bounds_changed', scheduleCull);
+    scheduleCull();
+
     return () => {
       focusDistrictRef.current = () => {};
+      cullListener.remove();
+      if (cullTimer) clearTimeout(cullTimer);
       metas.forEach((m) => clearPathListeners(m));
       metas.clear();
       polys.forEach((p) => p.setMap(null));

@@ -1,25 +1,25 @@
 # UAE administrative geography — build report
 
-- Generated: 2026-07-30T16:00:59.821Z
+- Generated: 2026-07-30T17:24:18.982Z
 - Source: OpenStreetMap via Overpass (© OpenStreetMap contributors, ODbL)
-- **Regions (emirates): 7 · Cities: 38 · Districts: 1947 · Boundaries: 1651**
+- **Regions (emirates): 7 · Cities: 38 · Districts: 1410 · Boundaries: 1114**
 
 ## Per emirate
 
 | code | emirate | cities | districts | with boundary |
 |------|---------|-------:|----------:|--------------:|
-| AUH | Abu Dhabi | 16 | 463 | 389 |
-| DXB | Dubai | 3 | 1076 | 954 |
-| SHJ | Sharjah | 7 | 216 | 164 |
-| AJM | Ajman | 2 | 36 | 30 |
-| UAQ | Umm al-Quwain | 1 | 36 | 34 |
-| RAK | Ras al-Khaimah | 4 | 69 | 60 |
-| FUJ | Fujairah | 5 | 51 | 20 |
+| AUH | Abu Dhabi | 16 | 397 | 323 |
+| DXB | Dubai | 3 | 640 | 518 |
+| SHJ | Sharjah | 7 | 211 | 159 |
+| AJM | Ajman | 2 | 30 | 24 |
+| UAQ | Umm al-Quwain | 1 | 33 | 31 |
+| RAK | Ras al-Khaimah | 4 | 60 | 51 |
+| FUJ | Fujairah | 5 | 39 | 8 |
 
 ## District sources
 
-- `landuse`: 853
 - `place`: 510
+- `landuse`: 316
 - `admin-8`: 310
 - `admin-10`: 236
 - `admin-11`: 29
@@ -42,5 +42,5 @@
 
 ## Names missing a language
 
-- No Arabic name: 761 districts, 0 cities
-- No English name: 19 districts, 0 cities
+- No Arabic name: 279 districts, 0 cities
+- No English name: 9 districts, 0 cities

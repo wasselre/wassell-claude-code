@@ -364,8 +364,46 @@ for (const f of geomFiles) {
 console.log(`\n── boundaries ──`);
 console.log(`  cached geometry files: ${geomFiles.length} (${geomById.size} elements)`);
 
+/**
+ * Minimum area for a `landuse`-sourced district, in m².
+ *
+ * `landuse=residential` is the richest source of real community boundaries — Al Barsha
+ * 1 (3.2 km²), Arjan (3.9 km²) — but the same tag covers every villa compound and
+ * sub-development. Without this floor the first UAE import gave Dubai 1,076 districts
+ * against Riyadh's 189, at a MEDIAN landuse area of 0.04 km²: "Hayat Townhouses, Town
+ * Square", "Al Salam, Mudon", "Staff Accommodation". The district picker draws every
+ * district of the selected city at once, so that rendered as an unreadable mass of
+ * overlapping outlines that lagged on zoom.
+ *
+ * Size ALONE is not the rule — anything from an admin boundary or a `place` tag is kept
+ * whatever its size, because a small admin sub-community is still a real named place.
+ * The threshold is not marginal: the smallest community it keeps is ~10x it.
+ */
+const MIN_LANDUSE_AREA_M2 = 250_000;
+
+/** Spherical polygon area in m² — good to a fraction of a percent at these sizes. */
+function approxAreaM2(geometry) {
+  const R = 6378137;
+  const ringArea = (ring) => {
+    let total = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [lng1, lat1] = ring[j];
+      const [lng2, lat2] = ring[i];
+      total += (lng2 - lng1) * Math.PI / 180 *
+        (2 + Math.sin(lat1 * Math.PI / 180) + Math.sin(lat2 * Math.PI / 180));
+    }
+    return Math.abs(total * R * R / 2);
+  };
+  if (!geometry) return 0;
+  if (geometry.type === 'Polygon') return ringArea(geometry.coordinates[0] ?? []);
+  if (geometry.type === 'MultiPolygon') {
+    return geometry.coordinates.reduce((a, poly) => a + ringArea(poly[0] ?? []), 0);
+  }
+  return 0;
+}
+
 const boundaries = [];
-let polyCount = 0, lineOnly = 0, noGeom = 0;
+let polyCount = 0, lineOnly = 0, noGeom = 0, tooSmall = 0;
 for (const d of districts) {
   const el = geomById.get(d.osm);
   if (!el) { noGeom++; continue; }
@@ -373,6 +411,12 @@ for (const d of districts) {
   const kind = geomKind(g);
   if (!g) { noGeom++; continue; }
   if (kind !== 'polygon') { lineOnly++; continue; }
+  // A plot-sized `landuse` polygon is a compound, not a district — see
+  // MIN_LANDUSE_AREA_M2. Dropped entirely rather than kept without a boundary, so it
+  // never reaches the district dropdown either.
+  if (d.source_kind === 'landuse' && approxAreaM2(g) < MIN_LANDUSE_AREA_M2) {
+    d._drop = true; tooSmall++; continue;
+  }
   // Re-derive the centroid from the real polygon — it is a better representative
   // point than the survey's bbox centre.
   const c = representativePoint(g, el);
@@ -382,7 +426,13 @@ for (const d of districts) {
   boundaries.push({ district_id: d.district_id, city_id: d.city_id, region_id: d.region_id, geometry: g, geometry_type: g.type });
   polyCount++;
 }
-console.log(`  polygons: ${polyCount} · line-only (skipped): ${lineOnly} · no geometry: ${noGeom}`);
+console.log(`  polygons: ${polyCount} · line-only (skipped): ${lineOnly} · no geometry: ${noGeom} · plot-sized landuse dropped: ${tooSmall}`);
+
+// Remove the plot-sized landuse districts from the deliverable entirely.
+if (tooSmall) {
+  for (let i = districts.length - 1; i >= 0; i--) if (districts[i]._drop) districts.splice(i, 1);
+  for (const d of districts) delete d._drop;
+}
 
 // ── 6. geometry plan for pass B ─────────────────────────────────────────────
 const planPath = join(OUT, 'geometry-plan.json');
