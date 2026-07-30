@@ -14,6 +14,7 @@
  *     derived server-side from the open task.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Plus, Search, RefreshCw } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -33,6 +34,7 @@ import NewContentModal from './components/NewContentModal';
 export default function MarketingOSPage() {
   const isAr = useAppStore((s) => s.language) === 'ar';
   const addToast = useAppStore((s) => s.addToast);
+  const navigate = useNavigate();
 
   const [role, setRole] = useState<MosRole>('viewer');
   const [types, setTypes] = useState<MosContentType[]>([]);
@@ -207,7 +209,11 @@ export default function MarketingOSPage() {
                 {visible.map((r) => {
                   const late = isOverdue(r);
                   return (
-                    <tr key={r.id} className="border-b border-sand/50 last:border-0 hover:bg-cream/40">
+                    <tr
+                      key={r.id}
+                      onClick={() => navigate(`/marketing-management/${r.id}`)}
+                      className="cursor-pointer border-b border-sand/50 last:border-0 hover:bg-cream/40"
+                    >
                       <td className="p-3 font-mono text-xs text-charcoal/60" dir="ltr">
                         {r.ref ?? '—'}
                       </td>

@@ -71,6 +71,7 @@ import MarketingIntelligencePage from '@/pages/MarketingIntelligence/MarketingIn
 // page id, so no profile has to be re-granted access. The old page + its API and
 // lib are deleted once the rebuild covers them.
 import MarketingOSPage from '@/pages/MarketingOS/MarketingOSPage';
+import ContentWorkspacePage from '@/pages/MarketingOS/ContentWorkspacePage';
 import ProjectFinderPage from '@/pages/ProjectFinder/ProjectFinderPage';
 import FinancingPage from '@/pages/Financing/FinancingPage';
 import PostsContentPage from '@/pages/PostsContent/PostsContentPage';
@@ -334,6 +335,9 @@ export default function App() {
           <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
           <Route path="/marketing-intelligence" element={<RequirePageAccess pageId="marketing_intelligence"><MarketingIntelligencePage /></RequirePageAccess>} />
           <Route path="/marketing-management" element={<RequirePageAccess pageId="marketing_management"><MarketingOSPage /></RequirePageAccess>} />
+          {/* Deep-linkable workspace. Flat sibling route sharing the same guard —
+              the repo convention for feature sub-pages (see /sales/studio/...). */}
+          <Route path="/marketing-management/:contentId" element={<RequirePageAccess pageId="marketing_management"><ContentWorkspacePage /></RequirePageAccess>} />
           {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
           <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />
           {/* Financing calculator. Query params let a client / project / unit
