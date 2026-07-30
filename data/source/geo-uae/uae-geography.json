@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-07-30T12:53:16.167Z",
+ "generated_at": "2026-07-30T13:29:36.198Z",
  "source": "OpenStreetMap via Overpass API (© OpenStreetMap contributors, ODbL)",
  "country": {
   "iso_code": "AE",
@@ -108,34 +108,6 @@
    "place": "city"
   },
   {
-   "city_id": "AE-AJM-C0002",
-   "region_id": "AE-AJM",
-   "emirate_code": "AJM",
-   "name_ar": "المنامة",
-   "name_en": "Al Manamah",
-   "display_name": "المنامة",
-   "point": [
-    56.000517,
-    25.3259416
-   ],
-   "osm": "way/872858710",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AJM-C0003",
-   "region_id": "AE-AJM",
-   "emirate_code": "AJM",
-   "name_ar": "",
-   "name_en": "Al Subaygha",
-   "display_name": "Al Subaygha",
-   "point": [
-    55.9889355,
-    24.8774933
-   ],
-   "osm": "way/360485991",
-   "place": "town"
-  },
-  {
    "city_id": "AE-AJM-C0004",
    "region_id": "AE-AJM",
    "emirate_code": "AJM",
@@ -147,34 +119,6 @@
     24.8154269
    ],
    "osm": "node/12153504632",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AJM-C0005",
-   "region_id": "AE-AJM",
-   "emirate_code": "AJM",
-   "name_ar": "مزيرع",
-   "name_en": "Mudayrah",
-   "display_name": "مزيرع",
-   "point": [
-    56.0359823,
-    24.830655
-   ],
-   "osm": "node/5951067703",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AJM-C0006",
-   "region_id": "AE-AJM",
-   "emirate_code": "AJM",
-   "name_ar": "النسيم",
-   "name_en": "Naseem",
-   "display_name": "النسيم",
-   "point": [
-    55.9754454,
-    25.3278463
-   ],
-   "osm": "node/11734341003",
    "place": "town"
   },
   {
@@ -220,76 +164,6 @@
    "place": "town"
   },
   {
-   "city_id": "AE-AUH-C0010",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "أبو قرين",
-   "name_en": "Abu Qrayn",
-   "display_name": "أبو قرين",
-   "point": [
-    54.5979302,
-    23.2325135
-   ],
-   "osm": "node/9976911331",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0011",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "العجبان",
-   "name_en": "Al 'Ajban",
-   "display_name": "العجبان",
-   "point": [
-    55.2572822,
-    24.5361046
-   ],
-   "osm": "node/6279392590",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0012",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "العراد",
-   "name_en": "Al 'Arad",
-   "display_name": "العراد",
-   "point": [
-    55.4122918,
-    23.8142451
-   ],
-   "osm": "node/9976881216",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0013",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "العايف",
-   "name_en": "Al 'Ayif",
-   "display_name": "العايف",
-   "point": [
-    52.656096,
-    23.1706651
-   ],
-   "osm": "node/9976911323",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0014",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "العزيزة",
-   "name_en": "Al 'Azeezah",
-   "display_name": "العزيزة",
-   "point": [
-    54.0685265,
-    23.3561256
-   ],
-   "osm": "node/9976911335",
-   "place": "town"
-  },
-  {
    "city_id": "AE-AUH-C0015",
    "region_id": "AE-AUH",
    "emirate_code": "AUH",
@@ -304,34 +178,6 @@
    "place": "city"
   },
   {
-   "city_id": "AE-AUH-C0016",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "البديعة",
-   "name_en": "Al Bday'ah",
-   "display_name": "البديعة",
-   "point": [
-    53.8374707,
-    23.6643366
-   ],
-   "osm": "node/9976911340",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0017",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الظاهرة",
-   "name_en": "Al Dhahrah",
-   "display_name": "الظاهرة",
-   "point": [
-    55.5319398,
-    23.9900173
-   ],
-   "osm": "node/9976881214",
-   "place": "town"
-  },
-  {
    "city_id": "AE-AUH-C0018",
    "region_id": "AE-AUH",
    "emirate_code": "AUH",
@@ -343,104 +189,6 @@
     24.1097132
    ],
    "osm": "relation/11900266",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0019",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الفقع",
-   "name_en": "Al Faqa'",
-   "display_name": "الفقع",
-   "point": [
-    55.6216238,
-    24.716533
-   ],
-   "osm": "node/2518533888",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0020",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "هيلي",
-   "name_en": "Al Hili",
-   "display_name": "هيلي",
-   "point": [
-    55.7675258,
-    24.287123
-   ],
-   "osm": "node/12278452815",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0021",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الهير",
-   "name_en": "Al Hiyar",
-   "display_name": "الهير",
-   "point": [
-    55.7441575,
-    24.5888856
-   ],
-   "osm": "node/914472821",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0022",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الجزيرة",
-   "name_en": "Al Jazeerah",
-   "display_name": "الجزيرة",
-   "point": [
-    52.2853075,
-    23.4972562
-   ],
-   "osm": "node/9976911321",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0023",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الختم",
-   "name_en": "Al Khatm",
-   "display_name": "الختم",
-   "point": [
-    54.9936763,
-    24.1900101
-   ],
-   "osm": "node/1503800705",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0024",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الخزنة",
-   "name_en": "Al Khaznah",
-   "display_name": "الخزنة",
-   "point": [
-    55.134002,
-    24.1690881
-   ],
-   "osm": "node/1503800709",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0025",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "المرير",
-   "name_en": "Al Mirayr",
-   "display_name": "المرير",
-   "point": [
-    54.4997399,
-    22.798972
-   ],
-   "osm": "node/9976911330",
    "place": "town"
   },
   {
@@ -458,34 +206,6 @@
    "place": "town"
   },
   {
-   "city_id": "AE-AUH-C0027",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "القوع",
-   "name_en": "Al Qou'",
-   "display_name": "القوع",
-   "point": [
-    55.4293513,
-    23.4151903
-   ],
-   "osm": "node/6279392589",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0028",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الروضة",
-   "name_en": "Al Rawdah",
-   "display_name": "الروضة",
-   "point": [
-    55.5028864,
-    24.1045713
-   ],
-   "osm": "node/9976881212",
-   "place": "town"
-  },
-  {
    "city_id": "AE-AUH-C0029",
    "region_id": "AE-AUH",
    "emirate_code": "AUH",
@@ -497,20 +217,6 @@
     24.0858473
    ],
    "osm": "node/6279196240",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0030",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الصاروج",
-   "name_en": "Al Sarooj",
-   "display_name": "الصاروج",
-   "point": [
-    55.791238,
-    24.200072
-   ],
-   "osm": "way/854517413",
    "place": "town"
   },
   {
@@ -528,146 +234,6 @@
    "place": "town"
   },
   {
-   "city_id": "AE-AUH-C0032",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الوقن",
-   "name_en": "Al Wiqan",
-   "display_name": "الوقن",
-   "point": [
-    55.4397576,
-    23.6432668
-   ],
-   "osm": "node/9976937717",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0033",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الزراف",
-   "name_en": "Al Zarraf",
-   "display_name": "الزراف",
-   "point": [
-    54.0808862,
-    23.6778577
-   ],
-   "osm": "node/9976911334",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0034",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "عصب",
-   "name_en": "Asab",
-   "display_name": "عصب",
-   "point": [
-    54.237206,
-    23.2787084
-   ],
-   "osm": "node/6279392586",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0035",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "الشويب",
-   "name_en": "Ash Shiweb",
-   "display_name": "الشويب",
-   "point": [
-    55.8155985,
-    24.7469573
-   ],
-   "osm": "node/12473600188",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0036",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "بدع المطاوعة",
-   "name_en": "Bad' Al Mutaw'ah",
-   "display_name": "بدع المطاوعة",
-   "point": [
-    52.5201402,
-    23.8205274
-   ],
-   "osm": "node/9976911318",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0037",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "بطين ليوا",
-   "name_en": "Bateen Liwa",
-   "display_name": "بطين ليوا",
-   "point": [
-    53.9277642,
-    22.8698493
-   ],
-   "osm": "node/9976911325",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0038",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "بلجعان",
-   "name_en": "Bilji'an",
-   "display_name": "بلجعان",
-   "point": [
-    53.8731762,
-    23.7944555
-   ],
-   "osm": "node/9976911339",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0039",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "بو الذياب",
-   "name_en": "Bu Al Dhiyab",
-   "display_name": "بو الذياب",
-   "point": [
-    53.5281365,
-    23.2937032
-   ],
-   "osm": "node/9976911336",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0040",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "بو حصا",
-   "name_en": "Bu Hasa",
-   "display_name": "بو حصا",
-   "point": [
-    53.3890911,
-    23.5995431
-   ],
-   "osm": "node/9976911337",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0041",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "بو كرية",
-   "name_en": "Bu Kirayyah",
-   "display_name": "بو كرية",
-   "point": [
-    55.4057563,
-    23.9149206
-   ],
-   "osm": "node/9976881215",
-   "place": "town"
-  },
-  {
    "city_id": "AE-AUH-C0042",
    "region_id": "AE-AUH",
    "emirate_code": "AUH",
@@ -679,20 +245,6 @@
     24.4741547
    ],
    "osm": "node/6279392591",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0043",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "المحاضر الشرقية",
-   "name_en": "Eastern Mahadir",
-   "display_name": "المحاضر الشرقية",
-   "point": [
-    54.0238946,
-    23.0677298
-   ],
-   "osm": "node/9976911328",
    "place": "town"
   },
   {
@@ -738,146 +290,6 @@
    "place": "town"
   },
   {
-   "city_id": "AE-AUH-C0047",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "حميم",
-   "name_en": "Hameem",
-   "display_name": "حميم",
-   "point": [
-    54.2812073,
-    22.9487533
-   ],
-   "osm": "node/953558256",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0048",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "المدينة الصناعية",
-   "name_en": "Industrial City",
-   "display_name": "المدينة الصناعية",
-   "point": [
-    55.5548571,
-    24.0238882
-   ],
-   "osm": "node/9976881213",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0049",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "خنور",
-   "name_en": "Khannur",
-   "display_name": "خنور",
-   "point": [
-    53.5842443,
-    23.1059004
-   ],
-   "osm": "node/12320454283",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0050",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "ليوا",
-   "name_en": "Liwa",
-   "display_name": "ليوا",
-   "point": [
-    53.7881048,
-    23.1358335
-   ],
-   "osm": "node/1253986403",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0051",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "مخيرز",
-   "name_en": "Mkhayriz",
-   "display_name": "مخيرز",
-   "point": [
-    53.0213914,
-    23.0607811
-   ],
-   "osm": "node/9976911324",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0052",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "مزيرعة",
-   "name_en": "Mzeerʻah",
-   "display_name": "مزيرعة",
-   "point": [
-    53.7794488,
-    23.0974185
-   ],
-   "osm": "node/9976911327",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0053",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "ناهل",
-   "name_en": "Nahil",
-   "display_name": "ناهل",
-   "point": [
-    55.4880997,
-    24.5039738
-   ],
-   "osm": "node/914484895",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0054",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "نقا الذيب",
-   "name_en": "Niqa Al Dheeb",
-   "display_name": "نقا الذيب",
-   "point": [
-    55.1784893,
-    24.4740256
-   ],
-   "osm": "node/9976881209",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0055",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "رملة سويحان",
-   "name_en": "Ramlat Sweihan",
-   "display_name": "رملة سويحان",
-   "point": [
-    55.2553926,
-    24.3611726
-   ],
-   "osm": "node/9976881210",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0056",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "رماح",
-   "name_en": "Rimah",
-   "display_name": "رماح",
-   "point": [
-    55.3123852,
-    24.1066475
-   ],
-   "osm": "node/9976881211",
-   "place": "town"
-  },
-  {
    "city_id": "AE-AUH-C0057",
    "region_id": "AE-AUH",
    "emirate_code": "AUH",
@@ -889,20 +301,6 @@
     24.0652929
    ],
    "osm": "way/391953160",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0058",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "سويحان",
-   "name_en": "Sweihan",
-   "display_name": "سويحان",
-   "point": [
-    55.3393223,
-    24.4676071
-   ],
-   "osm": "node/914493080",
    "place": "town"
   },
   {
@@ -920,20 +318,6 @@
    "place": "town"
   },
   {
-   "city_id": "AE-AUH-C0060",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "أم الزمول",
-   "name_en": "Um Al Zumoul",
-   "display_name": "أم الزمول",
-   "point": [
-    54.9412523,
-    22.8951543
-   ],
-   "osm": "node/9976937719",
-   "place": "town"
-  },
-  {
    "city_id": "AE-AUH-C0061",
    "region_id": "AE-AUH",
    "emirate_code": "AUH",
@@ -948,20 +332,6 @@
    "place": "town"
   },
   {
-   "city_id": "AE-AUH-C0062",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "المحاضر الغربية",
-   "name_en": "Western Mahadir",
-   "display_name": "المحاضر الغربية",
-   "point": [
-    53.4553521,
-    23.0001164
-   ],
-   "osm": "node/9976911326",
-   "place": "town"
-  },
-  {
    "city_id": "AE-AUH-C0063",
    "region_id": "AE-AUH",
    "emirate_code": "AUH",
@@ -973,48 +343,6 @@
     23.9693137
    ],
    "osm": "node/9976911317",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0064",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "يو النظرة",
-   "name_en": "Yaw Al Nadhrah",
-   "display_name": "يو النظرة",
-   "point": [
-    52.731627,
-    23.5111091
-   ],
-   "osm": "node/9976911322",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-AUH-C0065",
-   "region_id": "AE-AUH",
-   "emirate_code": "AUH",
-   "name_ar": "مدينة زايد",
-   "name_en": "Zayed City",
-   "display_name": "مدينة زايد",
-   "point": [
-    53.7289945,
-    23.6182854
-   ],
-   "osm": "way/872506070",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-DXB-C0066",
-   "region_id": "AE-DXB",
-   "emirate_code": "DXB",
-   "name_ar": "ديرة",
-   "name_en": "Deira",
-   "display_name": "ديرة",
-   "point": [
-    55.305334,
-    25.2727936
-   ],
-   "osm": "node/7826901099",
    "place": "town"
   },
   {
@@ -1046,34 +374,6 @@
    "place": "city"
   },
   {
-   "city_id": "AE-DXB-C0069",
-   "region_id": "AE-DXB",
-   "emirate_code": "DXB",
-   "name_ar": "لهباب",
-   "name_en": "Lahbab",
-   "display_name": "لهباب",
-   "point": [
-    55.5923766,
-    25.0415422
-   ],
-   "osm": "node/1487267662",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-DXB-C0070",
-   "region_id": "AE-DXB",
-   "emirate_code": "DXB",
-   "name_ar": "نزوى",
-   "name_en": "Nazwa",
-   "display_name": "نزوى",
-   "point": [
-    55.6617278,
-    25.0052995
-   ],
-   "osm": "node/1487267663",
-   "place": "town"
-  },
-  {
    "city_id": "AE-DXB-C0071",
    "region_id": "AE-DXB",
    "emirate_code": "DXB",
@@ -1085,48 +385,6 @@
     24.8694567
    ],
    "osm": "node/3649765991",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0072",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "المحترقة",
-   "name_en": "",
-   "display_name": "المحترقة",
-   "point": [
-    56.1303083,
-    25.5385359
-   ],
-   "osm": "way/1341331482",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0073",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "عبادلة",
-   "name_en": "Abadilah",
-   "display_name": "عبادلة",
-   "point": [
-    56.1884272,
-    25.4549581
-   ],
-   "osm": "node/5619098262",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0074",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "العقة",
-   "name_en": "Al Aqah",
-   "display_name": "العقة",
-   "point": [
-    56.3464719,
-    25.4973548
-   ],
-   "osm": "way/872858697",
    "place": "town"
   },
   {
@@ -1144,132 +402,6 @@
    "place": "city"
   },
   {
-   "city_id": "AE-FUJ-C0076",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "الفرفار",
-   "name_en": "Al Farfar",
-   "display_name": "الفرفار",
-   "point": [
-    56.2683753,
-    25.1516352
-   ],
-   "osm": "way/872858702",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0077",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "الغمرة",
-   "name_en": "Al Ghamarah",
-   "display_name": "الغمرة",
-   "point": [
-    56.1688488,
-    25.2942623
-   ],
-   "osm": "node/5617074738",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0078",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "الحلاة",
-   "name_en": "Al Halah",
-   "display_name": "الحلاة",
-   "point": [
-    56.179415,
-    25.4768976
-   ],
-   "osm": "way/601252648",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0079",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "الحيل",
-   "name_en": "Al Heel",
-   "display_name": "الحيل",
-   "point": [
-    56.272936,
-    25.0978265
-   ],
-   "osm": "way/872858701",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0080",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "الطيبة",
-   "name_en": "Al Tayyibah",
-   "display_name": "الطيبة",
-   "point": [
-    56.1627491,
-    25.3938955
-   ],
-   "osm": "way/360622523",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0081",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "الثيب",
-   "name_en": "Al Theeb",
-   "display_name": "الثيب",
-   "point": [
-    56.3530027,
-    25.2376465
-   ],
-   "osm": "way/872858705",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0082",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "",
-   "name_en": "Aqqah",
-   "display_name": "Aqqah",
-   "point": [
-    56.3564474,
-    25.4995345
-   ],
-   "osm": "way/584925183",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0083",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "الشعبة",
-   "name_en": "Ash Shubah",
-   "display_name": "الشعبة",
-   "point": [
-    56.1429176,
-    25.4344927
-   ],
-   "osm": "node/11850584985",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0084",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "السودة",
-   "name_en": "Assawda",
-   "display_name": "السودة",
-   "point": [
-    56.3553779,
-    25.2090588
-   ],
-   "osm": "way/872858704",
-   "place": "town"
-  },
-  {
    "city_id": "AE-FUJ-C0085",
    "region_id": "AE-FUJ",
    "emirate_code": "FUJ",
@@ -1282,20 +414,6 @@
    ],
    "osm": "way/117812208",
    "place": "city"
-  },
-  {
-   "city_id": "AE-FUJ-C0086",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "دفتا",
-   "name_en": "Daftah",
-   "display_name": "دفتا",
-   "point": [
-    56.17814,
-    25.2675769
-   ],
-   "osm": "way/360622481",
-   "place": "town"
   },
   {
    "city_id": "AE-FUJ-C0087",
@@ -1326,76 +444,6 @@
    "place": "city"
   },
   {
-   "city_id": "AE-FUJ-C0089",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "غوب",
-   "name_en": "Ghub",
-   "display_name": "غوب",
-   "point": [
-    56.2010781,
-    25.5639226
-   ],
-   "osm": "node/5606151594",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0090",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "الغورة",
-   "name_en": "Ghura",
-   "display_name": "الغورة",
-   "point": [
-    56.2076475,
-    25.2193597
-   ],
-   "osm": "node/10788336026",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0091",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "مربض",
-   "name_en": "Marbad",
-   "display_name": "مربض",
-   "point": [
-    56.132772,
-    25.3217308
-   ],
-   "osm": "way/360622547",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0092",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "مسافي",
-   "name_en": "Masafi",
-   "display_name": "مسافي",
-   "point": [
-    56.1650172,
-    25.3049807
-   ],
-   "osm": "node/8128209865",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0093",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "ميداق",
-   "name_en": "Maydaq",
-   "display_name": "ميداق",
-   "point": [
-    56.1050263,
-    25.3375509
-   ],
-   "osm": "node/5614905199",
-   "place": "town"
-  },
-  {
    "city_id": "AE-FUJ-C0094",
    "region_id": "AE-FUJ",
    "emirate_code": "FUJ",
@@ -1410,314 +458,6 @@
    "place": "city"
   },
   {
-   "city_id": "AE-FUJ-C0095",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "قدفع",
-   "name_en": "Qidfa",
-   "display_name": "قدفع",
-   "point": [
-    56.3636347,
-    25.3033365
-   ],
-   "osm": "way/872858693",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0096",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "قرية",
-   "name_en": "Qurayyah",
-   "display_name": "قرية",
-   "point": [
-    56.3601485,
-    25.2586246
-   ],
-   "osm": "way/872858706",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0097",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "ربامة",
-   "name_en": "Riyamah",
-   "display_name": "ربامة",
-   "point": [
-    56.0582225,
-    25.5456903
-   ],
-   "osm": "way/118682773",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0098",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "سكمكم",
-   "name_en": "Sakamkam",
-   "display_name": "سكمكم",
-   "point": [
-    56.3367241,
-    25.1631581
-   ],
-   "osm": "node/12250317973",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0099",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "شعبيات قبر اليهودي",
-   "name_en": "Sha'biyyat Qabr al Yahūdī",
-   "display_name": "شعبيات قبر اليهودي",
-   "point": [
-    56.1351274,
-    25.4292527
-   ],
-   "osm": "node/12307640710",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0100",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "شرم",
-   "name_en": "Sharm",
-   "display_name": "شرم",
-   "point": [
-    56.3435692,
-    25.469185
-   ],
-   "osm": "way/872858698",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0101",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "السيجي",
-   "name_en": "Siji",
-   "display_name": "السيجي",
-   "point": [
-    56.0771659,
-    25.2469421
-   ],
-   "osm": "node/5561591055",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0102",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "الطويين",
-   "name_en": "Tawiyean",
-   "display_name": "الطويين",
-   "point": [
-    56.0768012,
-    25.553532
-   ],
-   "osm": "node/5963364651",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0103",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "شوبان",
-   "name_en": "Thoban",
-   "display_name": "شوبان",
-   "point": [
-    56.0302106,
-    25.3034265
-   ],
-   "osm": "node/5621436090",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0104",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "زاهر الياد",
-   "name_en": "Zahir al Ya'ad",
-   "display_name": "زاهر الياد",
-   "point": [
-    56.1541232,
-    25.5328961
-   ],
-   "osm": "node/5614905202",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-FUJ-C0105",
-   "region_id": "AE-FUJ",
-   "emirate_code": "FUJ",
-   "name_ar": "ظاهر الصفوة",
-   "name_en": "Zahir As Safwah",
-   "display_name": "ظاهر الصفوة",
-   "point": [
-    56.1793586,
-    25.5546298
-   ],
-   "osm": "node/11878302271",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0106",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "العسيلي",
-   "name_en": "",
-   "display_name": "العسيلي",
-   "point": [
-    56.008144,
-    25.62676
-   ],
-   "osm": "node/1583581172",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0107",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "الدقداقة",
-   "name_en": "Ad Daqdaqah",
-   "display_name": "الدقداقة",
-   "point": [
-    55.9653814,
-    25.6693136
-   ],
-   "osm": "node/12289978543",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0108",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "الغيل",
-   "name_en": "Al Ghail",
-   "display_name": "الغيل",
-   "point": [
-    56.0593739,
-    25.4003246
-   ],
-   "osm": "node/1464143702",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0109",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "الحييلة",
-   "name_en": "Al Hayilah",
-   "display_name": "الحييلة",
-   "point": [
-    56.1024195,
-    25.7980557
-   ],
-   "osm": "node/12288689808",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0110",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "الجدة",
-   "name_en": "Al Jaddah",
-   "display_name": "الجدة",
-   "point": [
-    56.0832357,
-    25.9962307
-   ],
-   "osm": "node/10840139323",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0111",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "الجير",
-   "name_en": "Al Jeer",
-   "display_name": "الجير",
-   "point": [
-    56.0979187,
-    26.035673
-   ],
-   "osm": "node/5759499173",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0112",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "بركة الدسة",
-   "name_en": "Birkat Ad Dassah",
-   "display_name": "بركة الدسة",
-   "point": [
-    56.0516008,
-    25.692279
-   ],
-   "osm": "node/11776512642",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0113",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "ضاية",
-   "name_en": "Dhaya",
-   "display_name": "ضاية",
-   "point": [
-    56.0578977,
-    25.8880136
-   ],
-   "osm": "node/12237429437",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0114",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "غليلة",
-   "name_en": "Ghalilah",
-   "display_name": "غليلة",
-   "point": [
-    56.0742868,
-    25.9974973
-   ],
-   "osm": "node/5759509856",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0115",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "حارة عوالي",
-   "name_en": "Ḩārat ‘Awālī",
-   "display_name": "حارة عوالي",
-   "point": [
-    56.1300253,
-    26.0172021
-   ],
-   "osm": "node/10652051592",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0116",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "حمير العلم",
-   "name_en": "Himer Al ‘Alam",
-   "display_name": "حمير العلم",
-   "point": [
-    56.0015441,
-    25.5962625
-   ],
-   "osm": "node/11781618971",
-   "place": "town"
-  },
-  {
    "city_id": "AE-RAK-C0117",
    "region_id": "AE-RAK",
    "emirate_code": "RAK",
@@ -1729,48 +469,6 @@
     25.1900512
    ],
    "osm": "way/360633790",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0118",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "خزام",
-   "name_en": "Khuzam",
-   "display_name": "خزام",
-   "point": [
-    55.9343224,
-    25.7640773
-   ],
-   "osm": "node/12323371754",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0119",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "المقورة",
-   "name_en": "Maqawwarah",
-   "display_name": "المقورة",
-   "point": [
-    55.9223552,
-    25.6368772
-   ],
-   "osm": "node/12279655757",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0120",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "قفعة",
-   "name_en": "Qaf'a",
-   "display_name": "قفعة",
-   "point": [
-    56.1092976,
-    26.0382154
-   ],
-   "osm": "node/10840124200",
    "place": "town"
   },
   {
@@ -1802,20 +500,6 @@
    "place": "city"
   },
   {
-   "city_id": "AE-RAK-C0123",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "رميلة",
-   "name_en": "Rumayla",
-   "display_name": "رميلة",
-   "point": [
-    56.1101655,
-    26.0242085
-   ],
-   "osm": "node/10840128311",
-   "place": "town"
-  },
-  {
    "city_id": "AE-RAK-C0124",
    "region_id": "AE-RAK",
    "emirate_code": "RAK",
@@ -1827,118 +511,6 @@
     25.106653
    ],
    "osm": "node/12247846608",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0125",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "شعم",
-   "name_en": "Sha'am",
-   "display_name": "شعم",
-   "point": [
-    56.0857749,
-    26.0288628
-   ],
-   "osm": "node/5759499172",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0126",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "شريات",
-   "name_en": "Sharyāt",
-   "display_name": "شريات",
-   "point": [
-    56.1080106,
-    26.0431126
-   ],
-   "osm": "node/10840173354",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0127",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "شمال",
-   "name_en": "Shimal",
-   "display_name": "شمال",
-   "point": [
-    56.023364,
-    25.8175473
-   ],
-   "osm": "node/8143186353",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0128",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "ود ويد",
-   "name_en": "Wad Wid",
-   "display_name": "ود ويد",
-   "point": [
-    56.013964,
-    25.625149
-   ],
-   "osm": "node/1583581170",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-RAK-C0129",
-   "region_id": "AE-RAK",
-   "emirate_code": "RAK",
-   "name_ar": "وسيدة",
-   "name_en": "Wasideh",
-   "display_name": "وسيدة",
-   "point": [
-    56.1253796,
-    25.97793
-   ],
-   "osm": "node/11590955170",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-SHJ-C0130",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "البطائح",
-   "name_en": "Al Batayih",
-   "display_name": "البطائح",
-   "point": [
-    55.7380384,
-    25.2793096
-   ],
-   "osm": "node/8559635603",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-SHJ-C0131",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "الدفين",
-   "name_en": "Al Dafain",
-   "display_name": "الدفين",
-   "point": [
-    55.7795463,
-    24.9648028
-   ],
-   "osm": "node/12249280362",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-SHJ-C0132",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "الذيد",
-   "name_en": "Al Dhaid",
-   "display_name": "الذيد",
-   "point": [
-    55.8780955,
-    25.2806866
-   ],
-   "osm": "node/8143186389",
    "place": "town"
   },
   {
@@ -1956,20 +528,6 @@
    "place": "city"
   },
   {
-   "city_id": "AE-SHJ-C0134",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "الخوالد",
-   "name_en": "Al Khawālid",
-   "display_name": "الخوالد",
-   "point": [
-    55.8378368,
-    24.9765695
-   ],
-   "osm": "node/12328658769",
-   "place": "town"
-  },
-  {
    "city_id": "AE-SHJ-C0135",
    "region_id": "AE-SHJ",
    "emirate_code": "SHJ",
@@ -1982,34 +540,6 @@
    ],
    "osm": "node/1334365116",
    "place": "city"
-  },
-  {
-   "city_id": "AE-SHJ-C0136",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "الزبير",
-   "name_en": "Al Zubair",
-   "display_name": "الزبير",
-   "point": [
-    55.634697,
-    25.3783881
-   ],
-   "osm": "node/12455913869",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-SHJ-C0137",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "السامان",
-   "name_en": "As Saman",
-   "display_name": "السامان",
-   "point": [
-    55.8162727,
-    25.2325576
-   ],
-   "osm": "node/12250559277",
-   "place": "town"
   },
   {
    "city_id": "AE-SHJ-C0138",
@@ -2054,34 +584,6 @@
    "place": "city"
   },
   {
-   "city_id": "AE-SHJ-C0141",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "اللؤلؤية",
-   "name_en": "Lulayyah",
-   "display_name": "اللؤلؤية",
-   "point": [
-    56.3555672,
-    25.3958107
-   ],
-   "osm": "node/5617204023",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-SHJ-C0142",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "محافز",
-   "name_en": "Mahafiz",
-   "display_name": "محافز",
-   "point": [
-    55.748169,
-    25.1349429
-   ],
-   "osm": "node/12050730622",
-   "place": "town"
-  },
-  {
    "city_id": "AE-SHJ-C0143",
    "region_id": "AE-SHJ",
    "emirate_code": "SHJ",
@@ -2096,48 +598,6 @@
    "place": "city"
   },
   {
-   "city_id": "AE-SHJ-C0144",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "النحوة",
-   "name_en": "Nahwa",
-   "display_name": "النحوة",
-   "point": [
-    56.284377,
-    25.2737209
-   ],
-   "osm": "node/578244933",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-SHJ-C0145",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "البحائص",
-   "name_en": "Sha'biyyat  Bahayis",
-   "display_name": "البحائص",
-   "point": [
-    55.822812,
-    25.0173831
-   ],
-   "osm": "node/12473731501",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-SHJ-C0146",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "ابن رشيد",
-   "name_en": "Sha'biyyat as Rashidiyyah",
-   "display_name": "ابن رشيد",
-   "point": [
-    55.7306637,
-    25.2093938
-   ],
-   "osm": "node/12473609830",
-   "place": "town"
-  },
-  {
    "city_id": "AE-SHJ-C0147",
    "region_id": "AE-SHJ",
    "emirate_code": "SHJ",
@@ -2150,62 +610,6 @@
    ],
    "osm": "node/847933749",
    "place": "city"
-  },
-  {
-   "city_id": "AE-SHJ-C0148",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "شيص",
-   "name_en": "Shis",
-   "display_name": "شيص",
-   "point": [
-    56.2454992,
-    25.2913835
-   ],
-   "osm": "node/5601870113",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-SHJ-C0149",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "سهيلة",
-   "name_en": "Suhе̄lah",
-   "display_name": "سهيلة",
-   "point": [
-    55.9614219,
-    25.3566332
-   ],
-   "osm": "way/637836622",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-SHJ-C0150",
-   "region_id": "AE-SHJ",
-   "emirate_code": "SHJ",
-   "name_ar": "وشاح",
-   "name_en": "Wishāh",
-   "display_name": "وشاح",
-   "point": [
-    55.9104581,
-    25.2245806
-   ],
-   "osm": "node/12401338429",
-   "place": "town"
-  },
-  {
-   "city_id": "AE-UAQ-C0151",
-   "region_id": "AE-UAQ",
-   "emirate_code": "UAQ",
-   "name_ar": "فلج المعلا",
-   "name_en": "Falaj Al-Mu'alla",
-   "display_name": "فلج المعلا",
-   "point": [
-    55.8536802,
-    25.3503284
-   ],
-   "osm": "node/1334295200",
-   "place": "town"
   },
   {
    "city_id": "AE-UAQ-C0152",
@@ -2278,7 +682,9 @@
    "osm_id": 18471693,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "neighbourhood"
+   "place": "neighbourhood",
+   "geometry_type": "Polygon",
+   "coord_count": 60
   },
   {
    "district_id": "AE-AJM-D0004",
@@ -2297,7 +703,9 @@
    "osm_id": 12905777,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 90
   },
   {
    "district_id": "AE-AJM-D0005",
@@ -2316,7 +724,9 @@
    "osm_id": 12905783,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 54
   },
   {
    "district_id": "AE-AJM-D0006",
@@ -2327,7 +737,7 @@
    "name_en": "Hamidiya",
    "display_name": "الحميدية",
    "centroid_lng": 55.5327676,
-   "centroid_lat": 25.4025349,
+   "centroid_lat": 25.402535,
    "city_distance_km": 8.86,
    "city_assignment": "nearest_city",
    "osm": "relation/12905778",
@@ -2335,7 +745,9 @@
    "osm_id": 12905778,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 51
   },
   {
    "district_id": "AE-AJM-D0007",
@@ -2364,7 +776,7 @@
    "name_ar": "الراشدية",
    "name_en": "Al Rashidiya",
    "display_name": "الراشدية",
-   "centroid_lng": 55.4474929,
+   "centroid_lng": 55.447493,
    "centroid_lat": 25.396602,
    "city_distance_km": 0.4,
    "city_assignment": "nearest_city",
@@ -2373,7 +785,9 @@
    "osm_id": 18471692,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 33
   },
   {
    "district_id": "AE-AJM-D0009",
@@ -2384,7 +798,7 @@
    "name_en": "Ragayeb",
    "display_name": "الرقايب",
    "centroid_lng": 55.5714414,
-   "centroid_lat": 25.4095004,
+   "centroid_lat": 25.4095005,
    "city_distance_km": 12.81,
    "city_assignment": "nearest_city",
    "osm": "relation/12905781",
@@ -2392,7 +806,9 @@
    "osm_id": 12905781,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 45
   },
   {
    "district_id": "AE-AJM-D0010",
@@ -2411,7 +827,9 @@
    "osm_id": 12905744,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 103
   },
   {
    "district_id": "AE-AJM-D0011",
@@ -2430,7 +848,9 @@
    "osm_id": 12905776,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 29
   },
   {
    "district_id": "AE-AJM-D0012",
@@ -2440,7 +860,7 @@
    "name_ar": "الزوراء",
    "name_en": "Al Zawarah",
    "display_name": "الزوراء",
-   "centroid_lng": 55.475771,
+   "centroid_lng": 55.4757711,
    "centroid_lat": 25.4335694,
    "city_distance_km": 5.4,
    "city_assignment": "nearest_city",
@@ -2449,7 +869,9 @@
    "osm_id": 12905747,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 145
   },
   {
    "district_id": "AE-AJM-D0013",
@@ -2468,7 +890,9 @@
    "osm_id": 18471695,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 39
   },
   {
    "district_id": "AE-AJM-D0014",
@@ -2487,7 +911,9 @@
    "osm_id": 12905769,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 33
   },
   {
    "district_id": "AE-AJM-D0015",
@@ -2506,7 +932,9 @@
    "osm_id": 12905782,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 78
   },
   {
    "district_id": "AE-AJM-D0016",
@@ -2525,7 +953,9 @@
    "osm_id": 18471698,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 47
   },
   {
    "district_id": "AE-AJM-D0017",
@@ -2535,7 +965,7 @@
    "name_ar": "المويهات",
    "name_en": "Al Muwaihat",
    "display_name": "المويهات",
-   "centroid_lng": 55.5036672,
+   "centroid_lng": 55.5036673,
    "centroid_lat": 25.3714992,
    "city_distance_km": 6.37,
    "city_assignment": "nearest_city",
@@ -2544,7 +974,9 @@
    "osm_id": 12905775,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 44
   },
   {
    "district_id": "AE-AJM-D0018",
@@ -2554,7 +986,7 @@
    "name_ar": "النخيل",
    "name_en": "Al Nakhil",
    "display_name": "النخيل",
-   "centroid_lng": 55.4419381,
+   "centroid_lng": 55.4419382,
    "centroid_lat": 25.4184697,
    "city_distance_km": 2.78,
    "city_assignment": "nearest_city",
@@ -2563,7 +995,9 @@
    "osm_id": 12905745,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 284
   },
   {
    "district_id": "AE-AJM-D0019",
@@ -2582,7 +1016,9 @@
    "osm_id": 18471696,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 50
   },
   {
    "district_id": "AE-AJM-D0020",
@@ -2677,7 +1113,9 @@
    "osm_id": 12905780,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 52
   },
   {
    "district_id": "AE-AJM-D0025",
@@ -2726,7 +1164,7 @@
    "name_en": "Jazirat as Safiyah",
    "display_name": "جزيرة الصفية",
    "centroid_lng": 55.4597499,
-   "centroid_lat": 25.4120088,
+   "centroid_lat": 25.4120089,
    "city_distance_km": 2.51,
    "city_assignment": "nearest_city",
    "osm": "relation/18471705",
@@ -2734,7 +1172,9 @@
    "osm_id": 18471705,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 17
   },
   {
    "district_id": "AE-AJM-D0028",
@@ -2763,7 +1203,7 @@
    "name_ar": "مشيرف",
    "name_en": "Meshairef",
    "display_name": "مشيرف",
-   "centroid_lng": 55.4681796,
+   "centroid_lng": 55.4681797,
    "centroid_lat": 25.4080113,
    "city_distance_km": 2.81,
    "city_assignment": "nearest_city",
@@ -2772,7 +1212,9 @@
    "osm_id": 18471704,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 107
   },
   {
    "district_id": "AE-AJM-D0030",
@@ -2791,7 +1233,9 @@
    "osm_id": 18471706,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 18
   },
   {
    "district_id": "AE-AJM-D0031",
@@ -2962,7 +1406,9 @@
    "osm_id": 13251310,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 107
   },
   {
    "district_id": "AE-AUH-D0040",
@@ -2981,7 +1427,9 @@
    "osm_id": 13251440,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 118
   },
   {
    "district_id": "AE-AUH-D0041",
@@ -3029,7 +1477,7 @@
    "name_ar": "أبو مريخة",
    "name_en": "Abu Mreikhah",
    "display_name": "أبو مريخة",
-   "centroid_lng": 54.7292561,
+   "centroid_lng": 54.7292562,
    "centroid_lat": 24.5878345,
    "city_distance_km": 25.79,
    "city_assignment": "nearest_city",
@@ -3038,7 +1486,9 @@
    "osm_id": 13251373,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 1106
   },
   {
    "district_id": "AE-AUH-D0044",
@@ -3067,7 +1517,7 @@
    "name_ar": "الأفْلاج",
    "name_en": "Al Aflaj",
    "display_name": "الأفْلاج",
-   "centroid_lng": 55.8363146,
+   "centroid_lng": 55.8363147,
    "centroid_lat": 24.1627994,
    "city_distance_km": 11.53,
    "city_assignment": "nearest_city",
@@ -3076,7 +1526,9 @@
    "osm_id": 13251394,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 232
   },
   {
    "district_id": "AE-AUH-D0046",
@@ -3125,7 +1577,7 @@
    "name_en": "Al Bahyah",
    "display_name": "البَاهية",
    "centroid_lng": 54.647904,
-   "centroid_lat": 24.5568225,
+   "centroid_lat": 24.5568226,
    "city_distance_km": 17.41,
    "city_assignment": "nearest_city",
    "osm": "relation/13251343",
@@ -3133,7 +1585,9 @@
    "osm_id": 13251343,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 397
   },
   {
    "district_id": "AE-AUH-D0049",
@@ -3190,7 +1644,9 @@
    "osm_id": 13251461,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 1578
   },
   {
    "district_id": "AE-AUH-D0052",
@@ -3209,7 +1665,9 @@
    "osm_id": 13251348,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 135
   },
   {
    "district_id": "AE-AUH-D0053",
@@ -3238,8 +1696,8 @@
    "name_ar": "الجَاهلِي",
    "name_en": "Al Jahili",
    "display_name": "الجَاهلِي",
-   "centroid_lng": 55.7526776,
-   "centroid_lat": 24.2122,
+   "centroid_lng": 55.7526777,
+   "centroid_lat": 24.2122001,
    "city_distance_km": 1.6,
    "city_assignment": "nearest_city",
    "osm": "relation/13251385",
@@ -3247,7 +1705,9 @@
    "osm_id": 13251385,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 38
   },
   {
    "district_id": "AE-AUH-D0055",
@@ -3266,7 +1726,9 @@
    "osm_id": 13251416,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 163
   },
   {
    "district_id": "AE-AUH-D0056",
@@ -3285,7 +1747,9 @@
    "osm_id": 12743927,
    "source_kind": "place",
    "admin_level": null,
-   "place": "suburb"
+   "place": "suburb",
+   "geometry_type": "Polygon",
+   "coord_count": 674
   },
   {
    "district_id": "AE-AUH-D0057",
@@ -3304,7 +1768,9 @@
    "osm_id": 13251452,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 129
   },
   {
    "district_id": "AE-AUH-D0058",
@@ -3342,7 +1808,9 @@
    "osm_id": 13251312,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 118
   },
   {
    "district_id": "AE-AUH-D0060",
@@ -3380,7 +1848,9 @@
    "osm_id": 13251365,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 1222
   },
   {
    "district_id": "AE-AUH-D0062",
@@ -3418,7 +1888,9 @@
    "osm_id": 13251508,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 195
   },
   {
    "district_id": "AE-AUH-D0064",
@@ -3437,7 +1909,9 @@
    "osm_id": 13251351,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 180
   },
   {
    "district_id": "AE-AUH-D0065",
@@ -3466,7 +1940,7 @@
    "name_ar": "الخَالِدية",
    "name_en": "Al Khalidiyah",
    "display_name": "الخَالِدية",
-   "centroid_lng": 54.3495528,
+   "centroid_lng": 54.3495529,
    "centroid_lat": 24.4691789,
    "city_distance_km": 18.68,
    "city_assignment": "nearest_city",
@@ -3475,7 +1949,9 @@
    "osm_id": 13251313,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 41
   },
   {
    "district_id": "AE-AUH-D0067",
@@ -3504,8 +1980,8 @@
    "name_ar": "الخِبِيصِي",
    "name_en": "Al Khibeesi",
    "display_name": "الخِبِيصِي",
-   "centroid_lng": 55.699449,
-   "centroid_lat": 24.2299208,
+   "centroid_lng": 55.6994491,
+   "centroid_lat": 24.2299209,
    "city_distance_km": 4.68,
    "city_assignment": "nearest_city",
    "osm": "relation/13251411",
@@ -3513,7 +1989,9 @@
    "osm_id": 13251411,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 80
   },
   {
    "district_id": "AE-AUH-D0069",
@@ -3524,7 +2002,7 @@
    "name_en": "Al Khirayr",
    "display_name": "الخِرَيْر",
    "centroid_lng": 55.8525935,
-   "centroid_lat": 24.1375474,
+   "centroid_lat": 24.1375475,
    "city_distance_km": 14.59,
    "city_assignment": "nearest_city",
    "osm": "relation/13251396",
@@ -3532,7 +2010,9 @@
    "osm_id": 13251396,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 819
   },
   {
    "district_id": "AE-AUH-D0070",
@@ -3589,7 +2069,9 @@
    "osm_id": 13251319,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 391
   },
   {
    "district_id": "AE-AUH-D0073",
@@ -3627,7 +2109,9 @@
    "osm_id": 13251311,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 214
   },
   {
    "district_id": "AE-AUH-D0075",
@@ -3638,7 +2122,7 @@
    "name_en": "Al Dahma",
    "display_name": "الدَّهْماء",
    "centroid_lng": 55.6366744,
-   "centroid_lat": 24.2322976,
+   "centroid_lat": 24.2322975,
    "city_distance_km": 11.04,
    "city_assignment": "nearest_city",
    "osm": "relation/13251414",
@@ -3646,7 +2130,9 @@
    "osm_id": 13251414,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 104
   },
   {
    "district_id": "AE-AUH-D0076",
@@ -3665,7 +2151,9 @@
    "osm_id": 13251330,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 154
   },
   {
    "district_id": "AE-AUH-D0077",
@@ -3676,7 +2164,7 @@
    "name_en": "Al Ras Al Akhdar",
    "display_name": "الرأس الأخضر",
    "centroid_lng": 54.3106933,
-   "centroid_lat": 24.4620236,
+   "centroid_lat": 24.4620237,
    "city_distance_km": 22.47,
    "city_assignment": "nearest_city",
    "osm": "relation/13251453",
@@ -3684,7 +2172,9 @@
    "osm_id": 13251453,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 80
   },
   {
    "district_id": "AE-AUH-D0078",
@@ -3714,7 +2204,7 @@
    "name_en": "Al Rahbah",
    "display_name": "الرَّحبة",
    "centroid_lng": 54.6931512,
-   "centroid_lat": 24.5991707,
+   "centroid_lat": 24.5991708,
    "city_distance_km": 23.98,
    "city_assignment": "nearest_city",
    "osm": "relation/13251352",
@@ -3722,7 +2212,9 @@
    "osm_id": 13251352,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 211
   },
   {
    "district_id": "AE-AUH-D0080",
@@ -3760,7 +2252,9 @@
    "osm_id": 13251483,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 155
   },
   {
    "district_id": "AE-AUH-D0082",
@@ -3790,7 +2284,7 @@
    "name_en": "Al Rawdah Al Sharqiyah",
    "display_name": "الروضة الشرقية",
    "centroid_lng": 55.6486159,
-   "centroid_lat": 24.150325,
+   "centroid_lat": 24.1503249,
    "city_distance_km": 12.83,
    "city_assignment": "nearest_city",
    "osm": "relation/13251433",
@@ -3798,7 +2292,9 @@
    "osm_id": 13251433,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 237
   },
   {
    "district_id": "AE-AUH-D0084",
@@ -3817,7 +2313,9 @@
    "osm_id": 13251395,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 93
   },
   {
    "district_id": "AE-AUH-D0085",
@@ -3855,7 +2353,9 @@
    "osm_id": 13251354,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 119
   },
   {
    "district_id": "AE-AUH-D0087",
@@ -3893,7 +2393,9 @@
    "osm_id": 13251306,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 157
   },
   {
    "district_id": "AE-AUH-D0089",
@@ -3931,7 +2433,9 @@
    "osm_id": 13251336,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 88
   },
   {
    "district_id": "AE-AUH-D0091",
@@ -4007,7 +2511,9 @@
    "osm_id": 13251439,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 460
   },
   {
    "district_id": "AE-AUH-D0095",
@@ -4037,7 +2543,7 @@
    "name_en": "Al Sa'adah",
    "display_name": "السَّعادة",
    "centroid_lng": 54.4294346,
-   "centroid_lat": 24.4356181,
+   "centroid_lat": 24.4356182,
    "city_distance_km": 10.36,
    "city_assignment": "nearest_city",
    "osm": "relation/13251317",
@@ -4045,7 +2551,9 @@
    "osm_id": 13251317,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 222
   },
   {
    "district_id": "AE-AUH-D0097",
@@ -4083,7 +2591,9 @@
    "osm_id": 13251437,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 383
   },
   {
    "district_id": "AE-AUH-D0099",
@@ -4102,7 +2612,9 @@
    "osm_id": 13251518,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 66
   },
   {
    "district_id": "AE-AUH-D0100",
@@ -4140,7 +2652,9 @@
    "osm_id": 13251458,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 521
   },
   {
    "district_id": "AE-AUH-D0102",
@@ -4170,7 +2684,7 @@
    "name_en": "Al Samhah",
    "display_name": "السَّمْحة",
    "centroid_lng": 54.7510563,
-   "centroid_lat": 24.6658569,
+   "centroid_lat": 24.6658568,
    "city_distance_km": 28.01,
    "city_assignment": "nearest_city",
    "osm": "relation/13251374",
@@ -4178,7 +2692,9 @@
    "osm_id": 13251374,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 436
   },
   {
    "district_id": "AE-AUH-D0104",
@@ -4216,7 +2732,9 @@
    "osm_id": 13251379,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 919
   },
   {
    "district_id": "AE-AUH-D0106",
@@ -4254,7 +2772,9 @@
    "osm_id": 13251467,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 777
   },
   {
    "district_id": "AE-AUH-D0108",
@@ -4292,7 +2812,9 @@
    "osm_id": 13251360,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 361
   },
   {
    "district_id": "AE-AUH-D0110",
@@ -4349,7 +2871,9 @@
    "osm_id": 13251353,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 372
   },
   {
    "district_id": "AE-AUH-D0113",
@@ -4397,7 +2921,7 @@
    "name_ar": "الشَّوامخ",
    "name_en": "Al Shawamekh",
    "display_name": "الشَّوامخ",
-   "centroid_lng": 54.6648129,
+   "centroid_lng": 54.664813,
    "centroid_lat": 24.3486946,
    "city_distance_km": 16.99,
    "city_assignment": "nearest_city",
@@ -4406,7 +2930,9 @@
    "osm_id": 13251361,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 485
   },
   {
    "district_id": "AE-AUH-D0116",
@@ -4416,7 +2942,7 @@
    "name_ar": "الشِّوَيْب",
    "name_en": "Al Shiwayb",
    "display_name": "الشِّوَيْب",
-   "centroid_lng": 55.7714257,
+   "centroid_lng": 55.7708286,
    "centroid_lat": 24.7276728,
    "city_distance_km": 55.97,
    "city_assignment": "nearest_city",
@@ -4425,7 +2951,9 @@
    "osm_id": 13251427,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 219
   },
   {
    "district_id": "AE-AUH-D0117",
@@ -4436,7 +2964,7 @@
    "name_en": "Al Shuwaymah",
    "display_name": "الشُّوَيْمَة",
    "centroid_lng": 55.8302463,
-   "centroid_lat": 24.1882552,
+   "centroid_lat": 24.1882553,
    "city_distance_km": 9.54,
    "city_assignment": "nearest_city",
    "osm": "relation/13251393",
@@ -4444,7 +2972,9 @@
    "osm_id": 13251393,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 163
   },
   {
    "district_id": "AE-AUH-D0118",
@@ -4463,7 +2993,9 @@
    "osm_id": 13251510,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 79
   },
   {
    "district_id": "AE-AUH-D0119",
@@ -4482,7 +3014,9 @@
    "osm_id": 13251392,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 351
   },
   {
    "district_id": "AE-AUH-D0120",
@@ -4520,7 +3054,9 @@
    "osm_id": 13251342,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 657
   },
   {
    "district_id": "AE-AUH-D0122",
@@ -4539,7 +3075,9 @@
    "osm_id": 13251482,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 319
   },
   {
    "district_id": "AE-AUH-D0123",
@@ -4550,7 +3088,7 @@
    "name_en": "Al Tiwayya",
    "display_name": "الطِّوَيَّة",
    "centroid_lng": 55.6949357,
-   "centroid_lat": 24.2540269,
+   "centroid_lat": 24.254027,
    "city_distance_km": 6.04,
    "city_assignment": "nearest_city",
    "osm": "relation/13251415",
@@ -4558,7 +3096,9 @@
    "osm_id": 13251415,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 155
   },
   {
    "district_id": "AE-AUH-D0124",
@@ -4587,7 +3127,7 @@
    "name_ar": "الطَّوِيلَة",
    "name_en": "Al Taweelah",
    "display_name": "الطَّوِيلَة",
-   "centroid_lng": 54.6783189,
+   "centroid_lng": 54.678319,
    "centroid_lat": 24.7357348,
    "city_distance_km": 26.75,
    "city_assignment": "nearest_city",
@@ -4596,7 +3136,9 @@
    "osm_id": 13251376,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 335
   },
   {
    "district_id": "AE-AUH-D0126",
@@ -4615,7 +3157,9 @@
    "osm_id": 13251400,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 218
   },
   {
    "district_id": "AE-AUH-D0127",
@@ -4653,7 +3197,9 @@
    "osm_id": 13251438,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 332
   },
   {
    "district_id": "AE-AUH-D0129",
@@ -4683,7 +3229,7 @@
    "name_en": "Al 'Adlah",
    "display_name": "العَدلَة",
    "centroid_lng": 54.9324331,
-   "centroid_lat": 24.3984228,
+   "centroid_lat": 24.3984229,
    "city_distance_km": 40.87,
    "city_assignment": "nearest_city",
    "osm": "relation/13251371",
@@ -4691,7 +3237,9 @@
    "osm_id": 13251371,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 473
   },
   {
    "district_id": "AE-AUH-D0131",
@@ -4729,7 +3277,9 @@
    "osm_id": 13251369,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 641
   },
   {
    "district_id": "AE-AUH-D0133",
@@ -4739,8 +3289,8 @@
    "name_ar": "العِقَابِيَّة",
    "name_en": "Al 'Iqabiyyah",
    "display_name": "العِقَابِيَّة",
-   "centroid_lng": 55.6819299,
-   "centroid_lat": 24.175578,
+   "centroid_lng": 55.68193,
+   "centroid_lat": 24.1755781,
    "city_distance_km": 8.44,
    "city_assignment": "nearest_city",
    "osm": "relation/13251409",
@@ -4748,7 +3298,9 @@
    "osm_id": 13251409,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 117
   },
   {
    "district_id": "AE-AUH-D0134",
@@ -4778,7 +3330,7 @@
    "name_en": "Al Ghuweifat",
    "display_name": "الغويفات",
    "centroid_lng": 51.6405554,
-   "centroid_lat": 24.1380157,
+   "centroid_lat": 24.1380158,
    "city_distance_km": 14.25,
    "city_assignment": "nearest_town",
    "osm": "relation/13251517",
@@ -4786,7 +3338,9 @@
    "osm_id": 13251517,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 36
   },
   {
    "district_id": "AE-AUH-D0136",
@@ -4815,7 +3369,7 @@
    "name_ar": "الفَايَة",
    "name_en": "Al Fayah",
    "display_name": "الفَايَة",
-   "centroid_lng": 54.9630612,
+   "centroid_lng": 54.9630613,
    "centroid_lat": 24.3368704,
    "city_distance_km": 45.22,
    "city_assignment": "nearest_city",
@@ -4824,7 +3378,9 @@
    "osm_id": 13251370,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 787
   },
   {
    "district_id": "AE-AUH-D0138",
@@ -4835,7 +3391,7 @@
    "name_en": "Al Falah",
    "display_name": "الفلاح",
    "centroid_lng": 54.7194754,
-   "centroid_lat": 24.4371156,
+   "centroid_lat": 24.4371157,
    "city_distance_km": 19.03,
    "city_assignment": "nearest_city",
    "osm": "relation/13251359",
@@ -4843,7 +3399,9 @@
    "osm_id": 13251359,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 584
   },
   {
    "district_id": "AE-AUH-D0139",
@@ -4854,7 +3412,7 @@
    "name_en": "Al Fou'ah",
    "display_name": "الفُوعَة",
    "centroid_lng": 55.8060385,
-   "centroid_lat": 24.3627467,
+   "centroid_lat": 24.3627468,
    "city_distance_km": 16.52,
    "city_assignment": "nearest_city",
    "osm": "relation/13251422",
@@ -4862,7 +3420,9 @@
    "osm_id": 13251422,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 230
   },
   {
    "district_id": "AE-AUH-D0140",
@@ -4919,7 +3479,9 @@
    "osm_id": 13251347,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 63
   },
   {
    "district_id": "AE-AUH-D0143",
@@ -4938,7 +3500,9 @@
    "osm_id": 13251434,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 185
   },
   {
    "district_id": "AE-AUH-D0144",
@@ -4957,7 +3521,9 @@
    "osm_id": 13251417,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 104
   },
   {
    "district_id": "AE-AUH-D0145",
@@ -4986,8 +3552,8 @@
    "name_ar": "الكَاسِر",
    "name_en": "Al Kasir",
    "display_name": "الكَاسِر",
-   "centroid_lng": 54.3223907,
-   "centroid_lat": 24.4801073,
+   "centroid_lng": 54.3223908,
+   "centroid_lat": 24.4801074,
    "city_distance_km": 21.6,
    "city_assignment": "nearest_city",
    "osm": "relation/13251349",
@@ -4995,7 +3561,9 @@
    "osm_id": 13251349,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 42
   },
   {
    "district_id": "AE-AUH-D0147",
@@ -5043,7 +3611,7 @@
    "name_ar": "اللَّيان",
    "name_en": "Al Layyan",
    "display_name": "اللَّيان",
-   "centroid_lng": 55.0111514,
+   "centroid_lng": 55.0112063,
    "centroid_lat": 24.7778583,
    "city_distance_km": 17.59,
    "city_assignment": "nearest_city",
@@ -5052,7 +3620,9 @@
    "osm_id": 13251382,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 285
   },
   {
    "district_id": "AE-AUH-D0150",
@@ -5090,7 +3660,9 @@
    "osm_id": 13251337,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 350
   },
   {
    "district_id": "AE-AUH-D0152",
@@ -5128,7 +3700,9 @@
    "osm_id": 13251412,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 118
   },
   {
    "district_id": "AE-AUH-D0154",
@@ -5139,7 +3713,7 @@
    "name_en": "Al Marfa",
    "display_name": "المرْفَأ",
    "centroid_lng": 53.4943126,
-   "centroid_lat": 24.0875173,
+   "centroid_lat": 24.0875174,
    "city_distance_km": 11.38,
    "city_assignment": "nearest_town",
    "osm": "relation/13251481",
@@ -5147,7 +3721,9 @@
    "osm_id": 13251481,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 246
   },
   {
    "district_id": "AE-AUH-D0155",
@@ -5204,7 +3780,9 @@
    "osm_id": 13251346,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 90
   },
   {
    "district_id": "AE-AUH-D0158",
@@ -5214,7 +3792,7 @@
    "name_ar": "المَسْعُودِي",
    "name_en": "Al Mas'oudi",
    "display_name": "المَسْعُودِي",
-   "centroid_lng": 55.7393439,
+   "centroid_lng": 55.739344,
    "centroid_lat": 24.2850919,
    "city_distance_km": 6.72,
    "city_assignment": "nearest_city",
@@ -5223,7 +3801,9 @@
    "osm_id": 13251418,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 205
   },
   {
    "district_id": "AE-AUH-D0159",
@@ -5253,7 +3833,7 @@
    "name_en": "Al Mushrif",
    "display_name": "المُشرِف",
    "centroid_lng": 54.39007,
-   "centroid_lat": 24.4411446,
+   "centroid_lat": 24.4411445,
    "city_distance_km": 14.32,
    "city_assignment": "nearest_city",
    "osm": "relation/13251315",
@@ -5261,7 +3841,9 @@
    "osm_id": 13251315,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 108
   },
   {
    "district_id": "AE-AUH-D0161",
@@ -5299,7 +3881,9 @@
    "osm_id": 13251356,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 346
   },
   {
    "district_id": "AE-AUH-D0163",
@@ -5318,7 +3902,9 @@
    "osm_id": 13251386,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 51
   },
   {
    "district_id": "AE-AUH-D0164",
@@ -5347,7 +3933,7 @@
    "name_ar": "المُعْتَرِض",
    "name_en": "Al Mu'tarid",
    "display_name": "المُعْتَرِض",
-   "centroid_lng": 55.7425324,
+   "centroid_lng": 55.7425325,
    "centroid_lat": 24.2212745,
    "city_distance_km": 0.48,
    "city_assignment": "nearest_city",
@@ -5356,7 +3942,9 @@
    "osm_id": 13251406,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 95
   },
   {
    "district_id": "AE-AUH-D0166",
@@ -5375,7 +3963,9 @@
    "osm_id": 13251362,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 518
   },
   {
    "district_id": "AE-AUH-D0167",
@@ -5423,7 +4013,7 @@
    "name_ar": "المَعْمُورَة",
    "name_en": "Al Ma'mourah",
    "display_name": "المَعْمُورَة",
-   "centroid_lng": 54.6885501,
+   "centroid_lng": 54.6885502,
    "centroid_lat": 24.7754012,
    "city_distance_km": 23.34,
    "city_assignment": "nearest_city",
@@ -5432,7 +4022,9 @@
    "osm_id": 13251377,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 342
   },
   {
    "district_id": "AE-AUH-D0170",
@@ -5470,7 +4062,9 @@
    "osm_id": 13251410,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 115
   },
   {
    "district_id": "AE-AUH-D0172",
@@ -5508,7 +4102,9 @@
    "osm_id": 13251318,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 203
   },
   {
    "district_id": "AE-AUH-D0174",
@@ -5527,7 +4123,9 @@
    "osm_id": 13251387,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 141
   },
   {
    "district_id": "AE-AUH-D0175",
@@ -5565,7 +4163,9 @@
    "osm_id": 13251314,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 80
   },
   {
    "district_id": "AE-AUH-D0177",
@@ -5584,7 +4184,9 @@
    "osm_id": 13251407,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 128
   },
   {
    "district_id": "AE-AUH-D0178",
@@ -5603,7 +4205,9 @@
    "osm_id": 13251420,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 257
   },
   {
    "district_id": "AE-AUH-D0179",
@@ -5632,7 +4236,7 @@
    "name_ar": "النَّهضة",
    "name_en": "Al Nahdah",
    "display_name": "النَّهضة",
-   "centroid_lng": 54.7045121,
+   "centroid_lng": 54.7045122,
    "centroid_lat": 24.3144605,
    "city_distance_km": 22.5,
    "city_assignment": "nearest_city",
@@ -5641,7 +4245,9 @@
    "osm_id": 13251364,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 401
   },
   {
    "district_id": "AE-AUH-D0181",
@@ -5679,7 +4285,9 @@
    "osm_id": 13251459,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 753
   },
   {
    "district_id": "AE-AUH-D0183",
@@ -5689,7 +4297,7 @@
    "name_ar": "الهدوانية",
    "name_en": "Al Hadwaniyyah",
    "display_name": "الهدوانية",
-   "centroid_lng": 53.2316531,
+   "centroid_lng": 53.2316532,
    "centroid_lat": 23.9907149,
    "city_distance_km": 38.66,
    "city_assignment": "nearest_town",
@@ -5698,7 +4306,9 @@
    "osm_id": 13251476,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 306
   },
   {
    "district_id": "AE-AUH-D0184",
@@ -5736,7 +4346,9 @@
    "osm_id": 13251472,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 119
   },
   {
    "district_id": "AE-AUH-D0186",
@@ -5774,7 +4386,9 @@
    "osm_id": 13251460,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 1958
   },
   {
    "district_id": "AE-AUH-D0188",
@@ -5860,8 +4474,8 @@
    "name_ar": "الوُهَيْدَة",
    "name_en": "Al Wuhaydah",
    "display_name": "الوُهَيْدَة",
-   "centroid_lng": 51.8561957,
-   "centroid_lat": 24.0095338,
+   "centroid_lng": 51.8561958,
+   "centroid_lat": 24.0095339,
    "city_distance_km": 11.9,
    "city_assignment": "nearest_town",
    "osm": "relation/13251516",
@@ -5869,7 +4483,9 @@
    "osm_id": 13251516,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 137
   },
   {
    "district_id": "AE-AUH-D0193",
@@ -5880,7 +4496,7 @@
    "name_en": "Um Ghafah",
    "display_name": "أم غَافة",
    "centroid_lng": 55.9247832,
-   "centroid_lat": 24.0932656,
+   "centroid_lat": 24.0932657,
    "city_distance_km": 23.37,
    "city_assignment": "nearest_city",
    "osm": "relation/13251402",
@@ -5888,7 +4504,9 @@
    "osm_id": 13251402,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 815
   },
   {
    "district_id": "AE-AUH-D0194",
@@ -5907,7 +4525,9 @@
    "osm_id": 13251423,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 199
   },
   {
    "district_id": "AE-AUH-D0195",
@@ -5945,7 +4565,9 @@
    "osm_id": 13251513,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 149
   },
   {
    "district_id": "AE-AUH-D0197",
@@ -5964,7 +4586,9 @@
    "osm_id": 13251447,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 274
   },
   {
    "district_id": "AE-AUH-D0198",
@@ -6021,7 +4645,9 @@
    "osm_id": 13251333,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 66
   },
   {
    "district_id": "AE-AUH-D0201",
@@ -6040,7 +4666,9 @@
    "osm_id": 13251477,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 177
   },
   {
    "district_id": "AE-AUH-D0202",
@@ -6088,7 +4716,7 @@
    "name_ar": "جبل حَفيت",
    "name_en": "Jabal Hafeet",
    "display_name": "جبل حَفيت",
-   "centroid_lng": 55.7891758,
+   "centroid_lng": 55.7891759,
    "centroid_lat": 24.0701914,
    "city_distance_km": 17.77,
    "city_assignment": "nearest_city",
@@ -6097,7 +4725,9 @@
    "osm_id": 13251399,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 574
   },
   {
    "district_id": "AE-AUH-D0205",
@@ -6135,7 +4765,9 @@
    "osm_id": 13251448,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 987
   },
   {
    "district_id": "AE-AUH-D0207",
@@ -6154,7 +4786,9 @@
    "osm_id": 13251471,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 93
   },
   {
    "district_id": "AE-AUH-D0208",
@@ -6173,7 +4807,9 @@
    "osm_id": 13251329,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 64
   },
   {
    "district_id": "AE-AUH-D0209",
@@ -6192,7 +4828,9 @@
    "osm_id": 18471635,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 87
   },
   {
    "district_id": "AE-AUH-D0210",
@@ -6202,7 +4840,7 @@
    "name_ar": "جزيرة الأريام",
    "name_en": "Al Aryam Island",
    "display_name": "جزيرة الأريام",
-   "centroid_lng": 54.2101418,
+   "centroid_lng": 54.2101419,
    "centroid_lat": 24.3125457,
    "city_distance_km": 35.57,
    "city_assignment": "nearest_city",
@@ -6211,7 +4849,9 @@
    "osm_id": 13251457,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 325
   },
   {
    "district_id": "AE-AUH-D0211",
@@ -6222,7 +4862,7 @@
    "name_en": "Al Bazam Island",
    "display_name": "جزيرة البزم",
    "centroid_lng": 53.0880727,
-   "centroid_lat": 24.3274916,
+   "centroid_lat": 24.3274917,
    "city_distance_km": 42.39,
    "city_assignment": "nearest_town",
    "osm": "relation/18471622",
@@ -6230,7 +4870,9 @@
    "osm_id": 18471622,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 104
   },
   {
    "district_id": "AE-AUH-D0212",
@@ -6241,7 +4883,7 @@
    "name_en": "Al Jubail Island",
    "display_name": "جزيرة الجبيل",
    "centroid_lng": 54.4954347,
-   "centroid_lat": 24.5298922,
+   "centroid_lat": 24.5298923,
    "city_distance_km": 10.49,
    "city_assignment": "nearest_city",
    "osm": "relation/13251327",
@@ -6249,7 +4891,9 @@
    "osm_id": 13251327,
    "source_kind": "admin-8",
    "admin_level": 8,
-   "place": null
+   "place": null,
+   "geometry_type": "Polygon",
+   "coord_count": 127
   },
   {
    "district_id": "AE-AUH-D0213",
@@ -39219,8 +37863,8 @@
  ],
  "counts": {
   "regions": 7,
-  "cities": 152,
+  "cities": 38,
   "districts": 1947,
-  "boundaries": 0
+  "boundaries": 120
  }
 }

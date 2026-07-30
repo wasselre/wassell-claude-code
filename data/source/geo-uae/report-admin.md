@@ -1,20 +1,20 @@
 # UAE administrative geography — build report
 
-- Generated: 2026-07-30T12:53:16.167Z
+- Generated: 2026-07-30T13:29:36.198Z
 - Source: OpenStreetMap via Overpass (© OpenStreetMap contributors, ODbL)
-- **Regions (emirates): 7 · Cities: 152 · Districts: 1947 · Boundaries: 0**
+- **Regions (emirates): 7 · Cities: 38 · Districts: 1947 · Boundaries: 120**
 
 ## Per emirate
 
 | code | emirate | cities | districts | with boundary |
 |------|---------|-------:|----------:|--------------:|
-| AUH | Abu Dhabi | 59 | 463 | 0 |
-| DXB | Dubai | 6 | 1076 | 0 |
-| SHJ | Sharjah | 21 | 216 | 0 |
-| AJM | Ajman | 6 | 36 | 0 |
-| UAQ | Umm al-Quwain | 2 | 36 | 0 |
-| RAK | Ras al-Khaimah | 24 | 69 | 0 |
-| FUJ | Fujairah | 34 | 51 | 0 |
+| AUH | Abu Dhabi | 16 | 463 | 100 |
+| DXB | Dubai | 3 | 1076 | 0 |
+| SHJ | Sharjah | 7 | 216 | 0 |
+| AJM | Ajman | 2 | 36 | 20 |
+| UAQ | Umm al-Quwain | 1 | 36 | 0 |
+| RAK | Ras al-Khaimah | 4 | 69 | 0 |
+| FUJ | Fujairah | 5 | 51 | 0 |
 
 ## District sources
 
@@ -32,8 +32,9 @@
 - Dropped **1043** candidates whose centroid fell outside every emirate polygon (bbox spill into Oman/Saudi).
 - Dropped **99** district candidates whose name matches a city in the same emirate.
 - Dropped **8** OSM mapping artifacts (leading plot numbers, "under construction", building counts).
+- Pruned **114** cities that hold no district and carry no `place=city` tag — OSM tags UAE hamlets as towns, and they would be dead ends in the cascade's city step.
 - Merged **701** duplicate district candidates (same emirate + normalized name).
-- Districts with no polygon: **1947** (point-only in OSM, or geometry not yet fetched).
+- Districts with no polygon: **1827** (point-only in OSM, or geometry not yet fetched).
 
 ## Warnings
 
@@ -41,5 +42,5 @@
 
 ## Names missing a language
 
-- No Arabic name: 761 districts, 2 cities
-- No English name: 19 districts, 2 cities
+- No Arabic name: 761 districts, 0 cities
+- No English name: 19 districts, 0 cities

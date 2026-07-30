@@ -142,6 +142,9 @@ const cityRows = geo.cities.map((c) => {
     name_en: c.name_en || null,
     display_name: c.display_name || c.name_ar || c.name_en,
     spl_city_id: c.city_id,
+    // Load-bearing, not decorative: api/_lib/matchAgent.ts ranks free-text place-name
+    // candidates by country, and a row without this stamp can never be preferred.
+    country_code: 'AE',
     region_lookup: rid(c.region_id),
     region_name_ar: reg?.name_ar ?? null,
     region_name_en: reg?.name_en ?? null,
@@ -160,6 +163,7 @@ const districtRows = geo.districts.map((d) => {
     id: did(d.district_id),
     district_id: d.district_id,
     spl_district_id: d.district_id,          // the join key district_boundaries uses
+    country_code: 'AE',                      // see the cities note above
     name_ar: d.name_ar || null,
     name_en: d.name_en || null,
     display_name: d.display_name || d.name_ar || d.name_en,
@@ -218,10 +222,43 @@ const stageRows = boundaryFc.features.map((ft) => ({
   geometry_type: ft.geometry?.type ?? null,
 }));
 
+/**
+ * Delete this country's rows that the dataset no longer contains.
+ *
+ * Upsert alone is not enough. A re-run after a classification change leaves the
+ * dropped rows behind — and the first run of this importer did exactly that, writing
+ * 152 UAE cities before the pipeline learned to prune the 114 that hold no district
+ * and are not a `place=city` (OSM tags UAE hamlets as towns). Those would sit in the
+ * cascade's city step as dead ends forever.
+ *
+ * Scoped to `country_code=AE` so a bug here can never touch Saudi rows, and it only
+ * ever deletes rows ABSENT from the dataset it was just handed.
+ */
+async function pruneRemoved(table, keepIds) {
+  const r = await fetch(`${URL}/rest/v1/${table}?country_code=eq.AE&select=id`, { headers: H });
+  if (!r.ok) throw new Error(`GET ${table} → ${r.status} ${(await r.text()).slice(0, 300)}`);
+  const existing = await r.json();
+  const stale = existing.map((x) => x.id).filter((id) => !keepIds.has(id));
+  if (!stale.length) { console.log(`  ${table}: nothing stale`); return 0; }
+  console.log(`  ${table}: deleting ${stale.length} row(s) no longer in the dataset`);
+  if (DRY) return stale.length;
+  for (let i = 0; i < stale.length; i += 100) {
+    const chunk = stale.slice(i, i + 100);
+    await del(`${table}?id=in.(${chunk.join(',')})`);
+  }
+  return stale.length;
+}
+
 async function main() {
   console.log('\nregions…');   await batched('regions', regionRows, 200);
   console.log('cities…');      await batched('cities', cityRows, 200);
   console.log('districts…');   await batched('districts', districtRows, 200);
+
+  // Districts first: a city cannot be removed while a district still points at it.
+  console.log('pruning rows no longer in the dataset…');
+  await pruneRemoved('districts', new Set(districtRows.map((d) => d.id)));
+  await pruneRemoved('cities', new Set(cityRows.map((c) => c.id)));
+  await pruneRemoved('regions', new Set(regionRows.map((r) => r.id)));
 
   console.log('aliases (replacing this source only)…');
   await del(`district_aliases?source=eq.${encodeURIComponent(SOURCE)}`);

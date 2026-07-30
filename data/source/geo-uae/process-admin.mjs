@@ -313,6 +313,42 @@ const districts = dedupDistricts.kept
   });
 console.log(`  city assignment: ${byCity} nearest place=city, ${byTown} nearest town, ${byPrincipal} fell back to the principal city`);
 
+// ── 4b. prune cities that would be dead ends in the cascade ─────────────────
+//
+// Pruned AFTER district assignment, never before: every settlement has to stay a
+// candidate for "nearest city", and a town that actually won districts is kept by the
+// first clause below.
+//
+// OSM tags dozens of UAE hamlets as `place=town`, which is why the raw city tier is 152
+// (59 in Abu Dhabi alone) while only 37 hold a district. A city dropdown of 152 entries
+// where 114 lead to an empty district list is worse than useless. Keep a city if it
+// holds districts, OR is a real `place=city`, OR was synthesised as an emirate's
+// principal city. That is the same line the Saudi layer drew — its 152 cities are
+// "district-bearing only" — and it keeps every genuine city plus district-bearing towns
+// like Al Ruwais, Ghayathi and Dalma.
+const citiesWithDistricts = new Set(districts.map((d) => d.city_id));
+const keptCities = cities.filter((c) => citiesWithDistricts.has(c.city_id) || c.place === 'city' || c.synthesised);
+const prunedCities = cities.length - keptCities.length;
+console.log(`\n── cities pruned ──`);
+console.log(`  ${cities.length} → ${keptCities.length} (dropped ${prunedCities} with no districts and no place=city tag)`);
+
+// A district pointing at a pruned city would be invisible in the cascade. The keep-rule
+// makes that impossible, so assert it rather than trusting the reasoning.
+const keptIds = new Set(keptCities.map((c) => c.city_id));
+const orphaned = districts.filter((d) => !keptIds.has(d.city_id));
+if (orphaned.length) {
+  console.error(`\nFATAL: ${orphaned.length} district(s) point at a pruned city — e.g. ${orphaned[0].name_en || orphaned[0].name_ar} → ${orphaned[0].city_id}`);
+  process.exit(1);
+}
+for (const em of regions) {
+  if (!keptCities.some((c) => c.emirate_code === em.code)) {
+    console.error(`\nFATAL: emirate ${em.code} has no city left after pruning`);
+    process.exit(1);
+  }
+}
+cities.length = 0;
+cities.push(...keptCities);
+
 // ── 5. boundaries (run 2) ───────────────────────────────────────────────────
 // Districts mapped as a relation or a closed way can carry a real polygon. Nodes
 // cannot — they keep their exact point and no boundary, which is honest: the Saudi
@@ -416,6 +452,7 @@ const md = [
   `- Dropped **${outsideUae}** candidates whose centroid fell outside every emirate polygon (bbox spill into Oman/Saudi).`,
   `- Dropped **${asCity}** district candidates whose name matches a city in the same emirate.`,
   `- Dropped **${asArtifact}** OSM mapping artifacts (leading plot numbers, "under construction", building counts).`,
+  `- Pruned **${prunedCities}** cities that hold no district and carry no \`place=city\` tag — OSM tags UAE hamlets as towns, and they would be dead ends in the cascade's city step.`,
   `- Merged **${dedupDistricts.dropped.length}** duplicate district candidates (same emirate + normalized name).`,
   `- Districts with no polygon: **${districts.length - boundaries.length}** (point-only in OSM, or geometry not yet fetched).`,
   '',

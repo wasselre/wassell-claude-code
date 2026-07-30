@@ -1,0 +1,27 @@
+{
+  "source": "OpenStreetMap via Overpass API (© OpenStreetMap contributors, ODbL)",
+  "source_path": "data/source/geo-uae/uae-geography.json",
+  "extraction_date": "2026-07-30",
+  "import_started_at": "2026-07-30T13:30:27.017Z",
+  "import_completed_at": "2026-07-30T13:30:38.114Z",
+  "total_regions": 7,
+  "total_cities": 38,
+  "cities_with_districts": 37,
+  "cities_without_districts": 1,
+  "total_districts": 1947,
+  "imported_regions": 7,
+  "imported_cities": 38,
+  "imported_districts": 1947,
+  "imported_boundaries": 120,
+  "missing_english_names_count": 19,
+  "duplicate_rows_removed": 0,
+  "failed_records_count": 0,
+  "status": "completed",
+  "notes": "UAE geography (7 emirates). Derived from OSM: tiers classified by admin_level + place tags, city assigned by nearest same-emirate settlement. See data/source/geo-uae/report-admin.md.",
+  "validation_report_json": {
+    "regions": 7,
+    "cities": 38,
+    "districts": 1947,
+    "boundaries": 120
+  }
+}

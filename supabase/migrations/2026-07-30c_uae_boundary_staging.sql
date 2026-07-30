@@ -19,11 +19,19 @@ ALTER TABLE public._geo_uae_stage_boundaries ENABLE ROW LEVEL SECURITY;
 -- service_role (which bypasses RLS) can read or write it.
 REVOKE ALL ON public._geo_uae_stage_boundaries FROM anon, authenticated;
 
+-- The WHERE clause is REQUIRED, not stylistic: an unqualified
+-- `DELETE FROM _geo_uae_stage_boundaries;` is rejected with SQLSTATE 21000
+-- "DELETE requires a WHERE clause" by this project's safe-update guard, which fires
+-- even inside a SECURITY DEFINER function. `spl_district_id` is the NOT NULL primary
+-- key, so the predicate matches every row. TRUNCATE would also satisfy the guard but
+-- takes ACCESS EXCLUSIVE, and this table is written in batches over minutes.
 CREATE OR REPLACE FUNCTION public.geo_uae_stage_reset()
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_deleted int;
 BEGIN
-  DELETE FROM public._geo_uae_stage_boundaries;
-  RETURN jsonb_build_object('cleared', true);
+  DELETE FROM public._geo_uae_stage_boundaries WHERE spl_district_id IS NOT NULL;
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  RETURN jsonb_build_object('cleared', v_deleted);
 END; $$;
 
 /**
