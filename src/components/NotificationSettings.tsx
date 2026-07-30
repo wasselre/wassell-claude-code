@@ -12,7 +12,7 @@
  * explanation rather than a generic "not supported".
  */
 import { useEffect, useState } from 'react';
-import { Bell, BellOff, Loader2, Share, Smartphone } from 'lucide-react';
+import { Bell, BellOff, Loader2, Share, Smartphone, ShieldAlert } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import {
@@ -22,30 +22,60 @@ import {
   isDeviceSubscribed,
   type PushState,
 } from '@/lib/push/client';
+import {
+  loadPushBuiltinSettings,
+  savePushBuiltinSettings,
+  PUSH_BUILTIN_DEFAULTS,
+  type PushBuiltinSettings,
+} from '@/lib/push/builtinSettings';
 
 export default function NotificationSettings() {
-  const { language, addToast, currentUserId } = useAppStore();
+  const { language, addToast, currentUserId, users, profiles } = useAppStore();
   const isAr = language === 'ar';
+
+  const me = users.find((u) => u.id === currentUserId) ?? null;
+  const isAdmin = !!(me && profiles.find((p) => p.id === me.profile_id)?.is_admin);
 
   const [state, setState] = useState<PushState>('unsupported');
   const [subscribed, setSubscribed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState(false);
+  const [builtins, setBuiltins] = useState<PushBuiltinSettings>(PUSH_BUILTIN_DEFAULTS);
+  const [savingBuiltin, setSavingBuiltin] = useState<keyof PushBuiltinSettings | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       const s = getPushState();
       const sub = await isDeviceSubscribed();
+      const b = await loadPushBuiltinSettings();
       if (cancelled) return;
       setState(s);
       setSubscribed(sub);
+      setBuiltins(b);
       setChecked(true);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const toggleBuiltin = async (key: keyof PushBuiltinSettings) => {
+    const next = !builtins[key];
+    setSavingBuiltin(key);
+    // Optimistic, then reverted on failure — an admin must never be left
+    // looking at a toggle that says "off" while every rep still gets the alert.
+    setBuiltins((prev) => ({ ...prev, [key]: next }));
+    const res = await savePushBuiltinSettings({ [key]: next });
+    setSavingBuiltin(null);
+    if (!res.ok) {
+      setBuiltins((prev) => ({ ...prev, [key]: !next }));
+      addToast(
+        (isAr ? 'تعذّر الحفظ: ' : 'Could not save: ') + (res.error ?? ''),
+        'error',
+      );
+    }
+  };
 
   const handleEnable = async () => {
     setBusy(true);
@@ -170,6 +200,61 @@ export default function NotificationSettings() {
             ? 'الإعداد خاص بكل جهاز على حدة — فعّله على كل جهاز تريد أن تصلك عليه التنبيهات.'
             : 'This setting is per device — enable it on each device you want alerts on.'}
         </p>
+      )}
+
+      {/* Built-in notification switches — WORKSPACE-WIDE, so admin only. Turning
+          one off silences it for every rep, which is the point: it exists so a
+          hand-built workflow rule can replace a built-in without both firing. */}
+      {checked && isAdmin && (
+        <div className="mt-4 pt-3 border-t border-sand/25 space-y-3">
+          <div className="flex items-start gap-2">
+            <ShieldAlert size={14} className="mt-0.5 shrink-0 text-copper" />
+            <div>
+              <div className="text-xs font-bold text-charcoal/70">
+                {isAr ? 'التنبيهات الجاهزة (لكل الفريق)' : 'Built-in alerts (whole team)'}
+              </div>
+              <div className="text-[11px] text-charcoal/55 mt-0.5">
+                {isAr
+                  ? 'هذان التنبيهان مدمجان في النظام. أوقف أحدهما إذا أنشأت قاعدة تنبيه خاصة بك لنفس الحالة في «سير العمل» — وإلا سيصل تنبيهان لنفس الحدث.'
+                  : 'These two are built into the system. Switch one off if you build your own Notification rule for the same event in Workflows — otherwise the same event sends two alerts.'}
+              </div>
+            </div>
+          </div>
+
+          {(
+            [
+              {
+                key: 'hot_lead_enabled' as const,
+                ar: '🔥 عميل جديد — اتصل خلال ٥ دقائق',
+                en: '🔥 New lead — call within 5 minutes',
+              },
+              {
+                key: 'customer_replied_enabled' as const,
+                ar: '💬 العميل رد — دورك الآن',
+                en: '💬 Customer replied — your turn',
+              },
+            ]
+          ).map((row) => (
+            <label
+              key={row.key}
+              className="flex items-center justify-between gap-3 cursor-pointer text-sm"
+            >
+              <span className="text-charcoal/80">{isAr ? row.ar : row.en}</span>
+              <span className="flex items-center gap-2 shrink-0">
+                {savingBuiltin === row.key && (
+                  <Loader2 size={13} className="animate-spin text-charcoal/40" />
+                )}
+                <input
+                  type="checkbox"
+                  checked={builtins[row.key]}
+                  disabled={savingBuiltin !== null}
+                  onChange={() => void toggleBuiltin(row.key)}
+                  className="w-4 h-4 accent-copper"
+                />
+              </span>
+            </label>
+          ))}
+        </div>
       )}
     </div>
   );
