@@ -99,10 +99,57 @@ BEGIN
   RAISE NOTICE 'location fields patched with region→country_lookup: %', v_patched;
 END $$;
 
--- ── 3. Refresh the frozen artifacts (JSONB view + RLS policies + UNION) ─────
+-- ── 3. Rebuild the view chain, top down ─────────────────────────────────────
+--
+-- NEITHER freeze helper uses CASCADE, and both drops now have dependents:
+-- regenerate_frozen_model_artifacts() does a plain `DROP VIEW regions_v`, which
+-- unified_records is built on, and rebuild_unified_records() does a plain
+-- `DROP VIEW unified_records`, which v_our_projects_scope — added long after the
+-- freeze tooling was written — is built on. Calling them directly fails with
+-- SQLSTATE 2BP01. So unwind the stack explicitly and rebuild it in reverse.
+--
+-- Inside this transaction the drops hold ACCESS EXCLUSIVE, so concurrent readers
+-- block until COMMIT rather than seeing a missing view.
+--
+-- Grants are not restored by hand: Supabase's ALTER DEFAULT PRIVILEGES grants
+-- anon/authenticated/service_role on any new view in public, which is what the
+-- dropped views had. reloptions ARE preserved deliberately — v_our_projects_scope is
+-- NOT security_invoker (unlike unified_records and regions_v), and flipping that
+-- would silently change whose RLS applies to the website's project feed.
+--
+-- ANY future schema change to a frozen model needs this same unwind. Worth
+-- remembering before reaching for the CLAUDE.md migration template, which still
+-- shows the two helper calls on their own.
+DROP VIEW IF EXISTS public.v_our_projects_scope;
+DROP VIEW IF EXISTS public.unified_records;
+
 SELECT public.regenerate_frozen_model_artifacts(
   (SELECT id FROM public.models WHERE name = 'regions')
 );
 SELECT public.rebuild_unified_records();
+
+CREATE VIEW public.v_our_projects_scope AS
+ SELECT op.id AS our_project_id,
+    ap.id AS project_id,
+    (ap.data ->> 'project_name'::text) AS project_name_ar,
+    (ap.data ->> 'project_name_en'::text) AS project_name_en,
+    (NULLIF((ap.data ->> 'developer'::text), ''::text))::uuid AS developer_record_id,
+    (dev.data ->> 'name'::text) AS developer_name,
+    (ap.data ->> 'city_name'::text) AS city,
+    (ap.data ->> 'project_location'::text) AS location_text,
+    (ap.data ->> 'project_page_url'::text) AS project_page_url,
+    (ap.data ->> 'brochure_link'::text) AS brochure_url,
+    (ap.data ->> 'project_status'::text) AS project_status,
+    (ap.data ->> 'project_id'::text) AS external_project_id,
+    (op.data ->> 'portfolio_status'::text) AS portfolio_status,
+    (op.data ->> 'sales_priority'::text) AS sales_priority,
+    ((op.data ->> 'show_on_website'::text))::boolean AS show_on_website,
+    op.created_at AS scoped_since,
+    (dev.data ->> 'website'::text) AS developer_website,
+    (dev.data ->> 'phone'::text) AS developer_phone
+   FROM ((unified_records op
+     JOIN unified_records ap ON (((ap.id = (NULLIF((op.data ->> 'project'::text), ''::text))::uuid) AND (ap.model_id = '220c49b9-de57-492d-9eca-c0d9f54fd40f'::uuid))))
+     LEFT JOIN unified_records dev ON (((dev.id = (NULLIF((ap.data ->> 'developer'::text), ''::text))::uuid) AND (dev.model_id = '11bade2c-7da9-4d00-b045-eaab37153da2'::uuid))))
+  WHERE (op.model_id = '6609286a-f95a-45db-94e6-48cfa915ccbd'::uuid);
 
 COMMIT;

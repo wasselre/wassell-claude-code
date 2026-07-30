@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * Import the gathered Riyadh geo-intelligence dataset into geo_elements.
+ * Import a geo-intelligence dataset into geo_elements.
  *
- *   node scripts/import-geo-intelligence.mjs
+ *   node scripts/import-geo-intelligence.mjs                                        # Riyadh (default)
+ *   node scripts/import-geo-intelligence.mjs data/source/geo-uae/uae-geo-intelligence.json
  *
- * Reads data/source/geo/riyadh-geo-intelligence.json (the raw uploaded file),
- * upserts every anchor into public.geo_elements BY external_id via the
- * service-role RPC `wassell_import_geo_elements` (geometry parses server-side
- * with ST_GeomFromGeoJSON), rebuilds AR/EN aliases, and writes a validation
- * report to data/source/geo/import-report.{json,md}.
+ * Reads the dataset JSON and upserts every anchor into public.geo_elements BY
+ * external_id via the service-role RPC `wassell_import_geo_elements` (geometry
+ * parses server-side with ST_GeomFromGeoJSON), rebuilds AR/EN aliases, and writes a
+ * validation report next to the source file as `import-report.{json,md}`.
+ *
+ * The dataset path is an argument, not a constant, because every country's anchor set
+ * shares one schema and one import RPC — a second copy of this script would be a
+ * second thing to keep in step.
  *
  * Idempotent: re-running upserts the same rows. Needs SUPABASE_URL +
  * SUPABASE_SERVICE_ROLE_KEY (auto-loaded from .env.local / .env, like the other
@@ -19,13 +23,16 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
-const DATA = join(ROOT, 'data', 'source', 'geo');
-const SRC = join(DATA, 'riyadh-geo-intelligence.json');
+const DEFAULT_SRC = join(ROOT, 'data', 'source', 'geo', 'riyadh-geo-intelligence.json');
+const argPath = process.argv.slice(2).find((a) => !a.startsWith('--'));
+const SRC = argPath ? (isAbsolute(argPath) ? argPath : join(ROOT, argPath)) : DEFAULT_SRC;
+const DATA = dirname(SRC);           // reports land beside the dataset they describe
+const REL_SRC = relative(ROOT, SRC).split(sep).join('/');
 const BATCH = 100;
 const CONFIDENCE_FLOOR = 0.5; // keep in sync with the SQL matcher + geoMatch.ts
 
@@ -52,7 +59,7 @@ if (!url || !key) {
   process.exit(1);
 }
 if (!existsSync(SRC)) {
-  console.error(`Dataset not found at ${SRC}. Place riyadh-geo-intelligence.json there first.`);
+  console.error(`Dataset not found at ${SRC}.`);
   process.exit(1);
 }
 
@@ -87,7 +94,7 @@ const by = (fn) => rows.reduce((a, r) => { const k = fn(r) ?? '∅'; a[k] = (a[k
 const num = (v) => (v == null || v === '' ? null : Number(v));
 const report = {
   generated_at: new Date().toISOString(),
-  source_file: 'data/source/geo/riyadh-geo-intelligence.json',
+  source_file: REL_SRC,
   total: rows.length,
   upserted,
   aliases_added: Number(aliasRes?.aliases_added ?? 0),
@@ -124,5 +131,5 @@ const md = [
 ].join('\n');
 writeFileSync(join(DATA, 'import-report.md'), md);
 
-console.log(`[import] done. report → data/source/geo/import-report.md`);
+console.log(`[import] done. report → ${relative(ROOT, join(DATA, 'import-report.md')).split(sep).join('/')}`);
 console.log(JSON.stringify(report, null, 2));

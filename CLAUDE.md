@@ -196,13 +196,42 @@ SET schema = jsonb_set(
 WHERE name = 'clients';
 
 -- 3. Refresh the JSONB-shape view + the unified_records UNION.
+--
+-- The two helpers CANNOT be called on their own — see "unwinding the view chain"
+-- below. Drop every dependent view first, then rebuild in reverse:
+DROP VIEW IF EXISTS public.v_our_projects_scope;   -- depends on unified_records
+DROP VIEW IF EXISTS public.unified_records;        -- depends on <name>_v
+
 SELECT public.regenerate_frozen_model_artifacts(
   (SELECT id FROM models WHERE name = 'clients')
 );
 SELECT public.rebuild_unified_records();
 
+CREATE VIEW public.v_our_projects_scope AS ...;    -- restore the exact definition
+
 COMMIT;
 ```
+
+**Unwinding the view chain (CRITICAL — learned 2026-07-30):** neither helper uses
+`CASCADE`. `regenerate_frozen_model_artifacts` runs a plain `DROP VIEW <name>_v`, but
+`unified_records` is built on it; `rebuild_unified_records` runs a plain
+`DROP VIEW unified_records`, but `v_our_projects_scope` is built on THAT. Calling
+either one directly now fails with `SQLSTATE 2BP01 cannot drop view … because other
+objects depend on it`. Before writing a frozen-model migration:
+
+1. `SELECT DISTINCT dependent.relname FROM pg_depend d JOIN pg_rewrite r ON r.oid = d.objid JOIN pg_class dependent ON dependent.oid = r.ev_class JOIN pg_class source ON source.oid = d.refobjid WHERE source.relname = 'unified_records' AND dependent.relname <> 'unified_records';`
+   — enumerate the dependents, because the list grows every time someone stacks a
+   reporting view on `unified_records`.
+2. Capture each dependent's `pg_views.definition` AND its `pg_class.reloptions`, then
+   drop them, call the two helpers, and recreate them.
+   **`reloptions` is load-bearing:** `unified_records` and `<name>_v` are
+   `security_invoker=true`, but `v_our_projects_scope` is NOT. Recreating it as an
+   invoker view silently changes whose RLS applies to the website's project feed.
+3. Grants do NOT need restoring — Supabase's `ALTER DEFAULT PRIVILEGES` grants
+   anon/authenticated/service_role on any new view in `public`.
+
+Do it all in ONE transaction: the drops take `ACCESS EXCLUSIVE`, so concurrent readers
+block until `COMMIT` instead of meeting a missing view.
 
 **Field-type → column type mapping** (used by `freeze_model` and any migration you write — keep in sync):
 - `text`, `textarea`, `email`, `phone`, `url`, `dropdown`, `auto_id`, `lookup` (single) → `text`
@@ -221,7 +250,7 @@ COMMIT;
 
 1. **Migrations on a frozen model MUST update both the table AND `models.schema`.** The Builder UI renders forms from the JSONB schema; if you ALTER a column without updating the JSONB, the new column will exist but the form won't show it. If you update the JSONB without ALTERing the column, the dispatcher RPC's `freeze_apply_row` will try to write to a column that doesn't exist and the save will fail.
 
-2. **Always call `regenerate_frozen_model_artifacts(model_id)` and `rebuild_unified_records()` at the end of the migration.** The first refreshes the `<name>_v` JSONB-shape view so the new column appears in reads AND regenerates the four RLS policies on the parent table (so the policy's inline `jsonb_build_object(...)` expression includes the new field for scope evaluation); the second rebuilds the UNION view across all frozen models. **Skipping the regen call on a schema change leaves the policy referencing columns that no longer exist (or missing the new column from scope checks) — both silent-correctness bugs.**
+2. **Always call `regenerate_frozen_model_artifacts(model_id)` and `rebuild_unified_records()` at the end of the migration — wrapped in the view-chain unwind above.** The first refreshes the `<name>_v` JSONB-shape view so the new column appears in reads AND regenerates the four RLS policies on the parent table (so the policy's inline `jsonb_build_object(...)` expression includes the new field for scope evaluation); the second rebuilds the UNION view across all frozen models. **Skipping the regen call on a schema change leaves the policy referencing columns that no longer exist (or missing the new column from scope checks) — both silent-correctness bugs.** Calling them WITHOUT dropping the dependent views first fails outright with `2BP01` — see "Unwinding the view chain".
 
 3. **Never write to `records` for a frozen model.** The records-block trigger will reject it. Use the `record_save` / `record_delete` RPCs (or, in the app, go through the store actions which already do).
 

@@ -27,6 +27,9 @@ const CATEGORY_COLORS: Record<string, string> = {
   business_zones: '#9A7B2E',    // bronze-olive
   lifestyle: '#C2683A',         // burnt-copper
   zones: '#7A5C8E',             // soft plum (informal corridors)
+  islands: '#2E7D6B',           // sea-green — UAE only, where the master-planned
+                                // islands (Palm Jumeirah, Yas, Saadiyat, Al Reem,
+                                // Al Maryah) are primary anchors, not scenery
 };
 const catColor = (c: string | null | undefined) => (c && CATEGORY_COLORS[c]) || '#4A4E54';
 // Below this confidence an element is faded — captures the 9 informal zones

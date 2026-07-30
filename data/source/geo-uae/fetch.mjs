@@ -35,6 +35,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { overpass } from './lib/overpass.mjs';
+import { EMIRATES } from './lib/emirates.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RAW = join(HERE, 'raw');
@@ -44,19 +45,6 @@ const argv = process.argv.slice(2);
 const FORCE = argv.includes('--force');
 const passes = argv.filter((a) => !a.startsWith('--'));
 const wants = (p) => passes.length === 0 || passes.includes(p);
-
-/**
- * The 7 emirate relations (OSM ids, confirmed live against Overpass 2026-07-30).
- */
-export const EMIRATES = [
-  { osm_id: 3766481, code: 'AUH', name_en: 'Abu Dhabi', name_ar: 'أبو ظبي' },
-  { osm_id: 3766483, code: 'DXB', name_en: 'Dubai', name_ar: 'دبي' },
-  { osm_id: 3766486, code: 'SHJ', name_en: 'Sharjah', name_ar: 'الشارقة' },
-  { osm_id: 3766482, code: 'AJM', name_en: 'Ajman', name_ar: 'عجمان' },
-  { osm_id: 3766487, code: 'UAQ', name_en: 'Umm al-Quwain', name_ar: 'أم القيوين' },
-  { osm_id: 3766485, code: 'RAK', name_en: 'Ras al-Khaimah', name_ar: 'رأس الخيمة' },
-  { osm_id: 3766484, code: 'FUJ', name_en: 'Fujairah', name_ar: 'الفجيرة' },
-];
 
 /**
  * UAE bounding box (south,west,north,east). Deliberately a little generous — it also
@@ -90,13 +78,27 @@ const bboxQuery = (selector, out) =>
   `[out:json][timeout:${TIMEOUT}][bbox:${BBOX}];(${selector});${out}`;
 
 // ── pass 0: emirate polygons ────────────────────────────────────────────────
+// One request PER emirate. All seven at once 504s on every mirror: Abu Dhabi alone
+// carries a Gulf coastline plus ~200 offshore islands, and the combined response is
+// tens of MB of coordinates. Per-emirate files are also independently cached, so a
+// single failure doesn't cost the other six.
 async function emirates() {
-  console.log('\n── pass 0: emirate polygons ──');
-  await cached('geom-emirates', () =>
-    overpass(
-      `[out:json][timeout:${TIMEOUT}];relation(id:${EMIRATES.map((e) => e.osm_id).join(',')});out geom;`,
-      { label: 'emirates', attempts: 6 },
-    ),
+  console.log('\n── pass 0: emirate + country polygons ──');
+  for (const em of EMIRATES) {
+    await cached(`geom-emirate-${em.code}`, () =>
+      overpass(`[out:json][timeout:${TIMEOUT}];relation(${em.osm_id});out geom;`,
+        { label: `emirate-${em.code}`, attempts: 8 }),
+    );
+  }
+  // The UAE national boundary. Load-bearing, not decorative: emirate borders are
+  // traced independently and don't tile the country perfectly, so a point can land in
+  // a seam between two of them. The country polygon is what distinguishes such a point
+  // (keep it, assign to the nearest emirate) from one in a foreign enclave — Al
+  // Buraimi, Oman sits inside Abu Dhabi's BOUNDING BOX right next to Al Ain, and only
+  // a real boundary can reject it.
+  await cached('geom-country-AE', () =>
+    overpass(`[out:json][timeout:${TIMEOUT}];relation(307763);out geom;`,
+      { label: 'country-AE', attempts: 8 }),
   );
 }
 

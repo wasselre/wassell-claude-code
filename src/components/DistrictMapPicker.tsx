@@ -97,7 +97,7 @@ const DASH_TICK_MS = 90;
 /** Element types shown as landmark pins on the picker — the sales-relevant
  *  anchors (all curated + verified in geo_elements). Roads/metro/parks are
  *  deliberately left out: too dense to read at city zoom. */
-const LANDMARK_TYPES = ['landmarks', 'malls', 'universities', 'airports_transport'];
+const LANDMARK_TYPES = ['landmarks', 'malls', 'universities', 'airports_transport', 'islands'];
 /** Road-like element types — SEARCHABLE but never drawn as pins (too dense to
  *  read at city zoom). Picking one from search draws its actual line so the user
  *  can see where it runs. Roads/ring roads/metro lines are all MultiLineString. */
