@@ -71,7 +71,7 @@ import MarketingIntelligencePage from '@/pages/MarketingIntelligence/MarketingIn
 // A second workspace, not a page inside the Sales one: it mounts OUTSIDE
 // AppLayout with its own shell, rail and visual system, under /m. The switcher
 // in each shell's header is how you move between the two.
-import MarketingWorkspace from '@/pages/Marketing/MarketingWorkspace';
+import MarketingWorkspace, { RequireMarketingWorkspace } from '@/pages/Marketing/MarketingWorkspace';
 import MarketingOverviewPage from '@/pages/Marketing/OverviewPage';
 import MarketingWorkPage from '@/pages/Marketing/WorkPage';
 import MarketingContentListPage from '@/pages/Marketing/ContentListPage';
@@ -432,9 +432,12 @@ export default function App() {
         <Route
           element={
             <RequireAuth>
-              <RequirePageAccess pageId="marketing_management">
+              {/* Same page-access id as the shared guard, but it renders the
+                  workspace shell while the store boots instead of a blank
+                  page — there is no surrounding layout here to fill it. */}
+              <RequireMarketingWorkspace>
                 <MarketingWorkspace />
-              </RequirePageAccess>
+              </RequireMarketingWorkspace>
             </RequireAuth>
           }
         >

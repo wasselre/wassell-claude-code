@@ -13,9 +13,12 @@
  */
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+  type ReactNode,
 } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
+import { useCanAccessPage } from '@/hooks/usePermission';
 import {
   MosContentType,
   MosGrant,
@@ -144,6 +147,69 @@ const NAV: NavGroup[] = [
     ],
   },
 ];
+
+/* ------------------------------------------------------------------ */
+/* gate                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The workspace's own access gate.
+ *
+ * It exists instead of the shared `RequirePageAccess` for one reason: that
+ * guard renders NOTHING while the store boots, which on a route with no
+ * surrounding layout means a blank white page for as long as the boot takes.
+ * The authorization decision is identical — same `page_access` id, same
+ * redirect, same toast — but the waiting state is a shell rather than a void.
+ */
+export function RequireMarketingWorkspace({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
+  const initialized = useAppStore((s) => s.initialized);
+  const addToast = useAppStore((s) => s.addToast);
+  const isAr = useAppStore((s) => s.language) === 'ar';
+  const allowed = useCanAccessPage('marketing_management');
+  const toasted = useRef(false);
+
+  useEffect(() => {
+    if (!initialized || allowed || toasted.current) return;
+    toasted.current = true;
+    addToast(t('access.access_denied'), 'error');
+  }, [initialized, allowed, addToast, t]);
+
+  if (!initialized) return <BootShell isAr={isAr} />;
+  if (!allowed) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+/** The rail and a page-shaped skeleton, so booting looks like loading. */
+function BootShell({ isAr }: { isAr: boolean }) {
+  return (
+    <div className="mos-root">
+      <aside className="mos-rail">
+        <div className="brand">
+          <BrandMark className="brand-mark" />
+          <div className="brand-txt">
+            <b>{isAr ? 'وصل' : 'Wassel'}</b>
+            <span>{isAr ? 'التسويق' : 'Marketing'}</span>
+          </div>
+        </div>
+      </aside>
+      <div className="mos-main">
+        <div className="phead">
+          <div style={{ width: '100%' }}>
+            <div className="sk" style={{ height: 24, width: 180 }} />
+            <div className="sk" style={{ height: 12, width: 260, marginTop: 8 }} />
+          </div>
+        </div>
+        <div className="body">
+          <div className="grid g4" style={{ marginBottom: 18 }}>
+            {[0, 1, 2, 3].map((i) => <div key={i} className="sk" style={{ height: 96 }} />)}
+          </div>
+          <div className="sk" style={{ height: 220 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* shell                                                              */
@@ -355,7 +421,21 @@ export default function MarketingWorkspace() {
             </div>
           )}
 
-          <Outlet />
+          {/* Hold the page until the workspace bootstrap lands. Rendering it
+              early flashed the defaults — the raw content-type key in the Type
+              column and "viewer" in the rail — which reads as a bug even
+              though it corrects itself a moment later. */}
+          {ready ? (
+            <Outlet />
+          ) : (
+            <div className="body">
+              <div className="sk" style={{ height: 26, width: 200, marginBottom: 16 }} />
+              <div className="grid g4" style={{ marginBottom: 18 }}>
+                {[0, 1, 2, 3].map((i) => <div key={i} className="sk" style={{ height: 96 }} />)}
+              </div>
+              <div className="sk" style={{ height: 200 }} />
+            </div>
+          )}
         </div>
       </div>
     </Ctx.Provider>

@@ -1,0 +1,18 @@
+-- Applied to production 2026-07-30 as migrations
+--   mos_campaigns_assets_shoots_comments
+--   mos_executions_write_is_enter_metrics
+--   mos_ref_allocator_security_definer
+-- Checked in for the record; see docs/prd/marketing-workspace.md.
+--
+-- The spend side, the material side, and the thread. Campaigns (money),
+-- executions (one ad set per platform), assets (the library), shoot requests
+-- (what missing scenes roll up into), and comments.
+--
+-- THE ONE NON-OBVIOUS BIT: mos_next_ref is SECURITY DEFINER.
+-- mos_ref_counters has RLS on and NO policies, because nothing should touch it
+-- directly. A BEFORE INSERT trigger minting a ref therefore has to run with the
+-- function owner's rights, or every insert fails with
+--   42501 new row violates row-level security policy for table "mos_ref_counters"
+-- A user allowed to insert the ROW must be able to get a NUMBER without being
+-- granted write access to a shared counter. SET search_path is mandatory so a
+-- caller cannot shadow `public` and redirect the body at their own table.
