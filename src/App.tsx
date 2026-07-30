@@ -67,7 +67,10 @@ import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage'
 import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
 import MarketIntelligencePage from '@/pages/MarketIntelligence/MarketIntelligencePage';
 import MarketingIntelligencePage from '@/pages/MarketingIntelligence/MarketingIntelligencePage';
-import MarketingManagementPage from '@/pages/MarketingManagement/MarketingManagementPage';
+// Marketing OS replaces the old MarketingManagementPage on the same route and
+// page id, so no profile has to be re-granted access. The old page + its API and
+// lib are deleted once the rebuild covers them.
+import MarketingOSPage from '@/pages/MarketingOS/MarketingOSPage';
 import ProjectFinderPage from '@/pages/ProjectFinder/ProjectFinderPage';
 import FinancingPage from '@/pages/Financing/FinancingPage';
 import PostsContentPage from '@/pages/PostsContent/PostsContentPage';
@@ -330,7 +333,7 @@ export default function App() {
           <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
           <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
           <Route path="/marketing-intelligence" element={<RequirePageAccess pageId="marketing_intelligence"><MarketingIntelligencePage /></RequirePageAccess>} />
-          <Route path="/marketing-management" element={<RequirePageAccess pageId="marketing_management"><MarketingManagementPage /></RequirePageAccess>} />
+          <Route path="/marketing-management" element={<RequirePageAccess pageId="marketing_management"><MarketingOSPage /></RequirePageAccess>} />
           {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
           <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />
           {/* Financing calculator. Query params let a client / project / unit
