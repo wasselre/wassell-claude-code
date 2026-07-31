@@ -280,10 +280,12 @@ export default function WritingFields({
             const isPicked = approved !== '' && h === approved;
             return (
               <div key={i} className={`opt${isPicked ? ' pick' : ''}`}>
+                {/* No `border: 0` here — that would erase the .rd circle and
+                    leave an invisible 14px button (shipped once; caught live). */}
                 <button
                   type="button"
                   className="rd"
-                  style={{ cursor: canApprove ? 'pointer' : 'default', border: 0, padding: 0 }}
+                  style={{ cursor: canApprove ? 'pointer' : 'default' }}
                   disabled={!canApprove}
                   onClick={() => approve(h)}
                   aria-label={isAr ? 'اعتماد هذا العنوان' : 'Approve this headline'}
