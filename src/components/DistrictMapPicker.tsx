@@ -103,8 +103,11 @@ const LANDMARK_TYPES = ['landmarks', 'malls', 'universities', 'airports_transpor
  *  can see where it runs. Roads/ring roads/metro lines are all MultiLineString. */
 const ROAD_TYPES = ['roads_major', 'ring_roads', 'metro_lines'];
 /** District name labels + landmark pins appear from this zoom in (city-wide
- *  view stays clean); landmark NAMES appear once close enough to read. */
+ *  view stays clean). */
 const LABELS_MIN_ZOOM = 11;
+/** Zoom the map snaps to when focusing a landmark — close enough that the dots are
+ *  individually distinguishable. It no longer gates NAMES: landmarks render as points
+ *  only, because at UAE scale their labels buried the map. */
 const LANDMARK_NAMES_MIN_ZOOM = 13;
 /** Max vertices when a district boundary is copied into an editable shape —
  *  keeps the vertex handles usable (a full simplified ring can be 300+). */
@@ -139,6 +142,26 @@ const PICKER_MAP_STYLE: google.maps.MapTypeStyle[] = [
   ...WASSEL_MAP_STYLE,
   { featureType: 'administrative.neighborhood', elementType: 'labels', stylers: [{ visibility: 'off' }] },
   { featureType: 'administrative.locality', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  // THE DISTRICT NAME IS THE ONLY TEXT THIS MAP OWES YOU.
+  //
+  // The base style COLOURS poi labels but never hides them, which was survivable
+  // over Riyadh and is not over Dubai: at district zoom Google draws a label for
+  // every shop, clinic and business in view, and they pile into an unreadable black
+  // mass that buries the district mesh underneath (live report 2026-07-31).
+  //
+  // Roads keep their labels — a road name orients you, it doesn't compete with the
+  // district name. Everything else that is a POI, a park name, a transit stop or a
+  // business goes silent.
+  { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.business', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.park', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.attraction', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.place_of_worship', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.medical', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.school', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.sports_complex', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.government', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'transit', elementType: 'labels', stylers: [{ visibility: 'off' }] },
 ];
 
 /** GeoJSON Polygon/MultiPolygon → google.maps paths (outer + hole rings). */
@@ -814,9 +837,9 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, isLoaded, shapes]);
 
-  // District NAME labels on every polygon + landmark pins, both zoom-gated so
-  // the city-wide view stays readable: labels + pins from LABELS_MIN_ZOOM in,
-  // landmark names once close enough (LANDMARK_NAMES_MIN_ZOOM). Labels are
+  // District NAME labels on every polygon + landmark POINTS, both zoom-gated from
+  // LABELS_MIN_ZOOM so the city-wide view stays readable. The district name is the
+  // only text this map draws; landmarks are dots with a hover title. Labels are
   // transparent-icon markers at each district's largest-ring centroid.
   const landmarkMarkersRef = useRef<google.maps.Marker[]>([]);
   useEffect(() => {
@@ -855,14 +878,22 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         const position = { lat: l.latitude!, lng: l.longitude! };
         return {
           marker: new google.maps.Marker({
+            // A LANDMARK IS A POINT HERE, NOT A LABEL.
+            //
+            // These used to carry their name as a rendered label above
+            // LANDMARK_NAMES_MIN_ZOOM. That read fine against Riyadh's 725 anchors and
+            // became the single worst thing on the map once the UAE import pushed the
+            // set to ~3,900: hundreds of overlapping terracotta names on top of the
+            // district mesh. Small dot only, at the same scale the shared map layer
+            // uses (useGeoBoundaryLayer), so every map draws landmarks alike. The name
+            // still arrives on hover via `title`.
             position,
             icon: {
-              path: google.maps.SymbolPath.CIRCLE, scale: 4.5,
-              fillColor: TERRACOTTA, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 1.5,
-              labelOrigin: new google.maps.Point(0, 3),
+              path: google.maps.SymbolPath.CIRCLE, scale: 3.2,
+              fillColor: TERRACOTTA, fillOpacity: 0.95, strokeColor: '#fff', strokeWeight: 1,
             },
             title: name,
-            clickable: true, // hover shows the name even below the label zoom
+            clickable: true, // hover shows the name
             zIndex: 5,
           }),
           position,
@@ -885,7 +916,6 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     //      changes nothing costs zero marker ops.
     // Labels only show at zoom >= LABELS_MIN_ZOOM, where a handful of districts
     // are on screen; we were attaching all 219 regardless.
-    let namesApplied: boolean | null = null;
     const syncMarkers = () => {
       const z = map.getZoom() ?? 0;
       if (z < LABELS_MIN_ZOOM) {
@@ -907,15 +937,6 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         const inView = e.position.lat >= south && e.position.lat <= north
           && e.position.lng >= west && e.position.lng <= east;
         if (inView !== e.on) { e.marker.setMap(inView ? map : null); e.on = inView; }
-      }
-      const names = z >= LANDMARK_NAMES_MIN_ZOOM;
-      if (names !== namesApplied) {
-        namesApplied = names;
-        for (const e of lmEntries) {
-          e.marker.setLabel(names && e.name
-            ? { text: e.name, color: TERRACOTTA, fontSize: '10px', fontWeight: '700' }
-            : null);
-        }
       }
     };
     syncMarkers();
