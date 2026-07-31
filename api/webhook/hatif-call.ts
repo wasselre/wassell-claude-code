@@ -321,20 +321,29 @@ interface AppUserLite {
   email: string | null;
   name_en: string | null;
   name_ar: string | null;
+  /** Hatif's own user id for this person — the stable join key. See below. */
+  hatif_user_id: string | null;
+  is_active: boolean | null;
 }
 
-async function loadActiveUsers(): Promise<AppUserLite[]> {
+async function loadRosterForAgentMatch(): Promise<AppUserLite[]> {
   // Deliberately NOT cached across events: the roster changes rarely but we
   // want a newly-added agent to link without waiting for the Edge isolate to
   // recycle. The table is a single-company roster (tiny), so a read per
   // webhook is negligible.
+  //
+  // Loads INACTIVE users too. This used to filter `is_active = true`, which is
+  // one of the three reasons no call has ever named its rep: the two
+  // highest-volume callers are offboarded users (فهد, 830 calls; صالح, 46) and
+  // were therefore never candidates. Attribution is history — an agent who has
+  // left still made the call. Routing a confirmation popup is a separate
+  // question, and the enqueue RPC gates on is_active itself.
   const supa = getServiceSupabase();
   const { data, error } = await supa
     .from('users')
-    .select('id,email,name_en,name_ar')
-    .eq('is_active', true);
+    .select('id,email,name_en,name_ar,hatif_user_id,is_active');
   if (error) {
-    console.error('[hatif-webhook] active-users load for agent match failed:', error.message);
+    console.error('[hatif-webhook] roster load for agent match failed:', error.message);
     return [];
   }
   return (data as AppUserLite[] | null) ?? [];
@@ -357,15 +366,32 @@ function firstNonEmpty(...vals: (string | null | undefined)[]): string | null {
  * second. Returns null when nothing matches — caller stores an empty agent.
  */
 async function findAgentUserId(event: HatifCallEvent): Promise<string | null> {
+  // Hatif's `userId` is the ONLY stable identity it sends. Verified across the
+  // last 200 raw_event payloads: the agent fields present are `userId` and
+  // `userName` — there is no email of any spelling, so the email branch below
+  // has never once matched. `userName` is a FIRST name («فهد») against a roster
+  // of full names («فهد عبدالعزيز»), so that branch never matched either.
+  //
+  // The id → user mapping lives on `users.hatif_user_id`, seeded per agent in
+  // 2026-07-31_hatif_agent_identity_map.sql. Email and name remain as
+  // fallbacks: email for the day Hatif starts sending one, name for an agent
+  // whose Hatif id has not been mapped yet.
+  // `event.userId` only — coerceHatifEvent already folds user_id / agentId /
+  // agent_id into it, and Hatif's nested `user` object has no verified id.
+  const hatifId = firstNonEmpty(event.userId);
   const email = firstNonEmpty(
     event.userEmail, event.agentEmail, event.userPrincipalName, event.user?.email,
   );
   const name = firstNonEmpty(event.userName, event.user?.userName);
-  if (!email && !name) return null;
+  if (!hatifId && !email && !name) return null;
 
-  const users = await loadActiveUsers();
+  const users = await loadRosterForAgentMatch();
   if (users.length === 0) return null;
 
+  if (hatifId) {
+    const byHatifId = users.find((u) => (u.hatif_user_id ?? '').trim() === hatifId.trim());
+    if (byHatifId) return byHatifId.id;
+  }
   if (email) {
     const e = email.toLowerCase();
     const byEmail = users.find((u) => (u.email ?? '').trim().toLowerCase() === e);
@@ -378,6 +404,9 @@ async function findAgentUserId(event: HatifCallEvent): Promise<string | null> {
     );
     if (byName) return byName.id;
   }
+  // Unmapped agent (e.g. a call-centre operator with no CRM account). The call
+  // is still logged and Hatif's raw name is preserved on call_logs.agent_name.
+  console.log(`[hatif-webhook] no CRM user for Hatif agent id=${hatifId ?? '?'} name=${name ?? '?'}`);
   return null;
 }
 
