@@ -56,7 +56,9 @@ if (!DRY_RUN && !DEEPSEEK_KEY) {
   process.exit(1);
 }
 
-const BATCH = 20; // strings per DeepSeek call
+const BATCH_MAX_ITEMS = 20; // strings per DeepSeek call (hard cap)
+const BATCH_MAX_CHARS = 3000; // total source chars per call — long prose (competitor
+// analyses, unit notes) must not overflow max_tokens, which truncates the JSON reply
 const RPC_PAGE = 200; // candidates fetched per RPC call
 
 // Keep in sync with the SYSTEM_PROMPT in api/value-translate.ts.
@@ -96,7 +98,11 @@ async function supabaseRest(path, init = {}) {
     const text = await res.text().catch(() => '');
     throw new Error(`${path} → HTTP ${res.status}: ${text.slice(0, 400)}`);
   }
-  return res.status === 204 ? null : res.json();
+  // `Prefer: return=minimal` responses (201/204) have an EMPTY body — parsing
+  // them threw "Unexpected end of JSON input" and failed every batch AFTER its
+  // rows were successfully upserted (live bug, 2026-07-31).
+  const text = await res.text();
+  return text.trim() === '' ? null : JSON.parse(text);
 }
 
 async function fetchCandidates(limit) {
@@ -121,7 +127,7 @@ async function deepseekBatch(items) {
         { role: 'user', content: `Target language: English.\nItems:\n${JSON.stringify(payload)}` },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 6000,
+      max_tokens: 8000,
       temperature: 0.2,
     }),
   });
@@ -130,6 +136,8 @@ async function deepseekBatch(items) {
     throw new Error(`deepseek HTTP ${res.status}: ${text.slice(0, 300)}`);
   }
   const body = await res.json();
+  const finish = body.choices?.[0]?.finish_reason;
+  if (finish === 'length') throw new Error('deepseek reply truncated (finish_reason=length) — batch too large');
   const content = body.choices?.[0]?.message?.content;
   if (!content) throw new Error('deepseek returned an empty completion');
   const parsed = JSON.parse(content.slice(content.indexOf('{'), content.lastIndexOf('}') + 1));
@@ -168,8 +176,25 @@ for (;;) {
     process.exit(0);
   }
 
-  for (let i = 0; i < candidates.length; i += BATCH) {
-    const chunk = candidates.slice(i, i + BATCH);
+  // Char-budget batching: many short names pack into one call; long prose
+  // (competitor analyses, unit notes) gets small batches so the JSON reply
+  // never hits max_tokens and truncates.
+  const chunks = [];
+  let current = [];
+  let currentChars = 0;
+  for (const c of candidates) {
+    const len = c.source_text.length;
+    if (current.length > 0 && (current.length >= BATCH_MAX_ITEMS || currentChars + len > BATCH_MAX_CHARS)) {
+      chunks.push(current);
+      current = [];
+      currentChars = 0;
+    }
+    current.push(c);
+    currentChars += len;
+  }
+  if (current.length > 0) chunks.push(current);
+
+  for (const chunk of chunks) {
     try {
       const results = await deepseekBatch(chunk);
       const rows = chunk

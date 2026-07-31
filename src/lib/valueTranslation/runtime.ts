@@ -37,6 +37,12 @@ interface MissMeta {
 
 const MAX_CHARS = 4000;
 const BATCH_SIZE = 25;
+/**
+ * Total source chars per batch call. Long prose must not overflow the
+ * endpoint's max_tokens — a truncated JSON reply fails the whole batch
+ * (learned live during the 2026-07-31 backfill).
+ */
+const BATCH_CHAR_BUDGET = 3000;
 const FLUSH_DELAY_MS = 800;
 const LOAD_PAGE = 1000;
 
@@ -128,7 +134,14 @@ async function flush(): Promise<void> {
   const target = (['en', 'ar'] as TargetLang[]).find((t) => pending[t].size > 0);
   if (!target) return;
 
-  const batch = Array.from(pending[target].entries()).slice(0, BATCH_SIZE);
+  const batch: Array<[string, MissMeta]> = [];
+  let chars = 0;
+  for (const entry of pending[target].entries()) {
+    const len = entry[0].length;
+    if (batch.length > 0 && (batch.length >= BATCH_SIZE || chars + len > BATCH_CHAR_BUDGET)) break;
+    batch.push(entry);
+    chars += len;
+  }
   for (const [text] of batch) pending[target].delete(text);
 
   inFlight = true;

@@ -174,7 +174,7 @@ export default async function handler(req: Request): Promise<Response> {
             user: userMessage,
             shape: '{"results":[{"i": number, "t": string}]}',
             requiredKeys: ['results'],
-            maxTokens: 4_000,
+            maxTokens: 8_000,
             timeoutMs: 25_000,
           });
           results = validateResults(out, missing.length);
@@ -194,7 +194,7 @@ export default async function handler(req: Request): Promise<Response> {
         try {
           response = await client.messages.create({
             model: 'claude-haiku-4-5-20251001',
-            max_tokens: 4_000,
+            max_tokens: 8_000,
             system: SYSTEM_PROMPT,
             tools: [TOOL_SCHEMA],
             tool_choice: { type: 'tool', name: 'translate_values' },
