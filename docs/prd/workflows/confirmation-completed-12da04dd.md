@@ -5,7 +5,7 @@
 # Workflow: Confirmation Completed / إكمال تأكيد الموعد
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-17
+**Last updated (from DB):** 2026-07-30
 **Workflow id:** `12da04dd-8119-4aeb-a573-ce85864ab657`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is updated
@@ -136,13 +136,13 @@ _Match: ALL must pass (AND)_
 - Follow-up Type (`followup_type`) equals "Appointment Confirmation Call" (`appointment_confirmation_call`)
 - Appointment (`appointment_id`) is not empty
 - Actual Follow-up (`actual_datetime`) is not empty
-- Outcome (`call_result`) equals "Wrong Time" (`wrong_time`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Recontact Later To Reschedule" (`recontact_later`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
 Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
-- Client Status (`client_status`) ← static value الوقت غير مناسب
+- Client Status (`client_status`) ← static value إعادة تواصل لاحقًا
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:

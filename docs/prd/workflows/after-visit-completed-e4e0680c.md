@@ -5,7 +5,7 @@
 # Workflow: After-Visit Completed / إكمال متابعة بعد الزيارة
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-21
+**Last updated (from DB):** 2026-07-30
 **Workflow id:** `e4e0680c-4400-4030-8013-2bb21abb2a2f`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is updated
@@ -140,28 +140,7 @@ Create a **Follow-ups / المتابعات** record with:
 - Status (`followup_status`) ← static value open
 - Follow-up Number (`followup_number`) ← formula `{followup_number} + 1`
 
-### Branch 8: ELSE IF — Wrong Time
-
-**Conditions:**
-_Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals "Follow-Up Call After Visit" (`follow_up_call_after_visit`)
-- Actual Follow-up (`actual_datetime`) is not empty
-- Outcome (`call_result`) equals "Wrong Time" (`wrong_time`) · _only when it newly becomes true_
-
-**Actions (run in order):**
-
-**Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
-- Client Status (`client_status`) ← static value الوقت غير مناسب
-
-**Action 2 — Create Record**
-Create a **Follow-ups / المتابعات** record with:
-- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
-- Follow-up Type (`followup_type`) ← static value follow_up_call_after_visit
-- Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by `+0d`
-- Status (`followup_status`) ← static value open
-
-### Branch 9: ELSE IF — Requested Another Visit
+### Branch 8: ELSE IF — Requested Another Visit
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -184,7 +163,7 @@ Create a **Follow-ups / المتابعات** record with:
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+0d`
 - Status (`followup_status`) ← static value open
 
-### Branch 10: ELSE IF — Visited Another Project
+### Branch 9: ELSE IF — Visited Another Project
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -208,7 +187,7 @@ Create a **Follow-ups / المتابعات** record with:
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d @10:00`
 - Status (`followup_status`) ← static value open
 
-### Branch 11: ELSE IF — Recontact Later
+### Branch 10: ELSE IF — Recontact Later
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -230,7 +209,7 @@ Create a **Follow-ups / المتابعات** record with:
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by `+0d`
 - Status (`followup_status`) ← static value open
 
-### Branch 12: ELSE IF — Invalid Number
+### Branch 11: ELSE IF — Invalid Number
 
 **Conditions:**
 _Match: ALL must pass (AND)_

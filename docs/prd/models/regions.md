@@ -5,7 +5,7 @@
 # Model: Regions / المناطق  `regions`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-26
+**Last updated (from DB):** 2026-07-30
 **Model id:** `d15a0001-0000-4000-8000-000000000001`
 **Storage:** frozen table `regions`
 **Group:** Geography
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **7**
+- Fields: **8**
 - Section-selector field: none
 - Duplicate-check field: SPL Region ID (`spl_region_id`)
 - Custom buttons: 0
@@ -32,7 +32,15 @@
 | `name_ar` | Name (AR) / الاسم (عربي) | Text | yes | half | yes |  |
 | `name_en` | Name (EN) / الاسم (إنجليزي) | Text | yes | half | yes |  |
 | `spl_region_id` | SPL Region ID / معرف المنطقة (SPL) | Text | no | half | yes |  |
+| `country_lookup` | Country / الدولة | Lookup | no | half | yes | → Countries |
 | `country_code` | Country Code / رمز الدولة | Text | no | half | no |  |
 | `source` | Source / المصدر | Text | no | half | no |  |
 | `source_updated_at` | Source Updated / تاريخ تحديث المصدر | Date & time | no | half | no |  |
 | `is_active` | Active / نشط | Checkbox | no | half | no |  |
+
+**Field details:**
+
+- **Country / الدولة** (`country_lookup`, type `lookup`):
+  - target model: Countries
+  - shows field: `name_ar`
+  - multiple: no

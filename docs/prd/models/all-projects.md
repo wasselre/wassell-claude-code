@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-19
+**Last updated (from DB):** 2026-07-31
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -13,8 +13,8 @@
 **Icon:** `building-2`   ·   **Color:** `#8E4E3A`
 
 ## Overview
-- Sections: **9** (1 base, 8 non-base)
-- Fields: **57**
+- Sections: **10** (1 base, 9 non-base)
+- Fields: **65**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 1
@@ -80,7 +80,7 @@
   - API value `finishing` → "Finishing" / "التشطيب" · color `#EC4899`
   - API value `facade_installation` → "Facade Installation" / "تركيب الواجهات " · color `#14B8A6`
   - API value `ready` → "Ready" / "جاهز " · color `#EF4444`
-  - API value `تحت-التطوير` → "تحت التطوير" / "تحت التطوير" · color `#06B6D4`
+  - API value `تحت-التطوير` → "Under Development" / "تحت التطوير" · color `#06B6D4`
 - **Unit Types / أنواع الوحدات** (`unit_types`, type `multiselect`) — multi-value. Options:
   - API value `apartment` → "Apartment" / "شقة" · color `#3B82F6`
   - API value `townhouse` → "Townhouse" / "تاون هاوس" · color `#10B981`
@@ -93,7 +93,7 @@
   - API value `townhouses` → "Townhouses" / "تاون هاوس" · color `#6366F1`
   - API value `villas` → "Villas" / "فلل" · color `#6B7280`
   - API value `اختبار-سلج` → "Test" / "اختبار-سلج" · color `#3B82F6`
-  - API value `برج` → "برج" / "برج" · color `#10B981`
+  - API value `برج` → "Tower" / "برج" · color `#10B981`
   - API value `penthouse` → "Penthouse" / "بنتهاوس" · color `#06B6D4`
 - **Preferred Amenities / المرافق** (`preferred_amenities`, type `multiselect`) — multi-value. Options:
   - API value `prayer_room` → "Prayer Room" / "مصلى" · color `#3B82F6`
@@ -109,19 +109,19 @@
   - API value `basketball_court` → "Basketball Court" / "ملعب كرة سلة" · color `#B8734F`
   - API value `volleyball_court` → "Volleyball Court" / "ملعب كرة طائرة" · color `#C09B5F`
   - API value `tennis_court` → "Tennis Court" / "ملعب تنس" · color `#3B82F6`
-  - API value `مواقف-خارجية` → "مواقف خارجية" / "مواقف خارجية" · color `#EF4444`
-  - API value `اسطح-خاصة` → "أسطح خاصة" / "أسطح خاصة" · color `#8B5CF6`
-  - API value `بلكونات` → "بلكونات" / "بلكونات" · color `#EC4899`
-  - API value `نظام-مراقبة-امنية` → "نظام مراقبة أمنية" / "نظام مراقبة أمنية" · color `#06B6D4`
-  - API value `مواقف-خارجية-مظللة` → "مواقف خارجية مظللة" / "مواقف خارجية مظللة" · color `#84CC16`
-  - API value `شواحن-سيارات-كهربايية` → "شواحن سيارات كهربائية" / "شواحن سيارات كهربائية" · color `#F97316`
-  - API value `نظام-دخول-ذكي` → "نظام دخول ذكي" / "نظام دخول ذكي" · color `#6366F1`
-  - API value `مصاعد` → "مصاعد" / "مصاعد" · color `#3B82F6`
-  - API value `خزان-مياه-ارضي` → "خزان مياه أرضي" / "خزان مياه أرضي" · color `#10B981`
-  - API value `مضخات-مياه` → "مضخات مياه" / "مضخات مياه" · color `#F59E0B`
-  - API value `سينما` → "سينما" / "سينما" · color `#EF4444`
-  - API value `جلسات-خارجية` → "جلسات خارجية" / "جلسات خارجية" · color `#8B5CF6`
-  - API value `فراغات-مرنة` → "فراغات مرنة" / "فراغات مرنة" · color `#EC4899`
+  - API value `مواقف-خارجية` → "Outdoor Parking" / "مواقف خارجية" · color `#EF4444`
+  - API value `اسطح-خاصة` → "Private Rooftops" / "أسطح خاصة" · color `#8B5CF6`
+  - API value `بلكونات` → "Balconies" / "بلكونات" · color `#EC4899`
+  - API value `نظام-مراقبة-امنية` → "Security Camera System" / "نظام مراقبة أمنية" · color `#06B6D4`
+  - API value `مواقف-خارجية-مظللة` → "Shaded Outdoor Parking" / "مواقف خارجية مظللة" · color `#84CC16`
+  - API value `شواحن-سيارات-كهربايية` → "EV Chargers" / "شواحن سيارات كهربائية" · color `#F97316`
+  - API value `نظام-دخول-ذكي` → "Smart Entry System" / "نظام دخول ذكي" · color `#6366F1`
+  - API value `مصاعد` → "Elevators" / "مصاعد" · color `#3B82F6`
+  - API value `خزان-مياه-ارضي` → "Ground Water Tank" / "خزان مياه أرضي" · color `#10B981`
+  - API value `مضخات-مياه` → "Water Pumps" / "مضخات مياه" · color `#F59E0B`
+  - API value `سينما` → "Cinema" / "سينما" · color `#EF4444`
+  - API value `جلسات-خارجية` → "Outdoor Seating Areas" / "جلسات خارجية" · color `#8B5CF6`
+  - API value `فراغات-مرنة` → "Flexible Spaces" / "فراغات مرنة" · color `#EC4899`
   - API value `jacuzzi` → "Jacuzzi" / "جاكوزي" · color `#C09B5F`
   - API value `sauna` → "Sauna" / "ساونا" · color `#C09B5F`
   - API value `steam_room` → "Steam Room" / "غرفة بخار" · color `#C09B5F`
@@ -212,7 +212,31 @@
   - 50 to 10000 step 1 m²
   - stored rollup (`available_area_range`), read-only
 
-### 4. Sales & Targeting / المبيعات والاستهداف  _(color #8E4E3A)_
+### 4. Payment & Handover / الدفع والتسليم  _(color #B8734F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `handover_date` | Handover Date / تاريخ التسليم | Date | no | half | yes |  |
+| `developer_currency` | Developer Currency / عملة المطور | Dropdown | no | half | yes | 2 options |
+| `payment_plan_summary` | Payment Plan (Summary) / ملخص خطة الدفع | Text | no | full | yes |  |
+| `down_payment_percent` | Down Payment % / الدفعة الأولى % | Number | no | half | yes |  |
+| `during_construction_percent` | During Construction % / أثناء الإنشاء % | Number | no | half | yes |  |
+| `on_handover_percent` | On Handover % / عند التسليم % | Number | no | half | yes |  |
+| `post_handover_months` | Post-Handover Months / أشهر ما بعد التسليم | Number | no | half | yes |  |
+| `payment_plan_schedule` | Payment Schedule / جدول الدفعات | Table | no | full | yes | 4 columns |
+
+**Field details:**
+
+- **Developer Currency / عملة المطور** (`developer_currency`, type `dropdown`) — options:
+  - API value `SAR` → "SAR" / "ريال سعودي"
+  - API value `AED` → "AED" / "درهم إماراتي"
+- **Payment Schedule / جدول الدفعات** (`payment_plan_schedule`, type `table`) — columns:
+  - `milestone` "Milestone" (text)
+  - `percent` "Percent %" (number)
+  - `due_at` "Due At" (text)
+  - `notes` "Notes" (text)
+
+### 5. Sales & Targeting / المبيعات والاستهداف  _(color #8E4E3A)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -242,7 +266,7 @@
   - API value `shared` → "Shared" / "مشترك" · color `#C09B5F`
   - API value `open_market` → "Open Market" / "سوق مفتوح" · color `#9CA3AF`
 
-### 5. Media & Marketing / الوسائط والتسويق  _(color #B8734F)_
+### 6. Media & Marketing / الوسائط والتسويق  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -273,7 +297,7 @@
   - `service` "Service" (text)
   - `notes` "Notes" (text)
 
-### 6. Developer Content / محتوى المطور  _(color #C09B5F)_
+### 7. Developer Content / محتوى المطور  _(color #C09B5F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -281,7 +305,7 @@
 | `project_page_url` | Project Page / صفحة المشروع - المطور | URL | no | half | yes |  |
 | `developer_content` | Developer Content / المحتوى - المطور | Attachment | no | half | yes |  |
 
-### 7. Our Content / محتوانا  _(color #8E4E3A)_
+### 8. Our Content / محتوانا  _(color #8E4E3A)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -290,13 +314,13 @@
 | `project_content` | Project Content / محتوى المشروع | Attachment | no | half | yes |  |
 | `marketing_document` | Marketing Document / الوثيقة التسويقية | Text area | no | full | no |  |
 
-### 8. Website Settings / إعدادات الموقع  _(color #B8734F)_
+### 9. Website Settings / إعدادات الموقع  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `is_public` | Show on Website / عرض على الموقع | Checkbox | no | half | yes |  |
 
-### 9. Data Quality / جودة البيانات  _(color #C09B5F)_
+### 10. Data Quality / جودة البيانات  _(color #C09B5F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |

@@ -5,7 +5,7 @@
 # Workflow: Follow-ups - Booking Call / المتابعات - إتصال حجز موعد
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-23
+**Last updated (from DB):** 2026-07-30
 **Workflow id:** `d997425a-0c8d-48c4-afef-b5792792cfae`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is updated
@@ -108,11 +108,25 @@ Update **Clients / العملاء** records where Client ID (`client_id`) = the 
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value مهتم
 
-### Branch 5: ELSE IF — الوقت غير مناسب
+### Branch 5: ELSE IF — غير مهتم
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Outcome (`call_result`) equals "Wrong Time" (`wrong_time`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Not Interested" (`not_interested`) · _only when it newly becomes true_
+- Actual Follow-up (`actual_datetime`) is not empty
+
+**Actions (run in order):**
+
+**Action 1 — Update Record**
+Update **Clients / العملاء** records where Client ID (`client_id`) = the trigger record's Client ID (`client_id`), setting:
+- Client Stage (`client_stage`) ← static value غير مؤهل
+- Client Status (`client_status`) ← static value غير مهتم
+
+### Branch 6: ELSE IF — Recontact Later
+
+**Conditions:**
+_Match: ALL must pass (AND)_
+- Outcome (`call_result`) equals "Recontact Later To Reschedule" (`recontact_later`) · _only when it newly becomes true_
 - Actual Follow-up (`actual_datetime`) is not empty
 - Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`)
 
@@ -129,18 +143,4 @@ Create a **Follow-ups / المتابعات** record with:
 **Action 2 — Update Record**
 Update **Clients / العملاء** records where Client ID (`client_id`) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
-- Client Status (`client_status`) ← static value الوقت غير مناسب
-
-### Branch 6: ELSE IF — غير مهتم
-
-**Conditions:**
-_Match: ALL must pass (AND)_
-- Outcome (`call_result`) equals "Not Interested" (`not_interested`) · _only when it newly becomes true_
-- Actual Follow-up (`actual_datetime`) is not empty
-
-**Actions (run in order):**
-
-**Action 1 — Update Record**
-Update **Clients / العملاء** records where Client ID (`client_id`) = the trigger record's Client ID (`client_id`), setting:
-- Client Stage (`client_stage`) ← static value غير مؤهل
-- Client Status (`client_status`) ← static value غير مهتم
+- Client Status (`client_status`) ← static value إعادة تواصل لاحقًا

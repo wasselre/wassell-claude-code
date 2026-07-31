@@ -5,7 +5,7 @@
 # Workflow: WhatsApp Response Completed / إكمال رد الواتساب
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-12
+**Last updated (from DB):** 2026-07-30
 **Workflow id:** `95bdbe0f-1247-4eb4-bc8f-f0db786c7e27`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is updated
@@ -52,31 +52,7 @@ Update **Clients / العملاء** records where `id` (unknown field) = the tri
 - Client Stage (`client_stage`) ← static value عرض سعر
 - Client Status (`client_status`) ← static value تم طلب عرض سعر
 
-### Branch 3: ELSE IF — Wrong Time
-
-**Conditions:**
-_Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals "WhatsApp Follow-Up" (`whatsapp_follow_up`)
-- Actual Follow-up (`actual_datetime`) is not empty
-- Outcome (`call_result`) equals "Wrong Time" (`wrong_time`) · _only when it newly becomes true_
-
-**Actions (run in order):**
-
-**Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
-- Client Status (`client_status`) ← static value الوقت غير مناسب
-
-**Action 2 — Create Record**
-Create a **Follow-ups / المتابعات** record with:
-- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
-- Follow-up Type (`followup_type`) ← static value whatsapp_follow_up
-- Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by `+0d`
-- Status (`followup_status`) ← static value open
-- WhatsApp Attempt # (`whatsapp_attempt_number`) ← static value 1
-- Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)
-- Previous Follow-up (`previous_followup_id`) ← the trigger record's id
-
-### Branch 4: ELSE IF — Recontact Later
+### Branch 3: ELSE IF — Recontact Later
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -100,7 +76,7 @@ Create a **Follow-ups / المتابعات** record with:
 - Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)
 - Previous Follow-up (`previous_followup_id`) ← the trigger record's id
 
-### Branch 5: ELSE IF — Not Interested
+### Branch 4: ELSE IF — Not Interested
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -116,7 +92,7 @@ Update **Clients / العملاء** records where `id` (unknown field) = the tri
 - Client Status (`client_status`) ← static value غير مهتم
 - Lost Reason (`lost_reason`) ← the trigger record's Lost Reason (`lost_reason`)
 
-### Branch 6: ELSE IF — No Message Sent
+### Branch 5: ELSE IF — No Message Sent
 
 **Conditions:**
 _Match: ALL must pass (AND)_

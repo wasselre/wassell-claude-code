@@ -5,7 +5,7 @@
 # Model: Districts / الأحياء  `districts`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-26
+**Last updated (from DB):** 2026-07-30
 **Model id:** `d9a9db7e-b602-470c-b81b-5d6ff17048e9`
 **Storage:** frozen table `districts`
 **Group:** Geography
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **27**
+- Fields: **28**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -55,6 +55,7 @@
 | `is_active` | Active / نشط | Checkbox | no | half | no |  |
 | `legacy_status` | Legacy Status / حالة الترحيل | Dropdown | no | half | no | 3 options |
 | `migration_notes` | Migration Notes / ملاحظات الترحيل | Text area | no | full | no |  |
+| `country_code` | Country Code / رمز الدولة | Text | no | half | no |  |
 
 **Field details:**
 

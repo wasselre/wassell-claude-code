@@ -5,7 +5,7 @@
 # Model: Unanswered Requests / طلبات غير مجابة  `unanswered_requests`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-22
+**Last updated (from DB):** 2026-07-31
 **Model id:** `da920a2c-43c2-4b82-9c39-ac36c4602e51`
 **Storage:** unified records (JSONB)
 **Group:** Unresponded Requests
@@ -54,7 +54,7 @@
   - source section: `84e95d93-b3cb-40d3-9f69-0b30d51a2a3a`
   - fields: all · editable: all · sync-back: all
 - **Request Status / حالة الطلب** (`request_status`, type `dropdown`) — options:
-  - API value `` → "" / "تم الإستلام" · color `#3B82F6`
+  - API value `received` → "Received" / "تم الإستلام" · color `#3B82F6`
   - API value `offices_selected` → "Offices Selected" / "يتم تحديد المكاتب" · color `#10B981`
   - API value `offices_contacted` → "Offices Contacted" / "يتم التواصل مع المكاتب" · color `#F59E0B`
   - API value `offers_identified` → "Offers Identified" / "تم حصر العروض" · color `#EF4444`

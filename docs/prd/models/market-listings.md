@@ -5,7 +5,7 @@
 # Model: Market Listings / إعلانات السوق  `market_listings`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-02
+**Last updated (from DB):** 2026-07-30
 **Model id:** `8f06bc39-4bee-42e9-9fab-77023fb89ede`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

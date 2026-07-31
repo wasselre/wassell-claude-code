@@ -5,7 +5,7 @@
 # Model: Real Estate Offices / المكاتب العقارية  `real_estate_offices`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-28
+**Last updated (from DB):** 2026-07-30
 **Model id:** `62256164-281b-4f1f-85a8-a3dac40b9ae9`
 **Storage:** unified records (JSONB)
 **Group:** Unresponded Requests

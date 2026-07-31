@@ -5,7 +5,7 @@
 # Model: Cities / المدن  `cities`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-26
+**Last updated (from DB):** 2026-07-30
 **Model id:** `d15a0001-0000-4000-8000-000000000002`
 **Storage:** frozen table `cities`
 **Group:** Geography
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **11**
+- Fields: **12**
 - Section-selector field: none
 - Duplicate-check field: SPL City ID (`spl_city_id`)
 - Custom buttons: 0
@@ -40,6 +40,7 @@
 | `source_updated_at` | Source Updated / تاريخ تحديث المصدر | Date & time | no | half | no |  |
 | `has_districts` | Has Districts / يحتوي على أحياء | Checkbox | no | half | no |  |
 | `is_active` | Active / نشط | Checkbox | no | half | no |  |
+| `country_code` | Country Code / رمز الدولة | Text | no | half | no |  |
 
 **Field details:**
 
