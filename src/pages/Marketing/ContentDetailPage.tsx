@@ -126,6 +126,19 @@ export default function ContentDetailPage() {
   const openPubs = publications.filter((p) => p.status !== 'cancelled').length;
   const openTasks = tasks.filter((t) => t.status === 'open').length;
 
+  // The version IS the round — a rejection opens round 2, which is version 2.
+  // One number, derived from the task chain, never set by hand.
+  const version = tasks.reduce((a, t) => Math.max(a, t.round), 1);
+
+  // The pinned review note: the latest rejection, shown while the item is
+  // still open so nobody has to scroll the thread to learn WHY it came back.
+  const lastRejection = item.status_key !== 'done'
+    ? [...tasks]
+        .filter((t) => t.result === 'changes_requested' && t.note)
+        .sort((a, b) => (a.closed_at ?? '').localeCompare(b.closed_at ?? ''))
+        .pop() ?? null
+    : null;
+
   const tabs: Array<{ key: Tab; ar: string; en: string; badge?: number }> = [
     { key: 'overview', ar: 'نظرة عامة', en: 'Overview' },
     { key: 'content', ar: 'المحتوى', en: 'Content' },
@@ -153,6 +166,9 @@ export default function ContentDetailPage() {
             <h3>{item.title}</h3>
             <div className="chips">
               <KindCell typeKey={item.content_type_key} label={typeLabel(item.content_type_key)} />
+              {version > 1 && (
+                <span className="tag">{isAr ? `النسخة ${num(version, true)}` : `Version ${version}`}</span>
+              )}
               {item.project_id && <span className="tag">{projectName(item.project_id)}</span>}
               <span className="tag tag-t">
                 {(isAr ? PURPOSE_LABELS[item.purpose]?.ar : PURPOSE_LABELS[item.purpose]?.en) ?? item.purpose}
@@ -176,6 +192,9 @@ export default function ContentDetailPage() {
                   {isAr ? 'متأخر' : 'late'}
                 </span>
               )}
+              <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
+                {isAr ? 'آخر تعديل ' : 'last edited '}{shortDate(item.updated_at, isAr)}
+              </span>
             </div>
           </div>
           <div className="acts">
@@ -329,22 +348,20 @@ export default function ContentDetailPage() {
                 schema={type?.field_schema ?? []}
                 data={item.data ?? {}}
                 canEdit={canEditNow}
+                canApprove={can('approve_creative')}
                 isAr={isAr}
                 onSaved={(data) => setItem({ ...item, data })}
               />
               {(item.content_type_key === 'video' || scenes.length > 0) && (
-                <>
-                  <div className="lbl">{isAr ? 'المشاهد' : 'Scenes'}</div>
-                  <SceneTable
-                    contentId={item.id}
-                    contentTitle={item.title}
-                    projectId={item.project_id}
-                    scenes={scenes}
-                    canEdit={canEditNow}
-                    isAr={isAr}
-                    onChange={setScenes}
-                  />
-                </>
+                <SceneTable
+                  contentId={item.id}
+                  contentTitle={item.title}
+                  projectId={item.project_id}
+                  scenes={scenes}
+                  canEdit={canEditNow}
+                  isAr={isAr}
+                  onChange={setScenes}
+                />
               )}
             </div>
           )}
@@ -444,6 +461,30 @@ export default function ContentDetailPage() {
                 workflowLabel={typeLabel(item.content_type_key)}
                 isAr={isAr}
               />
+            </div>
+          )}
+          {lastRejection && (
+            <div
+              style={{
+                background: 'color-mix(in srgb, var(--late) 8%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--late) 30%, transparent)',
+                borderRadius: 8,
+                padding: '10px 12px',
+                marginBottom: 13,
+              }}
+            >
+              <div className="lbl" style={{ color: 'var(--late)' }}>
+                {isAr
+                  ? `ملاحظة مراجعة مفتوحة · النسخة ${num(lastRejection.round, true)}`
+                  : `Open review note · version ${lastRejection.round}`}
+              </div>
+              <div style={{ fontSize: 12, marginTop: 5, lineHeight: 1.7 }}>{lastRejection.note}</div>
+              <div style={{ fontSize: 10.5, color: 'var(--mute)', marginTop: 6 }}>
+                {shortDate(lastRejection.closed_at, isAr)}
+                {version > lastRejection.round && (
+                  <> · {isAr ? `قيد المعالجة في النسخة ${num(version, true)}` : `being addressed in version ${version}`}</>
+                )}
+              </div>
             </div>
           )}
           <CommentThread
