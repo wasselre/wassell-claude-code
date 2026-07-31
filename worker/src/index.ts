@@ -27,6 +27,7 @@ import http from 'node:http';
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { loadEnv } from './env.js';
 import { makeServiceClient } from './lib/serviceClient.js';
+import { runCallAnalysisJob, type CallAnalysisJob } from './runCallAnalysisJob.js';
 import { runCleanTextJob, type CleanTextJob } from './runCleanTextJob.js';
 import { runVideoConvertJob, type VideoConvertJob } from './runVideoConvertJob.js';
 import { runListingMirrorJob, type ListingMirrorJob } from './runListingMirrorJob.js';
@@ -85,6 +86,11 @@ let videoWakeRequested = false;
 // watchdog sweeps stale jobs of ALL kinds.
 let mirrorBusy = false;
 let mirrorWakeRequested = false;
+// AI call-result suggestions (call_result_suggestions) get their own loop: a
+// rep is waiting on the popup, so a 5-10s DeepSeek read must never queue behind
+// a 12-minute deck build.
+let callAnalysisBusy = false;
+let callAnalysisWakeRequested = false;
 // Office-preview conversions (file_preview_jobs) get a THIRD independent loop
 // for the same reason — a 2-10s soffice run should never wait behind a deck.
 let previewBusy = false;
@@ -610,6 +616,110 @@ async function listingMirrorPollLoop(): Promise<void> {
     }
     const wokeAt = Date.now();
     while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !mirrorWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// AI call-result suggestions — call_result_suggestions queue.
+//
+// A rep hangs up and moves on to the next task; a few seconds later this loop
+// reads the transcript, proposes the outcome, and the row flips to 'ready' so
+// Realtime can push a confirmation popup to the task's owner. NOTHING is
+// applied without that human confirming — 'ready' is a proposal, never a write
+// to the follow-up.
+
+async function claimAndRunOneCallAnalysis(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('call_result_suggestion_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] call-analysis claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    id: string; call_record_id: string; call_log_id: string | null; client_id: string | null;
+    rep_user_id: string | null; followup_id: string | null; followup_type: string | null;
+    kind: string; attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: CallAnalysisJob = {
+    id: row.id,
+    callRecordId: row.call_record_id,
+    callLogId: row.call_log_id,
+    clientId: row.client_id,
+    followupId: row.followup_id,
+    followupType: row.followup_type,
+    kind: row.kind === 'log_interaction' ? 'log_interaction' : 'confirm_followup',
+    attempts: row.attempts,
+  };
+  console.log(`[worker] claimed call-analysis job=${job.id} call=${job.callRecordId} kind=${job.kind} attempts=${job.attempts}`);
+
+  try {
+    const r = await runCallAnalysisJob({ supabase, env, job });
+    const { error: doneErr } = await supabase.rpc('call_result_suggestion_ready', {
+      p_id: job.id,
+      p_outcome: r.outcome,
+      p_confidence: r.confidence,
+      p_reasoning: r.reasoning,
+      p_summary: r.summary,
+      p_fields: r.fields,
+      p_quoted: r.quoted,
+      p_model: r.model,
+      p_source: r.source,
+    });
+    if (doneErr) console.error(`[worker] call_result_suggestion_ready RPC failed: ${doneErr.message}`);
+    else console.log(`[worker] call-analysis job=${job.id} ready → ${r.outcome}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] call-analysis job=${job.id} FAILED:`, msg);
+    try {
+      const { error: failErr } = await supabase.rpc('call_result_suggestion_fail', {
+        p_id: job.id, p_error: msg,
+      });
+      if (failErr) console.error(`[worker] call_result_suggestion_fail RPC failed: ${failErr.message}`);
+    } catch (innerErr) {
+      console.error(`[worker] could not mark call-analysis job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true; // claimed → re-poll immediately so a backlog drains
+}
+
+async function runCallAnalysisWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('call_result_suggestions_watchdog');
+    if (error) { console.error(`[worker] call-analysis watchdog RPC error: ${error.message}`); return; }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) console.warn(`[worker] call-analysis watchdog swept ${swept} stale job(s)`);
+  } catch (err) {
+    console.error('[worker] call-analysis watchdog threw:', err);
+  }
+}
+
+async function callAnalysisPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    callAnalysisBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneCallAnalysis();
+    } catch (err) {
+      console.error('[worker] call-analysis poll iteration error:', err);
+    }
+    callAnalysisBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runCallAnalysisWatchdog();
+    }
+    if (didClaim || callAnalysisWakeRequested) {
+      callAnalysisWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !callAnalysisWakeRequested && !shuttingDown) {
       await sleep(200);
     }
   }
@@ -1958,6 +2068,8 @@ const server = http.createServer((req, res) => {
         clean_busy: cleanBusy,
         video_busy: videoBusy,
         mirror_busy: mirrorBusy,
+        call_analysis_busy: callAnalysisBusy,
+        call_analysis_enabled: Boolean(env.DEEPSEEK_API_KEY),
         preview_busy: previewBusy,
         compress_busy: compressBusy,
         push_busy: pushBusy,
@@ -1990,6 +2102,7 @@ const server = http.createServer((req, res) => {
     cleanWakeRequested = true;
     videoWakeRequested = true;
     mirrorWakeRequested = true;
+    callAnalysisWakeRequested = true;
     previewWakeRequested = true;
     compressWakeRequested = true;
     documentWakeRequested = true;
@@ -2019,7 +2132,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || cleanBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || scheduledWaBusy || marketingBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || scheduledWaBusy || marketingBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -2577,6 +2690,14 @@ if (env.WORKFLOW_PROOF_ONLY) {
     conflictWatchdogLoop(),
     marketingOpsPollLoop(), // always-on: ops monitoring runs even when collection is disabled
   ];
+  // AI call-result analysis only runs when the DeepSeek key is set, so the
+  // worker boots cleanly before the feature is switched on.
+  if (env.DEEPSEEK_API_KEY) {
+    console.log(`[worker] call-analysis loop enabled (model=${env.DEEPSEEK_MODEL})`);
+    loops.push(callAnalysisPollLoop());
+  } else {
+    console.log('[worker] call-analysis loop disabled (DEEPSEEK_API_KEY unset)');
+  }
   // Scheduled-reports loop only runs when the shared secret is set (feature on).
   if (env.REPORTS_RUNNER_SECRET) {
     console.log('[worker] scheduled-reports loop enabled');

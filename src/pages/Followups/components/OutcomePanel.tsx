@@ -369,6 +369,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
               clientId={clientId}
               phones={phones}
               value={(draft.completed_by_call_id as string) ?? null}
+              anchor={(draft.actual_datetime as string) ?? null}
               onAttach={(id) => patchDraft({ completed_by_call_id: id })}
             />
           )}

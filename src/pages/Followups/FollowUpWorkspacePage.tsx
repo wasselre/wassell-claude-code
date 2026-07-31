@@ -5,7 +5,9 @@ import { useAppStore } from '@/stores/appStore';
 import { useCanEditRecord, useCanViewRecord } from '@/hooks/usePermission';
 import { useRecordDraft } from '@/hooks/useRecordDraft';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
-import { applyOverridesToConfig, buildFieldLabels, getFollowUpTypeConfig, validateFollowUpCompletion } from '@/lib/salesProcess';
+import { applyOverridesToConfig, getFollowUpTypeConfig } from '@/lib/salesProcess';
+import { completeFollowUp } from './lib/completeFollowup';
+import { cancelSuggestionsForFollowup } from '@/lib/callSuggestions/client';
 import type { AppRecord } from '@/types';
 import { resolveFollowupContext } from './lib/followupContext';
 import { getFinderHandoff, clearFinderHandoff } from '@/lib/matching/finderHandoff';
@@ -181,63 +183,47 @@ export default function FollowUpWorkspacePage() {
   const goAdvanced = () => navigate(`/model/followups/${record.id}?generic=1`);
 
   const handleComplete = async (outcomeKey: string) => {
-    const finalData: Record<string, unknown> = {
-      ...draft,
-      call_result: outcomeKey,
-      actual_datetime: draft.actual_datetime ?? new Date().toISOString(),
-      followup_status: 'completed',
-      // Clear the WhatsApp waiting/replied flag on completion. A completed row
-      // must never keep `message_sent_waiting_response` — otherwise the on_due
-      // escalation (which keys off whatsapp_state) can still match it and spawn
-      // a ghost attempt-2 task. (Bug fix — the comment on handleWhatsAppSent
-      // claimed this happened; it didn't until now.)
-      whatsapp_state: null,
-      completed_by_user: currentUserId ?? draft.completed_by_user ?? null,
-      source_stage_snapshot: draft.source_stage_snapshot ?? (ctx.client?.client_stage as string) ?? null,
-      source_status_snapshot: draft.source_status_snapshot ?? (ctx.client?.client_status as string) ?? null,
-    };
-
-    const result = validateFollowUpCompletion({
-      followupType: ctx.typeKey ?? '',
-      selectedOutcome: outcomeKey,
-      draft: finalData,
-      fieldLabels: buildFieldLabels(model.schema.sections.flatMap((s) => s.fields)),
-    });
-    if (!result.ok) {
-      addToast(isAr ? result.hardErrors[0]?.message_ar ?? 'حقول مطلوبة ناقصة' : result.hardErrors[0]?.message_en ?? 'Required fields missing', 'error');
-      return;
-    }
-
     setSaving(true);
-    const toSave: AppRecord = { ...record, data: finalData, updated_at: new Date().toISOString() };
-    const saveResult = await saveRecord(toSave, { expectedVersion: versionRef.current?.version ?? null });
+    // The stamping, validation, save and reverse evidence link all live in
+    // completeFollowUp() — shared with the chat modals and the AI call-result
+    // confirmation popup, so every surface writes `call_result` identically and
+    // the outcome workflows can't see three slightly different shapes.
+    const pcModel = models.find((m) => m.name === 'phone_calls');
+    const result = await completeFollowUp({
+      record,
+      model,
+      draft,
+      outcomeKey,
+      typeKey: ctx.typeKey,
+      currentUserId,
+      clientStage: (ctx.client?.client_stage as string) ?? null,
+      clientStatus: (ctx.client?.client_status as string) ?? null,
+      expectedVersion: versionRef.current?.version ?? null,
+      saveRecord,
+      phoneCallsRecords: pcModel ? records[pcModel.id] ?? [] : [],
+    });
     setSaving(false);
 
-    if (saveResult.status === 'conflict') {
-      conflictedRef.current = true; // adopt the re-fetched version on the next render so a retry succeeds
-      addToast(isAr ? 'تم تعديل هذا السجل من مستخدم آخر — حدّث الصفحة قبل الحفظ.' : 'This record was just edited by someone else — reload before saving.', 'error');
+    if (!result.ok) {
+      if (result.reason === 'conflict') {
+        conflictedRef.current = true; // adopt the re-fetched version next render so a retry succeeds
+        addToast(isAr ? 'تم تعديل هذا السجل من مستخدم آخر — حدّث الصفحة قبل الحفظ.' : 'This record was just edited by someone else — reload before saving.', 'error');
+      } else {
+        addToast(isAr ? result.message_ar : result.message_en, 'error');
+      }
       return;
     }
-    if (saveResult.status === 'queued') {
-      addToast(isAr ? 'تم الحفظ محلياً — سيُزامن لاحقاً.' : 'Saved locally — will sync later.', 'info');
-    } else {
-      addToast(isAr ? 'تم إكمال المتابعة' : 'Follow-up completed', 'success');
-    }
+    addToast(
+      result.queued
+        ? (isAr ? 'تم الحفظ محلياً — سيُزامن لاحقاً.' : 'Saved locally — will sync later.')
+        : (isAr ? 'تم إكمال المتابعة' : 'Follow-up completed'),
+      result.queued ? 'info' : 'success',
+    );
 
-    // Bidirectional evidence: stamp the phone_call with this follow-up id.
-    const callId = finalData.completed_by_call_id;
-    if (typeof callId === 'string' && callId) {
-      const pcModel = models.find((m) => m.name === 'phone_calls');
-      const callRec = pcModel ? (records[pcModel.id] ?? []).find((r) => r.id === callId) : null;
-      if (callRec && callRec.data.linked_followup_id !== record.id) {
-        // Own version + opts; a conflict here doesn't undo the completion (the
-        // pending-sync queue retries a queued write).
-        void saveRecord(
-          { ...callRec, data: { ...callRec.data, linked_followup_id: record.id }, updated_at: new Date().toISOString() },
-          { expectedVersion: callRec.version ?? null },
-        );
-      }
-    }
+    // A pending AI suggestion for this task is now moot — the rep completed it
+    // by hand. Retire it so the popup doesn't ask them to confirm an outcome
+    // they already recorded themselves.
+    void cancelSuggestionsForFollowup(record.id);
 
     // Return the rep to where they came from (e.g. the Sales Tasks queue, with
     // its view/filters preserved) if the entry point passed a ?returnTo=; else

@@ -33,12 +33,29 @@ function noAnswer(nextType: FollowUpTypeKey, delayDays = 1): FollowUpOutcomeConf
   };
 }
 
-/** Wrong time: requires reschedule_contact_date; reschedules the same activity. */
-function wrongTime(nextType: FollowUpTypeKey): FollowUpOutcomeConfig {
+/**
+ * Recontact later: the client is open in principle but not now — for ANY
+ * reason. Requires reschedule_contact_date; the rep picks when. Reschedules the
+ * same activity.
+ *
+ * This ABSORBED the retired `wrong_time` outcome on 2026-07-30. The two were
+ * indistinguishable in practice: both required a reschedule date and both fired
+ * the identical `schedule_recontact` action, so the only difference reaching the
+ * client was a status string. Reps did not split them consistently — in a
+ * 50-call audit of real completed follow-ups, «اتصل بي بعد نص ساعة، أنا في
+ * اجتماع» was filed as recontact_later while «برجع لك» was filed as wrong_time,
+ * i.e. exactly backwards from the definitions. Collapsing them removed 4 of 7
+ * classification errors outright (86% → 94% agreement with the human label).
+ *
+ * `wrong_time` is NOT deleted from OUTCOME_CATALOG — ~43 historical follow-ups
+ * still carry it and must keep rendering a label. It is simply no longer
+ * offered to a rep.
+ */
+function recontactLater(nextType: FollowUpTypeKey): FollowUpOutcomeConfig {
   return {
-    value: 'wrong_time',
+    value: 'recontact_later',
     requires: { ...REQ_ACTUAL, reschedule_contact_date: true },
-    client_update_preview: { status: 'الوقت غير مناسب' },
+    client_update_preview: { status: 'إعادة تواصل لاحقًا' },
     next_action_preview: { kind: 'schedule_recontact', create_followup_type: nextType, use_field: 'reschedule_contact_date' },
   };
 }
@@ -104,13 +121,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
         next_action_preview: { kind: 'create_followup', create_followup_type: 'whatsapp_follow_up', delay_days: 1 },
       },
       noAnswer('appointment_booking_call', 1),
-      wrongTime('appointment_booking_call'),
-      {
-        value: 'recontact_later',
-        requires: { ...REQ_ACTUAL, reschedule_contact_date: true },
-        client_update_preview: { status: 'إعادة تواصل لاحقًا' },
-        next_action_preview: { kind: 'schedule_recontact', create_followup_type: 'appointment_booking_call', use_field: 'reschedule_contact_date' },
-      },
+      recontactLater('appointment_booking_call'),
       notInterested('غير مؤهل'),
       { value: 'invalid_number', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'رقم خاطئ' }, is_terminal: true },
       { value: 'duplicate', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'مكرر' }, is_terminal: true },
@@ -227,7 +238,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
         client_update_preview: { stage: 'غير مؤهل', status: 'تم إلغاء الموعد' },
         is_terminal: true,
       },
-      wrongTime('appointment_confirmation_call'),
+      recontactLater('appointment_confirmation_call'),
       notInterested('غير مؤهل'),
     ],
   },
@@ -264,7 +275,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       { value: 'still_interested', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'مهتم' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_booking_call', delay_days: 0 } },
       notInterested('غير مؤهل'),
       noAnswer('no_show_recovery_call', 1),
-      wrongTime('no_show_recovery_call'),
+      recontactLater('no_show_recovery_call'),
     ],
   },
   {
@@ -294,7 +305,6 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       { value: 'invalid_number', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'رقم خاطئ' }, is_terminal: true },
       notInterested('خاسر'),
       noAnswer('follow_up_call_after_visit', 1),
-      wrongTime('follow_up_call_after_visit'),
     ],
   },
   {
@@ -313,7 +323,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       { value: 'needs_financing_info', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'يحتاج معلومات تمويل' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'offer_follow_up', delay_days: 2 } },
       { value: 'offer_rejected', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'خاسر', status: 'تم رفض العرض' }, is_terminal: true },
       noAnswer('offer_follow_up', 1),
-      wrongTime('offer_follow_up'),
+      recontactLater('offer_follow_up'),
     ],
   },
   {
@@ -330,7 +340,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       { value: 'payment_received', requires: { ...REQ_ACTUAL }, client_update_preview: { stage: 'تمويل', status: 'تم الحجز' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'financing_follow_up', delay_days: 1 } },
       { value: 'payment_pending', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'بانتظار دفعة الحجز' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'reservation_payment_follow_up', delay_days: 2 } },
       noAnswer('reservation_payment_follow_up', 1),
-      wrongTime('reservation_payment_follow_up'),
+      recontactLater('reservation_payment_follow_up'),
     ],
   },
   {
@@ -348,7 +358,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       { value: 'payment_received', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'التقييم' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'financing_follow_up', delay_days: 3 } },
       { value: 'waiting_decision', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'البنك' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'financing_follow_up', delay_days: 2 } },
       noAnswer('financing_follow_up', 1),
-      wrongTime('financing_follow_up'),
+      recontactLater('financing_follow_up'),
     ],
   },
   {

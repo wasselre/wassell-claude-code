@@ -139,15 +139,15 @@ describe('validateFollowUpCompletion', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('blocks wrong_time without reschedule_contact_date', () => {
-    const r = validateFollowUpCompletion({ followupType: T, selectedOutcome: 'wrong_time', draft: { actual_datetime: '2026-06-16T10:00:00Z' } });
+  it('blocks recontact_later without reschedule_contact_date', () => {
+    const r = validateFollowUpCompletion({ followupType: T, selectedOutcome: 'recontact_later', draft: { actual_datetime: '2026-06-16T10:00:00Z' } });
     expect(r.ok).toBe(false);
     expect(r.hardErrors.some((e) => e.field === 'reschedule_contact_date')).toBe(true);
   });
 
-  it('passes wrong_time with reschedule_contact_date', () => {
+  it('passes recontact_later with reschedule_contact_date', () => {
     const r = validateFollowUpCompletion({
-      followupType: T, selectedOutcome: 'wrong_time',
+      followupType: T, selectedOutcome: 'recontact_later',
       draft: { actual_datetime: '2026-06-16T10:00:00Z', reschedule_contact_date: '2026-06-18T10:00:00Z' },
     });
     expect(r.ok).toBe(true);
@@ -172,8 +172,8 @@ describe('validateFollowUpCompletion', () => {
 });
 
 describe('isOutcomeFieldVisible', () => {
-  it('reveals reschedule_contact_date for wrong_time, hides it for interested', () => {
-    expect(isOutcomeFieldVisible('reschedule_contact_date', 'appointment_booking_call', 'wrong_time')).toBe(true);
+  it('reveals reschedule_contact_date for recontact_later, hides it for interested', () => {
+    expect(isOutcomeFieldVisible('reschedule_contact_date', 'appointment_booking_call', 'recontact_later')).toBe(true);
     expect(isOutcomeFieldVisible('reschedule_contact_date', 'appointment_booking_call', 'interested')).toBe(false);
   });
 

@@ -110,6 +110,16 @@ export interface WorkerEnv {
    *  only drains mkt_collection_jobs when '1'. (The DB also has a global pause +
    *  per-account enable; this is the worker-process-level gate.) */
   MARKETING_COLLECTION_ENABLED: boolean;
+  /** DeepSeek key for the AI call-result lane (call_result_suggestions). When
+   *  UNSET the call-analysis loop self-disables, so the worker boots fine
+   *  before the feature is turned on — same posture as REPORTS_RUNNER_SECRET.
+   *  Chosen over Claude for this lane after a 50-call blind benchmark against
+   *  real agent-chosen outcomes; see docs/prd/calling.md. */
+  DEEPSEEK_API_KEY: string | null;
+  /** Model id. `deepseek-v4-pro` is the one benchmarked; `deepseek-v4-flash`
+   *  is the cheaper/faster sibling and is NOT validated for this task. */
+  DEEPSEEK_MODEL: string;
+  DEEPSEEK_BASE_URL: string;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -150,5 +160,8 @@ export function loadEnv(): WorkerEnv {
     LISTING_IMAGE_PROXY_URL: process.env.LISTING_IMAGE_PROXY_URL ?? null,
     LISTING_IMAGE_PROXY_TOKEN: process.env.LISTING_IMAGE_PROXY_TOKEN ?? null,
     MARKETING_COLLECTION_ENABLED: process.env.MARKETING_COLLECTION_ENABLED === '1',
+    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? null,
+    DEEPSEEK_MODEL: process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro',
+    DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
   };
 }

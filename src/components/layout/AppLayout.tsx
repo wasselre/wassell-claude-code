@@ -5,6 +5,7 @@ import Header from './Header';
 import GlobalChatComposer from '@/pages/Chats/components/GlobalChatComposer';
 import JobsIndicator from '@/components/JobsIndicator';
 import SalesNotifications from '@/components/SalesNotifications';
+import CallResultConfirmHost from '@/pages/Followups/components/CallResultConfirmHost';
 
 export default function AppLayout() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -61,6 +62,10 @@ export default function AppLayout() {
       {/* Pop-up notifications for hot new leads + customer replies (toast +
           browser Notification). Renders nothing. */}
       <SalesNotifications />
+      {/* Full-page "confirm what happened on that call" popup. Realtime-driven,
+          scoped to this rep by RLS, and self-minimising when they are mid-task.
+          Renders nothing until a suggestion is ready. */}
+      <CallResultConfirmHost />
     </div>
   );
 }

@@ -28,6 +28,11 @@ export const OUTCOME_CATALOG: readonly OutcomeCatalogEntry[] = [
   { value: 'interested', label_ar: 'مهتم', label_en: 'Interested', tone: 'positive' },
   { value: 'not_interested', label_ar: 'غير مهتم', label_en: 'Not Interested', tone: 'negative' },
   { value: 'no_answer', label_ar: 'لا يوجد رد', label_en: 'No Answer', tone: 'neutral' },
+  // RETIRED 2026-07-30 — folded into `recontact_later`, which requires the same
+  // reschedule date and fires the same `schedule_recontact` action. No longer in
+  // any type's `allowed_outcomes`, so a rep cannot pick it; kept here (append-
+  // only rule) because ~43 historical follow-ups still store it and the table,
+  // the generic form, and reporting all need a label for those rows.
   { value: 'wrong_time', label_ar: 'الوقت غير مناسب', label_en: 'Wrong Time', tone: 'neutral' },
   { value: 'appointment_booked', label_ar: 'تم حجز موعد', label_en: 'Appointment Booked', tone: 'positive' },
   { value: 'rescheduled', label_ar: 'تمت إعادة الجدولة', label_en: 'Rescheduled', tone: 'neutral' },
