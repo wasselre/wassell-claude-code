@@ -810,7 +810,9 @@ export default async function handler(req: Request): Promise<Response> {
         const id = str(raw.id);
         const patch: Record<string, unknown> = {};
         for (const k of ['name', 'project_id', 'objective', 'status', 'starts_on',
-                         'ends_on', 'budget_total', 'note'] as const) {
+                         'ends_on', 'budget_total', 'note',
+                         'kind', 'goal', 'owner_role', 'success_metric',
+                         'success_threshold'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
         if (id) {
@@ -819,12 +821,39 @@ export default async function handler(req: Request): Promise<Response> {
           if (f) return f;
           if (!upd.data) return jsonError(404, 'campaign not found');
         } else {
-          if (!str(patch.name)) return jsonError(400, 'name is required');
+          // The design has no name field — the goal sentence IS the identity.
+          // The list still wants a short handle, so the name falls back to it.
+          if (!str(patch.name) && str(patch.goal)) patch.name = patch.goal;
+          if (!str(patch.name)) return jsonError(400, 'goal or name is required');
           patch.created_by_user_id = await resolveAppUserId(sb, user.userId);
           const ins = await sb.from('mos_campaigns').insert(patch).select('id').maybeSingle();
           const f = dbFail(ins.error);
           if (f) return f;
           const created = ins.data as unknown as Row | null;
+
+          // "التنفيذات التي ستُنشأ" — the modal's promise, kept server-side in
+          // the same request: one DRAFT execution per chosen platform with its
+          // budget share. Drafts spend nothing until someone launches them on
+          // the platform itself.
+          const execs = Array.isArray(body.executions) ? (body.executions as unknown[]) : [];
+          if (created?.id && execs.length > 0) {
+            const rows = execs
+              .map((e) => e as Record<string, unknown>)
+              .filter((e) => typeof e.platform === 'string' && e.platform !== '')
+              .map((e) => ({
+                campaign_id: created.id,
+                platform: e.platform,
+                label: typeof e.label === 'string' ? e.label : null,
+                budget: typeof e.budget === 'number' && Number.isFinite(e.budget) ? e.budget : null,
+                status: 'draft',
+              }));
+            if (rows.length > 0) {
+              const execIns = await sb.from('mos_campaign_executions').insert(rows);
+              const ef = dbFail(execIns.error);
+              if (ef) return ef;
+            }
+          }
+
           const one = await sb.from('mos_campaign_v').select('*').eq('id', created?.id ?? '').maybeSingle();
           const of_ = dbFail(one.error);
           if (of_) return of_;

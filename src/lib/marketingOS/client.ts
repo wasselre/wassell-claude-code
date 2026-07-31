@@ -272,6 +272,13 @@ export interface MosCampaign {
   project_id: string | null;
   objective: 'awareness' | 'leads' | 'traffic' | 'sales' | 'other';
   status: 'planning' | 'active' | 'paused' | 'done' | 'cancelled';
+  /** Paid carries a budget and a target cost; organic is reach — screen 19's fork. */
+  kind: 'paid' | 'organic';
+  /** The goal written as a RESULT («١٥٠ عميلًا مؤهلًا…») — the campaign's identity. */
+  goal: string | null;
+  owner_role: MosRole | null;
+  success_metric: string | null;
+  success_threshold: number | null;
   starts_on: string | null;
   ends_on: string | null;
   budget_total: number | null;
@@ -438,8 +445,13 @@ export const fetchCampaignDetail = (id: string) =>
     comments: MosComment[];
   }>('campaign_detail', { id });
 
-export const saveCampaign = (campaign: Record<string, unknown>) =>
-  call<{ item: MosCampaign }>('campaign_save', { campaign });
+export const saveCampaign = (
+  campaign: Record<string, unknown>,
+  executions?: Array<{ platform: string; label?: string | null; budget?: number | null }>,
+) => call<{ item: MosCampaign }>('campaign_save', {
+  campaign,
+  ...(executions && executions.length > 0 ? { executions } : {}),
+});
 
 export const saveExecution = (campaignId: string, execution: Record<string, unknown>) =>
   call<{ executions: MosExecution[] }>('execution_save', { campaign_id: campaignId, execution });
@@ -621,13 +633,32 @@ export const SHOOT_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
 };
 
 export const PLATFORM_LABELS: Record<string, { ar: string; en: string }> = {
-  instagram: { ar: 'انستقرام',  en: 'Instagram' },
-  tiktok:    { ar: 'تيك توك',   en: 'TikTok' },
-  snapchat:  { ar: 'سناب شات',  en: 'Snapchat' },
-  x:         { ar: 'إكس',       en: 'X' },
-  youtube:   { ar: 'يوتيوب',    en: 'YouTube' },
-  whatsapp:  { ar: 'واتساب',    en: 'WhatsApp' },
-  website:   { ar: 'الموقع',    en: 'Website' },
+  instagram: { ar: 'انستقرام',     en: 'Instagram' },
+  tiktok:    { ar: 'تيك توك',      en: 'TikTok' },
+  snapchat:  { ar: 'سناب شات',     en: 'Snapchat' },
+  x:         { ar: 'إكس',          en: 'X' },
+  youtube:   { ar: 'يوتيوب',       en: 'YouTube' },
+  whatsapp:  { ar: 'واتساب',       en: 'WhatsApp' },
+  website:   { ar: 'الموقع',       en: 'Website' },
+  // Paid AD channels — a Meta ad set is not an Instagram post, so the spend
+  // side names the ad platform, not the feed it lands in (design screen 19).
+  meta:      { ar: 'إعلانات ميتا', en: 'Meta ads' },
+  google:    { ar: 'بحث جوجل',     en: 'Google search' },
+};
+
+/** Screen 19's mandatory success criterion — what the campaign is judged by. */
+export const SUCCESS_METRIC_LABELS: Record<string, { ar: string; en: string }> = {
+  cpl_qualified: { ar: 'تكلفة العميل المؤهل', en: 'Cost per qualified lead' },
+  cpl:           { ar: 'تكلفة العميل',         en: 'Cost per lead' },
+  leads:         { ar: 'عدد العملاء المؤهلين', en: 'Qualified leads' },
+  reach:         { ar: 'الوصول',               en: 'Reach' },
+};
+
+/** The purposes an ad set can serve, stored on the execution's label. */
+export const EXEC_PURPOSE_LABELS: Record<string, { ar: string; en: string }> = {
+  lead_form: { ar: 'نموذج عملاء', en: 'Lead form' },
+  traffic:   { ar: 'زيارات',      en: 'Traffic' },
+  awareness: { ar: 'وعي',         en: 'Awareness' },
 };
 
 /** The platform's own colour, used for the calendar spine and account chips. */

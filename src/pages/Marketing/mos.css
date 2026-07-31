@@ -1722,3 +1722,49 @@
     overflow: hidden;
   }
 }
+
+/* ── Dark theme — the design's own token set, verbatim ─────────────────
+   The approved screens carry a full dark palette; dropping it was one of
+   the visible gaps between mockup and app. Follows the OS preference, the
+   same signal the design file itself used. Every rule above reads only
+   variables, so this block is the entire dark implementation. */
+@media (prefers-color-scheme: dark) {
+  .mos-root {
+    --cream: #1b1611;
+    --paper: #241d17;
+    --sand: #3b3027;
+    --sand-2: #2c241d;
+    --line: #3a2f26;
+    --line-soft: #332a22;
+    --copper: #cb8b64;
+    --terracotta: #d0704e;
+    --choc: #ebd9c2;
+    --gold: #e0c08e;
+    --ink: #f1e9db;
+    --ink-2: #e3d9c9;
+    --mute: #a2937f;
+    --go: #74a88a;
+    --wait: #d8a94e;
+    --late: #d07a90;
+    --calm: #8d99a6;
+    --rail: #120d09;
+    --rail-ink: #eedfcb;
+    --rail-mute: #8f7c66;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  /* Dark chips on light-ink backgrounds flip their text, as in the design. */
+  .mos-root .p-live,
+  .mos-root .p-now {
+    color: #221a13;
+  }
+  .mos-scrim {
+    background: rgba(0, 0, 0, 0.55);
+  }
+  /* Native pickers (date/select) render their own chrome — tell them the
+     truth about the theme or they stay blinding white. */
+  .mos-root input,
+  .mos-root select,
+  .mos-root textarea {
+    color-scheme: dark;
+  }
+}

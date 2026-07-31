@@ -10,11 +10,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  CAMPAIGN_STATUS_LABELS, MosCampaign, OBJECTIVE_LABELS, fetchCampaigns, saveCampaign,
+  CAMPAIGN_STATUS_LABELS, EXEC_PURPOSE_LABELS, MosCampaign, OBJECTIVE_LABELS,
+  PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS, fetchCampaigns, saveCampaign,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton } from './components/kit';
-import { IconPlus } from './components/icons';
+import { IconCampaigns, IconCheck, IconMetrics, IconPlus } from './components/icons';
 import { money, num, shortDate } from './lib/format';
 
 const TONE: Record<string, 'now' | 'go' | 'idle' | 'wait' | 'live'> = {
@@ -189,7 +190,25 @@ export default function CampaignsPage() {
   );
 }
 
-/** Screen 19 — new campaign. */
+/**
+ * Screen 19 — the campaign brief, faithful to the design.
+ *
+ * The fork at the top matters: picking paid or organic changes the fields below
+ * it, because a budget and a cost-per-lead are meaningless on an organic push.
+ * There is deliberately NO name field — the goal sentence, written as a RESULT,
+ * is the campaign's identity («زيادة الوعي» ليست هدفًا). The success criterion
+ * is mandatory: a campaign without one cannot be judged, and every campaign in
+ * the old sheet lacked it. Nothing here spends money — executions are created
+ * as drafts until someone launches them on the platform itself.
+ */
+const SPLIT_PLATFORMS = ['meta', 'tiktok', 'google', 'snapchat', 'x'] as const;
+
+interface SplitRow {
+  on: boolean;
+  purpose: string;
+  budget: string;
+}
+
 export function CampaignModal({
   campaign, isAr, onClose, onSaved,
 }: {
@@ -200,35 +219,94 @@ export function CampaignModal({
 }) {
   const { projects } = useWorkspace();
   const addToast = useAppStore((s) => s.addToast);
-  const [name, setName] = useState(campaign?.name ?? '');
+  const isNew = !campaign;
+
+  const [kind, setKind] = useState<MosCampaign['kind']>(campaign?.kind ?? 'paid');
+  const [goal, setGoal] = useState(campaign?.goal ?? campaign?.name ?? '');
   const [projectId, setProjectId] = useState(campaign?.project_id ?? '');
-  const [objective, setObjective] = useState<MosCampaign['objective']>(campaign?.objective ?? 'leads');
-  const [status, setStatus] = useState<MosCampaign['status']>(campaign?.status ?? 'planning');
+  const [ownerRole, setOwnerRole] = useState<string>(campaign?.owner_role ?? 'marketing_manager');
   const [startsOn, setStartsOn] = useState(campaign?.starts_on ?? '');
   const [endsOn, setEndsOn] = useState(campaign?.ends_on ?? '');
   const [budget, setBudget] = useState(campaign?.budget_total?.toString() ?? '');
-  const [note, setNote] = useState(campaign?.note ?? '');
+  const [metric, setMetric] = useState(campaign?.success_metric ?? 'cpl_qualified');
+  const [threshold, setThreshold] = useState(campaign?.success_threshold?.toString() ?? '');
+  const [status, setStatus] = useState<MosCampaign['status']>(campaign?.status ?? 'planning');
+  const [split, setSplit] = useState<Record<string, SplitRow>>(() =>
+    Object.fromEntries(SPLIT_PLATFORMS.map((p) => [
+      p,
+      { on: p === 'meta', purpose: 'lead_form', budget: '' },
+    ])),
+  );
   const [busy, setBusy] = useState(false);
 
+  const totalBudget = budget.trim() === '' ? null : Number(budget);
+  const allocated = Object.values(split)
+    .filter((r) => r.on && r.budget.trim() !== '')
+    .reduce((a, r) => a + (Number(r.budget) || 0), 0);
+  const unallocated = totalBudget === null ? null : totalBudget - allocated;
+  const chosen = SPLIT_PLATFORMS.filter((p) => split[p]?.on);
+
+  const patchSplit = (p: string, patch: Partial<SplitRow>): void =>
+    setSplit((cur) => ({ ...cur, [p]: { ...(cur[p] ?? { on: false, purpose: 'lead_form', budget: '' }), ...patch } }));
+
   const submit = async (): Promise<void> => {
-    if (!name.trim()) {
-      addToast(isAr ? 'اكتب اسم الحملة.' : 'Give the campaign a name.', 'error');
+    if (!goal.trim()) {
+      addToast(
+        isAr ? 'اكتب الهدف كنتيجة — هو ما تُقاس به الحملة.' : 'Write the goal as a result — it is what the campaign is judged by.',
+        'error',
+      );
+      return;
+    }
+    // The design's note: معيار النجاح إلزامي. A paid campaign without a
+    // criterion cannot be judged, so the form refuses it up front.
+    if (kind === 'paid' && threshold.trim() === '') {
+      addToast(
+        isAr ? 'حدّد معيار النجاح — حملة بلا معيار لا يمكن الحكم عليها.' : 'Set the success criterion — a campaign without one cannot be judged.',
+        'error',
+      );
       return;
     }
     setBusy(true);
     try {
-      const res = await saveCampaign({
-        id: campaign?.id,
-        name: name.trim(),
-        project_id: projectId || null,
-        objective,
-        status,
-        starts_on: startsOn || null,
-        ends_on: endsOn || null,
-        budget_total: budget.trim() === '' ? null : Number(budget),
-        note: note || null,
-      });
-      addToast(isAr ? 'حُفظت الحملة.' : 'Campaign saved.', 'success');
+      const executions = isNew && kind === 'paid'
+        ? chosen.map((p) => {
+            const row = split[p];
+            const purpose = EXEC_PURPOSE_LABELS[row?.purpose ?? ''];
+            return {
+              platform: p,
+              label: purpose ? (isAr ? purpose.ar : purpose.en) : null,
+              budget: row && row.budget.trim() !== '' ? Number(row.budget) : null,
+            };
+          })
+        : undefined;
+
+      const res = await saveCampaign(
+        {
+          id: campaign?.id,
+          // The goal doubles as the list's short handle — no separate name.
+          name: goal.trim(),
+          goal: goal.trim(),
+          kind,
+          project_id: projectId || null,
+          owner_role: ownerRole || null,
+          objective: kind === 'organic' ? 'awareness' : 'leads',
+          status,
+          starts_on: startsOn || null,
+          ends_on: endsOn || null,
+          budget_total: kind === 'paid' ? totalBudget : null,
+          success_metric: metric || null,
+          success_threshold: threshold.trim() === '' ? null : Number(threshold),
+        },
+        executions,
+      );
+      addToast(
+        isNew
+          ? isAr
+            ? `أُنشئت الحملة ${res.item?.ref ?? ''} و${num(executions?.length ?? 0, true)} تنفيذات كمسودات.`
+            : `Created campaign ${res.item?.ref ?? ''} with ${executions?.length ?? 0} draft executions.`
+          : isAr ? 'حُفظت الحملة.' : 'Campaign saved.',
+        'success',
+      );
       onSaved(res.item);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
@@ -239,25 +317,63 @@ export function CampaignModal({
 
   return (
     <Modal
-      title={campaign ? (isAr ? 'تعديل الحملة' : 'Edit campaign') : (isAr ? 'حملة جديدة' : 'New campaign')}
+      title={isNew ? (isAr ? 'حملة جديدة' : 'New campaign') : (isAr ? 'تعديل الحملة' : 'Edit campaign')}
       sub={isAr
-        ? 'الميزانية سقف، لا التزام. المصروف الحقيقي يأتي من صفوف التنفيذ.'
-        : 'The budget is a ceiling, not a commitment. Real spend comes from the execution rows.'}
+        ? 'هدف، ومدة، والمنصات التي ستعمل عليها. تُنشأ التنفيذات كمسودات.'
+        : 'A goal, a duration, and the platforms it runs on. Executions are created as drafts.'}
       onClose={onClose}
       footer={
         <>
+          <span className="note">
+            {isAr
+              ? 'لا شيء ينفق مالًا هنا. التنفيذات مسودات حتى يطلقها أحد على المنصة نفسها.'
+              : 'Nothing here spends money. Executions stay drafts until someone launches them on the platform itself.'}
+          </span>
           <button type="button" className="btn" onClick={onClose} disabled={busy}>
             {isAr ? 'إلغاء' : 'Cancel'}
           </button>
           <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy}>
-            {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'حفظ' : 'Save'}
+            {busy
+              ? (isAr ? 'جارٍ الإنشاء…' : 'Working…')
+              : isNew ? (isAr ? 'إنشاء الحملة' : 'Create campaign') : (isAr ? 'حفظ' : 'Save')}
           </button>
         </>
       }
     >
-      <Field label={isAr ? 'اسم الحملة' : 'Campaign name'}>
-        <input className="inp" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-      </Field>
+      <div>
+        <div className="lbl" style={{ marginBottom: 7 }}>{isAr ? 'النوع' : 'Type'}</div>
+        <div className="pick2">
+          <button type="button" className={`p2${kind === 'paid' ? ' on' : ''}`} onClick={() => setKind('paid')}>
+            <IconCampaigns />
+            <div className="n4">{isAr ? 'مدفوعة' : 'Paid'}</div>
+            <div className="s4">{isAr ? 'ميزانية وتكلفة مستهدفة' : 'a budget and a target cost'}</div>
+          </button>
+          <button type="button" className={`p2${kind === 'organic' ? ' on' : ''}`} onClick={() => setKind('organic')}>
+            <IconMetrics />
+            <div className="n4">{isAr ? 'عضوية' : 'Organic'}</div>
+            <div className="s4">{isAr ? 'حجم ووصول' : 'volume and reach'}</div>
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <div className="lbl" style={{ marginBottom: 6 }}>
+          {isAr ? 'الهدف — اكتبه كنتيجة' : 'The goal — write it as a result'}
+        </div>
+        <input
+          className="inp"
+          value={goal}
+          onChange={(e) => setGoal(e.target.value)}
+          autoFocus={isNew}
+          placeholder={isAr ? '١٥٠ عميلًا مؤهلًا لمينا ٥٢ خلال أغسطس' : '150 qualified leads for Mina 52 during August'}
+        />
+        <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 5 }}>
+          {isAr
+            ? 'هذا يصبح الهدف الذي تُقاس به الحملة. «زيادة الوعي» ليست هدفًا.'
+            : 'This becomes what the campaign is measured against. “Raise awareness” is not a goal.'}
+        </div>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
         <Field label={isAr ? 'المشروع' : 'Project'}>
           <select className="inp" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
@@ -267,47 +383,211 @@ export function CampaignModal({
             ))}
           </select>
         </Field>
-        <Field label={isAr ? 'الهدف' : 'Objective'}>
-          <select
-            className="inp"
-            value={objective}
-            onChange={(e) => setObjective(e.target.value as MosCampaign['objective'])}
-          >
-            {Object.keys(OBJECTIVE_LABELS).map((k) => (
-              <option key={k} value={k}>{isAr ? OBJECTIVE_LABELS[k]?.ar : OBJECTIVE_LABELS[k]?.en}</option>
+        <Field label={isAr ? 'المسؤول' : 'Responsible'}>
+          <select className="inp" value={ownerRole} onChange={(e) => setOwnerRole(e.target.value)}>
+            {(['marketing_manager', 'ops_supervisor', 'writer', 'montage'] as const).map((r) => (
+              <option key={r} value={r}>{isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}</option>
             ))}
           </select>
         </Field>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 13 }}>
-        <Field label={isAr ? 'من' : 'From'}>
-          <input type="date" className="inp" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: kind === 'paid' ? '1fr 1fr 1fr' : '1fr 1fr', gap: 13 }}>
+        <Field label={isAr ? 'تبدأ' : 'Starts'}>
+          <input type="date" className="inp ltr" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} />
         </Field>
-        <Field label={isAr ? 'إلى' : 'To'}>
-          <input type="date" className="inp" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} />
+        <Field label={isAr ? 'تنتهي' : 'Ends'}>
+          <input type="date" className="inp ltr" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} />
         </Field>
-        <Field label={isAr ? 'الميزانية' : 'Budget'} hint={isAr ? 'ر.س' : 'SAR'}>
-          <input className="inp" inputMode="numeric" value={budget} onChange={(e) => setBudget(e.target.value)} />
-        </Field>
+        {kind === 'paid' && (
+          <Field label={isAr ? 'الميزانية الكلية' : 'Total budget'}>
+            <div className="inp inp-row" style={{ padding: 0 }}>
+              <input
+                className="inp"
+                style={{ border: 0, flex: 1 }}
+                inputMode="numeric"
+                value={budget}
+                onChange={(e) => setBudget(e.target.value)}
+              />
+              <span style={{ fontSize: 11, color: 'var(--mute)', paddingInlineEnd: 11 }}>
+                {isAr ? 'ريال' : 'SAR'}
+              </span>
+            </div>
+          </Field>
+        )}
       </div>
-      <Field label={isAr ? 'الحالة' : 'Status'}>
-        <div className="seg" style={{ width: '100%' }}>
-          {(['planning', 'active', 'paused', 'done'] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              className={status === s ? 'on' : ''}
-              style={{ flex: 1, textAlign: 'center' }}
-              onClick={() => setStatus(s)}
-            >
-              {isAr ? CAMPAIGN_STATUS_LABELS[s]?.ar : CAMPAIGN_STATUS_LABELS[s]?.en}
-            </button>
-          ))}
+
+      {kind === 'paid' && isNew && (
+        <div>
+          <div className="lbl" style={{ marginBottom: 7 }}>
+            {isAr ? 'التنفيذات التي ستُنشأ' : 'The executions this will create'}
+          </div>
+          <div style={{ border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden' }}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th style={{ width: 38 }} />
+                  <th>{isAr ? 'المنصة' : 'Platform'}</th>
+                  <th style={{ width: 130 }}>{isAr ? 'الغرض' : 'Purpose'}</th>
+                  <th className="num" style={{ width: 122 }}>{isAr ? 'حصة الميزانية' : 'Budget share'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SPLIT_PLATFORMS.map((p) => {
+                  const row = split[p];
+                  if (!row) return null;
+                  return (
+                    <tr key={p} style={row.on ? undefined : { opacity: 0.55 }}>
+                      <td>
+                        <button
+                          type="button"
+                          className={`pill ${row.on ? 'p-go' : 'p-idle'}`}
+                          style={{ padding: '3px 6px', cursor: 'pointer' }}
+                          onClick={() => patchSplit(p, { on: !row.on })}
+                          aria-label={isAr ? `تفعيل ${PLATFORM_LABELS[p]?.ar ?? p}` : `Toggle ${PLATFORM_LABELS[p]?.en ?? p}`}
+                        >
+                          {row.on ? <IconCheck style={{ width: 11, height: 11 }} /> : '○'}
+                        </button>
+                      </td>
+                      <td>{(isAr ? PLATFORM_LABELS[p]?.ar : PLATFORM_LABELS[p]?.en) ?? p}</td>
+                      <td>
+                        {row.on ? (
+                          <select
+                            className="inp"
+                            style={{ padding: '4px 8px', fontSize: 12 }}
+                            value={row.purpose}
+                            onChange={(e) => patchSplit(p, { purpose: e.target.value })}
+                          >
+                            {Object.keys(EXEC_PURPOSE_LABELS).map((k) => (
+                              <option key={k} value={k}>
+                                {isAr ? EXEC_PURPOSE_LABELS[k]?.ar : EXEC_PURPOSE_LABELS[k]?.en}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span style={{ color: 'var(--mute)' }}>—</span>
+                        )}
+                      </td>
+                      <td className="num">
+                        {row.on ? (
+                          <input
+                            className="inp"
+                            style={{ padding: '4px 8px', fontSize: 12, textAlign: 'end' }}
+                            inputMode="numeric"
+                            value={row.budget}
+                            onChange={(e) => patchSplit(p, { budget: e.target.value })}
+                          />
+                        ) : (
+                          <span style={{ color: 'var(--mute)' }}>—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {/* The remainder is shown in the warning tone rather than accepted
+              silently — the design's whole point for this table. */}
+          {totalBudget !== null && (
+            <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 11, color: 'var(--mute)', flexWrap: 'wrap' }}>
+              <span>
+                {isAr ? 'موزّع ' : 'Allocated '}
+                <b style={{ color: 'var(--ink)' }}>{num(allocated, isAr)}</b>
+                {isAr ? ` من ${num(totalBudget, true)}` : ` of ${num(totalBudget, false)}`}
+              </span>
+              {unallocated !== null && unallocated !== 0 && (
+                <span style={{ color: unallocated > 0 ? 'var(--wait)' : 'var(--late)', fontWeight: 700 }}>
+                  {unallocated > 0
+                    ? isAr
+                      ? `${num(unallocated, true)} ريال غير موزّعة`
+                      : `${num(unallocated, false)} SAR unallocated`
+                    : isAr
+                      ? `تجاوز بمقدار ${num(Math.abs(unallocated), true)} ريال`
+                      : `over by ${num(Math.abs(unallocated), false)} SAR`}
+                </span>
+              )}
+            </div>
+          )}
         </div>
-      </Field>
-      <Field label={isAr ? 'ملاحظة' : 'Note'}>
-        <textarea className="inp" rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
-      </Field>
+      )}
+
+      <div>
+        <div className="lbl" style={{ marginBottom: 6 }}>{isAr ? 'معيار النجاح' : 'Success criterion'}</div>
+        <div style={{ display: 'flex', gap: 11, flexWrap: 'wrap' }}>
+          <select className="inp" style={{ flex: 1, minWidth: 180 }} value={metric} onChange={(e) => setMetric(e.target.value)}>
+            {Object.keys(SUCCESS_METRIC_LABELS).map((k) => (
+              <option key={k} value={k}>
+                {isAr ? SUCCESS_METRIC_LABELS[k]?.ar : SUCCESS_METRIC_LABELS[k]?.en}
+              </option>
+            ))}
+          </select>
+          <div className="inp inp-row" style={{ width: 170, padding: 0 }}>
+            <input
+              className="inp"
+              style={{ border: 0, flex: 1 }}
+              inputMode="numeric"
+              value={threshold}
+              onChange={(e) => setThreshold(e.target.value)}
+            />
+            <span style={{ fontSize: 11, color: 'var(--mute)', paddingInlineEnd: 11, whiteSpace: 'nowrap' }}>
+              {metric === 'leads' || metric === 'reach'
+                ? isAr ? 'أو أكثر' : 'or more'
+                : isAr ? 'ريال أو أقل' : 'SAR or less'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {!isNew && (
+        <Field label={isAr ? 'الحالة' : 'Status'}>
+          <div className="seg" style={{ width: '100%' }}>
+            {(['planning', 'active', 'paused', 'done'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={status === s ? 'on' : ''}
+                style={{ flex: 1, textAlign: 'center' }}
+                onClick={() => setStatus(s)}
+              >
+                {isAr ? CAMPAIGN_STATUS_LABELS[s]?.ar : CAMPAIGN_STATUS_LABELS[s]?.en}
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
+
+      {isNew && (
+        <div
+          style={{
+            background: 'var(--sand-2)',
+            border: '1px solid var(--line)',
+            borderRadius: 8,
+            padding: '11px 13px',
+            fontSize: 11.5,
+            color: 'var(--mute)',
+            lineHeight: 1.9,
+          }}
+        >
+          <b style={{ color: 'var(--ink)' }}>{isAr ? 'عند الإنشاء' : 'On create'}</b>
+          {isAr ? ' — حملة برقم ' : ' — a campaign numbered '}
+          <b style={{ color: 'var(--ink)' }} className="ltr">C-</b>
+          {kind === 'paid' && chosen.length > 0 && (
+            <>
+              {isAr
+                ? `، و${num(chosen.length, true)} تنفيذات كمسودات`
+                : `, and ${chosen.length} draft executions`}
+            </>
+          )}
+          {isAr
+            ? '، وهدف يُقاس بمعياره أعلاه.'
+            : ', and a goal judged by the criterion above.'}
+          <br />
+          {isAr
+            ? 'لا يُربط أي محتوى بعد؛ يُنسب المحتوى القائم من تبويب المحتوى.'
+            : 'No content is linked yet; existing content is attributed from the Content tab.'}
+        </div>
+      )}
     </Modal>
   );
 }

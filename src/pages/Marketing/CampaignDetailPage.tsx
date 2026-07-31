@@ -11,7 +11,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, EXEC_STATUS_LABELS, MosCampaign, MosComment, MosContentRow,
-  MosExecution, OBJECTIVE_LABELS, PLATFORM_LABELS,
+  MosExecution, OBJECTIVE_LABELS, PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS,
   deleteExecution, fetchCampaignDetail, saveExecution,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
@@ -201,8 +201,31 @@ export default function CampaignDetailPage() {
               <div className="card">
                 <div className="card-h"><h4>{isAr ? 'الحملة' : 'The campaign'}</h4></div>
                 <div className="card-b" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 26px' }}>
-                  <ReadField label={isAr ? 'الهدف' : 'Objective'}>
-                    {(isAr ? OBJECTIVE_LABELS[item.objective]?.ar : OBJECTIVE_LABELS[item.objective]?.en) ?? item.objective}
+                  <ReadField label={isAr ? 'الهدف — كنتيجة' : 'The goal — as a result'}>
+                    {item.goal ?? item.name}
+                  </ReadField>
+                  <ReadField label={isAr ? 'معيار النجاح' : 'Success criterion'}>
+                    {item.success_metric && SUCCESS_METRIC_LABELS[item.success_metric]
+                      ? `${isAr
+                          ? SUCCESS_METRIC_LABELS[item.success_metric]?.ar
+                          : SUCCESS_METRIC_LABELS[item.success_metric]?.en} — ${
+                          item.success_threshold !== null
+                            ? num(item.success_threshold, isAr)
+                            : '—'} ${
+                          item.success_metric === 'leads' || item.success_metric === 'reach'
+                            ? isAr ? 'أو أكثر' : 'or more'
+                            : isAr ? 'ريال أو أقل' : 'SAR or less'}`
+                      : isAr ? 'غير محدد — لا يمكن الحكم على الحملة' : 'Not set — the campaign cannot be judged'}
+                  </ReadField>
+                  <ReadField label={isAr ? 'النوع' : 'Type'}>
+                    {item.kind === 'organic'
+                      ? isAr ? 'عضوية — حجم ووصول' : 'Organic — volume and reach'
+                      : isAr ? 'مدفوعة — ميزانية وتكلفة مستهدفة' : 'Paid — a budget and a target cost'}
+                  </ReadField>
+                  <ReadField label={isAr ? 'المسؤول' : 'Responsible'}>
+                    {item.owner_role && ROLE_LABELS[item.owner_role]
+                      ? isAr ? ROLE_LABELS[item.owner_role].ar : ROLE_LABELS[item.owner_role].en
+                      : '—'}
                   </ReadField>
                   <ReadField label={isAr ? 'المشروع' : 'Project'}>
                     {item.project_id ? projectName(item.project_id) : '—'}
