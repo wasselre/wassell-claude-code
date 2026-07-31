@@ -1068,7 +1068,9 @@ export default async function handler(req: Request): Promise<Response> {
         const id = str(raw.id);
         const patch: Record<string, unknown> = {};
         for (const k of ['title', 'kind', 'source', 'project_id', 'file_id', 'url',
-                         'thumb_url', 'shot_on', 'tags', 'note'] as const) {
+                         'thumb_url', 'shot_on', 'tags', 'note',
+                         'file_path', 'mime_type', 'size_bytes', 'original_name',
+                         'usage_rights'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
         if (id) {

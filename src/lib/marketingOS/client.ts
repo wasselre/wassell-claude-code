@@ -365,6 +365,12 @@ export interface MosAsset {
   tags: string[];
   note: string | null;
   created_at: string;
+  /** Set for uploaded files (screen 23); null for link-only assets. */
+  file_path?: string | null;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+  original_name?: string | null;
+  usage_rights?: string | null;
 }
 
 export interface MosAssetLink {

@@ -81,6 +81,7 @@ import MarketingCalendarPage from '@/pages/Marketing/CalendarPage';
 import MarketingCampaignsPage from '@/pages/Marketing/CampaignsPage';
 import MarketingCampaignDetailPage from '@/pages/Marketing/CampaignDetailPage';
 import MarketingExecutionDetailPage from '@/pages/Marketing/ExecutionDetailPage';
+import MarketingUploadPage from '@/pages/Marketing/UploadPage';
 import MarketingLibraryPage from '@/pages/Marketing/LibraryPage';
 import MarketingShootsPage from '@/pages/Marketing/ShootsPage';
 import MarketingNumbersPage from '@/pages/Marketing/NumbersPage';
@@ -450,6 +451,7 @@ export default function App() {
           <Route path="/m/content/:contentId" element={<MarketingContentDetailPage />} />
           <Route path="/m/calendar" element={<MarketingCalendarPage />} />
           <Route path="/m/library" element={<MarketingLibraryPage />} />
+          <Route path="/m/library/upload" element={<MarketingUploadPage />} />
           <Route path="/m/shoots" element={<MarketingShootsPage />} />
           <Route path="/m/campaigns" element={<MarketingCampaignsPage />} />
           <Route path="/m/campaigns/:campaignId" element={<MarketingCampaignDetailPage />} />

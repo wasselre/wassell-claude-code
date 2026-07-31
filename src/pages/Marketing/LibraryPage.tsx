@@ -18,6 +18,7 @@ import { Empty, LoadError, Modal, PageHead, ReadField, Skeleton } from './compon
 import { NewAssetModal } from './components/MaterialsTab';
 import { IconLibrary, IconPlus, IconSearch, IconTrash } from './components/icons';
 import { num, shortDate } from './lib/format';
+import { formatBytes } from './lib/upload';
 
 const KIND_BG: Record<string, string> = {
   photo: 'linear-gradient(135deg,#8E6A4F,#B8734F)',
@@ -110,10 +111,16 @@ export default function LibraryPage() {
           {isAr ? 'طلبات التصوير' : 'Shoot requests'}
         </button>
         {can('manage_assets') && (
-          <button type="button" className="btn btn-p" onClick={() => setAdding(true)}>
-            <IconPlus />
-            {isAr ? 'مادة جديدة' : 'New material'}
-          </button>
+          <>
+            {/* Links are the exception; FILES are the library. Upload is primary. */}
+            <button type="button" className="btn" onClick={() => setAdding(true)}>
+              {isAr ? 'إضافة رابط' : 'Add a link'}
+            </button>
+            <button type="button" className="btn btn-p" onClick={() => navigate('/m/library/upload')}>
+              <IconPlus />
+              {isAr ? 'رفع ملفات' : 'Upload files'}
+            </button>
+          </>
         )}
       </PageHead>
 
@@ -161,9 +168,9 @@ export default function LibraryPage() {
               : isAr ? 'جرّب تغيير التصفية.' : 'Try changing the filters.'}
           >
             {assets.length === 0 && can('manage_assets') && (
-              <button type="button" className="btn btn-p" onClick={() => setAdding(true)}>
+              <button type="button" className="btn btn-p" onClick={() => navigate('/m/library/upload')}>
                 <IconPlus />
-                {isAr ? 'مادة جديدة' : 'New material'}
+                {isAr ? 'رفع أول الملفات' : 'Upload the first files'}
               </button>
             )}
           </Empty>
@@ -228,22 +235,42 @@ export default function LibraryPage() {
             ) : undefined
           }
         >
-          <div
-            className="im"
-            style={{
-              height: 180,
-              borderRadius: 10,
-              background: KIND_BG[detail.kind] ?? 'var(--sand)',
-              display: 'grid',
-              placeItems: 'center',
-              color: '#fff',
-              overflow: 'hidden',
-            }}
-          >
-            {detail.thumb_url
-              ? <img src={detail.thumb_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              : <IconLibrary style={{ width: 28, height: 28 }} />}
-          </div>
+          {/* The preview knows the medium: video plays, audio plays, an image
+              shows, a document opens. A grey block is the last resort. */}
+          {detail.kind === 'video' && detail.url ? (
+            <video
+              src={detail.url}
+              controls
+              preload="metadata"
+              style={{ width: '100%', maxHeight: 320, borderRadius: 10, background: '#000' }}
+            />
+          ) : detail.kind === 'audio' && detail.url ? (
+            <div
+              style={{
+                borderRadius: 10, background: KIND_BG.audio, padding: '26px 16px',
+                display: 'grid', gap: 12, placeItems: 'center',
+              }}
+            >
+              <audio src={detail.url} controls style={{ width: '100%' }} />
+            </div>
+          ) : (
+            <div
+              className="im"
+              style={{
+                height: 180,
+                borderRadius: 10,
+                background: KIND_BG[detail.kind] ?? 'var(--sand)',
+                display: 'grid',
+                placeItems: 'center',
+                color: '#fff',
+                overflow: 'hidden',
+              }}
+            >
+              {detail.thumb_url
+                ? <img src={detail.thumb_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                : <IconLibrary style={{ width: 28, height: 28 }} />}
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 26px' }}>
             <ReadField label={isAr ? 'النوع' : 'Kind'}>
@@ -261,11 +288,27 @@ export default function LibraryPage() {
                 ? detail.tags.map((t) => <span key={t} className="tag" style={{ marginInlineEnd: 5 }}>{t}</span>)
                 : '—'}
             </ReadField>
-            <ReadField label={isAr ? 'الرابط' : 'Link'}>
-              {detail.url
-                ? <a href={detail.url} target="_blank" rel="noreferrer" className="ltr">{isAr ? 'فتح' : 'Open'}</a>
-                : '—'}
+            <ReadField label={isAr ? 'الملف' : 'The file'}>
+              {detail.size_bytes ? (
+                <>
+                  <span className="ltr">{detail.original_name ?? ''}</span>
+                  {' · '}{formatBytes(detail.size_bytes, isAr)}
+                  {detail.url && (
+                    <>
+                      {' · '}
+                      <a href={detail.url} target="_blank" rel="noreferrer">{isAr ? 'فتح' : 'Open'}</a>
+                    </>
+                  )}
+                </>
+              ) : detail.url ? (
+                <a href={detail.url} target="_blank" rel="noreferrer" className="ltr">
+                  {isAr ? 'رابط خارجي — فتح' : 'External link — open'}
+                </a>
+              ) : '—'}
             </ReadField>
+            {detail.usage_rights && (
+              <ReadField label={isAr ? 'حقوق الاستخدام' : 'Usage rights'}>{detail.usage_rights}</ReadField>
+            )}
           </div>
 
           <div>
