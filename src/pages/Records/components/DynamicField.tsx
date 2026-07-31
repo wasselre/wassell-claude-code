@@ -24,6 +24,7 @@ import { resolveMirror } from '@/lib/mirrorResolver';
 import { shortenGoogleMapsUrl } from '@/lib/urlUtils';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { slugifyOptionLabel, findExistingOption, uniqueOptionValue } from '@/lib/optionSlug';
+import { translateLabel } from '@/lib/translateLabel';
 import {
   ImageFieldInput,
   MultiImageFieldInput,
@@ -139,6 +140,51 @@ export default function DynamicField({
       },
     };
     saveModel(updatedModel);
+
+    // The option is created with the typed label on BOTH language sides so the
+    // save is never blocked on a network call. Backfill the other language
+    // asynchronously — this was the source of every Arabic-in-English dropdown
+    // gap in production (the Builder auto-translates; this inline path didn't).
+    // The `value` slug is deliberately left alone: dedupe on re-create depends
+    // on it staying derived from the typed label.
+    void translateLabel(label, 'option')
+      .then((tr) => {
+        const st = useAppStore.getState();
+        const owning = st.models.find((m) => m.id === owningModel.id);
+        if (!owning) return;
+        let patched = false;
+        const next = {
+          ...owning,
+          schema: {
+            ...owning.schema,
+            sections: owning.schema.sections.map((sec) => ({
+              ...sec,
+              fields: sec.fields.map((f) => {
+                if (f.id !== field.id || !f.options) return f;
+                return {
+                  ...f,
+                  options: f.options.map((o) => {
+                    // Only patch if the option still carries the raw typed pair —
+                    // if the user already edited either label in the Builder,
+                    // their edit wins.
+                    if (o.id !== newOption.id || o.label_ar !== label || o.label_en !== label) return o;
+                    patched = true;
+                    return { ...o, label_ar: tr.label_ar, label_en: tr.label_en };
+                  }),
+                };
+              }),
+            })),
+          },
+        };
+        if (patched) st.saveModel(next);
+      })
+      .catch((err: unknown) => {
+        // Translation failed (network / provider outage). The option keeps the
+        // typed label on both sides — visible in Settings → Translations as
+        // "needs translation", never silently lost. Log loudly per CLAUDE.md.
+        console.error('[DynamicField] inline option auto-translate failed:', err);
+      });
+
     return newOption.value;
   };
   const label = isAr ? field.label_ar : field.label_en;

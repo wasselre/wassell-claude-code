@@ -21,6 +21,8 @@ import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import { formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { formatNumberWithCommas, formatRangeValue } from './RangeField';
+import { resolveDisplayText } from '@/lib/valueTranslation/runtime';
+import { isTranslatableField, kindForField } from '@/lib/valueTranslation/config';
 import type { AppModel, AppRecord, MapsConfig, ModelField, NoteEntry, User } from '@/types';
 
 interface MapsViewProps {
@@ -107,7 +109,7 @@ export function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx
         const dv = resolveLookupDisplayValue(rec, displayName, { targetModel, allModels: models, allRecords });
         if (dv === null || dv === undefined || typeof dv === 'object') return id.slice(0, 8);
         const s = String(dv);
-        return s.trim() === '' ? id.slice(0, 8) : s;
+        return s.trim() === '' ? id.slice(0, 8) : resolveDisplayText(s, isAr ? 'ar' : 'en', { kind: 'name', field_hint: displayName });
       };
       if (field.is_multi || Array.isArray(raw)) {
         const ids = Array.isArray(raw) ? raw : [];
@@ -201,6 +203,9 @@ export function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx
     default:
       if (Array.isArray(raw)) return raw.map((v) => String(v)).join(joinSep);
       if (typeof raw === 'object') return JSON.stringify(raw);
+      if (isTranslatableField(field)) {
+        return resolveDisplayText(raw, isAr ? 'ar' : 'en', { kind: kindForField(field), field_hint: field.name });
+      }
       return String(raw);
   }
 }

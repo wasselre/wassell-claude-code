@@ -5,6 +5,8 @@ import Badge from '@/components/ui/Badge';
 import DynamicCell from './DynamicCell';
 import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
+import { resolveDisplayText, useValueTranslationVersion } from '@/lib/valueTranslation/runtime';
+import { isTranslatableField, kindForField } from '@/lib/valueTranslation/config';
 import type { AppModel, AppRecord, ModelField, FieldOption } from '@/types';
 
 /**
@@ -33,7 +35,8 @@ function resolveFieldDisplay(
       const linked = linkedRecords.find((r) => r.id === id);
       if (!linked) return null;
       const v = resolveLookupDisplayValue(linked, field.lookup_display_field!, { targetModel, allModels, allRecords });
-      return v !== null && v !== undefined && typeof v !== 'object' ? String(v) : null;
+      if (v === null || v === undefined || typeof v === 'object') return null;
+      return resolveDisplayText(String(v), isAr ? 'ar' : 'en', { kind: 'name', field_hint: field.lookup_display_field! });
     };
     if (Array.isArray(raw)) {
       const labels = raw.map(resolveOne).filter((x): x is string => !!x);
@@ -85,6 +88,9 @@ function formatScalar(field: ModelField, value: unknown, isAr: boolean): string 
       : [];
     return links.length ? links.join(isAr ? '، ' : ', ') : '—';
   }
+  if (isTranslatableField(field)) {
+    return resolveDisplayText(value, isAr ? 'ar' : 'en', { kind: kindForField(field), field_hint: field.name });
+  }
   return String(value);
 }
 
@@ -132,7 +138,8 @@ function displayExpandedField(
       const linked = linkedRecords.find((r) => r.id === id);
       if (!linked) return null;
       const v = resolveLookupDisplayValue(linked, field.lookup_display_field!, { targetModel, allModels, allRecords });
-      return v !== null && v !== undefined && typeof v !== 'object' ? String(v) : null;
+      if (v === null || v === undefined || typeof v === 'object') return null;
+      return resolveDisplayText(String(v), isAr ? 'ar' : 'en', { kind: 'name', field_hint: field.lookup_display_field! });
     };
     if (Array.isArray(value)) {
       const labels = value.map(resolveOne).filter((x): x is string => !!x);
@@ -170,6 +177,8 @@ export default function CardView({ model, records, onCardClick, selectedIds, onT
   const { t } = useTranslation();
   const { language, records: allRecords, models } = useAppStore();
   const isAr = language === 'ar';
+  // Re-render when async value translations arrive (titles/subtitles resolve).
+  useValueTranslationVersion();
 
   const selectionEnabled = !!selectedIds && !!onToggleSelect && !!onToggleSelectAll;
   const allSelected = selectionEnabled && records.length > 0 && records.every((r) => selectedIds!.has(r.id));

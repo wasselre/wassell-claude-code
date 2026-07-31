@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
 import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
+import { resolveDisplayText, useValueTranslationVersion } from '@/lib/valueTranslation/runtime';
 import { Search, X, Plus } from 'lucide-react';
 
 interface LookupComboboxProps {
@@ -33,6 +34,8 @@ export default function LookupCombobox({
 }: LookupComboboxProps) {
   const { models, records, language, saveRecord } = useAppStore();
   const isAr = language === 'ar';
+  // Re-render when async value translations arrive (picker labels resolve).
+  useValueTranslationVersion();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -85,6 +88,12 @@ export default function LookupCombobox({
     };
   }, [linkedModel, lookupDisplayField, models, records]);
 
+  // Display variant of labelFor — overlay-translates the (usually Arabic) name
+  // for the current UI language. Search matches BOTH the source label and the
+  // translated label so typing either "مساكن" or "Masaken" finds the record.
+  const displayFor = (rec: { id: string; data: Record<string, unknown> }): string =>
+    resolveDisplayText(labelFor(rec), isAr ? 'ar' : 'en', { kind: 'name', field_hint: lookupDisplayField });
+
   // Normalize value: in multi mode always string[]; in single mode a string or undefined.
   const selectedIds = useMemo<string[]>(() => {
     if (isMulti) return Array.isArray(value) ? (value as string[]) : [];
@@ -96,7 +105,7 @@ export default function LookupCombobox({
   // Only the dropdown's candidate list is scoped — once an id is picked,
   // it stays bound until the user changes it.
   const singleSelectedRecord = !isMulti ? allLinkedRecords.find((r) => r.id === selectedIds[0]) : undefined;
-  const singleDisplayValue = singleSelectedRecord ? labelFor(singleSelectedRecord) : '';
+  const singleDisplayValue = singleSelectedRecord ? displayFor(singleSelectedRecord) : '';
 
   const limit = maxRecords && maxRecords > 0 ? maxRecords : 20;
   const filteredRecords = useMemo(() => {
@@ -105,8 +114,12 @@ export default function LookupCombobox({
     if (!query.trim()) return base.slice(0, limit);
     const q = query.toLowerCase();
     return base
-      .filter((r) => labelFor(r).toLowerCase().includes(q))
+      .filter((r) => labelFor(r).toLowerCase().includes(q) || displayFor(r).toLowerCase().includes(q))
       .slice(0, limit);
+    // displayFor reads the module-level translation cache; the version hook
+    // above re-renders (and thus re-runs this memo's deps change via labelFor
+    // identity) when new translations arrive.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, linkedRecords, selectedIds, limit, labelFor, candidatePredicate]);
 
   useEffect(() => {
@@ -148,7 +161,11 @@ export default function LookupCombobox({
     trimmedQuery.length > 0 &&
     !!lookupDisplayField &&
     !displayIsComputed &&
-    !filteredRecords.some((r) => labelFor(r).toLowerCase() === trimmedQuery.toLowerCase());
+    !filteredRecords.some(
+      (r) =>
+        labelFor(r).toLowerCase() === trimmedQuery.toLowerCase() ||
+        displayFor(r).toLowerCase() === trimmedQuery.toLowerCase(),
+    );
 
   const createAndPick = () => {
     if (!canCreate || !linkedModel) return;
@@ -191,7 +208,7 @@ export default function LookupCombobox({
         {selectedRecords.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-1.5">
             {selectedRecords.map((rec) => {
-              const label = labelFor(rec);
+              const label = displayFor(rec);
               return (
                 <span
                   key={rec.id}
@@ -231,7 +248,7 @@ export default function LookupCombobox({
                 onClick={() => pickRecord(rec.id)}
                 className="w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm"
               >
-                {labelFor(rec)}
+                {displayFor(rec)}
               </button>
             ))}
             {canCreate && (
@@ -288,7 +305,7 @@ export default function LookupCombobox({
               onClick={() => pickRecord(rec.id)}
               className="w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm"
             >
-              {labelFor(rec)}
+              {displayFor(rec)}
             </button>
           ))}
           {canCreate && (

@@ -12,6 +12,8 @@ import type { AnalyticsContext } from './context';
 import { toNumeric } from './numeric.js';
 import { bucketDate } from './dateWindows.js';
 import { resolveLookupDisplayValue, resolveMirror } from '../mirrorResolver.js';
+import { resolveDisplayText } from '../valueTranslation/runtime';
+import { isTranslatableField, kindForField } from '../valueTranslation/config';
 
 const EMPTY_AR = '(فارغ)';
 const EMPTY_EN = '(Empty)';
@@ -93,10 +95,28 @@ function scalarKey(value: unknown, field: ModelField, ctx: AnalyticsContext): Gr
     case 'lookup':
     case 'unit_picker': {
       const label = resolveLinkedLabel(String(value), field, ctx);
-      return { field_id: field.id, raw: String(value), label_ar: label, label_en: label };
+      // Linked-record display values are names (project, developer, client) —
+      // overlay-translate each language slot so chart axes match the UI language.
+      return {
+        field_id: field.id,
+        raw: String(value),
+        label_ar: resolveDisplayText(label, 'ar', { kind: 'name' }),
+        label_en: resolveDisplayText(label, 'en', { kind: 'name' }),
+      };
     }
-    default:
-      return { field_id: field.id, raw: String(value), label_ar: String(value), label_en: String(value) };
+    default: {
+      const s = String(value);
+      if (isTranslatableField(field)) {
+        const kind = kindForField(field);
+        return {
+          field_id: field.id,
+          raw: s,
+          label_ar: resolveDisplayText(s, 'ar', { kind, field_hint: field.name }),
+          label_en: resolveDisplayText(s, 'en', { kind, field_hint: field.name }),
+        };
+      }
+      return { field_id: field.id, raw: s, label_ar: s, label_en: s };
+    }
   }
 }
 

@@ -15,6 +15,8 @@ import {
   AttachmentCell,
 } from './DriveCells';
 import { VideoCell, MultiVideoCell } from './VideoField';
+import { resolveDisplayText, useValueTranslationVersion } from '@/lib/valueTranslation/runtime';
+import { isTranslatableField, kindForField } from '@/lib/valueTranslation/config';
 import type { ModelField, AppRecord, AttachmentRef, NoteEntry, LocationLevel, TableColumn } from '@/types';
 
 interface DynamicCellProps {
@@ -28,6 +30,9 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
   const { t } = useTranslation();
   const { language, addToast, models, openChatComposer } = useAppStore();
   const isAr = language === 'ar';
+  const lang = isAr ? ('ar' as const) : ('en' as const);
+  // Re-render when async value translations arrive (cache misses resolve).
+  useValueTranslationVersion();
 
   // Mirror fields resolve at render time by hopping through a sibling lookup.
   // Handle BEFORE the empty check so sibling-not-selected / deleted-record states render correctly.
@@ -95,7 +100,9 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
           {countLabel}
         </span>
         <span className="text-charcoal/40 truncate max-w-[16rem]">
-          {latest.text.replace(/\s+/g, ' ').slice(0, 60)}
+          {resolveDisplayText(latest.text, lang, { kind: 'text', field_hint: field.name })
+            .replace(/\s+/g, ' ')
+            .slice(0, 60)}
         </span>
       </span>
     );
@@ -107,6 +114,14 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
 
   switch (field.type) {
     case 'text':
+      return (
+        <span>
+          {isTranslatableField(field)
+            ? resolveDisplayText(value, lang, { kind: kindForField(field), field_hint: field.name })
+            : String(value)}
+        </span>
+      );
+
     case 'email':
     case 'number':
       return <span>{String(value)}</span>;
@@ -362,7 +377,13 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
     }
 
     case 'textarea':
-      return <span className="truncate max-w-xs block">{String(value)}</span>;
+      return (
+        <span className="truncate max-w-xs block">
+          {isTranslatableField(field)
+            ? resolveDisplayText(value, lang, { kind: 'text', field_hint: field.name })
+            : String(value)}
+        </span>
+      );
 
     case 'range': {
       const str = formatRangeValue(field, value, isAr);
@@ -443,7 +464,10 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
         const text = displayVal !== null && displayVal !== undefined && typeof displayVal !== 'object'
           ? String(displayVal)
           : (displayVal ? String(displayVal) : id.slice(0, 8));
-        return <span key={id} className="text-copper font-bold">{text}</span>;
+        // Lookup display fields are almost always names (project, developer,
+        // client) — overlay-translate so English mode shows "Masaken Al Aseel"
+        // instead of the raw Arabic project name.
+        return <span key={id} className="text-copper font-bold">{resolveDisplayText(text, lang, { kind: 'name', field_hint: displayFieldName })}</span>;
       };
 
       // Multi-select: chip list.
@@ -457,7 +481,8 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
                 const linkedRecord = linkedRecords.find((r) => r.id === id);
                 if (!linkedRecord) return isAr ? 'سجل محذوف' : 'Deleted';
                 const dv = resolveLookupDisplayValue(linkedRecord, displayFieldName, displayCtx);
-                return dv !== null && dv !== undefined && typeof dv !== 'object' ? String(dv) : id.slice(0, 8);
+                const text = dv !== null && dv !== undefined && typeof dv !== 'object' ? String(dv) : id.slice(0, 8);
+                return resolveDisplayText(text, lang, { kind: 'name', field_hint: displayFieldName });
               })()} />
             ))}
           </div>

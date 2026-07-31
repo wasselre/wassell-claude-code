@@ -7,11 +7,11 @@
  * ("Clients") + a clean slug ("clients") so the saved model never has
  * mismatched / placeholder labels or `item_<timestamp>` slugs.
  *
- * Implementation: Qwen3 30B on Cloudflare Workers AI FIRST (all writing/
- * translation routes there — user decision 2026-07-18, see api/_lib/textLlm.ts),
- * falling back to Claude Haiku 4.5 with forced tool-use on any Qwen failure.
- * Both paths share the same validation; this fires on every debounced input
- * change in the Builder, so speed matters on both.
+ * Implementation: DeepSeek (`deepseek-chat`) FIRST — user decision 2026-07-31,
+ * replacing the earlier Qwen route ("we will use DeepSeek"), see
+ * api/_lib/deepseek.ts — falling back to Claude Haiku 4.5 with forced tool-use
+ * on any DeepSeek failure. Both paths share the same validation; this fires on
+ * every debounced input change in the Builder, so speed matters on both.
  *
  * Runtime: `edge`. This endpoint is bursty — a user opens the options editor,
  * translates a handful of labels, then closes it — so a `nodejs` function
@@ -28,7 +28,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
-import { qwenRoutingEnabled, qwenJson, logQwenFallback } from './_lib/textLlm.js';
+import { deepseekEnabled, deepseekJson, logDeepseekFallback } from './_lib/deepseek.js';
 
 export const config = { runtime: 'edge' };
 
@@ -150,22 +150,22 @@ export default async function handler(req: Request): Promise<Response> {
 
     const userMessage = `Context: this is ${kindHint}.\nSource language hint: ${sourceLang}.\nInput: ${input}`;
 
-    // ── Primary: Qwen on Cloudflare Workers AI ─────────────────────────
-    if (qwenRoutingEnabled()) {
+    // ── Primary: DeepSeek ──────────────────────────────────────────────
+    if (deepseekEnabled()) {
       try {
-        const out = await qwenJson<ToolInput>({
+        const out = await deepseekJson<ToolInput>({
           system: SYSTEM_PROMPT.replace('Always call the `translate_label` tool — never reply in prose.', ''),
           user: userMessage,
           shape: '{"label_ar": string, "label_en": string, "name": string}',
           requiredKeys: ['label_ar', 'label_en', 'name'],
-          maxTokens: 1_200,
+          maxTokens: 600,
           timeoutMs: 25_000,
         });
         const res = buildResult(out);
         if (res) return jsonOk(res);
-        throw new Error('qwen returned unusable labels/slug');
+        throw new Error('deepseek returned unusable labels/slug');
       } catch (err) {
-        logQwenFallback('/api/translate', err);
+        logDeepseekFallback('/api/translate', err);
       }
     }
 
