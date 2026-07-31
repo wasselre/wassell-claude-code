@@ -80,6 +80,7 @@ import MarketingContentDetailPage from '@/pages/Marketing/ContentDetailPage';
 import MarketingCalendarPage from '@/pages/Marketing/CalendarPage';
 import MarketingCampaignsPage from '@/pages/Marketing/CampaignsPage';
 import MarketingCampaignDetailPage from '@/pages/Marketing/CampaignDetailPage';
+import MarketingExecutionDetailPage from '@/pages/Marketing/ExecutionDetailPage';
 import MarketingLibraryPage from '@/pages/Marketing/LibraryPage';
 import MarketingShootsPage from '@/pages/Marketing/ShootsPage';
 import MarketingNumbersPage from '@/pages/Marketing/NumbersPage';
@@ -452,6 +453,9 @@ export default function App() {
           <Route path="/m/shoots" element={<MarketingShootsPage />} />
           <Route path="/m/campaigns" element={<MarketingCampaignsPage />} />
           <Route path="/m/campaigns/:campaignId" element={<MarketingCampaignDetailPage />} />
+          {/* The bottom layer — screen 21. Literal "exec" segment keeps it
+              from ever being read as a campaign id. */}
+          <Route path="/m/campaigns/:campaignId/exec/:executionId" element={<MarketingExecutionDetailPage />} />
           <Route path="/m/numbers" element={<MarketingNumbersPage />} />
           <Route path="/m/settings" element={<MarketingSettingsPage />} />
           <Route path="/m/settings/:section" element={<SettingsSectionPage />} />

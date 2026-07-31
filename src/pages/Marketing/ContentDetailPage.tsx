@@ -264,8 +264,10 @@ export default function ContentDetailPage() {
                       <ReadField label={isAr ? 'المشروع' : 'Project'}>
                         {item.project_id ? projectName(item.project_id) : '—'}
                       </ReadField>
-                      <ReadField label={isAr ? 'النشر المستهدف' : 'Target publish'}>
-                        {shortDate(item.target_publish_at, isAr)}
+                      <ReadField label={isAr ? 'المدة والحجم المطلوب' : 'Required duration & volume'}>
+                        {typeof item.data?.duration_size === 'string' && item.data.duration_size !== ''
+                          ? item.data.duration_size
+                          : '—'}
                       </ReadField>
                     </div>
                   )}
@@ -478,21 +480,27 @@ function BriefForm({
   const [angle, setAngle] = useState(row.angle ?? '');
   const [cta, setCta] = useState(row.cta ?? '');
   const [projectId, setProjectId] = useState(row.project_id ?? '');
-  const [publishAt, setPublishAt] = useState(row.target_publish_at?.slice(0, 10) ?? '');
+  // «المدة والحجم المطلوب» — free text («٣٥–٤٥ ثانية · ٩:١٦», «١٠ تصاميم»),
+  // not a date. Lives in data; the actual publish timing belongs to the
+  // Publishing tab's per-platform rows.
+  const [durationSize, setDurationSize] = useState(
+    typeof row.data?.duration_size === 'string' ? row.data.duration_size : '',
+  );
   const [busy, setBusy] = useState(false);
 
   const save = async (): Promise<void> => {
     setBusy(true);
     try {
+      const mergedData = { ...(row.data ?? {}), duration_size: durationSize || null };
       const res = await updateContent(row.id, {
         goal: goal || null,
         audience: audience || null,
         angle: angle || null,
         cta: cta || null,
         project_id: projectId || null,
-        target_publish_at: publishAt ? new Date(publishAt).toISOString() : null,
+        data: mergedData,
       });
-      onSaved({ ...row, ...res.item, goal, audience, angle, cta });
+      onSaved({ ...row, ...res.item, goal, audience, angle, cta, data: mergedData });
       addToast(isAr ? 'حُفظ الموجز.' : 'Brief saved.', 'success');
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
@@ -530,8 +538,13 @@ function BriefForm({
           </select>
         </label>
         <label>
-          <span className="lbl">{isAr ? 'النشر المستهدف' : 'Target publish'}</span>
-          <input type="date" className="inp" value={publishAt} onChange={(e) => setPublishAt(e.target.value)} />
+          <span className="lbl">{isAr ? 'المدة والحجم المطلوب' : 'Required duration & volume'}</span>
+          <input
+            className="inp"
+            value={durationSize}
+            onChange={(e) => setDurationSize(e.target.value)}
+            placeholder={isAr ? '٣٥–٤٥ ثانية · ٩:١٦' : '35–45s · 9:16'}
+          />
         </label>
       </div>
       <div>

@@ -347,7 +347,13 @@ export default function CampaignDetailPage() {
                         {executions.map((x) => {
                           const linked = content.find((c) => c.id === x.content_id);
                           return (
-                            <tr key={x.id}>
+                            // The row opens the execution's own page — screen 21,
+                            // where the ads live. The buttons stay for quick edits.
+                            <tr
+                              key={x.id}
+                              className="click"
+                              onClick={() => navigate(`/m/campaigns/${item.id}/exec/${x.id}`)}
+                            >
                               <td>
                                 <span className="tag">
                                   {(isAr ? PLATFORM_LABELS[x.platform]?.ar : PLATFORM_LABELS[x.platform]?.en) ?? x.platform}
@@ -365,7 +371,7 @@ export default function CampaignDetailPage() {
                                 </Pill>
                               </td>
                               {can('enter_metrics') && (
-                                <td>
+                                <td onClick={(e) => e.stopPropagation()}>
                                   <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end' }}>
                                     <button type="button" className="btn btn-sm" onClick={() => setExecEditing(x)}>
                                       {isAr ? 'تعديل' : 'Edit'}

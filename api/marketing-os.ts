@@ -873,7 +873,8 @@ export default async function handler(req: Request): Promise<Response> {
         const patch: Record<string, unknown> = {};
         for (const k of ['content_id', 'platform', 'account_id', 'label', 'status',
                          'starts_on', 'ends_on', 'budget', 'spend', 'impressions',
-                         'clicks', 'leads', 'qualified', 'note'] as const) {
+                         'clicks', 'leads', 'qualified', 'note',
+                         'targeting', 'lead_form_fields'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
         if (id) {
@@ -893,6 +894,136 @@ export default async function handler(req: Request): Promise<Response> {
         const lf = dbFail(list.error);
         if (lf) return lf;
         return jsonOk({ executions: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Execution detail — the bottom layer, where each AD is a   */
+      /* content reference + targeting + a result (screen 21)      */
+      /* -------------------------------------------------------- */
+      case 'execution_detail': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+
+        const exec = await sb.from('mos_campaign_executions').select('*').eq('id', id).maybeSingle();
+        const execFail = dbFail(exec.error);
+        if (execFail) return execFail;
+        if (!exec.data) return jsonError(404, 'execution not found');
+        const row = exec.data as unknown as Row;
+
+        const [campaign, ads, daily] = await Promise.all([
+          sb.from('mos_campaign_v').select('*').eq('id', row.campaign_id as string).maybeSingle(),
+          sb.from('mos_execution_ads').select('*').eq('execution_id', id)
+            .order('created_at', { ascending: true }),
+          sb.from('mos_execution_daily').select('*').eq('execution_id', id)
+            .order('day', { ascending: false }).limit(90),
+        ]);
+        const f = dbFail(campaign.error) ?? dbFail(ads.error) ?? dbFail(daily.error);
+        if (f) return f;
+
+        // Each ad points at a content record — fetch the referenced rows so the
+        // UI can show titles, types, project (for the wrong-project warning) and
+        // the workflow state (for the "waiting on approval" note).
+        const contentIds = Array.from(new Set(
+          (ads.data ?? [])
+            .map((a) => (a as unknown as Row).content_id as string | null)
+            .filter((c): c is string => Boolean(c)),
+        ));
+        let adContent: unknown[] = [];
+        if (contentIds.length > 0) {
+          const c = await sb.from('mos_content_v').select(CONTENT_LIST_COLUMNS).in('id', contentIds);
+          const cf = dbFail(c.error);
+          if (cf) return cf;
+          adContent = c.data ?? [];
+        }
+
+        return jsonOk({
+          execution: exec.data,
+          campaign: campaign.data,
+          ads: ads.data ?? [],
+          ad_content: adContent,
+          daily: daily.data ?? [],
+        });
+      }
+
+      case 'ad_save': {
+        const executionId = str(body.execution_id);
+        if (!executionId) return jsonError(400, 'execution_id is required');
+        const raw = (body.ad ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['content_id', 'label', 'status', 'spend', 'impressions',
+                         'clicks', 'leads', 'qualified', 'note'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        if (id) {
+          const upd = await sb.from('mos_execution_ads').update(patch).eq('id', id).select('id').maybeSingle();
+          const uf = dbFail(upd.error);
+          if (uf) return uf;
+          if (!upd.data) return jsonError(404, 'ad not found');
+        } else {
+          patch.execution_id = executionId;
+          const ins = await sb.from('mos_execution_ads').insert(patch).select('id').maybeSingle();
+          const inf = dbFail(ins.error);
+          if (inf) return inf;
+        }
+        const list = await sb.from('mos_execution_ads').select('*')
+          .eq('execution_id', executionId).order('created_at', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ ads: list.data ?? [] });
+      }
+
+      case 'ad_delete': {
+        const id = str(body.id);
+        const executionId = str(body.execution_id);
+        if (!id || !executionId) return jsonError(400, 'id and execution_id are required');
+        const del = await sb.from('mos_execution_ads').delete().eq('id', id);
+        const df = dbFail(del.error);
+        if (df) return df;
+        const list = await sb.from('mos_execution_ads').select('*')
+          .eq('execution_id', executionId).order('created_at', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ ads: list.data ?? [] });
+      }
+
+      case 'daily_save': {
+        const executionId = str(body.execution_id);
+        const day = str(body.day);
+        if (!executionId || !day) return jsonError(400, 'execution_id and day are required');
+        const numOrNull = (v: unknown): number | null =>
+          typeof v === 'number' && Number.isFinite(v) ? v : null;
+        const spend = numOrNull(body.spend);
+        const leads = numOrNull(body.leads);
+        const qualified = numOrNull(body.qualified);
+        // Mirrors mos_exec_daily_not_empty so the user gets a sentence.
+        if (spend === null && leads === null && qualified === null) {
+          return new Response(
+            JSON.stringify({
+              error: 'Enter at least one number for the day.',
+              error_ar: 'أدخل رقمًا واحدًا على الأقل لليوم.',
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        const up = await sb.from('mos_execution_daily').upsert(
+          {
+            execution_id: executionId,
+            day,
+            spend,
+            leads,
+            qualified,
+            entered_by_user_id: await resolveAppUserId(sb, user.userId),
+          },
+          { onConflict: 'execution_id,day' },
+        );
+        const uf = dbFail(up.error);
+        if (uf) return uf;
+        const list = await sb.from('mos_execution_daily').select('*')
+          .eq('execution_id', executionId).order('day', { ascending: false }).limit(90);
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ daily: list.data ?? [] });
       }
 
       case 'execution_delete': {

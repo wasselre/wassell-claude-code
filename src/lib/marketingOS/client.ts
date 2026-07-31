@@ -311,6 +311,44 @@ export interface MosExecution {
   qualified: number | null;
   source: 'manual' | 'api';
   note: string | null;
+  /** Screen 21's side panels — descriptive brief data on the execution. */
+  targeting?: MosTargeting;
+  lead_form_fields?: string[];
+}
+
+/** The targeting brief. All free text — it describes the platform setup. */
+export interface MosTargeting {
+  location?: string;
+  age?: string;
+  interests?: string;
+  placements?: string;
+  bidding?: string;
+  daily_budget?: string;
+}
+
+export interface MosAd {
+  id: string;
+  execution_id: string;
+  content_id: string | null;
+  label: string | null;
+  status: 'running' | 'watch' | 'paused' | 'waiting';
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  leads: number | null;
+  qualified: number | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface MosDailyEntry {
+  id: string;
+  execution_id: string;
+  day: string;
+  spend: number | null;
+  leads: number | null;
+  qualified: number | null;
+  note: string | null;
 }
 
 export interface MosAsset {
@@ -458,6 +496,33 @@ export const saveExecution = (campaignId: string, execution: Record<string, unkn
 
 export const deleteExecution = (campaignId: string, id: string) =>
   call<{ executions: MosExecution[] }>('execution_delete', { campaign_id: campaignId, id });
+
+export const fetchExecutionDetail = (id: string) =>
+  call<{
+    execution: MosExecution;
+    campaign: MosCampaign | null;
+    ads: MosAd[];
+    ad_content: MosContentRow[];
+    daily: MosDailyEntry[];
+  }>('execution_detail', { id });
+
+export const saveAd = (executionId: string, ad: Record<string, unknown>) =>
+  call<{ ads: MosAd[] }>('ad_save', { execution_id: executionId, ad });
+
+export const deleteAd = (executionId: string, id: string) =>
+  call<{ ads: MosAd[] }>('ad_delete', { execution_id: executionId, id });
+
+export const saveDaily = (
+  executionId: string,
+  entry: { day: string; spend?: number | null; leads?: number | null; qualified?: number | null },
+) => call<{ daily: MosDailyEntry[] }>('daily_save', { execution_id: executionId, ...entry });
+
+export const AD_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
+  running: { ar: 'يعمل',        en: 'Running' },
+  watch:   { ar: 'مراقبة',      en: 'Watching' },
+  paused:  { ar: 'موقف',        en: 'Paused' },
+  waiting: { ar: 'في الانتظار', en: 'Waiting' },
+};
 
 export const fetchAssets = (filters: Record<string, unknown> = {}) =>
   call<{ assets: MosAsset[]; links: MosAssetLink[] }>('asset_list', filters);
