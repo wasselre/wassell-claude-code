@@ -1070,7 +1070,7 @@ export default async function handler(req: Request): Promise<Response> {
         for (const k of ['title', 'kind', 'source', 'project_id', 'file_id', 'url',
                          'thumb_url', 'shot_on', 'tags', 'note',
                          'file_path', 'mime_type', 'size_bytes', 'original_name',
-                         'usage_rights'] as const) {
+                         'usage_rights', 'shoot_request_id'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
         if (id) {
@@ -1134,18 +1134,25 @@ export default async function handler(req: Request): Promise<Response> {
       /* Shoot requests — what missing scenes turn into            */
       /* -------------------------------------------------------- */
       case 'shoot_list': {
-        const [reqs, items] = await Promise.all([
+        const [reqs, items, shootAssets, links] = await Promise.all([
           sb.from('mos_shoot_requests').select('*')
             .order('created_at', { ascending: false }).limit(cap(body.limit, 100, 300)),
           sb.from('mos_shoot_items').select('*').limit(1000),
+          // Delivered files per request — the completed table's «ملفات» count
+          // and the usage percentage both come from these.
+          sb.from('mos_assets').select('id, shoot_request_id, kind')
+            .not('shoot_request_id', 'is', null).is('archived_at', null).limit(2000),
+          sb.from('mos_asset_links').select('asset_id, content_id').limit(4000),
         ]);
-        const f = dbFail(reqs.error) ?? dbFail(items.error);
+        const f = dbFail(reqs.error) ?? dbFail(items.error)
+          ?? dbFail(shootAssets.error) ?? dbFail(links.error);
         if (f) return f;
 
         // Every scene still marked missing, whether or not it has been requested
-        // yet — the backlog IS the pending shoot list.
+        // yet — the backlog IS the pending shoot list. created_at feeds the
+        // "oldest waiting" column that drives the auto-suggest threshold.
         const missing = await sb.from('mos_scenes')
-          .select('id, content_id, position, visual, footage_status')
+          .select('id, content_id, position, visual, footage_status, created_at')
           .eq('footage_status', 'missing').limit(500);
         const mf = dbFail(missing.error);
         if (mf) return mf;
@@ -1165,6 +1172,60 @@ export default async function handler(req: Request): Promise<Response> {
           items: items.data ?? [],
           missing_scenes: missing.data ?? [],
           scene_owners: owners,
+          shoot_assets: shootAssets.data ?? [],
+          asset_links: links.data ?? [],
+        });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Delivery — the wire that makes this NOT Drive. Files      */
+      /* arriving is what marks the waiting scenes covered; nobody */
+      /* has to notice and connect them by hand.                   */
+      /* -------------------------------------------------------- */
+      case 'shoot_deliver': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+
+        const upd = await sb.from('mos_shoot_requests')
+          .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+          .eq('id', id).select('id').maybeSingle();
+        const uf = dbFail(upd.error);
+        if (uf) return uf;
+        if (!upd.data) return jsonError(404, 'shoot request not found');
+
+        const itemRows = await sb.from('mos_shoot_items').select('id, scene_id').eq('request_id', id);
+        const irf = dbFail(itemRows.error);
+        if (irf) return irf;
+        const rows = (itemRows.data ?? []) as unknown as Array<{ id: string; scene_id: string | null }>;
+
+        if (rows.length > 0) {
+          const itemsDone = await sb.from('mos_shoot_items')
+            .update({ done: true }).eq('request_id', id);
+          const idf = dbFail(itemsDone.error);
+          if (idf) return idf;
+
+          const sceneIds = rows.map((r) => r.scene_id).filter((s): s is string => Boolean(s));
+          if (sceneIds.length > 0) {
+            // The scenes that were waiting on this shoot are now covered. If a
+            // shot was actually missed, downgrading it back is one click —
+            // correction is the exception, connecting is the default.
+            const scenes = await sb.from('mos_scenes')
+              .update({ footage_status: 'have' }).in('id', sceneIds);
+            const sf = dbFail(scenes.error);
+            if (sf) return sf;
+          }
+        }
+
+        const [reqsAfter, itemsAfter] = await Promise.all([
+          sb.from('mos_shoot_requests').select('*').order('created_at', { ascending: false }).limit(300),
+          sb.from('mos_shoot_items').select('*').limit(1000),
+        ]);
+        const rf = dbFail(reqsAfter.error) ?? dbFail(itemsAfter.error);
+        if (rf) return rf;
+        return jsonOk({
+          requests: reqsAfter.data ?? [],
+          items: itemsAfter.data ?? [],
+          scenes_marked: rows.filter((r) => r.scene_id).length,
         });
       }
 

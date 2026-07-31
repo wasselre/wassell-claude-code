@@ -39,6 +39,7 @@
     "@xyflow/react": "^12.10.2",
     "docx": "^9.7.1",
     "exceljs": "^4.4.0",
+    "heic2any": "^0.0.4",
     "html2canvas": "^1.4.1",
     "i18next": "^24.2.2",
     "jspdf": "^2.5.2",

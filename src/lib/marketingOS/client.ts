@@ -371,6 +371,8 @@ export interface MosAsset {
   size_bytes?: number | null;
   original_name?: string | null;
   usage_rights?: string | null;
+  /** The shoot request whose delivery brought this file in. */
+  shoot_request_id?: string | null;
 }
 
 export interface MosAssetLink {
@@ -386,6 +388,7 @@ export interface MosShootRequest {
   project_id: string | null;
   status: 'requested' | 'scheduled' | 'shot' | 'delivered' | 'cancelled';
   scheduled_at: string | null;
+  delivered_at?: string | null;
   location: string | null;
   note: string | null;
   assigned_role: string | null;
@@ -548,9 +551,18 @@ export const fetchShoots = () =>
   call<{
     requests: MosShootRequest[];
     items: MosShootItem[];
-    missing_scenes: Array<Pick<MosScene, 'id' | 'content_id' | 'position' | 'visual' | 'footage_status'>>;
+    missing_scenes: Array<Pick<MosScene, 'id' | 'content_id' | 'position' | 'visual' | 'footage_status'>
+      & { created_at?: string }>;
     scene_owners: Array<MosTitleRef & { project_id: string | null }>;
+    shoot_assets: Array<{ id: string; shoot_request_id: string; kind: string }>;
+    asset_links: Array<{ asset_id: string; content_id: string }>;
   }>('shoot_list');
+
+export const deliverShoot = (id: string) =>
+  call<{ requests: MosShootRequest[]; items: MosShootItem[]; scenes_marked: number }>(
+    'shoot_deliver',
+    { id },
+  );
 
 export const saveShoot = (request: Record<string, unknown>, sceneIds?: string[]) =>
   call<{ requests: MosShootRequest[]; request_id: string | null }>('shoot_save', {

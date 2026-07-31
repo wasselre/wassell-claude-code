@@ -13,11 +13,12 @@
  * the endpoint. Photos, videos, audio, PDFs, design files — everything.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import {
-  ASSET_SOURCE_LABELS, MosAsset, fetchAssets, saveAsset,
+  ASSET_SOURCE_LABELS, MosAsset, MosShootRequest, deliverShoot, fetchAssets,
+  fetchShoots, saveAsset,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Field, PageHead } from './components/kit';
@@ -26,10 +27,11 @@ import {
 } from './components/icons';
 import { num } from './lib/format';
 import {
-  formatBytes, isBrowserImage, kindFromFile, storagePath, uploadToStorage,
+  PickedFile, collectDropped, formatBytes, heicToJpeg, isBrowserImage, isHeic,
+  kindFromFile, storagePath, tagsFromPath, uploadToStorage,
 } from './lib/upload';
 
-type RowStatus = 'waiting' | 'uploading' | 'done' | 'failed' | 'duplicate' | 'skipped';
+type RowStatus = 'waiting' | 'converting' | 'uploading' | 'done' | 'failed' | 'duplicate' | 'skipped';
 
 interface Row {
   id: string;
@@ -41,6 +43,12 @@ interface Row {
   duplicateOf: string | null;
   previewUrl: string | null;
   assetRef: string | null;
+  /** Folder segments the file arrived under — they become tags automatically. */
+  folderTags: string[];
+  /** Set after HEIC→JPEG: the name the file was uploaded AS. */
+  convertedName: string | null;
+  /** Set when conversion failed and the original was uploaded instead. */
+  conversionFailed: boolean;
 }
 
 const KIND_LABEL: Record<string, { ar: string; en: string }> = {
@@ -61,6 +69,7 @@ const USAGE_RIGHTS: Array<{ key: string; ar: string; en: string }> = [
 export default function UploadPage() {
   const { isAr, can, projects } = useWorkspace();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const addToast = useAppStore((s) => s.addToast);
 
   const [rows, setRows] = useState<Row[]>([]);
@@ -76,8 +85,17 @@ export default function UploadPage() {
   const [tags, setTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState('');
 
+  // The shoot this batch delivers. Arriving files are what mark the waiting
+  // scenes covered — the wire that makes this not Drive.
+  const [shoots, setShoots] = useState<MosShootRequest[]>([]);
+  const [shootId, setShootId] = useState(params.get('shoot') ?? '');
+
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const folderRef = useRef<HTMLInputElement | null>(null);
+  // Counted in the upload lanes — the `rows` closure inside start() is stale
+  // by the time the batch ends, so the delivery check reads this instead.
+  const successRef = useRef(0);
 
   useEffect(() => {
     // The existing library, for duplicate detection at the door.
@@ -90,7 +108,21 @@ export default function UploadPage() {
           'error',
         );
       });
+    // Open shoot requests, for the delivery link. Non-fatal if unavailable.
+    void fetchShoots()
+      .then((res) => {
+        const open = res.requests.filter((r) => r.status !== 'delivered' && r.status !== 'cancelled');
+        setShoots(open);
+        const preset = params.get('shoot');
+        const match = preset ? open.find((r) => r.id === preset) : null;
+        if (match?.project_id) setProjectId(match.project_id);
+      })
+      .catch((e: unknown) => {
+        console.error('[marketing] shoot list unavailable for upload link', e);
+      });
     return () => abortRef.current?.abort();
+    // params is read once at mount by design — the preset should not re-apply.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addToast, isAr]);
 
   // Object URLs must be released or a 184-file batch leaks the whole card.
@@ -99,13 +131,13 @@ export default function UploadPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const addFiles = useCallback((files: FileList | File[]) => {
-    const list = Array.from(files).filter((f) => f.size > 0);
+  const addFiles = useCallback((picked: PickedFile[]) => {
+    const list = picked.filter((p) => p.file.size > 0);
     if (list.length === 0) return;
     setRows((cur) => {
       const seen = new Set(cur.map((r) => `${r.file.name}|${r.file.size}`));
       const next = [...cur];
-      for (const file of list) {
+      for (const { file, folderTags } of list) {
         const key = `${file.name}|${file.size}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -121,6 +153,9 @@ export default function UploadPage() {
           duplicateOf: dup ? (dup.title || dup.ref || dup.id) : null,
           previewUrl: isBrowserImage(file) ? URL.createObjectURL(file) : null,
           assetRef: null,
+          folderTags,
+          convertedName: null,
+          conversionFailed: false,
         });
       }
       return next;
@@ -143,33 +178,62 @@ export default function UploadPage() {
 
   const uploadOne = async (row: Row, signal: AbortSignal): Promise<void> => {
     const assetId = uuid();
-    const path = storagePath(assetId, row.file.name);
-    patchRow(row.id, { status: 'uploading', progress: 0, error: null });
+    patchRow(row.id, { progress: 0, error: null });
     try {
+      // HEIC first: iPhones shoot it, browsers can't render it. A failed
+      // conversion falls back to the ORIGINAL file with a visible note —
+      // never a dropped file.
+      let toSend = row.file;
+      let conversionFailed = false;
+      if (isHeic(row.file)) {
+        patchRow(row.id, { status: 'converting' });
+        try {
+          toSend = await heicToJpeg(row.file);
+          patchRow(row.id, {
+            convertedName: toSend.name,
+            previewUrl: URL.createObjectURL(toSend),
+          });
+        } catch (convErr) {
+          console.error('[marketing] HEIC conversion failed', row.file.name, convErr);
+          conversionFailed = true;
+        }
+      }
+      if (signal.aborted) {
+        patchRow(row.id, { status: 'waiting', progress: 0 });
+        return;
+      }
+
+      patchRow(row.id, { status: 'uploading', conversionFailed });
+      const path = storagePath(assetId, toSend.name);
       const result = await uploadToStorage(
-        row.file,
+        toSend,
         path,
         (fraction) => patchRow(row.id, { progress: fraction }),
         signal,
       );
-      const kind = kindFromFile(row.file);
-      const title = row.file.name.replace(/\.[^.]+$/, '');
+      const kind = kindFromFile(toSend);
+      const title = toSend.name.replace(/\.[^.]+$/, '');
+      // Folder names ride in as tags — Photos/Amenities tagged the file
+      // before anyone typed anything.
+      const allTags = Array.from(new Set([...tags, ...row.folderTags]));
       const res = await saveAsset({
         title,
         kind,
         source,
         project_id: projectId || null,
         url: result.publicUrl,
-        thumb_url: isBrowserImage(row.file) ? result.publicUrl : null,
+        thumb_url: isBrowserImage(toSend) ? result.publicUrl : null,
         shot_on: shotOn || null,
-        tags,
+        tags: allTags,
         file_path: result.path,
-        mime_type: row.file.type || null,
-        size_bytes: row.file.size,
+        mime_type: toSend.type || null,
+        size_bytes: toSend.size,
         original_name: row.file.name,
         usage_rights: USAGE_RIGHTS.find((r) => r.key === rights)?.[isAr ? 'ar' : 'en'] ?? rights,
+        shoot_request_id: shootId || null,
       });
       patchRow(row.id, { status: 'done', progress: 1, assetRef: res.asset.ref });
+      successRef.current += 1;
     } catch (e) {
       if (signal.aborted) {
         patchRow(row.id, { status: 'waiting', progress: 0 });
@@ -184,6 +248,7 @@ export default function UploadPage() {
   const start = async (): Promise<void> => {
     if (uploadable.length === 0) return;
     setRunning(true);
+    successRef.current = 0;
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -204,6 +269,23 @@ export default function UploadPage() {
         isAr ? 'انتهى الرفع — راجع أي صف فشل.' : 'Upload finished — check any failed rows.',
         'success',
       );
+      // The delivery wire: files arrived for this shoot, so the request is
+      // delivered, its shot list is ticked, and the scenes that were waiting
+      // flip to "have" — the approval checklist unblocks itself.
+      if (shootId && successRef.current > 0) {
+        try {
+          const res = await deliverShoot(shootId);
+          const shoot = shoots.find((s) => s.id === shootId);
+          addToast(
+            isAr
+              ? `سُلِّم ${shoot?.ref ?? 'طلب التصوير'} — عُلِّمت ${num(res.scenes_marked, true)} لقطة منتظرة كمتوفرة.`
+              : `${shoot?.ref ?? 'The shoot'} delivered — ${res.scenes_marked} waiting shots marked covered.`,
+            'success',
+          );
+        } catch (e) {
+          addToast(e instanceof Error ? e.message : String(e), 'error');
+        }
+      }
     }
   };
 
@@ -282,6 +364,30 @@ export default function UploadPage() {
                   ))}
                 </select>
               </Field>
+              <div>
+                <Field label={isAr ? 'التصوير' : 'The shoot'}>
+                  <select
+                    className="inp"
+                    value={shootId}
+                    onChange={(e) => {
+                      setShootId(e.target.value);
+                      const s = shoots.find((x) => x.id === e.target.value);
+                      if (s?.project_id) setProjectId(s.project_id);
+                    }}
+                  >
+                    <option value="">{isAr ? 'غير مرتبط بطلب' : 'Not linked to a request'}</option>
+                    {shoots.map((s) => (
+                      <option key={s.id} value={s.id}>{s.title}</option>
+                    ))}
+                  </select>
+                </Field>
+                {shootId && (
+                  <div style={{ fontSize: 10.5, color: 'var(--copper)', marginTop: 5, fontWeight: 700 }}>
+                    {isAr ? 'مرتبط بطلب التصوير ' : 'Linked to shoot request '}
+                    <span className="ltr">{shoots.find((s) => s.id === shootId)?.ref ?? ''}</span>
+                  </div>
+                )}
+              </div>
               <Field label={isAr ? 'المصدر' : 'Source'}>
                 <select className="inp" value={source} onChange={(e) => setSource(e.target.value as MosAsset['source'])}>
                   {Object.keys(ASSET_SOURCE_LABELS).map((k) => (
@@ -349,7 +455,11 @@ export default function UploadPage() {
               onDrop={(e) => {
                 e.preventDefault();
                 setDragOver(false);
-                addFiles(e.dataTransfer.files);
+                // Folders drop too — their names arrive as tags.
+                void collectDropped(e.dataTransfer.items).then(addFiles).catch((err: unknown) => {
+                  console.error('[marketing] drop traversal failed', err);
+                  addToast(isAr ? 'تعذّرت قراءة المجلد المفلَت.' : 'Could not read the dropped folder.', 'error');
+                });
               }}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="var(--copper)" style={{ width: 24, height: 24, strokeWidth: 1.5 }} aria-hidden>
@@ -360,16 +470,44 @@ export default function UploadPage() {
               </div>
               <div style={{ fontSize: 11.5, marginTop: 4 }}>
                 {isAr
-                  ? 'صور · فيديو · صوت · PDF · ملفات تصميم — يمكن تحديد المئات دفعة واحدة'
-                  : 'Photos · video · audio · PDFs · design files — hundreds at once is the point'}
+                  ? <>أسماء المجلدات تتحول إلى وسوم تلقائيًا — <b className="ltr">Photos/Amenities</b> ← وسما الملفات بداخلها</>
+                  : <>Folder names become tags automatically — <b className="ltr">Photos/Amenities</b> tags everything inside it</>}
               </div>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{ marginTop: 10 }}
+                onClick={(e) => { e.stopPropagation(); folderRef.current?.click(); }}
+              >
+                {isAr ? 'أو اختر مجلدًا كاملًا' : 'Or pick a whole folder'}
+              </button>
               <input
                 ref={inputRef}
                 type="file"
                 multiple
                 style={{ display: 'none' }}
                 onChange={(e) => {
-                  if (e.target.files) addFiles(e.target.files);
+                  if (e.target.files) {
+                    addFiles(Array.from(e.target.files).map((file) => ({ file, folderTags: [] })));
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <input
+                ref={folderRef}
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                {...({ webkitdirectory: '' } as unknown as React.InputHTMLAttributes<HTMLInputElement>)}
+                onChange={(e) => {
+                  if (e.target.files) {
+                    addFiles(Array.from(e.target.files).map((file) => ({
+                      file,
+                      folderTags: tagsFromPath(
+                        (file as File & { webkitRelativePath?: string }).webkitRelativePath ?? file.name,
+                      ),
+                    })));
+                  }
                   e.target.value = '';
                 }}
               />
@@ -403,6 +541,23 @@ export default function UploadPage() {
                     />
                   ))}
                 </div>
+              </div>
+            )}
+
+            {shootId && (
+              <div
+                style={{
+                  marginTop: 13, background: 'var(--sand-2)', border: '1px solid var(--line)',
+                  borderRadius: 9, padding: '12px 15px', fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.85,
+                }}
+              >
+                <b>
+                  {isAr ? 'لأن هذا الرفع مرتبط بطلب التصوير ' : 'Because this upload is linked to shoot request '}
+                  <span className="ltr">{shoots.find((s) => s.id === shootId)?.ref ?? ''}</span>
+                </b>
+                {isAr
+                  ? '، ستُعلَّم اللقطات التي كانت تنتظره كمُغطّاة عند اكتمال الرفع، وتنفكّ قائمة الاعتماد المعطّلة وحدها. لا أحد مضطر للانتباه والربط بينهما.'
+                  : ', the shots waiting on it will be marked covered when the upload finishes, and the blocked approval checklist unblocks itself. Nobody has to notice and connect them.'}
               </div>
             )}
 
@@ -458,6 +613,7 @@ function QueueRow({
       <div style={{ minWidth: 0, flex: 1 }}>
         <div className="nm ltr" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {row.file.name}
+          {row.convertedName && <> → {row.convertedName}</>}
         </div>
         <div
           className="mt"
@@ -472,6 +628,13 @@ function QueueRow({
               : (
                 <>
                   {kindLabel} · {formatBytes(row.file.size, isAr)}
+                  {row.convertedName && <> · {isAr ? 'حُوِّلت إلى JPEG' : 'converted to JPEG'}</>}
+                  {row.conversionFailed && (
+                    <span style={{ color: 'var(--wait)' }}>
+                      {' · '}{isAr ? 'تعذّر التحويل — رُفع الأصل' : 'conversion failed — original uploaded'}
+                    </span>
+                  )}
+                  {row.folderTags.length > 0 && <> · {row.folderTags.join(' · ')}</>}
                   {row.status === 'done' && row.assetRef && <> · <span className="ltr">{row.assetRef}</span></>}
                 </>
               )}
@@ -488,6 +651,9 @@ function QueueRow({
         )}
         {row.status === 'uploading' && (
           <span className="pill p-now">{num(Math.round(row.progress * 100), isAr)}{isAr ? '٪' : '%'}</span>
+        )}
+        {row.status === 'converting' && (
+          <span className="pill p-wait">{isAr ? 'تُحوَّل…' : 'Converting…'}</span>
         )}
         {row.status === 'waiting' && <span className="pill p-idle">{isAr ? 'انتظار' : 'Waiting'}</span>}
         {row.status === 'skipped' && <span className="pill p-idle">{isAr ? 'تُخطّي' : 'Skipped'}</span>}
