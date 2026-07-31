@@ -86,23 +86,34 @@ for (const c of COUNTRIES) {
   console.log(`  ${c.code}: ${geom.type}, ${coordCount(geom)} coords`);
 }
 
+// A REGION's external_id is its `regions` row UUID, not 'AE-DXB' or an spl_region_id.
+//
+// This is not cosmetic and it bit once already: the city tier is backfilled with
+// `parent_external_id = cities.region_lookup`, which IS that UUID. Keying regions any
+// other way produces a second, parallel set of region outlines that nothing links to —
+// 40 rows for 20 regions, every regional boundary drawn twice.
+const regionRows = await get('regions?select=id,spl_region_id,country_code,name_ar,name_en');
+const regionByCode = new Map(regionRows.map((r) => [String(r.spl_region_id), r]));
+
 // ── regions: UAE emirates (already cached by the UAE pipeline) ──────────────
 console.log('\n── UAE emirates ──');
 for (const em of EMIRATES) {
   const rel = readEls(join(UAE_RAW, `geom-emirate-${em.code}.json`)).find((e) => e.type === 'relation');
   const geom = rel ? elementGeometry(rel) : null;
   if (!geom) { console.warn(`  ! ${em.code}: no cached polygon — skipped`); continue; }
+  const row = regionByCode.get(`AE-${em.code}`);
+  if (!row) { console.warn(`  ! ${em.code}: no regions row for AE-${em.code} — skipped`); continue; }
   stage.push({
-    tier: 'region', external_id: `AE-${em.code}`, parent_external_id: 'AE', country_code: 'AE',
-    name_ar: stripEmirateAr(em.name_ar), name_en: stripEmirate(em.name_en), geojson: geom,
-    source: 'OpenStreetMap via Overpass API (ODbL)',
+    tier: 'region', external_id: row.id, parent_external_id: 'AE', country_code: 'AE',
+    name_ar: stripEmirateAr(row.name_ar || em.name_ar), name_en: stripEmirate(row.name_en || em.name_en),
+    geojson: geom, source: 'OpenStreetMap via Overpass API (ODbL)',
   });
   console.log(`  ${em.code}: ${coordCount(geom)} coords`);
 }
 
 // ── regions: Saudi, matched to our rows by name ─────────────────────────────
 console.log('\n── Saudi regions ──');
-const saRows = await get('regions?country_code=eq.SA&select=spl_region_id,name_ar,name_en');
+const saRows = regionRows.filter((r) => r.country_code === 'SA');
 // OSM decorates region names ("Riyadh Region", "Eastern Province", "منطقة الرياض");
 // ours are bare. Strip the decoration from BOTH sides before comparing.
 const bareEn = (s) => normalizeEn(String(s ?? '').replace(/\s+(region|province|governorate|emirate)\s*$/i, ''));
@@ -126,7 +137,8 @@ for (const f of readdirSync(RAW).filter((f) => /^region-SA-\d+\.json$/.test(f)))
     continue;
   }
   stage.push({
-    tier: 'region', external_id: row.spl_region_id, parent_external_id: 'SA', country_code: 'SA',
+    // The regions row UUID — see the note above the emirate loop.
+    tier: 'region', external_id: row.id, parent_external_id: 'SA', country_code: 'SA',
     name_ar: row.name_ar, name_en: row.name_en, geojson: geom,
     source: 'OpenStreetMap via Overpass API (ODbL)',
   });
