@@ -1833,9 +1833,27 @@ const resources = {
   },
 };
 
+/**
+ * Boot in the language the user last chose. The Zustand store persists it as
+ * JSON under `wassell_language` (saveLocal), but until 2026-07-31 i18next
+ * always booted `ar` and was only synced by the Header toggle — so reloading
+ * in English rendered MIXED chrome: `t()` strings in Arabic, store-driven
+ * strings in English.
+ */
+function storedLanguage(): 'ar' | 'en' {
+  try {
+    const raw = localStorage.getItem('wassell_language');
+    const parsed = raw ? (JSON.parse(raw) as string) : null;
+    return parsed === 'en' ? 'en' : 'ar';
+  } catch {
+    // Storage unavailable (SSR, privacy mode) — Arabic default, matching the store.
+    return 'ar';
+  }
+}
+
 i18n.use(initReactI18next).init({
   resources,
-  lng: 'ar',
+  lng: storedLanguage(),
   fallbackLng: 'en',
   interpolation: {
     escapeValue: false,
