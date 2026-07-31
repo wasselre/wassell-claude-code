@@ -32,6 +32,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Bell, Loader2, Phone, Sparkles, X } from 'lucide-react';
+import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -59,6 +60,10 @@ export default function CallResultConfirmHost() {
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const seededFor = useRef<string | null>(null);
+  // One synthetic follow-up id per suggestion. Generated in a memo it would
+  // churn on every realtime records update, so pin it here — the id must be
+  // stable between the render that builds the record and the save that uses it.
+  const synthIds = useRef<Map<string, string>>(new Map());
 
   // Oldest first — the rep confirms them one at a time, in the order the calls
   // actually happened, so the narrative matches their memory.
@@ -96,10 +101,20 @@ export default function CallResultConfirmHost() {
   const callsModel = models.find((m) => m.name === 'phone_calls');
   const optionsModel = models.find((m) => m.name === 'client_property_options');
 
-  const followupRec = useMemo<AppRecord | null>(() => {
+  const linkedFollowup = useMemo<AppRecord | null>(() => {
     if (!followupModel || !active?.followup_id) return null;
     return (records[followupModel.id] ?? []).find((r) => r.id === active.followup_id) ?? null;
   }, [followupModel, records, active?.followup_id]);
+
+  /**
+   * The follow-up type this popup records against.
+   *
+   * MUST agree with the worker's DEFAULT_TYPE for off-task calls, because the
+   * worker picked `suggested_outcome` from that type's allowed set — render a
+   * different type here and the AI's own answer wouldn't be a selectable button.
+   */
+  const typeKey = active?.followup_type ?? 'appointment_booking_call';
+
 
   const clientRec = useMemo<AppRecord | null>(() => {
     if (!clientsModel || !active?.client_id) return null;
@@ -110,6 +125,46 @@ export default function CallResultConfirmHost() {
     if (!callsModel || !active?.call_record_id) return null;
     return (records[callsModel.id] ?? []).find((r) => r.id === active.call_record_id) ?? null;
   }, [callsModel, records, active?.call_record_id]);
+
+  /**
+   * An off-task call still has to be recordable.
+   *
+   * The matcher excludes WhatsApp follow-ups on purpose (a call must never
+   * complete a chat task), and a client whose only open task is a WhatsApp one
+   * therefore arrives here with no follow-up at all — which is exactly what
+   * happened on the first real call. Rather than send the rep away to find a
+   * task themselves, synthesise one: an unsaved follow-up record that
+   * completeFollowUp() creates AND completes in the same write. The client's
+   * WhatsApp task is left untouched.
+   */
+  const syntheticFollowup = useMemo<AppRecord | null>(() => {
+    if (!followupModel || !active || linkedFollowup) return null;
+    const now = new Date().toISOString();
+    return {
+      id: (() => {
+        const existing = synthIds.current.get(active.id);
+        if (existing) return existing;
+        const fresh = uuid();
+        synthIds.current.set(active.id, fresh);
+        return fresh;
+      })(),
+      model_id: followupModel.id,
+      data: {
+        client_id: active.client_id,
+        // section_selector convention: the type is stored as an array.
+        followup_type: [typeKey],
+        sales_rep: active.rep_user_id,
+        scheduled_datetime: (callRec?.data.call_time as string) ?? now,
+        completed_by_call_id: active.call_record_id,
+      },
+      created_at: now,
+      updated_at: now,
+      version: null,
+    } as unknown as AppRecord;
+  }, [followupModel, active, linkedFollowup, callRec, typeKey]);
+
+  /** What the outcome picker and the save actually operate on. */
+  const followupRec = linkedFollowup ?? syntheticFollowup;
 
   /**
    * The main option if one is flagged, else the top three by match_score.
@@ -168,28 +223,22 @@ export default function CallResultConfirmHost() {
   // ── confirm ───────────────────────────────────────────────────────────────
 
   const handleConfirm = async (outcomeKey: string) => {
-    if (!active || !followupModel) return;
-    if (!followupRec) {
-      // log_interaction, or the follow-up hasn't reached the store yet. Creating
-      // + completing a task from here is deliberately NOT done silently — the
-      // rep is sent to the client so they choose the task themselves.
-      addToast(
-        isAr ? 'لا توجد متابعة مرتبطة — سجّل النتيجة من صفحة العميل.' : 'No linked follow-up — record this from the client page.',
-        'info',
-      );
-      return;
-    }
+    if (!active || !followupModel || !followupRec) return;
+    // followupRec is either the matched task or a synthesised one; completeFollowUp
+    // saves through record_save, which CREATES when the id is new. So an off-task
+    // call is logged and completed in a single write, on the same path.
+    const isNew = !linkedFollowup;
     setSaving(true);
     const result = await completeFollowUp({
       record: followupRec,
       model: followupModel,
       draft,
       outcomeKey,
-      typeKey: active.followup_type,
+      typeKey,
       currentUserId,
       clientStage: (clientRec?.data.client_stage as string) ?? null,
       clientStatus: (clientRec?.data.client_status as string) ?? null,
-      expectedVersion: followupRec.version ?? null,
+      expectedVersion: isNew ? null : followupRec.version ?? null,
       saveRecord,
       phoneCallsRecords: callsModel ? records[callsModel.id] ?? [] : [],
     });
@@ -211,7 +260,12 @@ export default function CallResultConfirmHost() {
       console.error('[callSuggestions] follow-up saved but the suggestion was not marked confirmed');
     }
     setSaving(false);
-    addToast(isAr ? 'تم تأكيد نتيجة المكالمة' : 'Call result confirmed', 'success');
+    addToast(
+      isNew
+        ? (isAr ? 'تم تسجيل المكالمة وتأكيد نتيجتها' : 'Call logged and result confirmed')
+        : (isAr ? 'تم تأكيد نتيجة المكالمة' : 'Call result confirmed'),
+      'success',
+    );
     dropActive();
   };
 
@@ -332,10 +386,18 @@ export default function CallResultConfirmHost() {
 
         {/* The real outcome picker — same component, rules and validation the
             Workspace uses, so an override re-reveals the right required fields. */}
+        {!linkedFollowup ? (
+          <p className="rounded-xl border border-sand bg-cream/40 px-3 py-2 text-xs text-charcoal/70">
+            {isAr
+              ? 'هذه المكالمة ليست مرتبطة بمتابعة مفتوحة — سيتم إنشاء متابعة وتسجيل نتيجتها عند التأكيد.'
+              : 'This call has no open follow-up — confirming will create one and record the result on it.'}
+          </p>
+        ) : null}
+
         {followupModel && followupRec ? (
           <OutcomePanel
             followupModel={followupModel}
-            typeKey={active.followup_type}
+            typeKey={typeKey}
             draft={draft}
             patchDraft={patchDraft}
             readOnly={false}
@@ -347,13 +409,7 @@ export default function CallResultConfirmHost() {
             onComplete={handleConfirm}
             saving={saving}
           />
-        ) : (
-          <div className="rounded-xl border border-sand bg-cream/40 p-4 text-sm text-charcoal">
-            {isAr
-              ? 'هذه المكالمة ليست مرتبطة بمتابعة مفتوحة. افتح صفحة العميل لتسجيل النتيجة.'
-              : 'This call is not linked to an open follow-up. Open the client to record the result.'}
-          </div>
-        )}
+        ) : null}
 
         <div className="flex items-center justify-between gap-2 pt-1">
           <span className="text-xs text-charcoal/60">
