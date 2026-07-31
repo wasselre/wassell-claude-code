@@ -56,7 +56,10 @@ if (!DRY_RUN && !DEEPSEEK_KEY) {
   process.exit(1);
 }
 
-const BATCH_MAX_ITEMS = 20; // strings per DeepSeek call (hard cap)
+// --singles puts one string per call — slow but immune to one bad string
+// poisoning a whole batch's JSON reply; use it to clear stragglers.
+const SINGLES = process.argv.includes('--singles');
+const BATCH_MAX_ITEMS = SINGLES ? 1 : 20; // strings per DeepSeek call (hard cap)
 const BATCH_MAX_CHARS = 3000; // total source chars per call — long prose (competitor
 // analyses, unit notes) must not overflow max_tokens, which truncates the JSON reply
 const RPC_PAGE = 200; // candidates fetched per RPC call
