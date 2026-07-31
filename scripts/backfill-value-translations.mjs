@@ -194,7 +194,7 @@ for (;;) {
   }
   if (current.length > 0) chunks.push(current);
 
-  for (const chunk of chunks) {
+  const runChunk = async (chunk) => {
     try {
       const results = await deepseekBatch(chunk);
       const rows = chunk
@@ -219,6 +219,13 @@ for (;;) {
       failed += chunk.length;
       console.error(`\nbatch failed: ${err.message}`);
     }
+  };
+
+  // Modest concurrency — 4 in-flight DeepSeek calls cuts a multi-hour
+  // sequential run to well under an hour without hammering the API.
+  const CONCURRENCY = 4;
+  for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+    await Promise.all(chunks.slice(i, i + CONCURRENCY).map(runChunk));
   }
 
   if (done >= MAX_STRINGS) break;
