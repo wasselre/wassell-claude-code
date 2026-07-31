@@ -379,8 +379,8 @@ export default function CallResultConfirmHost() {
           ) : null}
           <p className="mt-2 text-xs text-charcoal/60">
             {isAr
-              ? 'راجع النتيجة وعدّلها إن لزم — لا يُحفظ شيء قبل تأكيدك.'
-              : 'Review and change it if needed — nothing is saved until you confirm.'}
+              ? 'النتيجة مُختارة مسبقًا بالأسفل — أكّدها أو غيّرها. لا يُحفظ شيء قبل تأكيدك.'
+              : 'The outcome below is pre-selected — confirm it or change it. Nothing is saved until you do.'}
           </p>
         </div>
 
@@ -396,8 +396,13 @@ export default function CallResultConfirmHost() {
 
         {followupModel && followupRec ? (
           <OutcomePanel
+            // Keyed by suggestion so the panel REMOUNTS for the next call in the
+            // queue — its selection lives in useState, which a prop change alone
+            // would not re-seed, leaving call #2 showing call #1's answer.
+            key={active.id}
             followupModel={followupModel}
             typeKey={typeKey}
+            suggestedOutcome={active.suggested_outcome}
             draft={draft}
             patchDraft={patchDraft}
             readOnly={false}

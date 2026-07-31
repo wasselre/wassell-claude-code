@@ -28,6 +28,15 @@ interface OutcomePanelProps {
   onMarkWaiting?: () => void;
   onComplete: (outcomeKey: string) => void;
   saving: boolean;
+  /**
+   * An AI-proposed outcome. When set it is PRE-SELECTED and promoted to the
+   * primary button, so the rep confirms a decision instead of making one —
+   * that is the entire point of the call-result assistant. Without it the
+   * panel opened with nothing chosen and the first CONFIGURED outcome
+   * («تم حجز موعد») sitting there as a big green button, which reads as a
+   * recommendation the assistant never made.
+   */
+  suggestedOutcome?: string | null;
 }
 
 // datetime-local <-> ISO helpers (local wall-clock <-> UTC ISO).
@@ -51,10 +60,12 @@ const toneClasses: Record<string, string> = {
 };
 
 export default function OutcomePanel(props: OutcomePanelProps) {
-  const { followupModel, typeKey, draft, patchDraft, readOnly, clientId, phones, onBookAppointment, onSendWhatsApp, onMarkWaiting, onComplete, saving } = props;
+  const { followupModel, typeKey, draft, patchDraft, readOnly, clientId, phones, onBookAppointment, onSendWhatsApp, onMarkWaiting, onComplete, saving, suggestedOutcome } = props;
   const isAr = useAppStore((s) => s.language === 'ar');
   const [outcomeKey, setOutcomeKey] = useState<string | null>(
-    typeof draft.call_result === 'string' && draft.followup_status === 'completed' ? draft.call_result : null,
+    typeof draft.call_result === 'string' && draft.followup_status === 'completed'
+      ? draft.call_result
+      : suggestedOutcome ?? null,
   );
   // FOLLOWUP_3 correction: in the open phase the rep chooses between SENDING a
   // WhatsApp (→ waiting state) or RECORDING a reply the client already sent.
@@ -269,7 +280,16 @@ export default function OutcomePanel(props: OutcomePanelProps) {
         // The first config outcome is the primary success path (e.g. حجز موعد for
         // a booking call) — render it as a prominent filled button; the rest as pills.
         // no_message_sent is a PRE-reply action (offered on the choice screen), never a response button.
-        const [primary, ...secondary] = typeConfig.allowed_outcomes.filter((o) => o.value !== 'no_message_sent');
+        const selectable = typeConfig.allowed_outcomes.filter((o) => o.value !== 'no_message_sent');
+        // With a suggestion in play the AI's answer takes the primary slot; the
+        // configured success path is still offered, just as a pill like the rest.
+        const ordered = suggestedOutcome && selectable.some((o) => o.value === suggestedOutcome)
+          ? [
+              ...selectable.filter((o) => o.value === suggestedOutcome),
+              ...selectable.filter((o) => o.value !== suggestedOutcome),
+            ]
+          : selectable;
+        const [primary, ...secondary] = ordered;
         const fill: Record<string, string> = { positive: '#10B981', neutral: '#C09B5F', negative: '#8E4E3A' };
         return (
           <div className="space-y-2">
