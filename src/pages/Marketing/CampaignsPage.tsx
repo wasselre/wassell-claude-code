@@ -4,42 +4,80 @@
  * The spend side. A campaign is an envelope of money and time; the content that
  * runs inside it stays in the content library rather than being copied here.
  * Cost per lead is COMPUTED from the executions, never typed — a number you can
- * type is a number that can disagree with its own inputs.
+ * type is a number that can disagree with its own inputs. Organic rows leave
+ * the money columns as a dash: «—» means "does not apply", while ٠ would mean
+ * "we spent and got nothing".
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  CAMPAIGN_STATUS_LABELS, EXEC_PURPOSE_LABELS, MosCampaign, OBJECTIVE_LABELS,
-  PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS, fetchCampaigns, saveCampaign,
+  CAMPAIGN_STATUS_LABELS, EXEC_PURPOSE_LABELS, MosCampaign,
+  PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS,
+  fetchCampaignDetail, fetchCampaigns, fetchPublications, saveCampaign,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton } from './components/kit';
+import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
 import { IconCampaigns, IconCheck, IconMetrics, IconPlus } from './components/icons';
-import { money, num, shortDate } from './lib/format';
+import { num, shortDate } from './lib/format';
 
-const TONE: Record<string, 'now' | 'go' | 'idle' | 'wait' | 'live'> = {
-  planning: 'idle',
-  active: 'now',
-  paused: 'wait',
-  done: 'live',
-  cancelled: 'idle',
+const AR_MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+const EN_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** The mockup's status pills — the table reads «جارية», never «نشطة». */
+const TABLE_STATUS: Record<string, { tone: Tone; ar: string; en: string }> = {
+  active:    { tone: 'now',  ar: 'جارية',  en: 'Active' },
+  planning:  { tone: 'idle', ar: 'مخططة', en: 'Planned' },
+  done:      { tone: 'go',   ar: 'منتهية', en: 'Ended' },
+  paused:    { tone: 'wait', ar: 'موقوفة', en: 'Paused' },
+  cancelled: { tone: 'idle', ar: 'ملغاة',  en: 'Cancelled' },
+};
+const FALLBACK_STATUS = { tone: 'idle', ar: 'مخططة', en: 'Planned' } as const;
+
+/**
+ * The sub-line under the campaign name names the AD platform for paid
+ * («ميتا · بحث جوجل») — transcribed shorter than PLATFORM_LABELS' formal
+ * «إعلانات ميتا». Organic sub-lines name the feeds, via PLATFORM_LABELS.
+ */
+const SUB_PLATFORM: Record<string, { ar: string; en: string }> = {
+  meta:   { ar: 'ميتا',     en: 'Meta' },
+  google: { ar: 'بحث جوجل', en: 'Google search' },
 };
 
+function subPlatform(p: string, isAr: boolean): string {
+  const l = SUB_PLATFORM[p] ?? PLATFORM_LABELS[p];
+  return l ? (isAr ? l.ar : l.en) : p;
+}
+
+type StatusFilter = 'all' | 'active' | 'planning' | 'done';
+type KindFilter = 'all' | 'paid' | 'organic';
+
 export default function CampaignsPage() {
-  const { isAr, can, projectName } = useWorkspace();
+  const { isAr, can, projects, projectName } = useWorkspace();
   const navigate = useNavigate();
 
   const [rows, setRows] = useState<MosCampaign[]>([]);
+  const [platforms, setPlatforms] = useState<Map<string, string[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [statusF, setStatusF] = useState<StatusFilter>('all');
+  const [kindF, setKindF] = useState<KindFilter>('all');
+  const [projectF, setProjectF] = useState('');
+  const [monthScope, setMonthScope] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setRows((await fetchCampaigns()).campaigns);
+      const list = (await fetchCampaigns()).campaigns;
+      setRows(list);
+      // The platform sub-lines need each campaign's executions (paid) or its
+      // content's publications (organic). Resolved in the background so the
+      // table never waits on the N+1 detail calls.
+      void resolvePlatforms(list)
+        .then(setPlatforms)
+        .catch((e: unknown) => console.error('campaign platform lines failed', e));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -49,21 +87,80 @@ export default function CampaignsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const totalBudget = rows.reduce((a, c) => a + (c.budget_total ?? 0), 0);
-  const totalSpend = rows.reduce((a, c) => a + (c.total_spend ?? 0), 0);
-  const totalLeads = rows.reduce((a, c) => a + (c.total_leads ?? 0), 0);
+  /* ── filters ────────────────────────────────────────────────────────── */
+
+  const filtered = useMemo(() => rows.filter((c) =>
+    (statusF === 'all' || c.status === statusF)
+    && (kindF === 'all' || c.kind === kindF)
+    && (!projectF || c.project_id === projectF),
+  ), [rows, statusF, kindF, projectF]);
+
+  /* ── stats — scoped to this month while the month chip is on ────────── */
+
+  const stats = useMemo(() => {
+    const now = new Date();
+    const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const mEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const scoped = monthScope
+      ? rows.filter((c) => {
+          const s = c.starts_on ? new Date(c.starts_on) : null;
+          const e = c.ends_on ? new Date(c.ends_on) : s;
+          return s !== null && e !== null && s <= mEnd && e >= mStart;
+        })
+      : rows;
+    const spent = scoped.reduce((a, c) => a + (c.total_spend ?? 0), 0);
+    const budget = scoped.reduce((a, c) => a + (c.budget_total ?? 0), 0);
+    const leads = scoped.reduce((a, c) => a + (c.total_leads ?? 0), 0);
+    const qualified = scoped.reduce((a, c) => a + (c.total_qualified ?? 0), 0);
+    const target = (metric: string): number | null => {
+      const vals = scoped
+        .filter((c) => c.success_metric === metric && c.success_threshold !== null)
+        .map((c) => c.success_threshold as number);
+      return vals.length > 0 ? Math.min(...vals) : null;
+    };
+    return {
+      spent,
+      budget,
+      leads,
+      qualified,
+      spendPct: budget > 0 ? Math.round((spent / budget) * 100) : 0,
+      qualPct: leads > 0 ? Math.round((qualified / leads) * 100) : 0,
+      cpl: leads > 0 && spent > 0 ? Math.round(spent / leads) : null,
+      cpq: qualified > 0 && spent > 0 ? Math.round(spent / qualified) : null,
+      cplTarget: target('cpl'),
+      cpqTarget: target('cpl_qualified'),
+    };
+  }, [rows, monthScope]);
+
+  /* ── header sub: «أغسطس ٢٠٢٦ · ٦٠,٠٠٠ ريال ملتزم بها · حملتان جاريتان…» ── */
+
+  const sub = useMemo(() => {
+    const now = new Date();
+    const active = rows.filter((c) => c.status === 'active').length;
+    const planning = rows.filter((c) => c.status === 'planning').length;
+    const committed = rows
+      .filter((c) => c.status === 'active')
+      .reduce((a, c) => a + (c.budget_total ?? 0), 0);
+    if (!isAr) {
+      return `${EN_MONTHS[now.getMonth()]} ${now.getFullYear()} · ${num(committed, false)} SAR committed · `
+        + `${active} active${planning > 0 ? `, ${planning} planned` : ''}`;
+    }
+    const activePhrase = active === 0 ? 'لا حملات جارية'
+      : active === 1 ? 'حملة جارية'
+      : active === 2 ? 'حملتان جاريتان'
+      : `${num(active, true)} حملات جارية`;
+    const planningPhrase = planning === 0 ? ''
+      : planning === 1 ? '، وواحدة مخططة'
+      : planning === 2 ? '، وحملتان مخططتان'
+      : `، و${num(planning, true)} مخططة`;
+    return `${AR_MONTHS[now.getMonth()]} ${num(now.getFullYear(), true)} · ${num(committed, true)} ريال ملتزم بها · ${activePhrase}${planningPhrase}`;
+  }, [rows, isAr]);
+
+  const now = new Date();
 
   return (
     <>
-      <PageHead
-        title={isAr ? 'الحملات' : 'Campaigns'}
-        sub={isAr
-          ? `${num(rows.length, true)} حملة · ${money(totalSpend, true)} من ${money(totalBudget, true)}`
-          : `${rows.length} campaigns · ${money(totalSpend, false)} of ${money(totalBudget, false)}`}
-      >
-        <button type="button" className="btn" onClick={() => void load()} disabled={loading}>
-          {isAr ? 'تحديث' : 'Refresh'}
-        </button>
+      <PageHead title={isAr ? 'الحملات' : 'Campaigns'} sub={sub}>
         {can('approve_budget') && (
           <button type="button" className="btn btn-p" onClick={() => setCreating(true)}>
             <IconPlus />
@@ -94,87 +191,203 @@ export default function CampaignsPage() {
 
         {rows.length > 0 && (
           <>
-            <div className="grid g4" style={{ marginBottom: 16 }}>
-              <div className="stat">
-                <div className="k">{isAr ? 'الميزانية' : 'Budget'}</div>
-                <div className="v">{num(Math.round(totalBudget), isAr)}</div>
-                <div className="d">{isAr ? 'ر.س عبر كل الحملات' : 'SAR across all campaigns'}</div>
-              </div>
-              <div className="stat">
-                <div className="k">{isAr ? 'المصروف' : 'Spent'}</div>
-                <div className="v">{num(Math.round(totalSpend), isAr)}</div>
-                <div className="meter">
-                  <i style={{ width: `${totalBudget > 0 ? Math.min(100, (totalSpend / totalBudget) * 100) : 0}%`, background: 'var(--copper)' }} />
-                </div>
-              </div>
-              <div className="stat">
-                <div className="k">{isAr ? 'العملاء' : 'Leads'}</div>
-                <div className="v">{num(totalLeads, isAr)}</div>
-                <div className="d">{isAr ? 'مُدخلة يدويًا' : 'entered by hand'}</div>
-              </div>
-              <div className="stat">
-                <div className="k">{isAr ? 'تكلفة العميل' : 'Cost per lead'}</div>
-                <div className="v">{totalLeads > 0 ? num(Math.round(totalSpend / totalLeads), isAr) : '—'}</div>
-                <div className="d">{isAr ? 'محسوبة، لا تُكتب' : 'computed, never typed'}</div>
-              </div>
+            <div className="grid g4" style={{ marginBottom: 18 }}>
+              <Stat
+                isAr={isAr}
+                label={isAr ? 'المصروف هذا الشهر' : 'Spent this month'}
+                value={stats.spent}
+                detail={isAr
+                  ? `من ${num(stats.budget, true)} ريال · ${num(stats.spendPct, true)}٪`
+                  : `of ${num(stats.budget, false)} SAR · ${stats.spendPct}%`}
+                meter={[{ pct: stats.spendPct, color: 'var(--copper)' }]}
+              />
+              <Stat
+                isAr={isAr}
+                label={isAr ? 'العملاء المحتملون' : 'Leads'}
+                value={stats.leads}
+                detail={isAr
+                  ? `${num(stats.qualified, true)} مؤهلًا · ${num(stats.qualPct, true)}٪`
+                  : `${num(stats.qualified, false)} qualified · ${stats.qualPct}%`}
+                meter={[
+                  { pct: stats.qualPct, color: 'var(--go)' },
+                  { pct: 100 - stats.qualPct, color: 'var(--sand)' },
+                ]}
+              />
+              <Stat
+                isAr={isAr}
+                label={isAr ? 'تكلفة العميل' : 'Cost per lead'}
+                value={stats.cpl}
+                detail={isAr
+                  ? `ريال${stats.cplTarget !== null ? ` · المستهدف ${num(stats.cplTarget, true)}` : ''}`
+                  : `SAR${stats.cplTarget !== null ? ` · target ${num(stats.cplTarget, false)}` : ''}`}
+                meter={[{
+                  pct: stats.cpl !== null && stats.cplTarget !== null
+                    ? Math.min(100, Math.round((stats.cpl / stats.cplTarget) * 100))
+                    : 100,
+                  color: stats.cpl !== null && stats.cplTarget !== null && stats.cpl <= stats.cplTarget
+                    ? 'var(--go)'
+                    : 'var(--wait)',
+                }]}
+              />
+              <Stat
+                isAr={isAr}
+                label={isAr ? 'تكلفة المؤهل' : 'Cost per qualified'}
+                value={stats.cpq}
+                detail={isAr
+                  ? `ريال${stats.cpqTarget !== null ? ` · المستهدف ${num(stats.cpqTarget, true)}` : ''}`
+                  : `SAR${stats.cpqTarget !== null ? ` · target ${num(stats.cpqTarget, false)}` : ''}`}
+                meter={[{
+                  pct: stats.cpq !== null && stats.cpqTarget !== null
+                    ? Math.min(100, Math.round((stats.cpq / stats.cpqTarget) * 100))
+                    : 100,
+                  color: 'var(--copper)',
+                }]}
+              />
             </div>
 
-            <div className="card">
-              <div className="tbl-wrap">
-                <table className="tbl">
-                  <thead>
-                    <tr>
-                      <th style={{ width: 70 }}>{isAr ? 'الرقم' : 'Ref'}</th>
-                      <th>{isAr ? 'الحملة' : 'Campaign'}</th>
-                      <th style={{ width: 120 }}>{isAr ? 'المشروع' : 'Project'}</th>
-                      <th style={{ width: 110 }}>{isAr ? 'الهدف' : 'Objective'}</th>
-                      <th style={{ width: 150 }}>{isAr ? 'المدة' : 'Dates'}</th>
-                      <th className="num" style={{ width: 110 }}>{isAr ? 'الميزانية' : 'Budget'}</th>
-                      <th className="num" style={{ width: 110 }}>{isAr ? 'المصروف' : 'Spent'}</th>
-                      <th className="num" style={{ width: 80 }}>{isAr ? 'عملاء' : 'Leads'}</th>
-                      <th className="num" style={{ width: 90 }}>{isAr ? 'التكلفة' : 'CPL'}</th>
-                      <th style={{ width: 100 }}>{isAr ? 'الحالة' : 'Status'}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((c) => {
-                      const cpl = (c.total_leads ?? 0) > 0 && c.total_spend
-                        ? c.total_spend / (c.total_leads ?? 1)
-                        : null;
-                      return (
-                        <tr key={c.id} className="click" onClick={() => navigate(`/m/campaigns/${c.id}`)}>
-                          <td className="id">{c.ref}</td>
-                          <td className="ttl">
-                            {c.name}
-                            <div style={{ fontSize: 11, color: 'var(--mute)', fontWeight: 400 }}>
-                              {isAr
-                                ? `${num(c.content_count, true)} عنصر · ${num(c.execution_count, true)} تنفيذ`
-                                : `${c.content_count} items · ${c.execution_count} executions`}
-                            </div>
-                          </td>
-                          <td>{c.project_id ? projectName(c.project_id) : '—'}</td>
-                          <td>
-                            {(isAr ? OBJECTIVE_LABELS[c.objective]?.ar : OBJECTIVE_LABELS[c.objective]?.en) ?? c.objective}
-                          </td>
-                          <td style={{ color: 'var(--mute)', fontSize: 11.5 }}>
-                            {shortDate(c.starts_on, isAr)} — {shortDate(c.ends_on, isAr)}
-                          </td>
-                          <td className="num">{num(c.budget_total, isAr)}</td>
-                          <td className="num">{num(c.total_spend, isAr)}</td>
-                          <td className="num">{num(c.total_leads, isAr)}</td>
-                          <td className="num">{cpl === null ? '—' : num(Math.round(cpl), isAr)}</td>
-                          <td>
-                            <Pill tone={TONE[c.status] ?? 'idle'}>
-                              {(isAr ? CAMPAIGN_STATUS_LABELS[c.status]?.ar : CAMPAIGN_STATUS_LABELS[c.status]?.en) ?? c.status}
-                            </Pill>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+            <div className="filt">
+              <div className="seg">
+                {(['all', 'active', 'planning', 'done'] as const).map((s) => (
+                  <button key={s} type="button" className={statusF === s ? 'on' : ''} onClick={() => setStatusF(s)}>
+                    {isAr
+                      ? { all: 'الكل', active: 'نشطة', planning: 'مخططة', done: 'منتهية' }[s]
+                      : { all: 'All', active: 'Active', planning: 'Planned', done: 'Ended' }[s]}
+                  </button>
+                ))}
               </div>
+              <button
+                type="button"
+                className={`fbtn${monthScope ? ' on' : ''}`}
+                onClick={() => setMonthScope((v) => !v)}
+              >
+                {monthScope ? (
+                  <>
+                    {(isAr ? AR_MONTHS : EN_MONTHS)[now.getMonth()]} {num(now.getFullYear(), isAr)}{' '}
+                    <span className="x">×</span>
+                  </>
+                ) : (
+                  isAr ? 'المدة: الكل' : 'Period: all'
+                )}
+              </button>
+              <button
+                type="button"
+                className="fbtn"
+                onClick={() => setKindF((k) => (k === 'all' ? 'paid' : k === 'paid' ? 'organic' : 'all'))}
+              >
+                {isAr
+                  ? `النوع: ${{ all: 'الكل', paid: 'مدفوعة', organic: 'عضوية' }[kindF]}`
+                  : `Type: ${{ all: 'all', paid: 'paid', organic: 'organic' }[kindF]}`}
+              </button>
+              <select className="fbtn" value={projectF} onChange={(e) => setProjectF(e.target.value)}>
+                <option value="">{isAr ? 'المشروع: أي' : 'Project: any'}</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.project_name ?? p.id.slice(0, 8)}</option>
+                ))}
+              </select>
+              <span style={{ marginInlineStart: 'auto', fontSize: 11.5, color: 'var(--mute)' }}>
+                {isAr
+                  ? 'أرقام المدفوع مُدخلة يدويًا حتى ربط المنصات'
+                  : 'Paid numbers are entered by hand until the platforms are linked'}
+              </span>
             </div>
+
+            {filtered.length === 0 ? (
+              <div style={{ padding: '22px 6px', color: 'var(--mute)', fontSize: 12.5 }}>
+                {isAr ? 'لا حملات تطابق هذه المرشحات.' : 'No campaigns match these filters.'}
+              </div>
+            ) : (
+              <div className="card">
+                <div className="tbl-wrap">
+                  <table className="tbl">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 66 }}>{isAr ? 'الرقم' : 'Ref'}</th>
+                        <th>{isAr ? 'الحملة' : 'Campaign'}</th>
+                        <th style={{ width: 74 }}>{isAr ? 'النوع' : 'Type'}</th>
+                        <th style={{ width: 106 }}>{isAr ? 'المشروع' : 'Project'}</th>
+                        <th style={{ width: 104 }}>{isAr ? 'المدة' : 'Duration'}</th>
+                        <th style={{ width: 96 }}>{isAr ? 'الحالة' : 'Status'}</th>
+                        <th style={{ width: 66 }}>{isAr ? 'المحتوى' : 'Content'}</th>
+                        <th className="num" style={{ width: 96 }}>{isAr ? 'الميزانية' : 'Budget'}</th>
+                        <th className="num" style={{ width: 88 }}>{isAr ? 'المصروف' : 'Spent'}</th>
+                        <th className="num" style={{ width: 66 }}>{isAr ? 'العملاء' : 'Leads'}</th>
+                        <th className="num" style={{ width: 82 }}>{isAr ? 'التكلفة' : 'Cost'}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map((c) => {
+                        const st = TABLE_STATUS[c.status] ?? FALLBACK_STATUS;
+                        const dimmed = c.status === 'done' || c.status === 'cancelled';
+                        const planning = c.status === 'planning';
+                        const organic = c.kind === 'organic';
+                        const plats = platforms.get(c.id);
+                        const subLine = plats === undefined
+                          ? ''
+                          : plats.length > 0
+                            ? plats.map((p) => subPlatform(p, isAr)).join(' · ')
+                            : (isAr ? 'لم تُطلق' : 'Not launched yet');
+                        const leads = c.total_leads ?? 0;
+                        const spend = c.total_spend ?? 0;
+                        const cpl = !organic && !planning && spend > 0 && leads > 0
+                          ? Math.round(spend / leads)
+                          : null;
+                        const threshold = c.success_metric === 'cpl' ? c.success_threshold : null;
+                        return (
+                          <tr
+                            key={c.id}
+                            className="click"
+                            style={dimmed ? { opacity: 0.65 } : undefined}
+                            onClick={() => navigate(`/m/campaigns/${c.id}`)}
+                          >
+                            <td className="id">{c.ref ?? '—'}</td>
+                            <td className="ttl">
+                              {c.name}
+                              {subLine && (
+                                <div style={{ fontSize: 11, color: 'var(--mute)', fontWeight: 400, marginTop: 2 }}>
+                                  {subLine}
+                                </div>
+                              )}
+                            </td>
+                            <td>
+                              <span className="tag">
+                                {c.kind === 'paid' ? (isAr ? 'مدفوعة' : 'Paid') : (isAr ? 'عضوية' : 'Organic')}
+                              </span>
+                            </td>
+                            <td>{c.project_id ? projectName(c.project_id) : (isAr ? 'كل المشاريع' : 'All projects')}</td>
+                            <td>{duration(c, isAr)}</td>
+                            <td><Pill tone={st.tone}>{isAr ? st.ar : st.en}</Pill></td>
+                            <td className="num">{num(c.content_count, isAr)}</td>
+                            <td className="num" style={organic || c.budget_total === null ? { color: 'var(--mute)' } : undefined}>
+                              {organic
+                                ? '—'
+                                : c.budget_total !== null
+                                  ? num(c.budget_total, isAr)
+                                  : planning ? (isAr ? 'لاحقًا' : 'later') : '—'}
+                            </td>
+                            <td className="num" style={organic || c.total_spend === null ? { color: 'var(--mute)' } : undefined}>
+                              {organic ? '—' : num(c.total_spend, isAr)}
+                            </td>
+                            <td className="num" style={planning || c.total_leads === null ? { color: 'var(--mute)' } : undefined}>
+                              {planning ? '—' : num(c.total_leads, isAr)}
+                            </td>
+                            <td
+                              className="num"
+                              style={cpl === null
+                                ? { color: 'var(--mute)' }
+                                : threshold !== null
+                                  ? { color: cpl <= threshold ? 'var(--go)' : 'var(--late)', fontWeight: 700 }
+                                  : undefined}
+                            >
+                              {cpl === null ? '—' : num(cpl, isAr)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -188,6 +401,58 @@ export default function CampaignsPage() {
       )}
     </>
   );
+}
+
+/** «١–٣١ أغسطس» inside one month; a range across months; «فبراير ٢٠٢٧» for an unlaunched plan. */
+function duration(c: MosCampaign, isAr: boolean): string {
+  const months = isAr ? AR_MONTHS : EN_MONTHS;
+  const s = c.starts_on ? new Date(c.starts_on) : null;
+  const e = c.ends_on ? new Date(c.ends_on) : null;
+  if (c.status === 'planning' && s && s.getTime() > Date.now()) {
+    return `${months[s.getMonth()]} ${num(s.getFullYear(), isAr)}`;
+  }
+  if (s && e) {
+    if (s.getFullYear() === e.getFullYear() && s.getMonth() === e.getMonth()) {
+      return `${num(s.getDate(), isAr)}–${num(e.getDate(), isAr)} ${months[s.getMonth()]}`;
+    }
+    if (s.getFullYear() === e.getFullYear()) {
+      return `${num(s.getDate(), isAr)} ${months[s.getMonth()]} – ${num(e.getDate(), isAr)} ${months[e.getMonth()]}`;
+    }
+    return `${num(s.getDate(), isAr)} ${months[s.getMonth()]} ${num(s.getFullYear(), isAr)} – ${num(e.getDate(), isAr)} ${months[e.getMonth()]} ${num(e.getFullYear(), isAr)}`;
+  }
+  if (s) return shortDate(c.starts_on, isAr);
+  return '—';
+}
+
+/**
+ * The platform sub-line under each campaign name. Paid campaigns name their
+ * executions' ad platforms; organic ones name the feeds their attributed
+ * content publishes to. A campaign with neither reads «لم تُطلق».
+ */
+async function resolvePlatforms(list: MosCampaign[]): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  const pubs = (await fetchPublications()).publications;
+  await Promise.all(list.map(async (c) => {
+    try {
+      const d = await fetchCampaignDetail(c.id);
+      const set = new Set<string>();
+      if (c.kind === 'paid') {
+        for (const x of d.executions) if (x.platform) set.add(x.platform);
+      }
+      if (set.size === 0) {
+        const ids = new Set(d.content.map((r) => r.id));
+        for (const p of pubs) {
+          if (ids.has(p.content_id) && p.status !== 'cancelled' && p.platform) set.add(p.platform);
+        }
+      }
+      map.set(c.id, Array.from(set));
+    } catch (e) {
+      // One campaign's detail failing must not blank the whole column — that
+      // row's sub-line falls back to «لم تُطلق», and the failure stays loud.
+      console.error(`campaign platforms failed for ${c.id}`, e);
+    }
+  }));
+  return map;
 }
 
 /**

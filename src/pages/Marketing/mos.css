@@ -1814,3 +1814,23 @@
     color-scheme: dark;
   }
 }
+
+/* === s13/s14 additions === */
+/* Campaign lanes above the calendar grid (screen 13) — the mockup's
+   .lane/.bar2 rules, transcribed from the approved design. */
+.mos-root .lane{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;margin-bottom:6px;
+  font-size:11.5px;background:color-mix(in srgb,var(--gold) 16%,transparent);border:1px solid color-mix(in srgb,var(--gold) 42%,transparent)}
+.mos-root .lane .bar2{flex:1;height:5px;border-radius:3px;background:var(--sand);overflow:hidden}
+.mos-root .lane .bar2 i{display:block;height:100%;background:var(--copper)}
+/* Week view (screen 13 «أسبوع»): one expanded row instead of six compact ones. */
+.mos-root .cal-g.week .cal-c{min-height:132px}
+/* List view rows (screen 13 «قائمة»). */
+.mos-root .lrow{display:flex;align-items:center;gap:12px;width:100%;padding:10px 14px;border:0;background:none;border-bottom:1px solid var(--line-soft);cursor:pointer;font:inherit;color:inherit;text-align:start}
+.mos-root .lrow:last-child{border-bottom:0}
+.mos-root .lrow:hover{background:var(--sand-2)}
+.mos-root .lrow .lr-d{flex:none;width:132px;color:var(--mute);font-size:11.5px;white-space:nowrap}
+.mos-root .lrow .lr-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mute);font-size:11.5px}
+/* The campaigns filter bar's chips are real controls (screen 14): the status
+   seg plus fbtn buttons and the project <select> wearing the fbtn style. */
+.mos-root button.fbtn,
+.mos-root select.fbtn{font:inherit;cursor:pointer}
