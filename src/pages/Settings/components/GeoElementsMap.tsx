@@ -4,7 +4,7 @@ import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markercluste
 import { Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, buildClusterIcon } from '@/lib/locationUtils';
+import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildClusterIcon } from '@/lib/locationUtils';
 import { adminGeoGeoJSON, type GeoListFilters, type GeoFeatureCollection, type GeoFeature } from '@/lib/geo/adminClient';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 
@@ -348,7 +348,7 @@ export default function GeoElementsMap({ filters, isAr, selected, onSelect }: Pr
         mapContainerStyle={mapContainerStyle}
         center={DEFAULT_MAP_CENTER}
         zoom={10}
-        options={{ styles: WASSEL_MAP_STYLE, mapTypeControl: false, streetViewControl: false, fullscreenControl: true, clickableIcons: false }}
+        options={{ styles: GEO_MAP_STYLE, mapTypeControl: false, streetViewControl: false, fullscreenControl: true, clickableIcons: false }}
         onLoad={(m) => setMap(m)}
         onUnmount={() => { setMap(null); infoRef.current = null; }}
       />

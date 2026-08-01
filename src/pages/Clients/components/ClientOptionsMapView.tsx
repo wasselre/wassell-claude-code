@@ -6,7 +6,7 @@ import { useAppStore } from '@/stores/appStore';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 import {
-  DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE,
+  DEFAULT_MAP_CENTER, GEO_MAP_STYLE,
   buildColoredPinIcon, buildPillIcon, buildClusterIcon,
 } from '@/lib/locationUtils';
 import {
@@ -226,7 +226,7 @@ export default function ClientOptionsMapView({ options, isAr, renderCard, height
           onLoad={setMap}
           onUnmount={() => setMap(null)}
           options={{
-            styles: WASSEL_MAP_STYLE,
+            styles: GEO_MAP_STYLE,
             disableDefaultUI: false,
             mapTypeControl: false,
             streetViewControl: false,

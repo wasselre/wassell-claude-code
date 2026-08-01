@@ -12,7 +12,7 @@ import {
   DEFAULT_MAP_ZOOM,
   buildClusterIcon,
   buildPillIcon,
-  resolveMapStyles,
+  resolveGeoMapStyles,
 } from '@/lib/locationUtils';
 import { isSummaryModel } from '@/lib/lazyModels';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
@@ -262,7 +262,7 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
   const keyMissing = !isMapsKeyConfigured();
 
-  const styles = resolveMapStyles(cfg.map_style_json);
+  const styles = resolveGeoMapStyles(cfg.map_style_json);
   const center = persisted?.center
     ? persisted.center
     : resolved[0]
@@ -691,7 +691,7 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
   // Administrative context under the record pins — see useGeoBoundaryLayer.
   useGeoBoundaryLayer(mapInstance);
 
-  const styles = useMemo(() => resolveMapStyles(cfg.map_style_json), [cfg.map_style_json]);
+  const styles = useMemo(() => resolveGeoMapStyles(cfg.map_style_json), [cfg.map_style_json]);
   const firstPoint = points[0];
   // coordinates are [lng, lat]; indexed access is `number | undefined` under
   // noUncheckedIndexedAccess, so coerce to finite numbers.

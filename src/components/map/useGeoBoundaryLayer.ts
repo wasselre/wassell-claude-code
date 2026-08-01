@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { pickVisibleLabels, geometryExtent, type LabelCandidate } from '@/lib/geo/labelDeclutter';
 
 /**
  * Draws the administrative context every map was missing: a country / region / city /
@@ -74,19 +75,28 @@ interface Options {
   roads?: boolean;
   /** Draw landmark pins (zoom ≥ 11 server-side). */
   landmarks?: boolean;
+  /**
+   * Draw the place NAME on each boundary, decluttered so names never stack.
+   * On by default — a boundary you cannot name is decoration.
+   */
+  labels?: boolean;
+  /** Language for the label — Arabic name when true, English otherwise. */
+  isAr?: boolean;
   /** Fires when a boundary is clicked — lets a page drill into that district/city. */
   onSelect?: (props: Record<string, unknown>) => void;
 }
 
 export function useGeoBoundaryLayer(
   map: google.maps.Map | null,
-  { enabled = true, boundaries = true, roads = true, landmarks = true, onSelect }: Options = {},
+  { enabled = true, boundaries = true, roads = true, landmarks = true, labels = true, isAr = true, onSelect }: Options = {},
 ): GeoBoundaryLayerState {
   const [state, setState] = useState<GeoBoundaryLayerState>({
     tier: null, truncated: false, error: null, loading: false,
   });
 
   const layersRef = useRef<{ bounds: google.maps.Data; roads: google.maps.Data; marks: google.maps.Data } | null>(null);
+  /** Name markers for the current viewport, rebuilt per fetch and cleared on unmount. */
+  const labelMarkersRef = useRef<google.maps.Marker[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Monotonic request id. A slow response for a viewport the user already left must not
   // repaint the map — panning fires `idle` far faster than the RPC returns.
@@ -145,6 +155,8 @@ export function useGeoBoundaryLayer(
     layersRef.current = { bounds, roads: roadLayer, marks: markLayer };
     return () => {
       for (const l of [bounds, roadLayer, markLayer]) { l.setMap(null); }
+      for (const m of labelMarkersRef.current) m.setMap(null);
+      labelMarkersRef.current = [];
       layersRef.current = null;
     };
   }, [map, enabled]);
@@ -206,6 +218,48 @@ export function useGeoBoundaryLayer(
       const layers = layersRef.current;
       if (!layers) return;
       const res = (data ?? {}) as Record<string, unknown>;
+
+      // ── place names, decluttered ──────────────────────────────────────────
+      //
+      // An outline you cannot name is decoration. But naming EVERY outline is what
+      // made Dubai unreadable, so the same `pickVisibleLabels` rule the district
+      // picker uses decides which ones get drawn: big enough on screen to hold the
+      // text, and not already covered by a bigger neighbour's name.
+      //
+      // Markers are rebuilt per fetch rather than pooled: a viewport change already
+      // costs an RPC, the set is small by construction (the decluttering is what
+      // makes it small), and pooling would mean tracking identity across tiers that
+      // change completely when you cross a zoom band.
+      for (const m of labelMarkersRef.current) m.setMap(null);
+      labelMarkersRef.current = [];
+      if (labels && boundaries) {
+        const fc = res.boundaries as { features?: Array<Record<string, unknown>> } | undefined;
+        const cands: Array<LabelCandidate & { text: string }> = [];
+        for (const f of fc?.features ?? []) {
+          const props = (f.properties ?? {}) as Record<string, unknown>;
+          const text = String((isAr ? props.name_ar : props.name_en) || props.name_ar || props.name_en || '').trim();
+          if (!text) continue;
+          const ext = geometryExtent(f.geometry);
+          if (!ext) continue;
+          cands.push({ id: String(f.id ?? cands.length), text, ...ext });
+        }
+        const keep = pickVisibleLabels(cands, { zoom: Math.round(zoom), centerLat: map.getCenter()?.lat() ?? 25 });
+        // Transparent marker + label, the same treatment the picker uses, so the two
+        // surfaces render names identically.
+        const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
+        for (const c of cands) {
+          if (!keep.has(c.id)) continue;
+          labelMarkersRef.current.push(new google.maps.Marker({
+            map,
+            position: { lat: c.lat, lng: c.lng },
+            icon: invisible,
+            clickable: false,
+            zIndex: 4,
+            label: { text: c.text, color: COLORS.district, fontSize: '11px', fontWeight: '700' },
+          }));
+        }
+      }
+
       replace(layers.bounds, boundaries ? res.boundaries : null);
       replace(layers.roads, roads ? res.roads : null);
       replace(layers.marks, landmarks ? res.landmarks : null);
@@ -238,6 +292,9 @@ export function useGeoBoundaryLayer(
     // belt-and-braces: bounds_changed guarantees a reaction to every viewport change,
     // and idle (where it fires) gives one settled repaint. The 300 ms debounce plus the
     // identical-viewport guard in `load` make the overlap free.
+    // A dep change (e.g. the language toggle) has to repaint the names now, not on
+    // the next pan — the identical-viewport guard would otherwise swallow it.
+    lastKeyRef.current = null;
     const listeners = [
       map.addListener('bounds_changed', schedule),
       map.addListener('idle', schedule),
@@ -249,7 +306,7 @@ export function useGeoBoundaryLayer(
       // Abandon any in-flight response so it can't paint into an unmounted layer.
       reqRef.current++;
     };
-  }, [map, enabled, boundaries, roads, landmarks]);
+  }, [map, enabled, boundaries, roads, landmarks, labels, isAr]);
 
   return state;
 }

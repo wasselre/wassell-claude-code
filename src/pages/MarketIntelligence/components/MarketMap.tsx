@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { WASSEL_MAP_STYLE } from '@/lib/locationUtils';
+import { GEO_MAP_STYLE } from '@/lib/locationUtils';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 import type { MapDistrict } from '@/lib/market/client';
 
@@ -115,7 +115,7 @@ export default function MarketMap({
     const map = new google.maps.Map(divRef.current, {
       center: RIYADH,
       zoom: 10,
-      styles: WASSEL_MAP_STYLE,
+      styles: GEO_MAP_STYLE,
       mapTypeControl: false,
       streetViewControl: false,
       fullscreenControl: false,

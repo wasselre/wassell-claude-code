@@ -276,6 +276,53 @@ export function parseMapStyleJson(raw: string | null | undefined): google.maps.M
  * Always returns an array (never undefined) — pass straight to GoogleMap's
  * `options.styles`.
  */
+/**
+ * Silence the basemap's own place text, so the app's decluttered names are the only
+ * labels on the map.
+ *
+ * Two reasons, both learned the hard way over Dubai:
+ *
+ *  · DOUBLING — Google labels districts under BOTH `administrative.neighborhood` and
+ *    `administrative.locality`, so a map drawing its own district names showed several
+ *    of them twice (live reports 2026-07-13 and 2026-07-19).
+ *  · NOISE — the base style colours `poi` labels but never hides them. At district zoom
+ *    Google draws a label for every shop, clinic and business in view; over Riyadh that
+ *    was survivable, over Dubai it buried the map completely.
+ *
+ * Roads keep their labels deliberately: a road name orients you, it does not compete
+ * with the place name.
+ *
+ * Append to a style array — it must come AFTER the base style to win.
+ */
+export const GEO_LABEL_SUPPRESSION: google.maps.MapTypeStyle[] = [
+  { featureType: 'administrative.neighborhood', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'administrative.locality', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.business', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.park', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.attraction', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.place_of_worship', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.medical', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.school', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.sports_complex', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.government', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'transit', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+];
+
+/** The standard map style for any surface that draws the geography layer. */
+export const GEO_MAP_STYLE: google.maps.MapTypeStyle[] = [...WASSEL_MAP_STYLE, ...GEO_LABEL_SUPPRESSION];
+
+/**
+ * A custom style from `maps_config.map_style_json` PLUS the label suppression.
+ *
+ * Appending rather than replacing: an operator's custom palette is theirs to choose,
+ * but the app draws its own place names on top, so the basemap's competing labels have
+ * to go regardless of which palette is in play. Suppression comes last so it wins.
+ */
+export function resolveGeoMapStyles(rawJson: string | null | undefined): google.maps.MapTypeStyle[] {
+  return [...resolveMapStyles(rawJson), ...GEO_LABEL_SUPPRESSION];
+}
+
 export function resolveMapStyles(rawJson: string | null | undefined): google.maps.MapTypeStyle[] {
   const parsed = parseMapStyleJson(rawJson);
   return parsed ?? WASSEL_MAP_STYLE;

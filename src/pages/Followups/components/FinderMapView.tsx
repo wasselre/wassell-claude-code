@@ -4,7 +4,7 @@ import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markercluste
 import { Loader2, MapPin, X } from 'lucide-react';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { markActivity } from '@/lib/perf/freezeDetector';
-import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, buildColoredPinIcon, buildClusterIcon } from '@/lib/locationUtils';
+import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildColoredPinIcon, buildClusterIcon } from '@/lib/locationUtils';
 import type { FinderMatch, FinderSource } from '@/lib/matching/projectFinder';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 
@@ -225,7 +225,7 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
           onLoad={setMap}
           onUnmount={() => setMap(null)}
           options={{
-            styles: WASSEL_MAP_STYLE,
+            styles: GEO_MAP_STYLE,
             disableDefaultUI: false,
             mapTypeControl: false,
             streetViewControl: false,
