@@ -1,0 +1,864 @@
+{
+  "generated_at": "2026-08-01T05:44:29.219Z",
+  "source": "marketing-os-ar.html",
+  "themes": [
+    "dark",
+    "light"
+  ],
+  "screens": [
+    {
+      "n": 1,
+      "id": "s1",
+      "title": "نظرة عامة",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s01-main-dark.png",
+          "file_light": "reference-crops/s01-main-light.png",
+          "width": 1320,
+          "height": 760
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "id": "s2",
+      "title": "مهامي",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s02-main-dark.png",
+          "file_light": "reference-crops/s02-main-light.png",
+          "width": 1320,
+          "height": 760
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "id": "s3",
+      "title": "المحتوى — جدول واحد لكل شيء",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s03-main-dark.png",
+          "file_light": "reference-crops/s03-main-light.png",
+          "width": 1320,
+          "height": 760
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "id": "s4",
+      "title": "المحتوى — عرض اللوحة",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s04-main-dark.png",
+          "file_light": "reference-crops/s04-main-light.png",
+          "width": 1320,
+          "height": 760
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "id": "s5",
+      "title": "محتوى جديد",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s05-main-dark.png",
+          "file_light": "reference-crops/s05-main-light.png",
+          "width": 1320,
+          "height": 754
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "id": "s6",
+      "title": "ملف المحتوى — نظرة عامة",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s06-main-dark.png",
+          "file_light": "reference-crops/s06-main-light.png",
+          "width": 1320,
+          "height": 963
+        }
+      ]
+    },
+    {
+      "n": 7,
+      "id": "s7",
+      "title": "ملف المحتوى — الفيديو نفسه",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s07-main-dark.png",
+          "file_light": "reference-crops/s07-main-light.png",
+          "width": 1320,
+          "height": 1198
+        }
+      ]
+    },
+    {
+      "n": 8,
+      "id": "s8",
+      "title": "ملف المحتوى — نفس التبويب، لمنشور",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s08-main-dark.png",
+          "file_light": "reference-crops/s08-main-light.png",
+          "width": 1320,
+          "height": 1047
+        }
+      ]
+    },
+    {
+      "n": 9,
+      "id": "s9",
+      "title": "ملف المحتوى — المواد والملفات",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s09-main-dark.png",
+          "file_light": "reference-crops/s09-main-light.png",
+          "width": 1320,
+          "height": 999
+        }
+      ]
+    },
+    {
+      "n": 10,
+      "id": "s10",
+      "title": "ملف المحتوى — المهام والاعتمادات",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s10-main-dark.png",
+          "file_light": "reference-crops/s10-main-light.png",
+          "width": 1320,
+          "height": 1059
+        }
+      ]
+    },
+    {
+      "n": 11,
+      "id": "s11",
+      "title": "ملف المحتوى — النشر",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s11-main-dark.png",
+          "file_light": "reference-crops/s11-main-light.png",
+          "width": 1320,
+          "height": 986
+        }
+      ]
+    },
+    {
+      "n": 12,
+      "id": "s12",
+      "title": "ملف المحتوى — الأداء",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s12-main-dark.png",
+          "file_light": "reference-crops/s12-main-light.png",
+          "width": 1320,
+          "height": 922
+        }
+      ]
+    },
+    {
+      "n": 13,
+      "id": "s13",
+      "title": "التقويم",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s13-main-dark.png",
+          "file_light": "reference-crops/s13-main-light.png",
+          "width": 1320,
+          "height": 927
+        }
+      ]
+    },
+    {
+      "n": 14,
+      "id": "s14",
+      "title": "الحملات",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s14-main-dark.png",
+          "file_light": "reference-crops/s14-main-light.png",
+          "width": 1320,
+          "height": 797
+        }
+      ]
+    },
+    {
+      "n": 15,
+      "id": "s15",
+      "title": "تفاصيل الحملة",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s15-main-dark.png",
+          "file_light": "reference-crops/s15-main-light.png",
+          "width": 1320,
+          "height": 1085
+        }
+      ]
+    },
+    {
+      "n": 16,
+      "id": "s16",
+      "title": "مكتبة المواد",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s16-main-dark.png",
+          "file_light": "reference-crops/s16-main-light.png",
+          "width": 1320,
+          "height": 760
+        }
+      ]
+    },
+    {
+      "n": 17,
+      "id": "s17",
+      "title": "الإعدادات — مسارات العمل",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s17-main-dark.png",
+          "file_light": "reference-crops/s17-main-light.png",
+          "width": 1320,
+          "height": 1012
+        }
+      ]
+    },
+    {
+      "n": 18,
+      "id": "s18",
+      "title": "نفس الشاشة، بالإنجليزية",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s18-main-dark.png",
+          "file_light": "reference-crops/s18-main-light.png",
+          "width": 1320,
+          "height": 760
+        }
+      ]
+    },
+    {
+      "n": 19,
+      "id": "s19",
+      "title": "حملة جديدة",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s19-main-dark.png",
+          "file_light": "reference-crops/s19-main-light.png",
+          "width": 1320,
+          "height": 1070
+        }
+      ]
+    },
+    {
+      "n": 20,
+      "id": "s20",
+      "title": "الحملة — تبويب التنفيذات",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s20-main-dark.png",
+          "file_light": "reference-crops/s20-main-light.png",
+          "width": 1320,
+          "height": 1152
+        }
+      ]
+    },
+    {
+      "n": 21,
+      "id": "s21",
+      "title": "تفاصيل التنفيذ — حيث يلتقي المحتوى بالإنفاق",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s21-main-dark.png",
+          "file_light": "reference-crops/s21-main-light.png",
+          "width": 1320,
+          "height": 1004
+        }
+      ]
+    },
+    {
+      "n": 22,
+      "id": "s22",
+      "title": "تفاصيل المادة",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s22-main-dark.png",
+          "file_light": "reference-crops/s22-main-light.png",
+          "width": 1320,
+          "height": 1066
+        }
+      ]
+    },
+    {
+      "n": 23,
+      "id": "s23",
+      "title": "الرفع والإدخال",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s23-main-dark.png",
+          "file_light": "reference-crops/s23-main-light.png",
+          "width": 1320,
+          "height": 850
+        }
+      ]
+    },
+    {
+      "n": 24,
+      "id": "s24",
+      "title": "طلب تصوير",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s24-main-dark.png",
+          "file_light": "reference-crops/s24-main-light.png",
+          "width": 1320,
+          "height": 823
+        }
+      ]
+    },
+    {
+      "n": 25,
+      "id": "s25",
+      "title": "الإعدادات",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s25-main-dark.png",
+          "file_light": "reference-crops/s25-main-light.png",
+          "width": 1320,
+          "height": 700
+        }
+      ]
+    },
+    {
+      "n": 26,
+      "id": "s26",
+      "title": "الإعدادات — المنصات والحسابات",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s26-main-dark.png",
+          "file_light": "reference-crops/s26-main-light.png",
+          "width": 1320,
+          "height": 1046
+        }
+      ]
+    },
+    {
+      "n": 27,
+      "id": "s27",
+      "title": "الإعدادات — أنواع المحتوى",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s27-main-dark.png",
+          "file_light": "reference-crops/s27-main-light.png",
+          "width": 1320,
+          "height": 884
+        }
+      ]
+    },
+    {
+      "n": 28,
+      "id": "s28",
+      "title": "الجوال — اليوم، والبحث",
+      "frames": [
+        {
+          "key": "phone1",
+          "kind": "phone",
+          "file_dark": "reference-crops/s28-phone1-dark.png",
+          "file_light": "reference-crops/s28-phone1-light.png",
+          "width": 374,
+          "height": 748
+        },
+        {
+          "key": "phone2",
+          "kind": "phone",
+          "file_dark": "reference-crops/s28-phone2-dark.png",
+          "file_light": "reference-crops/s28-phone2-light.png",
+          "width": 374,
+          "height": 748
+        }
+      ]
+    },
+    {
+      "n": 29,
+      "id": "s29",
+      "title": "الجوال — الاعتماد من أي مكان",
+      "frames": [
+        {
+          "key": "phone1",
+          "kind": "phone",
+          "file_dark": "reference-crops/s29-phone1-dark.png",
+          "file_light": "reference-crops/s29-phone1-light.png",
+          "width": 392,
+          "height": 812,
+          "chrome": true
+        },
+        {
+          "key": "phone2",
+          "kind": "phone",
+          "file_dark": "reference-crops/s29-phone2-dark.png",
+          "file_light": "reference-crops/s29-phone2-light.png",
+          "width": 374,
+          "height": 748
+        },
+        {
+          "key": "phone3",
+          "kind": "phone",
+          "file_dark": "reference-crops/s29-phone3-dark.png",
+          "file_light": "reference-crops/s29-phone3-light.png",
+          "width": 374,
+          "height": 748
+        }
+      ]
+    },
+    {
+      "n": 30,
+      "id": "s30",
+      "title": "الجوال — وضع التصوير",
+      "frames": [
+        {
+          "key": "phone1",
+          "kind": "phone",
+          "file_dark": "reference-crops/s30-phone1-dark.png",
+          "file_light": "reference-crops/s30-phone1-light.png",
+          "width": 374,
+          "height": 748
+        },
+        {
+          "key": "phone2",
+          "kind": "phone",
+          "file_dark": "reference-crops/s30-phone2-dark.png",
+          "file_light": "reference-crops/s30-phone2-light.png",
+          "width": 374,
+          "height": 748
+        }
+      ]
+    },
+    {
+      "n": 31,
+      "id": "s31",
+      "title": "الجوال — النشر عند الثامنة مساءً",
+      "frames": [
+        {
+          "key": "phone1",
+          "kind": "phone",
+          "file_dark": "reference-crops/s31-phone1-dark.png",
+          "file_light": "reference-crops/s31-phone1-light.png",
+          "width": 374,
+          "height": 748
+        },
+        {
+          "key": "phone2",
+          "kind": "phone",
+          "file_dark": "reference-crops/s31-phone2-dark.png",
+          "file_light": "reference-crops/s31-phone2-light.png",
+          "width": 374,
+          "height": 748
+        }
+      ]
+    },
+    {
+      "n": 32,
+      "id": "s32",
+      "title": "الجوال — الردّ، والجدول العريض",
+      "frames": [
+        {
+          "key": "phone1",
+          "kind": "phone",
+          "file_dark": "reference-crops/s32-phone1-dark.png",
+          "file_light": "reference-crops/s32-phone1-light.png",
+          "width": 374,
+          "height": 748
+        },
+        {
+          "key": "phone2",
+          "kind": "phone",
+          "file_dark": "reference-crops/s32-phone2-dark.png",
+          "file_light": "reference-crops/s32-phone2-light.png",
+          "width": 374,
+          "height": 748
+        }
+      ]
+    },
+    {
+      "n": 33,
+      "id": "s33",
+      "title": "الأدوار والصلاحيات",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s33-main-dark.png",
+          "file_light": "reference-crops/s33-main-light.png",
+          "width": 1320,
+          "height": 1181
+        }
+      ]
+    },
+    {
+      "n": 34,
+      "id": "s34",
+      "title": "نظرة عامة — الرئيس التنفيذي",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s34-main-dark.png",
+          "file_light": "reference-crops/s34-main-light.png",
+          "width": 1320,
+          "height": 955
+        }
+      ]
+    },
+    {
+      "n": 35,
+      "id": "s35",
+      "title": "متابعة الفريق — مشرف العمليات",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s35-main-dark.png",
+          "file_light": "reference-crops/s35-main-light.png",
+          "width": 1320,
+          "height": 880
+        }
+      ]
+    },
+    {
+      "n": 36,
+      "id": "s36",
+      "title": "سجل واحد، خمسة أدوار",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s36-main-dark.png",
+          "file_light": "reference-crops/s36-main-light.png",
+          "width": 1320,
+          "height": 880
+        }
+      ]
+    },
+    {
+      "n": 37,
+      "id": "s37",
+      "title": "الإعدادات — الأدوار ومن يشغلها",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s37-main-dark.png",
+          "file_light": "reference-crops/s37-main-light.png",
+          "width": 1320,
+          "height": 760
+        }
+      ]
+    },
+    {
+      "n": 38,
+      "id": "s38",
+      "title": "طلب تعديلات",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s38-main-dark.png",
+          "file_light": "reference-crops/s38-main-light.png",
+          "width": 1320,
+          "height": 741
+        }
+      ]
+    },
+    {
+      "n": 39,
+      "id": "s39",
+      "title": "الحملة — تبويب المحتوى",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s39-main-dark.png",
+          "file_light": "reference-crops/s39-main-light.png",
+          "width": 1320,
+          "height": 905
+        }
+      ]
+    },
+    {
+      "n": 40,
+      "id": "s40",
+      "title": "الحملة — تبويب النتائج",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s40-main-dark.png",
+          "file_light": "reference-crops/s40-main-light.png",
+          "width": 1320,
+          "height": 822
+        }
+      ]
+    },
+    {
+      "n": 41,
+      "id": "s41",
+      "title": "المواد غير المستخدمة",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s41-main-dark.png",
+          "file_light": "reference-crops/s41-main-light.png",
+          "width": 1320,
+          "height": 760
+        }
+      ]
+    },
+    {
+      "n": 42,
+      "id": "s42",
+      "title": "طلبات التصوير",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s42-main-dark.png",
+          "file_light": "reference-crops/s42-main-light.png",
+          "width": 1320,
+          "height": 865
+        }
+      ]
+    },
+    {
+      "n": 43,
+      "id": "s43",
+      "title": "الإشعارات — لكل دور",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s43-main-dark.png",
+          "file_light": "reference-crops/s43-main-light.png",
+          "width": 1320,
+          "height": 791
+        }
+      ]
+    },
+    {
+      "n": 44,
+      "id": "s44",
+      "title": "نتائج البحث",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s44-main-dark.png",
+          "file_light": "reference-crops/s44-main-light.png",
+          "width": 1320,
+          "height": 836
+        }
+      ]
+    },
+    {
+      "n": 45,
+      "id": "s45",
+      "title": "اليوم الأول — نظام فارغ",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s45-main-dark.png",
+          "file_light": "reference-crops/s45-main-light.png",
+          "width": 1320,
+          "height": 1041
+        }
+      ]
+    },
+    {
+      "n": 46,
+      "id": "s46",
+      "title": "الجوال — حسابي",
+      "frames": [
+        {
+          "key": "phone1",
+          "kind": "phone",
+          "file_dark": "reference-crops/s46-phone1-dark.png",
+          "file_light": "reference-crops/s46-phone1-light.png",
+          "width": 374,
+          "height": 748
+        },
+        {
+          "key": "phone2",
+          "kind": "phone",
+          "file_dark": "reference-crops/s46-phone2-dark.png",
+          "file_light": "reference-crops/s46-phone2-light.png",
+          "width": 374,
+          "height": 748
+        }
+      ]
+    },
+    {
+      "n": 48,
+      "id": "s48",
+      "title": "الجوال — التنقل الكامل، والحملات",
+      "frames": [
+        {
+          "key": "phone1",
+          "kind": "phone",
+          "file_dark": "reference-crops/s48-phone1-dark.png",
+          "file_light": "reference-crops/s48-phone1-light.png",
+          "width": 374,
+          "height": 748
+        },
+        {
+          "key": "phone2",
+          "kind": "phone",
+          "file_dark": "reference-crops/s48-phone2-dark.png",
+          "file_light": "reference-crops/s48-phone2-light.png",
+          "width": 374,
+          "height": 748
+        }
+      ]
+    },
+    {
+      "n": 49,
+      "id": "s49",
+      "title": "الجوال — التقويم والمصفوفة",
+      "frames": [
+        {
+          "key": "phone1",
+          "kind": "phone",
+          "file_dark": "reference-crops/s49-phone1-dark.png",
+          "file_light": "reference-crops/s49-phone1-light.png",
+          "width": 374,
+          "height": 748
+        },
+        {
+          "key": "phone2",
+          "kind": "phone",
+          "file_dark": "reference-crops/s49-phone2-dark.png",
+          "file_light": "reference-crops/s49-phone2-light.png",
+          "width": 374,
+          "height": 748
+        }
+      ]
+    },
+    {
+      "n": 50,
+      "id": "s50",
+      "title": "إدخال أرقام الأسبوع",
+      "frames": [
+        {
+          "key": "main",
+          "kind": "desktop",
+          "file_dark": "reference-crops/s50-main-dark.png",
+          "file_light": "reference-crops/s50-main-light.png",
+          "width": 1320,
+          "height": 1018
+        }
+      ]
+    },
+    {
+      "n": 51,
+      "id": "s51",
+      "title": "الجوال — الإعدادات والمكتبة",
+      "frames": [
+        {
+          "key": "phone1",
+          "kind": "phone",
+          "file_dark": "reference-crops/s51-phone1-dark.png",
+          "file_light": "reference-crops/s51-phone1-light.png",
+          "width": 374,
+          "height": 748
+        },
+        {
+          "key": "phone2",
+          "kind": "phone",
+          "file_dark": "reference-crops/s51-phone2-dark.png",
+          "file_light": "reference-crops/s51-phone2-light.png",
+          "width": 374,
+          "height": 748
+        }
+      ]
+    },
+    {
+      "n": 52,
+      "id": "s52",
+      "title": "الجوال — الإدخال واللوحات",
+      "frames": [
+        {
+          "key": "phone1",
+          "kind": "phone",
+          "file_dark": "reference-crops/s52-phone1-dark.png",
+          "file_light": "reference-crops/s52-phone1-light.png",
+          "width": 374,
+          "height": 748
+        },
+        {
+          "key": "phone2",
+          "kind": "phone",
+          "file_dark": "reference-crops/s52-phone2-dark.png",
+          "file_light": "reference-crops/s52-phone2-light.png",
+          "width": 374,
+          "height": 748
+        }
+      ]
+    }
+  ]
+}

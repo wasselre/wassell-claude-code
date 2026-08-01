@@ -1,0 +1,10 @@
+{
+  "name": "mos-reference-tools",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "puppeteer": "^23",
+    "pixelmatch": "^6",
+    "pngjs": "^7"
+  }
+}

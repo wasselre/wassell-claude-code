@@ -102,3 +102,5 @@ data/source/geo/saudi-cities-geo-intelligence.csv
 # 9.6 MB intermediate: the OSM admin relations are already imported into
 # geo_admin_boundaries, and `node data/source/geo/fetch-admin.mjs` rebuilds it.
 data/source/geo/admin-boundaries.json
+docs/marketing-reference/tools/node_modules/
+docs/marketing-reference/tools/render-page.html

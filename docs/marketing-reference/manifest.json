@@ -1,0 +1,7547 @@
+{
+  "generated_at": "2026-08-01T05:51:15.542Z",
+  "source": {
+    "frames_index": "frames-index.json",
+    "matrix": "coverage-matrix.mjs"
+  },
+  "totals": {
+    "rows": 278,
+    "ssim": 124,
+    "assert": 154,
+    "by_gate_pending": {
+      "ssim": 124,
+      "assert": 154
+    }
+  },
+  "rows": [
+    {
+      "id": "s01-main-ar-dark",
+      "screen": 1,
+      "title": "نظرة عامة",
+      "frame_key": "main",
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s01-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s01-main-ar-light",
+      "screen": 1,
+      "title": "نظرة عامة",
+      "frame_key": "main",
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s01-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s02-main-ar-dark",
+      "screen": 2,
+      "title": "مهامي",
+      "frame_key": "main",
+      "surface": "mywork",
+      "route": "/m/my-work",
+      "setup": "mywork-writer",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "writer",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s02-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s02-main-ar-light",
+      "screen": 2,
+      "title": "مهامي",
+      "frame_key": "main",
+      "surface": "mywork",
+      "route": "/m/my-work",
+      "setup": "mywork-writer",
+      "locale": "ar",
+      "theme": "light",
+      "role": "writer",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s02-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s03-main-ar-dark",
+      "screen": 3,
+      "title": "المحتوى — جدول واحد لكل شيء",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content",
+      "setup": "content-table",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s03-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s03-main-ar-light",
+      "screen": 3,
+      "title": "المحتوى — جدول واحد لكل شيء",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content",
+      "setup": "content-table",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s03-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s04-main-ar-dark",
+      "screen": 4,
+      "title": "المحتوى — عرض اللوحة",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content?view=board",
+      "setup": "content-board",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s04-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s04-main-ar-light",
+      "screen": 4,
+      "title": "المحتوى — عرض اللوحة",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content?view=board",
+      "setup": "content-board",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s04-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s05-main-ar-dark",
+      "screen": 5,
+      "title": "محتوى جديد",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content",
+      "setup": "new-content-modal",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 754
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s05-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s05-main-ar-light",
+      "screen": 5,
+      "title": "محتوى جديد",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content",
+      "setup": "new-content-modal",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 754
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s05-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s06-main-ar-dark",
+      "screen": 6,
+      "title": "ملف المحتوى — نظرة عامة",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-overview",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 963
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s06-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s06-main-ar-light",
+      "screen": 6,
+      "title": "ملف المحتوى — نظرة عامة",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-overview",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 963
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s06-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s07-main-ar-dark",
+      "screen": 7,
+      "title": "ملف المحتوى — الفيديو نفسه",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-writing",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1198
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s07-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s07-main-ar-light",
+      "screen": 7,
+      "title": "ملف المحتوى — الفيديو نفسه",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-writing",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1198
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s07-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s08-main-ar-dark",
+      "screen": 8,
+      "title": "ملف المحتوى — نفس التبويب، لمنشور",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:p013",
+      "setup": "p013-writing",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1047
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s08-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s08-main-ar-light",
+      "screen": 8,
+      "title": "ملف المحتوى — نفس التبويب، لمنشور",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:p013",
+      "setup": "p013-writing",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1047
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s08-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s09-main-ar-dark",
+      "screen": 9,
+      "title": "ملف المحتوى — المواد والملفات",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004?tab=materials",
+      "setup": "v004-materials",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 999
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s09-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s09-main-ar-light",
+      "screen": 9,
+      "title": "ملف المحتوى — المواد والملفات",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004?tab=materials",
+      "setup": "v004-materials",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 999
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s09-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s10-main-ar-dark",
+      "screen": 10,
+      "title": "ملف المحتوى — المهام والاعتمادات",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004?tab=tasks",
+      "setup": "v004-tasks",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1059
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s10-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s10-main-ar-light",
+      "screen": 10,
+      "title": "ملف المحتوى — المهام والاعتمادات",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004?tab=tasks",
+      "setup": "v004-tasks",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1059
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s10-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s11-main-ar-dark",
+      "screen": 11,
+      "title": "ملف المحتوى — النشر",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v001?tab=publish",
+      "setup": "v001-publish",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 986
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s11-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s11-main-ar-light",
+      "screen": 11,
+      "title": "ملف المحتوى — النشر",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v001?tab=publish",
+      "setup": "v001-publish",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 986
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s11-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s12-main-ar-dark",
+      "screen": 12,
+      "title": "ملف المحتوى — الأداء",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v001?tab=performance",
+      "setup": "v001-performance-manual",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 922
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s12-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s12-main-ar-light",
+      "screen": 12,
+      "title": "ملف المحتوى — الأداء",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v001?tab=performance",
+      "setup": "v001-performance-manual",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 922
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s12-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s13-main-ar-dark",
+      "screen": 13,
+      "title": "التقويم",
+      "frame_key": "main",
+      "surface": "calendar",
+      "route": "/m/calendar",
+      "setup": "calendar-month",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 927
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s13-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s13-main-ar-light",
+      "screen": 13,
+      "title": "التقويم",
+      "frame_key": "main",
+      "surface": "calendar",
+      "route": "/m/calendar",
+      "setup": "calendar-month",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 927
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s13-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s14-main-ar-dark",
+      "screen": 14,
+      "title": "الحملات",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns",
+      "setup": "campaigns-list",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 797
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s14-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s14-main-ar-light",
+      "screen": 14,
+      "title": "الحملات",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns",
+      "setup": "campaigns-list",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 797
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s14-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s15-main-ar-dark",
+      "screen": 15,
+      "title": "تفاصيل الحملة",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002",
+      "setup": "c002-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1085
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s15-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s15-main-ar-light",
+      "screen": 15,
+      "title": "تفاصيل الحملة",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002",
+      "setup": "c002-detail",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1085
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s15-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s16-main-ar-dark",
+      "screen": 16,
+      "title": "مكتبة المواد",
+      "frame_key": "main",
+      "surface": "library",
+      "route": "/m/library",
+      "setup": "library-grid",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s16-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s16-main-ar-light",
+      "screen": 16,
+      "title": "مكتبة المواد",
+      "frame_key": "main",
+      "surface": "library",
+      "route": "/m/library",
+      "setup": "library-grid",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s16-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s17-main-ar-dark",
+      "screen": 17,
+      "title": "الإعدادات — مسارات العمل",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/workflows",
+      "setup": "workflows-editor",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1012
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s17-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s17-main-ar-light",
+      "screen": 17,
+      "title": "الإعدادات — مسارات العمل",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/workflows",
+      "setup": "workflows-editor",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1012
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s17-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s18-main-en-dark",
+      "screen": 18,
+      "title": "نفس الشاشة، بالإنجليزية",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content",
+      "setup": "content-table-en",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s18-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "THE EN reference — content table in LTR English. ssim-gated like Arabic rows."
+    },
+    {
+      "id": "s18-main-en-light",
+      "screen": 18,
+      "title": "نفس الشاشة، بالإنجليزية",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content",
+      "setup": "content-table-en",
+      "locale": "en",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s18-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "THE EN reference — content table in LTR English. ssim-gated like Arabic rows."
+    },
+    {
+      "id": "s19-main-ar-dark",
+      "screen": 19,
+      "title": "حملة جديدة",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns",
+      "setup": "new-campaign-modal",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1070
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s19-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s19-main-ar-light",
+      "screen": 19,
+      "title": "حملة جديدة",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns",
+      "setup": "new-campaign-modal",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1070
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s19-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s20-main-ar-dark",
+      "screen": 20,
+      "title": "الحملة — تبويب التنفيذات",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=executions",
+      "setup": "c002-executions",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1152
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s20-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s20-main-ar-light",
+      "screen": 20,
+      "title": "الحملة — تبويب التنفيذات",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=executions",
+      "setup": "c002-executions",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1152
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s20-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s21-main-ar-dark",
+      "screen": 21,
+      "title": "تفاصيل التنفيذ — حيث يلتقي المحتوى بالإنفاق",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002/exec/:e1",
+      "setup": "c002-exec-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1004
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s21-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s21-main-ar-light",
+      "screen": 21,
+      "title": "تفاصيل التنفيذ — حيث يلتقي المحتوى بالإنفاق",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002/exec/:e1",
+      "setup": "c002-exec-detail",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1004
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s21-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s22-main-ar-dark",
+      "screen": 22,
+      "title": "تفاصيل المادة",
+      "frame_key": "main",
+      "surface": "library",
+      "route": "/m/library/:a012",
+      "setup": "asset-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1066
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s22-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s22-main-ar-light",
+      "screen": 22,
+      "title": "تفاصيل المادة",
+      "frame_key": "main",
+      "surface": "library",
+      "route": "/m/library/:a012",
+      "setup": "asset-detail",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1066
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s22-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s23-main-ar-dark",
+      "screen": 23,
+      "title": "الرفع والإدخال",
+      "frame_key": "main",
+      "surface": "library",
+      "route": "/m/library/upload",
+      "setup": "upload-queue-realism",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 850
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s23-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s23-main-ar-light",
+      "screen": 23,
+      "title": "الرفع والإدخال",
+      "frame_key": "main",
+      "surface": "library",
+      "route": "/m/library/upload",
+      "setup": "upload-queue-realism",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 850
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s23-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s24-main-ar-dark",
+      "screen": 24,
+      "title": "طلب تصوير",
+      "frame_key": "main",
+      "surface": "shoots",
+      "route": "/m/shoots/:sr003",
+      "setup": "shoot-request-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 823
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s24-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s24-main-ar-light",
+      "screen": 24,
+      "title": "طلب تصوير",
+      "frame_key": "main",
+      "surface": "shoots",
+      "route": "/m/shoots/:sr003",
+      "setup": "shoot-request-detail",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 823
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s24-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s25-main-ar-dark",
+      "screen": 25,
+      "title": "الإعدادات",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings",
+      "setup": "settings-home",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 700
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s25-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s25-main-ar-light",
+      "screen": 25,
+      "title": "الإعدادات",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings",
+      "setup": "settings-home",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 700
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s25-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s26-main-ar-dark",
+      "screen": 26,
+      "title": "الإعدادات — المنصات والحسابات",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/platforms",
+      "setup": "settings-platforms",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1046
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s26-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s26-main-ar-light",
+      "screen": 26,
+      "title": "الإعدادات — المنصات والحسابات",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/platforms",
+      "setup": "settings-platforms",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1046
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s26-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s27-main-ar-dark",
+      "screen": 27,
+      "title": "الإعدادات — أنواع المحتوى",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/content-types",
+      "setup": "settings-content-types",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 884
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s27-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s27-main-ar-light",
+      "screen": 27,
+      "title": "الإعدادات — أنواع المحتوى",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/content-types",
+      "setup": "settings-content-types",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 884
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s27-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s28-phone1-ar-dark",
+      "screen": 28,
+      "title": "الجوال — اليوم، والبحث",
+      "frame_key": "phone1",
+      "surface": "mywork",
+      "route": "/m/my-work",
+      "setup": "mobile-today",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s28-phone1-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s28-phone1-ar-light",
+      "screen": 28,
+      "title": "الجوال — اليوم، والبحث",
+      "frame_key": "phone1",
+      "surface": "mywork",
+      "route": "/m/my-work",
+      "setup": "mobile-today",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s28-phone1-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s28-phone2-ar-dark",
+      "screen": 28,
+      "title": "الجوال — اليوم، والبحث",
+      "frame_key": "phone2",
+      "surface": "mywork",
+      "route": "/m/my-work",
+      "setup": "mobile-today",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s28-phone2-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s28-phone2-ar-light",
+      "screen": 28,
+      "title": "الجوال — اليوم، والبحث",
+      "frame_key": "phone2",
+      "surface": "mywork",
+      "route": "/m/my-work",
+      "setup": "mobile-today",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s28-phone2-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s29-phone1-ar-dark",
+      "screen": 29,
+      "title": "الجوال — الاعتماد من أي مكان",
+      "frame_key": "phone1",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "mobile-review-push",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 392,
+        "height": 812
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s29-phone1-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s29-phone1-ar-light",
+      "screen": 29,
+      "title": "الجوال — الاعتماد من أي مكان",
+      "frame_key": "phone1",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "mobile-review-push",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 392,
+        "height": 812
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s29-phone1-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s29-phone2-ar-dark",
+      "screen": 29,
+      "title": "الجوال — الاعتماد من أي مكان",
+      "frame_key": "phone2",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "mobile-review-scenes",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s29-phone2-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s29-phone2-ar-light",
+      "screen": 29,
+      "title": "الجوال — الاعتماد من أي مكان",
+      "frame_key": "phone2",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "mobile-review-scenes",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s29-phone2-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s29-phone3-ar-dark",
+      "screen": 29,
+      "title": "الجوال — الاعتماد من أي مكان",
+      "frame_key": "phone3",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "mobile-review-sheet",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s29-phone3-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s29-phone3-ar-light",
+      "screen": 29,
+      "title": "الجوال — الاعتماد من أي مكان",
+      "frame_key": "phone3",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "mobile-review-sheet",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s29-phone3-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s30-phone1-ar-dark",
+      "screen": 30,
+      "title": "الجوال — وضع التصوير",
+      "frame_key": "phone1",
+      "surface": "shoots",
+      "route": "/m/shoots/:sr003?mode=site",
+      "setup": "mobile-site-list",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s30-phone1-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s30-phone1-ar-light",
+      "screen": 30,
+      "title": "الجوال — وضع التصوير",
+      "frame_key": "phone1",
+      "surface": "shoots",
+      "route": "/m/shoots/:sr003?mode=site",
+      "setup": "mobile-site-list",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s30-phone1-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s30-phone2-ar-dark",
+      "screen": 30,
+      "title": "الجوال — وضع التصوير",
+      "frame_key": "phone2",
+      "surface": "shoots",
+      "route": "/m/shoots/:sr003?mode=site",
+      "setup": "mobile-site-offline",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s30-phone2-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s30-phone2-ar-light",
+      "screen": 30,
+      "title": "الجوال — وضع التصوير",
+      "frame_key": "phone2",
+      "surface": "shoots",
+      "route": "/m/shoots/:sr003?mode=site",
+      "setup": "mobile-site-offline",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s30-phone2-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s31-phone1-ar-dark",
+      "screen": 31,
+      "title": "الجوال — النشر عند الثامنة مساءً",
+      "frame_key": "phone1",
+      "surface": "content",
+      "route": "/m/content/:v001?tab=publish",
+      "setup": "mobile-publish-assistant",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s31-phone1-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s31-phone1-ar-light",
+      "screen": 31,
+      "title": "الجوال — النشر عند الثامنة مساءً",
+      "frame_key": "phone1",
+      "surface": "content",
+      "route": "/m/content/:v001?tab=publish",
+      "setup": "mobile-publish-assistant",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s31-phone1-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s31-phone2-ar-dark",
+      "screen": 31,
+      "title": "الجوال — النشر عند الثامنة مساءً",
+      "frame_key": "phone2",
+      "surface": "content",
+      "route": "/m/content/:v001?tab=publish",
+      "setup": "mobile-publish-assistant",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s31-phone2-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s31-phone2-ar-light",
+      "screen": 31,
+      "title": "الجوال — النشر عند الثامنة مساءً",
+      "frame_key": "phone2",
+      "surface": "content",
+      "route": "/m/content/:v001?tab=publish",
+      "setup": "mobile-publish-assistant",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s31-phone2-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s32-phone1-ar-dark",
+      "screen": 32,
+      "title": "الجوال — الردّ، والجدول العريض",
+      "frame_key": "phone1",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002",
+      "setup": "mobile-exec-cards",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s32-phone1-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s32-phone1-ar-light",
+      "screen": 32,
+      "title": "الجوال — الردّ، والجدول العريض",
+      "frame_key": "phone1",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002",
+      "setup": "mobile-exec-cards",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s32-phone1-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s32-phone2-ar-dark",
+      "screen": 32,
+      "title": "الجوال — الردّ، والجدول العريض",
+      "frame_key": "phone2",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002",
+      "setup": "mobile-exec-cards",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s32-phone2-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s32-phone2-ar-light",
+      "screen": 32,
+      "title": "الجوال — الردّ، والجدول العريض",
+      "frame_key": "phone2",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002",
+      "setup": "mobile-exec-cards",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s32-phone2-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s33-main-ar-dark",
+      "screen": 33,
+      "title": "الأدوار والصلاحيات",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/roles",
+      "setup": "settings-role-matrix",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1181
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s33-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s33-main-ar-light",
+      "screen": 33,
+      "title": "الأدوار والصلاحيات",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/roles",
+      "setup": "settings-role-matrix",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1181
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s33-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s34-main-ar-dark",
+      "screen": 34,
+      "title": "نظرة عامة — الرئيس التنفيذي",
+      "frame_key": "main",
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-ceo",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "ceo",
+      "viewport": {
+        "width": 1320,
+        "height": 955
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s34-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s34-main-ar-light",
+      "screen": 34,
+      "title": "نظرة عامة — الرئيس التنفيذي",
+      "frame_key": "main",
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-ceo",
+      "locale": "ar",
+      "theme": "light",
+      "role": "ceo",
+      "viewport": {
+        "width": 1320,
+        "height": 955
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s34-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s35-main-ar-dark",
+      "screen": 35,
+      "title": "متابعة الفريق — مشرف العمليات",
+      "frame_key": "main",
+      "surface": "team",
+      "route": "/m/team",
+      "setup": "team-followup",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 880
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s35-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s35-main-ar-light",
+      "screen": 35,
+      "title": "متابعة الفريق — مشرف العمليات",
+      "frame_key": "main",
+      "surface": "team",
+      "route": "/m/team",
+      "setup": "team-followup",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 880
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s35-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s36-main-ar-dark",
+      "screen": 36,
+      "title": "سجل واحد، خمسة أدوار",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-role-harness",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 880
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s36-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "one record, five role states — each roleVariant row asserts the exact button/lock set"
+    },
+    {
+      "id": "s36-main-ar-light",
+      "screen": 36,
+      "title": "سجل واحد، خمسة أدوار",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-role-harness",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 880
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s36-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "one record, five role states — each roleVariant row asserts the exact button/lock set"
+    },
+    {
+      "id": "s37-main-ar-dark",
+      "screen": 37,
+      "title": "الإعدادات — الأدوار ومن يشغلها",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/people",
+      "setup": "settings-people",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s37-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s37-main-ar-light",
+      "screen": 37,
+      "title": "الإعدادات — الأدوار ومن يشغلها",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/people",
+      "setup": "settings-people",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s37-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s38-main-ar-dark",
+      "screen": 38,
+      "title": "طلب تعديلات",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004?tab=tasks",
+      "setup": "request-changes-modal",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 741
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s38-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s38-main-ar-light",
+      "screen": 38,
+      "title": "طلب تعديلات",
+      "frame_key": "main",
+      "surface": "content",
+      "route": "/m/content/:v004?tab=tasks",
+      "setup": "request-changes-modal",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 741
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s38-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s39-main-ar-dark",
+      "screen": 39,
+      "title": "الحملة — تبويب المحتوى",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=content",
+      "setup": "c002-content-tab",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 905
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s39-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s39-main-ar-light",
+      "screen": 39,
+      "title": "الحملة — تبويب المحتوى",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=content",
+      "setup": "c002-content-tab",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 905
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s39-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s40-main-ar-dark",
+      "screen": 40,
+      "title": "الحملة — تبويب النتائج",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=results",
+      "setup": "c002-results-tab",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 822
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s40-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s40-main-ar-light",
+      "screen": 40,
+      "title": "الحملة — تبويب النتائج",
+      "frame_key": "main",
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=results",
+      "setup": "c002-results-tab",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 822
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s40-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s41-main-ar-dark",
+      "screen": 41,
+      "title": "المواد غير المستخدمة",
+      "frame_key": "main",
+      "surface": "library",
+      "route": "/m/library/unused",
+      "setup": "library-unused",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s41-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s41-main-ar-light",
+      "screen": 41,
+      "title": "المواد غير المستخدمة",
+      "frame_key": "main",
+      "surface": "library",
+      "route": "/m/library/unused",
+      "setup": "library-unused",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s41-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s42-main-ar-dark",
+      "screen": 42,
+      "title": "طلبات التصوير",
+      "frame_key": "main",
+      "surface": "shoots",
+      "route": "/m/shoots",
+      "setup": "shoots-bands",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 865
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s42-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s42-main-ar-light",
+      "screen": 42,
+      "title": "طلبات التصوير",
+      "frame_key": "main",
+      "surface": "shoots",
+      "route": "/m/shoots",
+      "setup": "shoots-bands",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 865
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s42-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s43-main-ar-dark",
+      "screen": 43,
+      "title": "الإشعارات — لكل دور",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/notifications",
+      "setup": "settings-notifications",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 791
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s43-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s43-main-ar-light",
+      "screen": 43,
+      "title": "الإشعارات — لكل دور",
+      "frame_key": "main",
+      "surface": "settings",
+      "route": "/m/settings/notifications",
+      "setup": "settings-notifications",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 791
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s43-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s44-main-ar-dark",
+      "screen": 44,
+      "title": "نتائج البحث",
+      "frame_key": "main",
+      "surface": "search",
+      "route": "/m/search?q=مينا",
+      "setup": "search-results",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 836
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s44-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s44-main-ar-light",
+      "screen": 44,
+      "title": "نتائج البحث",
+      "frame_key": "main",
+      "surface": "search",
+      "route": "/m/search?q=مينا",
+      "setup": "search-results",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 836
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s44-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s45-main-ar-dark",
+      "screen": 45,
+      "title": "اليوم الأول — نظام فارغ",
+      "frame_key": "main",
+      "surface": "overview",
+      "route": "/m",
+      "setup": "zero-records-day-one",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1041
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s45-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "captured on the branch AFTER fixture teardown — the truthful empty state"
+    },
+    {
+      "id": "s45-main-ar-light",
+      "screen": 45,
+      "title": "اليوم الأول — نظام فارغ",
+      "frame_key": "main",
+      "surface": "overview",
+      "route": "/m",
+      "setup": "zero-records-day-one",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1041
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s45-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "captured on the branch AFTER fixture teardown — the truthful empty state"
+    },
+    {
+      "id": "s46-phone1-ar-dark",
+      "screen": 46,
+      "title": "الجوال — حسابي",
+      "frame_key": "phone1",
+      "surface": "account",
+      "route": "/m/account",
+      "setup": "mobile-account",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s46-phone1-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s46-phone1-ar-light",
+      "screen": 46,
+      "title": "الجوال — حسابي",
+      "frame_key": "phone1",
+      "surface": "account",
+      "route": "/m/account",
+      "setup": "mobile-account",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s46-phone1-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s46-phone2-ar-dark",
+      "screen": 46,
+      "title": "الجوال — حسابي",
+      "frame_key": "phone2",
+      "surface": "account",
+      "route": "/m/account",
+      "setup": "mobile-account",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s46-phone2-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s46-phone2-ar-light",
+      "screen": 46,
+      "title": "الجوال — حسابي",
+      "frame_key": "phone2",
+      "surface": "account",
+      "route": "/m/account",
+      "setup": "mobile-account",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s46-phone2-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s48-phone1-ar-dark",
+      "screen": 48,
+      "title": "الجوال — التنقل الكامل، والحملات",
+      "frame_key": "phone1",
+      "surface": "more",
+      "route": "/m",
+      "setup": "mobile-more-sheet",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s48-phone1-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s48-phone1-ar-light",
+      "screen": 48,
+      "title": "الجوال — التنقل الكامل، والحملات",
+      "frame_key": "phone1",
+      "surface": "more",
+      "route": "/m",
+      "setup": "mobile-more-sheet",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s48-phone1-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s48-phone2-ar-dark",
+      "screen": 48,
+      "title": "الجوال — التنقل الكامل، والحملات",
+      "frame_key": "phone2",
+      "surface": "more",
+      "route": "/m/campaigns",
+      "setup": "mobile-campaign-verdicts",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s48-phone2-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s48-phone2-ar-light",
+      "screen": 48,
+      "title": "الجوال — التنقل الكامل، والحملات",
+      "frame_key": "phone2",
+      "surface": "more",
+      "route": "/m/campaigns",
+      "setup": "mobile-campaign-verdicts",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s48-phone2-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s49-phone1-ar-dark",
+      "screen": 49,
+      "title": "الجوال — التقويم والمصفوفة",
+      "frame_key": "phone1",
+      "surface": "calendar",
+      "route": "/m/calendar",
+      "setup": "mobile-calendar-agenda",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s49-phone1-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s49-phone1-ar-light",
+      "screen": 49,
+      "title": "الجوال — التقويم والمصفوفة",
+      "frame_key": "phone1",
+      "surface": "calendar",
+      "route": "/m/calendar",
+      "setup": "mobile-calendar-agenda",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s49-phone1-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s49-phone2-ar-dark",
+      "screen": 49,
+      "title": "الجوال — التقويم والمصفوفة",
+      "frame_key": "phone2",
+      "surface": "calendar",
+      "route": "/m/settings/roles",
+      "setup": "mobile-roles-list",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s49-phone2-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s49-phone2-ar-light",
+      "screen": 49,
+      "title": "الجوال — التقويم والمصفوفة",
+      "frame_key": "phone2",
+      "surface": "calendar",
+      "route": "/m/settings/roles",
+      "setup": "mobile-roles-list",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s49-phone2-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s50-main-ar-dark",
+      "screen": 50,
+      "title": "إدخال أرقام الأسبوع",
+      "frame_key": "main",
+      "surface": "numbers",
+      "route": "/m/numbers",
+      "setup": "numbers-weekly-entry",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1018
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s50-main-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s50-main-ar-light",
+      "screen": 50,
+      "title": "إدخال أرقام الأسبوع",
+      "frame_key": "main",
+      "surface": "numbers",
+      "route": "/m/numbers",
+      "setup": "numbers-weekly-entry",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1018
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s50-main-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s51-phone1-ar-dark",
+      "screen": 51,
+      "title": "الجوال — الإعدادات والمكتبة",
+      "frame_key": "phone1",
+      "surface": "settings",
+      "route": "/m/settings/workflows",
+      "setup": "mobile-workflow-accordion",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s51-phone1-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s51-phone1-ar-light",
+      "screen": 51,
+      "title": "الجوال — الإعدادات والمكتبة",
+      "frame_key": "phone1",
+      "surface": "settings",
+      "route": "/m/settings/workflows",
+      "setup": "mobile-workflow-accordion",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s51-phone1-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s51-phone2-ar-dark",
+      "screen": 51,
+      "title": "الجوال — الإعدادات والمكتبة",
+      "frame_key": "phone2",
+      "surface": "settings",
+      "route": "/m/library",
+      "setup": "mobile-library-grid",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s51-phone2-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s51-phone2-ar-light",
+      "screen": 51,
+      "title": "الجوال — الإعدادات والمكتبة",
+      "frame_key": "phone2",
+      "surface": "settings",
+      "route": "/m/library",
+      "setup": "mobile-library-grid",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s51-phone2-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s52-phone1-ar-dark",
+      "screen": 52,
+      "title": "الجوال — الإدخال واللوحات",
+      "frame_key": "phone1",
+      "surface": "numbers",
+      "route": "/m/numbers",
+      "setup": "mobile-numbers-task",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s52-phone1-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s52-phone1-ar-light",
+      "screen": 52,
+      "title": "الجوال — الإدخال واللوحات",
+      "frame_key": "phone1",
+      "surface": "numbers",
+      "route": "/m/numbers",
+      "setup": "mobile-numbers-task",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s52-phone1-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s52-phone2-ar-dark",
+      "screen": 52,
+      "title": "الجوال — الإدخال واللوحات",
+      "frame_key": "phone2",
+      "surface": "numbers",
+      "route": "/m",
+      "setup": "mobile-overview-stack",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s52-phone2-dark.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s52-phone2-ar-light",
+      "screen": 52,
+      "title": "الجوال — الإدخال واللوحات",
+      "frame_key": "phone2",
+      "surface": "numbers",
+      "route": "/m",
+      "setup": "mobile-overview-stack",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 374,
+        "height": 748
+      },
+      "gate": "ssim",
+      "reference": "reference-crops/s52-phone2-light.png",
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s01-main-en-mirror",
+      "screen": 1,
+      "title": "نظرة عامة — EN mirror",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s02-main-en-mirror",
+      "screen": 2,
+      "title": "مهامي — EN mirror",
+      "frame_key": null,
+      "surface": "mywork",
+      "route": "/m/my-work",
+      "setup": "mywork-writer",
+      "locale": "en",
+      "theme": "dark",
+      "role": "writer",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s04-main-en-mirror",
+      "screen": 4,
+      "title": "المحتوى — عرض اللوحة — EN mirror",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content?view=board",
+      "setup": "content-board",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s05-main-en-mirror",
+      "screen": 5,
+      "title": "محتوى جديد — EN mirror",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content",
+      "setup": "new-content-modal",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 754
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s06-main-en-mirror",
+      "screen": 6,
+      "title": "ملف المحتوى — نظرة عامة — EN mirror",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-overview",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 963
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s07-main-en-mirror",
+      "screen": 7,
+      "title": "ملف المحتوى — الفيديو نفسه — EN mirror",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-writing",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1198
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s08-main-en-mirror",
+      "screen": 8,
+      "title": "ملف المحتوى — نفس التبويب، لمنشور — EN mirror",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:p013",
+      "setup": "p013-writing",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1047
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s09-main-en-mirror",
+      "screen": 9,
+      "title": "ملف المحتوى — المواد والملفات — EN mirror",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004?tab=materials",
+      "setup": "v004-materials",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 999
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s10-main-en-mirror",
+      "screen": 10,
+      "title": "ملف المحتوى — المهام والاعتمادات — EN mirror",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004?tab=tasks",
+      "setup": "v004-tasks",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1059
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s11-main-en-mirror",
+      "screen": 11,
+      "title": "ملف المحتوى — النشر — EN mirror",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v001?tab=publish",
+      "setup": "v001-publish",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 986
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s12-connected-ar-dark",
+      "screen": 12,
+      "title": "ملف المحتوى — الأداء — connected",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v001?tab=performance",
+      "setup": "v001-performance-connected",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 922
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "snapshot-history state — same tab, connected-source data"
+    },
+    {
+      "id": "s12-connected-ar-light",
+      "screen": 12,
+      "title": "ملف المحتوى — الأداء — connected",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v001?tab=performance",
+      "setup": "v001-performance-connected",
+      "locale": "ar",
+      "theme": "light",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 922
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "snapshot-history state — same tab, connected-source data"
+    },
+    {
+      "id": "s12-main-en-mirror",
+      "screen": 12,
+      "title": "ملف المحتوى — الأداء — EN mirror",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v001?tab=performance",
+      "setup": "v001-performance-manual",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 922
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s13-main-en-mirror",
+      "screen": 13,
+      "title": "التقويم — EN mirror",
+      "frame_key": null,
+      "surface": "calendar",
+      "route": "/m/calendar",
+      "setup": "calendar-month",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 927
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s14-main-en-mirror",
+      "screen": 14,
+      "title": "الحملات — EN mirror",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns",
+      "setup": "campaigns-list",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 797
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s15-main-en-mirror",
+      "screen": 15,
+      "title": "تفاصيل الحملة — EN mirror",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002",
+      "setup": "c002-detail",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1085
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s16-main-en-mirror",
+      "screen": 16,
+      "title": "مكتبة المواد — EN mirror",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library",
+      "setup": "library-grid",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s17-main-en-mirror",
+      "screen": 17,
+      "title": "الإعدادات — مسارات العمل — EN mirror",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/workflows",
+      "setup": "workflows-editor",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1012
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s19-main-en-mirror",
+      "screen": 19,
+      "title": "حملة جديدة — EN mirror",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns",
+      "setup": "new-campaign-modal",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1070
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s20-main-en-mirror",
+      "screen": 20,
+      "title": "الحملة — تبويب التنفيذات — EN mirror",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=executions",
+      "setup": "c002-executions",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1152
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s21-main-en-mirror",
+      "screen": 21,
+      "title": "تفاصيل التنفيذ — حيث يلتقي المحتوى بالإنفاق — EN mirror",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002/exec/:e1",
+      "setup": "c002-exec-detail",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1004
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s22-main-en-mirror",
+      "screen": 22,
+      "title": "تفاصيل المادة — EN mirror",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/:a012",
+      "setup": "asset-detail",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1066
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s23-main-en-mirror",
+      "screen": 23,
+      "title": "الرفع والإدخال — EN mirror",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/upload",
+      "setup": "upload-queue-realism",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 850
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s24-main-en-mirror",
+      "screen": 24,
+      "title": "طلب تصوير — EN mirror",
+      "frame_key": null,
+      "surface": "shoots",
+      "route": "/m/shoots/:sr003",
+      "setup": "shoot-request-detail",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 823
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s25-main-en-mirror",
+      "screen": 25,
+      "title": "الإعدادات — EN mirror",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings",
+      "setup": "settings-home",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 700
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s26-main-en-mirror",
+      "screen": 26,
+      "title": "الإعدادات — المنصات والحسابات — EN mirror",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/platforms",
+      "setup": "settings-platforms",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1046
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s27-main-en-mirror",
+      "screen": 27,
+      "title": "الإعدادات — أنواع المحتوى — EN mirror",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/content-types",
+      "setup": "settings-content-types",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 884
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s33-main-en-mirror",
+      "screen": 33,
+      "title": "الأدوار والصلاحيات — EN mirror",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/roles",
+      "setup": "settings-role-matrix",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1181
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s33-role-marketing_manager",
+      "screen": 33,
+      "title": "الأدوار والصلاحيات — role: marketing_manager",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/roles",
+      "setup": "settings-role-matrix@role=marketing_manager",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1181
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s34-role-ceo",
+      "screen": 34,
+      "title": "نظرة عامة — الرئيس التنفيذي — role: ceo",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-ceo@role=ceo",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "ceo",
+      "viewport": {
+        "width": 1320,
+        "height": 955
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s35-main-en-mirror",
+      "screen": 35,
+      "title": "متابعة الفريق — مشرف العمليات — EN mirror",
+      "frame_key": null,
+      "surface": "team",
+      "route": "/m/team",
+      "setup": "team-followup",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 880
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s36-role-ceo",
+      "screen": 36,
+      "title": "سجل واحد، خمسة أدوار — role: ceo",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-role-harness@role=ceo",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "ceo",
+      "viewport": {
+        "width": 1320,
+        "height": 880
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "one record, five role states — each roleVariant row asserts the exact button/lock set"
+    },
+    {
+      "id": "s36-role-marketing_manager",
+      "screen": 36,
+      "title": "سجل واحد، خمسة أدوار — role: marketing_manager",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-role-harness@role=marketing_manager",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 880
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "one record, five role states — each roleVariant row asserts the exact button/lock set"
+    },
+    {
+      "id": "s36-role-ops_supervisor",
+      "screen": 36,
+      "title": "سجل واحد، خمسة أدوار — role: ops_supervisor",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-role-harness@role=ops_supervisor",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "ops_supervisor",
+      "viewport": {
+        "width": 1320,
+        "height": 880
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "one record, five role states — each roleVariant row asserts the exact button/lock set"
+    },
+    {
+      "id": "s36-role-writer",
+      "screen": 36,
+      "title": "سجل واحد، خمسة أدوار — role: writer",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-role-harness@role=writer",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "writer",
+      "viewport": {
+        "width": 1320,
+        "height": 880
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "one record, five role states — each roleVariant row asserts the exact button/lock set"
+    },
+    {
+      "id": "s36-role-montage",
+      "screen": 36,
+      "title": "سجل واحد، خمسة أدوار — role: montage",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-role-harness@role=montage",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "montage",
+      "viewport": {
+        "width": 1320,
+        "height": 880
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "one record, five role states — each roleVariant row asserts the exact button/lock set"
+    },
+    {
+      "id": "s37-main-en-mirror",
+      "screen": 37,
+      "title": "الإعدادات — الأدوار ومن يشغلها — EN mirror",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/people",
+      "setup": "settings-people",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s38-main-en-mirror",
+      "screen": 38,
+      "title": "طلب تعديلات — EN mirror",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004?tab=tasks",
+      "setup": "request-changes-modal",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 741
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s39-main-en-mirror",
+      "screen": 39,
+      "title": "الحملة — تبويب المحتوى — EN mirror",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=content",
+      "setup": "c002-content-tab",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 905
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s40-main-en-mirror",
+      "screen": 40,
+      "title": "الحملة — تبويب النتائج — EN mirror",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=results",
+      "setup": "c002-results-tab",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 822
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s41-main-en-mirror",
+      "screen": 41,
+      "title": "المواد غير المستخدمة — EN mirror",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/unused",
+      "setup": "library-unused",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s42-main-en-mirror",
+      "screen": 42,
+      "title": "طلبات التصوير — EN mirror",
+      "frame_key": null,
+      "surface": "shoots",
+      "route": "/m/shoots",
+      "setup": "shoots-bands",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 865
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s43-main-en-mirror",
+      "screen": 43,
+      "title": "الإشعارات — لكل دور — EN mirror",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/notifications",
+      "setup": "settings-notifications",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 791
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s44-main-en-mirror",
+      "screen": 44,
+      "title": "نتائج البحث — EN mirror",
+      "frame_key": null,
+      "surface": "search",
+      "route": "/m/search?q=مينا",
+      "setup": "search-results",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 836
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "s50-main-en-mirror",
+      "screen": 50,
+      "title": "إدخال أرقام الأسبوع — EN mirror",
+      "frame_key": null,
+      "surface": "numbers",
+      "route": "/m/numbers",
+      "setup": "numbers-weekly-entry",
+      "locale": "en",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 1018
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-iphone",
+      "screen": null,
+      "title": "Route pattern — /m @ iphone",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m @ iphone-max",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-tablet",
+      "screen": null,
+      "title": "Route pattern — /m @ tablet",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-my-work-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/my-work @ iphone",
+      "frame_key": null,
+      "surface": "mywork",
+      "route": "/m/my-work",
+      "setup": "mywork-writer",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-my-work-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/my-work @ iphone-max",
+      "frame_key": null,
+      "surface": "mywork",
+      "route": "/m/my-work",
+      "setup": "mywork-writer",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-my-work-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/my-work @ tablet",
+      "frame_key": null,
+      "surface": "mywork",
+      "route": "/m/my-work",
+      "setup": "mywork-writer",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-team-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/team @ iphone",
+      "frame_key": null,
+      "surface": "team",
+      "route": "/m/team",
+      "setup": "team-followup",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-team-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/team @ iphone-max",
+      "frame_key": null,
+      "surface": "team",
+      "route": "/m/team",
+      "setup": "team-followup",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-team-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/team @ tablet",
+      "frame_key": null,
+      "surface": "team",
+      "route": "/m/team",
+      "setup": "team-followup",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/content @ iphone",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content",
+      "setup": "content-table",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/content @ iphone-max",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content",
+      "setup": "content-table",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/content @ tablet",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content",
+      "setup": "content-table",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-view-board-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/content?view=board @ iphone",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content?view=board",
+      "setup": "content-board",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-view-board-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/content?view=board @ iphone-max",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content?view=board",
+      "setup": "content-board",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-view-board-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/content?view=board @ tablet",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content?view=board",
+      "setup": "content-board",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v004-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v004 @ iphone",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-overview",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v004-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v004 @ iphone-max",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-overview",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v004-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v004 @ tablet",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004",
+      "setup": "v004-overview",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v004-tab-materials-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v004?tab=materials @ iphone",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004?tab=materials",
+      "setup": "v004-materials",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v004-tab-materials-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v004?tab=materials @ iphone-max",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004?tab=materials",
+      "setup": "v004-materials",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v004-tab-materials-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v004?tab=materials @ tablet",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004?tab=materials",
+      "setup": "v004-materials",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v004-tab-tasks-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v004?tab=tasks @ iphone",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004?tab=tasks",
+      "setup": "v004-tasks",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v004-tab-tasks-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v004?tab=tasks @ iphone-max",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004?tab=tasks",
+      "setup": "v004-tasks",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v004-tab-tasks-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v004?tab=tasks @ tablet",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v004?tab=tasks",
+      "setup": "v004-tasks",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v001-tab-publish-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v001?tab=publish @ iphone",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v001?tab=publish",
+      "setup": "v001-publish",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v001-tab-publish-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v001?tab=publish @ iphone-max",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v001?tab=publish",
+      "setup": "v001-publish",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v001-tab-publish-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v001?tab=publish @ tablet",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v001?tab=publish",
+      "setup": "v001-publish",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v001-tab-performance-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v001?tab=performance @ iphone",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v001?tab=performance",
+      "setup": "v001-performance-manual",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v001-tab-performance-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v001?tab=performance @ iphone-max",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v001?tab=performance",
+      "setup": "v001-performance-manual",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-content-v001-tab-performance-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/content/:v001?tab=performance @ tablet",
+      "frame_key": null,
+      "surface": "content",
+      "route": "/m/content/:v001?tab=performance",
+      "setup": "v001-performance-manual",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-calendar-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/calendar @ iphone",
+      "frame_key": null,
+      "surface": "calendar",
+      "route": "/m/calendar",
+      "setup": "calendar-month",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-calendar-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/calendar @ iphone-max",
+      "frame_key": null,
+      "surface": "calendar",
+      "route": "/m/calendar",
+      "setup": "calendar-month",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-calendar-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/calendar @ tablet",
+      "frame_key": null,
+      "surface": "calendar",
+      "route": "/m/calendar",
+      "setup": "calendar-month",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/library @ iphone",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library",
+      "setup": "library-grid",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/library @ iphone-max",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library",
+      "setup": "library-grid",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/library @ tablet",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library",
+      "setup": "library-grid",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-upload-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/library/upload @ iphone",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/upload",
+      "setup": "upload-queue-realism",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-upload-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/library/upload @ iphone-max",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/upload",
+      "setup": "upload-queue-realism",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-upload-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/library/upload @ tablet",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/upload",
+      "setup": "upload-queue-realism",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-a012-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/library/:a012 @ iphone",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/:a012",
+      "setup": "asset-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-a012-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/library/:a012 @ iphone-max",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/:a012",
+      "setup": "asset-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-a012-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/library/:a012 @ tablet",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/:a012",
+      "setup": "asset-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-unused-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/library/unused @ iphone",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/unused",
+      "setup": "library-unused",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-unused-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/library/unused @ iphone-max",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/unused",
+      "setup": "library-unused",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-library-unused-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/library/unused @ tablet",
+      "frame_key": null,
+      "surface": "library",
+      "route": "/m/library/unused",
+      "setup": "library-unused",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-shoots-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/shoots @ iphone",
+      "frame_key": null,
+      "surface": "shoots",
+      "route": "/m/shoots",
+      "setup": "shoots-bands",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-shoots-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/shoots @ iphone-max",
+      "frame_key": null,
+      "surface": "shoots",
+      "route": "/m/shoots",
+      "setup": "shoots-bands",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-shoots-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/shoots @ tablet",
+      "frame_key": null,
+      "surface": "shoots",
+      "route": "/m/shoots",
+      "setup": "shoots-bands",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-shoots-sr003-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/shoots/:sr003 @ iphone",
+      "frame_key": null,
+      "surface": "shoots",
+      "route": "/m/shoots/:sr003",
+      "setup": "shoot-request-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-shoots-sr003-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/shoots/:sr003 @ iphone-max",
+      "frame_key": null,
+      "surface": "shoots",
+      "route": "/m/shoots/:sr003",
+      "setup": "shoot-request-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-shoots-sr003-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/shoots/:sr003 @ tablet",
+      "frame_key": null,
+      "surface": "shoots",
+      "route": "/m/shoots/:sr003",
+      "setup": "shoot-request-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns @ iphone",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns",
+      "setup": "campaigns-list",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns @ iphone-max",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns",
+      "setup": "campaigns-list",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns @ tablet",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns",
+      "setup": "campaigns-list",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002 @ iphone",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002",
+      "setup": "c002-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002 @ iphone-max",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002",
+      "setup": "c002-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002 @ tablet",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002",
+      "setup": "c002-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-tab-executions-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002?tab=executions @ iphone",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=executions",
+      "setup": "c002-executions",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-tab-executions-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002?tab=executions @ iphone-max",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=executions",
+      "setup": "c002-executions",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-tab-executions-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002?tab=executions @ tablet",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=executions",
+      "setup": "c002-executions",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-tab-content-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002?tab=content @ iphone",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=content",
+      "setup": "c002-content-tab",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-tab-content-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002?tab=content @ iphone-max",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=content",
+      "setup": "c002-content-tab",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-tab-content-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002?tab=content @ tablet",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=content",
+      "setup": "c002-content-tab",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-tab-results-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002?tab=results @ iphone",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=results",
+      "setup": "c002-results-tab",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-tab-results-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002?tab=results @ iphone-max",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=results",
+      "setup": "c002-results-tab",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-tab-results-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002?tab=results @ tablet",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002?tab=results",
+      "setup": "c002-results-tab",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-exec-e1-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002/exec/:e1 @ iphone",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002/exec/:e1",
+      "setup": "c002-exec-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-exec-e1-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002/exec/:e1 @ iphone-max",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002/exec/:e1",
+      "setup": "c002-exec-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-campaigns-c002-exec-e1-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/campaigns/:c002/exec/:e1 @ tablet",
+      "frame_key": null,
+      "surface": "campaigns",
+      "route": "/m/campaigns/:c002/exec/:e1",
+      "setup": "c002-exec-detail",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-numbers-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/numbers @ iphone",
+      "frame_key": null,
+      "surface": "numbers",
+      "route": "/m/numbers",
+      "setup": "numbers-weekly-entry",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-numbers-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/numbers @ iphone-max",
+      "frame_key": null,
+      "surface": "numbers",
+      "route": "/m/numbers",
+      "setup": "numbers-weekly-entry",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-numbers-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/numbers @ tablet",
+      "frame_key": null,
+      "surface": "numbers",
+      "route": "/m/numbers",
+      "setup": "numbers-weekly-entry",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-search-q-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/search?q=مينا @ iphone",
+      "frame_key": null,
+      "surface": "search",
+      "route": "/m/search?q=مينا",
+      "setup": "search-results",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-search-q-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/search?q=مينا @ iphone-max",
+      "frame_key": null,
+      "surface": "search",
+      "route": "/m/search?q=مينا",
+      "setup": "search-results",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-search-q-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/search?q=مينا @ tablet",
+      "frame_key": null,
+      "surface": "search",
+      "route": "/m/search?q=مينا",
+      "setup": "search-results",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/settings @ iphone",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings",
+      "setup": "settings-home",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/settings @ iphone-max",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings",
+      "setup": "settings-home",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/settings @ tablet",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings",
+      "setup": "settings-home",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-workflows-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/settings/workflows @ iphone",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/workflows",
+      "setup": "workflows-editor",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-workflows-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/settings/workflows @ iphone-max",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/workflows",
+      "setup": "workflows-editor",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-workflows-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/settings/workflows @ tablet",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/workflows",
+      "setup": "workflows-editor",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-content-types-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/settings/content-types @ iphone",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/content-types",
+      "setup": "settings-content-types",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-content-types-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/settings/content-types @ iphone-max",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/content-types",
+      "setup": "settings-content-types",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-content-types-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/settings/content-types @ tablet",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/content-types",
+      "setup": "settings-content-types",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-platforms-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/settings/platforms @ iphone",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/platforms",
+      "setup": "settings-platforms",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-platforms-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/settings/platforms @ iphone-max",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/platforms",
+      "setup": "settings-platforms",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-platforms-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/settings/platforms @ tablet",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/platforms",
+      "setup": "settings-platforms",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-roles-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/settings/roles @ iphone",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/roles",
+      "setup": "settings-role-matrix",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-roles-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/settings/roles @ iphone-max",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/roles",
+      "setup": "settings-role-matrix",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-roles-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/settings/roles @ tablet",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/roles",
+      "setup": "settings-role-matrix",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-people-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/settings/people @ iphone",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/people",
+      "setup": "settings-people",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-people-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/settings/people @ iphone-max",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/people",
+      "setup": "settings-people",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-people-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/settings/people @ tablet",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/people",
+      "setup": "settings-people",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-notifications-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/settings/notifications @ iphone",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/notifications",
+      "setup": "settings-notifications",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-notifications-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/settings/notifications @ iphone-max",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/notifications",
+      "setup": "settings-notifications",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-settings-notifications-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/settings/notifications @ tablet",
+      "frame_key": null,
+      "surface": "settings",
+      "route": "/m/settings/notifications",
+      "setup": "settings-notifications",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-account-iphone",
+      "screen": null,
+      "title": "Route pattern — /m/account @ iphone",
+      "frame_key": null,
+      "surface": "account",
+      "route": "/m/account",
+      "setup": "mobile-account",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-account-iphone-max",
+      "screen": null,
+      "title": "Route pattern — /m/account @ iphone-max",
+      "frame_key": null,
+      "surface": "account",
+      "route": "/m/account",
+      "setup": "mobile-account",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 430,
+        "height": 932
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "route-m-account-tablet",
+      "screen": null,
+      "title": "Route pattern — /m/account @ tablet",
+      "frame_key": null,
+      "surface": "account",
+      "route": "/m/account",
+      "setup": "mobile-account",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      }
+    },
+    {
+      "id": "nav-ceo-desktop",
+      "screen": null,
+      "title": "Nav visibility — ceo (desktop)",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded@role=ceo",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "ceo",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "rail/tab set must equal surface_access — hidden means absent"
+    },
+    {
+      "id": "nav-ceo-iphone",
+      "screen": null,
+      "title": "Nav visibility — ceo (iphone)",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded@role=ceo",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "ceo",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "rail/tab set must equal surface_access — hidden means absent"
+    },
+    {
+      "id": "nav-marketing_manager-desktop",
+      "screen": null,
+      "title": "Nav visibility — marketing_manager (desktop)",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded@role=marketing_manager",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "rail/tab set must equal surface_access — hidden means absent"
+    },
+    {
+      "id": "nav-marketing_manager-iphone",
+      "screen": null,
+      "title": "Nav visibility — marketing_manager (iphone)",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded@role=marketing_manager",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "marketing_manager",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "rail/tab set must equal surface_access — hidden means absent"
+    },
+    {
+      "id": "nav-ops_supervisor-desktop",
+      "screen": null,
+      "title": "Nav visibility — ops_supervisor (desktop)",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded@role=ops_supervisor",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "ops_supervisor",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "rail/tab set must equal surface_access — hidden means absent"
+    },
+    {
+      "id": "nav-ops_supervisor-iphone",
+      "screen": null,
+      "title": "Nav visibility — ops_supervisor (iphone)",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded@role=ops_supervisor",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "ops_supervisor",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "rail/tab set must equal surface_access — hidden means absent"
+    },
+    {
+      "id": "nav-writer-desktop",
+      "screen": null,
+      "title": "Nav visibility — writer (desktop)",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded@role=writer",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "writer",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "rail/tab set must equal surface_access — hidden means absent"
+    },
+    {
+      "id": "nav-writer-iphone",
+      "screen": null,
+      "title": "Nav visibility — writer (iphone)",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded@role=writer",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "writer",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "rail/tab set must equal surface_access — hidden means absent"
+    },
+    {
+      "id": "nav-montage-desktop",
+      "screen": null,
+      "title": "Nav visibility — montage (desktop)",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded@role=montage",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "montage",
+      "viewport": {
+        "width": 1320,
+        "height": 760
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "rail/tab set must equal surface_access — hidden means absent"
+    },
+    {
+      "id": "nav-montage-iphone",
+      "screen": null,
+      "title": "Nav visibility — montage (iphone)",
+      "frame_key": null,
+      "surface": "overview",
+      "route": "/m",
+      "setup": "overview-loaded@role=montage",
+      "locale": "ar",
+      "theme": "dark",
+      "role": "montage",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "gate": "assert",
+      "reference": null,
+      "status": "pending",
+      "evidence": {
+        "actual": null,
+        "overlay": null,
+        "diff": null,
+        "ssim": null,
+        "pixel_pct": null,
+        "inspected": false
+      },
+      "notes": "rail/tab set must equal surface_access — hidden means absent"
+    }
+  ]
+}
