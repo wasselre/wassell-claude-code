@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-01T05:51:15.542Z",
+  "generated_at": "2026-08-01T06:41:49.340Z",
   "source": {
     "frames_index": "frames-index.json",
     "matrix": "coverage-matrix.mjs"
@@ -9,7 +9,7 @@
     "ssim": 124,
     "assert": 154,
     "by_gate_pending": {
-      "ssim": 124,
+      "ssim": 123,
       "assert": 154
     }
   },
@@ -31,15 +31,16 @@
       },
       "gate": "ssim",
       "reference": "reference-crops/s01-main-dark.png",
-      "status": "pending",
+      "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s01-main-ar-dark.png",
+        "overlay": "overlays/s01-main-ar-dark.png",
+        "diff": "diffs/s01-main-ar-dark.png",
+        "ssim": 0.807832,
+        "pixel_pct": 93.9979,
         "inspected": false
-      }
+      },
+      "note": "metrics-below-threshold (ssim 0.807832 < 0.98 or pixel_pct 93.9979 < 99)"
     },
     {
       "id": "s01-main-ar-light",

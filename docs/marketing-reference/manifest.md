@@ -1,13 +1,13 @@
 # Marketing OS — Visual Gate Manifest
 
-Generated: 2026-08-01T05:51:15.542Z
+Generated: 2026-08-01T06:41:49.340Z
 Sources: `frames-index.json` + `coverage-matrix.mjs` (regenerate with `node scripts/mos-manifest.mjs`)
 
-**Totals:** 278 rows — 124 ssim / 154 assert — pending: 124 ssim / 154 assert — carried forward: 0 / reset: 278
+**Totals:** 278 rows — 124 ssim / 154 assert — pending: 123 ssim / 154 assert — updated by `scripts/mos-qa.mjs`
 
 | id | screen | route | setup | locale | theme | role | viewport | gate | status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| s01-main-ar-dark | 1 | /m | overview-loaded | ar | dark | marketing_manager | 1320x760 | ssim | pending |
+| s01-main-ar-dark | 1 | /m | overview-loaded | ar | dark | marketing_manager | 1320x760 | ssim | fail |
 | s01-main-ar-light | 1 | /m | overview-loaded | ar | light | marketing_manager | 1320x760 | ssim | pending |
 | s02-main-ar-dark | 2 | /m/my-work | mywork-writer | ar | dark | writer | 1320x760 | ssim | pending |
 | s02-main-ar-light | 2 | /m/my-work | mywork-writer | ar | light | writer | 1320x760 | ssim | pending |

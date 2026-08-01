@@ -1,4 +1,19 @@
-# MOS exact-build — orchestration state (updated 2026-08-01 ~10:30)
+# MOS exact-build — orchestration state (updated 2026-08-01 ~11:15)
+
+## PROVEN LIVE (do not re-derive)
+- Engine end-to-end: writer bootstrap via real API returns the s33 surface map
+  exactly + 2 role-path workflows (6/10 steps) at v1. Migrations 01–05 + 07 on branch.
+- Migration 07 added: role_path rows readable via wassell_mos_can('read') —
+  the old workflows SELECT policy gates on can_view_workflows (Sales-only flag).
+- Full stack runs: `npx vite --port 5173` (branch VITE_ env) +
+  `node scripts/mos-dev-server.mjs --port 3000 --vite-port 5173 --env .mos-branch.env`;
+  SPA login by seeding localStorage sb-czdznzadjqzajrnjoafi-auth-token.
+- FIRST CAPTURE DONE: `node scripts/mos-qa.mjs s01-main-ar-dark` (env: MOS_APP_URL,
+  MOS_SUPABASE_URL/ANON from .mos-branch.local, MOS_FIXTURE_PASSWORD) → ssim 0.808 /
+  pixel 94.0 vs the filled reference on an EMPTY db — dims matched, delta = missing
+  fixture data + minor rail-label drift. Harness + compare pipeline WORK.
+- Clock-skew note: one-off "JWT issued at future" console error on a Sales-side load
+  (local clock behind AWS); resync Windows clock if it pollutes console-clean gate.
 
 Working doc for the one-phase build. Claude orchestrates + reviews; **Kimi K3 writes the
 code** (`bash scripts/kimi-code.sh "$(cat <spec>)"`, specs in the session scratchpad
