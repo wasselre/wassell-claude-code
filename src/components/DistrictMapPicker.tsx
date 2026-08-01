@@ -852,12 +852,22 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       name?: string;
       /** Whether it's currently attached to the map — so we only call setMap on a real change. */
       on: boolean;
+      /** District extent in DEGREES — how much room the name has to live in. */
+      spanLat?: number;
+      spanLng?: number;
+      /** True for district names; landmarks are points and never compete for label space. */
+      isLabel?: boolean;
     }
     const labelEntries: MarkerEntry[] = [];
     for (const s of shapes) {
       let ring: google.maps.LatLngLiteral[] = [];
       for (const p of geojsonToPaths(s.geojson)) if (p.length > ring.length) ring = p;
       if (ring.length < 3) continue;
+      let rMinLat = Infinity, rMaxLat = -Infinity, rMinLng = Infinity, rMaxLng = -Infinity;
+      for (const pt of ring) {
+        if (pt.lat < rMinLat) rMinLat = pt.lat; if (pt.lat > rMaxLat) rMaxLat = pt.lat;
+        if (pt.lng < rMinLng) rMinLng = pt.lng; if (pt.lng > rMaxLng) rMaxLng = pt.lng;
+      }
       const lat = ring.reduce((a, p) => a + p.lat, 0) / ring.length;
       const lng = ring.reduce((a, p) => a + p.lng, 0) / ring.length;
       labelEntries.push({
@@ -869,6 +879,9 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         }),
         position: { lat, lng },
         on: false,
+        spanLat: rMaxLat - rMinLat,
+        spanLng: rMaxLng - rMinLng,
+        isLabel: true,
       });
     }
     const lmEntries: MarkerEntry[] = landmarks
@@ -933,10 +946,72 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         south = sw.lat() - padLat; north = ne.lat() + padLat;
         west = sw.lng() - padLng; east = ne.lng() + padLng;
       }
+      // ── DECLUTTER THE DISTRICT NAMES ──────────────────────────────────────
+      //
+      // Attaching every in-view label is what turned Dubai's core into a solid
+      // black mass: hundreds of small districts packed together, each drawing its
+      // name, all overlapping. Outside the core the same code reads perfectly —
+      // the difference is purely label density.
+      //
+      // So do what a real map renderer does, in two steps:
+      //
+      //   1. SIZE GATE — a district only gets a name if it is physically big
+      //      enough on screen to hold one. A community rendering 20 px wide
+      //      cannot show «البرشاء جنوب 2»; drawing it there helps nobody and
+      //      buries its neighbours.
+      //   2. GREEDY COLLISION — place the biggest districts first and skip any
+      //      label whose text box would overlap one already placed.
+      //
+      // The result degrades the right way: zoomed out you get the major districts
+      // named, and as you zoom in the small ones gain room and appear. Landmarks
+      // are points and never take part.
+      const degPerPx = 360 / (256 * Math.pow(2, z));
+      const CHAR_PX = 6.2;   // ~11px Amiri, averaged over Arabic and Latin
+      const LINE_PX = 13;
+      const placed: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+
+      const inView = (e: MarkerEntry) =>
+        e.position.lat >= south && e.position.lat <= north
+        && e.position.lng >= west && e.position.lng <= east;
+
+      // Biggest first — the district most likely to be what you're looking at wins
+      // the space, rather than whichever happened to sort first.
+      const labels = entries
+        .filter((e) => e.isLabel && inView(e))
+        .sort((a, b) => (b.spanLat ?? 0) * (b.spanLng ?? 0) - (a.spanLat ?? 0) * (a.spanLng ?? 0));
+
+      // A degree of LATITUDE covers more pixels than a degree of longitude, by
+      // 1/cos(lat) — ~10% at Dubai's 25°, and it only grows further north. Without
+      // this the size gate and the collision boxes are wrong in the vertical axis,
+      // which is the axis that decides whether two names actually overlap.
+      const latScale = Math.cos((map.getCenter()?.lat() ?? 25) * Math.PI / 180) || 1;
+      const degPerPxLat = degPerPx * latScale;
+
+      for (const e of labels) {
+        const name = e.marker.getLabel();
+        const text = typeof name === 'string' ? name : (name?.text ?? '');
+        const wPx = Math.max(24, text.length * CHAR_PX);
+        const boxW = (e.spanLng ?? 0) / degPerPx;
+        const boxH = (e.spanLat ?? 0) / degPerPxLat;
+
+        // Step 1: too small on screen to carry its own name.
+        let show = boxW >= wPx * 0.75 && boxH >= LINE_PX * 1.2;
+
+        // Step 2: would it land on top of a name already placed?
+        if (show) {
+          const cx = e.position.lng / degPerPx;
+          const cy = -e.position.lat / degPerPxLat; // y grows downward; sign only has to be consistent
+          const box = { x1: cx - wPx / 2, y1: cy - LINE_PX / 2, x2: cx + wPx / 2, y2: cy + LINE_PX / 2 };
+          if (placed.some((p) => box.x1 < p.x2 && box.x2 > p.x1 && box.y1 < p.y2 && box.y2 > p.y1)) show = false;
+          else placed.push(box);
+        }
+        if (show !== e.on) { e.marker.setMap(show ? map : null); e.on = show; }
+      }
+      // Labels that scrolled out of view still need detaching.
       for (const e of entries) {
-        const inView = e.position.lat >= south && e.position.lat <= north
-          && e.position.lng >= west && e.position.lng <= east;
-        if (inView !== e.on) { e.marker.setMap(inView ? map : null); e.on = inView; }
+        if (e.isLabel) { if (!inView(e) && e.on) { e.marker.setMap(null); e.on = false; } continue; }
+        const on = inView(e);
+        if (on !== e.on) { e.marker.setMap(on ? map : null); e.on = on; }
       }
     };
     syncMarkers();
