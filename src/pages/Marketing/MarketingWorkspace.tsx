@@ -21,14 +21,16 @@ import { useAppStore } from '@/stores/appStore';
 import { useCanAccessPage } from '@/hooks/usePermission';
 import {
   MosContentType,
-  MosGrant,
   MosProject,
   MosRole,
-  MosUser,
   ROLE_LABELS,
+  RolePerson,
+  SurfaceKey,
+  SurfaceLevel,
   fetchBootstrap,
   fetchProjects,
   fetchRoles,
+  persistActiveRole,
 } from '@/lib/marketingOS/client';
 import { initial, num } from './lib/format';
 import {
@@ -43,13 +45,19 @@ import './mos.css';
 /* ------------------------------------------------------------------ */
 
 interface WorkspaceCtx {
+  /** The role the person is working AS right now (display; never authorization). */
   role: MosRole;
+  activeRole: MosRole;
+  setActiveRole: (role: MosRole) => void;
+  /** Every mos role the caller holds — capability truth is the UNION of these. */
+  roles: MosRole[];
+  /** Per-surface visibility from the server's surface matrix. */
+  surfaces: Record<SurfaceKey, SurfaceLevel>;
   appUserId: string | null;
   contentTypes: MosContentType[];
   projects: MosProject[];
-  users: MosUser[];
-  grants: MosGrant[];
-  /** Re-read role grants after the Roles screen changes them. */
+  people: RolePerson[];
+  /** Re-read role assignments after the Roles screen changes them. */
   reloadGrants: () => Promise<void>;
   /** A project's display name, or a short id when the project is gone. */
   projectName: (id: string | null | undefined) => string;
@@ -106,6 +114,12 @@ interface NavItem {
   Icon: (p: Record<string, unknown>) => JSX.Element;
   badge?: 'mywork' | 'content';
   end?: boolean;
+  /**
+   * The surface_access row that governs this item. 'hidden' removes the item
+   * from the rail entirely — no disabled button leading to a refusal. 'search'
+   * is not a matrix surface: it shows whenever ANY surface is visible.
+   */
+  surface: SurfaceKey | 'search';
 }
 
 interface NavGroup {
@@ -118,32 +132,32 @@ const NAV: NavGroup[] = [
   {
     ar: null, en: null,
     items: [
-      { to: '/m', ar: 'نظرة عامة', en: 'Overview', Icon: IconOverview, end: true },
-      { to: '/m/my-work', ar: 'مهامي', en: 'My work', Icon: IconMyWork, badge: 'mywork' },
-      { to: '/m/team', ar: 'متابعة الفريق', en: 'Team work', Icon: IconTeam },
+      { to: '/m', ar: 'نظرة عامة', en: 'Overview', Icon: IconOverview, end: true, surface: 'overview' },
+      { to: '/m/my-work', ar: 'مهامي', en: 'My work', Icon: IconMyWork, badge: 'mywork', surface: 'mywork' },
+      { to: '/m/team', ar: 'متابعة الفريق', en: 'Team work', Icon: IconTeam, surface: 'team' },
     ],
   },
   {
     ar: 'الإنتاج', en: 'Production',
     items: [
-      { to: '/m/content', ar: 'المحتوى', en: 'Content', Icon: IconContent, badge: 'content' },
-      { to: '/m/search', ar: 'البحث', en: 'Search', Icon: IconSearch },
-      { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', Icon: IconCalendar },
-      { to: '/m/library', ar: 'مكتبة المواد', en: 'Asset library', Icon: IconLibrary },
-      { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', Icon: IconShoot },
+      { to: '/m/content', ar: 'المحتوى', en: 'Content', Icon: IconContent, badge: 'content', surface: 'content' },
+      { to: '/m/search', ar: 'البحث', en: 'Search', Icon: IconSearch, surface: 'search' },
+      { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', Icon: IconCalendar, surface: 'calendar' },
+      { to: '/m/library', ar: 'مكتبة المواد', en: 'Asset library', Icon: IconLibrary, surface: 'library' },
+      { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', Icon: IconShoot, surface: 'shoots' },
     ],
   },
   {
     ar: 'الإنفاق', en: 'Spend',
     items: [
-      { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns },
-      { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', Icon: IconMetrics },
+      { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns, surface: 'campaigns' },
+      { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', Icon: IconMetrics, surface: 'numbers' },
     ],
   },
   {
     ar: 'الإعداد', en: 'Setup',
     items: [
-      { to: '/m/settings', ar: 'الإعدادات', en: 'Settings', Icon: IconSettings },
+      { to: '/m/settings', ar: 'الإعدادات', en: 'Settings', Icon: IconSettings, surface: 'settings' },
     ],
   },
 ];
@@ -223,11 +237,14 @@ export default function MarketingWorkspace() {
   const location = useLocation();
 
   const [role, setRole] = useState<MosRole>('viewer');
+  const [roles, setRoles] = useState<MosRole[]>(['viewer']);
+  const [surfaces, setSurfaces] = useState<Record<SurfaceKey, SurfaceLevel>>(
+    () => ({}) as Record<SurfaceKey, SurfaceLevel>,
+  );
   const [appUserId, setAppUserId] = useState<string | null>(null);
   const [contentTypes, setContentTypes] = useState<MosContentType[]>([]);
   const [projects, setProjects] = useState<MosProject[]>([]);
-  const [users, setUsers] = useState<MosUser[]>([]);
-  const [grants, setGrants] = useState<MosGrant[]>([]);
+  const [people, setPeople] = useState<RolePerson[]>([]);
   const [ready, setReady] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const [badges, setBadges] = useState<{ mywork: number | null; content: number | null }>({
@@ -248,15 +265,20 @@ export default function MarketingWorkspace() {
         }),
         fetchRoles().catch((e: unknown) => {
           console.error('[marketing] people directory unavailable', e);
-          return { users: [] as MosUser[], grants: [] as MosGrant[] };
+          return { people: [] as RolePerson[], roles: [] };
         }),
       ]);
-      setRole(bootstrap.role);
-      setAppUserId(bootstrap.app_user_id);
+      // The server resolved the active role from the x-mos-active-role header
+      // (sent from localStorage by the client) against the held roles — persist
+      // the resolved value so later calls send a role that is actually held.
+      persistActiveRole(bootstrap.me.active_role);
+      setRole(bootstrap.me.active_role);
+      setRoles(bootstrap.me.roles);
+      setSurfaces(bootstrap.me.surfaces);
+      setAppUserId(bootstrap.me.user_id);
       setContentTypes(bootstrap.content_types);
       setProjects(projectsResult.projects);
-      setUsers(rolesResult.users);
-      setGrants(rolesResult.grants);
+      setPeople(rolesResult.people);
     } catch (e) {
       setBootError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -289,17 +311,24 @@ export default function MarketingWorkspace() {
 
   const reloadGrants = useCallback(async () => {
     const res = await fetchRoles();
-    setUsers(res.users);
-    setGrants(res.grants);
+    setPeople(res.people);
+  }, []);
+
+  const setActiveRole = useCallback((next: MosRole) => {
+    persistActiveRole(next);
+    setRole(next);
   }, []);
 
   const ctx: WorkspaceCtx = useMemo(() => ({
     role,
+    activeRole: role,
+    setActiveRole,
+    roles,
+    surfaces,
     appUserId,
     contentTypes,
     projects,
-    users,
-    grants,
+    people,
     reloadGrants,
     isAr,
     ready,
@@ -313,10 +342,22 @@ export default function MarketingWorkspace() {
       return isAr ? t.label_ar : t.label_en;
     },
     setBadge: (key, value) => setBadges((b) => (b[key] === value ? b : { ...b, [key]: value })),
-    can: (capability) => (MATRIX[role] ?? []).includes(capability),
-  }), [role, appUserId, contentTypes, projects, users, grants, reloadGrants, isAr, ready, projectMap, typeMap]);
+    // Capability truth is the UNION over every held role — a person who is
+    // Writer AND Ops Supervisor gets both sets, exactly like wassell_mos_can.
+    can: (capability) => roles.some((r) => (MATRIX[r] ?? []).includes(capability)),
+  }), [role, roles, surfaces, setActiveRole, appUserId, contentTypes, projects, people, reloadGrants, isAr, ready, projectMap, typeMap]);
 
   const roleLabel = ROLE_LABELS[role] ? (isAr ? ROLE_LABELS[role].ar : ROLE_LABELS[role].en) : role;
+
+  // A hidden surface removes its rail item entirely — no disabled button
+  // leading to a refusal (the matrix's whole point). Search is not a matrix
+  // surface: it shows whenever the caller can see anything at all.
+  const anySurfaceVisible = Object.values(surfaces).some((l) => l !== 'hidden');
+  const navVisible = (item: NavItem): boolean => {
+    if (!ready) return true; // don't flash-remove items before bootstrap lands
+    if (item.surface === 'search') return anySurfaceVisible;
+    return surfaces[item.surface] !== 'hidden';
+  };
 
   return (
     <Ctx.Provider value={ctx}>
@@ -349,25 +390,29 @@ export default function MarketingWorkspace() {
             </span>
           </button>
 
-          {NAV.map((group, gi) => (
-            <div key={gi}>
-              {group.ar && <div className="nav-sec">{isAr ? group.ar : group.en}</div>}
-              {group.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) => `navi${isActive ? ' on' : ''}`}
-                >
-                  <item.Icon />
-                  {isAr ? item.ar : item.en}
-                  {item.badge && badges[item.badge] !== null && (
-                    <span className="ct">{num(badges[item.badge], isAr)}</span>
-                  )}
-                </NavLink>
-              ))}
-            </div>
-          ))}
+          {NAV.map((group, gi) => {
+            const items = group.items.filter(navVisible);
+            if (items.length === 0) return null;
+            return (
+              <div key={gi}>
+                {group.ar && <div className="nav-sec">{isAr ? group.ar : group.en}</div>}
+                {items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    className={({ isActive }) => `navi${isActive ? ' on' : ''}`}
+                  >
+                    <item.Icon />
+                    {isAr ? item.ar : item.en}
+                    {item.badge && badges[item.badge] !== null && (
+                      <span className="ct">{num(badges[item.badge], isAr)}</span>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            );
+          })}
 
           <div className="rail-foot">
             <div className="av">{initial(roleLabel)}</div>

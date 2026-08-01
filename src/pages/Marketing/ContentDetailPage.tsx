@@ -37,7 +37,9 @@ type Tab = 'overview' | 'content' | 'materials' | 'tasks' | 'publishing' | 'perf
 export default function ContentDetailPage() {
   const { contentId } = useParams<{ contentId: string }>();
   const navigate = useNavigate();
-  const { isAr, role, can, typeLabel, projectName, contentTypes, users, projects } = useWorkspace();
+  const { isAr, role, can, typeLabel, projectName, contentTypes, people, projects } = useWorkspace();
+  // CommentThread wants the legacy {id,name_ar,name_en} shape.
+  const users = people.map((p) => ({ id: p.user_id, name_ar: p.name_ar, name_en: p.name_en }));
 
   const [item, setItem] = useState<MosContentRow | null>(null);
   const [tasks, setTasks] = useState<MosTask[]>([]);

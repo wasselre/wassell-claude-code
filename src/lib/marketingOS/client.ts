@@ -23,6 +23,95 @@ export type MosRole =
   | 'viewer'
   | 'none';
 
+/** The five roles a role-path step can point at (mos_ prefix stripped). */
+export type MosPathRole = 'ceo' | 'marketing_manager' | 'ops_supervisor' | 'writer' | 'montage';
+
+/** Every surface the shell can route to. Absence from surface_access = hidden. */
+export type SurfaceKey =
+  | 'overview' | 'mywork' | 'team' | 'content' | 'calendar' | 'library'
+  | 'shoots' | 'campaigns' | 'numbers' | 'settings' | 'roles';
+
+export type SurfaceLevel = 'full' | 'read' | 'hidden';
+
+/** A role-path step, as stored in workflows.metadata.steps. */
+export interface StepDef {
+  key: string;
+  label_ar: string;
+  label_en: string;
+  role_key: MosPathRole;
+  due_days: number;
+  is_approval: boolean;
+  approval_kind: 'creative' | 'process' | 'budget' | null;
+  require_note_on_reject: boolean;
+  creates_revision: boolean;
+  required_fields: string[];
+  required_files: string[];
+}
+
+/** A canonical workflow (kind='role_path') with its current version pinned on. */
+export interface WorkflowDef {
+  id: string;
+  label_ar: string;
+  label_en: string;
+  is_active: boolean;
+  steps: StepDef[];
+  current_version_no: number;
+  current_version_id: string | null;
+}
+
+export interface BootstrapMe {
+  user_id: string | null;
+  /** Every mos role the caller HOLDS (multi-role is the point of the new engine). */
+  roles: MosRole[];
+  active_role: MosRole;
+  surfaces: Record<SurfaceKey, SurfaceLevel>;
+  prefs: Record<string, unknown>;
+}
+
+export interface BootstrapResponse {
+  me: BootstrapMe;
+  content_types: MosContentType[];
+  workflows: WorkflowDef[];
+  platform_accounts: MosAccount[];
+  settings: Record<string, unknown>;
+  unread_notifications: number;
+}
+
+/** A person and the mos role keys they hold. */
+export interface RolePerson {
+  user_id: string;
+  name_ar: string | null;
+  name_en: string | null;
+  email: string | null;
+  roles: MosRole[];
+}
+
+/** A canonical mos role and how many people currently hold it. */
+export interface MosRoleDef {
+  key: string;
+  role_id: string;
+  label_ar: string;
+  label_en: string;
+  holders: number;
+}
+
+export interface SurfaceCell {
+  role_key: string;
+  surface_key: string;
+  level: SurfaceLevel;
+}
+
+export interface MosContentVersion {
+  id: string;
+  content_id: string;
+  round: number;
+  data: Record<string, unknown>;
+  scenes: MosScene[];
+  submitted_by_user_id: string | null;
+  rejected_note: string | null;
+  created_at: string;
+}
+
 export interface MosContentType {
   id: string;
   key: string;
@@ -131,10 +220,33 @@ async function authHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * The role the caller is currently working as. Display-affecting only — the
+ * server validates it against the held roles and never authorizes off it.
+ */
+const ACTIVE_ROLE_KEY = 'mos_active_role';
+
+export function getActiveRole(): string | null {
+  return window.localStorage.getItem(ACTIVE_ROLE_KEY);
+}
+
+export function persistActiveRole(role: string): void {
+  window.localStorage.setItem(ACTIVE_ROLE_KEY, role);
+}
+
+function activeRoleHeader(): Record<string, string> {
+  const role = getActiveRole();
+  return role ? { 'x-mos-active-role': role } : {};
+}
+
 async function call<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
   const res = await fetch('/api/marketing-os', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(await authHeader()),
+      ...activeRoleHeader(),
+    },
     body: JSON.stringify({ action, ...payload }),
   });
   if (!res.ok) {
@@ -151,8 +263,7 @@ async function call<T>(action: string, payload: Record<string, unknown> = {}): P
 /* actions                                                            */
 /* ------------------------------------------------------------------ */
 
-export const fetchBootstrap = () =>
-  call<{ role: MosRole; app_user_id: string | null; content_types: MosContentType[] }>('bootstrap');
+export const fetchBootstrap = () => call<BootstrapResponse>('bootstrap');
 
 export const fetchContentList = (filters: Record<string, unknown> = {}) =>
   call<{ content: MosContentRow[] }>('content_list', filters);
@@ -169,11 +280,27 @@ export const createContent = (payload: Record<string, unknown>) =>
 export const updateContent = (id: string, patch: Record<string, unknown>) =>
   call<{ item: MosContentRow }>('content_update', { id, patch });
 
+export interface TaskAdvanceResult {
+  item: MosContentRow;
+  closed_task_id: string;
+  opened_task_id: string | null;
+  next_step_key: string | null;
+  round: number;
+  done: boolean;
+}
+
 export const completeTask = (
   taskId: string,
   result: 'submitted' | 'approved' | 'changes_requested',
   note?: string,
-) => call<{ item: MosContentRow }>('task_complete', { task_id: taskId, result, note });
+  targets?: string[],
+) => call<TaskAdvanceResult>('task_complete', { task_id: taskId, result, note, targets });
+
+export const transferTask = (taskId: string, toUserId: string) =>
+  call<{ ok: true }>('task_transfer', { task_id: taskId, to_user_id: toUserId });
+
+export const fetchContentVersions = (contentId: string) =>
+  call<{ versions: MosContentVersion[] }>('content_versions', { content_id: contentId });
 
 export interface MosPublication {
   id: string;
@@ -219,17 +346,21 @@ export interface MosSnapshot {
   enquiries: number | null;
 }
 
-export interface MosUser {
-  id: string;
-  name_ar: string | null;
-  name_en: string | null;
-  email: string | null;
-}
+export const fetchRoles = () =>
+  call<{ people: RolePerson[]; roles: MosRoleDef[] }>('roles_list');
 
-export interface MosGrant {
-  user_id: string;
-  mos_role: MosRole;
-}
+export const grantRole = (userId: string, roleKey: MosPathRole, grant: boolean) =>
+  call<{ ok: true }>('role_grant', { user_id: userId, role_key: roleKey, grant });
+
+export const fetchSurfaceMatrix = () =>
+  call<{
+    surfaces: SurfaceKey[];
+    roles: Array<{ key: string; role_id: string }>;
+    cells: SurfaceCell[];
+  }>('surface_matrix');
+
+export const setSurface = (roleKey: string, surfaceKey: SurfaceKey, level: SurfaceLevel) =>
+  call<{ ok: true }>('surface_set', { role_key: roleKey, surface_key: surfaceKey, level });
 
 export const saveScene = (contentId: string, scene: Record<string, unknown>) =>
   call<{ scenes: MosScene[] }>('scene_save', { content_id: contentId, scene });
@@ -254,12 +385,6 @@ export const recordMetrics = (
 
 export const fetchMetricsHistory = (publicationId: string) =>
   call<{ snapshots: MosSnapshot[] }>('metrics_history', { publication_id: publicationId });
-
-export const fetchRoles = () =>
-  call<{ users: MosUser[]; grants: MosGrant[] }>('roles_list');
-
-export const grantRole = (userId: string, mosRole: MosRole | null) =>
-  call<{ grants: MosGrant[] }>('role_grant', { user_id: userId, mos_role: mosRole });
 
 /* ------------------------------------------------------------------ */
 /* the rest of the workspace                                          */
@@ -373,6 +498,12 @@ export interface MosAsset {
   usage_rights?: string | null;
   /** The shoot request whose delivery brought this file in. */
   shoot_request_id?: string | null;
+  /** Video runtime, seconds — drives the mm:ss thumb badge (screen 16). */
+  duration_seconds?: number | null;
+  /** Set on children of a grouped set («مجموعة ن» badge on the parent). */
+  parent_asset_id?: string | null;
+  rights_expiry?: string | null;
+  shot_by?: string | null;
 }
 
 export interface MosAssetLink {
@@ -411,14 +542,6 @@ export interface MosComment {
   body: string;
   author_user_id: string | null;
   created_at: string;
-}
-
-export interface MosWorkflow {
-  id: string;
-  key: string;
-  label_ar: string;
-  label_en: string;
-  is_active: boolean;
 }
 
 export interface MosProject {
@@ -586,16 +709,77 @@ export const addComment = (target: { contentId?: string; campaignId?: string }, 
     body,
   });
 
-export const fetchSettings = () =>
-  call<{
-    workflows: MosWorkflow[];
-    steps: MosStep[];
-    content_types: MosContentType[];
-    accounts: MosAccount[];
-  }>('settings_data');
+/**
+ * StepDef → the step shape the stage rail and the modals render. The rail
+ * matches tasks to steps by id, and tasks carry the step KEY, so id = key —
+ * one stable identifier across workflow versions.
+ */
+export function stepDefToMosStep(workflowId: string, s: StepDef, index: number): MosStep {
+  return {
+    id: s.key,
+    workflow_id: workflowId,
+    position: index + 1,
+    key: s.key,
+    label_ar: s.label_ar,
+    label_en: s.label_en,
+    role: s.role_key,
+    due_days: s.due_days,
+    is_approval: s.is_approval,
+    approval_kind: s.approval_kind,
+    required_fields: s.required_fields,
+    required_files: s.required_files,
+    require_note_on_reject: s.require_note_on_reject,
+    creates_revision: s.creates_revision,
+  };
+}
 
-export const saveStep = (step: Record<string, unknown>) =>
-  call<{ steps: MosStep[] }>('step_save', { step });
+export function mosStepToStepDef(s: MosStep): StepDef {
+  return {
+    key: s.key,
+    label_ar: s.label_ar,
+    label_en: s.label_en,
+    role_key: s.role as StepDef['role_key'],
+    due_days: s.due_days,
+    is_approval: s.is_approval,
+    approval_kind: s.approval_kind,
+    require_note_on_reject: s.require_note_on_reject ?? false,
+    creates_revision: s.creates_revision ?? false,
+    required_fields: s.required_fields ?? [],
+    required_files: s.required_files ?? [],
+  };
+}
+
+export interface SettingsData {
+  workflows: WorkflowDef[];
+  /** Flattened from each workflow's metadata.steps — kept for screens that
+   *  reason about steps across workflows (the new-content preview). */
+  steps: MosStep[];
+  content_types: MosContentType[];
+  accounts: MosAccount[];
+  settings: Record<string, unknown>;
+  surface: {
+    roles: Array<{ key: string; role_id: string }>;
+    cells: SurfaceCell[];
+  };
+  notification_rules: unknown[];
+}
+
+export const fetchSettings = async (): Promise<SettingsData> => {
+  const res = await call<Omit<SettingsData, 'steps'>>('settings_data');
+  return {
+    ...res,
+    steps: res.workflows.flatMap((w) => w.steps.map((s, i) => stepDefToMosStep(w.id, s, i))),
+  };
+};
+
+/** Save a whole role path. The DB trigger snapshots the new version on write. */
+export const saveWorkflow = (payload: {
+  id?: string;
+  label_ar: string;
+  label_en: string;
+  is_active?: boolean;
+  steps: StepDef[];
+}) => call<{ workflow: WorkflowDef; version_no: number }>('workflow_save', payload);
 
 export const saveContentType = (contentType: Record<string, unknown>) =>
   call<{ content_types: MosContentType[] }>('content_type_save', { content_type: contentType });

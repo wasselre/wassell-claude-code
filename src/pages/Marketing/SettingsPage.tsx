@@ -15,8 +15,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  MosAccount, MosContentType, MosRole, MosStep, MosWorkflow, PLATFORM_LABELS, ROLE_LABELS,
-  fetchSettings, grantRole, saveAccount, saveContentType, saveStep,
+  MosAccount, MosContentType, MosPathRole, MosRole, MosStep, PLATFORM_LABELS, ROLE_LABELS,
+  StepDef, WorkflowDef, fetchSettings, grantRole, saveAccount,
+  saveContentType, saveWorkflow, stepDefToMosStep,
 } from '@/lib/marketingOS/client';
 import { useWorkspace, type Capability } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton } from './components/kit';
@@ -101,12 +102,18 @@ export function SettingsSectionPage() {
   const { isAr, can } = useWorkspace();
   const navigate = useNavigate();
 
-  const [workflows, setWorkflows] = useState<MosWorkflow[]>([]);
-  const [steps, setSteps] = useState<MosStep[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowDef[]>([]);
   const [types, setTypes] = useState<MosContentType[]>([]);
   const [accounts, setAccounts] = useState<MosAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Steps live inside each canonical workflow (metadata.steps); the flat list
+  // the sections render is derived, never stored separately.
+  const steps = useMemo(
+    () => workflows.flatMap((w) => w.steps.map((s, i) => stepDefToMosStep(w.id, s, i))),
+    [workflows],
+  );
 
   const load = useCallback(async () => {
     if (section === 'roles') { setLoading(false); return; }
@@ -115,7 +122,6 @@ export function SettingsSectionPage() {
     try {
       const res = await fetchSettings();
       setWorkflows(res.workflows);
-      setSteps(res.steps);
       setTypes(res.content_types);
       setAccounts(res.accounts);
     } catch (e) {
@@ -160,7 +166,8 @@ export function SettingsSectionPage() {
             steps={steps}
             canManage={canManage}
             isAr={isAr}
-            onSteps={setSteps}
+            onWorkflow={(saved) =>
+              setWorkflows((ws) => ws.map((w) => (w.id === saved.id ? saved : w)))}
           />
         )}
         {!loading && section === 'types' && (
@@ -185,15 +192,15 @@ export function SettingsSectionPage() {
 /* ── Workflows (screen 17) ────────────────────────────────────────── */
 
 function WorkflowsSection({
-  workflows, steps, canManage, isAr, onSteps,
+  workflows, steps, canManage, isAr, onWorkflow,
 }: {
-  workflows: MosWorkflow[];
+  workflows: WorkflowDef[];
   steps: MosStep[];
   canManage: boolean;
   isAr: boolean;
-  onSteps: (steps: MosStep[]) => void;
+  onWorkflow: (workflow: WorkflowDef) => void;
 }) {
-  const [editing, setEditing] = useState<{ step: MosStep | null; workflowId: string } | null>(null);
+  const [editing, setEditing] = useState<{ step: MosStep | null; workflow: WorkflowDef } | null>(null);
 
   if (workflows.length === 0) {
     return <Empty title={isAr ? 'لا مسارات' : 'No workflows'} />;
@@ -215,7 +222,7 @@ function WorkflowsSection({
                   type="button"
                   className="btn btn-sm"
                   style={{ marginInlineStart: 'auto' }}
-                  onClick={() => setEditing({ step: null, workflowId: w.id })}
+                  onClick={() => setEditing({ step: null, workflow: w })}
                 >
                   <IconPlus />
                   {isAr ? 'إضافة مرحلة' : 'Add a stage'}
@@ -260,7 +267,7 @@ function WorkflowsSection({
                   </div>
                 </div>
                 {canManage && (
-                  <button type="button" className="btn btn-sm" onClick={() => setEditing({ step: s, workflowId: w.id })}>
+                  <button type="button" className="btn btn-sm" onClick={() => setEditing({ step: s, workflow: w })}>
                     {isAr ? 'تعديل' : 'Edit'}
                   </button>
                 )}
@@ -273,11 +280,11 @@ function WorkflowsSection({
       {editing && (
         <StepModal
           step={editing.step}
-          workflowId={editing.workflowId}
-          nextPosition={steps.filter((s) => s.workflow_id === editing.workflowId).length + 1}
+          workflow={editing.workflow}
+          nextPosition={steps.filter((s) => s.workflow_id === editing.workflow.id).length + 1}
           isAr={isAr}
           onClose={() => setEditing(null)}
-          onSaved={(rows) => { onSteps(rows); setEditing(null); }}
+          onSaved={(saved) => { onWorkflow(saved); setEditing(null); }}
         />
       )}
     </div>
@@ -285,20 +292,20 @@ function WorkflowsSection({
 }
 
 function StepModal({
-  step, workflowId, nextPosition, isAr, onClose, onSaved,
+  step, workflow, nextPosition, isAr, onClose, onSaved,
 }: {
   step: MosStep | null;
-  workflowId: string;
+  workflow: WorkflowDef;
   nextPosition: number;
   isAr: boolean;
   onClose: () => void;
-  onSaved: (steps: MosStep[]) => void;
+  onSaved: (workflow: WorkflowDef) => void;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [labelAr, setLabelAr] = useState(step?.label_ar ?? '');
   const [labelEn, setLabelEn] = useState(step?.label_en ?? '');
   const [key, setKey] = useState(step?.key ?? '');
-  const [role, setRole] = useState<MosRole>(step?.role ?? 'writer');
+  const [role, setRole] = useState<MosPathRole>((step?.role as MosPathRole | undefined) ?? 'writer');
   const [dueDays, setDueDays] = useState((step?.due_days ?? 2).toString());
   const [isApproval, setIsApproval] = useState(step?.is_approval ?? false);
   const [position, setPosition] = useState((step?.position ?? nextPosition).toString());
@@ -311,20 +318,37 @@ function StepModal({
     }
     setBusy(true);
     try {
-      const res = await saveStep({
-        id: step?.id,
-        workflow_id: workflowId,
+      // Steps live inside the workflow row, so saving one means saving the
+      // whole path: replace the edited step (by key) or insert the new one at
+      // its position, then upsert. The DB trigger snapshots a new version.
+      const defs: StepDef[] = workflow.steps.map((s) => ({ ...s }));
+      const next: StepDef = {
         key: key.trim(),
         label_ar: labelAr.trim(),
         label_en: labelEn.trim(),
-        role,
+        role_key: role,
         due_days: Number(dueDays) || 1,
         is_approval: isApproval,
         approval_kind: isApproval ? (role === 'ceo' ? 'budget' : role === 'ops_supervisor' ? 'process' : 'creative') : null,
-        position: Number(position) || nextPosition,
+        require_note_on_reject: step?.require_note_on_reject ?? false,
+        creates_revision: step?.creates_revision ?? false,
+        required_fields: step?.required_fields ?? [],
+        required_files: step?.required_files ?? [],
+      };
+      if (step) {
+        const at = defs.findIndex((d) => d.key === step.key);
+        if (at >= 0) defs.splice(at, 1);
+      }
+      const pos = Math.min(Math.max(1, Number(position) || defs.length + 1), defs.length + 1);
+      defs.splice(pos - 1, 0, next);
+      const res = await saveWorkflow({
+        id: workflow.id,
+        label_ar: workflow.label_ar,
+        label_en: workflow.label_en,
+        steps: defs,
       });
       addToast(isAr ? 'حُفظت المرحلة.' : 'Stage saved.', 'success');
-      onSaved(res.steps);
+      onSaved(res.workflow);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
@@ -332,7 +356,7 @@ function StepModal({
     }
   };
 
-  const ROLES: MosRole[] = ['writer', 'montage', 'ops_supervisor', 'marketing_manager', 'ceo'];
+  const ROLES: MosPathRole[] = ['writer', 'montage', 'ops_supervisor', 'marketing_manager', 'ceo'];
 
   return (
     <Modal
@@ -372,7 +396,7 @@ function StepModal({
         </Field>
       </div>
       <Field label={isAr ? 'الدور المسؤول' : 'Owning role'}>
-        <select className="inp" value={role} onChange={(e) => setRole(e.target.value as MosRole)}>
+        <select className="inp" value={role} onChange={(e) => setRole(e.target.value as MosPathRole)}>
           {ROLES.map((r) => (
             <option key={r} value={r}>{isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}</option>
           ))}
@@ -394,7 +418,7 @@ function TypesSection({
   types, workflows, steps, canManage, isAr, onTypes,
 }: {
   types: MosContentType[];
-  workflows: MosWorkflow[];
+  workflows: WorkflowDef[];
   steps: MosStep[];
   canManage: boolean;
   isAr: boolean;
@@ -481,7 +505,7 @@ function TypeModal({
   type, workflows, isAr, onClose, onSaved,
 }: {
   type: MosContentType | null;
-  workflows: MosWorkflow[];
+  workflows: WorkflowDef[];
   isAr: boolean;
   onClose: () => void;
   onSaved: (types: MosContentType[]) => void;
@@ -692,7 +716,11 @@ function PlatformsSection({
 
 /* ── Roles (screens 33 + 37) ──────────────────────────────────────── */
 
-const ASSIGNABLE: MosRole[] = ['marketing_manager', 'ops_supervisor', 'writer', 'montage', 'ceo', 'viewer'];
+/** The five grantable roles. Viewer is the ABSENCE of any grant, not a grant. */
+const ASSIGNABLE: MosPathRole[] = ['marketing_manager', 'ops_supervisor', 'writer', 'montage', 'ceo'];
+
+/** The capability matrix table also shows what a grant-less viewer can do. */
+const MATRIX_ROLES: MosRole[] = [...ASSIGNABLE, 'viewer'];
 
 /** The matrix from screen 33, mirrored from `wassell_mos_can`. */
 const CAPS: Array<{ ar: string; en: string; key: Capability }> = [
@@ -722,22 +750,23 @@ const ROLE_CAPS: Record<string, Capability[]> = {
 };
 
 function RolesSection({ isAr }: { isAr: boolean }) {
-  const { users, grants, reloadGrants, role } = useWorkspace();
+  const { people, reloadGrants, role } = useWorkspace();
   const addToast = useAppStore((s) => s.addToast);
   const [busy, setBusy] = useState<string | null>(null);
 
   const canManage = role === 'administrator' || role === 'marketing_manager';
-  const roleOf = useCallback(
-    (userId: string): MosRole | null => grants.find((g) => g.user_id === userId)?.mos_role ?? null,
-    [grants],
+  const rolesOf = useCallback(
+    (userId: string): MosRole[] => people.find((p) => p.user_id === userId)?.roles ?? [],
+    [people],
   );
 
-  const grantedCount = useMemo(() => grants.length, [grants]);
+  const grantedCount = useMemo(() => people.filter((p) => p.roles.length > 0).length, [people]);
 
-  const set = async (userId: string, next: MosRole | null): Promise<void> => {
-    setBusy(userId);
+  // Multi-role: each button grants or revokes ONE key; the others stay.
+  const toggle = async (userId: string, next: MosPathRole, grant: boolean): Promise<void> => {
+    setBusy(`${userId}:${next}`);
     try {
-      await grantRole(userId, next);
+      await grantRole(userId, next, grant);
       await reloadGrants();
       addToast(isAr ? 'تم تحديث الدور.' : 'Role updated.', 'success');
     } catch (e) {
@@ -764,7 +793,7 @@ function RolesSection({ isAr }: { isAr: boolean }) {
             {isAr ? `${num(grantedCount, true)} ممنوحة` : `${grantedCount} granted`}
           </span>
         </div>
-        {users.length === 0 ? (
+        {people.length === 0 ? (
           <Empty title={isAr ? 'لا مستخدمين' : 'No users'} />
         ) : (
           <div className="tbl-wrap">
@@ -772,14 +801,14 @@ function RolesSection({ isAr }: { isAr: boolean }) {
               <thead>
                 <tr>
                   <th style={{ width: 240 }}>{isAr ? 'الشخص' : 'Person'}</th>
-                  <th>{isAr ? 'الدور في التسويق' : 'Marketing role'}</th>
+                  <th>{isAr ? 'الأدوار في التسويق' : 'Marketing roles'}</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => {
-                  const current = roleOf(u.id);
+                {people.map((u) => {
+                  const held = rolesOf(u.user_id);
                   return (
-                    <tr key={u.id}>
+                    <tr key={u.user_id}>
                       <td>
                         <div className="ttl">{(isAr ? u.name_ar : u.name_en) ?? u.name_en ?? u.name_ar ?? '—'}</div>
                         <div className="ltr" style={{ fontSize: 11, color: 'var(--mute)' }}>{u.email ?? ''}</div>
@@ -790,9 +819,9 @@ function RolesSection({ isAr }: { isAr: boolean }) {
                             <button
                               key={r}
                               type="button"
-                              className={`fbtn${current === r ? ' on' : ''}`}
-                              disabled={!canManage || busy === u.id}
-                              onClick={() => void set(u.id, current === r ? null : r)}
+                              className={`fbtn${held.includes(r) ? ' on' : ''}`}
+                              disabled={!canManage || busy === `${u.user_id}:${r}`}
+                              onClick={() => void toggle(u.user_id, r, !held.includes(r))}
                             >
                               {isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}
                             </button>
@@ -820,7 +849,7 @@ function RolesSection({ isAr }: { isAr: boolean }) {
             <thead>
               <tr>
                 <th>{isAr ? 'الصلاحية' : 'Capability'}</th>
-                {ASSIGNABLE.map((r) => (
+                {MATRIX_ROLES.map((r) => (
                   <th key={r}>{isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}</th>
                 ))}
               </tr>
@@ -829,7 +858,7 @@ function RolesSection({ isAr }: { isAr: boolean }) {
               {CAPS.map((c) => (
                 <tr key={c.key}>
                   <td>{isAr ? c.ar : c.en}</td>
-                  {ASSIGNABLE.map((r) => {
+                  {MATRIX_ROLES.map((r) => {
                     const has = (ROLE_CAPS[r] ?? []).includes(c.key);
                     return (
                       <td key={r}>

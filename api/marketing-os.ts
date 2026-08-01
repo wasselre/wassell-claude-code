@@ -3,7 +3,10 @@
  *
  * Action-dispatch endpoint for the Marketing OS module — a ground-up rebuild.
  * It shares NOTHING with the `mkt_*` tables or `api/marketing-mgmt.ts`; it reads
- * and writes only `mos_*`.
+ * and writes the `mos_*` domain tables plus the canonical engine tables
+ * (`workflows` kind='role_path', `workflow_versions`, `workflow_role_tasks`,
+ * `roles` key 'mos_*', `surface_access`) that replaced the retired mos engine
+ * (formerly mos_workflows / mos_workflow_steps / mos_tasks / mos_role_grants).
  *
  * Deliberately NOT `api/marketing.ts` — that name is already the live Marketing
  * Intelligence endpoint (competitor intel, ~49k observed facts) and is unrelated.
@@ -12,6 +15,8 @@
  *   - Edge runtime, one POST, `{ action, ...payload }`.
  *   - Runs on the CALLER's JWT, never the service role. RLS is the authorization
  *     boundary — `wassell_mos_can(<capability>)` decides, not this file.
+ *   - Task transitions go through `workflow_advance_role_path` (SQL, atomic);
+ *     this file only snapshots versions and translates the response.
  *   - Reads go through `mos_content_v`, which DERIVES status and current owner
  *     from the open task. There is no stored status column to disagree with.
  *   - Updates use an allow-list, never a deny-list.
@@ -64,11 +69,27 @@ const DB_MESSAGES: Record<string, { en: string; ar: string }> = {
     en: 'That content type does not exist.',
     ar: 'نوع المحتوى غير موجود.',
   },
-  mos_tasks_reject_note_check: {
+  'MOS:NOTE_REQUIRED': {
     en: 'Requesting changes requires a note explaining what to change.',
     ar: 'طلب التعديلات يستلزم ملاحظة توضّح المطلوب.',
   },
-  uq_mos_tasks_one_open: {
+  'MOS:NO_OPEN_TASK': {
+    en: 'This item has no open task.',
+    ar: 'لا توجد مهمة مفتوحة لهذا العنصر.',
+  },
+  'MOS:NOT_YOUR_TASK': {
+    en: 'This task sits with another role.',
+    ar: 'هذه المهمة تتبع دورًا آخر.',
+  },
+  'MOS:UNKNOWN_ROLE': {
+    en: 'That marketing role does not exist.',
+    ar: 'دور التسويق غير موجود.',
+  },
+  workflow_role_tasks_reject_note_check: {
+    en: 'Requesting changes requires a note explaining what to change.',
+    ar: 'طلب التعديلات يستلزم ملاحظة توضّح المطلوب.',
+  },
+  uq_workflow_role_tasks_one_open: {
     en: 'This item already has an open task.',
     ar: 'هذا العنصر لديه مهمة مفتوحة بالفعل.',
   },
@@ -137,6 +158,184 @@ const CONTENT_EDITABLE = [
 ] as const;
 
 /* ------------------------------------------------------------------ */
+/* the canonical engine (workflows kind='role_path' + workflow_role_   */
+/* tasks + roles 'mos_*' + surface_access)                             */
+/* ------------------------------------------------------------------ */
+
+/** The five marketing roles a role-path step can point at (keys, mos_ stripped). */
+const MOS_ROLE_KEYS = ['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage'] as const;
+
+/** Every surface the shell can route to, in the matrix's stable order. */
+const SURFACES = [
+  'overview', 'mywork', 'team', 'content', 'calendar', 'library',
+  'shoots', 'campaigns', 'numbers', 'settings', 'roles',
+] as const;
+type SurfaceKey = (typeof SURFACES)[number];
+type SurfaceLevel = 'full' | 'read' | 'hidden';
+
+/** A role-path step as stored in workflows.metadata->'steps'. */
+interface StepDef {
+  key: string;
+  label_ar: string;
+  label_en: string;
+  role_key: string;
+  due_days: number;
+  is_approval: boolean;
+  approval_kind: string | null;
+  require_note_on_reject: boolean;
+  creates_revision: boolean;
+  required_fields: string[];
+  required_files: string[];
+}
+
+/** Defensive read of metadata.steps — metadata is jsonb, so nothing is guaranteed. */
+function stepsOf(metadata: unknown): StepDef[] {
+  const raw = (metadata as { steps?: unknown } | null)?.steps;
+  if (!Array.isArray(raw)) return [];
+  const out: StepDef[] = [];
+  for (const item of raw) {
+    const r = (item ?? {}) as Record<string, unknown>;
+    const key = typeof r.key === 'string' ? r.key : '';
+    if (!key) continue;
+    out.push({
+      key,
+      label_ar: typeof r.label_ar === 'string' ? r.label_ar : '',
+      label_en: typeof r.label_en === 'string' ? r.label_en : '',
+      role_key: typeof r.role_key === 'string' ? r.role_key : '',
+      due_days: typeof r.due_days === 'number' && Number.isFinite(r.due_days) ? r.due_days : 2,
+      is_approval: r.is_approval === true,
+      approval_kind: typeof r.approval_kind === 'string' ? r.approval_kind : null,
+      require_note_on_reject: r.require_note_on_reject === true,
+      creates_revision: r.creates_revision === true,
+      required_fields: Array.isArray(r.required_fields) ? (r.required_fields as unknown[]).map(String) : [],
+      required_files: Array.isArray(r.required_files) ? (r.required_files as unknown[]).map(String) : [],
+    });
+  }
+  return out;
+}
+
+interface WorkflowDef {
+  id: string;
+  label_ar: string;
+  label_en: string;
+  is_active: boolean;
+  steps: StepDef[];
+  current_version_no: number;
+  current_version_id: string | null;
+}
+
+/** Canonical role-path rows + the version table → the contract's WorkflowDef list. */
+function assembleWorkflowDefs(wfRows: unknown[], verRows: unknown[]): WorkflowDef[] {
+  const latest = new Map<string, { version_no: number; id: string }>();
+  for (const v of verRows) {
+    const r = v as { workflow_id: string; version_no: number; id: string };
+    const cur = latest.get(r.workflow_id);
+    if (!cur || r.version_no > cur.version_no) {
+      latest.set(r.workflow_id, { version_no: r.version_no, id: r.id });
+    }
+  }
+  return wfRows.map((w) => {
+    const r = w as { id: string; label_ar: string; label_en: string; is_active: boolean; metadata: unknown };
+    const v = latest.get(r.id);
+    return {
+      id: r.id,
+      label_ar: r.label_ar,
+      label_en: r.label_en,
+      is_active: r.is_active,
+      steps: stepsOf(r.metadata),
+      current_version_no: v?.version_no ?? 0,
+      current_version_id: v?.id ?? null,
+    };
+  });
+}
+
+/**
+ * The caller's level per surface, mirroring wassell_mos_surface_level() exactly:
+ * administrator / marketing_manager see everything; otherwise the MAX level
+ * across held roles wins and absence of a row means hidden; a viewer (no
+ * marketing role at all) gets a read floor on 'overview' alone. Computed here
+ * from one surface_access read so bootstrap stays a single round trip.
+ */
+function computeSurfaces(held: string[], accessRows: unknown[]): Record<SurfaceKey, SurfaceLevel> {
+  const rows = accessRows as Array<{
+    surface_key: string;
+    level: SurfaceLevel;
+    roles: { key: string } | Array<{ key: string }> | null;
+  }>;
+  const rank: Record<SurfaceLevel, number> = { hidden: 0, read: 1, full: 2 };
+  const seesAll = held.includes('administrator') || held.includes('marketing_manager');
+  const out = {} as Record<SurfaceKey, SurfaceLevel>;
+  for (const surface of SURFACES) {
+    if (seesAll) {
+      out[surface] = 'full';
+      continue;
+    }
+    let best: SurfaceLevel | null = null;
+    for (const r of rows) {
+      if (r.surface_key !== surface) continue;
+      const joined = Array.isArray(r.roles) ? r.roles[0] : r.roles;
+      const key = joined?.key ?? '';
+      if (!key.startsWith('mos_') || !held.includes(key.slice(4))) continue;
+      if (best === null || rank[r.level] > rank[best]) best = r.level;
+    }
+    if (best !== null) {
+      out[surface] = best;
+    } else {
+      out[surface] = held.includes('viewer') && surface === 'overview' ? 'read' : 'hidden';
+    }
+  }
+  return out;
+}
+
+/**
+ * workflow_role_tasks row → the task shape the SPA already renders. The stage
+ * rail matches tasks to steps by id, so step_id carries the step KEY (steps are
+ * synthesized with id = key below) — one stable identifier across versions.
+ */
+function mapRoleTask(t: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: t.id,
+    content_id: t.subject_id,
+    step_id: t.step_key ?? null,
+    role: t.role_key,
+    assignee_user_id: t.assignee_user_id ?? null,
+    status: t.status,
+    result: t.result ?? null,
+    note: t.note ?? null,
+    round: t.round,
+    opened_at: t.opened_at,
+    due_at: t.due_at ?? null,
+    closed_at: t.closed_at ?? null,
+  };
+}
+
+/** StepDefs → the step shape the SPA renders (id = key, position = 1-based index). */
+function mapStepDefs(workflowId: string, steps: StepDef[]): Array<Record<string, unknown>> {
+  return steps.map((s, i) => ({
+    id: s.key,
+    workflow_id: workflowId,
+    position: i + 1,
+    key: s.key,
+    label_ar: s.label_ar,
+    label_en: s.label_en,
+    role: s.role_key,
+    due_days: s.due_days,
+    is_approval: s.is_approval,
+    approval_kind: s.approval_kind,
+    required_fields: s.required_fields,
+    required_files: s.required_files,
+    require_note_on_reject: s.require_note_on_reject,
+    creates_revision: s.creates_revision,
+  }));
+}
+
+const slugify = (s: string): string =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'workflow';
+
+/** roles.key 'mos_*' → the stripped key the API contract speaks in. */
+const stripMosPrefix = (key: string): string => key.replace(/^mos_/, '');
+
+/* ------------------------------------------------------------------ */
 /* handler                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -157,24 +356,60 @@ export default async function handler(req: Request): Promise<Response> {
 
     switch (action) {
       /* -------------------------------------------------------- */
-      /* bootstrap — role + content types, one call on page load   */
+      /* bootstrap — me (roles, surfaces), workflows, settings in  */
+      /* one call on page load                                     */
       /* -------------------------------------------------------- */
       case 'bootstrap': {
-        const [roleRes, typesRes, appUserId] = await Promise.all([
-          sb.rpc('wassell_mos_role', { p_auth_uid: user.userId }),
-          sb.from('mos_content_types')
-            .select('id, key, label_ar, label_en, prefix, workflow_id, field_schema, sort_order')
-            .is('archived_at', null)
-            .eq('is_active', true)
-            .order('sort_order', { ascending: true }),
-          resolveAppUserId(sb, user.userId),
-        ]);
-        const fail = dbFail(roleRes.error) ?? dbFail(typesRes.error);
+        const [rolesRes, accessRes, typesRes, wfRes, verRes, settingsRes, accountsRes, appUserId] =
+          await Promise.all([
+            sb.rpc('wassell_mos_roles'),
+            sb.from('surface_access').select('surface_key, level, roles!inner(key)'),
+            sb.from('mos_content_types')
+              .select('id, key, label_ar, label_en, prefix, workflow_id, field_schema, sort_order')
+              .is('archived_at', null)
+              .eq('is_active', true)
+              .order('sort_order', { ascending: true }),
+            sb.from('workflows')
+              .select('id, label_ar, label_en, is_active, metadata')
+              .eq('kind', 'role_path')
+              .order('label_en', { ascending: true }),
+            sb.from('workflow_versions').select('id, workflow_id, version_no'),
+            sb.from('mos_settings').select('key, value'),
+            sb.from('mos_platform_accounts').select('*').is('archived_at', null)
+              .order('sort_order', { ascending: true }),
+            resolveAppUserId(sb, user.userId),
+          ]);
+        const fail = dbFail(rolesRes.error) ?? dbFail(accessRes.error) ?? dbFail(typesRes.error)
+          ?? dbFail(wfRes.error) ?? dbFail(verRes.error) ?? dbFail(settingsRes.error)
+          ?? dbFail(accountsRes.error);
         if (fail) return fail;
+
+        const held = (rolesRes.data as string[] | null) ?? [];
+        // Display-affecting only (contract convention): the header chooses which
+        // of the caller's HELD roles the UI leads with; it never authorizes.
+        const requestedRole = (req.headers.get('x-mos-active-role') ?? '').trim();
+        const activeRole = held.includes(requestedRole) ? requestedRole : (held[0] ?? 'viewer');
+
+        const settings: Record<string, unknown> = {};
+        for (const row of (settingsRes.data ?? []) as Array<{ key: string; value: unknown }>) {
+          settings[row.key] = row.value;
+        }
+
         return jsonOk({
-          role: (roleRes.data as string | null) ?? 'viewer',
-          app_user_id: appUserId,
+          me: {
+            user_id: appUserId,
+            roles: held,
+            active_role: activeRole,
+            surfaces: computeSurfaces(held, accessRes.data ?? []),
+            // Notification prefs arrive with the notifications migration (…_04),
+            // which is not in this build yet.
+            prefs: {},
+          },
           content_types: typesRes.data ?? [],
+          workflows: assembleWorkflowDefs(wfRes.data ?? [], verRes.data ?? []),
+          platform_accounts: accountsRes.data ?? [],
+          settings,
+          unread_notifications: 0,
         });
       }
 
@@ -214,7 +449,8 @@ export default async function handler(req: Request): Promise<Response> {
 
         const [item, tasks, scenes] = await Promise.all([
           sb.from('mos_content_v').select('*').eq('id', id).maybeSingle(),
-          sb.from('mos_tasks').select('*').eq('content_id', id)
+          sb.from('workflow_role_tasks').select('*')
+            .eq('subject_table', 'mos_content').eq('subject_id', id)
             .order('opened_at', { ascending: true }),
           sb.from('mos_scenes').select('*').eq('content_id', id)
             .order('position', { ascending: true }),
@@ -224,21 +460,31 @@ export default async function handler(req: Request): Promise<Response> {
         if (fail) return fail;
         if (!item.data) return jsonError(404, 'content item not found');
 
-        // Steps for the workflow this item is on — drives the stage rail.
-        const workflowId = (item.data as Row).workflow_id as string | null;
-        let steps: unknown[] = [];
-        if (workflowId) {
-          const stepsRes = await sb.from('mos_workflow_steps')
-            .select('*').eq('workflow_id', workflowId)
-            .order('position', { ascending: true });
-          const stepsFail = dbFail(stepsRes.error);
-          if (stepsFail) return stepsFail;
-          steps = stepsRes.data ?? [];
+        // Steps for the stage rail come from the item's PINNED version, so an
+        // edit to the path never relabels a step under running work. An item
+        // with no pin (never started on a path) falls back to the live row.
+        const row = item.data as Row;
+        const workflowId = (row.workflow_id as string | null) ?? null;
+        const pinnedVersionId = (row.workflow_version_id as string | null) ?? null;
+        let steps: Array<Record<string, unknown>> = [];
+        if (pinnedVersionId) {
+          const verRes = await sb.from('workflow_versions')
+            .select('definition').eq('id', pinnedVersionId).maybeSingle();
+          const verFail = dbFail(verRes.error);
+          if (verFail) return verFail;
+          const def = (verRes.data as { definition?: { metadata?: unknown } } | null)?.definition;
+          steps = mapStepDefs(workflowId ?? '', stepsOf(def?.metadata ?? null));
+        } else if (workflowId) {
+          const wfRes = await sb.from('workflows')
+            .select('metadata').eq('id', workflowId).maybeSingle();
+          const wfFail = dbFail(wfRes.error);
+          if (wfFail) return wfFail;
+          steps = mapStepDefs(workflowId, stepsOf((wfRes.data as { metadata?: unknown } | null)?.metadata ?? null));
         }
 
         return jsonOk({
           item: item.data,
-          tasks: tasks.data ?? [],
+          tasks: (tasks.data ?? []).map((t) => mapRoleTask(t as Record<string, unknown>)),
           scenes: scenes.data ?? [],
           steps,
         });
@@ -278,24 +524,34 @@ export default async function handler(req: Request): Promise<Response> {
 
         // Open the workflow's first step immediately. Content with no task would
         // read as 'draft' and sit in nobody's queue — the exact failure mode this
-        // module exists to remove.
+        // module exists to remove. The item is PINNED to the current version, so
+        // a later edit to the path never moves running work.
         if (type.workflow_id) {
-          const firstStep = await sb.from('mos_workflow_steps')
-            .select('id, role, due_days')
-            .eq('workflow_id', type.workflow_id)
-            .order('position', { ascending: true })
-            .limit(1)
-            .maybeSingle();
-          const stepFail = dbFail(firstStep.error);
-          if (stepFail) return stepFail;
+          const [wfRes, verRes] = await Promise.all([
+            sb.from('workflows').select('id, metadata').eq('id', type.workflow_id).maybeSingle(),
+            sb.from('workflow_versions').select('id, version_no')
+              .eq('workflow_id', type.workflow_id)
+              .order('version_no', { ascending: false }).limit(1).maybeSingle(),
+          ]);
+          const wfFail = dbFail(wfRes.error) ?? dbFail(verRes.error);
+          if (wfFail) return wfFail;
 
-          if (firstStep.data) {
-            const step = firstStep.data as { id: string; role: string; due_days: number };
-            const dueAt = new Date(Date.now() + step.due_days * 86_400_000).toISOString();
-            const taskRes = await sb.from('mos_tasks').insert({
-              content_id: row.id,
-              step_id: step.id,
-              role: step.role,
+          const first = stepsOf((wfRes.data as { metadata?: unknown } | null)?.metadata ?? null)[0];
+          const versionId = (verRes.data as { id: string } | null)?.id ?? null;
+          if (first) {
+            if (versionId) {
+              const pin = await sb.from('mos_content')
+                .update({ workflow_version_id: versionId }).eq('id', row.id);
+              const pinFail = dbFail(pin.error);
+              if (pinFail) return pinFail;
+            }
+            const dueAt = new Date(Date.now() + first.due_days * 86_400_000).toISOString();
+            const taskRes = await sb.from('workflow_role_tasks').insert({
+              subject_table: 'mos_content',
+              subject_id: row.id,
+              workflow_version_id: versionId,
+              step_key: first.key,
+              role_key: first.role_key,
               due_at: dueAt,
             });
             const taskFail = dbFail(taskRes.error);
@@ -337,13 +593,19 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
-      /* Close the open task and open the next step                */
+      /* Advance the role path — the transition itself is SQL      */
       /* -------------------------------------------------------- */
       case 'task_complete': {
+        // The SPA hands the open task's id; the engine advances by subject.
+        // Both are accepted and resolved to the same open row.
         const taskId = str(body.task_id);
+        let contentId = str(body.content_id);
         const result = str(body.result);
         const note = str(body.note);
-        if (!taskId) return jsonError(400, 'task_id is required');
+        const targets = Array.isArray(body.targets)
+          ? (body.targets as unknown[]).filter((t): t is string => typeof t === 'string')
+          : [];
+        if (!taskId && !contentId) return jsonError(400, 'task_id or content_id is required');
         if (!result || !['submitted', 'approved', 'changes_requested'].includes(result)) {
           return jsonError(400, 'result must be submitted, approved or changes_requested');
         }
@@ -358,74 +620,106 @@ export default async function handler(req: Request): Promise<Response> {
           );
         }
 
-        const cur = await sb.from('mos_tasks')
-          .select('id, content_id, step_id, round, status').eq('id', taskId).maybeSingle();
+        let tq = sb.from('workflow_role_tasks')
+          .select('id, subject_id, round')
+          .eq('subject_table', 'mos_content')
+          .eq('status', 'open');
+        tq = taskId ? tq.eq('id', taskId) : tq.eq('subject_id', contentId ?? '');
+        const cur = await tq.maybeSingle();
         const curFail = dbFail(cur.error);
         if (curFail) return curFail;
-        if (!cur.data) return jsonError(404, 'task not found');
-        const task = cur.data as unknown as {
-          id: string; content_id: string; step_id: string | null; round: number; status: string;
+        if (!cur.data) return jsonError(404, 'no open task found');
+        const openTask = cur.data as unknown as { id: string; subject_id: string; round: number };
+        contentId = openTask.subject_id;
+
+        // Submitted work gets a frozen snapshot of the round BEFORE the engine
+        // moves on — a resubmit of the same round overwrites its own snapshot.
+        if (result === 'submitted') {
+          const [contentRes, scenesRes, appUserId] = await Promise.all([
+            sb.from('mos_content').select('data').eq('id', contentId).maybeSingle(),
+            sb.from('mos_scenes').select('*').eq('content_id', contentId)
+              .order('position', { ascending: true }),
+            resolveAppUserId(sb, user.userId),
+          ]);
+          const snapReadFail = dbFail(contentRes.error) ?? dbFail(scenesRes.error);
+          if (snapReadFail) return snapReadFail;
+          const snap = await sb.from('mos_content_versions').upsert(
+            {
+              content_id: contentId,
+              round: openTask.round,
+              data: ((contentRes.data as { data?: unknown } | null)?.data ?? {}) as Record<string, unknown>,
+              scenes: scenesRes.data ?? [],
+              submitted_by_user_id: appUserId,
+            },
+            { onConflict: 'content_id,round' },
+          );
+          const snapFail = dbFail(snap.error);
+          if (snapFail) return snapFail;
+        }
+
+        const adv = await sb.rpc('workflow_advance_role_path', {
+          p_subject_table: 'mos_content',
+          p_subject_id: contentId,
+          p_result: result,
+          p_note: note,
+          p_targets: targets,
+        });
+        const advFail = dbFail(adv.error);
+        if (advFail) return advFail;
+        const payload = (adv.data ?? {}) as {
+          closed_task_id: string;
+          opened_task_id: string | null;
+          next_step_key: string | null;
+          round: number;
+          done: boolean;
         };
-        if (task.status !== 'open') return jsonError(400, 'task is already closed');
 
-        const appUserId = await resolveAppUserId(sb, user.userId);
-        const close = await sb.from('mos_tasks').update({
-          status: 'done',
-          result,
-          note,
-          closed_at: new Date().toISOString(),
-          closed_by_user_id: appUserId,
-        }).eq('id', taskId);
-        const closeFail = dbFail(close.error);
-        if (closeFail) return closeFail;
-
-        // Where the work goes next.
-        const contentRes = await sb.from('mos_content')
-          .select('workflow_id').eq('id', task.content_id).maybeSingle();
-        const contentFail = dbFail(contentRes.error);
-        if (contentFail) return contentFail;
-        const workflowId = (contentRes.data as { workflow_id: string | null } | null)?.workflow_id;
-
-        if (workflowId && task.step_id) {
-          const stepsRes = await sb.from('mos_workflow_steps')
-            .select('id, position, role, due_days')
-            .eq('workflow_id', workflowId)
-            .order('position', { ascending: true });
-          const stepsFail = dbFail(stepsRes.error);
-          if (stepsFail) return stepsFail;
-
-          const steps = (stepsRes.data ?? []) as unknown as Array<{
-            id: string; position: number; role: string; due_days: number;
-          }>;
-          const idx = steps.findIndex((s) => s.id === task.step_id);
-
-          // Approved / submitted → forward. Changes requested → back one step,
-          // as a new round, so the loop is visible in the task chain rather than
-          // overwriting the record it came from.
-          const nextStep =
-            result === 'changes_requested'
-              ? (idx > 0 ? steps[idx - 1] : steps[idx])
-              : (idx >= 0 && idx < steps.length - 1 ? steps[idx + 1] : null);
-
-          if (nextStep) {
-            const dueAt = new Date(Date.now() + nextStep.due_days * 86_400_000).toISOString();
-            const openRes = await sb.from('mos_tasks').insert({
-              content_id: task.content_id,
-              step_id: nextStep.id,
-              role: nextStep.role,
-              due_at: dueAt,
-              round: result === 'changes_requested' ? task.round + 1 : task.round,
-            });
-            const openFail = dbFail(openRes.error);
-            if (openFail) return openFail;
-          }
+        // A rejection's reason lives on the version it rejected. The engine has
+        // already incremented the round, so the rejected version is round - 1.
+        if (result === 'changes_requested' && payload.round - 1 >= 1) {
+          const rn = await sb.from('mos_content_versions')
+            .update({ rejected_note: note })
+            .eq('content_id', contentId)
+            .eq('round', payload.round - 1);
+          const rnFail = dbFail(rn.error);
+          if (rnFail) return rnFail;
         }
 
         const full = await sb.from('mos_content_v')
-          .select(CONTENT_LIST_COLUMNS).eq('id', task.content_id).maybeSingle();
+          .select(CONTENT_LIST_COLUMNS).eq('id', contentId).maybeSingle();
         const fullFail = dbFail(full.error);
         if (fullFail) return fullFail;
-        return jsonOk({ item: full.data });
+        return jsonOk({ item: full.data, ...payload });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Hand an open task to a specific person                    */
+      /* -------------------------------------------------------- */
+      case 'task_transfer': {
+        const taskId = str(body.task_id);
+        const toUserId = str(body.to_user_id);
+        if (!taskId || !toUserId) return jsonError(400, 'task_id and to_user_id are required');
+        const res = await sb.rpc('workflow_role_task_transfer', {
+          p_task_id: taskId,
+          p_to_user_id: toUserId,
+        });
+        const f = dbFail(res.error);
+        if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Round snapshots — the review-comparison trail             */
+      /* -------------------------------------------------------- */
+      case 'content_versions': {
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        const res = await sb.from('mos_content_versions').select('*')
+          .eq('content_id', contentId)
+          .order('round', { ascending: true });
+        const f = dbFail(res.error);
+        if (f) return f;
+        return jsonOk({ versions: res.data ?? [] });
       }
 
       /* -------------------------------------------------------- */
@@ -594,47 +888,113 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
-      /* Role grants — steps point at roles, this maps role→person */
+      /* Roles — canonical roles 'mos_*' × users.role_assignments  */
       /* -------------------------------------------------------- */
       case 'roles_list': {
-        const [users, grants] = await Promise.all([
-          sb.from('users').select('id, name_ar, name_en, email, is_active')
+        const [rolesRes, usersRes] = await Promise.all([
+          sb.from('roles').select('id, key, label_ar, label_en')
+            .like('key', 'mos\\_%').order('key', { ascending: true }),
+          sb.from('users').select('id, name_ar, name_en, email, role_assignments, is_active')
             .eq('is_active', true).order('name_en', { ascending: true }).limit(500),
-          sb.from('mos_role_grants').select('user_id, mos_role'),
         ]);
-        const f = dbFail(users.error) ?? dbFail(grants.error);
+        const f = dbFail(rolesRes.error) ?? dbFail(usersRes.error);
         if (f) return f;
-        return jsonOk({ users: users.data ?? [], grants: grants.data ?? [] });
+
+        const roleRows = (rolesRes.data ?? []) as unknown as Array<{
+          id: string; key: string; label_ar: string; label_en: string;
+        }>;
+        const keyById = new Map(roleRows.map((r) => [r.id, stripMosPrefix(r.key)]));
+        const people = ((usersRes.data ?? []) as unknown as Array<{
+          id: string;
+          name_ar: string | null;
+          name_en: string | null;
+          email: string | null;
+          role_assignments: unknown;
+        }>).map((u) => {
+          const assignments = Array.isArray(u.role_assignments) ? u.role_assignments : [];
+          const held = assignments
+            .map((a) => keyById.get(String((a as { role_id?: unknown } | null)?.role_id ?? '')))
+            .filter((k): k is string => Boolean(k));
+          return { user_id: u.id, name_ar: u.name_ar, name_en: u.name_en, email: u.email, roles: held };
+        });
+        const roles = roleRows.map((r) => {
+          const key = stripMosPrefix(r.key);
+          return {
+            key,
+            role_id: r.id,
+            label_ar: r.label_ar,
+            label_en: r.label_en,
+            holders: people.filter((p) => p.roles.includes(key)).length,
+          };
+        });
+        return jsonOk({ people, roles });
       }
 
       case 'role_grant': {
         const targetUserId = str(body.user_id);
-        const mosRole = str(body.mos_role);
-        if (!targetUserId) return jsonError(400, 'user_id is required');
-        const VALID = ['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage', 'viewer'];
-        if (mosRole && !VALID.includes(mosRole)) return jsonError(400, 'unknown role');
+        const roleKey = str(body.role_key);
+        if (!targetUserId || !roleKey) return jsonError(400, 'user_id and role_key are required');
+        if (typeof body.grant !== 'boolean') return jsonError(400, 'grant must be a boolean');
+        // Atomic + self-authorizing (manage_roles) inside the RPC — a browser
+        // read-modify-write of users.role_assignments would be a lost-update race.
+        const res = await sb.rpc('mos_role_grant', {
+          p_user_id: targetUserId,
+          p_role_key: roleKey,
+          p_grant: body.grant,
+        });
+        const f = dbFail(res.error);
+        if (f) return f;
+        return jsonOk({ ok: true });
+      }
 
-        if (!mosRole) {
-          const del = await sb.from('mos_role_grants').delete().eq('user_id', targetUserId);
-          const f = dbFail(del.error);
-          if (f) return f;
-        } else {
-          const up = await sb.from('mos_role_grants').upsert(
-            {
-              user_id: targetUserId,
-              mos_role: mosRole,
-              granted_by_user_id: await resolveAppUserId(sb, user.userId),
-            },
-            { onConflict: 'user_id' },
-          );
-          const f = dbFail(up.error);
-          if (f) return f;
+      /* -------------------------------------------------------- */
+      /* The surface matrix (screen 33) — full / read / hidden     */
+      /* -------------------------------------------------------- */
+      case 'surface_matrix': {
+        const [rolesRes, cellsRes] = await Promise.all([
+          sb.from('roles').select('id, key').like('key', 'mos\\_%').order('key', { ascending: true }),
+          sb.from('surface_access').select('role_id, surface_key, level'),
+        ]);
+        const f = dbFail(rolesRes.error) ?? dbFail(cellsRes.error);
+        if (f) return f;
+        const roleRows = (rolesRes.data ?? []) as unknown as Array<{ id: string; key: string }>;
+        const keyById = new Map(roleRows.map((r) => [r.id, stripMosPrefix(r.key)]));
+        const cells = ((cellsRes.data ?? []) as unknown as Array<{
+          role_id: string; surface_key: string; level: string;
+        }>)
+          .map((c) => ({ role_key: keyById.get(c.role_id) ?? '', surface_key: c.surface_key, level: c.level }))
+          .filter((c) => c.role_key !== '');
+        return jsonOk({
+          surfaces: [...SURFACES],
+          roles: roleRows.map((r) => ({ key: stripMosPrefix(r.key), role_id: r.id })),
+          cells,
+        });
+      }
+
+      case 'surface_set': {
+        const roleKey = str(body.role_key);
+        const surfaceKey = str(body.surface_key);
+        const level = str(body.level);
+        if (!roleKey || !(MOS_ROLE_KEYS as readonly string[]).includes(roleKey)) {
+          return jsonError(400, 'unknown role');
         }
-
-        const grants = await sb.from('mos_role_grants').select('user_id, mos_role');
-        const gf = dbFail(grants.error);
-        if (gf) return gf;
-        return jsonOk({ grants: grants.data ?? [] });
+        if (!surfaceKey || !(SURFACES as readonly string[]).includes(surfaceKey)) {
+          return jsonError(400, 'unknown surface');
+        }
+        if (!level || !['full', 'read', 'hidden'].includes(level)) {
+          return jsonError(400, 'level must be full, read or hidden');
+        }
+        const roleRes = await sb.from('roles').select('id').eq('key', `mos_${roleKey}`).maybeSingle();
+        const roleFail = dbFail(roleRes.error);
+        if (roleFail) return roleFail;
+        if (!roleRes.data) return jsonError(400, 'unknown role');
+        const up = await sb.from('surface_access').upsert(
+          { role_id: (roleRes.data as { id: string }).id, surface_key: surfaceKey, level },
+          { onConflict: 'role_id,surface_key' },
+        );
+        const f = dbFail(up.error);
+        if (f) return f;
+        return jsonOk({ ok: true });
       }
 
       /* -------------------------------------------------------- */
@@ -723,14 +1083,17 @@ export default async function handler(req: Request): Promise<Response> {
         const f = dbFail(rows.error);
         if (f) return f;
 
-        // The item's own open task carries the step id we need to name the action.
+        // The item's own open task carries the step key we need to name the action.
         const ids = (rows.data ?? []).map((r) => (r as unknown as Row).id);
         let tasks: unknown[] = [];
         if (ids.length > 0) {
-          const t = await sb.from('mos_tasks').select('*').in('content_id', ids).eq('status', 'open');
+          const t = await sb.from('workflow_role_tasks').select('*')
+            .eq('subject_table', 'mos_content')
+            .in('subject_id', ids)
+            .eq('status', 'open');
           const tf = dbFail(t.error);
           if (tf) return tf;
-          tasks = t.data ?? [];
+          tasks = (t.data ?? []).map((row) => mapRoleTask(row as Record<string, unknown>));
         }
         return jsonOk({ role: myRole, content: rows.data ?? [], tasks });
       }
@@ -1333,51 +1696,171 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
-      /* Settings — workflows, steps, types, platforms             */
+      /* Settings — workflows, types, platforms, surface matrix    */
       /* -------------------------------------------------------- */
       case 'settings_data': {
-        const [workflows, steps, types, accounts] = await Promise.all([
-          sb.from('mos_workflows').select('*').is('archived_at', null).order('key', { ascending: true }),
-          sb.from('mos_workflow_steps').select('*').order('position', { ascending: true }),
-          sb.from('mos_content_types').select('*').is('archived_at', null)
-            .order('sort_order', { ascending: true }),
-          sb.from('mos_platform_accounts').select('*').is('archived_at', null)
-            .order('sort_order', { ascending: true }),
-        ]);
-        const f = dbFail(workflows.error) ?? dbFail(steps.error)
-          ?? dbFail(types.error) ?? dbFail(accounts.error);
+        const [wfRes, verRes, typesRes, accountsRes, settingsRes, surfRolesRes, surfCellsRes] =
+          await Promise.all([
+            sb.from('workflows')
+              .select('id, label_ar, label_en, is_active, metadata')
+              .eq('kind', 'role_path')
+              .order('label_en', { ascending: true }),
+            sb.from('workflow_versions').select('id, workflow_id, version_no'),
+            sb.from('mos_content_types').select('*').is('archived_at', null)
+              .order('sort_order', { ascending: true }),
+            sb.from('mos_platform_accounts').select('*').is('archived_at', null)
+              .order('sort_order', { ascending: true }),
+            sb.from('mos_settings').select('key, value'),
+            sb.from('roles').select('id, key').like('key', 'mos\\_%').order('key', { ascending: true }),
+            sb.from('surface_access').select('role_id, surface_key, level'),
+          ]);
+        const f = dbFail(wfRes.error) ?? dbFail(verRes.error) ?? dbFail(typesRes.error)
+          ?? dbFail(accountsRes.error) ?? dbFail(settingsRes.error)
+          ?? dbFail(surfRolesRes.error) ?? dbFail(surfCellsRes.error);
         if (f) return f;
+
+        const settings: Record<string, unknown> = {};
+        for (const row of (settingsRes.data ?? []) as Array<{ key: string; value: unknown }>) {
+          settings[row.key] = row.value;
+        }
+        const roleRows = (surfRolesRes.data ?? []) as unknown as Array<{ id: string; key: string }>;
+        const keyById = new Map(roleRows.map((r) => [r.id, stripMosPrefix(r.key)]));
+        const cells = ((surfCellsRes.data ?? []) as unknown as Array<{
+          role_id: string; surface_key: string; level: string;
+        }>)
+          .map((c) => ({ role_key: keyById.get(c.role_id) ?? '', surface_key: c.surface_key, level: c.level }))
+          .filter((c) => c.role_key !== '');
+
         return jsonOk({
-          workflows: workflows.data ?? [],
-          steps: steps.data ?? [],
-          content_types: types.data ?? [],
-          accounts: accounts.data ?? [],
+          workflows: assembleWorkflowDefs(wfRes.data ?? [], verRes.data ?? []),
+          content_types: typesRes.data ?? [],
+          accounts: accountsRes.data ?? [],
+          settings,
+          surface: {
+            roles: roleRows.map((r) => ({ key: stripMosPrefix(r.key), role_id: r.id })),
+            cells,
+          },
+          // Notification rules arrive with the notifications migration (…_04),
+          // which is not in this build yet.
+          notification_rules: [],
         });
       }
 
-      case 'step_save': {
-        const raw = (body.step ?? {}) as Record<string, unknown>;
-        const id = str(raw.id);
-        const patch: Record<string, unknown> = {};
-        for (const k of ['workflow_id', 'position', 'key', 'label_ar', 'label_en', 'role',
-                         'due_days', 'is_approval', 'approval_kind'] as const) {
-          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+      /* -------------------------------------------------------- */
+      /* Save a whole role path — steps live in metadata, and the  */
+      /* DB trigger snapshots the new version on write             */
+      /* -------------------------------------------------------- */
+      case 'workflow_save': {
+        const labelAr = str(body.label_ar);
+        const labelEn = str(body.label_en);
+        if (!labelAr || !labelEn) return jsonError(400, 'label_ar and label_en are required');
+        const rawSteps = Array.isArray(body.steps) ? (body.steps as unknown[]) : null;
+        if (!rawSteps || rawSteps.length === 0) return jsonError(400, 'steps must be a non-empty array');
+
+        const seen = new Set<string>();
+        const steps: StepDef[] = [];
+        for (const raw of rawSteps) {
+          const s = (raw ?? {}) as Record<string, unknown>;
+          const key = str(s.key);
+          const sLabelAr = str(s.label_ar);
+          const sLabelEn = str(s.label_en);
+          const roleKey = str(s.role_key);
+          if (!key || !sLabelAr || !sLabelEn) {
+            return jsonError(400, 'every step needs key, label_ar and label_en');
+          }
+          if (seen.has(key)) return jsonError(400, `duplicate step key: ${key}`);
+          seen.add(key);
+          if (!roleKey || !(MOS_ROLE_KEYS as readonly string[]).includes(roleKey)) {
+            return jsonError(400, `step ${key} needs a valid role_key`);
+          }
+          const dueDays = typeof s.due_days === 'number' && Number.isInteger(s.due_days) && s.due_days >= 0
+            ? s.due_days
+            : null;
+          if (dueDays === null) return jsonError(400, `step ${key}: due_days must be an integer >= 0`);
+          steps.push({
+            key,
+            label_ar: sLabelAr,
+            label_en: sLabelEn,
+            role_key: roleKey,
+            due_days: dueDays,
+            is_approval: s.is_approval === true,
+            approval_kind: str(s.approval_kind),
+            require_note_on_reject: s.require_note_on_reject === true,
+            creates_revision: s.creates_revision === true,
+            required_fields: Array.isArray(s.required_fields) ? (s.required_fields as unknown[]).map(String) : [],
+            required_files: Array.isArray(s.required_files) ? (s.required_files as unknown[]).map(String) : [],
+          });
         }
+
+        const id = str(body.id);
+        let workflowId: string;
         if (id) {
-          const upd = await sb.from('mos_workflow_steps').update(patch).eq('id', id).select('id').maybeSingle();
-          const f = dbFail(upd.error);
-          if (f) return f;
-          if (!upd.data) return jsonError(404, 'step not found');
+          const existing = await sb.from('workflows')
+            .select('id, kind, metadata').eq('id', id).maybeSingle();
+          const existFail = dbFail(existing.error);
+          if (existFail) return existFail;
+          if (!existing.data || (existing.data as { kind?: string }).kind !== 'role_path') {
+            return jsonError(404, 'workflow not found');
+          }
+          const prevMeta = ((existing.data as { metadata?: Record<string, unknown> }).metadata ?? {});
+          const metadata = {
+            ...prevMeta,
+            managed_by: 'marketing_os',
+            key: typeof prevMeta.key === 'string' && prevMeta.key !== '' ? prevMeta.key : slugify(labelEn),
+            steps,
+          };
+          const patch: Record<string, unknown> = { label_ar: labelAr, label_en: labelEn, metadata };
+          if (typeof body.is_active === 'boolean') patch.is_active = body.is_active;
+          const upd = await sb.from('workflows').update(patch).eq('id', id);
+          const updFail = dbFail(upd.error);
+          if (updFail) return updFail;
+          workflowId = id;
         } else {
-          if (!str(patch.workflow_id)) return jsonError(400, 'workflow_id is required');
-          const ins = await sb.from('mos_workflow_steps').insert(patch).select('id').maybeSingle();
-          const f = dbFail(ins.error);
-          if (f) return f;
+          const ins = await sb.from('workflows').insert({
+            label_ar: labelAr,
+            label_en: labelEn,
+            kind: 'role_path',
+            trigger_model_id: null,
+            trigger_event: null,
+            conditions: [],
+            actions: [],
+            is_active: typeof body.is_active === 'boolean' ? body.is_active : true,
+            metadata: { managed_by: 'marketing_os', key: slugify(labelEn), steps },
+          }).select('id').maybeSingle();
+          const insFail = dbFail(ins.error);
+          if (insFail) return insFail;
+          if (!ins.data) return jsonError(500, 'insert returned no row');
+          workflowId = (ins.data as unknown as Row).id;
         }
-        const list = await sb.from('mos_workflow_steps').select('*').order('position', { ascending: true });
-        const lf = dbFail(list.error);
-        if (lf) return lf;
-        return jsonOk({ steps: list.data ?? [] });
+
+        // The write above already triggered the version snapshot; read it back.
+        const [wfRow, verRow] = await Promise.all([
+          sb.from('workflows').select('id, label_ar, label_en, is_active, metadata')
+            .eq('id', workflowId).maybeSingle(),
+          sb.from('workflow_versions').select('id, version_no')
+            .eq('workflow_id', workflowId)
+            .order('version_no', { ascending: false }).limit(1).maybeSingle(),
+        ]);
+        const readFail = dbFail(wfRow.error) ?? dbFail(verRow.error);
+        if (readFail) return readFail;
+        const w = wfRow.data as {
+          id: string; label_ar: string; label_en: string; is_active: boolean; metadata: unknown;
+        } | null;
+        const v = verRow.data as { id: string; version_no: number } | null;
+        return jsonOk({
+          workflow: w
+            ? {
+                id: w.id,
+                label_ar: w.label_ar,
+                label_en: w.label_en,
+                is_active: w.is_active,
+                steps: stepsOf(w.metadata),
+                current_version_no: v?.version_no ?? 0,
+                current_version_id: v?.id ?? null,
+              }
+            : null,
+          version_no: v?.version_no ?? 0,
+        });
       }
 
       case 'content_type_save': {

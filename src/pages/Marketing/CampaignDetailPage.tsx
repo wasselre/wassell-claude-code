@@ -46,7 +46,9 @@ const PLATFORMS = ['instagram', 'tiktok', 'snapchat', 'x', 'youtube'] as const;
 export default function CampaignDetailPage() {
   const { campaignId } = useParams<{ campaignId: string }>();
   const navigate = useNavigate();
-  const { isAr, can, projectName, users, typeLabel } = useWorkspace();
+  const { isAr, can, projectName, people, typeLabel } = useWorkspace();
+  // CommentThread wants the legacy {id,name_ar,name_en} shape.
+  const users = people.map((p) => ({ id: p.user_id, name_ar: p.name_ar, name_en: p.name_en }));
   const addToast = useAppStore((s) => s.addToast);
 
   const [item, setItem] = useState<MosCampaign | null>(null);
