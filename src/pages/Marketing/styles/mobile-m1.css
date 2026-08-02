@@ -1,0 +1,296 @@
+/*
+ * Marketing Workspace — mobile layer part 1 (design screens 28, 49-phone1, 52-phone2).
+ *
+ * The phone renderings of اليوم (WorkPage), the calendar agenda (CalendarPage)
+ * and the stacked overview (OverviewPage). Every rule is transcribed from the
+ * mockups' .ph-* phone CSS (docs/marketing-reference/source/marketing-os-ar.html):
+ * .ph-card/.ph-t/.ph-m/.ph-lbl/.ph-btn/.ph-pill become .m1-card/.m1-t/.m1-m/
+ * .m1-lbl/.m1-btn/.m1-pill. Scoped under .mos-root and wrapped in the shell's
+ * 760px phone breakpoint (mobile-shell.css), so desktop rendering is untouched.
+ *
+ * One deliberate divergence from the mock: the mock's .ph-btn.sm2 is 38px and
+ * its filter chips ~33px — both below the layer's 44px touch-target floor, so
+ * they are raised to 44px here (the base button keeps the mock's 46px).
+ */
+
+@media (max-width: 760px) {
+  /* ── shared card grammar (mock .ph-card family) ─────────────────────── */
+  .mos-root .m1-card {
+    display: block;
+    width: 100%;
+    text-align: start;
+    font: inherit;
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    padding: 14px 15px;
+    margin-bottom: 10px;
+    cursor: pointer;
+  }
+  .mos-root .m1-card:active {
+    background: var(--sand-2);
+  }
+  /* .ph-card.hot — the copper-tinted "start here" card. */
+  .mos-root .m1-card.hot {
+    border-color: color-mix(in srgb, var(--copper) 42%, transparent);
+    background: color-mix(in srgb, var(--copper) 7%, var(--paper));
+  }
+  /* .ph-card.late2 — the can't-miss late card. */
+  .mos-root .m1-card.late2 {
+    border-color: color-mix(in srgb, var(--late) 42%, transparent);
+  }
+  /* s28's «بانتظار شخص آخر» cards render at opacity .6 in the mock. */
+  .mos-root .m1-card.faded {
+    opacity: 0.6;
+  }
+
+  .mos-root .m1-t {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.6;
+  }
+  .mos-root .m1-m {
+    font-size: 12.5px;
+    color: var(--mute);
+    margin-top: 4px;
+    line-height: 1.65;
+  }
+  .mos-root .m1-lbl {
+    font-size: 11px;
+    color: var(--mute);
+    font-weight: 700;
+    margin: 16px 4px 8px;
+  }
+  .mos-root .m1-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 6px;
+  }
+  .mos-root .m1-pill.late {
+    background: color-mix(in srgb, var(--late) 13%, transparent);
+    color: var(--late);
+  }
+  /* id + pill header row inside a card — pill pinned to the far edge. */
+  .mos-root .m1-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .mos-root .m1-row .pill,
+  .mos-root .m1-row .m1-pill {
+    margin-inline-start: auto;
+  }
+  .mos-root .m1-id {
+    font-size: 11.5px;
+    color: var(--mute);
+    font-weight: 700;
+  }
+
+  /* .ph-btn — the full-width thumb-height card action. */
+  .mos-root .m1-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: 100%;
+    height: 46px;
+    border-radius: 13px;
+    font: inherit;
+    font-size: 14.5px;
+    font-weight: 700;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    cursor: pointer;
+    margin-top: 12px;
+  }
+  .mos-root .m1-btn.p {
+    background: var(--copper);
+    border-color: var(--copper);
+    color: #fff9f2;
+  }
+  .mos-root .m1-btn.g {
+    background: var(--go);
+    border-color: var(--go);
+    color: #f4fbf7;
+  }
+  /* Mock sm2 is 38px — raised to the 44px touch floor. */
+  .mos-root .m1-btn.sm {
+    height: 44px;
+    font-size: 13.5px;
+    border-radius: 11px;
+    margin-top: 11px;
+  }
+
+  /* ── s28 — the thumb-scrolled chip filter bar ───────────────────────── */
+  .mos-root .m1-chips {
+    display: flex;
+    gap: 7px;
+    overflow-x: auto;
+    margin: 2px 0 12px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .mos-root .m1-chips::-webkit-scrollbar {
+    display: none;
+  }
+  .mos-root .m1-chips .fbtn {
+    flex: 0 0 auto;
+    font-size: 12.5px;
+    padding: 7px 12px;
+    min-height: 44px; /* touch target (mock chips are shorter) */
+    border-radius: 22px;
+  }
+
+  /* ── s49 phone1 — the calendar agenda ───────────────────────────────── */
+  /* The أجندة/شهر switch — two equal chips. */
+  .mos-root .m1-seg2 {
+    display: flex;
+    gap: 7px;
+    margin: 2px 0 12px;
+  }
+  .mos-root .m1-seg2 .fbtn {
+    flex: 1;
+    justify-content: center;
+    font-size: 12.5px;
+    padding: 7px 0;
+    min-height: 44px; /* touch target */
+  }
+  .mos-root .m1-dayhead {
+    display: flex;
+    gap: 9px;
+    align-items: baseline;
+    margin: 14px 2px 7px;
+  }
+  .mos-root .m1-dayhead .d {
+    font-family: var(--serif);
+    font-size: 19px;
+    font-weight: 700;
+  }
+  .mos-root .m1-dayhead .n {
+    font-size: 11.5px;
+    color: var(--mute);
+  }
+  .mos-root .m1-agcard {
+    padding: 11px 13px;
+    margin-bottom: 7px;
+  }
+  .mos-root .m1-agcard .top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--mute);
+  }
+  .mos-root .m1-agcard .t2 {
+    font-size: 13.5px;
+    font-weight: 700;
+    margin-top: 5px;
+    color: var(--ink);
+  }
+  /* The 8px platform spine dot — same colours as the desktop legend. */
+  .mos-root .m1-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--ink);
+    flex: none;
+  }
+  .mos-root .m1-dot.ig {
+    background: #c13584;
+  }
+  .mos-root .m1-dot.tt {
+    background: var(--ink);
+  }
+  .mos-root .m1-dot.sc {
+    background: #c8b400;
+  }
+  .mos-root .m1-dot.x {
+    background: var(--ink);
+  }
+  /* Due / campaign-end wear the dotted warning square, never a solid dot. */
+  .mos-root .m1-dot.due {
+    background: transparent;
+    border: 1.5px dotted var(--late);
+  }
+  /* «الأسبوع الخالي كليًا يظهر كتحذير» — the dashed late-wash row. */
+  .mos-root .m1-emptyweek {
+    margin-top: 14px;
+    border: 1.5px dashed color-mix(in srgb, var(--late) 45%, transparent);
+    border-radius: 13px;
+    padding: 14px;
+    text-align: center;
+    background: color-mix(in srgb, var(--late) 5%, transparent);
+  }
+  .mos-root .m1-emptyweek .t {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--late);
+  }
+  .mos-root .m1-emptyweek .s {
+    font-size: 12px;
+    color: var(--mute);
+    margin-top: 5px;
+    line-height: 1.7;
+  }
+
+  /* ── s52 phone2 — the stacked overview ──────────────────────────────── */
+  /* «نفس الأرقام الأربعة وبنفس الترتيب» — a 2×2 stat grid, no compression. */
+  .mos-root .m1-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .mos-root .m1-stat {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    padding: 12px 13px;
+    margin: 0;
+  }
+  .mos-root .m1-stat .v {
+    font-family: var(--serif);
+    font-size: 30px;
+    line-height: 1.2;
+  }
+  .mos-root .m1-stat .d {
+    font-size: 11px;
+    color: var(--mute);
+  }
+  .mos-root .m1-stat.late {
+    border-color: color-mix(in srgb, var(--late) 42%, transparent);
+  }
+  .mos-root .m1-stat.late .lbl,
+  .mos-root .m1-stat.late .v {
+    color: var(--late);
+  }
+  /* Stalled cards — id row, bold title, stage · holder meta. */
+  .mos-root .m1-stall {
+    padding: 12px 13px;
+  }
+  .mos-root .m1-stall .t2 {
+    font-size: 13.5px;
+    font-weight: 700;
+    margin-top: 6px;
+  }
+  .mos-root .m1-stall .s {
+    font-size: 11.5px;
+    color: var(--mute);
+    margin-top: 3px;
+  }
+  /* The publish-list rows reuse the desktop .ev chips — thumb height here. */
+  .mos-root .m1-pubcard .ev {
+    min-height: 44px; /* touch target */
+  }
+
+  /* Header controls these screens keep on the phone get the 44px floor too. */
+  .mos-root .phead .seg button {
+    min-height: 44px;
+  }
+}

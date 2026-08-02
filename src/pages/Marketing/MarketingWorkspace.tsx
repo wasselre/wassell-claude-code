@@ -42,6 +42,7 @@ import {
   IconSwap, IconTeam,
 } from './components/icons';
 import NotificationBell from './components/NotificationBell';
+import MobileTabBar from './components/MobileTabBar';
 import './mos.css';
 import './styles/rail-badges.css';
 
@@ -529,6 +530,10 @@ export default function MarketingWorkspace() {
             </div>
           )}
         </div>
+
+        {/* Bottom tab bar — visible only <760px (mobile-shell.css); items are
+            filtered by surface access inside the component. */}
+        <MobileTabBar />
       </div>
     </Ctx.Provider>
   );

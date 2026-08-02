@@ -32,9 +32,32 @@ import { Empty, LoadError, PageHead, Pill, Skeleton, Stat } from './components/k
 import NewContentModal from './components/NewContentModal';
 import EmptyDayOne from './components/EmptyDayOne';
 import { IconPlus } from './components/icons';
-import { dayLabel, daysAgo, money, monthName, monthOf, num, shortDate } from './lib/format';
+import { dayLabel, daysAgo, money, monthName, monthOf, num, shortDate, toArabicDigits } from './lib/format';
 
 const QUARTER_NAMES_AR = ['الأول', 'الثاني', 'الثالث', 'الرابع'];
+
+/**
+ * The shell's phone breakpoint (mobile-shell.css). No shared matchMedia hook
+ * exists in the codebase, so each mobile-aware page carries this small one.
+ */
+function useIsMobile(): boolean {
+  const [mobile, setMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 760px)');
+    const sync = (): void => setMobile(mq.matches);
+    // Both signals: emulated viewports (devtools/webviews) can resize without
+    // firing the media-query change event.
+    mq.addEventListener('change', sync);
+    window.addEventListener('resize', sync);
+    return () => {
+      mq.removeEventListener('change', sync);
+      window.removeEventListener('resize', sync);
+    };
+  }, []);
+  return mobile;
+}
 
 export default function OverviewPage() {
   const { role } = useWorkspace();
@@ -48,6 +71,7 @@ export default function OverviewPage() {
 function ManagerOverview() {
   const { isAr, can, people } = useWorkspace();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const addToast = useAppStore((s) => s.addToast);
   const [period, setPeriod] = useState<OverviewPeriod>('week');
   const [data, setData] = useState<MosOverview | null>(null);
@@ -87,18 +111,14 @@ function ManagerOverview() {
   const unscheduledCount = data?.unscheduled.length ?? 0;
   const publishingTotal = scheduledCount + unscheduledCount;
 
-  const budget = (data?.campaigns ?? []).reduce((a, c) => a + (c.budget_total ?? 0), 0);
-  const spent = (data?.campaigns ?? []).reduce((a, c) => a + (c.total_spend ?? 0), 0);
-  const leads = (data?.campaigns ?? []).reduce((a, c) => a + (c.total_leads ?? 0), 0);
-  const qualified = (data?.campaigns ?? []).reduce((a, c) => a + (c.total_qualified ?? 0), 0);
-  const cpl = leads > 0 ? spent / leads : null;
-
   // «٣ أشخاص في الإنتاج» — people holding a production role.
   const productionPeople = people.filter((p) =>
     p.roles.some((r) => r === 'writer' || r === 'montage' || r === 'ops_supervisor')).length;
 
   const periodSub = (d: MosOverview): string => {
-    const year = num(new Date(d.week_start).getFullYear(), isAr);
+    // Years carry no thousands separator — «٢٠٢٦», never «٢,٠٢٦».
+    const y = new Date(d.week_start).getFullYear();
+    const year = isAr ? toArabicDigits(String(y)) : String(y);
     let range: string;
     if (d.period === 'month') {
       range = `${monthOf(d.week_start, isAr)} ${year}`;
@@ -152,7 +172,7 @@ function ManagerOverview() {
             {isAr ? 'الربع' : 'Quarter'}
           </button>
         </div>
-        {can('write_content') && (
+        {can('write_content') && !isMobile && (
           <button type="button" className="btn btn-p" onClick={() => setCreating(true)}>
             <IconPlus />
             {isAr ? 'محتوى جديد' : 'New content'}
@@ -164,7 +184,112 @@ function ManagerOverview() {
         {error && <LoadError message={error} onRetry={() => void load(period)} isAr={isAr} />}
         {loading && !data && <Skeleton rows={6} />}
 
-        {data && (
+        {/* s52 phone2 — «اللوحة تُكدَّس ولا تُختصر»: the same four numbers in
+            the same order as a 2×2 card grid, then the stalled list, then what
+            publishes, then the paid card. Nothing dropped, nothing squeezed. */}
+        {data && isMobile && (
+          <>
+            <div className="m1-stats">
+              <div className="m1-stat">
+                <div className="lbl">{isAr ? 'تحت الإنتاج' : 'In production'}</div>
+                <div className="v">{num(inProduction, isAr)}</div>
+                <div className="d">
+                  {isAr
+                    ? `${num(postCount, true)} منشور · ${num(videoCount, true)} فيديو`
+                    : `${postCount} posts · ${videoCount} video`}
+                </div>
+              </div>
+              <div className="m1-stat">
+                <div className="lbl">{isAr ? 'بانتظارك' : 'Waiting on you'}</div>
+                <div className="v">{num(data.counts.waiting_on_me, isAr)}</div>
+                <div className="d">
+                  {data.counts.waiting_on_me > 0 && data.waiting_oldest_at
+                    ? isAr
+                      ? `أقدمها ${daysAgo(data.waiting_oldest_at, true)}`
+                      : `oldest ${daysAgo(data.waiting_oldest_at, false)}`
+                    : isAr ? 'لا شيء بانتظارك' : 'nothing waits on you'}
+                </div>
+              </div>
+              <div className="m1-stat">
+                <div className="lbl">
+                  {data.period === 'week'
+                    ? isAr ? 'يُنشر هذا الأسبوع' : 'Publishing this week'
+                    : isAr ? 'يُنشر في هذه الفترة' : 'Publishing this period'}
+                </div>
+                <div className="v">{num(publishingTotal, isAr)}</div>
+                <div className="d">
+                  {unscheduledCount > 0
+                    ? isAr ? `${num(unscheduledCount, true)} بلا موعد` : `${unscheduledCount} unscheduled`
+                    : isAr ? `${num(scheduledCount, true)} مجدولة` : `${scheduledCount} scheduled`}
+                </div>
+              </div>
+              <div className="m1-stat late">
+                <div className="lbl">{isAr ? 'متأخر' : 'Late'}</div>
+                <div className="v">{num(data.counts.late, isAr)}</div>
+                <div className="d">{lateDetail(data)}</div>
+              </div>
+            </div>
+
+            <div className="m1-lbl" style={{ marginTop: 4 }}>
+              {isAr ? 'متوقف منذ ٤٨ ساعة' : 'Stalled — nothing moved in 48h'}
+            </div>
+            {data.stalled.length === 0 ? (
+              <div className="m1-card" style={{ cursor: 'default' }}>
+                <div className="m1-m" style={{ marginTop: 0 }}>
+                  {isAr
+                    ? 'لا شيء متوقف — كل عنصر تحت الإنتاج تحرّك مؤخرًا.'
+                    : 'Nothing is stuck — everything in production has moved recently.'}
+                </div>
+              </div>
+            ) : data.stalled.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                className="m1-card m1-stall"
+                onClick={() => navigate(`/m/content/${r.id}`)}
+              >
+                <div className="m1-row">
+                  <span className="m1-id ltr">{r.ref ?? '—'}</span>
+                  <span className="pill p-late">{daysAgo(r.updated_at, isAr)}</span>
+                </div>
+                <div className="t2">{r.title}</div>
+                <div className="s">
+                  {(isAr ? r.current_step_label_ar : r.current_step_label_en) ?? r.status_key}
+                  {' · '}
+                  {r.owner_role && ROLE_LABELS[r.owner_role]
+                    ? isAr
+                      ? `لدى ${ROLE_LABELS[r.owner_role].ar}`
+                      : `with ${ROLE_LABELS[r.owner_role].en}`
+                    : isAr ? 'بلا مالك' : 'no owner'}
+                </div>
+              </button>
+            ))}
+
+            <div className="m1-lbl">
+              {data.period === 'week'
+                ? isAr ? 'يُنشر هذا الأسبوع' : 'Publishing this week'
+                : isAr ? 'يُنشر في هذه الفترة' : 'Publishing this period'}
+            </div>
+            <div className="card m1-pubcard">
+              <div className="card-b" style={{ padding: '10px 14px 14px' }}>
+                <WeekList data={data} isAr={isAr} />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 16 }}>
+              <PaidAdsCard data={data} isAr={isAr} />
+            </div>
+            {data.campaigns.length === 0 && (
+              <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.8, marginTop: 10 }}>
+                {isAr
+                  ? 'أرقام الإعلانات مُدخلة يدويًا حتى تُربط المنصات. أي رقم قد يكذب، يقول ذلك بنفسه.'
+                  : 'Ad numbers are typed in by hand until the platforms are connected. Any number that could lie says so itself.'}
+              </div>
+            )}
+          </>
+        )}
+
+        {data && !isMobile && (
           <>
             <div className="grid g4" style={{ marginBottom: 18 }}>
               <Stat
@@ -294,92 +419,11 @@ function ManagerOverview() {
                     <span className="r">{num(publishingTotal, isAr)}</span>
                   </div>
                   <div className="card-b" style={{ padding: '10px 14px 14px' }}>
-                    {publishingTotal === 0 ? (
-                      <div style={{ fontSize: 12.5, color: 'var(--mute)' }}>
-                        {isAr
-                          ? 'لا شيء مجدول لهذه الفترة بعد.'
-                          : 'Nothing is scheduled for this period yet.'}
-                      </div>
-                    ) : (
-                      <>
-                        {data.week.map((p) => (
-                          <button
-                            key={p.id}
-                            type="button"
-                            className={`ev ${PLATFORM_CLASS[p.platform] ?? ''}`}
-                            onClick={() => navigate(`/m/content/${p.content_id}`)}
-                          >
-                            <span>
-                              {dayLabel(p.scheduled_at, isAr)} ·{' '}
-                              {(isAr ? PLATFORM_LABELS[p.platform]?.ar : PLATFORM_LABELS[p.platform]?.en) ?? p.platform}
-                              {' · '}
-                            </span>
-                            <b style={{ fontWeight: 700 }}>
-                              {p.ref ? `${p.ref} ` : ''}{p.title ?? ''}
-                            </b>
-                          </button>
-                        ))}
-                        {data.unscheduled.length > 0 && (
-                          <div className="ev due">
-                            <span>
-                              {isAr ? 'بحاجة لموعد نشر' : 'Needs a slot'}
-                              {' · '}
-                            </span>
-                            <b style={{ fontWeight: 700 }}>
-                              {data.unscheduled.map((u) => u.ref ?? u.title).join(isAr ? '، ' : ', ')}
-                            </b>
-                          </div>
-                        )}
-                      </>
-                    )}
+                    <WeekList data={data} isAr={isAr} />
                   </div>
                 </div>
 
-                <div className="card">
-                  <div className="card-h">
-                    <h4>
-                      {isAr
-                        ? `الإعلانات المدفوعة — ${monthOf(data.week_start, true)}`
-                        : `Paid ads — ${monthOf(data.week_start, false)}`}
-                    </h4>
-                    <span className="tag tag-t">{isAr ? 'مُدخلة يدويًا' : 'entered by hand'}</span>
-                  </div>
-                  <div className="card-b" style={{ display: 'grid', gap: 11 }}>
-                    <div>
-                      <div className="lbl">{isAr ? 'المصروف من الميزانية' : 'Spent of budget'}</div>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginTop: 4 }}>
-                        <span style={{ fontFamily: 'var(--serif)', fontSize: 24, fontVariantNumeric: 'tabular-nums' }}>
-                          {num(Math.round(spent), isAr)}
-                        </span>
-                        <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
-                          {isAr ? `من ${num(Math.round(budget), true)} ريال` : `of ${num(Math.round(budget), false)} SAR`}
-                        </span>
-                      </div>
-                      <div className="meter" style={{ marginTop: 8 }}>
-                        <i style={{ width: `${budget > 0 ? Math.min(100, (spent / budget) * 100) : 0}%`, background: 'var(--copper)' }} />
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
-                      <div>
-                        <div className="lbl">{isAr ? 'العملاء' : 'Leads'}</div>
-                        <div style={{ fontFamily: 'var(--serif)', fontSize: 20 }}>{num(leads, isAr)}</div>
-                      </div>
-                      <div>
-                        <div className="lbl">{isAr ? 'تكلفة العميل' : 'Cost per lead'}</div>
-                        <div style={{ fontFamily: 'var(--serif)', fontSize: 20 }}>
-                          {cpl === null ? '—' : num(Math.round(cpl), isAr)}
-                          {cpl !== null && (
-                            <span style={{ fontSize: 11, color: 'var(--mute)' }}> {isAr ? 'ر.س' : 'SAR'}</span>
-                          )}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="lbl">{isAr ? 'المؤهلون' : 'Qualified'}</div>
-                        <div style={{ fontFamily: 'var(--serif)', fontSize: 20 }}>{num(qualified, isAr)}</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <PaidAdsCard data={data} isAr={isAr} />
 
                 {data.campaigns.length === 0 && (
                   <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.8 }}>
@@ -396,6 +440,113 @@ function ManagerOverview() {
 
       {creating && <NewContentModal onClose={() => setCreating(false)} />}
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* shared pieces — one implementation for desktop and the s52 phone    */
+/* ------------------------------------------------------------------ */
+
+/** The «يُنشر هذا الأسبوع» rows — scheduled .ev chips + the needs-a-slot row. */
+function WeekList({ data, isAr }: { data: MosOverview; isAr: boolean }) {
+  const navigate = useNavigate();
+  const publishingTotal = data.week.length + data.unscheduled.length;
+  if (publishingTotal === 0) {
+    return (
+      <div style={{ fontSize: 12.5, color: 'var(--mute)' }}>
+        {isAr
+          ? 'لا شيء مجدول لهذه الفترة بعد.'
+          : 'Nothing is scheduled for this period yet.'}
+      </div>
+    );
+  }
+  return (
+    <>
+      {data.week.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          className={`ev ${PLATFORM_CLASS[p.platform] ?? ''}`}
+          onClick={() => navigate(`/m/content/${p.content_id}`)}
+        >
+          <span>
+            {dayLabel(p.scheduled_at, isAr)} ·{' '}
+            {(isAr ? PLATFORM_LABELS[p.platform]?.ar : PLATFORM_LABELS[p.platform]?.en) ?? p.platform}
+            {' · '}
+          </span>
+          <b style={{ fontWeight: 700 }}>
+            {p.ref ? `${p.ref} ` : ''}{p.title ?? ''}
+          </b>
+        </button>
+      ))}
+      {data.unscheduled.length > 0 && (
+        <div className="ev due">
+          <span>
+            {isAr ? 'بحاجة لموعد نشر' : 'Needs a slot'}
+            {' · '}
+          </span>
+          <b style={{ fontWeight: 700 }}>
+            {data.unscheduled.map((u) => u.ref ?? u.title).join(isAr ? '، ' : ', ')}
+          </b>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** The hand-entered «الإعلانات المدفوعة» card — same DOM on both layouts. */
+function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
+  const budget = (data.campaigns ?? []).reduce((a, c) => a + (c.budget_total ?? 0), 0);
+  const spent = (data.campaigns ?? []).reduce((a, c) => a + (c.total_spend ?? 0), 0);
+  const leads = (data.campaigns ?? []).reduce((a, c) => a + (c.total_leads ?? 0), 0);
+  const qualified = (data.campaigns ?? []).reduce((a, c) => a + (c.total_qualified ?? 0), 0);
+  const cpl = leads > 0 ? spent / leads : null;
+  return (
+    <div className="card">
+      <div className="card-h">
+        <h4>
+          {isAr
+            ? `الإعلانات المدفوعة — ${monthOf(data.week_start, true)}`
+            : `Paid ads — ${monthOf(data.week_start, false)}`}
+        </h4>
+        <span className="tag tag-t">{isAr ? 'مُدخلة يدويًا' : 'entered by hand'}</span>
+      </div>
+      <div className="card-b" style={{ display: 'grid', gap: 11 }}>
+        <div>
+          <div className="lbl">{isAr ? 'المصروف من الميزانية' : 'Spent of budget'}</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginTop: 4 }}>
+            <span style={{ fontFamily: 'var(--serif)', fontSize: 24, fontVariantNumeric: 'tabular-nums' }}>
+              {num(Math.round(spent), isAr)}
+            </span>
+            <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
+              {isAr ? `من ${num(Math.round(budget), true)} ريال` : `of ${num(Math.round(budget), false)} SAR`}
+            </span>
+          </div>
+          <div className="meter" style={{ marginTop: 8 }}>
+            <i style={{ width: `${budget > 0 ? Math.min(100, (spent / budget) * 100) : 0}%`, background: 'var(--copper)' }} />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+          <div>
+            <div className="lbl">{isAr ? 'العملاء' : 'Leads'}</div>
+            <div style={{ fontFamily: 'var(--serif)', fontSize: 20 }}>{num(leads, isAr)}</div>
+          </div>
+          <div>
+            <div className="lbl">{isAr ? 'تكلفة العميل' : 'Cost per lead'}</div>
+            <div style={{ fontFamily: 'var(--serif)', fontSize: 20 }}>
+              {cpl === null ? '—' : num(Math.round(cpl), isAr)}
+              {cpl !== null && (
+                <span style={{ fontSize: 11, color: 'var(--mute)' }}> {isAr ? 'ر.س' : 'SAR'}</span>
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="lbl">{isAr ? 'المؤهلون' : 'Qualified'}</div>
+            <div style={{ fontFamily: 'var(--serif)', fontSize: 20 }}>{num(qualified, isAr)}</div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
