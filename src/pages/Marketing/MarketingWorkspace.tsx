@@ -38,6 +38,7 @@ import {
   IconMetrics, IconMyWork, IconOverview, IconSearch, IconSettings, IconShoot,
   IconSwap, IconTeam,
 } from './components/icons';
+import NotificationBell from './components/NotificationBell';
 import './mos.css';
 
 /* ------------------------------------------------------------------ */
@@ -374,6 +375,7 @@ export default function MarketingWorkspace() {
               <b>{isAr ? 'وصل' : 'Wassel'}</b>
               <span>{isAr ? 'التسويق' : 'Marketing'}</span>
             </div>
+            <NotificationBell />
           </div>
 
           {/* The switcher — the one control that makes two workspaces one app. */}
