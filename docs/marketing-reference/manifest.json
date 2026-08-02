@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-02T20:26:07.108Z",
+  "generated_at": "2026-08-02T21:31:47.103Z",
   "source": {
     "frames_index": "frames-index.json",
     "matrix": "coverage-matrix.mjs"
@@ -36,11 +36,11 @@
         "actual": "actual-screenshots/s01-main-ar-dark.png",
         "overlay": "overlays/s01-main-ar-dark.png",
         "diff": "diffs/s01-main-ar-dark.png",
-        "ssim": 0.767386,
-        "pixel_pct": 92.0748,
+        "ssim": 0.76769,
+        "pixel_pct": 92.0846,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.767386 < 0.98 or pixel_pct 92.0748 < 99)"
+      "note": "metrics-below-threshold (ssim 0.76769 < 0.98 or pixel_pct 92.0846 < 99)"
     },
     {
       "id": "s01-main-ar-light",
@@ -64,11 +64,11 @@
         "actual": "actual-screenshots/s01-main-ar-light.png",
         "overlay": "overlays/s01-main-ar-light.png",
         "diff": "diffs/s01-main-ar-light.png",
-        "ssim": 0.722467,
-        "pixel_pct": 86.0301,
+        "ssim": 0.722765,
+        "pixel_pct": 86.0397,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.722467 < 0.98 or pixel_pct 86.0301 < 99)"
+      "note": "metrics-below-threshold (ssim 0.722765 < 0.98 or pixel_pct 86.0397 < 99)"
     },
     {
       "id": "s02-main-ar-dark",
@@ -260,11 +260,11 @@
         "actual": "actual-screenshots/s05-main-ar-dark.png",
         "overlay": "overlays/s05-main-ar-dark.png",
         "diff": "diffs/s05-main-ar-dark.png",
-        "ssim": 0.666684,
-        "pixel_pct": 93.1196,
+        "ssim": 0.665698,
+        "pixel_pct": 93.1025,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.666684 < 0.98 or pixel_pct 93.1196 < 99)"
+      "note": "metrics-below-threshold (ssim 0.665698 < 0.98 or pixel_pct 93.1025 < 99)"
     },
     {
       "id": "s05-main-ar-light",
@@ -288,11 +288,11 @@
         "actual": "actual-screenshots/s05-main-ar-light.png",
         "overlay": "overlays/s05-main-ar-light.png",
         "diff": "diffs/s05-main-ar-light.png",
-        "ssim": 0.724448,
-        "pixel_pct": 60.0682,
+        "ssim": 0.725414,
+        "pixel_pct": 60.0669,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.724448 < 0.98 or pixel_pct 60.0682 < 99)"
+      "note": "metrics-below-threshold (ssim 0.725414 < 0.98 or pixel_pct 60.0669 < 99)"
     },
     {
       "id": "s06-main-ar-dark",
@@ -512,11 +512,11 @@
         "actual": "actual-screenshots/s09-main-ar-light.png",
         "overlay": "overlays/s09-main-ar-light.png",
         "diff": "diffs/s09-main-ar-light.png",
-        "ssim": 0.74267,
-        "pixel_pct": 90.5719,
+        "ssim": 0.741699,
+        "pixel_pct": 90.5366,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.74267 < 0.98 or pixel_pct 90.5719 < 99)"
+      "note": "metrics-below-threshold (ssim 0.741699 < 0.98 or pixel_pct 90.5366 < 99)"
     },
     {
       "id": "s10-main-ar-dark",
@@ -1074,11 +1074,11 @@
         "actual": "actual-screenshots/s19-main-ar-light.png",
         "overlay": "overlays/s19-main-ar-light.png",
         "diff": "diffs/s19-main-ar-light.png",
-        "ssim": 0.765922,
-        "pixel_pct": 58.328,
+        "ssim": 0.765923,
+        "pixel_pct": 58.3281,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.765922 < 0.98 or pixel_pct 58.328 < 99)"
+      "note": "metrics-below-threshold (ssim 0.765923 < 0.98 or pixel_pct 58.3281 < 99)"
     },
     {
       "id": "s20-main-ar-dark",
@@ -1550,11 +1550,11 @@
         "actual": "actual-screenshots/s28-phone1-ar-dark.png",
         "overlay": "overlays/s28-phone1-ar-dark.png",
         "diff": "diffs/s28-phone1-ar-dark.png",
-        "ssim": 0.626972,
-        "pixel_pct": 80.3712,
+        "ssim": 0.571321,
+        "pixel_pct": 74.6572,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.626972 < 0.98 or pixel_pct 80.3712 < 99)"
+      "note": "metrics-below-threshold (ssim 0.571321 < 0.98 or pixel_pct 74.6572 < 99)"
     },
     {
       "id": "s28-phone1-ar-light",
@@ -1578,11 +1578,11 @@
         "actual": "actual-screenshots/s28-phone1-ar-light.png",
         "overlay": "overlays/s28-phone1-ar-light.png",
         "diff": "diffs/s28-phone1-ar-light.png",
-        "ssim": 0.572409,
-        "pixel_pct": 48.6735,
+        "ssim": 0.53588,
+        "pixel_pct": 42.9563,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.572409 < 0.98 or pixel_pct 48.6735 < 99)"
+      "note": "metrics-below-threshold (ssim 0.53588 < 0.98 or pixel_pct 42.9563 < 99)"
     },
     {
       "id": "s28-phone2-ar-dark",
@@ -1606,11 +1606,11 @@
         "actual": "actual-screenshots/s28-phone2-ar-dark.png",
         "overlay": "overlays/s28-phone2-ar-dark.png",
         "diff": "diffs/s28-phone2-ar-dark.png",
-        "ssim": 0.651643,
-        "pixel_pct": 85.4893,
+        "ssim": 0.59425,
+        "pixel_pct": 79.1412,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.651643 < 0.98 or pixel_pct 85.4893 < 99)"
+      "note": "metrics-below-threshold (ssim 0.59425 < 0.98 or pixel_pct 79.1412 < 99)"
     },
     {
       "id": "s28-phone2-ar-light",
@@ -1634,11 +1634,11 @@
         "actual": "actual-screenshots/s28-phone2-ar-light.png",
         "overlay": "overlays/s28-phone2-ar-light.png",
         "diff": "diffs/s28-phone2-ar-light.png",
-        "ssim": 0.587032,
-        "pixel_pct": 49.713,
+        "ssim": 0.550577,
+        "pixel_pct": 44.2024,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.587032 < 0.98 or pixel_pct 49.713 < 99)"
+      "note": "metrics-below-threshold (ssim 0.550577 < 0.98 or pixel_pct 44.2024 < 99)"
     },
     {
       "id": "s29-phone1-ar-dark",
@@ -1662,11 +1662,11 @@
         "actual": "actual-screenshots/s29-phone1-ar-dark.png",
         "overlay": "overlays/s29-phone1-ar-dark.png",
         "diff": "diffs/s29-phone1-ar-dark.png",
-        "ssim": 0.56311,
-        "pixel_pct": 31.2164,
+        "ssim": 0.545618,
+        "pixel_pct": 31.3524,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.56311 < 0.98 or pixel_pct 31.2164 < 99)"
+      "note": "metrics-below-threshold (ssim 0.545618 < 0.98 or pixel_pct 31.3524 < 99)"
     },
     {
       "id": "s29-phone1-ar-light",
@@ -1690,11 +1690,11 @@
         "actual": "actual-screenshots/s29-phone1-ar-light.png",
         "overlay": "overlays/s29-phone1-ar-light.png",
         "diff": "diffs/s29-phone1-ar-light.png",
-        "ssim": 0.473932,
-        "pixel_pct": 21.6347,
+        "ssim": 0.480908,
+        "pixel_pct": 17.886,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.473932 < 0.98 or pixel_pct 21.6347 < 99)"
+      "note": "metrics-below-threshold (ssim 0.480908 < 0.98 or pixel_pct 17.886 < 99)"
     },
     {
       "id": "s29-phone2-ar-dark",
@@ -1718,11 +1718,11 @@
         "actual": "actual-screenshots/s29-phone2-ar-dark.png",
         "overlay": "overlays/s29-phone2-ar-dark.png",
         "diff": "diffs/s29-phone2-ar-dark.png",
-        "ssim": 0.597694,
-        "pixel_pct": 83.9065,
+        "ssim": 0.583458,
+        "pixel_pct": 81.9537,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.597694 < 0.98 or pixel_pct 83.9065 < 99)"
+      "note": "metrics-below-threshold (ssim 0.583458 < 0.98 or pixel_pct 81.9537 < 99)"
     },
     {
       "id": "s29-phone2-ar-light",
@@ -1746,11 +1746,11 @@
         "actual": "actual-screenshots/s29-phone2-ar-light.png",
         "overlay": "overlays/s29-phone2-ar-light.png",
         "diff": "diffs/s29-phone2-ar-light.png",
-        "ssim": 0.509219,
-        "pixel_pct": 43.674,
+        "ssim": 0.503593,
+        "pixel_pct": 39.318,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.509219 < 0.98 or pixel_pct 43.674 < 99)"
+      "note": "metrics-below-threshold (ssim 0.503593 < 0.98 or pixel_pct 39.318 < 99)"
     },
     {
       "id": "s29-phone3-ar-dark",
@@ -1806,7 +1806,7 @@
         "pixel_pct": null,
         "inspected": false
       },
-      "note": "harness-error: mobile-review-sheet: clicking «اعتماد» did not open the approval sheet («اعتماد هذا النص؟») — the mobile review sheet is not implemented. NOTE: the click may have APPROVED V-004's open task; re-run node scripts/mos-fixtures.mjs before capturing other V-004 rows."
+      "note": "harness-error: setup 'mobile-review-sheet': no clickable '.task-card button' exactly «اعتماد» (row s29-phone3-ar-light)"
     },
     {
       "id": "s30-phone1-ar-dark",
@@ -1830,11 +1830,11 @@
         "actual": "actual-screenshots/s30-phone1-ar-dark.png",
         "overlay": "overlays/s30-phone1-ar-dark.png",
         "diff": "diffs/s30-phone1-ar-dark.png",
-        "ssim": 0.656558,
-        "pixel_pct": 84.7905,
+        "ssim": 0.673525,
+        "pixel_pct": 82.1907,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.656558 < 0.98 or pixel_pct 84.7905 < 99)"
+      "note": "metrics-below-threshold (ssim 0.673525 < 0.98 or pixel_pct 82.1907 < 99)"
     },
     {
       "id": "s30-phone1-ar-light",
@@ -1858,11 +1858,11 @@
         "actual": "actual-screenshots/s30-phone1-ar-light.png",
         "overlay": "overlays/s30-phone1-ar-light.png",
         "diff": "diffs/s30-phone1-ar-light.png",
-        "ssim": 0.589812,
-        "pixel_pct": 49.7451,
+        "ssim": 0.61566,
+        "pixel_pct": 48.3546,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.589812 < 0.98 or pixel_pct 49.7451 < 99)"
+      "note": "metrics-below-threshold (ssim 0.61566 < 0.98 or pixel_pct 48.3546 < 99)"
     },
     {
       "id": "s30-phone2-ar-dark",
@@ -2054,11 +2054,11 @@
         "actual": "actual-screenshots/s32-phone1-ar-dark.png",
         "overlay": "overlays/s32-phone1-ar-dark.png",
         "diff": "diffs/s32-phone1-ar-dark.png",
-        "ssim": 0.750584,
-        "pixel_pct": 93.7069,
+        "ssim": 0.722105,
+        "pixel_pct": 92.7486,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.750584 < 0.98 or pixel_pct 93.7069 < 99)"
+      "note": "metrics-below-threshold (ssim 0.722105 < 0.98 or pixel_pct 92.7486 < 99)"
     },
     {
       "id": "s32-phone1-ar-light",
@@ -2082,11 +2082,11 @@
         "actual": "actual-screenshots/s32-phone1-ar-light.png",
         "overlay": "overlays/s32-phone1-ar-light.png",
         "diff": "diffs/s32-phone1-ar-light.png",
-        "ssim": 0.642633,
-        "pixel_pct": 54.7056,
+        "ssim": 0.614388,
+        "pixel_pct": 53.8012,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.642633 < 0.98 or pixel_pct 54.7056 < 99)"
+      "note": "metrics-below-threshold (ssim 0.614388 < 0.98 or pixel_pct 53.8012 < 99)"
     },
     {
       "id": "s32-phone2-ar-dark",
@@ -2110,11 +2110,11 @@
         "actual": "actual-screenshots/s32-phone2-ar-dark.png",
         "overlay": "overlays/s32-phone2-ar-dark.png",
         "diff": "diffs/s32-phone2-ar-dark.png",
-        "ssim": 0.71911,
-        "pixel_pct": 92.8079,
+        "ssim": 0.690211,
+        "pixel_pct": 91.9189,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.71911 < 0.98 or pixel_pct 92.8079 < 99)"
+      "note": "metrics-below-threshold (ssim 0.690211 < 0.98 or pixel_pct 91.9189 < 99)"
     },
     {
       "id": "s32-phone2-ar-light",
@@ -2138,11 +2138,11 @@
         "actual": "actual-screenshots/s32-phone2-ar-light.png",
         "overlay": "overlays/s32-phone2-ar-light.png",
         "diff": "diffs/s32-phone2-ar-light.png",
-        "ssim": 0.607629,
-        "pixel_pct": 52.5508,
+        "ssim": 0.58068,
+        "pixel_pct": 51.4831,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.607629 < 0.98 or pixel_pct 52.5508 < 99)"
+      "note": "metrics-below-threshold (ssim 0.58068 < 0.98 or pixel_pct 51.4831 < 99)"
     },
     {
       "id": "s33-main-ar-dark",
@@ -2363,12 +2363,12 @@
         "actual": "actual-screenshots/s36-main-ar-light.png",
         "overlay": "overlays/s36-main-ar-light.png",
         "diff": "diffs/s36-main-ar-light.png",
-        "ssim": 0.697811,
-        "pixel_pct": 85.1364,
+        "ssim": 0.697808,
+        "pixel_pct": 85.1362,
         "inspected": false
       },
       "notes": "one record, five role states — each roleVariant row asserts the exact button/lock set",
-      "note": "metrics-below-threshold (ssim 0.697811 < 0.98 or pixel_pct 85.1364 < 99)"
+      "note": "metrics-below-threshold (ssim 0.697808 < 0.98 or pixel_pct 85.1362 < 99)"
     },
     {
       "id": "s37-main-ar-dark",
@@ -2420,11 +2420,11 @@
         "actual": "actual-screenshots/s37-main-ar-light.png",
         "overlay": "overlays/s37-main-ar-light.png",
         "diff": "diffs/s37-main-ar-light.png",
-        "ssim": 0.745733,
-        "pixel_pct": 84.5748,
+        "ssim": 0.745735,
+        "pixel_pct": 84.5743,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.745733 < 0.98 or pixel_pct 84.5748 < 99)"
+      "note": "metrics-below-threshold (ssim 0.745735 < 0.98 or pixel_pct 84.5743 < 99)"
     },
     {
       "id": "s38-main-ar-dark",
@@ -2613,14 +2613,14 @@
       "reference": "reference-crops/s41-main-dark.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s41-main-ar-dark.png",
+        "overlay": "overlays/s41-main-ar-dark.png",
+        "diff": "diffs/s41-main-ar-dark.png",
+        "ssim": 0.760039,
+        "pixel_pct": 84.1159,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.760039 < 0.98 or pixel_pct 84.1159 < 99)"
     },
     {
       "id": "s41-main-ar-light",
@@ -2641,14 +2641,14 @@
       "reference": "reference-crops/s41-main-light.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s41-main-ar-light.png",
+        "overlay": "overlays/s41-main-ar-light.png",
+        "diff": "diffs/s41-main-ar-light.png",
+        "ssim": 0.755651,
+        "pixel_pct": 83.1869,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.755651 < 0.98 or pixel_pct 83.1869 < 99)"
     },
     {
       "id": "s42-main-ar-dark",
@@ -2672,11 +2672,11 @@
         "actual": "actual-screenshots/s42-main-ar-dark.png",
         "overlay": "overlays/s42-main-ar-dark.png",
         "diff": "diffs/s42-main-ar-dark.png",
-        "ssim": 0.798811,
-        "pixel_pct": 92.4873,
+        "ssim": 0.82127,
+        "pixel_pct": 94.6938,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.82127 < 0.98 or pixel_pct 94.6938 < 99)"
     },
     {
       "id": "s42-main-ar-light",
@@ -2697,14 +2697,14 @@
       "reference": "reference-crops/s42-main-light.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s42-main-ar-light.png",
+        "overlay": "overlays/s42-main-ar-light.png",
+        "diff": "diffs/s42-main-ar-light.png",
+        "ssim": 0.801909,
+        "pixel_pct": 93.1426,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.801909 < 0.98 or pixel_pct 93.1426 < 99)"
     },
     {
       "id": "s43-main-ar-dark",
@@ -2725,14 +2725,14 @@
       "reference": "reference-crops/s43-main-dark.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s43-main-ar-dark.png",
+        "overlay": "overlays/s43-main-ar-dark.png",
+        "diff": "diffs/s43-main-ar-dark.png",
+        "ssim": 0.792537,
+        "pixel_pct": 93.6061,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.792537 < 0.98 or pixel_pct 93.6061 < 99)"
     },
     {
       "id": "s43-main-ar-light",
@@ -2753,14 +2753,14 @@
       "reference": "reference-crops/s43-main-light.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s43-main-ar-light.png",
+        "overlay": "overlays/s43-main-ar-light.png",
+        "diff": "diffs/s43-main-ar-light.png",
+        "ssim": 0.760689,
+        "pixel_pct": 88.6711,
         "inspected": false
       },
-      "note": "harness-error: Execution context was destroyed, most likely because of a navigation."
+      "note": "metrics-below-threshold (ssim 0.760689 < 0.98 or pixel_pct 88.6711 < 99)"
     },
     {
       "id": "s44-main-ar-dark",
@@ -2781,14 +2781,14 @@
       "reference": "reference-crops/s44-main-dark.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s44-main-ar-dark.png",
+        "overlay": "overlays/s44-main-ar-dark.png",
+        "diff": "diffs/s44-main-ar-dark.png",
+        "ssim": 0.804579,
+        "pixel_pct": 91.1354,
         "inspected": false
       },
-      "note": "harness-error: Execution context was destroyed, most likely because of a navigation."
+      "note": "metrics-below-threshold (ssim 0.804579 < 0.98 or pixel_pct 91.1354 < 99)"
     },
     {
       "id": "s44-main-ar-light",
@@ -2809,14 +2809,14 @@
       "reference": "reference-crops/s44-main-light.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s44-main-ar-light.png",
+        "overlay": "overlays/s44-main-ar-light.png",
+        "diff": "diffs/s44-main-ar-light.png",
+        "ssim": 0.757308,
+        "pixel_pct": 88.3092,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.757308 < 0.98 or pixel_pct 88.3092 < 99)"
     },
     {
       "id": "s45-main-ar-dark",
@@ -2837,15 +2837,15 @@
       "reference": "reference-crops/s45-main-dark.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s45-main-ar-dark.png",
+        "overlay": "overlays/s45-main-ar-dark.png",
+        "diff": "diffs/s45-main-ar-dark.png",
+        "ssim": 0.773356,
+        "pixel_pct": 92.7585,
         "inspected": false
       },
       "notes": "captured on the branch AFTER fixture teardown — the truthful empty state",
-      "note": "harness-error: Execution context was destroyed, most likely because of a navigation."
+      "note": "metrics-below-threshold (ssim 0.773356 < 0.98 or pixel_pct 92.7585 < 99)"
     },
     {
       "id": "s45-main-ar-light",
@@ -2866,15 +2866,15 @@
       "reference": "reference-crops/s45-main-light.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s45-main-ar-light.png",
+        "overlay": "overlays/s45-main-ar-light.png",
+        "diff": "diffs/s45-main-ar-light.png",
+        "ssim": 0.75328,
+        "pixel_pct": 87.715,
         "inspected": false
       },
       "notes": "captured on the branch AFTER fixture teardown — the truthful empty state",
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.75328 < 0.98 or pixel_pct 87.715 < 99)"
     },
     {
       "id": "s46-phone1-ar-dark",
@@ -2895,14 +2895,14 @@
       "reference": "reference-crops/s46-phone1-dark.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s46-phone1-ar-dark.png",
+        "overlay": "overlays/s46-phone1-ar-dark.png",
+        "diff": "diffs/s46-phone1-ar-dark.png",
+        "ssim": 0.668791,
+        "pixel_pct": 86.4862,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.668791 < 0.98 or pixel_pct 86.4862 < 99)"
     },
     {
       "id": "s46-phone1-ar-light",
@@ -2923,14 +2923,14 @@
       "reference": "reference-crops/s46-phone1-light.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s46-phone1-ar-light.png",
+        "overlay": "overlays/s46-phone1-ar-light.png",
+        "diff": "diffs/s46-phone1-ar-light.png",
+        "ssim": 0.568384,
+        "pixel_pct": 52.6574,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.568384 < 0.98 or pixel_pct 52.6574 < 99)"
     },
     {
       "id": "s46-phone2-ar-dark",
@@ -2951,14 +2951,14 @@
       "reference": "reference-crops/s46-phone2-dark.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s46-phone2-ar-dark.png",
+        "overlay": "overlays/s46-phone2-ar-dark.png",
+        "diff": "diffs/s46-phone2-ar-dark.png",
+        "ssim": 0.723236,
+        "pixel_pct": 94.2077,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.723236 < 0.98 or pixel_pct 94.2077 < 99)"
     },
     {
       "id": "s46-phone2-ar-light",
@@ -2979,14 +2979,14 @@
       "reference": "reference-crops/s46-phone2-light.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s46-phone2-ar-light.png",
+        "overlay": "overlays/s46-phone2-ar-light.png",
+        "diff": "diffs/s46-phone2-ar-light.png",
+        "ssim": 0.594118,
+        "pixel_pct": 53.0084,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.594118 < 0.98 or pixel_pct 53.0084 < 99)"
     },
     {
       "id": "s48-phone1-ar-dark",
@@ -3007,14 +3007,14 @@
       "reference": "reference-crops/s48-phone1-dark.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s48-phone1-ar-dark.png",
+        "overlay": "overlays/s48-phone1-ar-dark.png",
+        "diff": "diffs/s48-phone1-ar-dark.png",
+        "ssim": 0.769905,
+        "pixel_pct": 94.6099,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.769905 < 0.98 or pixel_pct 94.6099 < 99)"
     },
     {
       "id": "s48-phone1-ar-light",
@@ -3035,14 +3035,14 @@
       "reference": "reference-crops/s48-phone1-light.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s48-phone1-ar-light.png",
+        "overlay": "overlays/s48-phone1-ar-light.png",
+        "diff": "diffs/s48-phone1-ar-light.png",
+        "ssim": 0.696517,
+        "pixel_pct": 73.8007,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.696517 < 0.98 or pixel_pct 73.8007 < 99)"
     },
     {
       "id": "s48-phone2-ar-dark",
@@ -3063,14 +3063,14 @@
       "reference": "reference-crops/s48-phone2-dark.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s48-phone2-ar-dark.png",
+        "overlay": "overlays/s48-phone2-ar-dark.png",
+        "diff": "diffs/s48-phone2-ar-dark.png",
+        "ssim": 0.707066,
+        "pixel_pct": 92.5209,
         "inspected": false
       },
-      "note": "harness-error: Execution context was destroyed, most likely because of a navigation."
+      "note": "metrics-below-threshold (ssim 0.707066 < 0.98 or pixel_pct 92.5209 < 99)"
     },
     {
       "id": "s48-phone2-ar-light",
@@ -3094,11 +3094,11 @@
         "actual": "actual-screenshots/s48-phone2-ar-light.png",
         "overlay": "overlays/s48-phone2-ar-light.png",
         "diff": "diffs/s48-phone2-ar-light.png",
-        "ssim": 0.591343,
-        "pixel_pct": 52.0586,
+        "ssim": 0.597194,
+        "pixel_pct": 52.7221,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.591343 < 0.98 or pixel_pct 52.0586 < 99)"
+      "note": "metrics-below-threshold (ssim 0.597194 < 0.98 or pixel_pct 52.7221 < 99)"
     },
     {
       "id": "s49-phone1-ar-dark",
@@ -3122,11 +3122,11 @@
         "actual": "actual-screenshots/s49-phone1-ar-dark.png",
         "overlay": "overlays/s49-phone1-ar-dark.png",
         "diff": "diffs/s49-phone1-ar-dark.png",
-        "ssim": 0.614683,
-        "pixel_pct": 87.4925,
+        "ssim": 0.653403,
+        "pixel_pct": 90.7153,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.614683 < 0.98 or pixel_pct 87.4925 < 99)"
+      "note": "metrics-below-threshold (ssim 0.653403 < 0.98 or pixel_pct 90.7153 < 99)"
     },
     {
       "id": "s49-phone1-ar-light",
@@ -3150,11 +3150,11 @@
         "actual": "actual-screenshots/s49-phone1-ar-light.png",
         "overlay": "overlays/s49-phone1-ar-light.png",
         "diff": "diffs/s49-phone1-ar-light.png",
-        "ssim": 0.52608,
-        "pixel_pct": 45.8141,
+        "ssim": 0.566559,
+        "pixel_pct": 52.2213,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.52608 < 0.98 or pixel_pct 45.8141 < 99)"
+      "note": "metrics-below-threshold (ssim 0.566559 < 0.98 or pixel_pct 52.2213 < 99)"
     },
     {
       "id": "s49-phone2-ar-dark",
@@ -3178,11 +3178,11 @@
         "actual": "actual-screenshots/s49-phone2-ar-dark.png",
         "overlay": "overlays/s49-phone2-ar-dark.png",
         "diff": "diffs/s49-phone2-ar-dark.png",
-        "ssim": 0.668058,
-        "pixel_pct": 89.1186,
+        "ssim": 0.674409,
+        "pixel_pct": 89.9515,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.668058 < 0.98 or pixel_pct 89.1186 < 99)"
+      "note": "metrics-below-threshold (ssim 0.674409 < 0.98 or pixel_pct 89.9515 < 99)"
     },
     {
       "id": "s49-phone2-ar-light",
@@ -3206,11 +3206,11 @@
         "actual": "actual-screenshots/s49-phone2-ar-light.png",
         "overlay": "overlays/s49-phone2-ar-light.png",
         "diff": "diffs/s49-phone2-ar-light.png",
-        "ssim": 0.556655,
-        "pixel_pct": 41.0742,
+        "ssim": 0.571503,
+        "pixel_pct": 47.3705,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.556655 < 0.98 or pixel_pct 41.0742 < 99)"
+      "note": "metrics-below-threshold (ssim 0.571503 < 0.98 or pixel_pct 47.3705 < 99)"
     },
     {
       "id": "s50-main-ar-dark",
@@ -3259,14 +3259,14 @@
       "reference": "reference-crops/s50-main-light.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s50-main-ar-light.png",
+        "overlay": "overlays/s50-main-ar-light.png",
+        "diff": "diffs/s50-main-ar-light.png",
+        "ssim": 0.743557,
+        "pixel_pct": 84.5096,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.743557 < 0.98 or pixel_pct 84.5096 < 99)"
     },
     {
       "id": "s51-phone1-ar-dark",
@@ -3287,14 +3287,14 @@
       "reference": "reference-crops/s51-phone1-dark.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s51-phone1-ar-dark.png",
+        "overlay": "overlays/s51-phone1-ar-dark.png",
+        "diff": "diffs/s51-phone1-ar-dark.png",
+        "ssim": 0.591629,
+        "pixel_pct": 68.2311,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.591629 < 0.98 or pixel_pct 68.2311 < 99)"
     },
     {
       "id": "s51-phone1-ar-light",
@@ -3315,14 +3315,14 @@
       "reference": "reference-crops/s51-phone1-light.png",
       "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s51-phone1-ar-light.png",
+        "overlay": "overlays/s51-phone1-ar-light.png",
+        "diff": "diffs/s51-phone1-ar-light.png",
+        "ssim": 0.544367,
+        "pixel_pct": 42.3858,
         "inspected": false
       },
-      "note": "amiri-fallback"
+      "note": "metrics-below-threshold (ssim 0.544367 < 0.98 or pixel_pct 42.3858 < 99)"
     },
     {
       "id": "s51-phone2-ar-dark",
@@ -3346,11 +3346,11 @@
         "actual": "actual-screenshots/s51-phone2-ar-dark.png",
         "overlay": "overlays/s51-phone2-ar-dark.png",
         "diff": "diffs/s51-phone2-ar-dark.png",
-        "ssim": 0.467703,
-        "pixel_pct": 50.7274,
+        "ssim": 0.466749,
+        "pixel_pct": 51.7212,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.467703 < 0.98 or pixel_pct 50.7274 < 99)"
+      "note": "metrics-below-threshold (ssim 0.466749 < 0.98 or pixel_pct 51.7212 < 99)"
     },
     {
       "id": "s51-phone2-ar-light",
@@ -3374,11 +3374,11 @@
         "actual": "actual-screenshots/s51-phone2-ar-light.png",
         "overlay": "overlays/s51-phone2-ar-light.png",
         "diff": "diffs/s51-phone2-ar-light.png",
-        "ssim": 0.523267,
-        "pixel_pct": 33.8807,
+        "ssim": 0.519252,
+        "pixel_pct": 34.6385,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.523267 < 0.98 or pixel_pct 33.8807 < 99)"
+      "note": "metrics-below-threshold (ssim 0.519252 < 0.98 or pixel_pct 34.6385 < 99)"
     },
     {
       "id": "s52-phone1-ar-dark",
@@ -3458,11 +3458,11 @@
         "actual": "actual-screenshots/s52-phone2-ar-dark.png",
         "overlay": "overlays/s52-phone2-ar-dark.png",
         "diff": "diffs/s52-phone2-ar-dark.png",
-        "ssim": 0.694057,
-        "pixel_pct": 93.1643,
+        "ssim": 0.705628,
+        "pixel_pct": 94.4787,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.694057 < 0.98 or pixel_pct 93.1643 < 99)"
+      "note": "metrics-below-threshold (ssim 0.705628 < 0.98 or pixel_pct 94.4787 < 99)"
     },
     {
       "id": "s52-phone2-ar-light",
@@ -3486,11 +3486,11 @@
         "actual": "actual-screenshots/s52-phone2-ar-light.png",
         "overlay": "overlays/s52-phone2-ar-light.png",
         "diff": "diffs/s52-phone2-ar-light.png",
-        "ssim": 0.177236,
-        "pixel_pct": 0.1727,
+        "ssim": 0.594508,
+        "pixel_pct": 53.7744,
         "inspected": false
       },
-      "note": "metrics-below-threshold (ssim 0.177236 < 0.98 or pixel_pct 0.1727 < 99)"
+      "note": "metrics-below-threshold (ssim 0.594508 < 0.98 or pixel_pct 53.7744 < 99)"
     },
     {
       "id": "s01-main-en-mirror",

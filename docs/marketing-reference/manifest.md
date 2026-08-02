@@ -1,6 +1,6 @@
 # Marketing OS — Visual Gate Manifest
 
-Generated: 2026-08-02T20:26:07.108Z
+Generated: 2026-08-02T21:31:47.103Z
 Sources: `frames-index.json` + `coverage-matrix.mjs` (regenerate with `node scripts/mos-manifest.mjs`)
 
 **Totals:** 278 rows — 124 ssim / 154 assert — pending: 0 ssim / 154 assert — updated by `scripts/mos-qa.mjs`
