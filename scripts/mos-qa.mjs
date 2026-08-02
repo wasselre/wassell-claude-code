@@ -61,6 +61,7 @@ const argv = process.argv.slice(2);
 const positional = [];
 const approveIds = [];
 let flagAll = false;
+let flagNoPersist = false;
 let flagListPending = false;
 let gateFilter = null;
 let screenFilter = null;
@@ -68,6 +69,7 @@ for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--all') flagAll = true;
   else if (a === '--list-pending') flagListPending = true;
+  else if (a === '--no-persist') flagNoPersist = true; // agent iteration loops: never touch the shared manifest
   else if (a === '--approve') {
     // everything after --approve up to the next --flag is an id
     while (i + 1 < argv.length && !argv[i + 1].startsWith('--')) approveIds.push(argv[++i]);
@@ -123,6 +125,7 @@ function renderManifestMd(manifest) {
 }
 
 function persistManifest(manifest) {
+  if (flagNoPersist) { console.log('(--no-persist: manifest untouched)'); return; }
   manifest.generated_at = new Date().toISOString();
   manifest.totals.by_gate_pending = {
     ssim: manifest.rows.filter((r) => r.gate === 'ssim' && r.status === 'pending').length,
