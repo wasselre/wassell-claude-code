@@ -128,9 +128,25 @@ export async function authorizeWhatsappSend(args: {
     return { ok: false, status: 500, error: 'Supabase env missing', reason: 'lookup_failed' };
   }
 
+  // Resolve the chats model up front so BOTH record lookups below can be scoped
+  // to it. This is not just correctness — it is the difference between a 31ms
+  // query and a timeout. The `records` SELECT RLS calls `wassell_can_view_record`,
+  // which is NOT leakproof, so Postgres must evaluate it on every candidate row
+  // BEFORE the `data->>wid` filter — and unscoped that means the ENTIRE records
+  // table (market listings, clients, …), which blew past statement_timeout and
+  // 500'd EVERY send with reason 'lookup_failed' from ~2026-07-30 on, while the
+  // WhatsApp gateway was perfectly healthy. `model_id` is indexed, so scoping to
+  // the ~few-hundred chat rows lets the RLS function run only on those.
+  const { data: chatsModel } = await svc.from('models').select('id').eq('name', 'chats').maybeSingle();
+  const chatsModelId = (chatsModel as { id?: string } | null)?.id ?? null;
+  if (!chatsModelId) {
+    return { ok: false, status: 500, error: 'chats model missing', reason: 'lookup_failed' };
+  }
+
   const { data: visible, error: visErr } = await scoped
     .from('records')
     .select('id, data')
+    .eq('model_id', chatsModelId)
     .eq('data->>wid', chatWid)
     .maybeSingle();
   if (visErr) {
@@ -154,6 +170,7 @@ export async function authorizeWhatsappSend(args: {
   const { data: exists } = await svc
     .from('records')
     .select('id')
+    .eq('model_id', chatsModelId)
     .eq('data->>wid', chatWid)
     .maybeSingle();
 
@@ -166,14 +183,9 @@ export async function authorizeWhatsappSend(args: {
     };
   }
 
-  const { data: chatsModel } = await svc.from('models').select('id').eq('name', 'chats').maybeSingle();
-  const modelId = (chatsModel as { id?: string } | null)?.id;
-  if (!modelId) {
-    return { ok: false, status: 500, error: 'chats model missing', reason: 'lookup_failed' };
-  }
   const { data: mayCreate } = await svc.rpc('wassell_user_has_action', {
     auth_user_id: args.user.userId,
-    the_model_id: modelId,
+    the_model_id: chatsModelId,
     action: 'create',
   });
   if (mayCreate !== true) {
