@@ -135,3 +135,10 @@ finish; B6 overlay; captures/approvals; journeys; gates. All specs in kimi-specs
 RESUME: after 9pm say continue (Claude agents) OR recharge Moonshot anytime
 (kimi-code.sh pipeline — independent budget). Browser gotcha: after vite HMR
 bursts, hard-reload the tab before judging runtime errors (stale module mix).
+
+## MODEL POLICY (2026-08-01) — Opus 4.8 for all NEW agents
+User switched the session to claude-opus-4-8 and asked all future agents to run on it.
+=> Every Agent() spawn from here passes model:"opus" explicitly. The 4 mobile agents
+launched just before the switch (ac2970/a3c2d4/ab3360/a17ae0) finish on Fable 5 — left
+alone rather than killed mid-file. Kimi pipeline (kimi-code.sh) is a separate budget,
+unaffected.
