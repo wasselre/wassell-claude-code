@@ -1,4 +1,4 @@
-TASK: Rebuild the settings ENGINE surfaces to EXACTLY match design screens 17 (مسارات العمل), 25 (الإعدادات home), 33 (الأدوار والصلاحيات), 37 (الأدوار ومن يشغلها), 43 (الإشعارات). Files: src/pages/Marketing/SettingsPage.tsx and/or split sections into src/pages/Marketing/components/Settings*.tsx (keep /m/settings/:section routing), additive CSS at END of mos.css under `/* === s17/s25/s33/s37/s43 additions === */`.
+TASK: Rebuild the settings ENGINE surfaces to EXACTLY match design screens 17 (مسارات العمل), 25 (الإعدادات home), 33 (الأدوار والصلاحيات), 37 (الأدوار ومن يشغلها), 43 (الإشعارات). Files: src/pages/Marketing/SettingsPage.tsx and/or split sections into src/pages/Marketing/components/Settings*.tsx (keep /m/settings/:section routing), a NEW file src/pages/Marketing/styles/settings-engine.css (import from SettingsPage.tsx; .mos-root-scoped; do NOT touch mos.css).
 
 GROUND TRUTH: READ docs/marketing-reference/source/screens/s17.html, s25.html, s33.html, s37.html, s43.html. Bilingual verbatim-Arabic; num() digits.
 

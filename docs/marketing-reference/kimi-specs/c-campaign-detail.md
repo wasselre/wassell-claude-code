@@ -1,4 +1,4 @@
-TASK: Rebuild the campaign-detail surfaces to EXACTLY match design screens 15 (تفاصيل الحملة), 20 (التنفيذات), 21 (تفاصيل التنفيذ), 39 (الحملة — المحتوى), 40 (الحملة — النتائج). Files: src/pages/Marketing/CampaignDetailPage.tsx, ExecutionDetailPage.tsx, additive CSS at END of mos.css under `/* === s15/s20/s21/s39/s40 additions === */`.
+TASK: Rebuild the campaign-detail surfaces to EXACTLY match design screens 15 (تفاصيل الحملة), 20 (التنفيذات), 21 (تفاصيل التنفيذ), 39 (الحملة — المحتوى), 40 (الحملة — النتائج). Files: src/pages/Marketing/CampaignDetailPage.tsx, ExecutionDetailPage.tsx, a NEW file src/pages/Marketing/styles/campaign-detail.css (import from CampaignDetailPage.tsx; .mos-root-scoped; do NOT touch mos.css).
 
 GROUND TRUTH: READ docs/marketing-reference/source/screens/s15.html, s20.html, s21.html, s39.html, s40.html. Bilingual verbatim-Arabic; num() digits.
 
