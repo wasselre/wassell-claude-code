@@ -278,23 +278,117 @@ const FREEZE_CSS = '*,*::before,*::after{animation:none !important;transition:no
 // setup ctx
 // ---------------------------------------------------------------------------
 
-function resolveRoute(route) {
-  return route.replace(/:([A-Za-z0-9_]+)/g, (whole, token) => {
-    const id = FIXTURE_IDS[token];
-    if (id == null || id === '') {
-      throw new Error(`mos-qa: unresolved route token ':${token}' in '${route}' — set it via MOS_FIXTURE_IDS_JSON`);
-    }
-    return String(id);
-  });
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function makeCtx(page, row) {
+/** Per-run cache for ref→id resolution and list/detail responses. Keys are
+ *  role-scoped: RLS can legitimately show different sets to different roles. */
+const refCache = new Map();
+
+function makeCtx(page, row, session, role) {
+  const bearer = session.access_token;
+
+  /** POST /api/marketing-os as THIS ROW's role. Throws on error envelopes. */
+  async function api(action, payload = {}) {
+    const res = await fetch(`${APP_URL}/api/marketing-os`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action, ...payload }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body || body.error) {
+      throw new Error(
+        `mos-qa: api '${action}' failed as ${role} — HTTP ${res.status}: ${JSON.stringify(body)?.slice(0, 500)}`,
+      );
+    }
+    return body;
+  }
+
+  async function cachedList(action, payload, field) {
+    const key = `${role}:${action}`;
+    if (!refCache.has(key)) refCache.set(key, (await api(action, payload))[field] ?? []);
+    return refCache.get(key);
+  }
+
+  /** Resolve a fixture ref to a live record id at capture time. */
+  async function resolveRef(kind, ref) {
+    const cacheKey = `${role}:${kind}:${ref}`;
+    if (refCache.has(cacheKey)) return refCache.get(cacheKey);
+    let id = null;
+    if (kind === 'content') {
+      id = (await cachedList('content_list', { limit: 500 }, 'content'))
+        .find((r) => r.ref === ref)?.id ?? null;
+    } else if (kind === 'campaign') {
+      id = (await cachedList('campaign_list', { limit: 100 }, 'campaigns'))
+        .find((r) => r.ref === ref)?.id ?? null;
+    } else if (kind === 'shoot') {
+      const requests = await cachedList('shoot_list', {}, 'requests');
+      let hit = requests.find((r) => r.ref === ref);
+      if (!hit && ref.startsWith('SR-')) {
+        // Documented branch-allocator divergence: mos_tg_shoot_ref mints 'SH-',
+        // not the mockups' 'SR-' (see scripts/mos-fixtures.mjs header note 2).
+        hit = requests.find((r) => r.ref === `SH-${ref.slice(3)}`);
+        if (hit) {
+          console.warn(`mos-qa: shoot '${ref}' resolved to branch-minted '${hit.ref}' (known SH-/SR- divergence)`);
+        }
+      }
+      id = hit?.id ?? null;
+    } else if (kind === 'asset') {
+      id = (await cachedList('asset_list', { limit: 500 }, 'assets'))
+        .find((r) => r.title === ref || r.ref === ref)?.id ?? null;
+    } else {
+      throw new Error(`mos-qa: resolveRef unknown kind '${kind}'`);
+    }
+    if (!id) {
+      throw new Error(`mos-qa: resolveRef found no ${kind} '${ref}' as ${role} — are the fixtures built? (node scripts/mos-fixtures.mjs)`);
+    }
+    refCache.set(cacheKey, id);
+    return id;
+  }
+
+  /** ':token' → live id. FIXTURE_IDS (env override) wins; otherwise the token
+   *  conventions resolve against the fixture dataset via the API. */
+  async function resolveToken(token, route) {
+    if (token === 'e1') {
+      const c002 = await resolveRef('campaign', 'C-002');
+      const key = `${role}:campaign_detail:${c002}`;
+      if (!refCache.has(key)) refCache.set(key, await api('campaign_detail', { id: c002 }));
+      const first = (refCache.get(key).executions ?? [])[0];
+      if (!first?.id) {
+        throw new Error(`mos-qa: ':e1' in '${route}' — C-002 has no executions; are the fixtures built?`);
+      }
+      return String(first.id);
+    }
+    // a012 — the asset screen 22 is built around: s22's «اقتراب ليلي خارجي»
+    // (the first asset scripts/mos-fixtures.mjs creates).
+    if (token === 'a012') return resolveRef('asset', 'اقتراب ليلي خارجي');
+    const m = token.match(/^([a-z]+)(\d+)$/);
+    if (m) {
+      const n = m[2].padStart(3, '0');
+      if (m[1] === 'v' || m[1] === 'p') return resolveRef('content', `${m[1].toUpperCase()}-${n}`);
+      if (m[1] === 'c') return resolveRef('campaign', `C-${n}`);
+      if (m[1] === 'sr') return resolveRef('shoot', `SR-${n}`);
+    }
+    throw new Error(`mos-qa: unresolved route token ':${token}' in '${route}' — set it via MOS_FIXTURE_IDS_JSON`);
+  }
+
+  async function resolveRoute(route) {
+    let out = route;
+    for (const m of route.matchAll(/:([A-Za-z0-9_]+)/g)) {
+      const token = m[1];
+      const fixed = FIXTURE_IDS[token];
+      const id = fixed != null && fixed !== '' ? String(fixed) : await resolveToken(token, route);
+      out = out.replace(`:${token}`, id);
+    }
+    return out;
+  }
+
   return {
     page,
     appUrl: APP_URL,
     row,
+    role,
+    api,
+    resolveRef,
     resolveRoute,
     goto: async (p) => {
       await page.goto(APP_URL + p, { waitUntil: 'networkidle0', timeout: 60000 });
@@ -364,7 +458,7 @@ async function captureRow(browser, row, results) {
     }
 
     // The state recipe.
-    await recipe(makeCtx(page, row));
+    await recipe(makeCtx(page, row, session, role));
     await page.addStyleTag({ content: FREEZE_CSS }).catch((err) => {
       // addStyleTag after a same-document SPA navigation is fine; a real
       // failure here means the page died — that must be loud, not skipped.
