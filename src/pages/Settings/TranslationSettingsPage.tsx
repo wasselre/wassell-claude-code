@@ -12,6 +12,7 @@ import {
 } from '@/lib/migrateLegacyLabels';
 import { Languages, Search, AlertTriangle, Check, ChevronDown, Wand2, Loader2, X } from 'lucide-react';
 import BackToSettings from './components/BackToSettings';
+import RecordValueTranslationsPanel from './components/RecordValueTranslationsPanel';
 // types used indirectly through store data
 
 type TranslationItem = {
@@ -410,6 +411,11 @@ export default function TranslationSettingsPage() {
           <div className="text-xs text-charcoal/40">{isAr ? 'مترجم' : 'Translated'}</div>
         </div>
       </div>
+
+      {/* ── Record-value translations (bilingual W2): seed-batch acceptance
+          + per-model unit status. The gate between imported legacy
+          translations and anything a user sees. ─────────────────────── */}
+      <RecordValueTranslationsPanel />
 
       {/* ── One-shot legacy migration panel ────────────────────────────
           Scans for items that the legacy auto-translate stub left in
