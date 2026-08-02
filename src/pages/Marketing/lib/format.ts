@@ -87,6 +87,21 @@ export function dateTime(iso: string | null | undefined, isAr: boolean): string 
   return `${shortDate(iso, isAr)} · ${num(h12, isAr)}:${isAr ? toArabicDigits(m) : m} ${suffix}`;
 }
 
+/**
+ * Screen 08's approver stamp — «٢٧ يوليو، ٢:١٤م» / "Jul 27, 2:14pm". The short
+ * ص/م suffix (not صباحًا/مساءً) is the mockup's own shape.
+ */
+export function dateStamp(iso: string | null | undefined, isAr: boolean): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const h = d.getHours();
+  const m = d.getMinutes().toString().padStart(2, '0');
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  const suffix = isAr ? (h < 12 ? 'ص' : 'م') : h < 12 ? 'am' : 'pm';
+  return `${shortDate(iso, isAr)}، ${num(h12, isAr)}:${isAr ? toArabicDigits(m) : m}${suffix}`;
+}
+
 /** Whole days between now and `iso`. Negative = in the past. */
 export function daysFromNow(iso: string | null | undefined): number | null {
   if (!iso) return null;

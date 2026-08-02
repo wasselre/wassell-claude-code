@@ -205,6 +205,8 @@ export interface MosContentRow {
   target_publish_at: string | null;
   updated_at: string;
   /** Only present on `content_detail` (the list select names its columns). */
+  created_at?: string;
+  created_by_user_id?: string | null;
   data?: Record<string, unknown>;
   goal?: string | null;
   audience?: string | null;
@@ -228,6 +230,10 @@ export interface MosTask {
   opened_at: string;
   due_at: string | null;
   closed_at: string | null;
+  /** Who closed it — drives screen 08's «اعتمده ريان · …» approver meta line. */
+  closed_by_user_id?: string | null;
+  /** What a rejection targeted (field keys + `scene:<id>`) — screen 38's chips. */
+  revision_targets?: string[];
   /** From the PINNED version's step — drives screen 35's approvals split. */
   is_approval?: boolean;
   approval_kind?: 'creative' | 'process' | 'budget' | null;
@@ -276,7 +282,7 @@ export interface MosScene {
   visual: string | null;
   voiceover: string | null;
   on_screen_text: string | null;
-  footage_status: 'have' | 'to_make' | 'missing';
+  footage_status: 'have' | 'to_make' | 'missing' | 'template';
   note: string | null;
 }
 
@@ -1284,9 +1290,12 @@ export const PUB_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
 };
 
 export const FOOTAGE_LABELS: Record<string, { ar: string; en: string }> = {
-  have:    { ar: 'متوفرة', en: 'Have it' },
-  to_make: { ar: 'تُصنع',  en: 'To be made' },
-  missing: { ar: 'ناقصة',  en: 'Missing' },
+  have:     { ar: 'متوفرة', en: 'Have it' },
+  to_make:  { ar: 'تُصنع',  en: 'To be made' },
+  missing:  { ar: 'ناقصة',  en: 'Missing' },
+  // Screen 07's fourth state: the shot comes from a template (الشعار + واتساب),
+  // so nobody has to film it and it isn't "made" per-video either.
+  template: { ar: 'قالب',   en: 'Template' },
 };
 
 export const ROLE_LABELS: Record<MosRole, { ar: string; en: string }> = {

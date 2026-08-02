@@ -1936,3 +1936,43 @@
   .mos-root .body > .grid[style*="1.6fr"],
   .mos-root .body > .grid[style*="1.4fr"]{grid-template-columns:1fr}
 }
+
+/* === s06-s08/s38 additions === */
+/* Mention inside a comment body (screens 06/07/08 «@سارة») — copper, bold. */
+.mos-root .mn{color:var(--copper);font-weight:700}
+/* Screen 36's «قادم إليك» banner — a notice, not a task: the role sees work
+   coming without a queue full of things it cannot start. */
+.mos-root .up-banner{display:flex;align-items:center;gap:10px;margin-bottom:14px;
+  background:color-mix(in srgb,var(--gold) 12%,transparent);
+  border:1px solid color-mix(in srgb,var(--gold) 36%,transparent);
+  border-radius:9px;padding:10px 13px;font-size:12px;color:var(--ink-2);line-height:1.7}
+/* «مقارنة بالنسخة ١» panel — two frozen submissions side by side, the changed
+   cells lit (new side copper, old side late) so the diff is seen, not remembered. */
+.mos-root .cmp-head,
+.mos-scrim .cmp-head{display:grid;grid-template-columns:150px 1fr 1fr;gap:10px;align-items:start;margin-bottom:4px}
+.mos-root .cmp-row,
+.mos-scrim .cmp-row{display:grid;grid-template-columns:150px 1fr 1fr;gap:10px;padding:7px 0;border-top:1px solid var(--line-soft);font-size:12.5px}
+.mos-root .cmp-k,
+.mos-scrim .cmp-k{color:var(--mute);font-size:11.5px;padding-top:3px}
+.mos-root .cmp-v,
+.mos-scrim .cmp-v{line-height:1.85;white-space:pre-line;overflow-wrap:anywhere;border-radius:6px;padding:2px 8px}
+.mos-root .cmp-v.chg,
+.mos-scrim .cmp-v.chg{background:color-mix(in srgb,var(--copper) 11%,transparent)}
+.mos-root .cmp-v.chg-old,
+.mos-scrim .cmp-v.chg-old{background:color-mix(in srgb,var(--late) 8%,transparent);color:var(--mute)}
+/* Screen 38 — the three-rounds alert: the footer's sentence, promoted to a
+   late-tinted banner at the top of the modal when round >= 3. */
+.mos-scrim .s38-alert{background:color-mix(in srgb,var(--late) 9%,transparent);
+  border:1px solid color-mix(in srgb,var(--late) 32%,transparent);
+  border-radius:8px;padding:10px 13px;font-size:11.5px;color:var(--late);
+  font-weight:700;line-height:1.8}
+/* Screen 38 — «إلى من تعود؟» role cards. The default carries the copper
+   border; the alternative is drawn dimmed because the engine's return step is
+   not a choice this modal can make. */
+.mos-scrim .s38-role{flex:1;border:1px solid var(--line);border-radius:8px;
+  padding:10px 12px;display:flex;align-items:center;gap:9px;background:var(--paper)}
+.mos-scrim .s38-role.on{border-color:var(--copper);
+  background:color-mix(in srgb,var(--copper) 8%,transparent)}
+/* Screen 38 — the «عند الإرسال» consequence panel, transcribed from the mockup. */
+.mos-scrim .s38-cons{background:var(--sand-2);border:1px solid var(--line);
+  border-radius:8px;padding:11px 13px;font-size:11.5px;color:var(--mute);line-height:1.9}

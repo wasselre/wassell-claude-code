@@ -1,25 +1,38 @@
 /**
- * The content workspace — design screens 06 through 12, plus 38.
+ * The content workspace — design screens 06 through 12, plus 36 and 38.
  *
- * One item, six tabs, one stage rail. Tabs are LOCAL STATE, not routes: moving
- * between Overview and Publishing must not refetch the item, which is the
- * concrete answer to "it always reloads".
+ * One item, six tabs, one activity rail. Tabs are LOCAL STATE, not routes:
+ * moving between Overview and Publishing must not refetch the item, which is
+ * the concrete answer to "it always reloads".
  *
  * Everything the header shows — stage, owner, round, overdue — is derived from
  * the open task by `mos_content_v`. There is no status dropdown, so this header
  * can never disagree with the queue.
+ *
+ * Screen 36's role rules are computed HERE, once, and fanned out:
+ *   canAct      — the open task's role is one I HOLD, or I'm manager/admin.
+ *                 Buttons render only when this is true; never disabled
+ *                 refusals.
+ *   canEditNow  — the stage sits with MY role and that role writes. A manager
+ *                 reviewing can approve or send back — «لا يستطيع تعديل النص
+ *                 بنفسه» — so approval does not imply editing.
+ *   قادم إليك    — a later step on the pinned path belongs to my role: a
+ *                 banner, not a task.
+ *   ceo         — read-only AND no script, scenes, or comments at all.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  MosAccount, MosComment, MosContentRow, MosPublication, MosScene, MosStep, MosTask,
-  PLATFORM_LABELS, PUB_STATUS_LABELS, PURPOSE_LABELS, ROLE_LABELS,
-  fetchComments, fetchContentDetail, fetchPublications, fieldSchemaKeys, isOverdue, updateContent,
+  MosAccount, MosComment, MosContentRow, MosContentVersion, MosPublication, MosScene,
+  MosStep, MosTask, PLATFORM_LABELS, PUB_STATUS_LABELS, ROLE_LABELS, RolePerson,
+  addComment, completeTask, fetchCampaigns, fetchComments, fetchContentDetail,
+  fetchContentVersions, fetchPublications, fieldSchemaEntries, fieldSchemaKeys,
+  isOverdue, updateContent,
 } from '@/lib/marketingOS/client';
 import { useAppStore } from '@/stores/appStore';
 import { useWorkspace } from './MarketingWorkspace';
 import {
-  KindCell, LoadError, Pill, ReadField, Skeleton, StatusPill,
+  KindCell, LoadError, Pill, ReadField, Skeleton, StatusPill, Modal,
 } from './components/kit';
 import StageRail from './components/StageRail';
 import TaskCard from './components/TaskCard';
@@ -28,18 +41,55 @@ import SceneTable from './components/SceneTable';
 import PublishTab from './components/PublishTab';
 import PerformanceTab from './components/PerformanceTab';
 import MaterialsTab from './components/MaterialsTab';
-import CommentThread from './components/CommentThread';
-import { IconBack, IconForward } from './components/icons';
-import { daysAgo, num, shortDate } from './lib/format';
+import RequestChangesModal from './components/RequestChangesModal';
+import { IconBack, IconCheck, IconForward, IconSend } from './components/icons';
+import { daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
 
 type Tab = 'overview' | 'content' | 'materials' | 'tasks' | 'publishing' | 'performance';
+
+/** The breadcrumb's plural type names — s06 «الفيديوهات», s08 «المنشورات». */
+const TYPE_PLURAL: Record<string, { ar: string; en: string }> = {
+  video:    { ar: 'الفيديوهات', en: 'Videos' },
+  post:     { ar: 'المنشورات',  en: 'Posts' },
+  carousel: { ar: 'الكاروسيل',  en: 'Carousels' },
+  story:    { ar: 'القصص',      en: 'Stories' },
+};
+
+/** Labels for data keys the comparison panel can meet outside the schema. */
+const DATA_LABELS: Record<string, { ar: string; en: string }> = {
+  idea:              { ar: 'الفكرة', en: 'Idea' },
+  hook:              { ar: 'الافتتاحية', en: 'Hook' },
+  core_message:      { ar: 'الرسالة الأساسية', en: 'Core message' },
+  voiceover:         { ar: 'نص التعليق الصوتي', en: 'Voice-over' },
+  script:            { ar: 'النص', en: 'Script' },
+  headlines:         { ar: 'العناوين', en: 'Headlines' },
+  approved_headline: { ar: 'العنوان المعتمد', en: 'Approved headline' },
+  caption:           { ar: 'الكابشن', en: 'Caption' },
+  hashtags:          { ar: 'الوسوم', en: 'Hashtags' },
+  design_brief:      { ar: 'الاتجاه البصري', en: 'Visual direction' },
+  design_format:     { ar: 'الصيغة', en: 'Format' },
+  design_reference:  { ar: 'مرجع', en: 'Reference' },
+  slides:            { ar: 'الشرائح', en: 'Slides' },
+  duration:          { ar: 'المدة', en: 'Duration' },
+  duration_size:     { ar: 'المدة والحجم', en: 'Duration & size' },
+  aspect_ratio:      { ar: 'نسبة العرض', en: 'Aspect ratio' },
+  expiry:            { ar: 'تاريخ الانتهاء', en: 'Expiry' },
+};
+
+/** «اليوم» / «أمس» / «٢٢ يوليو» — the rail's timestamp shape. */
+function relDay(iso: string | null | undefined, isAr: boolean): string {
+  if (!iso) return '—';
+  const d = daysFromNow(iso);
+  if (d === 0) return isAr ? 'اليوم' : 'today';
+  if (d === -1) return isAr ? 'أمس' : 'yesterday';
+  return shortDate(iso, isAr);
+}
 
 export default function ContentDetailPage() {
   const { contentId } = useParams<{ contentId: string }>();
   const navigate = useNavigate();
-  const { isAr, role, can, typeLabel, projectName, contentTypes, people, projects } = useWorkspace();
-  // CommentThread wants the legacy {id,name_ar,name_en} shape.
-  const users = people.map((p) => ({ id: p.user_id, name_ar: p.name_ar, name_en: p.name_en }));
+  const addToast = useAppStore((s) => s.addToast);
+  const { isAr, role, roles, can, typeLabel, projectName, contentTypes, people, projects } = useWorkspace();
 
   const [item, setItem] = useState<MosContentRow | null>(null);
   const [tasks, setTasks] = useState<MosTask[]>([]);
@@ -49,10 +99,15 @@ export default function ContentDetailPage() {
   const [accounts, setAccounts] = useState<MosAccount[]>([]);
   const [comments, setComments] = useState<MosComment[]>([]);
   const [materialCount, setMaterialCount] = useState(0);
+  const [campaignName, setCampaignName] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingBrief, setEditingBrief] = useState(false);
+  const [actBusy, setActBusy] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [versions, setVersions] = useState<MosContentVersion[] | null>(null);
 
   const load = useCallback(async () => {
     if (!contentId) return;
@@ -82,26 +137,65 @@ export default function ContentDetailPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // The campaign tag («أغسطس العضوي») needs one extra lookup, only when the
+  // item is actually linked. A failure hides the tag — and is logged, never
+  // swallowed.
+  const campaignId = item?.campaign_id ?? null;
+  useEffect(() => {
+    if (!campaignId) { setCampaignName(null); return; }
+    let alive = true;
+    fetchCampaigns()
+      .then((res) => {
+        if (!alive) return;
+        setCampaignName(res.campaigns.find((c) => c.id === campaignId)?.name ?? null);
+      })
+      .catch((e: unknown) => { console.error('[marketing] campaign name unavailable', e); });
+    return () => { alive = false; };
+  }, [campaignId]);
+
   const openTask = tasks.find((t) => t.status === 'open') ?? null;
   const currentStep = openTask ? steps.find((s) => s.id === openTask.step_id) ?? null : null;
   const type = item ? contentTypes.find((t) => t.key === item.content_type_key) ?? null : null;
 
+  /* ── screen 36's rules, computed once ─────────────────────────────── */
+
+  /** The task is actionable: its role is one I HOLD, or I'm manager/admin. */
+  const canAct = useMemo(() => {
+    if (!openTask) return false;
+    if (roles.includes('administrator') || roles.includes('marketing_manager')) return true;
+    return roles.includes(openTask.role);
+  }, [openTask, roles]);
+
   /**
-   * Editing is allowed when the open stage sits with YOUR role — the same rule
-   * the database enforces. Managers and admins can always edit, because someone
-   * has to be able to fix a typo at 11pm.
+   * Writing is editable only while the stage sits with MY role — s36: the
+   * manager approves or returns, «لا يستطيع تعديل النص بنفسه». CEO never.
    */
   const canEditNow = useMemo(() => {
-    if (role === 'administrator' || role === 'marketing_manager') return true;
+    if (role === 'ceo') return false;
     if (!openTask) return false;
-    return openTask.role === role && can('write_content');
-  }, [role, openTask, can]);
+    return roles.includes(openTask.role) && can('write_content');
+  }, [role, openTask, roles, can]);
 
-  const canActOnTask = useMemo(() => {
-    if (!openTask) return false;
-    if (role === 'administrator') return true;
-    return openTask.role === role;
-  }, [openTask, role]);
+  /** Approving the creative (headline pick, approve button) — the reviewer's action. */
+  const canApproveCreative = useMemo(
+    () => canAct && currentStep?.is_approval === true && can('approve_creative'),
+    [canAct, currentStep, can],
+  );
+
+  /** CEO: read-only, and the script/scenes/comments are HIDDEN, not locked. */
+  const ceoView = role === 'ceo';
+
+  /** «قادم إليك» — a LATER step on the pinned path belongs to a role I hold. */
+  const upcomingForMe = useMemo(() => {
+    if (!openTask || canAct || ceoView) return null;
+    const currentPos = steps.find((s) => s.id === openTask.step_id)?.position ?? -1;
+    if (currentPos < 0) return null;
+    const mine = steps
+      .filter((s) => s.position > currentPos && roles.includes(s.role))
+      .sort((a, b) => a.position - b.position)[0];
+    if (!mine) return null;
+    return { step: mine, stepsAway: mine.position - currentPos };
+  }, [openTask, canAct, ceoView, steps, roles]);
 
   if (loading && !item) {
     return <div className="body"><Skeleton rows={7} /></div>;
@@ -141,14 +235,91 @@ export default function ContentDetailPage() {
         .pop() ?? null
     : null;
 
-  const tabs: Array<{ key: Tab; ar: string; en: string; badge?: number }> = [
+  // Screen 08's approver meta: the latest creative approval's closer + time.
+  const lastApproval = [...tasks]
+    .filter((t) => t.status === 'done' && t.result === 'approved')
+    .sort((a, b) => (a.closed_at ?? '').localeCompare(b.closed_at ?? ''))
+    .pop() ?? null;
+  const nameOf = (userId: string | null | undefined): string | null => {
+    if (!userId) return null;
+    const u = people.find((x) => x.user_id === userId);
+    if (!u) return null;
+    return (isAr ? u.name_ar : u.name_en) ?? u.name_en ?? u.name_ar;
+  };
+  const approverMeta = lastApproval
+    ? { name: nameOf(lastApproval.closed_by_user_id), at: lastApproval.closed_at }
+    : null;
+
+  // The step under review (for «اعتماد النص») is the one BEFORE an approval step.
+  const reviewedStep = currentStep?.is_approval
+    ? [...steps].sort((a, b) => a.position - b.position)
+        .filter((s) => s.position < currentStep.position)
+        .pop() ?? null
+    : null;
+  const nextStep = currentStep
+    ? steps.find((s) => s.position === currentStep.position + 1) ?? null
+    : null;
+
+  const ownerRoleLabel = item.owner_role
+    ? ROLE_LABELS[item.owner_role]
+      ? isAr ? ROLE_LABELS[item.owner_role].ar : ROLE_LABELS[item.owner_role].en
+      : item.owner_role
+    : null;
+
+  const dueAt = item.current_task_due_at ?? item.due_at;
+  const dueToday = dueAt ? daysFromNow(dueAt) === 0 : false;
+
+  const runTaskAction = async (result: 'submitted' | 'approved'): Promise<void> => {
+    if (!openTask) return;
+    setActBusy(true);
+    try {
+      await completeTask(openTask.id, result);
+      addToast(
+        result === 'approved'
+          ? isAr ? 'اعتُمد — انتقل إلى الخطوة التالية.' : 'Approved — it moved to the next stage.'
+          : isAr ? 'أُرسل — انتقل إلى الخطوة التالية.' : 'Submitted — it moved to the next stage.',
+        'success',
+      );
+      await load();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setActBusy(false);
+    }
+  };
+
+  const openCompare = (): void => {
+    setCompareOpen(true);
+    if (versions !== null) return;
+    fetchContentVersions(item.id)
+      .then((res) => setVersions(res.versions))
+      .catch((e: unknown) => {
+        console.error('[marketing] version history unavailable', e);
+        addToast(e instanceof Error ? e.message : String(e), 'error');
+        setCompareOpen(false);
+      });
+  };
+
+  const allTabs: Array<{ key: Tab; ar: string; en: string; badge?: number; ceoHidden?: boolean }> = [
     { key: 'overview', ar: 'نظرة عامة', en: 'Overview' },
-    { key: 'content', ar: 'المحتوى', en: 'Content' },
+    // Screen 36: the CEO sees NO script and NO scenes — the tab itself goes.
+    { key: 'content', ar: 'المحتوى', en: 'Content', ceoHidden: true },
     { key: 'materials', ar: 'المواد', en: 'Material', badge: materialCount || undefined },
     { key: 'tasks', ar: 'المهام والاعتمادات', en: 'Tasks & approvals', badge: openTasks || undefined },
     { key: 'publishing', ar: 'النشر', en: 'Publishing', badge: openPubs || undefined },
     { key: 'performance', ar: 'الأداء', en: 'Performance' },
   ];
+  const tabs = allTabs.filter((t) => !(ceoView && t.ceoHidden));
+  const activeTab: Tab = tabs.some((t) => t.key === tab) ? tab : 'overview';
+
+  const plural = TYPE_PLURAL[item.content_type_key];
+  const typePluralLabel = plural ? (isAr ? plural.ar : plural.en) : typeLabel(item.content_type_key);
+
+  const upcomingCopy = upcomingForMe
+    ? isAr
+      ? `قادم إليك · بعد ${upcomingForMe.stepsAway === 1 ? 'خطوة' : upcomingForMe.stepsAway === 2 ? 'خطوتين' : `${num(upcomingForMe.stepsAway, true)} خطوات`}`
+      : `Coming to you · ${upcomingForMe.stepsAway} step${upcomingForMe.stepsAway === 1 ? '' : 's'} away`
+    : '';
 
   return (
     <>
@@ -161,7 +332,7 @@ export default function ContentDetailPage() {
                 {isAr ? 'المحتوى' : 'Content'}
               </button>
               <span className="sep">/</span>
-              <span>{typeLabel(item.content_type_key)}</span>
+              <span>{typePluralLabel}</span>
               <span className="sep">/</span>
               <span className="ltr">{item.ref}</span>
             </div>
@@ -172,26 +343,29 @@ export default function ContentDetailPage() {
                 <span className="tag">{isAr ? `النسخة ${num(version, true)}` : `Version ${version}`}</span>
               )}
               {item.project_id && <span className="tag">{projectName(item.project_id)}</span>}
-              <span className="tag tag-t">
-                {(isAr ? PURPOSE_LABELS[item.purpose]?.ar : PURPOSE_LABELS[item.purpose]?.en) ?? item.purpose}
-              </span>
+              {campaignName && <span className="tag">{campaignName}</span>}
               <StatusPill row={item} isAr={isAr} />
-              {item.owner_role && (
+              {ownerRoleLabel && (
                 <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
                   {isAr ? 'لدى ' : 'with '}
-                  <b style={{ color: 'var(--ink)' }}>
-                    {ROLE_LABELS[item.owner_role]
-                      ? isAr ? ROLE_LABELS[item.owner_role].ar : ROLE_LABELS[item.owner_role].en
-                      : item.owner_role}
-                  </b>
+                  <b style={{ color: 'var(--ink)' }}>{ownerRoleLabel}</b>
                   {openTask && <> · {daysAgo(openTask.opened_at, isAr)}</>}
                 </span>
               )}
-              {overdue && (
+              {overdue && dueAt && (
                 <span style={{ fontSize: 11.5, color: 'var(--late)', fontWeight: 700 }}>
                   {isAr ? 'استحقاق ' : 'due '}
-                  {shortDate(item.current_task_due_at ?? item.due_at, isAr)} ·{' '}
-                  {isAr ? 'متأخر' : 'late'}
+                  {shortDate(dueAt, isAr)} · {isAr ? 'متأخر' : 'late'}
+                </span>
+              )}
+              {!overdue && dueToday && (
+                <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
+                  {isAr ? 'الاستحقاق اليوم' : 'due today'}
+                </span>
+              )}
+              {!overdue && !dueToday && dueAt && openTask && (
+                <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
+                  {isAr ? 'الاستحقاق ' : 'due '}{shortDate(dueAt, isAr)}
                 </span>
               )}
               <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
@@ -200,9 +374,50 @@ export default function ContentDetailPage() {
             </div>
           </div>
           <div className="acts">
-            <button type="button" className="btn" onClick={() => void load()}>
-              {isAr ? 'تحديث' : 'Refresh'}
-            </button>
+            {/* «مقارنة بالنسخة ١» — anyone who can read may compare. */}
+            {version > 1 && (
+              <button type="button" className="btn btn-d" onClick={openCompare}>
+                {isAr ? `مقارنة بالنسخة ${num(version - 1, true)}` : `Compare with version ${version - 1}`}
+              </button>
+            )}
+            {/* Screen 36: the header buttons are the CURRENT ROLE's buttons.
+                They render only while the task is actionable — no disabled
+                refusals. */}
+            {openTask && canAct && currentStep?.is_approval && (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={actBusy}
+                  onClick={() => setRejectOpen(true)}
+                >
+                  {isAr ? 'طلب تعديلات' : 'Request changes'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-go"
+                  disabled={actBusy}
+                  onClick={() => void runTaskAction('approved')}
+                >
+                  <IconCheck />
+                  {isAr
+                    ? `اعتماد ${reviewedStep?.label_ar ?? ''}`.trim()
+                    : `Approve ${reviewedStep?.label_en ?? ''}`.trim()}
+                </button>
+              </>
+            )}
+            {openTask && canAct && currentStep && !currentStep.is_approval && (
+              <button
+                type="button"
+                className="btn btn-p"
+                disabled={actBusy}
+                onClick={() => void runTaskAction('submitted')}
+              >
+                {isAr
+                  ? nextStep?.is_approval ? 'إرسال للمراجعة' : 'إرسال للخطوة التالية'
+                  : nextStep?.is_approval ? 'Submit for review' : 'Submit to the next stage'}
+              </button>
+            )}
           </div>
         </div>
         <div className="tabs">
@@ -210,7 +425,7 @@ export default function ContentDetailPage() {
             <button
               key={t.key}
               type="button"
-              className={tab === t.key ? 'on' : ''}
+              className={activeTab === t.key ? 'on' : ''}
               onClick={() => setTab(t.key)}
             >
               {isAr ? t.ar : t.en}
@@ -228,129 +443,167 @@ export default function ContentDetailPage() {
             </div>
           )}
 
-          {tab === 'overview' && (
-            <div style={{ display: 'grid', gap: 16 }}>
-              {openTask ? (
-                <TaskCard
-                  item={item}
-                  task={openTask}
-                  step={currentStep}
-                  scenes={scenes}
-                  canAct={canActOnTask}
-                  isAr={isAr}
-                  onDone={() => void load()}
-                />
-              ) : (
-                <div className="notice">
-                  {item.status_key === 'done'
-                    ? isAr
-                      ? 'انتهى مسار العمل لهذا العنصر — لا مهمة مفتوحة.'
-                      : 'The workflow is finished for this item — no open task.'
-                    : isAr
-                      ? 'لا مهمة مفتوحة. هذا العنصر ليس في طابور أحد.'
-                      : 'No open task. This item is in nobody’s queue.'}
-                </div>
-              )}
+          {/* Screen 36: «قادم إليك» is NOT a task — the montage sees the work
+              coming without a queue full of things they cannot start. */}
+          {upcomingForMe && (
+            <div className="up-banner">
+              <Pill tone="idle">{upcomingCopy}</Pill>
+              <span>
+                {isAr
+                  ? `«${upcomingForMe.step.label_ar}» — يظهر في مهامك عند وصوله، لا قبل.`
+                  : `“${upcomingForMe.step.label_en}” — it appears in your queue when it arrives, not before.`}
+              </span>
+            </div>
+          )}
 
-              <div className="card">
-                <div className="card-h">
-                  <h4>{isAr ? 'الموجز' : 'The brief'}</h4>
-                  <span className="r">
-                    {isAr ? 'يُحدَّد عند الإنشاء · قابل للتعديل' : 'set at creation · editable'}
-                  </span>
-                  {canEditNow && (
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      onClick={() => setEditingBrief((v) => !v)}
-                    >
-                      {editingBrief ? (isAr ? 'إنهاء' : 'Done') : (isAr ? 'تعديل' : 'Edit')}
-                    </button>
-                  )}
+          {activeTab === 'overview' && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: steps.length > 0 ? '1fr 216px' : '1fr',
+                gap: 18,
+                alignItems: 'start',
+              }}
+            >
+              <div style={{ display: 'grid', gap: 16 }}>
+                {openTask ? (
+                  <TaskCard
+                    item={item}
+                    task={openTask}
+                    step={currentStep}
+                    scenes={scenes}
+                    canAct={canAct}
+                    isAr={isAr}
+                    onDone={() => void load()}
+                  />
+                ) : (
+                  <div className="notice">
+                    {item.status_key === 'done'
+                      ? isAr
+                        ? 'انتهى مسار العمل لهذا العنصر — لا مهمة مفتوحة.'
+                        : 'The workflow is finished for this item — no open task.'
+                      : isAr
+                        ? 'لا مهمة مفتوحة. هذا العنصر ليس في طابور أحد.'
+                        : 'No open task. This item is in nobody’s queue.'}
+                  </div>
+                )}
+
+                <div className="card">
+                  <div className="card-h">
+                    <h4>{isAr ? 'الموجز' : 'The brief'}</h4>
+                    <span className="r">
+                      {isAr ? 'يُحدَّد عند الإنشاء · قابل للتعديل حتى المونتاج' : 'set at creation · editable until montage'}
+                    </span>
+                    {canEditNow && (
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => setEditingBrief((v) => !v)}
+                      >
+                        {editingBrief ? (isAr ? 'إنهاء' : 'Done') : (isAr ? 'تعديل' : 'Edit')}
+                      </button>
+                    )}
+                  </div>
+                  <div className="card-b">
+                    {editingBrief ? (
+                      <BriefForm
+                        row={item}
+                        isAr={isAr}
+                        projects={projects}
+                        onSaved={(patched) => { setItem(patched); setEditingBrief(false); }}
+                      />
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 26px' }}>
+                        <ReadField label={isAr ? 'الهدف' : 'Goal'}>{item.goal || '—'}</ReadField>
+                        <ReadField label={isAr ? 'الجمهور' : 'Audience'}>{item.audience || '—'}</ReadField>
+                        <ReadField label={isAr ? 'الزاوية' : 'Angle'}>{item.angle || '—'}</ReadField>
+                        <ReadField label={isAr ? 'دعوة الإجراء' : 'Call to action'}>{item.cta || '—'}</ReadField>
+                        <ReadField label={isAr ? 'يُنشر على' : 'Publishing to'}>
+                          {publications.length > 0
+                            ? publications
+                                .map((p) => (isAr ? PLATFORM_LABELS[p.platform]?.ar : PLATFORM_LABELS[p.platform]?.en) ?? p.platform)
+                                .join(isAr ? ' · ' : ' · ')
+                            : '—'}
+                        </ReadField>
+                        <ReadField label={isAr ? 'المدة المستهدفة' : 'Target duration'}>
+                          {typeof item.data?.duration_size === 'string' && item.data.duration_size !== ''
+                            ? item.data.duration_size
+                            : '—'}
+                        </ReadField>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="card-b">
-                  {editingBrief ? (
-                    <BriefForm
-                      row={item}
-                      isAr={isAr}
-                      projects={projects}
-                      onSaved={(patched) => { setItem(patched); setEditingBrief(false); }}
-                    />
+
+                <div className="card">
+                  <div className="card-h">
+                    <h4>{isAr ? 'خطة النشر' : 'Publishing plan'}</h4>
+                    <span className="r">
+                      {isAr
+                        ? `${num(publications.length, true)} منصة${publications.every((p) => !p.scheduled_at && !p.published_at) && publications.length > 0 ? ' · لا شيء مجدول بعد' : ''}`
+                        : `${publications.length} platforms${publications.every((p) => !p.scheduled_at && !p.published_at) && publications.length > 0 ? ' · nothing scheduled yet' : ''}`}
+                    </span>
+                    <button type="button" className="btn btn-sm" onClick={() => setTab('publishing')}>
+                      {isAr ? 'فتح' : 'Open'}
+                    </button>
+                  </div>
+                  {publications.length === 0 ? (
+                    <p style={{ padding: 20, textAlign: 'center', fontSize: 12.5, color: 'var(--mute)' }}>
+                      {isAr ? 'لا منصات بعد.' : 'No platforms yet.'}
+                    </p>
                   ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 26px' }}>
-                      <ReadField label={isAr ? 'الهدف' : 'Goal'}>{item.goal || '—'}</ReadField>
-                      <ReadField label={isAr ? 'الجمهور' : 'Audience'}>{item.audience || '—'}</ReadField>
-                      <ReadField label={isAr ? 'الزاوية' : 'Angle'}>{item.angle || '—'}</ReadField>
-                      <ReadField label={isAr ? 'دعوة الإجراء' : 'Call to action'}>{item.cta || '—'}</ReadField>
-                      <ReadField label={isAr ? 'المشروع' : 'Project'}>
-                        {item.project_id ? projectName(item.project_id) : '—'}
-                      </ReadField>
-                      <ReadField label={isAr ? 'المدة والحجم المطلوب' : 'Required duration & volume'}>
-                        {typeof item.data?.duration_size === 'string' && item.data.duration_size !== ''
-                          ? item.data.duration_size
-                          : '—'}
-                      </ReadField>
+                    <div className="tbl-wrap">
+                      <table className="tbl">
+                        <tbody>
+                          {publications.map((p) => (
+                            <tr key={p.id}>
+                              <td style={{ width: 140 }}>
+                                <span className="tag">
+                                  {(isAr ? PLATFORM_LABELS[p.platform]?.ar : PLATFORM_LABELS[p.platform]?.en) ?? p.platform}
+                                </span>
+                              </td>
+                              <td className="ltr" style={{ color: 'var(--mute)' }}>{p.account_handle ?? '—'}</td>
+                              <td style={{ width: 170, color: 'var(--mute)' }}>
+                                {p.published_at || p.scheduled_at
+                                  ? shortDate(p.published_at ?? p.scheduled_at, isAr)
+                                  : (isAr ? 'بلا موعد' : 'no time set')}
+                              </td>
+                              <td style={{ width: 110 }}>
+                                <Pill tone={p.status === 'published' ? 'live' : p.status === 'scheduled' ? 'go' : 'idle'}>
+                                  {(isAr ? PUB_STATUS_LABELS[p.status]?.ar : PUB_STATUS_LABELS[p.status]?.en) ?? p.status}
+                                </Pill>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="card">
-                <div className="card-h">
-                  <h4>{isAr ? 'خطة النشر' : 'Publishing plan'}</h4>
-                  <span className="r">
-                    {isAr
-                      ? `${num(publications.length, true)} منصة`
-                      : `${publications.length} platforms`}
-                  </span>
-                  <button type="button" className="btn btn-sm" onClick={() => setTab('publishing')}>
-                    {isAr ? 'فتح' : 'Open'}
-                  </button>
-                </div>
-                {publications.length === 0 ? (
-                  <p style={{ padding: 20, textAlign: 'center', fontSize: 12.5, color: 'var(--mute)' }}>
-                    {isAr ? 'لا منصات بعد.' : 'No platforms yet.'}
-                  </p>
-                ) : (
-                  <div className="tbl-wrap">
-                    <table className="tbl">
-                      <tbody>
-                        {publications.map((p) => (
-                          <tr key={p.id}>
-                            <td style={{ width: 140 }}>
-                              <span className="tag">
-                                {(isAr ? PLATFORM_LABELS[p.platform]?.ar : PLATFORM_LABELS[p.platform]?.en) ?? p.platform}
-                              </span>
-                            </td>
-                            <td className="ltr" style={{ color: 'var(--mute)' }}>{p.account_handle ?? '—'}</td>
-                            <td style={{ width: 170, color: 'var(--mute)' }}>
-                              {p.published_at || p.scheduled_at
-                                ? shortDate(p.published_at ?? p.scheduled_at, isAr)
-                                : (isAr ? 'بلا موعد' : 'no time set')}
-                            </td>
-                            <td style={{ width: 110 }}>
-                              <Pill tone={p.status === 'published' ? 'live' : p.status === 'scheduled' ? 'go' : 'idle'}>
-                                {(isAr ? PUB_STATUS_LABELS[p.status]?.ar : PUB_STATUS_LABELS[p.status]?.en) ?? p.status}
-                              </Pill>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
+              {/* Screen 06 keeps the stage rail INSIDE the overview — a card
+                  beside the task, not part of the activity rail. */}
+              {steps.length > 0 && (
+                <StageRail
+                  steps={steps}
+                  tasks={tasks}
+                  workflowLabel={typeLabel(item.content_type_key)}
+                  isAr={isAr}
+                />
+              )}
             </div>
           )}
 
-          {tab === 'content' && (
+          {activeTab === 'content' && (
             <div style={{ display: 'grid', gap: 16 }}>
               <WritingFields
                 contentId={item.id}
                 schema={fieldSchemaKeys(type?.field_schema ?? [])}
                 data={item.data ?? {}}
                 canEdit={canEditNow}
-                canApprove={can('approve_creative')}
+                canApprove={canApproveCreative}
+                approver={approverMeta}
                 isAr={isAr}
                 onSaved={(data) => setItem({ ...item, data })}
               />
@@ -361,6 +614,7 @@ export default function ContentDetailPage() {
                   projectId={item.project_id}
                   scenes={scenes}
                   canEdit={canEditNow}
+                  canRaiseShoot={role === 'ops_supervisor' || can('assign')}
                   isAr={isAr}
                   onChange={setScenes}
                 />
@@ -368,7 +622,7 @@ export default function ContentDetailPage() {
             </div>
           )}
 
-          {tab === 'materials' && (
+          {activeTab === 'materials' && (
             <MaterialsTab
               contentId={item.id}
               projectId={item.project_id}
@@ -378,7 +632,7 @@ export default function ContentDetailPage() {
             />
           )}
 
-          {tab === 'tasks' && (
+          {activeTab === 'tasks' && (
             <div className="card">
               <div className="card-h">
                 <h4>{isAr ? 'كل المهام والاعتمادات' : 'Every task and approval'}</h4>
@@ -434,7 +688,7 @@ export default function ContentDetailPage() {
             </div>
           )}
 
-          {tab === 'publishing' && (
+          {activeTab === 'publishing' && (
             <PublishTab
               contentId={item.id}
               publications={publications}
@@ -445,7 +699,7 @@ export default function ContentDetailPage() {
             />
           )}
 
-          {tab === 'performance' && (
+          {activeTab === 'performance' && (
             <PerformanceTab
               publications={publications}
               canEnter={can('enter_metrics')}
@@ -454,17 +708,213 @@ export default function ContentDetailPage() {
           )}
         </div>
 
-        <div className="wside wide">
-          {steps.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <StageRail
-                steps={steps}
-                tasks={tasks}
-                workflowLabel={typeLabel(item.content_type_key)}
-                isAr={isAr}
+        {/* The activity rail — screen 06's persistent side column. The CEO
+            does not see comments at all (screen 36), so the rail itself goes. */}
+        {!ceoView && (
+          <div className="wside wide">
+            <ActivityRail
+              item={item}
+              comments={comments}
+              tasks={tasks}
+              steps={steps}
+              people={people}
+              version={version}
+              lastRejection={lastRejection}
+              canComment={can('comment')}
+              isAr={isAr}
+              onCommentsChange={setComments}
+            />
+          </div>
+        )}
+      </div>
+
+      {rejectOpen && openTask && (
+        <RequestChangesModal
+          item={item}
+          openTask={openTask}
+          steps={steps}
+          scenes={scenes}
+          fields={fieldSchemaEntries(type?.field_schema ?? [])}
+          isAr={isAr}
+          onClose={() => setRejectOpen(false)}
+          onSubmitted={() => { setRejectOpen(false); void load(); }}
+        />
+      )}
+
+      {compareOpen && (
+        <CompareModal
+          itemRef={item.ref}
+          versions={versions}
+          currentRound={version}
+          isAr={isAr}
+          onClose={() => setCompareOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   The activity rail — screens 06/07/08, right column, present on EVERY tab.
+   Comments and the task chain share one timeline, newest first, so "why did
+   this come back?" is answered by scrolling rather than by asking.
+   ════════════════════════════════════════════════════════════════════════ */
+function ActivityRail({
+  item, comments, tasks, steps, people, version, lastRejection, canComment, isAr, onCommentsChange,
+}: {
+  item: MosContentRow;
+  comments: MosComment[];
+  tasks: MosTask[];
+  steps: MosStep[];
+  people: RolePerson[];
+  version: number;
+  lastRejection: MosTask | null;
+  canComment: boolean;
+  isAr: boolean;
+  onCommentsChange: (comments: MosComment[]) => void;
+}) {
+  const addToast = useAppStore((s) => s.addToast);
+  const [collapsed, setCollapsed] = useState(false);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const person = (userId: string | null | undefined): RolePerson | null =>
+    userId ? people.find((x) => x.user_id === userId) ?? null : null;
+  const nameOf = (userId: string | null | undefined): string => {
+    const u = person(userId);
+    if (!u) return isAr ? 'النظام' : 'System';
+    return (isAr ? u.name_ar : u.name_en) ?? u.name_en ?? u.name_ar ?? (isAr ? 'النظام' : 'System');
+  };
+  const avatarOf = (userId: string | null | undefined): string => {
+    const u = person(userId);
+    const role = u?.roles.find((r) => r !== 'viewer' && r !== 'none') ?? u?.roles[0] ?? null;
+    return roleAvatarClass(role);
+  };
+
+  const stepLabel = (stepId: string | null): string => {
+    const s = steps.find((x) => x.id === stepId);
+    return s ? (isAr ? s.label_ar : s.label_en) : isAr ? 'خطوة' : 'a stage';
+  };
+  /** The thing an approval approved: the step BEFORE the approval step. */
+  const approvedThing = (stepId: string | null): string => {
+    const s = steps.find((x) => x.id === stepId);
+    if (!s) return stepLabel(stepId);
+    const prev = [...steps].sort((a, b) => a.position - b.position)
+      .filter((x) => x.position < s.position).pop();
+    return prev ? (isAr ? prev.label_ar : prev.label_en) : (isAr ? s.label_ar : s.label_en);
+  };
+
+  interface SysEntry {
+    key: string;
+    at: string;
+    node: ReactNode;
+  }
+
+  const systemEntries: SysEntry[] = [
+    ...tasks
+      .filter((t) => t.status === 'done' && t.closed_at)
+      .map((t) => {
+        const name = nameOf(t.closed_by_user_id);
+        const when = relDay(t.closed_at, isAr);
+        let node: ReactNode;
+        if (t.result === 'approved') {
+          node = isAr
+            ? <><b>{name}</b> اعتمد <b>{approvedThing(t.step_id)}</b> · {when}</>
+            : <><b>{name}</b> approved <b>{approvedThing(t.step_id)}</b> · {when}</>;
+        } else if (t.result === 'changes_requested') {
+          node = isAr
+            ? <><b>{name}</b> أعاد <b>النسخة {num(t.round, true)}</b> — طلب تعديلات · {when}</>
+            : <><b>{name}</b> sent back <b>version {t.round}</b> — changes requested · {when}</>;
+        } else {
+          node = isAr
+            ? <><b>{name}</b> أرسل <b>النسخة {num(t.round, true)}</b> للمراجعة · {when}</>
+            : <><b>{name}</b> submitted <b>version {t.round}</b> for review · {when}</>;
+        }
+        return { key: `t-${t.id}`, at: t.closed_at ?? '', node };
+      }),
+    // The creation line — «مريم أنشأت V-004 · ١٨ يوليو».
+    ...(item.created_at
+      ? [{
+          key: 'created',
+          at: item.created_at,
+          node: isAr
+            ? <><b>{nameOf(item.created_by_user_id)}</b> أنشأ <b className="ltr">{item.ref}</b> · {relDay(item.created_at, true)}</>
+            : <><b>{nameOf(item.created_by_user_id)}</b> created <b className="ltr">{item.ref}</b> · {relDay(item.created_at, false)}</>,
+        }]
+      : []),
+  ];
+
+  const entries = [
+    ...comments.map((c) => ({ key: `c-${c.id}`, at: c.created_at, comment: c })),
+    ...systemEntries.map((s) => ({ key: s.key, at: s.at, sys: s.node })),
+  ].sort((a, b) => b.at.localeCompare(a.at)); // newest first — the rail's order
+
+  /** @mentions render in copper, as in the mockups. */
+  const renderBody = (body: string): ReactNode =>
+    body.split(/(@[^\s@]+)/g).map((part, i) =>
+      part.startsWith('@') ? <span key={i} className="mn">{part}</span> : part,
+    );
+
+  const send = async (): Promise<void> => {
+    const body = text.trim();
+    if (!body) return;
+    setBusy(true);
+    try {
+      const res = await addComment({ contentId: item.id }, body);
+      onCommentsChange(res.comments);
+      setText('');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 11 }}>
+        <div className="lbl">{isAr ? 'النشاط والتعليقات' : 'Activity & comments'}</div>
+        <button
+          type="button"
+          className="btn btn-d btn-sm"
+          style={{ marginInlineStart: 'auto' }}
+          onClick={() => setCollapsed((v) => !v)}
+        >
+          {collapsed ? (isAr ? 'عرض' : 'Show') : (isAr ? 'طيّ' : 'Collapse')}
+        </button>
+      </div>
+
+      {!collapsed && (
+        <>
+          {canComment && (
+            <div style={{ marginBottom: 13 }}>
+              <textarea
+                className="inp"
+                rows={2}
+                style={{ width: '100%', fontSize: 12 }}
+                placeholder={isAr ? 'اكتب تعليقًا، أو اذكر شخصًا…' : 'Write a comment, or mention someone…'}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void send();
+                }}
               />
+              {text.trim() !== '' && (
+                <button
+                  type="button"
+                  className="btn btn-p btn-sm"
+                  style={{ marginTop: 7 }}
+                  disabled={busy}
+                  onClick={() => void send()}
+                >
+                  <IconSend />
+                  {isAr ? 'إرسال' : 'Post'}
+                </button>
+              )}
             </div>
           )}
+
+          {/* The pinned review note — screen 07's open-rejection card. */}
           {lastRejection && (
             <div
               style={{
@@ -482,26 +932,190 @@ export default function ContentDetailPage() {
               </div>
               <div style={{ fontSize: 12, marginTop: 5, lineHeight: 1.7 }}>{lastRejection.note}</div>
               <div style={{ fontSize: 10.5, color: 'var(--mute)', marginTop: 6 }}>
-                {shortDate(lastRejection.closed_at, isAr)}
+                {nameOf(lastRejection.closed_by_user_id)} · {shortDate(lastRejection.closed_at, isAr)}
                 {version > lastRejection.round && (
-                  <> · {isAr ? `قيد المعالجة في النسخة ${num(version, true)}` : `being addressed in version ${version}`}</>
+                  <> · {isAr ? `عولجت في النسخة ${num(version, true)}` : `addressed in version ${version}`}</>
                 )}
               </div>
             </div>
           )}
-          <CommentThread
-            target={{ contentId: item.id }}
-            comments={comments}
-            tasks={tasks}
-            steps={steps}
-            users={users}
-            canComment={can('comment')}
-            isAr={isAr}
-            onChange={setComments}
-          />
+
+          {entries.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--mute)', padding: '10px 0' }}>
+              {isAr ? 'لا شيء بعد.' : 'Nothing yet.'}
+            </div>
+          )}
+
+          {entries.map((e) =>
+            'comment' in e ? (
+              <div key={e.key} className="thread">
+                <span className={`av ${avatarOf(e.comment.author_user_id)}`}>
+                  {initial(nameOf(e.comment.author_user_id))}
+                </span>
+                <div className="bd">
+                  <div className="who2">
+                    {nameOf(e.comment.author_user_id)}
+                    <span className="tm">{relDay(e.comment.created_at, isAr)}</span>
+                  </div>
+                  <div className="msg">{renderBody(e.comment.body)}</div>
+                </div>
+              </div>
+            ) : (
+              <div key={e.key} className="thread">
+                <div className="bd"><div className="sys">{e.sys}</div></div>
+              </div>
+            ),
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   «مقارنة بالنسخة ١» — two frozen submissions side by side; changed fields
+   are lit so the reviewer diffs with their eyes, not their memory.
+   ════════════════════════════════════════════════════════════════════════ */
+function CompareModal({
+  itemRef, versions, currentRound, isAr, onClose,
+}: {
+  itemRef: string | null;
+  versions: MosContentVersion[] | null;
+  currentRound: number;
+  isAr: boolean;
+  onClose: () => void;
+}) {
+  const cmp = useMemo(() => {
+    if (!versions || versions.length === 0) return null;
+    const newer = versions[versions.length - 1] ?? null;
+    const older = versions.length > 1 ? versions[versions.length - 2] ?? null : null;
+    return newer ? { older, newer } : null;
+  }, [versions]);
+
+  const labelOf = (key: string): string => {
+    const m = DATA_LABELS[key];
+    return m ? (isAr ? m.ar : m.en) : key;
+  };
+
+  const valueOf = (v: unknown): string => {
+    if (v === null || v === undefined || v === '') return '—';
+    if (Array.isArray(v)) return v.map((x) => String(x)).join(isAr ? '، ' : ', ') || '—';
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  };
+
+  const fieldRows = useMemo(() => {
+    if (!cmp) return [];
+    const a = cmp.older?.data ?? {};
+    const b = cmp.newer.data ?? {};
+    const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])]
+      .filter((k) => !k.startsWith('_'))
+      .sort((x, y) => labelOf(x).localeCompare(labelOf(y), 'ar'));
+    return keys.map((k) => ({
+      key: k,
+      label: labelOf(k),
+      oldV: valueOf(a[k]),
+      newV: valueOf(b[k]),
+      changed: JSON.stringify(a[k] ?? null) !== JSON.stringify(b[k] ?? null),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cmp, isAr]);
+
+  const sceneRows = useMemo(() => {
+    if (!cmp) return [];
+    const a = cmp.older?.scenes ?? [];
+    const b = cmp.newer.scenes ?? [];
+    const positions = [...new Set([...a, ...b].map((s) => s.position))].sort((x, y) => x - y);
+    const byPos = (list: MosScene[], pos: number) => list.find((s) => s.position === pos) ?? null;
+    const summary = (s: MosScene | null): string => {
+      if (!s) return '—';
+      const parts = [s.visual, s.voiceover, s.on_screen_text].filter((x): x is string => !!x);
+      return parts.join(' · ') || '—';
+    };
+    return positions.map((pos) => {
+      const o = byPos(a, pos);
+      const n = byPos(b, pos);
+      return {
+        pos,
+        oldV: summary(o),
+        newV: summary(n),
+        changed: JSON.stringify(o ?? null) !== JSON.stringify(n ?? null),
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cmp, isAr]);
+
+  return (
+    <Modal
+      wide
+      title={isAr ? `مقارنة النسخ · ${itemRef ?? ''}` : `Compare versions · ${itemRef ?? ''}`}
+      sub={cmp?.older
+        ? isAr
+          ? `النسخة ${num(cmp.older.round, true)} ← النسخة ${num(cmp.newer.round, true)} — المتغيّر مضاء`
+          : `Version ${cmp.older.round} ← version ${cmp.newer.round} — changes lit`
+        : isAr ? `النسخة ${num(currentRound, true)}` : `Version ${currentRound}`}
+      onClose={onClose}
+    >
+      {!cmp ? (
+        <div style={{ fontSize: 12.5, color: 'var(--mute)', textAlign: 'center', padding: 18 }}>
+          {versions === null
+            ? isAr ? 'جارٍ التحميل…' : 'Loading…'
+            : isAr ? 'لا نسخ محفوظة بعد — تُحفظ النسخة عند كل إرسال للمراجعة.' : 'No saved versions yet — a version is frozen on every submit for review.'}
         </div>
-      </div>
-    </>
+      ) : (
+        <>
+          <div className="cmp-head">
+            <div />
+            <div>
+              <div className="lbl">{isAr ? `النسخة ${num(cmp.older?.round ?? 0, true)}` : `Version ${cmp.older?.round ?? 0}`}</div>
+              <div style={{ fontSize: 11, color: 'var(--mute)' }}>{shortDate(cmp.older?.created_at, isAr)}</div>
+              {cmp.older?.rejected_note && (
+                <div style={{ fontSize: 11, color: 'var(--late)', marginTop: 4, lineHeight: 1.7 }}>
+                  {isAr ? `رُفضت: ${cmp.older.rejected_note}` : `Rejected: ${cmp.older.rejected_note}`}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="lbl">{isAr ? `النسخة ${num(cmp.newer.round, true)}` : `Version ${cmp.newer.round}`}</div>
+              <div style={{ fontSize: 11, color: 'var(--mute)' }}>{shortDate(cmp.newer.created_at, isAr)}</div>
+            </div>
+          </div>
+
+          {fieldRows.length > 0 && (
+            <div>
+              {fieldRows.map((r) => (
+                <div key={r.key} className="cmp-row">
+                  <div className="cmp-k">{r.label}</div>
+                  <div className={`cmp-v${r.changed ? ' chg-old' : ''}`}>{r.oldV}</div>
+                  <div className={`cmp-v${r.changed ? ' chg' : ''}`}>{r.newV}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {sceneRows.length > 0 && (
+            <div>
+              <div className="lbl" style={{ margin: '8px 0 2px' }}>
+                {isAr ? 'المشاهد' : 'Scenes'}
+              </div>
+              {sceneRows.map((r) => (
+                <div key={r.pos} className="cmp-row">
+                  <div className="cmp-k">{isAr ? `المشهد ${num(r.pos, true)}` : `Scene ${r.pos}`}</div>
+                  <div className={`cmp-v${r.changed ? ' chg-old' : ''}`}>{r.oldV}</div>
+                  <div className={`cmp-v${r.changed ? ' chg' : ''}`}>{r.newV}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {fieldRows.every((r) => !r.changed) && sceneRows.every((r) => !r.changed) && (
+            <div style={{ fontSize: 12, color: 'var(--mute)', textAlign: 'center', padding: 10 }}>
+              {isAr ? 'لا فرق بين النسختين.' : 'No differences between the two versions.'}
+            </div>
+          )}
+        </>
+      )}
+    </Modal>
   );
 }
 

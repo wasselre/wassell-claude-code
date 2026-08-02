@@ -4,10 +4,13 @@
  * dataset on the isolated Supabase BRANCH.
  *
  * The dataset transcribes the reference mockups in
- * docs/marketing-reference/source/screens/ (s02, s03, s06, s07, s09, s10, s11,
- * s12, s14, s16, s20, s21, s24, s34, s35, s37, s40, s41, s42, s50) so the
- * rebuilt screens capture against the exact names/numbers they were
- * designed around.
+ * docs/marketing-reference/source/screens/ (s01, s02, s03, s04, s06, s07, s09,
+ * s10, s11, s12, s13, s14, s16, s20, s21, s24, s34, s35, s37, s40, s41, s42,
+ * s50) so the rebuilt screens capture against the exact names/numbers they
+ * were designed around. Screen 01's four stat values (٢٣ تحت الإنتاج، ٧
+ * بانتظارك، ١٢ يُنشر هذا الأسبوع، ٤ متأخر) are COMPUTED by the app from this
+ * state — never hardcoded anywhere; see the RECONCILIATION map above CONTENT
+ * for the mock-vs-dataset discrepancies that could not be reconciled.
  *
  * CHANNELS
  *   Phase 0 (platform seed)  — raw SQL through the token-gated, branch-only
@@ -52,6 +55,18 @@
  *   6. IDEMPOTENCY. Re-runs converge: existing refs/titles are skipped,
  *      counter seeds never rewind, links/upserts are replay-safe, and
  *      driveTo() is a no-op for items already at their target step.
+ *   7. VALUE RECONCILIATION (2026-08-02). The drive matrix + due dates +
+ *      scheduled publications are tuned so screen 01's stats COMPUTE to the
+ *      mock values (23 in production = 9 video + 14 posts, 7 waiting on the
+ *      manager, 12 publishing this week = 9 scheduled + 3 unscheduled, 4
+ *      overdue = 2 design + 2 review). Task due dates are set explicitly via
+ *      task_update after the drive pass — the engine stamps due_at from the
+ *      REAL clock at task-open time, which is useless for the mockups' due
+ *      columns. Three items move BACK from done into production (V-006 →
+ *      review, V-010 → editing, P-020 → design) and two publications are
+ *      removed (V-010 IG, P-020 IG); the API can do neither, so THIS reshape
+ *      requires --teardown + a full rebuild. After that, re-runs converge
+ *      in place (field-reconciliation + due-date + publication patches).
  *
  * CONFIG: .mos-branch.local (KEY=VALUE) or env —
  *   MOS_BRANCH_URL, MOS_BRANCH_ANON_KEY, MOS_BOOTSTRAP_TOKEN   (branch SQL)
@@ -359,23 +374,95 @@ const CAMPAIGNS = [
     goal: '٢٠٠ عميل مؤهل بتكلفة مستهدفة ٣٧٥ ريال', success_metric: 'qualified', success_threshold: 200 },
 ];
 
-// Content, created in this exact order → V-001..V-011 then P-011..P-024.
+// Content, created in this exact order → V-001..V-014 then P-011..P-032.
 // drive: target step_key ('done' = finish the path). Steps from the seeded
 // role-paths: video idea→idea_review→script→script_review→assets→editing→
 // first_version→review→scheduling→publish_check; post writing→writing_review
 // →design→design_review→scheduling→publish_check.
+//
+// The in-production set below is 23 items — 9 video + 14 posts — distributed
+// writer 4 / montage 7 (2 late) / ops 5 / manager 7, so s01 computes
+// «٢٣ تحت الإنتاج · ٧ بانتظارك · ٤ متأخر (٢ تصميم + ٢ مراجعة)» and s02/s04/
+// s35 land wherever the mockups agree with s01.
+//
+/* ---- RECONCILIATION — mock-vs-dataset discrepancies left behind ---------
+ * Read later to write manifest row notes. Each: screen · mock value →
+ * dataset value · why. (18 entries; anything NOT listed here matches.)
+ *
+ *  1. s01 week card row 2 · «الاثنين ٢٨ · تيك توك · V-002» → V-002 tiktok on
+ *     ٣١ يوليو — s12/s50 need the 31-July «ناقص» row and s13 cells it on 31;
+ *     the card renders V-002 انستقرام on ٢٨ instead (the IG publish).
+ *  2. s01 stalled row 3 · title «مينا ٥٢ — صور جولة الثلاث غرف» → «صور الجولة
+ *     — ١٤٢ م²» — s03 (the content table) is the title source of truth.
+ *  3. s01 week card row 3 · title «موقع مقام ١٧» → «الموقع — خريطة المسافات»
+ *     — same: s03's title wins.
+ *  4. s01 stalled ages + row order · «٤/٣/٢/٢ أيام», V-004 first → ages and
+ *     order derive from mos_content.updated_at (real build clock), which no
+ *     API action sets. They render from the build's real timestamps.
+ *  5. s01 weekday labels · «الاثنين ٢٨ / الأربعاء ٣٠ / الخميس ٣١ / الجمعة ١»
+ *     → the mock pairs 2025 weekdays with 2026 dates; the app formats the
+ *     true 2026 weekday (الثلاثاء ٢٨ …). Not fixable from data.
+ *  6. s01 paid card denominator · «من ٦٠,٠٠٠ ريال» → ١٣٥,٠٠٠ — the card sums
+ *     every active+planning campaign (C-004 45k + C-005 15k + C-008 75k) and
+ *     C-008's planning budget is required by s34's «بانتظار توقيعك». The
+ *     numerator ٣٨,٤٠٠ · العملاء ٢١١ · تكلفة العميل ١٨٢ · المؤهلون ٦٣ all
+ *     land exactly.
+ *  7. s01 paid card title · «— أغسطس» → «— يوليو» — the app labels from
+ *     week_start (٢٦ يوليو). App behavior, not data.
+ *  8. s02 late band · writer «١ متأخرة» (V-004 rewrite, أعادها ريان) → 0 —
+ *     V-004 sits at مراجعة النص with the MANAGER per s01/s03/s35; the s02
+ *     mock was drawn before the round-2 submission.
+ *  9. s02 row 3 + s03 P-016 pill · «جدولة منشور معتمد» / «جاهز» → منشور —
+ *     s50's «أدخل» row + s12's second «ناقص» need P-016 published ٣٠ يوليو
+ *     with no metrics.
+ * 10. s35 tiles · الكاتب ٤ ✓ / المونتير ٧ ✓ but مشرف العمليات ٣ + مدير
+ *     التسويق ٣ + «١٧ مهمة مفتوحة» → ops ٥, manager ٧, ٢٣ مفتوحة — one
+ *     open-task set cannot be both 17 (s35) and 23 (s01); s01+s03 win.
+ *     Writer ٤ and montage ٧ (with ٢ متأخرة) match exactly.
+ * 11. s35 approvals card · «إبداعي ٢ · إجرائي ١» → ٧ إبداعي · ٤ إجرائي —
+ *     same root as #10 (the manager must hold ٧ approvals for s01's ٧).
+ * 12. s04 جاهز column · «جاهز ١ · V-003» → empty — V-003 is published on
+ *     سناب ٣١ يوليو (s01 week card + s13 + s50 all need it live).
+ * 13. s15/s39/s40 · V-006 as a C-004 tiktok ad («دخل ٢٠ أغسطس») → V-006 sits
+ *     at المراجعة, NOT an ad — the ad row would break C-004's exact
+ *     ٣٨,٤٠٠/٢١١/٦٣ sums, and s40 dates it after the fixture epoch anyway.
+ * 14. s13 header · «١٨ عملية نشر» in August → 12 August operations — the
+ *     calendar cells match wherever the underlying rows exist; the mock's
+ *     count includes rows from mutually exclusive states.
+ * 15. s13 cell ٣٠ · «استحقاق · نص V-004» → due renders on ٢٦ يوليو —
+ *     s01/s03/s35 all pin V-004's due at ٢٦ (٤ أيام متوقف).
+ * 16. s13 C-004 lane · «٣٨,٤٠٠ / ٦٠,٠٠٠» on the one lane → ٣١,٢٠٠ / ٤٥,٠٠٠ —
+ *     the mock put the two-campaign sum on C-004's lane alone.
+ * 17. s03 subline · «٦١ عنصرًا · ٣٤ منشور» → ٣٦ عنصرًا · ١٣ منشور — ٢٣ تحت
+ *     الإنتاج is exact; a 61-item library would mint refs to P-060+ (beyond
+ *     every mock's ref range) and flood the table/board with filler rows.
+ * 18. s03 P-022 due cell · «٢٨ يوليو» → «٢٩ يوليو» — s02+s35 both say
+ *     «اليوم» (= the 29th at the capture epoch), and a 28th due would make
+ *     P-022 a FIFTH overdue task, breaking «متأخر ٤».
+ * ------------------------------------------------------------------------ */
 const CONTENT = [
   { ref: 'V-001', type: 'video', title: 'مينا ٥٢ — فيديو الإطلاق', project: 'mina', campaign: 'C-002', purpose: 'paid', drive: 'done', target_publish_at: '2026-06-05T19:00:00+03' },
   { ref: 'V-002', type: 'video', title: 'جولة الوحدة — ١٤٢ م² زاوية', project: 'mina', campaign: 'C-004', purpose: 'both', drive: 'done', target_publish_at: '2026-07-28T19:00:00+03' },
   { ref: 'V-003', type: 'video', title: 'تعريف المطور — العجلان', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-31T20:00:00+03' },
   { ref: 'V-004', type: 'video', title: 'مينا ٥٢ — جولة الموقع', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'special', due_at: '2026-07-26T12:00:00+03', target_publish_at: '2026-08-10T19:00:00+03' },
   { ref: 'V-005', type: 'video', title: 'مقام ١٧ — جولة النموذج', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-19T19:00:00+03' },
-  { ref: 'V-006', type: 'video', title: 'مينا ٥٢ — شهادات الملاك', project: 'mina', campaign: 'C-004', purpose: 'both', drive: 'done', target_publish_at: '2026-07-25T19:00:00+03' },
-  { ref: 'V-007', type: 'video', title: 'جولة المرافق — المسبح والنادي', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'editing', due_at: '2026-07-31T12:00:00+03' },
+  // s04 «المراجعة ١» + s15/s39 title — retitled to «خطة السداد في ٢٠ ثانية»
+  // and moved BACK from done to review (needs --teardown once).
+  { ref: 'V-006', type: 'video', title: 'خطة السداد في ٢٠ ثانية', project: 'mina', campaign: 'C-004', purpose: 'both', drive: 'review', target_publish_at: null },
+  { ref: 'V-007', type: 'video', title: 'جولة المرافق — المسبح والنادي', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'editing', due_at: '2026-07-31T12:00:00+03', target_publish_at: '2026-08-01T16:00:00+03' },
   { ref: 'V-008', type: 'video', title: 'مينا ٥٢ — لقطة الدرون', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'editing', due_at: '2026-07-31T12:00:00+03' },
   { ref: 'V-009', type: 'video', title: 'لماذا شمال الرياض — زاوية المستثمر', project: 'mina', campaign: 'C-004', purpose: 'both', drive: 'assets', due_at: '2026-08-01T12:00:00+03', target_publish_at: '2026-08-12T19:00:00+03' },
-  { ref: 'V-010', type: 'video', title: 'مقام ١٧ — الواجهة ليلًا', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-12T19:00:00+03' },
+  // s04 «المونتاج ٣» tile + s13's Aug-18 tiktok slot — retitled and moved
+  // BACK from done to editing (needs --teardown once). The old IG-published
+  // publication appears in no mock and is dropped.
+  { ref: 'V-010', type: 'video', title: 'مقام ١٧ — الأنواع في ٣٠ ثانية', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'editing', target_publish_at: '2026-08-18T20:00:00+03' },
   { ref: 'V-011', type: 'video', title: 'مقام ١٧ — جدول التسليم', project: 'maqam', campaign: null, purpose: 'organic', drive: null, due_at: '2026-07-30T12:00:00+03' },
+  // V-012 exists so the two s04 tiles below mint their exact refs (V-013,
+  // V-014) from the shared counter. Itself a quiet done item in no mock.
+  { ref: 'V-012', type: 'video', title: 'مينا ٥٢ — نبذة الحي', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-08T19:00:00+03' },
+  // s04 «النص ٢»: V-013 «مينا ٥٢ — التمويل ببساطة» · V-014 «قصة عميل — أول تسليم».
+  { ref: 'V-013', type: 'video', title: 'مينا ٥٢ — التمويل ببساطة', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'script' },
+  { ref: 'V-014', type: 'video', title: 'قصة عميل — أول تسليم', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'script' },
   { ref: 'P-011', type: 'post', title: 'مقام ١٧ — الواجهة', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-26T18:00:00+03' },
   { ref: 'P-012', type: 'carousel', title: 'خطة السداد — دفعة ١٠٪', project: 'mina', campaign: 'C-004', purpose: 'paid', drive: 'done', target_publish_at: '2026-07-20T18:00:00+03' },
   { ref: 'P-013', type: 'post', title: 'مينا ٥٢ — عرض الأسبوع', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-15T18:00:00+03' },
@@ -384,13 +471,58 @@ const CONTENT = [
   { ref: 'P-016', type: 'post', title: 'الموقع — خريطة المسافات', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-30T18:00:00+03' },
   { ref: 'P-017', type: 'post', title: 'مينا ٥٢ — الأسعار من ٩٨٠ ألف', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-24T18:00:00+03' },
   { ref: 'P-018', type: 'carousel', title: 'كاروسيل خطة سداد مقام ١٧', project: 'maqam', campaign: 'C-004', purpose: 'paid', drive: 'design', due_at: '2026-07-27T12:00:00+03' },
-  { ref: 'P-019', type: 'carousel', title: 'خمسة أسباب للشراء في شمال الرياض', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'design', due_at: '2026-07-29T12:00:00+03' },
-  { ref: 'P-020', type: 'post', title: 'مينا ٥٢ — جولة البهو بالصور', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-26T18:00:00+03' },
+  { ref: 'P-019', type: 'carousel', title: 'خمسة أسباب للشراء في شمال الرياض', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'design', due_at: '2026-07-29T12:00:00+03', target_publish_at: '2026-08-01T12:00:00+03' },
+  // Moved BACK from done to design (needs --teardown once) so s01's
+  // unscheduled row reads exactly «P-019، P-020، V-007». Its old published
+  // publication appears in no mock and is dropped.
+  { ref: 'P-020', type: 'post', title: 'مينا ٥٢ — جولة البهو بالصور', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'design', due_at: '2026-07-28T12:00:00+03', target_publish_at: '2026-08-01T14:00:00+03' },
   { ref: 'P-021', type: 'post', title: 'صور الجولة — ١٤٢ م²', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'writing_review', due_at: '2026-07-26T12:00:00+03', target_publish_at: '2026-08-05T18:00:00+03' },
-  { ref: 'P-022', type: 'post', title: 'خطة سداد الثلاث غرف', project: 'mina', campaign: 'C-004', purpose: 'paid', drive: null, due_at: '2026-07-28T12:00:00+03', target_publish_at: '2026-08-04T18:00:00+03' },
+  { ref: 'P-022', type: 'post', title: 'خطة سداد الثلاث غرف', project: 'mina', campaign: 'C-004', purpose: 'paid', drive: null, due_at: '2026-07-29T17:00:00+03', target_publish_at: '2026-08-04T18:00:00+03' },
   { ref: 'P-023', type: 'post', title: 'مقام ١٧ — مرافق الحي', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-29T18:00:00+03' },
-  { ref: 'P-024', type: 'post', title: 'الحي — واجهة الجامع', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: null, due_at: '2026-08-02T12:00:00+03' },
+  { ref: 'P-024', type: 'post', title: 'الحي — واجهة الجامع', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'writing_review', due_at: '2026-08-02T12:00:00+03', target_publish_at: '2026-08-16T18:00:00+03' },
+  // P-025..P-032 — the remaining in-production posts that take the library
+  // to s01's «١٤ منشور». Steps chosen to land the role loads above; s13
+  // names P-025's Aug-19 instagram slot.
+  { ref: 'P-025', type: 'post', title: 'مقام ١٧ — أسئلة المشترين', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'writing_review', target_publish_at: '2026-08-19T18:00:00+03' },
+  { ref: 'P-026', type: 'post', title: 'مينا ٥٢ — جولة المطبخ بالصور', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'design_review' },
+  { ref: 'P-027', type: 'post', title: 'مقام ١٧ — النادي الرياضي', project: 'maqam', campaign: 'C-006', purpose: 'organic', drive: 'design' },
+  { ref: 'P-028', type: 'post', title: 'مينا ٥٢ — المواقف والبوابة', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'publish_check' },
+  { ref: 'P-029', type: 'post', title: 'مقام ١٧ — جدول الدفعات', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'design_review' },
+  { ref: 'P-030', type: 'post', title: 'مينا ٥٢ — عرض نهاية الأسبوع', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'publish_check' },
+  { ref: 'P-031', type: 'post', title: 'مقام ١٧ — منطقة اللعب', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'publish_check' },
+  { ref: 'P-032', type: 'post', title: 'مينا ٥٢ — التشطيبات', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'publish_check' },
 ];
+
+// Explicit task due dates (fixture clock 2026-07-29T10:00+03 — the capture
+// epoch). The engine stamps due_at = task-open time + step due_days from the
+// REAL clock; this pass overrides every in-production item via task_update
+// so the due columns and «متأخر ٤» (٢ تصميم + ٢ مراجعة) compute exactly.
+// Late at the epoch: V-004, P-021 (review) + P-018, P-020 (design).
+const TASK_DUE_DATES = {
+  'V-004': '2026-07-26T12:00:00+03', // مراجعة النص — LATE (s01/s03/s35)
+  'V-006': '2026-07-29T17:00:00+03', // المراجعة (s04 «٢٩ يوليو»)
+  'V-007': '2026-07-31T12:00:00+03', // مونتاج (s03/s04/s35)
+  'V-008': '2026-07-31T12:00:00+03', // مونتاج (s04/s35)
+  'V-009': '2026-08-01T12:00:00+03', // جمع المواد (s03/s04/s13)
+  'V-010': '2026-08-02T12:00:00+03', // مونتاج (s04 «٢ أغسطس»)
+  'V-011': '2026-07-30T12:00:00+03', // فكرة (s02/s04 «٣٠ يوليو»)
+  'V-013': '2026-08-01T12:00:00+03', // نص (s04 «١ أغسطس»)
+  'V-014': '2026-08-03T12:00:00+03', // نص (s04 «٣ أغسطس»)
+  'P-018': '2026-07-27T12:00:00+03', // تصميم — LATE (s35 «٢٧ يوليو»)
+  'P-019': '2026-07-29T12:00:00+03', // تصميم (s03 «٢٩ يوليو» — not late at 10:00)
+  'P-020': '2026-07-28T12:00:00+03', // تصميم — LATE (the 4th متأخر)
+  'P-021': '2026-07-26T12:00:00+03', // مراجعة الكتابة — LATE (s01/s03)
+  'P-022': '2026-07-29T17:00:00+03', // كتابة — «الاستحقاق اليوم» (s02/s35)
+  'P-024': '2026-08-02T12:00:00+03',
+  'P-025': '2026-07-30T12:00:00+03',
+  'P-026': '2026-07-31T12:00:00+03',
+  'P-027': '2026-08-01T12:00:00+03',
+  'P-028': '2026-07-31T12:00:00+03',
+  'P-029': '2026-08-01T12:00:00+03',
+  'P-030': '2026-08-01T12:00:00+03',
+  'P-031': '2026-08-02T12:00:00+03',
+  'P-032': '2026-08-03T12:00:00+03',
+};
 
 // V-004 writing fields (s06 brief + s07 exact prose).
 const V004_BRIEF = {

@@ -15,11 +15,14 @@ import {
 import { IconPlus, IconShoot, IconTrash } from './icons';
 import { num, toArabicDigits } from '../lib/format';
 
-const STATUSES: Array<MosScene['footage_status']> = ['have', 'to_make', 'missing'];
+const STATUSES: Array<MosScene['footage_status']> = ['have', 'to_make', 'missing', 'template'];
 const STATUS_BG: Record<string, string> = {
   have: 'var(--go)',
   to_make: 'var(--wait)',
   missing: 'var(--late)',
+  // «قالب» — the shot comes from a template (screen 07, الشعار + واتساب); the
+  // mockup paints it in the same wait tone as «تُصنع».
+  template: 'var(--wait)',
 };
 /** The strip's palette cycle — the design's warm sequence, not status colors. */
 const STRIP = ['var(--choc)', 'var(--copper)', 'var(--terracotta)', 'var(--copper)', 'var(--gold)', 'var(--choc)'];
@@ -38,13 +41,19 @@ const timeLabel = (s: MosScene, isAr: boolean): string => {
 };
 
 export default function SceneTable({
-  contentId, contentTitle, projectId, scenes, canEdit, isAr, onChange,
+  contentId, contentTitle, projectId, scenes, canEdit, canRaiseShoot = false, isAr, onChange,
 }: {
   contentId: string;
   contentTitle: string;
   projectId: string | null;
   scenes: MosScene[];
   canEdit: boolean;
+  /**
+   * Screen 36's ops rule: the operations supervisor may raise the shoot
+   * request EARLY — before the creative approval — so filming doesn't wait
+   * on the text. The fields stay locked; only this one button lights up.
+   */
+  canRaiseShoot?: boolean;
   isAr: boolean;
   onChange: (scenes: MosScene[]) => void;
 }) {
@@ -101,7 +110,7 @@ export default function SceneTable({
             ? `${num(scenes.length, true)} مشاهد${totalSeconds > 0 ? ` · ${num(totalSeconds, true)} ثانية` : ''} · ${num(have, true)} من ${num(scenes.length, true)} لديها تصوير`
             : `${scenes.length} scenes${totalSeconds > 0 ? ` · ${totalSeconds}s` : ''} · ${have} of ${scenes.length} have footage`}
         </span>
-        {missing.length > 0 && canEdit && (
+        {missing.length > 0 && (canEdit || canRaiseShoot) && (
           <button
             type="button"
             className="btn btn-sm"

@@ -330,6 +330,10 @@ function mapRoleTask(t: Record<string, unknown>): Record<string, unknown> {
     opened_at: t.opened_at,
     due_at: t.due_at ?? null,
     closed_at: t.closed_at ?? null,
+    // Who closed it + what a rejection targeted — screen 08's «اعتمده ريان · …»
+    // meta line and screen 38's revision chips both read these.
+    closed_by_user_id: t.closed_by_user_id ?? null,
+    revision_targets: Array.isArray(t.revision_targets) ? t.revision_targets : [],
   };
 }
 
