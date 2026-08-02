@@ -28,8 +28,11 @@ import {
   SurfaceKey,
   SurfaceLevel,
   fetchBootstrap,
+  fetchCampaigns,
+  fetchContentList,
   fetchProjects,
   fetchRoles,
+  fetchWork,
   persistActiveRole,
 } from '@/lib/marketingOS/client';
 import { initial, num } from './lib/format';
@@ -40,10 +43,20 @@ import {
 } from './components/icons';
 import NotificationBell from './components/NotificationBell';
 import './mos.css';
+import './styles/rail-badges.css';
 
 /* ------------------------------------------------------------------ */
 /* context                                                            */
 /* ------------------------------------------------------------------ */
+
+/**
+ * The rail's numeric badges, exactly the three the approved mock pins
+ * (rail-tpl in marketing-os-ar.html): مهامي = the caller's open-task count
+ * («٤» — s02's «٤ مفتوحة»), المحتوى = library size («٦١» — s03's «٦١
+ * عنصرًا»), الحملات = campaign count («٦»). Values COMPUTE from live data,
+ * never from the mock's static numbers.
+ */
+type BadgeKey = 'mywork' | 'content' | 'campaigns';
 
 interface WorkspaceCtx {
   /** The role the person is working AS right now (display; never authorization). */
@@ -65,8 +78,8 @@ interface WorkspaceCtx {
   typeLabel: (key: string) => string;
   isAr: boolean;
   ready: boolean;
-  /** Rail badge counts, refreshed by the screens that know better. */
-  setBadge: (key: 'mywork' | 'content', value: number | null) => void;
+  /** Rail badge counts — seeded at bootstrap, refreshed by the screens that know better. */
+  setBadge: (key: BadgeKey, value: number | null) => void;
   can: (capability: Capability) => boolean;
 }
 
@@ -113,7 +126,7 @@ interface NavItem {
   ar: string;
   en: string;
   Icon: (p: Record<string, unknown>) => JSX.Element;
-  badge?: 'mywork' | 'content';
+  badge?: BadgeKey;
   end?: boolean;
   /**
    * The surface_access row that governs this item. 'hidden' removes the item
@@ -151,7 +164,7 @@ const NAV: NavGroup[] = [
   {
     ar: 'الإنفاق', en: 'Spend',
     items: [
-      { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns, surface: 'campaigns' },
+      { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns, badge: 'campaigns', surface: 'campaigns' },
       { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', Icon: IconMetrics, surface: 'numbers' },
     ],
   },
@@ -248,10 +261,37 @@ export default function MarketingWorkspace() {
   const [people, setPeople] = useState<RolePerson[]>([]);
   const [ready, setReady] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
-  const [badges, setBadges] = useState<{ mywork: number | null; content: number | null }>({
-    mywork: null, content: null,
+  const [badges, setBadges] = useState<Record<BadgeKey, number | null>>({
+    mywork: null, content: null, campaigns: null,
   });
   const [railOpen, setRailOpen] = useState(false);
+
+  const applyBadge = useCallback((key: BadgeKey, value: number | null) => {
+    setBadges((b) => (b[key] === value ? b : { ...b, [key]: value }));
+  }, []);
+
+  /**
+   * Seed the rail badges the mock pins on مهامي / المحتوى / الحملات so the
+   * rail reads like the approved design on EVERY screen, not only after
+   * touring the app (WorkPage/ContentListPage still refresh their own badge
+   * when visited). Runs after bootstrap so the resolved active-role header is
+   * what work_list counts against. Each call settles independently — a
+   * failure hides that badge (null) and is reported, never fatal to the
+   * workspace.
+   */
+  const loadBadges = useCallback(async () => {
+    const [work, contentList, campaignList] = await Promise.allSettled([
+      fetchWork('mine'),
+      fetchContentList({ limit: 500 }),
+      fetchCampaigns(),
+    ]);
+    if (work.status === 'fulfilled') applyBadge('mywork', work.value.content.length);
+    else console.error('[marketing] my-work rail badge unavailable', work.reason);
+    if (contentList.status === 'fulfilled') applyBadge('content', contentList.value.content.length);
+    else console.error('[marketing] content rail badge unavailable', contentList.reason);
+    if (campaignList.status === 'fulfilled') applyBadge('campaigns', campaignList.value.campaigns.length);
+    else console.error('[marketing] campaigns rail badge unavailable', campaignList.reason);
+  }, [applyBadge]);
 
   const boot = useCallback(async () => {
     setBootError(null);
@@ -280,12 +320,14 @@ export default function MarketingWorkspace() {
       setContentTypes(bootstrap.content_types);
       setProjects(projectsResult.projects);
       setPeople(rolesResult.people);
+      // Fire-and-forget: the badges fill in as they land; `ready` never waits.
+      void loadBadges();
     } catch (e) {
       setBootError(e instanceof Error ? e.message : String(e));
     } finally {
       setReady(true);
     }
-  }, []);
+  }, [loadBadges]);
 
   const booted = useRef(false);
   useEffect(() => {
@@ -318,7 +360,10 @@ export default function MarketingWorkspace() {
   const setActiveRole = useCallback((next: MosRole) => {
     persistActiveRole(next);
     setRole(next);
-  }, []);
+    // مهامي counts against the ACTIVE role — refresh so the badge never lies
+    // after a role switch (persistActiveRole above sets the header first).
+    void loadBadges();
+  }, [loadBadges]);
 
   const ctx: WorkspaceCtx = useMemo(() => ({
     role,
@@ -342,11 +387,11 @@ export default function MarketingWorkspace() {
       if (!t) return key;
       return isAr ? t.label_ar : t.label_en;
     },
-    setBadge: (key, value) => setBadges((b) => (b[key] === value ? b : { ...b, [key]: value })),
+    setBadge: applyBadge,
     // Capability truth is the UNION over every held role — a person who is
     // Writer AND Ops Supervisor gets both sets, exactly like wassell_mos_can.
     can: (capability) => roles.some((r) => (MATRIX[r] ?? []).includes(capability)),
-  }), [role, roles, surfaces, setActiveRole, appUserId, contentTypes, projects, people, reloadGrants, isAr, ready, projectMap, typeMap]);
+  }), [role, roles, surfaces, setActiveRole, appUserId, contentTypes, projects, people, reloadGrants, isAr, ready, projectMap, typeMap, applyBadge]);
 
   const roleLabel = ROLE_LABELS[role] ? (isAr ? ROLE_LABELS[role].ar : ROLE_LABELS[role].en) : role;
 

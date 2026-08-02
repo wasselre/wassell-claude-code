@@ -18,7 +18,8 @@
  *     scripts/apply-branch-sql.mjs / scripts/verify-branch-bootstrap.mjs).
  *     Used ONLY for: profile, auth users, public.users, CRM record rows,
  *     ref-counter offsets, settings, and teardown. NEVER for marketing-domain
- *     objects.
+ *     objects — single exception: the phase-1 `-- time shift --` pass, which
+ *     backdates timestamps the API always stamps with now() (see decision 8).
  *   Phase 1 (domain data)    — the REAL /api/marketing-os endpoint on the
  *     MOS_APP_URL dev stack, signed in as the role that would own each write.
  *     RLS, the role-path engine, the ref triggers and notify_emit all run for
@@ -67,6 +68,14 @@
  *      removed (V-010 IG, P-020 IG); the API can do neither, so THIS reshape
  *      requires --teardown + a full rebuild. After that, re-runs converge
  *      in place (field-reconciliation + due-date + publication patches).
+ *   8. TIME SHIFT (2026-08-02). workflow_role_tasks.opened_at and
+ *      mos_content.updated_at are stamped now() by the engine / the
+ *      mos_content_touch_tg trigger on every write, so a dataset built today
+ *      can never show s01's «منذ ٤ أيام» stall ages at the frozen capture
+ *      epoch. The `-- time shift --` pass (after due dates) backdates ONLY
+ *      the four mock-pinned rows through the SQL channel; --verify asserts
+ *      the resulting stalled list (ref + age-days at the epoch) equals the
+ *      mock's exactly.
  *
  * CONFIG: .mos-branch.local (KEY=VALUE) or env —
  *   MOS_BRANCH_URL, MOS_BRANCH_ANON_KEY, MOS_BOOTSTRAP_TOKEN   (branch SQL)
@@ -398,11 +407,14 @@ const CAMPAIGNS = [
  *     (s02 echoes P-016 as «مقام ١٧ — الموقع») → the card renders the content
  *     titles «المرافق — سطح الاستراحة» / «الموقع — خريطة المسافات» — same:
  *     s03's table wins (it also pins P-016 to مينا ٥٢, not مقام ١٧).
- *  4. s01 stalled ages + row order · «٤/٣/٢/٢ أيام», V-004 first → ages and
- *     order derive from mos_content.updated_at (real build clock), which no
- *     API action sets. They render from the build's real timestamps. (The
- *     «بانتظارك أنت» subline's «منذ ٣ أيام» shares this root —
- *     waiting_oldest_at is updated_at too.)
+ *  4. s01 stalled ages + row order · «٤/٣/٢/٢ أيام», V-004 first → PINNED by
+ *     the `-- time shift --` pass (open-task opened_at + mos_content.
+ *     updated_at backdated to epoch − the mock's age; no API action can set
+ *     them). Two residues remain: (a) the «بانتظارك أنت» subline reads
+ *     «منذ ٤ أيام» — V-004 (4d) is the manager's oldest item, so the mock's
+ *     «منذ ٣ أيام» is internally inconsistent with its own stalled table;
+ *     (b) the app lists up to 8 stalled rows where the mock draws 4 — rows
+ *     5+ keep real build timestamps by design (only mock-aged rows shift).
  *  5. s01 weekday labels · «الاثنين ٢٨ / الأربعاء ٣٠ / الخميس ٣١ / الجمعة ١»
  *     → the mock pairs 2025 weekdays with 2026 dates; the app formats the
  *     true 2026 weekday (الثلاثاء ٢٨ …). Not fixable from data.
@@ -549,6 +561,27 @@ const TASK_DUE_DATES = {
   'P-031': '2026-08-02T12:00:00+03:00',
   'P-032': '2026-08-03T12:00:00+03:00',
 };
+
+// The capture epoch every age below is measured against (mos-qa's frozen
+// browser clock + mos-dev-server's frozen process clock).
+const EPOCH_ISO = '2026-07-29T10:00:00+03:00';
+
+// Backdated instants for the `-- time shift --` pass, transcribed from the
+// s01 stalled table «متوقف — لم يتحرك منذ ٤٨ ساعة» (s02 independently confirms
+// P-018's «لدى المونتير · ٣ أيام»). Timestamps are the ONE thing the real API
+// cannot produce for a frozen-clock capture environment — every write stamps
+// now() (opened_at at task-open time; updated_at via mos_content_touch_tg) —
+// so this backdating is test-environment time alignment, not fake business
+// data: all business rows were created through the real API. Only rows the
+// mock gives an age for are shifted; everything else keeps its build clock.
+// V-009 and P-021 both read «يومان»; V-009 gets the earlier hour so the
+// updated_at-ascending stalled sort renders them in the mock's row order.
+const TIME_SHIFTS = [
+  { ref: 'V-004', at: '2026-07-25T10:00:00+03:00', days: 4 }, // «٤ أيام» — s01 row 1 (hl)
+  { ref: 'P-018', at: '2026-07-26T10:00:00+03:00', days: 3 }, // «٣ أيام» — s01 row 2
+  { ref: 'V-009', at: '2026-07-27T08:00:00+03:00', days: 2 }, // «يومان» — s01 row 3
+  { ref: 'P-021', at: '2026-07-27T09:00:00+03:00', days: 2 }, // «يومان» — s01 row 4
+];
 
 // V-004 writing fields (s06 brief + s07 exact prose).
 const V004_BRIEF = {
@@ -941,6 +974,54 @@ async function phase1() {
     }
     console.log(`[ok] task due dates aligned to the fixture epoch `
       + `(${patched} patched · ${Object.keys(TASK_DUE_DATES).length} total)`);
+  }
+
+  /* -- 5c. time shift — backdate the mock-pinned stall ages ------------ */
+  // Timestamps are the ONE thing the real API cannot produce for a frozen-
+  // clock capture environment: opened_at is stamped at task-open time and
+  // mos_content_touch_tg stamps updated_at := now() on every UPDATE, both
+  // from the REAL build clock. s01's stalled ages («٤/٣/٢/٢ أيام») and the
+  // work-queue wait chips derive from exactly those columns, so the declared
+  // TIME_SHIFTS rows are backdated here through the SQL channel. This is
+  // test-environment time alignment, not fake business data — the rows
+  // themselves were created through the real API, and ONLY rows the mock
+  // gives an age for are touched. Convergent: a re-run patches nothing when
+  // both columns already carry the declared instant.
+  console.log('\n-- time shift --');
+  {
+    let patched = 0;
+    for (const s of TIME_SHIFTS) {
+      const id = contentByRef[s.ref]?.id;
+      if (!id) throw new Error(`time shift: ${s.ref} not in content map`);
+      const state = (await query(`
+SELECT (SELECT count(*)::int FROM public.workflow_role_tasks
+         WHERE subject_table = 'mos_content' AND subject_id = ${q(id)} AND status = 'open') AS open_tasks,
+       (SELECT count(*)::int FROM public.workflow_role_tasks
+         WHERE subject_table = 'mos_content' AND subject_id = ${q(id)} AND status = 'open'
+           AND opened_at = ${q(s.at)}::timestamptz) AS tasks_aligned,
+       (SELECT count(*)::int FROM public.mos_content
+         WHERE id = ${q(id)} AND updated_at = ${q(s.at)}::timestamptz) AS content_aligned`))[0] ?? {};
+      if ((state.open_tasks ?? 0) === 0) {
+        throw new Error(`time shift: ${s.ref} has no open task — TIME_SHIFTS and the drive matrix disagree`);
+      }
+      if (state.tasks_aligned === state.open_tasks && state.content_aligned === 1) {
+        console.log(`[skip] ${s.ref} already at ${s.at}`);
+        continue;
+      }
+      // One exec = one transaction: mos_content_touch_tg would overwrite the
+      // backdate with now(), so it is disabled around the UPDATE and re-enabled
+      // in the same atomic batch (a failure rolls the disable back too).
+      await exec(`
+ALTER TABLE public.mos_content DISABLE TRIGGER mos_content_touch_tg;
+UPDATE public.workflow_role_tasks SET opened_at = ${q(s.at)}::timestamptz
+ WHERE subject_table = 'mos_content' AND subject_id = ${q(id)} AND status = 'open';
+UPDATE public.mos_content SET updated_at = ${q(s.at)}::timestamptz WHERE id = ${q(id)};
+ALTER TABLE public.mos_content ENABLE TRIGGER mos_content_touch_tg;`);
+      patched += 1;
+      console.log(`[ok] ${s.ref} backdated to ${s.at} (${s.days} day(s) before the epoch)`);
+    }
+    console.log(`[ok] time shift aligned to the mock's stall ages `
+      + `(${patched} patched · ${TIME_SHIFTS.length} total)`);
   }
 
   /* -- 6. executions + ads + daily entries ---------------------------- */
@@ -1360,6 +1441,43 @@ async function verify() {
     process.exit(1);
   }
   console.log('[ok] s01 computes from state: ٢٣ تحت الإنتاج · ٧ بانتظارك · ١٢ (٩ مجدولة + ٣ بلا موعد) · ٤ متأخر');
+
+  /* ---- s01 stalled-list assertion (time shift) ----------------------- */
+  // The mock's stalled table is an ORDERED list with ages. After the
+  // `-- time shift --` pass the only pre-epoch open tasks must be exactly the
+  // four mock rows, oldest first, each a whole-day age at the epoch. Ages are
+  // computed from opened_at vs the epoch; mos_content.updated_at (what the
+  // app actually renders the «متوقف» column from) is asserted to carry the
+  // same declared instants.
+  const contentById = new Map(content.map((c) => [c.id, c]));
+  const gotStalled = openTasks
+    .filter((t) => t.opened_at && Date.parse(t.opened_at) < EPOCH)
+    .sort((a, b) => Date.parse(a.opened_at) - Date.parse(b.opened_at))
+    .map((t) => {
+      const days = Math.floor((EPOCH - Date.parse(t.opened_at)) / 86_400_000);
+      return `${contentById.get(t.content_id)?.ref ?? '?'}:${days}`;
+    })
+    .join(' · ');
+  const wantStalled = TIME_SHIFTS.map((s) => `${s.ref}:${s.days}`).join(' · ');
+  if (gotStalled !== wantStalled) {
+    console.error('FAIL: s01 stalled list (pre-epoch open tasks, oldest first) does not match the mock:');
+    console.error(`  dataset: ${gotStalled || '(none — was the time-shift pass run?)'}`);
+    console.error(`  mock:    ${wantStalled}`);
+    process.exit(1);
+  }
+  const shifted = await query(
+    `SELECT ref, updated_at FROM public.mos_content WHERE ref IN (${TIME_SHIFTS.map((s) => q(s.ref)).join(',')})`);
+  const updatedByRef = new Map(shifted.map((r) => [r.ref, Date.parse(r.updated_at)]));
+  for (const s of TIME_SHIFTS) {
+    const have = updatedByRef.get(s.ref);
+    if (have !== Date.parse(s.at)) {
+      console.error(`FAIL: ${s.ref} mos_content.updated_at is `
+        + `${have ? new Date(have).toISOString() : '(missing)'} — expected ${s.at}. `
+        + 'A later write bumped it (mos_content_touch_tg), or the time-shift pass never ran.');
+      process.exit(1);
+    }
+  }
+  console.log(`[ok] s01 stalled list: ${gotStalled} (ref:age-days at the ${EPOCH_ISO} epoch)`);
   console.log('=== VERIFY passed ===');
 }
 

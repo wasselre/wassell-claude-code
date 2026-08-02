@@ -100,6 +100,37 @@ function applyEnvAliases() {
 const envInfo = loadEnvFile(ARGS.env);
 applyEnvAliases();
 
+/* ------------------------------------------------------------------ */
+/* frozen clock (MOS_QA_EPOCH) — MUST run before any handler import    */
+/* ------------------------------------------------------------------ */
+// The visual-QA harness freezes the BROWSER clock at MOS_QA_EPOCH
+// (scripts/mos-qa.mjs determinismPrelude), but the api/ handlers this server
+// bundles compute «متأخر» counts and stall ages with new Date()/Date.now().
+// With a real server clock those disagree with the frozen captures, so the
+// same pattern is applied to the PROCESS clock here: no-arg construction and
+// Date.now() return the epoch; explicit-arg constructors, parse and UTC keep
+// working. Handlers are lazily imported per request, well after this runs.
+// Without MOS_QA_EPOCH (env or the --env file), behavior is unchanged.
+const QA_EPOCH = process.env.MOS_QA_EPOCH ?? null;
+if (QA_EPOCH) {
+  const epochMs = new Date(QA_EPOCH).getTime();
+  if (!Number.isFinite(epochMs)) {
+    throw new Error(`bad MOS_QA_EPOCH '${QA_EPOCH}' — not a parseable date`);
+  }
+  const RealDate = Date;
+  class FrozenDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) super(epochMs);
+      else super(...args);
+    }
+    static now() { return epochMs; }
+  }
+  FrozenDate.parse = RealDate.parse;
+  FrozenDate.UTC = RealDate.UTC;
+  globalThis.Date = FrozenDate;
+  console.log(`[mos-dev] ⏰ CLOCK FROZEN at ${QA_EPOCH} — new Date()/Date.now() return the epoch for every handler (unset MOS_QA_EPOCH to restore real time)`);
+}
+
 function mask(v) {
   if (!v) return '(unset)';
   if (v.length <= 8) return '****';
@@ -337,6 +368,7 @@ server.listen(ARGS.port, () => {
   console.log(`│  listening:    http://localhost:${ARGS.port}`);
   console.log(`│  vite proxy:   http://localhost:${ARGS.vitePort} (everything not in ROUTES)`);
   console.log(`│  env file:     ${envInfo.abs} (${envInfo.count} vars loaded)`);
+  console.log(`│  clock:        ${QA_EPOCH ? `FROZEN at ${QA_EPOCH} (MOS_QA_EPOCH)` : 'real time'}`);
   console.log(`│  SUPABASE_URL: ${process.env.SUPABASE_URL ?? '(unset)'}`);
   console.log(`│  anon key:     ${mask(process.env.SUPABASE_ANON_KEY)}`);
   console.log('│  api routes:');

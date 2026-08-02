@@ -1,0 +1,16 @@
+/**
+ * Rail badges — the numeric counters the approved mock pins on three nav
+ * items (rail-tpl in docs/marketing-reference/source/marketing-os-ar.html):
+ * مهامي, المحتوى and الحملات.
+ *
+ * The badge look itself is `.mos-root .navi .ct` in mos.css — verified
+ * 2026-08-02 to match the mock's `.navi .ct` (margin-inline-start: auto,
+ * font-size 10.5px, dimmed, tabular digits) — so it is NOT duplicated here.
+ * This file carries only what the mock never needed because its labels are
+ * short: the counter must never shrink or wrap when a nav label runs long
+ * (`.navi` is a flex row and the badge is its end item).
+ */
+.mos-root .navi .ct {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
