@@ -1,0 +1,337 @@
+/*
+ * Marketing Workspace — mobile layer, part 2 (design screen 29).
+ *
+ * The mobile review flow on the content record: the pinned prior-rejection
+ * note at the top, the readable scene list with its duration bar, the FIXED
+ * تعديلات/اعتماد bar above the tab bar, and the two bottom sheets — the
+ * approval sheet (checklist ABOVE the buttons, «اعتماد رغم النقص» spelled on
+ * the button itself) and «طلب تعديلات» rendered as a sheet instead of a
+ * centered modal.
+ *
+ * Everything derives from the mockup's .ph-* styles (marketing-os-ar.html),
+ * is scoped under `.mos-root`, and reads only mos.css design tokens — so
+ * dark mode and RTL/LTR come free. In-page pieces (note / scene list / fixed
+ * bar) live behind the 760px media query; the sheets are width-agnostic
+ * because ONLY the mobile UI ever opens them, and a mid-open resize must not
+ * strand them unstyled.
+ */
+
+/* ── The sheet scrim (both sheets render into <body> via portal) ───────── */
+/* The wrapper carries `mos-root mos-scrim m2-scrim`: mos-root for tokens,
+   mos-scrim so the s38-* modal-content styles keep applying inside the
+   request-changes sheet, m2-scrim to override the centered-modal layout
+   into a bottom-anchored one (higher specificity, so it wins). */
+.mos-root.m2-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(40, 28, 20, 0.42);
+  z-index: 80;
+  display: flex;
+  align-items: flex-end;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* ── The bottom sheet (mockup .ph-sheet) ──────────────────────────────── */
+.mos-root.m2-scrim .m2-sheet {
+  width: 100%;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 22px 22px 0 0;
+  padding: 9px 18px calc(26px + env(safe-area-inset-bottom));
+  box-shadow: 0 -14px 40px rgba(50, 32, 20, 0.22);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  animation: m2-sheet-up 0.18s ease;
+}
+
+@keyframes m2-sheet-up {
+  from { transform: translateY(24px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.mos-root .m2-grab {
+  width: 38px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--sand);
+  margin: 0 auto 14px;
+  flex: none;
+}
+
+.mos-root .m2-sheet-title {
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 700;
+  flex: none;
+}
+
+.mos-root .m2-sheet-sub {
+  font-size: 12.5px;
+  color: var(--mute);
+  margin-top: 4px;
+  line-height: 1.7;
+  flex: none;
+}
+
+/* The request-changes sheet's scrollable middle — the s38 form is long. */
+.mos-root .m2-sheet-body {
+  display: grid;
+  gap: 15px;
+  margin-top: 14px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-bottom: 4px;
+}
+
+/* The round sentence under the form — the modal footer's .note, sheet-shaped. */
+.mos-root .m2-sheet-note {
+  font-size: 11px;
+  color: var(--mute);
+  margin-top: 12px;
+  line-height: 1.7;
+  flex: none;
+}
+
+/* ── The approval checklist (mockup .ph-chk) — ABOVE the buttons ──────── */
+.mos-root .m2-chks {
+  margin-top: 15px;
+  flex: none;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.mos-root .m2-chk {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mos-root .m2-chk:last-child {
+  border-bottom: 0;
+}
+.mos-root .m2-chk .bx {
+  width: 23px;
+  height: 23px;
+  border-radius: 7px;
+  border: 1.5px solid var(--line);
+  flex: 0 0 23px;
+  display: grid;
+  place-items: center;
+}
+.mos-root .m2-chk.ok .bx {
+  background: var(--go);
+  border-color: var(--go);
+}
+.mos-root .m2-chk.ok .bx svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+  color: #fff;
+}
+.mos-root .m2-chk .tx {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.mos-root .m2-chk.ok .tx {
+  color: var(--mute);
+  text-decoration: line-through;
+}
+.mos-root .m2-chk.gap .bx {
+  border-color: var(--late);
+}
+.mos-root .m2-chk.gap .tx {
+  color: var(--late);
+}
+.mos-root .m2-chk .mt3 {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 2px;
+}
+
+.mos-root .m2-empty {
+  font-size: 12.5px;
+  color: var(--mute);
+  padding: 12px 0;
+}
+
+/* «أضف ملاحظة — اختياري» (mockup .ph-cap-box, made a real textarea). */
+.mos-root .m2-note-box {
+  margin-top: 14px;
+  width: 100%;
+  background: var(--sand-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 13px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.85;
+  color: var(--ink);
+  resize: none;
+  min-height: 44px; /* touch target */
+  flex: none;
+}
+.mos-root .m2-note-box::placeholder {
+  color: var(--mute);
+}
+
+/* ── Sheet / fixed-bar buttons (mockup .ph-btn) ───────────────────────── */
+.mos-root .m2-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 46px; /* touch target */
+  border-radius: 13px;
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  padding: 0 14px;
+}
+.mos-root .m2-btn.g {
+  background: var(--go);
+  border-color: var(--go);
+  color: #f4fbf7;
+}
+.mos-root .m2-btn.p {
+  background: var(--copper);
+  border-color: var(--copper);
+  color: #fff9f2;
+}
+.mos-root .m2-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* «اعتماد رغم النقص» + its recorded-gap subtitle on the button itself. */
+.mos-root .m2-btn.stack {
+  flex-direction: column;
+  gap: 1px;
+  min-height: 54px;
+}
+.mos-root .m2-btn .sub {
+  font-size: 10.5px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.mos-root .m2-btns {
+  display: flex;
+  gap: 9px;
+  margin-top: 14px;
+  flex: none;
+}
+
+/* ── In-page mobile pieces — phone widths only ────────────────────────── */
+@media (max-width: 760px) {
+  /* The pinned prior-rejection note (mockup: «ملاحظتك على النسخة ١»). */
+  .mos-root .m2-note {
+    background: color-mix(in srgb, var(--late) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--late) 30%, transparent);
+    border-radius: 12px;
+    padding: 11px 13px;
+    margin-bottom: 12px;
+  }
+  .mos-root .m2-note .t {
+    font-size: 11px;
+    color: var(--late);
+    font-weight: 700;
+  }
+  .mos-root .m2-note .b {
+    font-size: 12.5px;
+    margin-top: 5px;
+    line-height: 1.7;
+  }
+
+  /* The readable scene list (mockup .ph-card «المشاهد») + duration bar. */
+  .mos-root .m2-scenes {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    padding: 14px 15px;
+  }
+  .mos-root .m2-scenes .hd {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .mos-root .m2-scenes .hd .l {
+    font-size: 11px;
+    color: var(--mute);
+    font-weight: 700;
+  }
+  .mos-root .m2-scenes .hd .tag {
+    margin-inline-start: auto;
+  }
+  .mos-root .m2-bar {
+    display: flex;
+    gap: 5px;
+    height: 20px;
+    border-radius: 5px;
+    overflow: hidden;
+    margin-bottom: 11px;
+  }
+  .mos-root .m2-bar i {
+    display: block;
+  }
+  .mos-root .m2-scene {
+    border-bottom: 1px solid var(--line-soft);
+    padding-bottom: 9px;
+    margin-bottom: 9px;
+  }
+  .mos-root .m2-scene:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+    margin-bottom: 0;
+  }
+  .mos-root .m2-scene .row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+  .mos-root .m2-scene .n {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--copper);
+  }
+  .mos-root .m2-scene .t {
+    font-size: 11px;
+    color: var(--mute);
+  }
+  .mos-root .m2-scene .row .pill {
+    margin-inline-start: auto;
+  }
+  .mos-root .m2-scene .v {
+    font-size: 12.5px;
+    margin-top: 4px;
+    line-height: 1.7;
+  }
+
+  /* The FIXED تعديلات/اعتماد bar (mockup .ph-fix) — above the tab bar
+     (z 30), below the drawer scrim (39), sheets (60+) and modals (80). */
+  .mos-root .m2-fix {
+    position: fixed;
+    inset-inline: 14px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
+    display: flex;
+    gap: 9px;
+    z-index: 31;
+  }
+  .mos-root .m2-fix .m2-btn {
+    flex: 1;
+    box-shadow: 0 8px 24px rgba(50, 32, 20, 0.18);
+  }
+
+  /* Keep the last card readable above the fixed bar + tab bar. */
+  .mos-root .wsplit.m2-pad .wmain {
+    padding-bottom: 148px;
+  }
+}

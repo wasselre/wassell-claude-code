@@ -23,8 +23,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  MosAccount, MosComment, MosContentRow, MosContentVersion, MosPublication, MosScene,
-  MosStep, MosTask, PLATFORM_LABELS, PUB_STATUS_LABELS, ROLE_LABELS, RolePerson,
+  FOOTAGE_LABELS, MosAccount, MosComment, MosContentRow, MosContentVersion, MosPublication,
+  MosScene, MosStep, MosTask, PLATFORM_LABELS, PUB_STATUS_LABELS, ROLE_LABELS, RolePerson,
   addComment, completeTask, fetchAssets, fetchCampaigns, fetchComments,
   fetchContentDetail, fetchContentVersions, fetchPublications,
   fieldSchemaEntries, fieldSchemaKeys, isOverdue, updateContent,
@@ -42,8 +42,10 @@ import PublishTab from './components/PublishTab';
 import PerformanceTab from './components/PerformanceTab';
 import MaterialsTab from './components/MaterialsTab';
 import RequestChangesModal from './components/RequestChangesModal';
+import ApprovalSheet, { useIsMobile } from './components/ApprovalSheet';
 import { IconBack, IconCheck, IconForward, IconSend } from './components/icons';
 import { dateTimeShort, daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
+import './styles/mobile-m2.css';
 
 type Tab = 'overview' | 'content' | 'materials' | 'tasks' | 'publishing' | 'performance';
 
@@ -89,7 +91,10 @@ export default function ContentDetailPage() {
   const { contentId } = useParams<{ contentId: string }>();
   const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
-  const { isAr, role, roles, can, typeLabel, projectName, contentTypes, people, projects } = useWorkspace();
+  const { isAr, role, roles, can, typeLabel, projectName, contentTypes, people, projects, appUserId } = useWorkspace();
+  // Screen 29 — the phone review flow renders its own pinned note, scene
+  // list, fixed action bar and approval sheet below the 760px breakpoint.
+  const isMobile = useIsMobile();
 
   const [item, setItem] = useState<MosContentRow | null>(null);
   const [tasks, setTasks] = useState<MosTask[]>([]);
@@ -106,6 +111,7 @@ export default function ContentDetailPage() {
   const [editingBrief, setEditingBrief] = useState(false);
   const [actBusy, setActBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [approveOpen, setApproveOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
   const [versions, setVersions] = useState<MosContentVersion[] | null>(null);
 
@@ -279,6 +285,9 @@ export default function ContentDetailPage() {
     ? steps.find((s) => s.position === currentStep.position + 1) ?? null
     : null;
 
+  // Screen 29's FIXED تعديلات/اعتماد bar — the phone twin of the header pair.
+  const showFixBar = isMobile && !!openTask && canAct && currentStep?.is_approval === true;
+
   const ownerRoleLabel = item.owner_role
     ? ROLE_LABELS[item.owner_role]
       ? isAr ? ROLE_LABELS[item.owner_role].ar : ROLE_LABELS[item.owner_role].en
@@ -403,8 +412,9 @@ export default function ContentDetailPage() {
             )}
             {/* Screen 36: the header buttons are the CURRENT ROLE's buttons.
                 They render only while the task is actionable — no disabled
-                refusals. */}
-            {openTask && canAct && currentStep?.is_approval && (
+                refusals. On the phone (s29) the approval pair moves to the
+                FIXED bottom bar instead. */}
+            {openTask && canAct && currentStep?.is_approval && !isMobile && (
               <>
                 <button
                   type="button"
@@ -456,11 +466,29 @@ export default function ContentDetailPage() {
         </div>
       </div>
 
-      <div className="wsplit">
+      <div className={`wsplit${showFixBar ? ' m2-pad' : ''}`}>
         <div className="wmain">
           {error && (
             <div style={{ marginBottom: 12 }}>
               <LoadError message={error} onRetry={() => void load()} isAr={isAr} />
+            </div>
+          )}
+
+          {/* Screen 29, phone 2 — the prior rejection note pinned at the TOP
+              of the phone screen, so the reviewer re-reads what they asked
+              for without scrolling the thread. Desktop keeps it in the rail. */}
+          {isMobile && lastRejection && (
+            <div className="m2-note">
+              <div className="t">
+                {lastRejection.closed_by_user_id === appUserId
+                  ? isAr
+                    ? `ملاحظتك على النسخة ${num(lastRejection.round, true)}`
+                    : `Your note on version ${lastRejection.round}`
+                  : isAr
+                    ? `ملاحظة المراجعة على النسخة ${num(lastRejection.round, true)}`
+                    : `Review note on version ${lastRejection.round}`}
+              </div>
+              <div className="b">{lastRejection.note}</div>
             </div>
           )}
 
@@ -628,17 +656,23 @@ export default function ContentDetailPage() {
                 isAr={isAr}
                 onSaved={(data) => setItem({ ...item, data })}
               />
+              {/* Screen 29, phone 2: on the phone the scenes render as a
+                  READABLE list with a duration bar, not a compressed table. */}
               {(item.content_type_key === 'video' || scenes.length > 0) && (
-                <SceneTable
-                  contentId={item.id}
-                  contentTitle={item.title}
-                  projectId={item.project_id}
-                  scenes={scenes}
-                  canEdit={canEditNow}
-                  canRaiseShoot={role === 'ops_supervisor' || can('assign')}
-                  isAr={isAr}
-                  onChange={setScenes}
-                />
+                isMobile ? (
+                  scenes.length > 0 && <MobileSceneList scenes={scenes} isAr={isAr} />
+                ) : (
+                  <SceneTable
+                    contentId={item.id}
+                    contentTitle={item.title}
+                    projectId={item.project_id}
+                    scenes={scenes}
+                    canEdit={canEditNow}
+                    canRaiseShoot={role === 'ops_supervisor' || can('assign')}
+                    isAr={isAr}
+                    onChange={setScenes}
+                  />
+                )
               )}
             </div>
           )}
@@ -707,6 +741,46 @@ export default function ContentDetailPage() {
         )}
       </div>
 
+      {/* Screen 29's FIXED bottom bar — تعديلات / اعتماد, floating above the
+          tab bar so the decision never needs a scroll to the header. */}
+      {showFixBar && openTask && (
+        <div className="m2-fix">
+          <button
+            type="button"
+            className="m2-btn"
+            style={{ flex: '0 0 132px' }}
+            disabled={actBusy}
+            onClick={() => setRejectOpen(true)}
+          >
+            {isAr ? 'تعديلات' : 'Changes'}
+          </button>
+          <button
+            type="button"
+            className="m2-btn g"
+            disabled={actBusy}
+            onClick={() => setApproveOpen(true)}
+          >
+            {isAr ? 'اعتماد' : 'Approve'}
+          </button>
+        </div>
+      )}
+
+      {/* Screen 29, phone 3 — the approval sheet: checklist above the
+          buttons, «اعتماد رغم النقص» as a conscious path. */}
+      {approveOpen && openTask && (
+        <ApprovalSheet
+          openTask={openTask}
+          step={currentStep}
+          reviewedStep={reviewedStep}
+          nextStep={nextStep}
+          scenes={scenes}
+          data={item.data ?? {}}
+          isAr={isAr}
+          onClose={() => setApproveOpen(false)}
+          onDone={() => { setApproveOpen(false); void load(); }}
+        />
+      )}
+
       {rejectOpen && openTask && (
         <RequestChangesModal
           item={item}
@@ -730,6 +804,94 @@ export default function ContentDetailPage() {
         />
       )}
     </>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Screen 29, phone 2 — «المشاهد» as a READABLE phone list: a proportional
+   duration bar on top, then one row per scene (number · time · footage pill,
+   visual line under). Read-only by design: the phone flow is for REVIEWING;
+   scene editing stays on the desktop SceneTable.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/** The mockup's bar segment colours, cycled in its exact order. */
+const SCENE_BAR_COLORS = [
+  'var(--choc)', 'var(--copper)', 'var(--terracotta)',
+  'var(--copper)', 'var(--gold)', 'var(--choc)',
+];
+
+const FOOTAGE_TONE: Record<MosScene['footage_status'], string> = {
+  have: 'p-go',
+  missing: 'p-late',
+  to_make: 'p-wait',
+  template: 'p-idle',
+};
+
+function MobileSceneList({ scenes, isAr }: { scenes: MosScene[]; isAr: boolean }) {
+  const sorted = [...scenes].sort((a, b) => a.position - b.position);
+
+  // Segment widths: proportional when every scene carries a valid duration,
+  // an even split otherwise — a half-timed script must not draw a lying bar.
+  const durations = sorted.map((s) =>
+    s.start_sec != null && s.end_sec != null && s.end_sec > s.start_sec
+      ? s.end_sec - s.start_sec
+      : null,
+  );
+  const allTimed = durations.every((d): d is number => d !== null);
+  const totalDur = allTimed ? durations.reduce((a, b) => a + (b ?? 0), 0) : 0;
+  const widthOf = (i: number): string =>
+    allTimed && totalDur > 0
+      ? `${(((durations[i] ?? 0) / totalDur) * 100).toFixed(1)}%`
+      : `${(100 / sorted.length).toFixed(1)}%`;
+
+  // «٦ · ٣٨ ثانية» — count · the last scene's end second.
+  const totalSec = sorted.reduce((a, s) => Math.max(a, s.end_sec ?? 0), 0);
+  const tag = totalSec > 0
+    ? isAr
+      ? `${num(sorted.length, true)} · ${num(totalSec, true)} ثانية`
+      : `${sorted.length} · ${totalSec}s`
+    : num(sorted.length, isAr);
+
+  const timeOf = (s: MosScene): string | null =>
+    s.start_sec != null && s.end_sec != null
+      ? isAr
+        ? `${num(s.start_sec, true)}–${num(s.end_sec, true)}ث`
+        : `${s.start_sec}–${s.end_sec}s`
+      : null;
+
+  return (
+    <div className="m2-scenes">
+      <div className="hd">
+        <span className="l">{isAr ? 'المشاهد' : 'Scenes'}</span>
+        <span className="tag">{tag}</span>
+      </div>
+      <div className="m2-bar">
+        {sorted.map((s, i) => (
+          <i
+            key={s.id}
+            style={{ width: widthOf(i), background: SCENE_BAR_COLORS[i % SCENE_BAR_COLORS.length] }}
+          />
+        ))}
+      </div>
+      {sorted.map((s) => {
+        const t = timeOf(s);
+        return (
+          <div key={s.id} className="m2-scene">
+            <div className="row">
+              <span className="n">{num(s.position, isAr)}</span>
+              {t && <span className="t">{t}</span>}
+              <span className={`pill ${FOOTAGE_TONE[s.footage_status] ?? 'p-idle'}`}>
+                {(isAr ? FOOTAGE_LABELS[s.footage_status]?.ar : FOOTAGE_LABELS[s.footage_status]?.en)
+                  ?? s.footage_status}
+              </span>
+            </div>
+            {(s.visual || s.voiceover) && (
+              <div className="v">{s.visual ?? s.voiceover}</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

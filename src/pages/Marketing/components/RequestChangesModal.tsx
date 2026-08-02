@@ -15,14 +15,17 @@
  * the SQL transition cannot honor a different target and a selectable lie is
  * worse than a visible default.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   MosContentRow, MosFieldDef, MosScene, MosStep, MosTask, ROLE_LABELS,
   completeTask, updateTask,
 } from '@/lib/marketingOS/client';
 import { Modal } from './kit';
+import { useIsMobile } from './ApprovalSheet';
 import { daysAgo, isoDate, num, roleAvatarClass, shortDate } from '../lib/format';
+import '../styles/mobile-m2.css';
 
 /** Arabic ordinals for the round sentence — «هذه الجولة الثانية.» */
 const ORDINAL_AR = ['الأولى', 'الثانية', 'الثالثة', 'الرابعة', 'الخامسة', 'السادسة'];
@@ -88,6 +91,19 @@ export default function RequestChangesModal({
     isoDate(openTask.due_at) || isoDate(new Date(Date.now() + DAY_MS).toISOString()),
   );
   const [busy, setBusy] = useState(false);
+
+  // Screen 29: on the phone this renders as a BOTTOM SHEET, not a centered
+  // modal — same content, same rules (the note stays mandatory).
+  const isMobile = useIsMobile();
+  useEffect(() => {
+    // The sheet path bypasses kit's Modal, so it owns its own Escape.
+    if (!isMobile) return undefined;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isMobile, onClose]);
 
   const round = openTask.round;
   const currentStep = steps.find((s) => s.id === openTask.step_id) ?? null;
@@ -180,30 +196,15 @@ export default function RequestChangesModal({
     ? `هذه الجولة ${roundOrdinal(round, true)}. ثلاث جولات على سجل واحد تُظهر تنبيهًا لمدير التسويق — غالبًا الموجز هو المشكلة لا الكتابة.`
     : `This is ${roundOrdinal(round, false)}. Three rounds on one record raise an alert for the marketing manager — usually the brief is the problem, not the writing.`;
 
-  return (
-    <Modal
-      title={isAr ? `طلب تعديلات · ${item.ref ?? ''}` : `Request changes · ${item.ref ?? ''}`}
-      sub={isAr
-        ? `النسخة ${num(round, true)} من ${revisedLabel} — أرسلها ${returnRoleLabel}${sentAgo === 'اليوم' ? ' اليوم' : ` قبل ${sentAgo}`}`
-        : `Version ${round} of ${revisedLabel} — sent by the ${returnRoleLabel} ${sentAgo === 'today' ? 'today' : `${sentAgo} ago`}`}
-      onClose={onClose}
-      footer={
-        <>
-          <span className="note">{roundSentence}</span>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>
-            {isAr ? 'إلغاء' : 'Cancel'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-p"
-            disabled={busy || note.trim() === ''}
-            onClick={() => void submit()}
-          >
-            {busy ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : isAr ? 'إرسال الطلب' : 'Send the request'}
-          </button>
-        </>
-      }
-    >
+  const title = isAr ? `طلب تعديلات · ${item.ref ?? ''}` : `Request changes · ${item.ref ?? ''}`;
+  const sub = isAr
+    ? `النسخة ${num(round, true)} من ${revisedLabel} — أرسلها ${returnRoleLabel}${sentAgo === 'اليوم' ? ' اليوم' : ` قبل ${sentAgo}`}`
+    : `Version ${round} of ${revisedLabel} — sent by the ${returnRoleLabel} ${sentAgo === 'today' ? 'today' : `${sentAgo} ago`}`;
+
+  // The form itself — shared verbatim between the desktop modal and the
+  // phone bottom sheet, so the two can never drift.
+  const body = (
+    <>
       {/* Three rounds on one record: the footer sentence promoted to a banner. */}
       {round >= 3 && (
         <div className="s38-alert" role="alert">
@@ -250,7 +251,7 @@ export default function RequestChangesModal({
           style={{ width: '100%', minHeight: 82, lineHeight: 1.9 }}
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          autoFocus
+          autoFocus={!isMobile} /* on the phone, autofocus would pop the keyboard over the sheet */
           placeholder={isAr
             ? 'المشهد ٣ ما زال يشرح الموقع بدل أن يُظهره — اجعليه لقطة خريطة متحركة بلا تعليق.'
             : 'Scene 3 still explains the location instead of showing it — make it an animated map shot with no voice-over.'}
@@ -298,7 +299,7 @@ export default function RequestChangesModal({
       )}
 
       {/* ── الاستحقاق + التأثير على النشر ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 13 }}>
         <div>
           <div className="lbl" style={{ marginBottom: 6 }}>
             {isAr ? 'استحقاق التعديل' : 'Revision due date'}
@@ -372,6 +373,72 @@ export default function RequestChangesModal({
           </>
         )}
       </div>
+    </>
+  );
+
+  // Screen 29 — the phone shape: a bottom sheet with the round sentence and
+  // the send/cancel pair pinned under the scrollable form.
+  if (isMobile) {
+    return createPortal(
+      <div
+        className="mos-root mos-scrim m2-scrim"
+        onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
+      >
+        <div className="m2-sheet" role="dialog" aria-modal="true" aria-label={title}>
+          <div className="m2-grab" />
+          <div className="m2-sheet-title">{title}</div>
+          <div className="m2-sheet-sub">{sub}</div>
+          <div className="m2-sheet-body">{body}</div>
+          <div className="m2-sheet-note">{roundSentence}</div>
+          <div className="m2-btns">
+            <button
+              type="button"
+              className="m2-btn"
+              style={{ flex: '0 0 110px' }}
+              onClick={onClose}
+              disabled={busy}
+            >
+              {isAr ? 'إلغاء' : 'Cancel'}
+            </button>
+            <button
+              type="button"
+              className="m2-btn p"
+              style={{ flex: 1 }}
+              disabled={busy || note.trim() === ''}
+              onClick={() => void submit()}
+            >
+              {busy ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : isAr ? 'إرسال الطلب' : 'Send the request'}
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
+  return (
+    <Modal
+      title={title}
+      sub={sub}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="note">{roundSentence}</span>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
+            {isAr ? 'إلغاء' : 'Cancel'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-p"
+            disabled={busy || note.trim() === ''}
+            onClick={() => void submit()}
+          >
+            {busy ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : isAr ? 'إرسال الطلب' : 'Send the request'}
+          </button>
+        </>
+      }
+    >
+      {body}
     </Modal>
   );
 }
