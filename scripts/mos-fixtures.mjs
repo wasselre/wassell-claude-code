@@ -387,15 +387,17 @@ const CAMPAIGNS = [
 //
 /* ---- RECONCILIATION — mock-vs-dataset discrepancies left behind ---------
  * Read later to write manifest row notes. Each: screen · mock value →
- * dataset value · why. (20 entries; anything NOT listed here matches.)
+ * dataset value · why. (22 entries; anything NOT listed here matches.)
  *
  *  1. s01 week card row 2 · «الاثنين ٢٨ · تيك توك · V-002» → V-002 tiktok on
  *     ٣١ يوليو — s12/s50 need the 31-July «ناقص» row and s13 cells it on 31;
  *     the card renders V-002 انستقرام on ٢٨ instead (the IG publish).
- *  2. s01 stalled row 3 · title «مينا ٥٢ — صور جولة الثلاث غرف» → «صور الجولة
+ *  2. s01 stalled row 4 · title «مينا ٥٢ — صور جولة الثلاث غرف» → «صور الجولة
  *     — ١٤٢ م²» — s03 (the content table) is the title source of truth.
- *  3. s01 week card row 3 · title «موقع مقام ١٧» → «الموقع — خريطة المسافات»
- *     — same: s03's title wins.
+ *  3. s01 week card labels · «P-014 مرافق مينا ٥٢» / «P-016 موقع مقام ١٧»
+ *     (s02 echoes P-016 as «مقام ١٧ — الموقع») → the card renders the content
+ *     titles «المرافق — سطح الاستراحة» / «الموقع — خريطة المسافات» — same:
+ *     s03's table wins (it also pins P-016 to مينا ٥٢, not مقام ١٧).
  *  4. s01 stalled ages + row order · «٤/٣/٢/٢ أيام», V-004 first → ages and
  *     order derive from mos_content.updated_at (real build clock), which no
  *     API action sets. They render from the build's real timestamps. (The
@@ -413,14 +415,17 @@ const CAMPAIGNS = [
  *     week_start (٢٦ يوليو). App behavior, not data.
  *  8. s02 late band · writer «١ متأخرة» (V-004 rewrite, أعادها ريان) → 0 —
  *     V-004 sits at مراجعة النص with the MANAGER per s01/s03/s35; the s02
- *     mock was drawn before the round-2 submission.
+ *     mock was drawn before the round-2 submission. (s35's writer tile
+ *     subline «١ متأخرة» shares this root — dataset writer late = 0.)
  *  9. s02 row 3 + s03 P-016 pill · «جدولة منشور معتمد» / «جاهز» → منشور —
  *     s50's «أدخل» row + s12's second «ناقص» need P-016 published ٣٠ يوليو
  *     with no metrics.
  * 10. s35 tiles · الكاتب ٤ ✓ / المونتير ٧ ✓ but مشرف العمليات ٣ + مدير
  *     التسويق ٣ + «١٧ مهمة مفتوحة» → ops ٥, manager ٧, ٢٣ مفتوحة — one
  *     open-task set cannot be both 17 (s35) and 23 (s01); s01+s03 win.
- *     Writer ٤ and montage ٧ (with ٢ متأخرة) match exactly.
+ *     Writer ٤ and montage ٧ (with ٢ متأخرة) match exactly. The manager
+ *     tile's «١ متأخرة ٤ أيام» reads ٢ متأخرة in the dataset (V-004 +
+ *     P-021 both sit late with the manager — pinned by s01's «متأخر ٤»).
  * 11. s35 approvals card · «إبداعي ٢ · إجرائي ١» → ٧ إبداعي · ٤ إجرائي —
  *     same root as #10 (the manager must hold ٧ approvals for s01's ٧).
  * 12. s04 جاهز column · «جاهز ١ · V-003» → empty — V-003 is published on
@@ -452,6 +457,14 @@ const CAMPAIGNS = [
  *     mock-pinned) and lateDetail shows the top-2 exact step-label groups;
  *     it cannot merge them into a generic «بانتظار المراجعة». App behavior,
  *     not data.
+ * 21. s01 stalled row 2 title · «مقام ١٧ — كاروسيل خطة السداد» → «كاروسيل
+ *     خطة سداد مقام ١٧» — s02 draws the full item row with that exact
+ *     title; the s01 cell reuses the C-004 AD label (s20/s21), which the
+ *     dataset keeps on the ad row, not the content title.
+ * 22. s03 النشر cells for P-019/V-007 · «—» → «١ أغسطس» — s01's needs-a-slot
+ *     trio (P-019، P-020، V-007) is COMPUTED from target_publish_at inside
+ *     the fixture week with no scheduled publication, so both items must
+ *     carry 2026-08-01 targets; the s03 mock drew the column empty.
  * ------------------------------------------------------------------------ */
 const CONTENT = [
   { ref: 'V-001', type: 'video', title: 'مينا ٥٢ — فيديو الإطلاق', project: 'mina', campaign: 'C-002', purpose: 'paid', drive: 'done', target_publish_at: '2026-06-05T19:00:00+03' },
@@ -1273,7 +1286,9 @@ async function verify() {
     { object: 'content: video', count: byType.video ?? 0, expected: 14 },
     { object: 'content: post', count: byType.post ?? 0, expected: 19 },
     { object: 'content: carousel', count: byType.carousel ?? 0, expected: 3 },
-    { object: 'campaigns', count: campaigns.length, expected: 8 },
+    // C-002..C-008 — seven rows. The C- counter seeds at 2 (the mocks' first
+    // campaign ref), so a post-teardown rebuild never mints a C-001.
+    { object: 'campaigns', count: campaigns.length, expected: CAMPAIGNS.length },
     { object: 'executions', count: execCount, expected: 7 },
     { object: 'ads', count: adCount, expected: 6 },
     { object: 'assets', count: assets.length, expected: 16 },
