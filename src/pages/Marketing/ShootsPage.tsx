@@ -9,21 +9,24 @@
  * on shoot-brief quality: a shoot under 70% used deserves a sharper brief
  * next time, not blame for the photographer.
  *
- * Delivery is wired to intake: uploading a batch linked to a request marks
- * its waiting scenes covered (see UploadPage) — and the «تسليم» button here
- * does the same for hand-offs that skipped the upload page.
+ * «العتبة إعداد قابل للتغيير»: the trip-worthiness threshold comes from
+ * mos_settings (`bootstrap.settings.shoot_grouping_thresholds`), not from a
+ * constant — Settings changes it, this screen obeys it. Defaults 4 / 14.
+ *
+ * A row's «فتح» goes to the request's own page (/m/shoots/:id, screen 24) —
+ * deliver, item ticks and the upload deep-link all live there.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  MosShootItem, MosShootRequest, SHOOT_STATUS_LABELS,
-  deliverShoot, fetchShoots, saveShoot, toggleShootItem,
+  MosRole, MosShootItem, MosShootRequest, SHOOT_STATUS_LABELS,
+  fetchBootstrap, fetchShoots, saveShoot,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton } from './components/kit';
-import { IconCheck, IconPlus, IconShoot } from './components/icons';
-import { dateTime, daysAgo, num, shortDate } from './lib/format';
+import { Empty, Field, LoadError, Modal, PageHead, Pill, RoleChip, Skeleton } from './components/kit';
+import { IconPlus } from './components/icons';
+import { dayName, daysAgo, num, shortDate } from './lib/format';
 
 const TONE: Record<string, 'idle' | 'now' | 'go' | 'live'> = {
   requested: 'idle',
@@ -33,9 +36,13 @@ const TONE: Record<string, 'idle' | 'now' | 'go' | 'live'> = {
   cancelled: 'idle',
 };
 
-/** The trip-worthiness threshold: shots accumulated, or days waited. */
-const THRESHOLD_SHOTS = 4;
-const THRESHOLD_DAYS = 14;
+/** «عبر ٣ مشاريع» with Arabic number agreement. */
+function projectsAr(n: number): string {
+  if (n === 1) return 'مشروع واحد';
+  if (n === 2) return 'مشروعين';
+  if (n <= 10) return `${num(n, true)} مشاريع`;
+  return `${num(n, true)} مشروعًا`;
+}
 
 interface MissingScene {
   id: string;
@@ -48,7 +55,6 @@ interface MissingScene {
 export default function ShootsPage() {
   const { isAr, can, projectName } = useWorkspace();
   const navigate = useNavigate();
-  const addToast = useAppStore((s) => s.addToast);
 
   const [requests, setRequests] = useState<MosShootRequest[]>([]);
   const [items, setItems] = useState<MosShootItem[]>([]);
@@ -59,13 +65,23 @@ export default function ShootsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<{ sceneIds: string[]; projectId: string | null } | null>(null);
-  const [openRequest, setOpenRequest] = useState<MosShootRequest | null>(null);
+  /** The trip-worthiness threshold, from mos_settings. Defaults until read. */
+  const [thresholds, setThresholds] = useState<{ shots: number; days: number }>({ shots: 4, days: 14 });
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchShoots();
+      const [res, bootstrap] = await Promise.all([
+        fetchShoots(),
+        // The threshold is suggestion config, not the page's data — a settings
+        // failure keeps the defaults and must not block the list. Logged, not
+        // swallowed.
+        fetchBootstrap().catch((e: unknown) => {
+          console.error('[marketing] shoot thresholds unavailable — using 4/14 defaults', e);
+          return null;
+        }),
+      ]);
       setRequests(res.requests);
       setItems(res.items);
       setMissing(res.missing_scenes.map((s) => ({
@@ -78,6 +94,15 @@ export default function ShootsPage() {
       setOwners(res.scene_owners);
       setShootAssets(res.shoot_assets);
       setAssetLinks(res.asset_links);
+      if (bootstrap) {
+        // Canonical keys are min_shots / max_wait_days (the seeded mos_settings
+        // row); shots / days accepted as a legacy shape.
+        const raw = bootstrap.settings.shoot_grouping_thresholds as
+          { min_shots?: number; max_wait_days?: number; shots?: number; days?: number } | undefined;
+        const shots = [raw?.min_shots, raw?.shots].find((v) => typeof v === 'number' && v > 0);
+        const days = [raw?.max_wait_days, raw?.days].find((v) => typeof v === 'number' && v > 0);
+        setThresholds({ shots: shots ?? 4, days: days ?? 14 });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -119,11 +144,11 @@ export default function ShootsPage() {
           ...g,
           oldest,
           waitedDays,
-          overThreshold: g.scenes.length >= THRESHOLD_SHOTS || waitedDays >= THRESHOLD_DAYS,
+          overThreshold: g.scenes.length >= thresholds.shots || waitedDays >= thresholds.days,
         };
       })
       .sort((a, b) => Number(b.overThreshold) - Number(a.overThreshold) || b.scenes.length - a.scenes.length);
-  }, [backlog, owners]);
+  }, [backlog, owners, thresholds]);
 
   const open = requests.filter((r) => r.status !== 'delivered' && r.status !== 'cancelled');
   const sixtyDaysAgo = Date.now() - 60 * 86_400_000;
@@ -145,39 +170,9 @@ export default function ShootsPage() {
   const unblocks = (requestId: string): number =>
     new Set(items.filter((i) => i.request_id === requestId && i.content_id).map((i) => i.content_id)).size;
 
-  const setStatus = async (r: MosShootRequest, status: MosShootRequest['status']): Promise<void> => {
-    try {
-      // Delivered is not just a status — it flips the waiting scenes too.
-      if (status === 'delivered') {
-        const res = await deliverShoot(r.id);
-        setRequests(res.requests);
-        setItems(res.items);
-        addToast(
-          isAr
-            ? `سُلِّم — عُلِّمت ${num(res.scenes_marked, true)} لقطة منتظرة كمتوفرة.`
-            : `Delivered — ${res.scenes_marked} waiting shots marked covered.`,
-          'success',
-        );
-      } else {
-        const res = await saveShoot({ id: r.id, status });
-        setRequests(res.requests);
-        addToast(isAr ? 'حُدِّثت الحالة.' : 'Status updated.', 'success');
-      }
-      setOpenRequest(null);
-      void load();
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    }
-  };
-
-  const toggle = async (item: MosShootItem): Promise<void> => {
-    try {
-      const res = await toggleShootItem(item.id, !item.done);
-      setItems((cur) => cur.map((i) => (i.id === item.id ? res.item : i)));
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    }
-  };
+  // The mockup's header line: «١ مجدول · ٢ مقترحان · ١٤ لقطة منتظرة عبر ٣ مشاريع».
+  const scheduledCount = requests.filter((r) => r.status === 'scheduled').length;
+  const backlogProjects = new Set(suggestions.map((g) => g.projectId ?? 'none')).size;
 
   return (
     <>
@@ -193,8 +188,8 @@ export default function ShootsPage() {
           </>
         }
         sub={isAr
-          ? `${num(open.length, true)} مفتوح · ${num(suggestions.length, true)} مقترح · ${num(backlog.length, true)} لقطة منتظرة`
-          : `${open.length} open · ${suggestions.length} suggested · ${backlog.length} shots waiting`}
+          ? `${num(scheduledCount, true)} مجدول · ${num(suggestions.length, true)} مقترح · ${num(backlog.length, true)} لقطة منتظرة${backlogProjects > 0 ? ` عبر ${projectsAr(backlogProjects)}` : ''}`
+          : `${scheduledCount} scheduled · ${suggestions.length} suggested · ${backlog.length} shots waiting${backlogProjects > 0 ? ` across ${backlogProjects} ${backlogProjects === 1 ? 'project' : 'projects'}` : ''}`}
       >
         <button type="button" className="btn" onClick={() => void load()} disabled={loading}>
           {isAr ? 'تحديث' : 'Refresh'}
@@ -237,8 +232,8 @@ export default function ShootsPage() {
                   <tr>
                     <th style={{ width: 74 }}>{isAr ? 'الرقم' : 'Ref'}</th>
                     <th>{isAr ? 'الطلب' : 'Request'}</th>
-                    <th style={{ width: 126 }}>{isAr ? 'المشروع' : 'Project'}</th>
-                    <th style={{ width: 150 }}>{isAr ? 'الموعد' : 'When'}</th>
+                    <th style={{ width: 140 }}>{isAr ? 'المسؤول' : 'Owner'}</th>
+                    <th style={{ width: 140 }}>{isAr ? 'الموعد' : 'When'}</th>
                     <th className="num" style={{ width: 80 }}>{isAr ? 'لقطات' : 'Shots'}</th>
                     <th style={{ width: 110 }}>{isAr ? 'يفكّ' : 'Unblocks'}</th>
                     <th style={{ width: 100 }}>{isAr ? 'الحالة' : 'Status'}</th>
@@ -254,9 +249,11 @@ export default function ShootsPage() {
                       <tr key={r.id} className={r.status === 'scheduled' ? 'hl' : undefined}>
                         <td className="id">{r.ref}</td>
                         <td className="ttl">{r.title}</td>
-                        <td>{r.project_id ? projectName(r.project_id) : '—'}</td>
+                        <td><RoleChip role={(r.assigned_role ?? null) as MosRole | null} isAr={isAr} /></td>
                         <td style={{ color: 'var(--mute)' }}>
-                          {r.scheduled_at ? dateTime(r.scheduled_at, isAr) : (isAr ? 'بلا موعد' : 'not set')}
+                          {r.scheduled_at
+                            ? `${dayName(r.scheduled_at, isAr)} ${shortDate(r.scheduled_at, isAr)}`
+                            : (isAr ? 'بلا موعد' : 'not set')}
                         </td>
                         <td className="num">{num(done, isAr)} / {num(rows.length, isAr)}</td>
                         <td>
@@ -272,7 +269,7 @@ export default function ShootsPage() {
                           </Pill>
                         </td>
                         <td>
-                          <button type="button" className="btn btn-sm" onClick={() => setOpenRequest(r)}>
+                          <button type="button" className="btn btn-sm" onClick={() => navigate(`/m/shoots/${r.id}`)}>
                             {isAr ? 'فتح' : 'Open'}
                           </button>
                         </td>
@@ -318,7 +315,7 @@ export default function ShootsPage() {
                         {g.scenes.length > 4 && ` +${num(g.scenes.length - 4, isAr)}`}
                       </td>
                       <td className="num" style={{ fontWeight: 700 }}>{num(g.scenes.length, isAr)}</td>
-                      <td style={g.waitedDays >= THRESHOLD_DAYS ? { color: 'var(--wait)', fontWeight: 700 } : undefined}>
+                      <td style={g.waitedDays >= thresholds.days ? { color: 'var(--wait)', fontWeight: 700 } : undefined}>
                         {g.oldest ? daysAgo(g.oldest, isAr) : '—'}
                       </td>
                       <td>
@@ -343,9 +340,18 @@ export default function ShootsPage() {
               </table>
             </div>
             <div className="card-b" style={{ borderTop: '1px solid var(--line-soft)', fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.85 }}>
-              {isAr
-                ? <>العتبة الحالية <b>{num(THRESHOLD_SHOTS, true)} لقطات أو انتظار {num(THRESHOLD_DAYS, true)} يومًا</b>، أيهما أسبق. النظام يعرف كل لقطة ناقصة عبر كل المشاريع — لا ينتظر أن يتذكر أحد.</>
-                : <>The current threshold is <b>{THRESHOLD_SHOTS} shots or {THRESHOLD_DAYS} days waiting</b>, whichever comes first. The system knows every missing shot across every project — it does not wait for someone to remember.</>}
+              {(() => {
+                // «مقام ١٧ تجاوز الاثنين معًا» — name the first group past BOTH bars.
+                const both = suggestions.find(
+                  (g) => g.scenes.length >= thresholds.shots && g.waitedDays >= thresholds.days,
+                );
+                const bothName = both
+                  ? both.projectId ? projectName(both.projectId) : (isAr ? 'بلا مشروع' : 'No project')
+                  : null;
+                return isAr
+                  ? <>العتبة الحالية <b>{num(thresholds.shots, true)} لقطات أو انتظار {num(thresholds.days, true)} يومًا</b>، أيهما أسبق.{bothName ? <> {bothName} تجاوز الاثنين معًا.</> : null} العتبة إعداد قابل للتغيير.</>
+                  : <>The current threshold is <b>{thresholds.shots} shots or {thresholds.days} days waiting</b>, whichever comes first.{bothName ? <> {bothName} has passed both at once.</> : null} The threshold is a setting, not a law.</>;
+              })()}
             </div>
           </div>
         )}
@@ -363,7 +369,7 @@ export default function ShootsPage() {
                   <tr>
                     <th style={{ width: 74 }}>{isAr ? 'الرقم' : 'Ref'}</th>
                     <th>{isAr ? 'الطلب' : 'Request'}</th>
-                    <th style={{ width: 126 }}>{isAr ? 'المشروع' : 'Project'}</th>
+                    <th style={{ width: 140 }}>{isAr ? 'المسؤول' : 'Owner'}</th>
                     <th style={{ width: 110 }}>{isAr ? 'التاريخ' : 'Date'}</th>
                     <th className="num" style={{ width: 84 }}>{isAr ? 'ملفات' : 'Files'}</th>
                     <th className="num" style={{ width: 110 }}>{isAr ? 'استُخدم منها' : 'Used'}</th>
@@ -373,10 +379,10 @@ export default function ShootsPage() {
                   {completed.map((r) => {
                     const u = usage(r.id);
                     return (
-                      <tr key={r.id}>
+                      <tr key={r.id} className="click" onClick={() => navigate(`/m/shoots/${r.id}`)}>
                         <td className="id">{r.ref}</td>
                         <td className="ttl">{r.title}</td>
-                        <td>{r.project_id ? projectName(r.project_id) : '—'}</td>
+                        <td><RoleChip role={(r.assigned_role ?? null) as MosRole | null} isAr={isAr} /></td>
                         <td style={{ color: 'var(--mute)' }}>{shortDate(r.delivered_at ?? r.created_at, isAr)}</td>
                         <td className="num">{u.files > 0 ? num(u.files, isAr) : '—'}</td>
                         <td
@@ -412,72 +418,6 @@ export default function ShootsPage() {
           onClose={() => setCreating(null)}
           onSaved={() => { setCreating(null); void load(); }}
         />
-      )}
-
-      {openRequest && (
-        <Modal
-          title={openRequest.title}
-          sub={openRequest.ref ?? undefined}
-          onClose={() => setOpenRequest(null)}
-          wide
-          footer={
-            can('manage_assets') ? (
-              <>
-                <span className="note">
-                  {isAr
-                    ? '«تسليم» يعلّم كل اللقطات المنتظرة كمتوفرة دفعة واحدة.'
-                    : '“Deliver” marks every waiting shot covered in one go.'}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() => navigate(`/m/library/upload?shoot=${openRequest.id}`)}
-                >
-                  <IconShoot />
-                  {isAr ? 'رفع ملفات هذا الطلب' : 'Upload this shoot’s files'}
-                </button>
-                {(['scheduled', 'shot'] as const).map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    className={`btn btn-sm${openRequest.status === s ? ' btn-p' : ''}`}
-                    onClick={() => void setStatus(openRequest, s)}
-                  >
-                    {isAr ? SHOOT_STATUS_LABELS[s]?.ar : SHOOT_STATUS_LABELS[s]?.en}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className="btn btn-go btn-sm"
-                  onClick={() => void setStatus(openRequest, 'delivered')}
-                >
-                  <IconCheck />
-                  {isAr ? 'تسليم' : 'Deliver'}
-                </button>
-              </>
-            ) : undefined
-          }
-        >
-          {items.filter((i) => i.request_id === openRequest.id).length === 0 ? (
-            <div className="drop">{isAr ? 'لا لقطات في هذا الطلب.' : 'No shots on this request.'}</div>
-          ) : (
-            items
-              .filter((i) => i.request_id === openRequest.id)
-              .map((i) => (
-                <button
-                  key={i.id}
-                  type="button"
-                  className={`chk ${i.done ? 'ok' : 'no'}`}
-                  style={{ width: '100%', textAlign: 'start', background: 'transparent', border: 0, cursor: 'pointer' }}
-                  disabled={!can('manage_assets')}
-                  onClick={() => void toggle(i)}
-                >
-                  <IconCheck />
-                  <span style={{ textDecoration: i.done ? 'line-through' : undefined }}>{i.description}</span>
-                </button>
-              ))
-          )}
-        </Modal>
       )}
     </>
   );

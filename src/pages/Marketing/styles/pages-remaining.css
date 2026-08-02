@@ -210,3 +210,24 @@
 .mos-root .nm-inp.first {
   border-color: var(--copper);
 }
+
+/* An entered reading rendered as a value, not an editable box — readings are
+   appended, never replaced, so this session shows what was captured. */
+.mos-root span.nm-inp {
+  background: var(--sand-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+/* ── s44 — shoot-result thumbnails ───────────────────────────────────── */
+
+/* The small preview beside a shoot (or any) search hit row. */
+.mos-root .pr-thumb {
+  width: 52px;
+  height: 34px;
+  border-radius: 6px;
+  object-fit: cover;
+  display: block;
+  background: linear-gradient(140deg, #241a12, #7a5b3e);
+  border: 1px solid var(--line);
+}

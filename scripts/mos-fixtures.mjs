@@ -207,8 +207,8 @@ const VISITS = Array.from({ length: 4 }, (_, i) => ({
   data: { client_id: clientId(i + 1), scheduled_datetime: `2026-07-${22 + i}T15:00:00+03` },
 }));
 const RESERVATIONS = [
-  { id: 'f1de0014-0000-4000-8000-000000000001', data: { client_id: clientId(1), reservation_date: '2026-07-28T10:00:00+03', reservation_amount: '850000', payment_status: 'paid' } },
-  { id: 'f1de0014-0000-4000-8000-000000000002', data: { client_id: clientId(2), reservation_date: '2026-07-30T10:00:00+03', reservation_amount: '1200000', payment_status: 'pending' } },
+  { id: 'f1de0014-0000-4000-8000-000000000001', data: { client_id: clientId(1), reservation_date: '2026-07-28T10:00:00+03:00', reservation_amount: '850000', payment_status: 'paid' } },
+  { id: 'f1de0014-0000-4000-8000-000000000002', data: { client_id: clientId(2), reservation_date: '2026-07-30T10:00:00+03:00', reservation_amount: '1200000', payment_status: 'pending' } },
 ];
 
 /* ================================================================== */
@@ -275,7 +275,7 @@ ON CONFLICT (id) DO UPDATE SET
   }
   const insertRecords = (model, rows) => `
 INSERT INTO public.records (id, model_id, data, created_at)
-VALUES ${rows.map((r) => `(${q(r.id)}, ${q(model)}, ${qj(r.data)}, ${q(r.created_at ?? '2026-07-01T09:00:00+03')})`).join(',\n       ')}
+VALUES ${rows.map((r) => `(${q(r.id)}, ${q(model)}, ${qj(r.data)}, ${q(r.created_at ?? '2026-07-01T09:00:00+03:00')})`).join(',\n       ')}
 ON CONFLICT (id) DO NOTHING;`;
   await exec(insertRecords(modelId.all_projects, PROJECTS));
   console.log('[ok] 2 projects (مينا ٥٢ · مقام ١٧)');
@@ -467,49 +467,49 @@ const CAMPAIGNS = [
  *     carry 2026-08-01 targets; the s03 mock drew the column empty.
  * ------------------------------------------------------------------------ */
 const CONTENT = [
-  { ref: 'V-001', type: 'video', title: 'مينا ٥٢ — فيديو الإطلاق', project: 'mina', campaign: 'C-002', purpose: 'paid', drive: 'done', target_publish_at: '2026-06-05T19:00:00+03' },
-  { ref: 'V-002', type: 'video', title: 'جولة الوحدة — ١٤٢ م² زاوية', project: 'mina', campaign: 'C-004', purpose: 'both', drive: 'done', target_publish_at: '2026-07-28T19:00:00+03' },
-  { ref: 'V-003', type: 'video', title: 'تعريف المطور — العجلان', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-31T20:00:00+03' },
-  { ref: 'V-004', type: 'video', title: 'مينا ٥٢ — جولة الموقع', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'special', due_at: '2026-07-26T12:00:00+03', target_publish_at: '2026-08-10T19:00:00+03' },
-  { ref: 'V-005', type: 'video', title: 'مقام ١٧ — جولة النموذج', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-19T19:00:00+03' },
+  { ref: 'V-001', type: 'video', title: 'مينا ٥٢ — فيديو الإطلاق', project: 'mina', campaign: 'C-002', purpose: 'paid', drive: 'done', target_publish_at: '2026-06-05T19:00:00+03:00' },
+  { ref: 'V-002', type: 'video', title: 'جولة الوحدة — ١٤٢ م² زاوية', project: 'mina', campaign: 'C-004', purpose: 'both', drive: 'done', target_publish_at: '2026-07-28T19:00:00+03:00' },
+  { ref: 'V-003', type: 'video', title: 'تعريف المطور — العجلان', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-31T20:00:00+03:00' },
+  { ref: 'V-004', type: 'video', title: 'مينا ٥٢ — جولة الموقع', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'special', due_at: '2026-07-26T12:00:00+03:00', target_publish_at: '2026-08-10T19:00:00+03:00' },
+  { ref: 'V-005', type: 'video', title: 'مقام ١٧ — جولة النموذج', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-19T19:00:00+03:00' },
   // s04 «المراجعة ١» + s15/s39 title — retitled to «خطة السداد في ٢٠ ثانية»
   // and moved BACK from done to review (needs --teardown once).
   { ref: 'V-006', type: 'video', title: 'خطة السداد في ٢٠ ثانية', project: 'mina', campaign: 'C-004', purpose: 'both', drive: 'review', target_publish_at: null },
-  { ref: 'V-007', type: 'video', title: 'جولة المرافق — المسبح والنادي', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'editing', due_at: '2026-07-31T12:00:00+03', target_publish_at: '2026-08-01T16:00:00+03' },
-  { ref: 'V-008', type: 'video', title: 'مينا ٥٢ — لقطة الدرون', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'editing', due_at: '2026-07-31T12:00:00+03' },
-  { ref: 'V-009', type: 'video', title: 'لماذا شمال الرياض — زاوية المستثمر', project: 'mina', campaign: 'C-004', purpose: 'both', drive: 'assets', due_at: '2026-08-01T12:00:00+03', target_publish_at: '2026-08-12T19:00:00+03' },
+  { ref: 'V-007', type: 'video', title: 'جولة المرافق — المسبح والنادي', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'editing', due_at: '2026-07-31T12:00:00+03:00', target_publish_at: '2026-08-01T16:00:00+03:00' },
+  { ref: 'V-008', type: 'video', title: 'مينا ٥٢ — لقطة الدرون', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'editing', due_at: '2026-07-31T12:00:00+03:00' },
+  { ref: 'V-009', type: 'video', title: 'لماذا شمال الرياض — زاوية المستثمر', project: 'mina', campaign: 'C-004', purpose: 'both', drive: 'assets', due_at: '2026-08-01T12:00:00+03:00', target_publish_at: '2026-08-12T19:00:00+03:00' },
   // s04 «المونتاج ٣» tile + s13's Aug-18 tiktok slot — retitled and moved
   // BACK from done to editing (needs --teardown once). The old IG-published
   // publication appears in no mock and is dropped.
-  { ref: 'V-010', type: 'video', title: 'مقام ١٧ — الأنواع في ٣٠ ثانية', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'editing', target_publish_at: '2026-08-18T20:00:00+03' },
-  { ref: 'V-011', type: 'video', title: 'مقام ١٧ — جدول التسليم', project: 'maqam', campaign: null, purpose: 'organic', drive: null, due_at: '2026-07-30T12:00:00+03' },
+  { ref: 'V-010', type: 'video', title: 'مقام ١٧ — الأنواع في ٣٠ ثانية', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'editing', target_publish_at: '2026-08-18T20:00:00+03:00' },
+  { ref: 'V-011', type: 'video', title: 'مقام ١٧ — جدول التسليم', project: 'maqam', campaign: null, purpose: 'organic', drive: null, due_at: '2026-07-30T12:00:00+03:00' },
   // V-012 exists so the two s04 tiles below mint their exact refs (V-013,
   // V-014) from the shared counter. Itself a quiet done item in no mock.
-  { ref: 'V-012', type: 'video', title: 'مينا ٥٢ — نبذة الحي', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-08T19:00:00+03' },
+  { ref: 'V-012', type: 'video', title: 'مينا ٥٢ — نبذة الحي', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-08T19:00:00+03:00' },
   // s04 «النص ٢»: V-013 «مينا ٥٢ — التمويل ببساطة» · V-014 «قصة عميل — أول تسليم».
   { ref: 'V-013', type: 'video', title: 'مينا ٥٢ — التمويل ببساطة', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'script' },
   { ref: 'V-014', type: 'video', title: 'قصة عميل — أول تسليم', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'script' },
-  { ref: 'P-011', type: 'post', title: 'مقام ١٧ — الواجهة', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-26T18:00:00+03' },
-  { ref: 'P-012', type: 'carousel', title: 'خطة السداد — دفعة ١٠٪', project: 'mina', campaign: 'C-004', purpose: 'paid', drive: 'done', target_publish_at: '2026-07-20T18:00:00+03' },
-  { ref: 'P-013', type: 'post', title: 'مينا ٥٢ — عرض الأسبوع', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-15T18:00:00+03' },
-  { ref: 'P-014', type: 'post', title: 'المرافق — سطح الاستراحة', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-28T18:00:00+03' },
-  { ref: 'P-015', type: 'post', title: 'مقام ١٧ — موقع المشروع', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-22T18:00:00+03' },
-  { ref: 'P-016', type: 'post', title: 'الموقع — خريطة المسافات', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-30T18:00:00+03' },
-  { ref: 'P-017', type: 'post', title: 'مينا ٥٢ — الأسعار من ٩٨٠ ألف', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-24T18:00:00+03' },
-  { ref: 'P-018', type: 'carousel', title: 'كاروسيل خطة سداد مقام ١٧', project: 'maqam', campaign: 'C-004', purpose: 'paid', drive: 'design', due_at: '2026-07-27T12:00:00+03' },
-  { ref: 'P-019', type: 'carousel', title: 'خمسة أسباب للشراء في شمال الرياض', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'design', due_at: '2026-07-29T12:00:00+03', target_publish_at: '2026-08-01T12:00:00+03' },
+  { ref: 'P-011', type: 'post', title: 'مقام ١٧ — الواجهة', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-26T18:00:00+03:00' },
+  { ref: 'P-012', type: 'carousel', title: 'خطة السداد — دفعة ١٠٪', project: 'mina', campaign: 'C-004', purpose: 'paid', drive: 'done', target_publish_at: '2026-07-20T18:00:00+03:00' },
+  { ref: 'P-013', type: 'post', title: 'مينا ٥٢ — عرض الأسبوع', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-15T18:00:00+03:00' },
+  { ref: 'P-014', type: 'post', title: 'المرافق — سطح الاستراحة', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-28T18:00:00+03:00' },
+  { ref: 'P-015', type: 'post', title: 'مقام ١٧ — موقع المشروع', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-22T18:00:00+03:00' },
+  { ref: 'P-016', type: 'post', title: 'الموقع — خريطة المسافات', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-30T18:00:00+03:00' },
+  { ref: 'P-017', type: 'post', title: 'مينا ٥٢ — الأسعار من ٩٨٠ ألف', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-24T18:00:00+03:00' },
+  { ref: 'P-018', type: 'carousel', title: 'كاروسيل خطة سداد مقام ١٧', project: 'maqam', campaign: 'C-004', purpose: 'paid', drive: 'design', due_at: '2026-07-27T12:00:00+03:00' },
+  { ref: 'P-019', type: 'carousel', title: 'خمسة أسباب للشراء في شمال الرياض', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'design', due_at: '2026-07-29T12:00:00+03:00', target_publish_at: '2026-08-01T12:00:00+03:00' },
   // Moved BACK from done to design (needs --teardown once) so s01's
   // unscheduled row reads exactly «P-019، P-020، V-007». Its old published
   // publication appears in no mock and is dropped.
-  { ref: 'P-020', type: 'post', title: 'مينا ٥٢ — جولة البهو بالصور', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'design', due_at: '2026-07-28T12:00:00+03', target_publish_at: '2026-08-01T14:00:00+03' },
-  { ref: 'P-021', type: 'post', title: 'صور الجولة — ١٤٢ م²', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'writing_review', due_at: '2026-07-26T12:00:00+03', target_publish_at: '2026-08-05T18:00:00+03' },
-  { ref: 'P-022', type: 'post', title: 'خطة سداد الثلاث غرف', project: 'mina', campaign: 'C-004', purpose: 'paid', drive: null, due_at: '2026-07-29T17:00:00+03', target_publish_at: '2026-08-04T18:00:00+03' },
-  { ref: 'P-023', type: 'post', title: 'مقام ١٧ — مرافق الحي', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-29T18:00:00+03' },
-  { ref: 'P-024', type: 'post', title: 'الحي — واجهة الجامع', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'writing_review', due_at: '2026-08-02T12:00:00+03', target_publish_at: '2026-08-16T18:00:00+03' },
+  { ref: 'P-020', type: 'post', title: 'مينا ٥٢ — جولة البهو بالصور', project: 'mina', campaign: 'C-003', purpose: 'organic', drive: 'design', due_at: '2026-07-28T12:00:00+03:00', target_publish_at: '2026-08-01T14:00:00+03:00' },
+  { ref: 'P-021', type: 'post', title: 'صور الجولة — ١٤٢ م²', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'writing_review', due_at: '2026-07-26T12:00:00+03:00', target_publish_at: '2026-08-05T18:00:00+03:00' },
+  { ref: 'P-022', type: 'post', title: 'خطة سداد الثلاث غرف', project: 'mina', campaign: 'C-004', purpose: 'paid', drive: null, due_at: '2026-07-29T17:00:00+03:00', target_publish_at: '2026-08-04T18:00:00+03:00' },
+  { ref: 'P-023', type: 'post', title: 'مقام ١٧ — مرافق الحي', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'done', target_publish_at: '2026-07-29T18:00:00+03:00' },
+  { ref: 'P-024', type: 'post', title: 'الحي — واجهة الجامع', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'writing_review', due_at: '2026-08-02T12:00:00+03:00', target_publish_at: '2026-08-16T18:00:00+03:00' },
   // P-025..P-032 — the remaining in-production posts that take the library
   // to s01's «١٤ منشور». Steps chosen to land the role loads above; s13
   // names P-025's Aug-19 instagram slot.
-  { ref: 'P-025', type: 'post', title: 'مقام ١٧ — أسئلة المشترين', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'writing_review', target_publish_at: '2026-08-19T18:00:00+03' },
+  { ref: 'P-025', type: 'post', title: 'مقام ١٧ — أسئلة المشترين', project: 'maqam', campaign: 'C-003', purpose: 'organic', drive: 'writing_review', target_publish_at: '2026-08-19T18:00:00+03:00' },
   { ref: 'P-026', type: 'post', title: 'مينا ٥٢ — جولة المطبخ بالصور', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'design_review' },
   { ref: 'P-027', type: 'post', title: 'مقام ١٧ — النادي الرياضي', project: 'maqam', campaign: 'C-006', purpose: 'organic', drive: 'design' },
   { ref: 'P-028', type: 'post', title: 'مينا ٥٢ — المواقف والبوابة', project: 'mina', campaign: 'C-006', purpose: 'organic', drive: 'publish_check' },
@@ -525,29 +525,29 @@ const CONTENT = [
 // so the due columns and «متأخر ٤» (٢ تصميم + ٢ مراجعة) compute exactly.
 // Late at the epoch: V-004, P-021 (review) + P-018, P-020 (design).
 const TASK_DUE_DATES = {
-  'V-004': '2026-07-26T12:00:00+03', // مراجعة النص — LATE (s01/s03/s35)
-  'V-006': '2026-07-29T17:00:00+03', // المراجعة (s04 «٢٩ يوليو»)
-  'V-007': '2026-07-31T12:00:00+03', // مونتاج (s03/s04/s35)
-  'V-008': '2026-07-31T12:00:00+03', // مونتاج (s04/s35)
-  'V-009': '2026-08-01T12:00:00+03', // جمع المواد (s03/s04/s13)
-  'V-010': '2026-08-02T12:00:00+03', // مونتاج (s04 «٢ أغسطس»)
-  'V-011': '2026-07-30T12:00:00+03', // فكرة (s02/s04 «٣٠ يوليو»)
-  'V-013': '2026-08-01T12:00:00+03', // نص (s04 «١ أغسطس»)
-  'V-014': '2026-08-03T12:00:00+03', // نص (s04 «٣ أغسطس»)
-  'P-018': '2026-07-27T12:00:00+03', // تصميم — LATE (s35 «٢٧ يوليو»)
-  'P-019': '2026-07-29T12:00:00+03', // تصميم (s03 «٢٩ يوليو» — not late at 10:00)
-  'P-020': '2026-07-28T12:00:00+03', // تصميم — LATE (the 4th متأخر)
-  'P-021': '2026-07-26T12:00:00+03', // مراجعة الكتابة — LATE (s01/s03)
-  'P-022': '2026-07-29T17:00:00+03', // كتابة — «الاستحقاق اليوم» (s02/s35)
-  'P-024': '2026-08-02T12:00:00+03',
-  'P-025': '2026-07-30T12:00:00+03',
-  'P-026': '2026-07-31T12:00:00+03',
-  'P-027': '2026-08-01T12:00:00+03',
-  'P-028': '2026-07-31T12:00:00+03',
-  'P-029': '2026-08-01T12:00:00+03',
-  'P-030': '2026-08-01T12:00:00+03',
-  'P-031': '2026-08-02T12:00:00+03',
-  'P-032': '2026-08-03T12:00:00+03',
+  'V-004': '2026-07-26T12:00:00+03:00', // مراجعة النص — LATE (s01/s03/s35)
+  'V-006': '2026-07-29T17:00:00+03:00', // المراجعة (s04 «٢٩ يوليو»)
+  'V-007': '2026-07-31T12:00:00+03:00', // مونتاج (s03/s04/s35)
+  'V-008': '2026-07-31T12:00:00+03:00', // مونتاج (s04/s35)
+  'V-009': '2026-08-01T12:00:00+03:00', // جمع المواد (s03/s04/s13)
+  'V-010': '2026-08-02T12:00:00+03:00', // مونتاج (s04 «٢ أغسطس»)
+  'V-011': '2026-07-30T12:00:00+03:00', // فكرة (s02/s04 «٣٠ يوليو»)
+  'V-013': '2026-08-01T12:00:00+03:00', // نص (s04 «١ أغسطس»)
+  'V-014': '2026-08-03T12:00:00+03:00', // نص (s04 «٣ أغسطس»)
+  'P-018': '2026-07-27T12:00:00+03:00', // تصميم — LATE (s35 «٢٧ يوليو»)
+  'P-019': '2026-07-29T12:00:00+03:00', // تصميم (s03 «٢٩ يوليو» — not late at 10:00)
+  'P-020': '2026-07-28T12:00:00+03:00', // تصميم — LATE (the 4th متأخر)
+  'P-021': '2026-07-26T12:00:00+03:00', // مراجعة الكتابة — LATE (s01/s03)
+  'P-022': '2026-07-29T17:00:00+03:00', // كتابة — «الاستحقاق اليوم» (s02/s35)
+  'P-024': '2026-08-02T12:00:00+03:00',
+  'P-025': '2026-07-30T12:00:00+03:00',
+  'P-026': '2026-07-31T12:00:00+03:00',
+  'P-027': '2026-08-01T12:00:00+03:00',
+  'P-028': '2026-07-31T12:00:00+03:00',
+  'P-029': '2026-08-01T12:00:00+03:00',
+  'P-030': '2026-08-01T12:00:00+03:00',
+  'P-031': '2026-08-02T12:00:00+03:00',
+  'P-032': '2026-08-03T12:00:00+03:00',
 };
 
 // V-004 writing fields (s06 brief + s07 exact prose).
@@ -635,8 +635,8 @@ const EXECUTIONS = {
 // يوليو، ٧:٠٠ مساءً»). Exactly nine rows land in-week: seven published +
 // P-030/P-028 still scheduled. snapshots recorded as ops (s12 «أدخلتها نور»).
 const PUBLICATIONS = [
-  { content: 'V-001', platform: 'instagram', status: 'published', published_at: '2026-06-05T19:04:00+03' },
-  { content: 'V-002', platform: 'instagram', status: 'published', scheduled_at: '2026-07-28T19:00:00+03', published_at: '2026-07-28T19:04:00+03',
+  { content: 'V-001', platform: 'instagram', status: 'published', published_at: '2026-06-05T19:04:00+03:00' },
+  { content: 'V-002', platform: 'instagram', status: 'published', scheduled_at: '2026-07-28T19:00:00+03:00', published_at: '2026-07-28T19:04:00+03:00',
     caption: '١٤٢ مترًا، ثلاث غرف، وإطلالة على الحدائق 🌿\nمن ٩٨٠ ألف ريال — راسلنا على واتساب.',
     external_url: 'https://instagram.com/reel/C9xR2mK',
     snapshots: [
@@ -644,30 +644,30 @@ const PUBLICATIONS = [
       { views: 27410, engagement: 792, enquiries: 14, extra: { saves: 302 } },
     ] },
   // The «ناقص» case: published, deliberately NO snapshot (s12).
-  { content: 'V-002', platform: 'tiktok', status: 'published', scheduled_at: '2026-07-31T20:00:00+03', published_at: '2026-07-31T20:00:00+03',
+  { content: 'V-002', platform: 'tiktok', status: 'published', scheduled_at: '2026-07-31T20:00:00+03:00', published_at: '2026-07-31T20:00:00+03:00',
     caption: 'جولة في شقة ١٤٢ مترًا بشمال الرياض 👀\nالأسعار في الوصف.' },
   // «بحاجة لموعد» — a draft with no schedule (s11).
   { content: 'V-002', platform: 'snapchat', status: 'draft' },
   // s01 week card «الخميس ٣١ · سناب شات» + s13 + s50 — V-003 goes out on snap.
-  { content: 'V-003', platform: 'snapchat', status: 'published', scheduled_at: '2026-07-31T20:00:00+03', published_at: '2026-07-31T20:00:00+03' },
-  { content: 'V-005', platform: 'instagram', status: 'published', published_at: '2026-07-19T19:00:00+03' },
+  { content: 'V-003', platform: 'snapchat', status: 'published', scheduled_at: '2026-07-31T20:00:00+03:00', published_at: '2026-07-31T20:00:00+03:00' },
+  { content: 'V-005', platform: 'instagram', status: 'published', published_at: '2026-07-19T19:00:00+03:00' },
   // V-004's publishing plan (s06): three drafts, two carrying target dates.
-  { content: 'V-004', platform: 'instagram', status: 'draft', scheduled_at: '2026-08-10T19:00:00+03' },
-  { content: 'V-004', platform: 'tiktok', status: 'draft', scheduled_at: '2026-08-11T20:00:00+03' },
+  { content: 'V-004', platform: 'instagram', status: 'draft', scheduled_at: '2026-08-10T19:00:00+03:00' },
+  { content: 'V-004', platform: 'tiktok', status: 'draft', scheduled_at: '2026-08-11T20:00:00+03:00' },
   { content: 'V-004', platform: 'snapchat', status: 'draft' },
-  { content: 'P-011', platform: 'instagram', status: 'published', scheduled_at: '2026-07-26T18:00:00+03', published_at: '2026-07-26T18:00:00+03' },
-  { content: 'P-013', platform: 'instagram', status: 'published', published_at: '2026-07-15T18:00:00+03' },
-  { content: 'P-014', platform: 'instagram', status: 'published', scheduled_at: '2026-07-28T18:00:00+03', published_at: '2026-07-28T18:00:00+03',
+  { content: 'P-011', platform: 'instagram', status: 'published', scheduled_at: '2026-07-26T18:00:00+03:00', published_at: '2026-07-26T18:00:00+03:00' },
+  { content: 'P-013', platform: 'instagram', status: 'published', published_at: '2026-07-15T18:00:00+03:00' },
+  { content: 'P-014', platform: 'instagram', status: 'published', scheduled_at: '2026-07-28T18:00:00+03:00', published_at: '2026-07-28T18:00:00+03:00',
     snapshots: [{ views: 8400, engagement: 203, enquiries: 4 }] },
-  { content: 'P-015', platform: 'instagram', status: 'published', published_at: '2026-07-22T18:00:00+03' },
+  { content: 'P-015', platform: 'instagram', status: 'published', published_at: '2026-07-22T18:00:00+03:00' },
   // The s50 «أدخل» row: published, no numbers yet.
-  { content: 'P-016', platform: 'instagram', status: 'published', scheduled_at: '2026-07-30T18:00:00+03', published_at: '2026-07-30T18:00:00+03' },
-  { content: 'P-017', platform: 'instagram', status: 'published', published_at: '2026-07-24T18:00:00+03' },
-  { content: 'P-023', platform: 'instagram', status: 'published', scheduled_at: '2026-07-29T18:00:00+03', published_at: '2026-07-29T18:00:00+03' },
+  { content: 'P-016', platform: 'instagram', status: 'published', scheduled_at: '2026-07-30T18:00:00+03:00', published_at: '2026-07-30T18:00:00+03:00' },
+  { content: 'P-017', platform: 'instagram', status: 'published', published_at: '2026-07-24T18:00:00+03:00' },
+  { content: 'P-023', platform: 'instagram', status: 'published', scheduled_at: '2026-07-29T18:00:00+03:00', published_at: '2026-07-29T18:00:00+03:00' },
   // Scheduled, not yet published at the epoch — rows ٨ and ٩ of «٩ مجدولة».
   // Both sit at publish_check, i.e. past the scheduling step (RECONCILIATION 19).
-  { content: 'P-030', platform: 'instagram', status: 'scheduled', scheduled_at: '2026-07-31T18:00:00+03' },
-  { content: 'P-028', platform: 'instagram', status: 'scheduled', scheduled_at: '2026-08-01T18:00:00+03' },
+  { content: 'P-030', platform: 'instagram', status: 'scheduled', scheduled_at: '2026-07-31T18:00:00+03:00' },
+  { content: 'P-028', platform: 'instagram', status: 'scheduled', scheduled_at: '2026-08-01T18:00:00+03:00' },
 ];
 
 // Assets (s16 sections + s41 unused). links: [content ref, role].
@@ -703,11 +703,11 @@ const ASSETS = [
 // Shoot requests (s42). The scheduled one carries the scene items (s24).
 const SHOOTS = [
   { ref: 'SH-003', title: 'مقام ١٧ — خارجيات', project: 'maqam', status: 'scheduled',
-    scheduled_at: '2026-07-08T06:00:00+03', assigned_role: 'ops_supervisor', deliver: true },
+    scheduled_at: '2026-07-08T06:00:00+03:00', assigned_role: 'ops_supervisor', deliver: true },
   { ref: 'SH-004', title: 'مينا ٥٢ — مرافق وداخليات', project: 'mina', status: 'scheduled',
-    scheduled_at: '2026-07-29T06:00:00+03', assigned_role: 'montage', deliver: true },
+    scheduled_at: '2026-07-29T06:00:00+03:00', assigned_role: 'montage', deliver: true },
   { ref: 'SH-005', title: 'مينا ٥٢ — الدائري والمدارس', project: 'mina', status: 'scheduled',
-    scheduled_at: '2026-07-30T06:00:00+03', assigned_role: 'ops_supervisor',
+    scheduled_at: '2026-07-30T06:00:00+03:00', assigned_role: 'ops_supervisor',
     location: 'موقع مينا ٥٢ + مخرج الدائري ٨', note: '٣ ساعات تقديرية · كاميرا وجيمبال',
     scenes: [{ content: 'V-004', positions: [2, 4] }, { content: 'V-009', positions: [1, 3] }],
     extra_items: [
@@ -1199,25 +1199,25 @@ async function teardown() {
   const userIds = PEOPLE.map((p) => p.uid);
   // [label, count SQL, delete SQL] — counts are honest per-table numbers.
   const tables = [
-    ['client_attributions', 'SELECT count(*)::int AS n FROM public.client_attributions', 'DELETE FROM public.client_attributions'],
-    ['mos_metric_snapshots', 'SELECT count(*)::int AS n FROM public.mos_metric_snapshots', 'DELETE FROM public.mos_metric_snapshots'],
-    ['mos_publications', 'SELECT count(*)::int AS n FROM public.mos_publications', 'DELETE FROM public.mos_publications'],
-    ['mos_asset_links', 'SELECT count(*)::int AS n FROM public.mos_asset_links', 'DELETE FROM public.mos_asset_links'],
-    ['mos_assets', 'SELECT count(*)::int AS n FROM public.mos_assets', 'DELETE FROM public.mos_assets'],
-    ['mos_shoot_items', 'SELECT count(*)::int AS n FROM public.mos_shoot_items', 'DELETE FROM public.mos_shoot_items'],
-    ['mos_shoot_requests', 'SELECT count(*)::int AS n FROM public.mos_shoot_requests', 'DELETE FROM public.mos_shoot_requests'],
-    ['mos_execution_daily', 'SELECT count(*)::int AS n FROM public.mos_execution_daily', 'DELETE FROM public.mos_execution_daily'],
-    ['mos_execution_ads', 'SELECT count(*)::int AS n FROM public.mos_execution_ads', 'DELETE FROM public.mos_execution_ads'],
-    ['mos_campaign_executions', 'SELECT count(*)::int AS n FROM public.mos_campaign_executions', 'DELETE FROM public.mos_campaign_executions'],
-    ['mos_campaign_events', 'SELECT count(*)::int AS n FROM public.mos_campaign_events', 'DELETE FROM public.mos_campaign_events'],
-    ['mos_comments', 'SELECT count(*)::int AS n FROM public.mos_comments', 'DELETE FROM public.mos_comments'],
-    ['mos_content_versions', 'SELECT count(*)::int AS n FROM public.mos_content_versions', 'DELETE FROM public.mos_content_versions'],
+    ['client_attributions', 'SELECT count(*)::int AS n FROM public.client_attributions', 'DELETE FROM public.client_attributions WHERE true'],
+    ['mos_metric_snapshots', 'SELECT count(*)::int AS n FROM public.mos_metric_snapshots', 'DELETE FROM public.mos_metric_snapshots WHERE true'],
+    ['mos_publications', 'SELECT count(*)::int AS n FROM public.mos_publications', 'DELETE FROM public.mos_publications WHERE true'],
+    ['mos_asset_links', 'SELECT count(*)::int AS n FROM public.mos_asset_links', 'DELETE FROM public.mos_asset_links WHERE true'],
+    ['mos_assets', 'SELECT count(*)::int AS n FROM public.mos_assets', 'DELETE FROM public.mos_assets WHERE true'],
+    ['mos_shoot_items', 'SELECT count(*)::int AS n FROM public.mos_shoot_items', 'DELETE FROM public.mos_shoot_items WHERE true'],
+    ['mos_shoot_requests', 'SELECT count(*)::int AS n FROM public.mos_shoot_requests', 'DELETE FROM public.mos_shoot_requests WHERE true'],
+    ['mos_execution_daily', 'SELECT count(*)::int AS n FROM public.mos_execution_daily', 'DELETE FROM public.mos_execution_daily WHERE true'],
+    ['mos_execution_ads', 'SELECT count(*)::int AS n FROM public.mos_execution_ads', 'DELETE FROM public.mos_execution_ads WHERE true'],
+    ['mos_campaign_executions', 'SELECT count(*)::int AS n FROM public.mos_campaign_executions', 'DELETE FROM public.mos_campaign_executions WHERE true'],
+    ['mos_campaign_events', 'SELECT count(*)::int AS n FROM public.mos_campaign_events', 'DELETE FROM public.mos_campaign_events WHERE true'],
+    ['mos_comments', 'SELECT count(*)::int AS n FROM public.mos_comments', 'DELETE FROM public.mos_comments WHERE true'],
+    ['mos_content_versions', 'SELECT count(*)::int AS n FROM public.mos_content_versions', 'DELETE FROM public.mos_content_versions WHERE true'],
     ['workflow_role_tasks', "SELECT count(*)::int AS n FROM public.workflow_role_tasks WHERE subject_table = 'mos_content'", "DELETE FROM public.workflow_role_tasks WHERE subject_table = 'mos_content'"],
-    ['mos_content', 'SELECT count(*)::int AS n FROM public.mos_content', 'DELETE FROM public.mos_content'],
-    ['mos_campaigns', 'SELECT count(*)::int AS n FROM public.mos_campaigns', 'DELETE FROM public.mos_campaigns'],
+    ['mos_content', 'SELECT count(*)::int AS n FROM public.mos_content', 'DELETE FROM public.mos_content WHERE true'],
+    ['mos_campaigns', 'SELECT count(*)::int AS n FROM public.mos_campaigns', 'DELETE FROM public.mos_campaigns WHERE true'],
     ['notifications', `SELECT count(*)::int AS n FROM public.notifications WHERE user_id IN (${userIds.map(q).join(',')})`, `DELETE FROM public.notifications WHERE user_id IN (${userIds.map(q).join(',')})`],
     ['notification_prefs', `SELECT count(*)::int AS n FROM public.notification_prefs WHERE user_id IN (${userIds.map(q).join(',')})`, `DELETE FROM public.notification_prefs WHERE user_id IN (${userIds.map(q).join(',')})`],
-    ['mos_ref_counters', "SELECT count(*)::int AS n FROM public.mos_ref_counters WHERE prefix IN ('V-','P-','C-','SH-','A-')", "DELETE FROM public.mos_ref_counters WHERE prefix IN ('V-','P-','C-','SH-','A-')"],
+    ['mos_ref_counters', "SELECT count(*)::int AS n FROM public.mos_ref_counters WHERE prefix IN ('V-','P-','C-','SH-','SR-','A-')", "DELETE FROM public.mos_ref_counters WHERE prefix IN ('V-','P-','C-','SH-','A-')"],
     ['records (fixtures)', "SELECT count(*)::int AS n FROM public.records WHERE id::text LIKE 'f1de00%'", "DELETE FROM public.records WHERE id::text LIKE 'f1de00%'"],
     ['mos_settings.fixture_stamp', "SELECT count(*)::int AS n FROM public.mos_settings WHERE key = 'fixture_stamp'", "DELETE FROM public.mos_settings WHERE key = 'fixture_stamp'"],
   ];
