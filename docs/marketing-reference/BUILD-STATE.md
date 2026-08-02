@@ -22,6 +22,37 @@
 - B3 COMPLETE (migrations 04+06 on branch, worker loops, send-notification-wa endpoint).
   Kimi part2 dispatch died once with instant exit 4 + empty output (transient) — retried.
 
+## FIXTURES LIVE (A5 DONE — 2026-08-01 ~13:00)
+- `node scripts/mos-fixtures.mjs --phase 1` PASSED VERIFY on the branch: 25 content
+  items at mockup steps, V-004 at script_review r2 with the s10 note, C-002..C-008,
+  7 executions + 6 ads, 16 assets, 3 shoots (2 delivered), 18 publications,
+  8 attributions hitting the CRM rows in-window. Open tasks: mm2/writer3/montage4/ops1.
+- Engine gaps the build surfaced → migrations 08 (workflow_role_path_start — creation
+  right opens first task), 09 (versions UPDATE policy + write_content), 10 (versions
+  INSERT + assign). All applied to branch. RESTART the dev server after EVERY api/ edit
+  (lazy esbuild bundle caches the file state at first hit).
+- Known divergence: shoot refs are SH-* (mos_next_ref trigger prefix) vs mockup SR-* —
+  either migrate the prefix + re-ref rows, or accept + mask; DECIDE during s42 chase.
+- Branch DB is occasionally flaky (one ERR_CONNECTION_CLOSED, one transient 401, one
+  transient 400) — retry once before diagnosing; fixtures converge on re-run.
+
+## FILLED-DATA CAPTURES (drift chase open)
+Latest sweep: s01 .78 / s02 .80 / s03 .75 / s04 .85 / s13 .79 / s14 .79 / s16 .62 /
+s42 .80 / s35 fixed dimension bug (manifest now reads real PNG dims — rounding off-by-one).
+- s01 diff readout: STRUCTURE aligned (cards/table/paid card all in place). Red =
+  (1) fixture VALUES vs mock numbers — the drive matrix sent ~14 items to 'done' but
+  s01 wants ٢٣ تحت الإنتاج (≈2 done). RECONCILE the fixture drive targets against
+  s01+s03 jointly (edit CONTENT drive fields in scripts/mos-fixtures.mjs, teardown-less
+  re-drive is NOT possible backwards — plan: adjust targets, --teardown, full rebuild).
+  (2) rail badge counts (مهامي ٦١/الحملات ٦ style badges in mock). (3) pill styling.
+- s16 regressed with data (0.62): likely asset thumbnails (real vs mock placeholders)
+  → candidate for the mask mechanism (masks allowed ONLY where reference shows
+  placeholder media) + section layout drift.
+- NEXT LOOP: per-screen: view diffs/<id>.png → fix UI or fixture values → re-capture.
+  Then dispatch kimi-specs/qa-setups-full.md, then remaining clusters
+  (c-content-detail-1, c-content-detail-2, c-campaign-detail, c-settings-engine,
+  c-pages-remaining, d-mobile-layer), then journeys E, gates F.
+
 Working doc for the one-phase build. Claude orchestrates + reviews; **Kimi K3 writes the
 code** (`bash scripts/kimi-code.sh "$(cat <spec>)"`, specs in the session scratchpad
 `kimi-specs/`; Kimi cannot run shell commands — Claude runs tsc/build/captures).

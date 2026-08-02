@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-02T13:48:02.430Z",
+  "generated_at": "2026-08-02T15:53:34.736Z",
   "source": {
     "frames_index": "frames-index.json",
     "matrix": "coverage-matrix.mjs"
@@ -9,7 +9,7 @@
     "ssim": 124,
     "assert": 154,
     "by_gate_pending": {
-      "ssim": 120,
+      "ssim": 116,
       "assert": 154
     }
   },
@@ -36,11 +36,10 @@
         "actual": "actual-screenshots/s01-main-ar-dark.png",
         "overlay": "overlays/s01-main-ar-dark.png",
         "diff": "diffs/s01-main-ar-dark.png",
-        "ssim": 0.807832,
-        "pixel_pct": 93.9979,
+        "ssim": 0.782759,
+        "pixel_pct": 92.6942,
         "inspected": false
-      },
-      "note": "metrics-below-threshold (ssim 0.807832 < 0.98 or pixel_pct 93.9979 < 99)"
+      }
     },
     {
       "id": "s01-main-ar-light",
@@ -86,13 +85,13 @@
       },
       "gate": "ssim",
       "reference": "reference-crops/s02-main-dark.png",
-      "status": "pending",
+      "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s02-main-ar-dark.png",
+        "overlay": "overlays/s02-main-ar-dark.png",
+        "diff": "diffs/s02-main-ar-dark.png",
+        "ssim": 0.798438,
+        "pixel_pct": 93.4907,
         "inspected": false
       }
     },
@@ -140,13 +139,13 @@
       },
       "gate": "ssim",
       "reference": "reference-crops/s03-main-dark.png",
-      "status": "pending",
+      "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s03-main-ar-dark.png",
+        "overlay": "overlays/s03-main-ar-dark.png",
+        "diff": "diffs/s03-main-ar-dark.png",
+        "ssim": 0.74938,
+        "pixel_pct": 89.6908,
         "inspected": false
       }
     },
@@ -194,13 +193,13 @@
       },
       "gate": "ssim",
       "reference": "reference-crops/s04-main-dark.png",
-      "status": "pending",
+      "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s04-main-ar-dark.png",
+        "overlay": "overlays/s04-main-ar-dark.png",
+        "diff": "diffs/s04-main-ar-dark.png",
+        "ssim": 0.850707,
+        "pixel_pct": 94.067,
         "inspected": false
       }
     },
@@ -685,11 +684,10 @@
         "actual": "actual-screenshots/s13-main-ar-dark.png",
         "overlay": "overlays/s13-main-ar-dark.png",
         "diff": "diffs/s13-main-ar-dark.png",
-        "ssim": 0.844294,
-        "pixel_pct": 94.6307,
+        "ssim": 0.791301,
+        "pixel_pct": 90.7912,
         "inspected": false
-      },
-      "note": "metrics-below-threshold (ssim 0.844294 < 0.98 or pixel_pct 94.6307 < 99)"
+      }
     },
     {
       "id": "s13-main-ar-light",
@@ -740,11 +738,10 @@
         "actual": "actual-screenshots/s14-main-ar-dark.png",
         "overlay": "overlays/s14-main-ar-dark.png",
         "diff": "diffs/s14-main-ar-dark.png",
-        "ssim": 0.829943,
-        "pixel_pct": 94.761,
+        "ssim": 0.785922,
+        "pixel_pct": 93.178,
         "inspected": false
-      },
-      "note": "metrics-below-threshold (ssim 0.829943 < 0.98 or pixel_pct 94.761 < 99)"
+      }
     },
     {
       "id": "s14-main-ar-light",
@@ -849,11 +846,10 @@
         "actual": "actual-screenshots/s16-main-ar-dark.png",
         "overlay": "overlays/s16-main-ar-dark.png",
         "diff": "diffs/s16-main-ar-dark.png",
-        "ssim": 0.717538,
-        "pixel_pct": 75.8088,
+        "ssim": 0.621314,
+        "pixel_pct": 63.6635,
         "inspected": false
-      },
-      "note": "metrics-below-threshold (ssim 0.717538 < 0.98 or pixel_pct 75.8088 < 99)"
+      }
     },
     {
       "id": "s16-main-ar-light",
@@ -1113,7 +1109,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 1004
+        "height": 1005
       },
       "gate": "ssim",
       "reference": "reference-crops/s21-main-dark.png",
@@ -1140,7 +1136,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 1004
+        "height": 1005
       },
       "gate": "ssim",
       "reference": "reference-crops/s21-main-light.png",
@@ -2085,7 +2081,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 1181
+        "height": 1180
       },
       "gate": "ssim",
       "reference": "reference-crops/s33-main-dark.png",
@@ -2112,7 +2108,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 1181
+        "height": 1180
       },
       "gate": "ssim",
       "reference": "reference-crops/s33-main-light.png",
@@ -2193,7 +2189,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 880
+        "height": 879
       },
       "gate": "ssim",
       "reference": "reference-crops/s35-main-dark.png",
@@ -2220,7 +2216,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 880
+        "height": 879
       },
       "gate": "ssim",
       "reference": "reference-crops/s35-main-light.png",
@@ -2411,7 +2407,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 905
+        "height": 904
       },
       "gate": "ssim",
       "reference": "reference-crops/s39-main-dark.png",
@@ -2438,7 +2434,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 905
+        "height": 904
       },
       "gate": "ssim",
       "reference": "reference-crops/s39-main-light.png",
@@ -2577,13 +2573,13 @@
       },
       "gate": "ssim",
       "reference": "reference-crops/s42-main-dark.png",
-      "status": "pending",
+      "status": "fail",
       "evidence": {
-        "actual": null,
-        "overlay": null,
-        "diff": null,
-        "ssim": null,
-        "pixel_pct": null,
+        "actual": "actual-screenshots/s42-main-ar-dark.png",
+        "overlay": "overlays/s42-main-ar-dark.png",
+        "diff": "diffs/s42-main-ar-dark.png",
+        "ssim": 0.798811,
+        "pixel_pct": 92.4873,
         "inspected": false
       }
     },
@@ -3927,7 +3923,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 1004
+        "height": 1005
       },
       "gate": "assert",
       "reference": null,
@@ -4116,7 +4112,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 1181
+        "height": 1180
       },
       "gate": "assert",
       "reference": null,
@@ -4143,7 +4139,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 1181
+        "height": 1180
       },
       "gate": "assert",
       "reference": null,
@@ -4197,7 +4193,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 880
+        "height": 879
       },
       "gate": "assert",
       "reference": null,
@@ -4418,7 +4414,7 @@
       "role": "marketing_manager",
       "viewport": {
         "width": 1320,
-        "height": 905
+        "height": 904
       },
       "gate": "assert",
       "reference": null,

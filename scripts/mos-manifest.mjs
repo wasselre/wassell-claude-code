@@ -16,6 +16,22 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const REF_DIR = path.join(REPO_ROOT, 'docs', 'marketing-reference');
+
+/** Real pixel size of a reference crop, straight from the PNG IHDR
+ *  (bytes 16..24: width/height as big-endian uint32). Null if unreadable. */
+function pngDims(relPath) {
+  if (!relPath) return null;
+  try {
+    const fd = fs.openSync(path.join(REF_DIR, relPath), 'r');
+    const head = Buffer.alloc(24);
+    fs.readSync(fd, head, 0, 24, 0);
+    fs.closeSync(fd);
+    return { width: head.readUInt32BE(16), height: head.readUInt32BE(20) };
+  } catch (err) {
+    console.error(`pngDims: cannot read ${relPath}: ${err.message}`);
+    return null;
+  }
+}
 const FRAMES_INDEX_PATH = path.join(REF_DIR, 'frames-index.json');
 const MANIFEST_JSON_PATH = path.join(REF_DIR, 'manifest.json');
 const MANIFEST_MD_PATH = path.join(REF_DIR, 'manifest.md');
@@ -86,6 +102,11 @@ for (const screen of framesIndex.screens) {
     const setup = fOver.setup ?? decl.setup;
     const route = fOver.route ?? decl.route;
     const notes = fOver.notes ?? decl.notes;
+    // The capture viewport must equal the reference PNG's REAL pixel size —
+    // frames-index carries the boundingBox, which rounds (879.5 → 880) and
+    // fails the dimension gate by one pixel. Read the IHDR directly.
+    const realDims = pngDims(frame.file_dark);
+    if (realDims) { frame.width = realDims.width; frame.height = realDims.height; }
     for (const theme of THEMES) {
       referenceRows.push(baseRow({
         id: `s${NN(n)}-${frame.key}-${locale}-${theme}`,

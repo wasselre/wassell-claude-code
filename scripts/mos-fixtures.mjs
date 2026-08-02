@@ -685,22 +685,50 @@ async function phase1() {
 
   /* -- 3. V-004 — the showcase item (s06/s07/s10) --------------------- */
   console.log('\n-- V-004 writing + review loop --');
-  if (createdRefs.has('V-004')) {
+  {
+    // STATE-DRIVEN, not created-this-run-driven: a partial earlier run (or a
+    // manual advance) may have left V-004 anywhere in the loop — probe the
+    // open task and run only the remaining transitions so re-runs converge.
     const id = contentByRef['V-004'].id;
-    // Round 1: the slow-opening draft, submitted and rejected verbatim.
-    await api('writer', 'content_update', { id, patch: { ...V004_BRIEF, data: V004_DATA_V1 } });
-    await saveScenes('V-004', V004_SCENES);
-    await api('writer', 'task_complete', { content_id: id, result: 'submitted' }); // idea
-    await api('marketing_manager', 'task_complete', { content_id: id, result: 'approved' }); // idea_review
-    await api('writer', 'task_complete', { content_id: id, result: 'submitted' }); // script r1 → snapshot v1
-    await api('marketing_manager', 'task_complete', { content_id: id, result: 'changes_requested', note: V004_REJECT_NOTE });
-    console.log('[ok] V-004 round 1 rejected with the s10 note');
-    // Round 2: the rewrite (s07 prose), resubmitted — now waiting on review.
-    await api('writer', 'content_update', { id, patch: { data: V004_DATA_V2 } });
-    await api('writer', 'task_complete', { content_id: id, result: 'submitted' }); // script r2 → snapshot v2
-    console.log('[ok] V-004 round 2 submitted — sitting at مراجعة النص');
-  } else {
-    console.log('[skip] V-004 review loop (already built)');
+    const probe = async () => {
+      const d = await api('marketing_manager', 'content_detail', { id });
+      const open = (d.tasks ?? []).find((t) => t.status === 'open');
+      return { step: open?.step_id ?? null, round: open?.round ?? 0 };
+    };
+    let st = await probe();
+    if (st.step === 'script_review' && st.round === 2) {
+      console.log('[skip] V-004 review loop (already at script_review r2)');
+    } else {
+      // Brief + scenes are idempotent upserts — always safe to (re)apply.
+      await api('writer', 'content_update', { id, patch: { ...V004_BRIEF, data: V004_DATA_V1 } });
+      await saveScenes('V-004', V004_SCENES);
+      if (st.step === 'idea' && st.round === 1) {
+        await api('writer', 'task_complete', { content_id: id, result: 'submitted' });
+        st = await probe();
+      }
+      if (st.step === 'idea_review' && st.round === 1) {
+        await api('marketing_manager', 'task_complete', { content_id: id, result: 'approved' });
+        st = await probe();
+      }
+      if (st.step === 'script' && st.round === 1) {
+        await api('writer', 'task_complete', { content_id: id, result: 'submitted' }); // snapshot v1
+        st = await probe();
+      }
+      if (st.step === 'script_review' && st.round === 1) {
+        await api('marketing_manager', 'task_complete', { content_id: id, result: 'changes_requested', note: V004_REJECT_NOTE });
+        console.log('[ok] V-004 round 1 rejected with the s10 note');
+        st = await probe();
+      }
+      if (st.step === 'script' && st.round === 2) {
+        await api('writer', 'content_update', { id, patch: { data: V004_DATA_V2 } });
+        await api('writer', 'task_complete', { content_id: id, result: 'submitted' }); // snapshot v2
+        console.log('[ok] V-004 round 2 submitted — sitting at مراجعة النص');
+        st = await probe();
+      }
+      if (!(st.step === 'script_review' && st.round === 2)) {
+        throw new Error(`FATAL: V-004 loop could not converge — at '${st.step}' round ${st.round}`);
+      }
+    }
   }
   // V-004 must now sit at script_review round 2 — verify via the drive no-op.
   const v004 = await api('marketing_manager', 'content_detail', { id: contentByRef['V-004'].id });

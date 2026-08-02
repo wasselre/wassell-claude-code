@@ -1,19 +1,19 @@
 # Marketing OS — Visual Gate Manifest
 
-Generated: 2026-08-02T13:48:02.430Z
+Generated: 2026-08-02T15:53:34.736Z
 Sources: `frames-index.json` + `coverage-matrix.mjs` (regenerate with `node scripts/mos-manifest.mjs`)
 
-**Totals:** 278 rows — 124 ssim / 154 assert — pending: 120 ssim / 154 assert — updated by `scripts/mos-qa.mjs`
+**Totals:** 278 rows — 124 ssim / 154 assert — pending: 116 ssim / 154 assert — carried forward: 265 / reset: 13
 
 | id | screen | route | setup | locale | theme | role | viewport | gate | status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | s01-main-ar-dark | 1 | /m | overview-loaded | ar | dark | marketing_manager | 1320x760 | ssim | fail |
 | s01-main-ar-light | 1 | /m | overview-loaded | ar | light | marketing_manager | 1320x760 | ssim | pending |
-| s02-main-ar-dark | 2 | /m/my-work | mywork-writer | ar | dark | writer | 1320x760 | ssim | pending |
+| s02-main-ar-dark | 2 | /m/my-work | mywork-writer | ar | dark | writer | 1320x760 | ssim | fail |
 | s02-main-ar-light | 2 | /m/my-work | mywork-writer | ar | light | writer | 1320x760 | ssim | pending |
-| s03-main-ar-dark | 3 | /m/content | content-table | ar | dark | marketing_manager | 1320x760 | ssim | pending |
+| s03-main-ar-dark | 3 | /m/content | content-table | ar | dark | marketing_manager | 1320x760 | ssim | fail |
 | s03-main-ar-light | 3 | /m/content | content-table | ar | light | marketing_manager | 1320x760 | ssim | pending |
-| s04-main-ar-dark | 4 | /m/content?view=board | content-board | ar | dark | marketing_manager | 1320x760 | ssim | pending |
+| s04-main-ar-dark | 4 | /m/content?view=board | content-board | ar | dark | marketing_manager | 1320x760 | ssim | fail |
 | s04-main-ar-light | 4 | /m/content?view=board | content-board | ar | light | marketing_manager | 1320x760 | ssim | pending |
 | s05-main-ar-dark | 5 | /m/content | new-content-modal | ar | dark | marketing_manager | 1320x754 | ssim | pending |
 | s05-main-ar-light | 5 | /m/content | new-content-modal | ar | light | marketing_manager | 1320x754 | ssim | pending |
@@ -47,8 +47,8 @@ Sources: `frames-index.json` + `coverage-matrix.mjs` (regenerate with `node scri
 | s19-main-ar-light | 19 | /m/campaigns | new-campaign-modal | ar | light | marketing_manager | 1320x1070 | ssim | pending |
 | s20-main-ar-dark | 20 | /m/campaigns/:c002?tab=executions | c002-executions | ar | dark | marketing_manager | 1320x1152 | ssim | pending |
 | s20-main-ar-light | 20 | /m/campaigns/:c002?tab=executions | c002-executions | ar | light | marketing_manager | 1320x1152 | ssim | pending |
-| s21-main-ar-dark | 21 | /m/campaigns/:c002/exec/:e1 | c002-exec-detail | ar | dark | marketing_manager | 1320x1004 | ssim | pending |
-| s21-main-ar-light | 21 | /m/campaigns/:c002/exec/:e1 | c002-exec-detail | ar | light | marketing_manager | 1320x1004 | ssim | pending |
+| s21-main-ar-dark | 21 | /m/campaigns/:c002/exec/:e1 | c002-exec-detail | ar | dark | marketing_manager | 1320x1005 | ssim | pending |
+| s21-main-ar-light | 21 | /m/campaigns/:c002/exec/:e1 | c002-exec-detail | ar | light | marketing_manager | 1320x1005 | ssim | pending |
 | s22-main-ar-dark | 22 | /m/library/:a012 | asset-detail | ar | dark | marketing_manager | 1320x1066 | ssim | pending |
 | s22-main-ar-light | 22 | /m/library/:a012 | asset-detail | ar | light | marketing_manager | 1320x1066 | ssim | pending |
 | s23-main-ar-dark | 23 | /m/library/upload | upload-queue-realism | ar | dark | marketing_manager | 1320x850 | ssim | pending |
@@ -83,25 +83,25 @@ Sources: `frames-index.json` + `coverage-matrix.mjs` (regenerate with `node scri
 | s32-phone1-ar-light | 32 | /m/campaigns/:c002 | mobile-exec-cards | ar | light | marketing_manager | 374x748 | ssim | pending |
 | s32-phone2-ar-dark | 32 | /m/campaigns/:c002 | mobile-exec-cards | ar | dark | marketing_manager | 374x748 | ssim | pending |
 | s32-phone2-ar-light | 32 | /m/campaigns/:c002 | mobile-exec-cards | ar | light | marketing_manager | 374x748 | ssim | pending |
-| s33-main-ar-dark | 33 | /m/settings/roles | settings-role-matrix | ar | dark | marketing_manager | 1320x1181 | ssim | pending |
-| s33-main-ar-light | 33 | /m/settings/roles | settings-role-matrix | ar | light | marketing_manager | 1320x1181 | ssim | pending |
+| s33-main-ar-dark | 33 | /m/settings/roles | settings-role-matrix | ar | dark | marketing_manager | 1320x1180 | ssim | pending |
+| s33-main-ar-light | 33 | /m/settings/roles | settings-role-matrix | ar | light | marketing_manager | 1320x1180 | ssim | pending |
 | s34-main-ar-dark | 34 | /m | overview-ceo | ar | dark | ceo | 1320x955 | ssim | pending |
 | s34-main-ar-light | 34 | /m | overview-ceo | ar | light | ceo | 1320x955 | ssim | pending |
-| s35-main-ar-dark | 35 | /m/team | team-followup | ar | dark | marketing_manager | 1320x880 | ssim | pending |
-| s35-main-ar-light | 35 | /m/team | team-followup | ar | light | marketing_manager | 1320x880 | ssim | pending |
+| s35-main-ar-dark | 35 | /m/team | team-followup | ar | dark | marketing_manager | 1320x879 | ssim | pending |
+| s35-main-ar-light | 35 | /m/team | team-followup | ar | light | marketing_manager | 1320x879 | ssim | pending |
 | s36-main-ar-dark | 36 | /m/content/:v004 | v004-role-harness | ar | dark | marketing_manager | 1320x880 | ssim | pending |
 | s36-main-ar-light | 36 | /m/content/:v004 | v004-role-harness | ar | light | marketing_manager | 1320x880 | ssim | pending |
 | s37-main-ar-dark | 37 | /m/settings/people | settings-people | ar | dark | marketing_manager | 1320x760 | ssim | pending |
 | s37-main-ar-light | 37 | /m/settings/people | settings-people | ar | light | marketing_manager | 1320x760 | ssim | pending |
 | s38-main-ar-dark | 38 | /m/content/:v004?tab=tasks | request-changes-modal | ar | dark | marketing_manager | 1320x741 | ssim | pending |
 | s38-main-ar-light | 38 | /m/content/:v004?tab=tasks | request-changes-modal | ar | light | marketing_manager | 1320x741 | ssim | pending |
-| s39-main-ar-dark | 39 | /m/campaigns/:c002?tab=content | c002-content-tab | ar | dark | marketing_manager | 1320x905 | ssim | pending |
-| s39-main-ar-light | 39 | /m/campaigns/:c002?tab=content | c002-content-tab | ar | light | marketing_manager | 1320x905 | ssim | pending |
+| s39-main-ar-dark | 39 | /m/campaigns/:c002?tab=content | c002-content-tab | ar | dark | marketing_manager | 1320x904 | ssim | pending |
+| s39-main-ar-light | 39 | /m/campaigns/:c002?tab=content | c002-content-tab | ar | light | marketing_manager | 1320x904 | ssim | pending |
 | s40-main-ar-dark | 40 | /m/campaigns/:c002?tab=results | c002-results-tab | ar | dark | marketing_manager | 1320x822 | ssim | pending |
 | s40-main-ar-light | 40 | /m/campaigns/:c002?tab=results | c002-results-tab | ar | light | marketing_manager | 1320x822 | ssim | pending |
 | s41-main-ar-dark | 41 | /m/library/unused | library-unused | ar | dark | marketing_manager | 1320x760 | ssim | pending |
 | s41-main-ar-light | 41 | /m/library/unused | library-unused | ar | light | marketing_manager | 1320x760 | ssim | pending |
-| s42-main-ar-dark | 42 | /m/shoots | shoots-bands | ar | dark | marketing_manager | 1320x865 | ssim | pending |
+| s42-main-ar-dark | 42 | /m/shoots | shoots-bands | ar | dark | marketing_manager | 1320x865 | ssim | fail |
 | s42-main-ar-light | 42 | /m/shoots | shoots-bands | ar | light | marketing_manager | 1320x865 | ssim | pending |
 | s43-main-ar-dark | 43 | /m/settings/notifications | settings-notifications | ar | dark | marketing_manager | 1320x791 | ssim | pending |
 | s43-main-ar-light | 43 | /m/settings/notifications | settings-notifications | ar | light | marketing_manager | 1320x791 | ssim | pending |
@@ -151,17 +151,17 @@ Sources: `frames-index.json` + `coverage-matrix.mjs` (regenerate with `node scri
 | s17-main-en-mirror | 17 | /m/settings/workflows | workflows-editor | en | dark | marketing_manager | 1320x1012 | assert | pending |
 | s19-main-en-mirror | 19 | /m/campaigns | new-campaign-modal | en | dark | marketing_manager | 1320x1070 | assert | pending |
 | s20-main-en-mirror | 20 | /m/campaigns/:c002?tab=executions | c002-executions | en | dark | marketing_manager | 1320x1152 | assert | pending |
-| s21-main-en-mirror | 21 | /m/campaigns/:c002/exec/:e1 | c002-exec-detail | en | dark | marketing_manager | 1320x1004 | assert | pending |
+| s21-main-en-mirror | 21 | /m/campaigns/:c002/exec/:e1 | c002-exec-detail | en | dark | marketing_manager | 1320x1005 | assert | pending |
 | s22-main-en-mirror | 22 | /m/library/:a012 | asset-detail | en | dark | marketing_manager | 1320x1066 | assert | pending |
 | s23-main-en-mirror | 23 | /m/library/upload | upload-queue-realism | en | dark | marketing_manager | 1320x850 | assert | pending |
 | s24-main-en-mirror | 24 | /m/shoots/:sr003 | shoot-request-detail | en | dark | marketing_manager | 1320x823 | assert | pending |
 | s25-main-en-mirror | 25 | /m/settings | settings-home | en | dark | marketing_manager | 1320x700 | assert | pending |
 | s26-main-en-mirror | 26 | /m/settings/platforms | settings-platforms | en | dark | marketing_manager | 1320x1046 | assert | pending |
 | s27-main-en-mirror | 27 | /m/settings/content-types | settings-content-types | en | dark | marketing_manager | 1320x884 | assert | pending |
-| s33-main-en-mirror | 33 | /m/settings/roles | settings-role-matrix | en | dark | marketing_manager | 1320x1181 | assert | pending |
-| s33-role-marketing_manager | 33 | /m/settings/roles | settings-role-matrix@role=marketing_manager | ar | dark | marketing_manager | 1320x1181 | assert | pending |
+| s33-main-en-mirror | 33 | /m/settings/roles | settings-role-matrix | en | dark | marketing_manager | 1320x1180 | assert | pending |
+| s33-role-marketing_manager | 33 | /m/settings/roles | settings-role-matrix@role=marketing_manager | ar | dark | marketing_manager | 1320x1180 | assert | pending |
 | s34-role-ceo | 34 | /m | overview-ceo@role=ceo | ar | dark | ceo | 1320x955 | assert | pending |
-| s35-main-en-mirror | 35 | /m/team | team-followup | en | dark | marketing_manager | 1320x880 | assert | pending |
+| s35-main-en-mirror | 35 | /m/team | team-followup | en | dark | marketing_manager | 1320x879 | assert | pending |
 | s36-role-ceo | 36 | /m/content/:v004 | v004-role-harness@role=ceo | ar | dark | ceo | 1320x880 | assert | pending |
 | s36-role-marketing_manager | 36 | /m/content/:v004 | v004-role-harness@role=marketing_manager | ar | dark | marketing_manager | 1320x880 | assert | pending |
 | s36-role-ops_supervisor | 36 | /m/content/:v004 | v004-role-harness@role=ops_supervisor | ar | dark | ops_supervisor | 1320x880 | assert | pending |
@@ -169,7 +169,7 @@ Sources: `frames-index.json` + `coverage-matrix.mjs` (regenerate with `node scri
 | s36-role-montage | 36 | /m/content/:v004 | v004-role-harness@role=montage | ar | dark | montage | 1320x880 | assert | pending |
 | s37-main-en-mirror | 37 | /m/settings/people | settings-people | en | dark | marketing_manager | 1320x760 | assert | pending |
 | s38-main-en-mirror | 38 | /m/content/:v004?tab=tasks | request-changes-modal | en | dark | marketing_manager | 1320x741 | assert | pending |
-| s39-main-en-mirror | 39 | /m/campaigns/:c002?tab=content | c002-content-tab | en | dark | marketing_manager | 1320x905 | assert | pending |
+| s39-main-en-mirror | 39 | /m/campaigns/:c002?tab=content | c002-content-tab | en | dark | marketing_manager | 1320x904 | assert | pending |
 | s40-main-en-mirror | 40 | /m/campaigns/:c002?tab=results | c002-results-tab | en | dark | marketing_manager | 1320x822 | assert | pending |
 | s41-main-en-mirror | 41 | /m/library/unused | library-unused | en | dark | marketing_manager | 1320x760 | assert | pending |
 | s42-main-en-mirror | 42 | /m/shoots | shoots-bands | en | dark | marketing_manager | 1320x865 | assert | pending |
