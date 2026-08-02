@@ -1,9 +1,9 @@
 # Marketing OS — Visual Gate Manifest
 
-Generated: 2026-08-01T06:41:49.340Z
+Generated: 2026-08-02T13:48:02.430Z
 Sources: `frames-index.json` + `coverage-matrix.mjs` (regenerate with `node scripts/mos-manifest.mjs`)
 
-**Totals:** 278 rows — 124 ssim / 154 assert — pending: 123 ssim / 154 assert — updated by `scripts/mos-qa.mjs`
+**Totals:** 278 rows — 124 ssim / 154 assert — pending: 120 ssim / 154 assert — updated by `scripts/mos-qa.mjs`
 
 | id | screen | route | setup | locale | theme | role | viewport | gate | status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -31,13 +31,13 @@ Sources: `frames-index.json` + `coverage-matrix.mjs` (regenerate with `node scri
 | s11-main-ar-light | 11 | /m/content/:v001?tab=publish | v001-publish | ar | light | marketing_manager | 1320x986 | ssim | pending |
 | s12-main-ar-dark | 12 | /m/content/:v001?tab=performance | v001-performance-manual | ar | dark | marketing_manager | 1320x922 | ssim | pending |
 | s12-main-ar-light | 12 | /m/content/:v001?tab=performance | v001-performance-manual | ar | light | marketing_manager | 1320x922 | ssim | pending |
-| s13-main-ar-dark | 13 | /m/calendar | calendar-month | ar | dark | marketing_manager | 1320x927 | ssim | pending |
+| s13-main-ar-dark | 13 | /m/calendar | calendar-month | ar | dark | marketing_manager | 1320x927 | ssim | fail |
 | s13-main-ar-light | 13 | /m/calendar | calendar-month | ar | light | marketing_manager | 1320x927 | ssim | pending |
-| s14-main-ar-dark | 14 | /m/campaigns | campaigns-list | ar | dark | marketing_manager | 1320x797 | ssim | pending |
+| s14-main-ar-dark | 14 | /m/campaigns | campaigns-list | ar | dark | marketing_manager | 1320x797 | ssim | fail |
 | s14-main-ar-light | 14 | /m/campaigns | campaigns-list | ar | light | marketing_manager | 1320x797 | ssim | pending |
 | s15-main-ar-dark | 15 | /m/campaigns/:c002 | c002-detail | ar | dark | marketing_manager | 1320x1085 | ssim | pending |
 | s15-main-ar-light | 15 | /m/campaigns/:c002 | c002-detail | ar | light | marketing_manager | 1320x1085 | ssim | pending |
-| s16-main-ar-dark | 16 | /m/library | library-grid | ar | dark | marketing_manager | 1320x760 | ssim | pending |
+| s16-main-ar-dark | 16 | /m/library | library-grid | ar | dark | marketing_manager | 1320x760 | ssim | fail |
 | s16-main-ar-light | 16 | /m/library | library-grid | ar | light | marketing_manager | 1320x760 | ssim | pending |
 | s17-main-ar-dark | 17 | /m/settings/workflows | workflows-editor | ar | dark | marketing_manager | 1320x1012 | ssim | pending |
 | s17-main-ar-light | 17 | /m/settings/workflows | workflows-editor | ar | light | marketing_manager | 1320x1012 | ssim | pending |

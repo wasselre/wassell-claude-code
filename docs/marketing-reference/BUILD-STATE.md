@@ -14,6 +14,13 @@
   fixture data + minor rail-label drift. Harness + compare pipeline WORK.
 - Clock-skew note: one-off "JWT issued at future" console error on a Sales-side load
   (local clock behind AWS); resync Windows clock if it pollutes console-clean gate.
+- Empty-DB ssim baselines (dims all matched): s01 0.808, s13 0.844, s14 0.830, s16 0.718.
+  Gaps = missing fixture data + minor shell drift; re-capture after fixtures phase 1.
+- Dev stack MUST run as harness background tasks (plain `&` children die with the
+  shell): task 1 `npx vite --port 5173 --strictPort` with branch VITE_ env; task 2
+  `node scripts/mos-dev-server.mjs --port 3000 --vite-port 5173 --env .mos-branch.env`.
+- B3 COMPLETE (migrations 04+06 on branch, worker loops, send-notification-wa endpoint).
+  Kimi part2 dispatch died once with instant exit 4 + empty output (transient) — retried.
 
 Working doc for the one-phase build. Claude orchestrates + reviews; **Kimi K3 writes the
 code** (`bash scripts/kimi-code.sh "$(cat <spec>)"`, specs in the session scratchpad
