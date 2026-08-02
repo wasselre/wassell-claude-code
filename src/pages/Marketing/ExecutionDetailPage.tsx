@@ -12,7 +12,7 @@
  * aspiration, not a feature.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   AD_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosCampaign, MosContentRow,
@@ -20,8 +20,9 @@ import {
   deleteAd, fetchContentList, fetchExecutionDetail, saveAd, saveDaily, saveExecution,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
+import { PURPOSE_PILL_LABELS } from './CampaignDetailPage';
 import { Empty, Field, LoadError, Modal, Pill, ReadField, Skeleton } from './components/kit';
-import { IconBack, IconForward, IconPlus, IconTrash } from './components/icons';
+import { IconBack, IconForward, IconPlus } from './components/icons';
 import { isoDate, num, shortDate } from './lib/format';
 
 type Tab = 'ads' | 'targeting' | 'lead_form' | 'daily';
@@ -42,6 +43,7 @@ const cpq = (ad: MosAd): number | null =>
 export default function ExecutionDetailPage() {
   const { executionId } = useParams<{ executionId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const addToast = useAppStore((s) => s.addToast);
   const { isAr, can, projectName, typeLabel } = useWorkspace();
 
@@ -50,7 +52,11 @@ export default function ExecutionDetailPage() {
   const [ads, setAds] = useState<MosAd[]>([]);
   const [adContent, setAdContent] = useState<MosContentRow[]>([]);
   const [daily, setDaily] = useState<MosDailyEntry[]>([]);
-  const [tab, setTab] = useState<Tab>('ads');
+  // s40's «إدخال أرقام اليوم» deep-links straight to the daily tab.
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = searchParams.get('tab');
+    return t === 'targeting' || t === 'lead_form' || t === 'daily' ? t : 'ads';
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addingAd, setAddingAd] = useState(false);
@@ -149,12 +155,17 @@ export default function ExecutionDetailPage() {
   const targeting: MosTargeting = execution.targeting ?? {};
   const leadFields = Array.isArray(execution.lead_form_fields) ? execution.lead_form_fields : [];
 
-  const tabs: Array<{ key: Tab; ar: string; en: string; badge?: number }> = [
-    { key: 'ads', ar: 'الإعلانات', en: 'Ads', badge: ads.length || undefined },
+  // The mockup's tab row carries no counts — just the four names.
+  const tabs: Array<{ key: Tab; ar: string; en: string }> = [
+    { key: 'ads', ar: 'الإعلانات', en: 'Ads' },
     { key: 'targeting', ar: 'الاستهداف', en: 'Targeting' },
     { key: 'lead_form', ar: 'نموذج العملاء', en: 'Lead form' },
-    { key: 'daily', ar: 'يوميًا', en: 'Daily', badge: daily.length || undefined },
+    { key: 'daily', ar: 'يوميًا', en: 'Daily' },
   ];
+
+  const purposeLabel = execution.purpose && PURPOSE_PILL_LABELS[execution.purpose]
+    ? isAr ? PURPOSE_PILL_LABELS[execution.purpose]?.ar : PURPOSE_PILL_LABELS[execution.purpose]?.en
+    : null;
 
   return (
     <>
@@ -183,7 +194,9 @@ export default function ExecutionDetailPage() {
               {projectLabel && <> — {projectLabel}</>}
             </h3>
             <div className="chips">
-              {execution.label && <span className="tag">{execution.label}</span>}
+              {purposeLabel
+                ? <span className="tag">{purposeLabel}</span>
+                : execution.label && <span className="tag">{execution.label}</span>}
               {targeting.location && targeting.age && (
                 <span className="tag">{targeting.location} · {targeting.age}</span>
               )}
@@ -231,7 +244,6 @@ export default function ExecutionDetailPage() {
           {tabs.map((t) => (
             <button key={t.key} type="button" className={tab === t.key ? 'on' : ''} onClick={() => setTab(t.key)}>
               {isAr ? t.ar : t.en}
-              {t.badge ? <span className="b">{num(t.badge, isAr)}</span> : null}
             </button>
           ))}
         </div>
@@ -280,7 +292,6 @@ export default function ExecutionDetailPage() {
                             <th className="num" style={{ width: 74 }}>{isAr ? 'مؤهلون' : 'Qualified'}</th>
                             <th className="num" style={{ width: 92 }}>{isAr ? 'تكلفة المؤهل' : 'Cost/qual.'}</th>
                             <th style={{ width: 104 }}>{isAr ? 'الحالة' : 'Status'}</th>
-                            {canEnter && <th style={{ width: 40 }} />}
                           </tr>
                         </thead>
                         <tbody>
@@ -338,8 +349,25 @@ export default function ExecutionDetailPage() {
                                 >
                                   {value === null ? '—' : num(Math.round(value), isAr)}
                                 </td>
-                                <td>
-                                  {isBest ? (
+                                <td onClick={wrongProject ? (e) => e.stopPropagation() : undefined}>
+                                  {/* A wrong-project row's one honest action is
+                                      removal — the mockup puts it right here. */}
+                                  {wrongProject && canEnter ? (
+                                    <button
+                                      type="button"
+                                      className="btn btn-sm"
+                                      onClick={() => void (async () => {
+                                        try {
+                                          setAds((await deleteAd(execution.id, ad.id)).ads);
+                                          addToast(isAr ? 'أُزيل الإعلان.' : 'Ad removed.', 'success');
+                                        } catch (err) {
+                                          addToast(err instanceof Error ? err.message : String(err), 'error');
+                                        }
+                                      })()}
+                                    >
+                                      {isAr ? 'إزالة' : 'Remove'}
+                                    </button>
+                                  ) : isBest ? (
                                     <Pill tone="go">{isAr ? 'الأفضل' : 'Best'}</Pill>
                                   ) : (
                                     <Pill tone={AD_TONE[ad.status] ?? 'idle'}>
@@ -348,24 +376,6 @@ export default function ExecutionDetailPage() {
                                     </Pill>
                                   )}
                                 </td>
-                                {canEnter && (
-                                  <td onClick={(e) => e.stopPropagation()}>
-                                    <button
-                                      type="button"
-                                      className="btn btn-d btn-sm"
-                                      onClick={() => void (async () => {
-                                        try {
-                                          setAds((await deleteAd(execution.id, ad.id)).ads);
-                                        } catch (err) {
-                                          addToast(err instanceof Error ? err.message : String(err), 'error');
-                                        }
-                                      })()}
-                                      aria-label={isAr ? 'إزالة' : 'Remove'}
-                                    >
-                                      <IconTrash />
-                                    </button>
-                                  </td>
-                                )}
                               </tr>
                             );
                           })}
@@ -423,6 +433,16 @@ export default function ExecutionDetailPage() {
 
           {/* The side panels from the frame — always visible on desktop. */}
           <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
+            <OnPlatformCard
+              execution={execution}
+              canEdit={canEnter}
+              isAr={isAr}
+              onSaved={(pid, purpose) => setExecution({
+                ...execution,
+                platform_campaign_id: pid,
+                purpose,
+              })}
+            />
             <div className="card">
               <div className="card-h"><h4>{isAr ? 'الاستهداف' : 'Targeting'}</h4></div>
               <div className="card-b">
@@ -485,6 +505,88 @@ export default function ExecutionDetailPage() {
         />
       )}
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* «على المنصة» — the execution's own id on the ad platform            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every execution stores its platform campaign id — the design note on
+ * screen 20: that id is what lets the numbers be pulled automatically later
+ * without re-entering anything. Editable here, per screen 21.
+ */
+function OnPlatformCard({
+  execution, canEdit, isAr, onSaved,
+}: {
+  execution: MosExecution;
+  canEdit: boolean;
+  isAr: boolean;
+  onSaved: (platformCampaignId: string | null, purpose: MosExecution['purpose']) => void;
+}) {
+  const addToast = useAppStore((s) => s.addToast);
+  const [pid, setPid] = useState(execution.platform_campaign_id ?? '');
+  const [purpose, setPurpose] = useState<string>(execution.purpose ?? '');
+  const [busy, setBusy] = useState(false);
+
+  const save = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const nextPurpose = (purpose === '' ? null : purpose) as MosExecution['purpose'];
+      await saveExecution(execution.campaign_id, {
+        id: execution.id,
+        platform_campaign_id: pid.trim() || null,
+        purpose: nextPurpose,
+      });
+      onSaved(pid.trim() || null, nextPurpose);
+      addToast(isAr ? 'حُفظ رقم المنصة والغرض.' : 'Platform id and purpose saved.', 'success');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="card-h"><h4>{isAr ? 'على المنصة' : 'On the platform'}</h4></div>
+      <div className="card-b" style={{ display: 'grid', gap: 12 }}>
+        <Field
+          label={isAr ? 'رقم الحملة على المنصة' : 'Platform campaign id'}
+          hint={isAr ? 'ما يتيح سحب الأرقام آليًا لاحقًا' : 'lets the numbers be pulled automatically later'}
+        >
+          <input
+            className="inp ltr cd-platform-id"
+            value={pid}
+            disabled={!canEdit}
+            onChange={(e) => setPid(e.target.value)}
+          />
+        </Field>
+        <Field label={isAr ? 'الغرض' : 'Purpose'}>
+          <select
+            className="inp"
+            value={purpose}
+            disabled={!canEdit}
+            onChange={(e) => setPurpose(e.target.value)}
+          >
+            <option value="">{isAr ? 'غير محدد' : 'Not specified'}</option>
+            {Object.keys(PURPOSE_PILL_LABELS).map((k) => (
+              <option key={k} value={k}>
+                {isAr ? PURPOSE_PILL_LABELS[k]?.ar : PURPOSE_PILL_LABELS[k]?.en}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {canEdit && (
+          <div>
+            <button type="button" className="btn btn-p btn-sm" onClick={() => void save()} disabled={busy}>
+              {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'حفظ' : 'Save'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -552,6 +654,20 @@ function AdModal({
     }
   };
 
+  const remove = async (): Promise<void> => {
+    if (!ad) return;
+    setBusy(true);
+    try {
+      const res = await deleteAd(executionId, ad.id);
+      addToast(isAr ? 'حُذف الإعلان.' : 'Ad deleted.', 'success');
+      onSaved(res.ads);
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Modal
       title={ad ? (isAr ? 'تعديل الإعلان' : 'Edit ad') : (isAr ? 'إضافة إعلان' : 'Add an ad')}
@@ -561,6 +677,11 @@ function AdModal({
       onClose={onClose}
       footer={
         <>
+          {ad && (
+            <button type="button" className="btn btn-d" onClick={() => void remove()} disabled={busy}>
+              {isAr ? 'حذف' : 'Delete'}
+            </button>
+          )}
           <span className="note">
             {isAr ? 'اترك أي خانة فارغة إن لم تُقس — الفارغ ليس صفرًا.' : 'Leave a box empty if it was not measured — empty is not zero.'}
           </span>

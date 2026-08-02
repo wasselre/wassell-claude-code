@@ -35,7 +35,7 @@ import {
   KindCell, LoadError, Pill, ReadField, Skeleton, StatusPill, Modal,
 } from './components/kit';
 import StageRail from './components/StageRail';
-import TaskCard from './components/TaskCard';
+import TaskCard, { TasksApprovalsTab } from './components/TaskCard';
 import WritingFields from './components/WritingFields';
 import SceneTable from './components/SceneTable';
 import PublishTab from './components/PublishTab';
@@ -654,60 +654,18 @@ export default function ContentDetailPage() {
           )}
 
           {activeTab === 'tasks' && (
-            <div className="card">
-              <div className="card-h">
-                <h4>{isAr ? 'كل المهام والاعتمادات' : 'Every task and approval'}</h4>
-                <span className="r">
-                  {isAr
-                    ? 'الرفض يُنشئ جولة جديدة — لا يُستبدل أحد'
-                    : 'a rejection opens a new round — nothing is overwritten'}
-                </span>
-              </div>
-              <div className="tbl-wrap">
-                <table className="tbl">
-                  <thead>
-                    <tr>
-                      <th>{isAr ? 'المرحلة' : 'Stage'}</th>
-                      <th style={{ width: 140 }}>{isAr ? 'الدور' : 'Role'}</th>
-                      <th style={{ width: 90 }}>{isAr ? 'الجولة' : 'Round'}</th>
-                      <th style={{ width: 130 }}>{isAr ? 'النتيجة' : 'Result'}</th>
-                      <th style={{ width: 130 }}>{isAr ? 'أُغلقت' : 'Closed'}</th>
-                      <th>{isAr ? 'الملاحظة' : 'Note'}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tasks.map((t) => {
-                      const s = steps.find((x) => x.id === t.step_id);
-                      return (
-                        <tr key={t.id}>
-                          <td className="ttl">{s ? (isAr ? s.label_ar : s.label_en) : '—'}</td>
-                          <td>
-                            {ROLE_LABELS[t.role]
-                              ? isAr ? ROLE_LABELS[t.role].ar : ROLE_LABELS[t.role].en
-                              : t.role}
-                          </td>
-                          <td className="num">{num(t.round, isAr)}</td>
-                          <td>
-                            {t.status === 'open' ? (
-                              <Pill tone="now">{isAr ? 'مفتوحة' : 'Open'}</Pill>
-                            ) : t.result === 'approved' ? (
-                              <Pill tone="go">{isAr ? 'اعتُمدت' : 'Approved'}</Pill>
-                            ) : t.result === 'changes_requested' ? (
-                              <Pill tone="late">{isAr ? 'أُعيدت' : 'Sent back'}</Pill>
-                            ) : (
-                              <Pill tone="idle">{isAr ? 'أُرسلت' : 'Submitted'}</Pill>
-                            )}
-                          </td>
-                          <td style={{ color: 'var(--mute)' }}>{shortDate(t.closed_at, isAr)}</td>
-                          <td style={{ fontSize: 12, color: 'var(--ink-2)' }}>{t.note ?? '—'}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <TasksApprovalsTab
+              item={item}
+              tasks={tasks}
+              steps={steps}
+              scenes={scenes}
+              canApprove={canAct && currentStep?.is_approval === true}
+              onRequestChanges={() => setRejectOpen(true)}
+              onDone={() => void load()}
+              isAr={isAr}
+            />
           )}
+
 
           {activeTab === 'publishing' && (
             <PublishTab

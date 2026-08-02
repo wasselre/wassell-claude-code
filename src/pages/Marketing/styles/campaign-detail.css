@@ -1,0 +1,305 @@
+/*
+ * Campaign detail surfaces — design screens 15 / 20 / 21 / 39 / 40.
+ *
+ * Additive, `.mos-root`-scoped classes only. mos.css stays untouched; this
+ * file carries just what the campaign-detail rebuild needs beyond the shared
+ * primitives. Imported by CampaignDetailPage.tsx (ExecutionDetailPage reaches
+ * it through the same module graph).
+ */
+
+/* ── shared — the «←» consequence lines (s15 «ماذا تقول الأرقام») ────── */
+/* Defined here too so this page never depends on another page's stylesheet
+   being in the bundle. Identical to the settings-engine/pages-remaining copy. */
+.mos-root .rule {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.85;
+}
+.mos-root .rule + .rule {
+  margin-top: 4px;
+}
+.mos-root .arw {
+  color: var(--copper);
+  font-weight: 700;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* ── s15 — overview layout ───────────────────────────────────────────── */
+
+/* Main column + the 272px side rail of «مقابل الهدف» / «ماذا تقول الأرقام»
+   / «ما بعد الإعلان». */
+.mos-root .cd-oview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 272px;
+  gap: 16px;
+  align-items: start;
+}
+.mos-root .cd-main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.mos-root .cd-side {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+/* The goal card's two-column field grid. */
+.mos-root .cd-goalgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 26px;
+}
+
+/* The platform colour dot in tables and card headers. */
+.mos-root .cd-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+  display: inline-block;
+}
+.mos-root .cd-dot.lg {
+  width: 9px;
+  height: 9px;
+}
+.mos-root .cd-plat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* «مقابل الهدف» — the big serif number and its pace footer. */
+.mos-root .cd-bignum {
+  font-family: var(--serif);
+  font-size: 35px;
+  line-height: 1.1;
+}
+.mos-root .cd-vs-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.mos-root .cd-vs-sub {
+  font-size: 12.5px;
+  color: var(--mute);
+}
+.mos-root .cd-vs-pcts {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--mute);
+  margin-top: 6px;
+}
+.mos-root .cd-projection {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--ink-2);
+}
+
+/* «ما بعد الإعلان» — the key/value rows. */
+.mos-root .cd-kv {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+}
+.mos-root .cd-kv.top {
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+.mos-root .cd-kv-note {
+  font-size: 11px;
+  color: var(--ink-2);
+  margin-top: 5px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-soft);
+  line-height: 1.8;
+}
+
+/* The signature banner (requires_signature && !signed). */
+.mos-root .cd-sign {
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent);
+  border-radius: 9px;
+  padding: 12px 15px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--ink-2);
+}
+.mos-root .cd-sign .btn {
+  margin-inline-start: auto;
+  flex: none;
+}
+
+/* ── s20 — the execution cards ───────────────────────────────────────── */
+
+.mos-root .cd-exec-b {
+  display: grid;
+  grid-template-columns: 206px 1fr 256px;
+  gap: 0 24px;
+  align-items: center;
+}
+.mos-root .cd-pacenum {
+  font-family: var(--serif);
+  font-size: 23px;
+}
+.mos-root .cd-statnum {
+  font-family: var(--serif);
+  font-size: 21px;
+}
+.mos-root .cd-stats {
+  display: flex;
+  gap: 26px;
+}
+.mos-root .cd-verdict {
+  font-size: 11px;
+  margin-top: 4px;
+}
+.mos-root .cd-exec-note {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  line-height: 1.75;
+  border-inline-start: 2px solid var(--line);
+  padding-inline-start: 11px;
+}
+.mos-root .card.cd-weak {
+  border-color: color-mix(in srgb, var(--late) 38%, transparent);
+}
+.mos-root .card.cd-weak > .card-h {
+  background: color-mix(in srgb, var(--late) 6%, transparent);
+}
+.mos-root .card.cd-noqual {
+  opacity: 0.7;
+}
+
+/* The reallocation banner under the cards. */
+.mos-root .cd-banner {
+  margin-top: 16px;
+  background: var(--sand-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 13px 16px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.mos-root .cd-banner .tx {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.85;
+  max-width: 68ch;
+}
+.mos-root .cd-banner .btn {
+  margin-inline-start: auto;
+  flex: none;
+}
+
+/* ── s39 — content tab ───────────────────────────────────────────────── */
+
+.mos-root .cd-filtnote {
+  margin-inline-start: auto;
+  font-size: 11.5px;
+  color: var(--mute);
+}
+.mos-root tr.cd-wrongrow td {
+  background: color-mix(in srgb, var(--late) 6%, transparent);
+}
+.mos-root tr.cd-dim td {
+  opacity: 0.6;
+}
+.mos-root .cd-pickrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: start;
+  padding: 9px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--paper);
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+}
+.mos-root .cd-pickrow:hover {
+  border-color: var(--copper);
+}
+.mos-root .cd-picklist {
+  display: grid;
+  gap: 7px;
+  max-height: 330px;
+  overflow-y: auto;
+}
+/* .tbl scopes its own .id — the pick rows need the same monospace ref look. */
+.mos-root .cd-pickrow .id {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--mute);
+  flex: none;
+}
+
+/* ── s40 — results tab ───────────────────────────────────────────────── */
+
+/* The chart canvas gets the mockup's two borders; recharts draws no grid. */
+.mos-root .cd-chartbox {
+  border-bottom: 1px solid var(--line);
+  border-inline-start: 1px solid var(--line);
+  padding: 0 4px;
+}
+.mos-root .cd-gap {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  line-height: 1.9;
+}
+.mos-root .cd-week-note {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  margin-top: 10px;
+  line-height: 1.8;
+}
+.mos-root .cd-events {
+  font-size: 11.5px;
+  line-height: 1.85;
+  color: var(--ink-2);
+  display: grid;
+  gap: 8px;
+}
+.mos-root .cd-events .auto {
+  color: var(--mute);
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* ── s21 — the «على المنصة» side card ────────────────────────────────── */
+.mos-root .cd-platform-id {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── responsive ──────────────────────────────────────────────────────── */
+@media (max-width: 980px) {
+  .mos-root .cd-oview {
+    grid-template-columns: 1fr;
+  }
+  .mos-root .cd-exec-b {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .mos-root .cd-goalgrid {
+    grid-template-columns: 1fr;
+  }
+}
