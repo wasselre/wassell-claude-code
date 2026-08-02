@@ -1,0 +1,289 @@
+/**
+ * Content detail — part 2 (screens 09/10/11/12).
+ *
+ * Additive, `.mos-root`-scoped classes only, same convention as
+ * styles/pages-remaining.css. mos.css stays untouched. Everything here is
+ * prefixed `cd2-` except the tiny shared chips (.ver/.rule/.arw) that the
+ * mockups use and mos.css does not define — those are DUPLICATED from
+ * pages-remaining.css / settings-engine.css on purpose, because this tab must
+ * not depend on another page's lazily-loaded stylesheet having been imported.
+ */
+
+/* ── the in-tab split: bands/cards + the tab's own side column ───────── */
+/* The page-level side column is the activity rail; s09–s11 ALSO have their
+   own side card (coverage / rules / platform links), which therefore lives
+   INSIDE the tab area. */
+.mos-root .cd2-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 1180px) {
+  .mos-root .cd2-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── shared chips the mockups use (duplicated, see header note) ──────── */
+.mos-root .ver {
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--mute);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 7px;
+  background: var(--sand-2);
+  white-space: nowrap;
+}
+.mos-root .rule {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+}
+.mos-root .rule .arw,
+.mos-root .arw {
+  color: var(--copper);
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+/* ── s09 — the four production bands ─────────────────────────────────── */
+
+/* Band header row: label + the count tag pushed to the far edge. */
+.mos-root .cd2-band-h {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+.mos-root .cd2-band-h .tag {
+  margin-inline-start: auto;
+}
+
+/* A missing-shot row: dashed, late-tinted — a row, not an absence. */
+.mos-root .file.cd2-missing {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--late) 40%, transparent);
+}
+.mos-root .file.cd2-missing .th {
+  color: var(--late);
+  background: transparent;
+}
+.mos-root .file.cd2-missing .nm {
+  color: var(--late);
+}
+
+/* A review-version row currently under review — copper-lit like the mockup. */
+.mos-root .file.cd2-inreview {
+  border-color: color-mix(in srgb, var(--copper) 40%, transparent);
+}
+.mos-root .file.cd2-inreview .th {
+  background: color-mix(in srgb, var(--copper) 18%, transparent);
+}
+
+/* The coverage card's big number. */
+.mos-root .cd2-big {
+  font-family: var(--serif);
+  font-size: 28px;
+  line-height: 1;
+}
+.mos-root .cd2-cov-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--mute);
+}
+.mos-root .cd2-side-note {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+  line-height: 1.7;
+}
+
+/* ── s10 — the task chain ────────────────────────────────────────────── */
+
+/* The rejection row's tint — red enough to read, light enough to print. */
+.mos-root .tbl tr.cd2-rejected td {
+  background: color-mix(in srgb, var(--late) 6%, transparent);
+}
+/* The revision task the rejection created — an indented child, not a sibling. */
+.mos-root .cd2-child-arrow {
+  text-align: center;
+  color: var(--copper);
+  font-weight: 700;
+}
+.mos-root .cd2-child-title {
+  padding-inline-start: 22px;
+}
+/* Future steps from the pinned path — visible, dimmed, unstarted. */
+.mos-root .tbl tr.cd2-future {
+  opacity: 0.6;
+}
+.mos-root .cd2-sub {
+  font-size: 11px;
+  color: var(--mute);
+  font-weight: 400;
+  margin-top: 3px;
+}
+
+/* One elapsed-time meter row. */
+.mos-root .cd2-time-row .cd2-time-h {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+/* ── s11 — publication cards ─────────────────────────────────────────── */
+
+.mos-root .cd2-pub-h {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.mos-root .cd2-pdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.mos-root .cd2-pub-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 215px;
+  gap: 0 24px;
+}
+@media (max-width: 1180px) {
+  .mos-root .cd2-pub-grid {
+    grid-template-columns: 1fr;
+  }
+}
+/* The little platform badge in «الربط بالمنصات». */
+.mos-root .cd2-acct-badge {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border: 0;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+}
+/* The gold truth box: «مجدول» تعني تذكيرًا قبل الربط. */
+.mos-root .cd2-gold-note {
+  margin-top: 13px;
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent);
+  border-radius: 8px;
+  padding: 11px 12px;
+  font-size: 11.5px;
+  line-height: 1.8;
+  color: var(--ink-2);
+}
+.mos-root .cd2-caption-diff {
+  font-size: 10.5px;
+  color: var(--gold);
+  font-weight: 700;
+  margin-top: 5px;
+}
+
+/* ── s12 — performance ───────────────────────────────────────────────── */
+
+/* «ناقص» cells — alert-coloured words, never zeros. */
+.mos-root .tbl td.cd2-missing-cell {
+  color: var(--wait);
+  font-weight: 700;
+}
+.mos-root .tbl tr.cd2-missing-row td {
+  background: color-mix(in srgb, var(--wait) 7%, transparent);
+}
+
+/* The snapshot bar chart — honest dated columns, gaps stay gaps. */
+.mos-root .cd2-chart {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 11px 12px;
+  background: var(--sand-2);
+}
+.mos-root .cd2-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 74px;
+}
+.mos-root .cd2-bar {
+  flex: 1;
+  background: var(--copper);
+  border-radius: 3px 3px 0 0;
+  position: relative;
+  min-height: 3px;
+}
+.mos-root .cd2-bar.cd2-last {
+  background: var(--terracotta);
+}
+.mos-root .cd2-bar .cd2-bar-v {
+  position: absolute;
+  top: -17px;
+  inset-inline-start: 50%;
+  transform: translateX(50%);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--terracotta);
+  white-space: nowrap;
+}
+/* A skipped week: an empty dashed slot — the graph refuses to interpolate. */
+.mos-root .cd2-bar-gap {
+  flex: 1;
+  height: 100%;
+  border: 1px dashed color-mix(in srgb, var(--wait) 45%, transparent);
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+  background: transparent;
+}
+.mos-root .cd2-bar-lbls {
+  display: flex;
+  gap: 6px;
+  margin-top: 5px;
+}
+.mos-root .cd2-bar-lbls span {
+  flex: 1;
+  font-size: 9.5px;
+  color: var(--mute);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+/* The latest-value tiles above the chart. */
+.mos-root .cd2-kpi {
+  display: flex;
+  gap: 22px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.mos-root .cd2-kpi .cd2-kpi-v {
+  font-family: var(--serif);
+  font-size: 26px;
+}
+.mos-root .cd2-kpi .cd2-kpi-d {
+  font-size: 11px;
+  color: var(--mute);
+}
+.mos-root .cd2-kpi .cd2-kpi-up {
+  color: var(--go);
+  font-weight: 700;
+}
+/* «أين انتهى» outcome tiles. */
+.mos-root .cd2-outcomes {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.mos-root .cd2-outcomes .cd2-out-v {
+  font-family: var(--serif);
+  font-size: 21px;
+}
