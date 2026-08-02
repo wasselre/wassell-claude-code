@@ -349,18 +349,28 @@ BEGIN
 END $$;
 
 -- ── Seed import from the legacy cache (REV 4 §A7/§D): INACTIVE candidates ─
+-- SEQUENTIAL statements, not one CTE chain: data-modifying CTEs share a
+-- snapshot, so a revisions insert joining units inserted in the same
+-- statement sees an empty table (live incident during the 2026-08-02 W2
+-- apply — first run imported 0 revisions while inserting all units/variants).
 CREATE OR REPLACE FUNCTION public.record_translation_seed_from_cache(p_model_id uuid)
 RETURNS TABLE (imported int, rejected int)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
-DECLARE v_model_name text; v_imported int := 0; v_rejected int := 0;
+DECLARE v_model_name text; v_imported int := 0; v_eligible int := 0; v_matched int := 0;
 BEGIN
   SELECT name INTO v_model_name FROM models WHERE id = p_model_id;
   IF v_model_name IS NULL THEN RETURN QUERY SELECT 0, 0; RETURN; END IF;
 
-  WITH eligible AS (
+  CREATE TEMP TABLE IF NOT EXISTS _seed_matched (
+    entity_id uuid, field_path text, src text, treatment text, translated_text text
+  ) ON COMMIT DROP;
+  DELETE FROM _seed_matched;
+
+  INSERT INTO _seed_matched
+  SELECT e.entity_id, e.field_path, e.src, e.treatment, t.translated_text
+  FROM (
     SELECT ur.id AS entity_id, p.field_path,
-           btrim(ur.data->>p.field_path) AS src,
-           p.treatment
+           btrim(ur.data->>p.field_path) AS src, p.treatment
     FROM unified_records ur
     JOIN translation_field_policies p
       ON p.resource_kind = 'record' AND p.scope_id = p_model_id
@@ -369,55 +379,56 @@ BEGIN
     WHERE ur.model_id = p_model_id
       AND COALESCE(btrim(ur.data->>p.field_path),'') <> ''
       AND (ur.data->>p.field_path) ~ '[؀-ۿ]'
-  ),
-  matched AS (
-    SELECT e.entity_id, e.field_path, e.src, e.treatment, t.translated_text
-    FROM eligible e
-    JOIN value_translations t
-      ON t.target_lang = 'en'
-     AND t.source_hash = encode(digest(e.src, 'sha256'::text), 'hex')
-     AND t.model_hint = v_model_name                     -- context-bound only (REV 4 §A7)
-     AND t.field_hint = e.field_path
-     AND ((t.kind = 'name') = (e.treatment = 'transliterate'))  -- treatment-compatible
-  ),
-  units_ins AS (
-    INSERT INTO translation_units (resource_kind, entity_id, field_path, model_id,
-      source_lang, detector_version, source_rev, source_excerpt, generation, dirty)
-    SELECT 'record', m.entity_id, m.field_path, p_model_id,
-      'ar', 'seed-import-v1', encode(digest(m.src,'sha256'::text),'hex'),
-      left(m.src, 200), 1, true
-    FROM matched m
-    ON CONFLICT (resource_kind, entity_id, field_path) DO NOTHING
-    RETURNING 1
-  ),
-  variants_ins AS (
-    INSERT INTO translation_variants (resource_kind, entity_id, field_path, lang, role, state)
-    SELECT 'record', m.entity_id, m.field_path, l.lang,
-      CASE WHEN l.lang = 'ar' THEN 'source' ELSE 'target' END,
-      CASE WHEN l.lang = 'ar' THEN 'source' ELSE 'pending' END
-    FROM matched m CROSS JOIN (VALUES ('ar'),('en')) l(lang)
-    ON CONFLICT (resource_kind, entity_id, field_path, lang) DO NOTHING
-    RETURNING 1
-  ),
-  revs AS (
+  ) e
+  JOIN value_translations t
+    ON t.target_lang = 'en'
+   AND t.source_hash = encode(digest(e.src, 'sha256'::text), 'hex')
+   AND t.model_hint = v_model_name                     -- context-bound only (REV 4 §A7)
+   AND t.field_hint = e.field_path
+   AND ((t.kind = 'name') = (e.treatment = 'transliterate'));  -- treatment-compatible
+
+  SELECT count(*) INTO v_matched FROM _seed_matched;
+  SELECT count(*) INTO v_eligible
+  FROM unified_records ur
+  JOIN translation_field_policies p
+    ON p.resource_kind='record' AND p.scope_id=p_model_id
+   AND p.classification_status='confirmed' AND p.treatment IN ('translate','transliterate')
+   AND p.field_path !~ '\[' AND p.field_path NOT LIKE 'pair:%'
+  WHERE ur.model_id = p_model_id
+    AND COALESCE(btrim(ur.data->>p.field_path),'') <> ''
+    AND (ur.data->>p.field_path) ~ '[؀-ۿ]';
+
+  INSERT INTO translation_units (resource_kind, entity_id, field_path, model_id,
+    source_lang, detector_version, source_rev, source_excerpt, generation, dirty)
+  SELECT 'record', m.entity_id, m.field_path, p_model_id,
+    'ar', 'seed-import-v1', encode(digest(m.src,'sha256'::text),'hex'),
+    left(m.src, 200), 1, true
+  FROM _seed_matched m
+  ON CONFLICT (resource_kind, entity_id, field_path) DO NOTHING;
+
+  INSERT INTO translation_variants (resource_kind, entity_id, field_path, lang, role, state)
+  SELECT 'record', m.entity_id, m.field_path, l.lang,
+    CASE WHEN l.lang = 'ar' THEN 'source' ELSE 'target' END,
+    CASE WHEN l.lang = 'ar' THEN 'source' ELSE 'pending' END
+  FROM _seed_matched m CROSS JOIN (VALUES ('ar'),('en')) l(lang)
+  ON CONFLICT (resource_kind, entity_id, field_path, lang) DO NOTHING;
+
+  WITH revs AS (
     INSERT INTO translation_revisions (resource_kind, entity_id, field_path, lang, generation,
       source_rev, source_lang, source_text, translated_text, origin, status, treatment, provider)
     SELECT 'record', m.entity_id, m.field_path, 'en', u.generation,
       u.source_rev, 'ar', m.src, m.translated_text, 'seed', 'candidate', m.treatment, 'cache:deepseek'
-    FROM matched m
+    FROM _seed_matched m
     JOIN translation_units u ON u.resource_kind = 'record'
      AND u.entity_id = m.entity_id AND u.field_path = m.field_path
-    WHERE u.source_rev = encode(digest(m.src,'sha256'::text),'hex')   -- value unchanged since unit creation
+    WHERE u.source_rev = encode(digest(m.src,'sha256'::text),'hex')
     ON CONFLICT DO NOTHING
     RETURNING 1
-  )
-  SELECT COALESCE((SELECT count(*) FROM revs),0),
-         (SELECT count(*) FROM eligible) - COALESCE((SELECT count(*) FROM matched),0)
-  INTO v_imported, v_rejected;
+  ) SELECT count(*) INTO v_imported FROM revs;
 
   INSERT INTO translation_history (resource_kind, entity_id, field_path, reason)
-  SELECT 'record', p_model_id, 'model:' || v_model_name, 'seed_import';
-  RETURN QUERY SELECT v_imported, v_rejected;
+  VALUES ('record', p_model_id, 'model:' || v_model_name, 'seed_import');
+  RETURN QUERY SELECT v_imported, v_eligible - v_matched;
 END $$;
 
 -- ── GC + stats (REV 4 §B8/§13) ────────────────────────────────────────────
