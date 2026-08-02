@@ -10,6 +10,7 @@
 import type { AppRecord } from '@/types';
 import {
   type ProjectStoreSlices,
+  type ProjectViewOpts,
   type OptionView,
   modelByName,
   fieldByCandidates,
@@ -17,7 +18,7 @@ import {
   optionsFor,
   asString,
   asFiniteNumber,
-  lookupName,
+  lookupNameLocalized,
 } from './projectView';
 
 export interface UnitView {
@@ -73,9 +74,17 @@ export function unitsForProject(store: ProjectStoreSlices, projectId: string): A
   );
 }
 
-export function resolveUnitView(store: ProjectStoreSlices, record: AppRecord): UnitView {
+export function resolveUnitView(
+  store: ProjectStoreSlices,
+  record: AppRecord,
+  opts: ProjectViewOpts = {},
+): UnitView {
   const um = modelByName(store.models, 'units');
   const data = (record.data ?? {}) as Record<string, unknown>;
+  const lang: 'ar' | 'en' = opts.isAr === false ? 'en' : 'ar';
+  // W6: prefer the field's translation for the current language, else the source.
+  const tr = (fieldPath: string, source: string | null): string | null =>
+    (opts.translate?.(record.id, fieldPath, lang) ?? null) || source;
 
   const projectField = fieldByCandidates(um, ['project_id']);
   const developerField = fieldByCandidates(um, ['developer_id', 'developer']);
@@ -101,8 +110,8 @@ export function resolveUnitView(store: ProjectStoreSlices, record: AppRecord): U
     projectId,
     code: asString(data.unit_code) ?? asString(data.unit_number),
     unitNumber: data.unit_number != null ? String(data.unit_number) : null,
-    model: asString(data.unit_model),
-    developer: lookupName(store, developerField, developerField ? data[developerField.name] : null),
+    model: tr('unit_model', asString(data.unit_model)),
+    developer: lookupNameLocalized(store, developerField, developerField ? data[developerField.name] : null, opts),
     type: optionFor(typeField, typeField ? data[typeField.name] : null),
     status: optionFor(statusField, statusField ? data[statusField.name] : null),
     bedrooms: asFiniteNumber(data.bedrooms),
@@ -126,7 +135,7 @@ export function resolveUnitView(store: ProjectStoreSlices, record: AppRecord): U
     unitBrochure: asString(data.unit_brochure),
     projectBrochure: asString(data.project_brochure),
     locationLink: asString(data.location_url) ?? asString(data.project_location),
-    notes: asString(data.notes),
+    notes: tr('notes', asString(data.notes)),
     createdAt: record.created_at,
   };
 }

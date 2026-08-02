@@ -87,4 +87,45 @@ describe('resolveProjectView', () => {
     expect(v.isTargeted).toBe(false);
     expect(formatPriceRange(v.priceRange, true)).toBeNull();
   });
+
+  // Bilingual W6: language-aware name / developer / geo via injected opts.
+  it('localizes name, developer, and geography in English mode', () => {
+    const store = makeStore();
+    // Give the city a bilingual official name so geoLocalized resolves.
+    store.records['cities-model'] = [
+      { id: 'city-1', model_id: 'cities-model', data: { name_ar: 'الرياض', name_en: 'Riyadh' }, created_at: '', updated_at: '' } as AppRecord,
+    ];
+    const rec: AppRecord = {
+      id: 'p1', model_id: 'ap-model', created_at: '2026-06-01', updated_at: '2026-06-01',
+      data: { project_name: 'برج وصل', developer: 'dev-1', location: { city: 'city-1' } },
+    } as AppRecord;
+    const translations: Record<string, string> = {
+      'p1|project_name|en': 'Wassel Tower',
+      'dev-1|name|en': 'Almajdiah Development',
+    };
+    const translate = (id: string, path: string, lang: 'ar' | 'en') => translations[`${id}|${path}|${lang}`] ?? null;
+
+    const en = resolveProjectView(store, rec, { isAr: false, translate });
+    expect(en.name).toBe('Wassel Tower');           // translation, not the Arabic source
+    expect(en.developer).toBe('Almajdiah Development');
+    expect(en.city).toBe('Riyadh');                 // official English geo name
+
+    // Arabic mode (or no opts) keeps source + Arabic geo — server callers unchanged.
+    const ar = resolveProjectView(store, rec, { isAr: true, translate });
+    expect(ar.name).toBe('برج وصل');
+    expect(ar.city).toBe('الرياض');
+    const bare = resolveProjectView(store, rec);
+    expect(bare.name).toBe('برج وصل');
+    expect(bare.city).toBe('الرياض');
+  });
+
+  it('falls back to Arabic geo when the record has no name_en (never blank)', () => {
+    const store = makeStore(); // city-1 has display_name only, no name_en
+    const rec: AppRecord = {
+      id: 'p3', model_id: 'ap-model', created_at: '', updated_at: '',
+      data: { location: { city: 'city-1' } },
+    } as AppRecord;
+    const en = resolveProjectView(store, rec, { isAr: false });
+    expect(en.city).toBe('Riyadh'); // Arabic-source display_name, better than an empty English cell
+  });
 });

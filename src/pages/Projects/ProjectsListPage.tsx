@@ -13,6 +13,7 @@ import {
   formatPriceRange,
   type ProjectView,
 } from '@/lib/projects/projectView';
+import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
 
 type ViewMode = 'grid' | 'list' | 'map';
@@ -44,10 +45,13 @@ export default function ProjectsListPage() {
   // Escape hatch to the generic table/export view (same convention as followups).
   const useGeneric = searchParams.get('generic') === '1';
 
+  const translationVersion = useRecordTranslationVersion();
   const rawRecords = useMemo(() => (model ? records[model.id] ?? [] : []), [model, records]);
   const views: ProjectView[] = useMemo(
-    () => rawRecords.map((r) => resolveProjectView({ models, records }, r)),
-    [rawRecords, models, records],
+    () => rawRecords.map((r) => resolveProjectView({ models, records }, r, { isAr, translate: getEntityFieldText })),
+    // translationVersion: re-resolve names/geo once translations hydrate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawRecords, models, records, isAr, translationVersion],
   );
 
   // ── filter state ──────────────────────────────────────────────────────────

@@ -14,12 +14,25 @@
 //   * Slugs are resolved defensively (live slug first, seed fallback) because
 //     the live models were Builder-rebuilt with drifted slugs.
 
-import { resolveLocalizedName, resolveArabicName, type LocalizedName } from '@/lib/geo/localizedName';
+import { resolveLocalizedName, resolveArabicName, pickLocalized, type LocalizedName } from '@/lib/geo/localizedName';
 import type { AppModel, AppRecord, ModelField, FieldOption } from '@/types';
 
 export interface ProjectStoreSlices {
   models: AppModel[];
   records: Record<string, AppRecord[]>;
+}
+
+/**
+ * Bilingual W6: optional language + translation resolver for the view.
+ * `resolveProjectView` produces `name` / `developer` / `city` / `district` in
+ * this language. Injected (never imported) so this module stays server-safe —
+ * `api/project-ai.ts` imports it and must not pull the browser translation
+ * store. Absent ⇒ Arabic + source text (the pre-W6 behavior, unchanged), which
+ * is exactly what the server caller wants.
+ */
+export interface ProjectViewOpts {
+  isAr?: boolean;
+  translate?: (entityId: string, fieldPath: string, lang: 'ar' | 'en') => string | null;
 }
 
 export interface NumericRange {
@@ -191,6 +204,34 @@ export function lookupName(store: ProjectStoreSlices, field: ModelField | undefi
   return typeof v === 'string' && v ? v : null;
 }
 
+/** Lookup display, preferring the linked record's TRANSLATION for `lang` (W6). */
+export function lookupNameLocalized(
+  store: ProjectStoreSlices,
+  field: ModelField | undefined,
+  raw: unknown,
+  opts: ProjectViewOpts,
+): string | null {
+  const id = firstId(raw);
+  if (id && opts.translate && field?.lookup_display_field) {
+    const tr = opts.translate(id, field.lookup_display_field, opts.isAr === false ? 'en' : 'ar');
+    if (tr) return tr;
+  }
+  return lookupName(store, field, raw);
+}
+
+/** Geography display in the requested language; Arabic fallback when the record
+ *  has no `name_en` (never a blank under an English label). */
+function geoDisplay(
+  store: ProjectStoreSlices,
+  modelName: 'cities' | 'districts',
+  id: string | null,
+  isAr: boolean,
+): string | null {
+  const loc = geoLocalized(store, modelName, id);
+  if (loc) return pickLocalized(loc, isAr);
+  return geoName(store, modelName, id);
+}
+
 /** Read a stored rollup BY its rollup_kind (robust to slug renames). */
 export function rollupByKind(model: AppModel | undefined, data: Record<string, unknown>, kind: string): unknown {
   const f = allFields(model).find((x) => (x.rollup_kind ?? (x as { computed_kind?: string }).computed_kind) === kind);
@@ -200,9 +241,15 @@ export function rollupByKind(model: AppModel | undefined, data: Record<string, u
 
 // ── the resolver ────────────────────────────────────────────────────────────
 
-export function resolveProjectView(store: ProjectStoreSlices, record: AppRecord): ProjectView {
+export function resolveProjectView(
+  store: ProjectStoreSlices,
+  record: AppRecord,
+  opts: ProjectViewOpts = {},
+): ProjectView {
   const ap = modelByName(store.models, 'all_projects');
   const data = (record.data ?? {}) as Record<string, unknown>;
+  const isAr = opts.isAr !== false; // default Arabic (unchanged for server callers)
+  const lang: 'ar' | 'en' = isAr ? 'ar' : 'en';
 
   const loc = data.location && typeof data.location === 'object' && !Array.isArray(data.location)
     ? (data.location as Record<string, unknown>)
@@ -219,11 +266,13 @@ export function resolveProjectView(store: ProjectStoreSlices, record: AppRecord)
   return {
     id: record.id,
     raw: record,
-    name: asString(data.project_name),
-    developer: lookupName(store, developerField, developerField ? data[developerField.name] : null),
+    // W6: name + developer render in the UI language (translation, else source);
+    // geo renders localized (Arabic fallback when name_en is absent).
+    name: (opts.translate?.(record.id, 'project_name', lang) ?? null) || asString(data.project_name),
+    developer: lookupNameLocalized(store, developerField, developerField ? data[developerField.name] : null, opts),
     projectId: projectIdField ? asString(data[projectIdField.name]) : null,
-    city: geoName(store, 'cities', firstId(loc.city)),
-    district: geoName(store, 'districts', firstId(loc.district)),
+    city: geoDisplay(store, 'cities', firstId(loc.city), isAr),
+    district: geoDisplay(store, 'districts', firstId(loc.district), isAr),
     cityLocalized: geoLocalized(store, 'cities', firstId(loc.city)),
     districtLocalized: geoLocalized(store, 'districts', firstId(loc.district)),
     status: optionFor(statusField, statusField ? data[statusField.name] : null),

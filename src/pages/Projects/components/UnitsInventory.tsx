@@ -5,6 +5,7 @@ import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import { modelByName, fieldByCandidates } from '@/lib/projects/projectView';
 import { resolveUnitView, unitsForProject, sortUnits, type UnitView, type UnitSortKey } from '@/lib/projects/unitView';
+import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import UnitDrawer from './UnitDrawer';
 import UnitCompareModal from './UnitCompareModal';
 
@@ -25,9 +26,12 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
   const typeField = fieldByCandidates(unitsModel, ['unit_type']);
   const floorField = fieldByCandidates(unitsModel, ['floor']);
 
+  const translationVersion = useRecordTranslationVersion();
   const allUnits: UnitView[] = useMemo(
-    () => unitsForProject({ models, records }, projectId).map((r) => resolveUnitView({ models, records }, r)),
-    [models, records, projectId],
+    () => unitsForProject({ models, records }, projectId).map((r) => resolveUnitView({ models, records }, r, { isAr, translate: getEntityFieldText })),
+    // translationVersion: re-resolve unit model/notes/developer once translations hydrate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [models, records, projectId, isAr, translationVersion],
   );
 
   const [status, setStatus] = useState('');

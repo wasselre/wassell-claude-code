@@ -13,6 +13,7 @@ import {
   formatPriceRange, formatRange, asString, asFiniteNumber, type ProjectView,
 } from '@/lib/projects/projectView';
 import { auditProject } from '@/lib/projects/projectAi';
+import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
 import UnitsInventory from './components/UnitsInventory';
 import MatchClientModal from './components/MatchClientModal';
@@ -57,9 +58,12 @@ export default function ProjectDetailPage() {
     return linkedId ? (records[apModel.id] ?? []).find((r) => r.id === linkedId) : undefined;
   }, [apModel, isPortfolio, records, recordId, portfolioRecord]);
 
+  const translationVersion = useRecordTranslationVersion();
   const view: ProjectView | null = useMemo(
-    () => (record ? resolveProjectView({ models, records }, record) : null),
-    [record, models, records],
+    () => (record ? resolveProjectView({ models, records }, record, { isAr, translate: getEntityFieldText }) : null),
+    // translationVersion: re-resolve name/developer once translations hydrate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [record, models, records, isAr, translationVersion],
   );
 
   const [tab, setTab] = useState<TabKey>('overview');
