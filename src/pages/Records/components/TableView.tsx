@@ -23,6 +23,7 @@ import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/
 import { canEditRecord, getFieldPermission } from '@/lib/permissions';
 import type { AppModel, AppRecord, AttachmentRef, ModelField, ModelView } from '@/types';
 import { sortRecordsByFieldName, type SortCtx } from '@/lib/recordSort';
+import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import { shortenGoogleMapsUrl } from '@/lib/urlUtils';
 
 interface TableViewProps {
@@ -170,13 +171,14 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
     }
   }, [allSelected, someSelected]);
 
+  const translationVersion = useRecordTranslationVersion();
   const sortedRecords = useMemo(() => {
     // Controlled: the parent already sorted the full list (and paginated), so
     // render rows in the order received.
     if (controlledSort) return records;
-    const ctx: SortCtx = { isAr, allRecords, models, users };
+    const ctx: SortCtx = { isAr, allRecords, models, users, translate: getEntityFieldText };
     return sortRecordsByFieldName(records, model, sortField, sortDir, ctx);
-  }, [controlledSort, records, model, sortField, sortDir, isAr, allRecords, models, users]);
+  }, [controlledSort, records, model, sortField, sortDir, isAr, allRecords, models, users, translationVersion]);
 
   const startEdit = (record: AppRecord) => {
     // Inline-edit is gated by the same edit-scope check the form page uses.

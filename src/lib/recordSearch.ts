@@ -1,4 +1,4 @@
-import type { AppModel, AppRecord, ModelField } from '@/types';
+import type { AppModel, AppRecord, ModelField, User } from '@/types';
 import { resolveLookupDisplayValue, resolveMirror } from './mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from './sectionMirrorExpand';
 
@@ -13,14 +13,42 @@ export function normalizeDigits(input: string): string {
     .replace(/[۰-۹]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0x06F0 + 0x30));
 }
 
-/** Lowercase + digit-normalize, for case- and digit-script-insensitive matching. */
+/**
+ * Fold Arabic orthographic variants so a query matches regardless of how the
+ * hamza / ta-marbuta / alef-maqsura was typed (bilingual W5). This mirrors the
+ * SQL `wassell_search_norm` used by the server-side search index EXACTLY —
+ * client-side substring search and server trigram search must fold the same
+ * way, or the two disagree on what "الأصيل" matches. SQL:
+ *   translate(strip(ـ), 'أإآةى', 'اا هي') + digit unification + lower.
+ */
+export function foldArabic(input: string): string {
+  return input
+    .replace(/ـ/g, '')      // strip tatweel (kashida)
+    .replace(/[أإآ]/g, 'ا')       // hamza-carrying alef → bare alef
+    .replace(/ة/g, 'ه')          // ta-marbuta → heh (matches SQL)
+    .replace(/ى/g, 'ي');         // alef-maqsura → yeh
+}
+
+/** Lowercase + digit-normalize + Arabic-fold, for case-, digit-script-, and
+ *  orthography-insensitive matching. Kept in lockstep with SQL wassell_search_norm. */
 export function normalizeForSearch(input: string): string {
-  return normalizeDigits(input).toLowerCase();
+  return foldArabic(normalizeDigits(input)).toLowerCase();
 }
 
 export interface RecordSearchContext {
   models: AppModel[];
   records: Record<string, AppRecord[]>;
+  /** Users, for resolving assignee ids → names (both languages). Optional; when
+   *  absent, assignee ids are indexed raw (previous behavior). */
+  users?: User[];
+  /**
+   * Bilingual W5: resolve a record field's TRANSLATION for a language so an
+   * English-typed query finds an Arabic-source record (and vice versa). Injected
+   * (never imported) so this module stays free of the browser translation store
+   * — same server-bundle-safety rule as W0's grouping.ts. Absent ⇒ only source
+   * text is indexed (previous behavior, still correct).
+   */
+  translate?: (entityId: string, fieldPath: string, lang: 'ar' | 'en') => string | null;
 }
 
 /**
@@ -63,7 +91,13 @@ export function buildExpandedFieldSearchText(
   const { value, field } = resolveExpanded(ef, record, model, ctx);
   if (value === null || value === undefined || value === '') return '';
   const parts: string[] = [];
-  collectFieldSearchParts(field, value, ctx, parts);
+  // A value that came from a mirror belongs to a DIFFERENT record — its
+  // translation is keyed by that target's id, which we don't resolve here, so
+  // leave the entityId undefined (source-only index) for mirrored values. A
+  // plain local field's translation is keyed by (this record, this field slug).
+  const isLocal = ef.kind !== 'mirrored' && field.type !== 'mirror';
+  const entityId = isLocal ? record.id : undefined;
+  collectFieldSearchParts(field, value, ctx, parts, entityId);
   return parts.join(' ');
 }
 
@@ -90,11 +124,27 @@ export function buildRecordSearchText(
   return parts.join(' ');
 }
 
+/** Push both-language translations of a (record, field-path) into the haystack
+ *  when a translate resolver is available. No-op otherwise (source stays). */
+function pushTranslations(
+  ctx: RecordSearchContext,
+  entityId: string | undefined,
+  fieldPath: string,
+  out: string[],
+): void {
+  if (!ctx.translate || !entityId) return;
+  const ar = ctx.translate(entityId, fieldPath, 'ar');
+  const en = ctx.translate(entityId, fieldPath, 'en');
+  if (ar) out.push(ar);
+  if (en) out.push(en);
+}
+
 function collectFieldSearchParts(
   field: ModelField,
   v: unknown,
   ctx: RecordSearchContext,
   out: string[],
+  entityId?: string,
 ): void {
   switch (field.type) {
     case 'dropdown': {
@@ -127,6 +177,46 @@ function collectFieldSearchParts(
           allRecords: ctx.records,
         });
         if (disp !== null && disp !== undefined && disp !== '') out.push(String(disp));
+        // Bilingual W5: also index the LINKED record's translated display name,
+        // keyed by the target's own id + display field — so searching a
+        // project's English name finds every unit that links to it.
+        if (typeof id === 'string') pushTranslations(ctx, id, field.lookup_display_field, out);
+      }
+      return;
+    }
+    case 'assignee': {
+      // Resolve the assignee id → user name in BOTH languages (the raw uuid is
+      // useless to search; the cell shows the name).
+      const ids = Array.isArray(v) ? v : [v];
+      for (const id of ids) {
+        const u = ctx.users?.find((x) => x.id === id);
+        if (u) out.push(u.name_ar, u.name_en);
+      }
+      return;
+    }
+    case 'location': {
+      // Compound { levelKey: id(s) }; resolve each populated level to its geo
+      // record's display name (region/city/district are loaded records — the
+      // same resolution DynamicCell renders).
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return;
+      const compound = v as Record<string, unknown>;
+      for (const lv of field.location_levels ?? []) {
+        const raw = compound[lv.key];
+        const ids = Array.isArray(raw) ? raw : typeof raw === 'string' && raw ? [raw] : [];
+        const lvModel = ctx.models.find((m) => m.id === lv.model_id);
+        for (const id of ids) {
+          if (typeof id !== 'string') continue;
+          const rec = (ctx.records[lv.model_id] ?? []).find((r) => r.id === id);
+          if (!rec) continue;
+          const dv = resolveLookupDisplayValue(rec, lv.display_field, {
+            targetModel: lvModel ?? undefined,
+            allModels: ctx.models,
+            allRecords: ctx.records,
+          });
+          if (dv !== null && dv !== undefined && typeof dv !== 'object') out.push(String(dv));
+          // Geo names have official ar/en; index the other-language name too.
+          pushTranslations(ctx, id, lv.display_field, out);
+        }
       }
       return;
     }
@@ -165,6 +255,9 @@ function collectFieldSearchParts(
         for (const e of v) {
           if (e && typeof e === 'object' && 'text' in (e as object)) {
             out.push(String((e as { text?: unknown }).text ?? ''));
+            // Per-entry translation, keyed by the element path (W1 identity).
+            const id = (e as { id?: unknown }).id;
+            if (typeof id === 'string') pushTranslations(ctx, entityId, `${field.name}[id=${id}]`, out);
           } else if (typeof e !== 'object') {
             out.push(String(e));
           }
@@ -197,9 +290,15 @@ function collectFieldSearchParts(
     }
     default: {
       // text / email / phone / url / textarea / number / currency / formula /
-      // auto_id / date / datetime / assignee / etc. — stringify scalars; skip
-      // unknown object shapes (no meaningful text to search).
+      // auto_id / date / datetime / etc. — stringify scalars; skip unknown
+      // object shapes (no meaningful text to search).
       if (typeof v !== 'object') out.push(String(v));
+      // Bilingual W5: free-text fields (text / textarea) carry translations —
+      // index both languages so a cross-language query matches. Numbers / dates
+      // etc. have no translation unit, so this is a no-op for them.
+      if ((field.type === 'text' || field.type === 'textarea') && typeof v === 'string') {
+        pushTranslations(ctx, entityId, field.name, out);
+      }
     }
   }
 }

@@ -203,3 +203,66 @@ BEGIN
 
   RAISE NOTICE 'W4 smoke 10 (document language carrier): passed';
 END $$;
+
+-- 11) W5 search folding: wassell_search_norm folds Arabic orthography (hamza
+--     forms → bare alef, ta-marbuta → heh, alef-maqsura → yeh, tatweel stripped,
+--     digits unified) and — critically — آ (alef-madda) folds to ا, NOT to a
+--     space (the W1 typo fixed in 2026-09-02_02). Client foldArabic() must match.
+DO $$
+BEGIN
+  -- All three hamza-alef forms collapse to the SAME normalized token.
+  IF public.wassell_search_norm('الأصيل') <> public.wassell_search_norm('الاصيل') THEN
+    RAISE EXCEPTION 'SMOKE 11 failed: أ not folded to ا';
+  END IF;
+  IF public.wassell_search_norm('قرآن') <> public.wassell_search_norm('قران') THEN
+    RAISE EXCEPTION 'SMOKE 11b failed: آ not folded to ا (the alef-madda typo)';
+  END IF;
+  -- No space is introduced by the آ fold (the exact bug: "قرآن" → "قر ن").
+  IF position(' ' in public.wassell_search_norm('قرآن')) <> 0 THEN
+    RAISE EXCEPTION 'SMOKE 11c failed: آ still folds to a space';
+  END IF;
+  IF public.wassell_search_norm('مدرسة') <> 'مدرسه' THEN
+    RAISE EXCEPTION 'SMOKE 11d failed: ة not folded to ه';
+  END IF;
+  IF public.wassell_search_norm('مصطفى') <> 'مصطفي' THEN
+    RAISE EXCEPTION 'SMOKE 11e failed: ى not folded to ي';
+  END IF;
+  IF public.wassell_search_norm('كـــتاب ١٤') <> 'كتاب 14' THEN
+    RAISE EXCEPTION 'SMOKE 11f failed: tatweel/digit normalization drifted (got %)',
+      public.wassell_search_norm('كـــتاب ١٤');
+  END IF;
+  RAISE NOTICE 'W5 smoke 11 (search folding parity): passed';
+END $$;
+
+-- 12) W5 mode-1 search: word_similarity finds a WORD inside a long document (the
+--     old similarity()+`%` scored a short query against a long text too low to
+--     match). Also proves cross-language: an English word matches via text_en.
+DO $$
+DECLARE v_model uuid; v_rec uuid;
+BEGIN
+  INSERT INTO models (name, schema) VALUES ('smoke_search', '{"sections":[]}'::jsonb)
+  RETURNING id INTO v_model;
+  INSERT INTO records (model_id, data) VALUES (v_model, '{"notes":"نص طويل جداً يحتوي على موقف سيارة خاص"}')
+  RETURNING id INTO v_rec;
+  -- Populate the search document directly (the worker/rebuild path is covered
+  -- elsewhere) with a long AR source + its EN translation.
+  INSERT INTO search_documents (resource_kind, entity_id, model_id, text_src, text_ar, text_en, dirty)
+  VALUES ('record', v_rec, v_model,
+    'نص طويل جداً يحتوي على موقف سيارة خاص',
+    'نص طويل جداً يحتوي على موقف سيارة خاص',
+    'a very long description that mentions a private parking spot for the unit',
+    false);
+
+  IF NOT EXISTS (SELECT 1 FROM record_search_v2(v_model, 'parking', 'en', 50, 0) r WHERE r.record_id = v_rec) THEN
+    RAISE EXCEPTION 'SMOKE 12 failed: EN word "parking" did not find the record (word_similarity broken)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM record_search_v2(v_model, 'موقف', 'ar', 50, 0) r WHERE r.record_id = v_rec) THEN
+    RAISE EXCEPTION 'SMOKE 12b failed: AR source word did not find the record';
+  END IF;
+  -- A word that appears in NEITHER language must NOT match (no false positives).
+  IF EXISTS (SELECT 1 FROM record_search_v2(v_model, 'helicopter', 'en', 50, 0) r WHERE r.record_id = v_rec) THEN
+    RAISE EXCEPTION 'SMOKE 12c failed: unrelated word matched (threshold too loose)';
+  END IF;
+
+  RAISE NOTICE 'W5 smoke 12 (word-similarity cross-language search): passed';
+END $$;

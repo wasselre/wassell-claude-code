@@ -5,6 +5,7 @@ import { Search, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope, useApplyVisibleViews } from '@/hooks/usePermission';
 import { buildExpandedFieldSearchText, buildRecordSearchText, normalizeForSearch } from '@/lib/recordSearch';
+import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import { collectViewFields, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
@@ -111,10 +112,12 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
   // Pre-build the searchable string per unit, once per data change (not per
   // keystroke — resolving lookups/mirrors is O(linked rows)). Scope is either a
   // single picked field or ALL fields; rebuilds when the scope changes.
+  const translationVersion = useRecordTranslationVersion();
   const unitSearchIndex = useMemo(() => {
     const idx = new Map<string, string>();
     if (!unitsModel) return idx;
-    const ctx = { models, records };
+    // W5: assignee names + translated displays make the search cross-language.
+    const ctx = { models, records, users, translate: getEntityFieldText };
     const scopedField =
       searchField === 'all' ? null : expandedFields.find((f) => f.id === searchField) ?? null;
     for (const rec of scopedUnits) {
@@ -124,7 +127,7 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
       idx.set(rec.id, normalizeForSearch(text));
     }
     return idx;
-  }, [scopedUnits, unitsModel, models, records, searchField, expandedFields]);
+  }, [scopedUnits, unitsModel, models, records, users, searchField, expandedFields, translationVersion]);
 
   // Text search over the project's units — matches ANY field via the index above.
   // Applied after view-scope, before pagination.
@@ -171,9 +174,9 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
   // Sort the searched set (after view-scope + text search) before pagination.
   const sortedUnits = useMemo(() => {
     if (!unitsModel) return searchedUnits;
-    const ctx: SortCtx = { isAr, allRecords: records, models, users };
+    const ctx: SortCtx = { isAr, allRecords: records, models, users, translate: getEntityFieldText };
     return sortRecordsByFieldName(searchedUnits, unitsModel, sortFieldName, sortDir, ctx);
-  }, [searchedUnits, unitsModel, sortFieldName, sortDir, isAr, records, models, users]);
+  }, [searchedUnits, unitsModel, sortFieldName, sortDir, isAr, records, models, users, translationVersion]);
 
   const pagedUnits = useMemo(() => {
     const start = (currentPage - 1) * pageSize;

@@ -20,16 +20,32 @@ export interface SortCtx {
   allRecords: Record<string, AppRecord[]>;
   models: AppModel[];
   users: User[];
+  /**
+   * Bilingual W5: resolve a record field's TRANSLATION for a language so text /
+   * lookup columns sort by the value the cell actually SHOWS in the current
+   * language (an English user sees English names → sorts by them). Injected,
+   * never imported, to keep this module store-free. Absent ⇒ sort by source
+   * (previous behavior).
+   */
+  translate?: (entityId: string, fieldPath: string, lang: 'ar' | 'en') => string | null;
 }
 
 /**
  * Derive a comparable key that mirrors what `DynamicCell` renders. Returns a
  * number for numeric / date / ordinal types (compared numerically), a
  * locale-comparable string otherwise, or null for blanks (always sorted last).
+ * `entityId` (the record this value belongs to) enables translated-display
+ * sorting for text/textarea columns.
  */
-export function buildSortKey(field: ModelField, value: unknown, ctx: SortCtx): number | string | null {
+export function buildSortKey(
+  field: ModelField,
+  value: unknown,
+  ctx: SortCtx,
+  entityId?: string,
+): number | string | null {
   if (value === undefined || value === null || value === '') return null;
   const { isAr, allRecords, models, users } = ctx;
+  const uiLang: 'ar' | 'en' = isAr ? 'ar' : 'en';
 
   switch (field.type) {
     case 'number':
@@ -82,17 +98,23 @@ export function buildSortKey(field: ModelField, value: unknown, ctx: SortCtx): n
 
     case 'lookup': {
       // Resolve the linked record's display value (the same text the cell shows)
-      // and sort by that, not the stored record UUID.
+      // and sort by that, not the stored record UUID. Prefer the linked record's
+      // TRANSLATION in the current language (W5) so English sorts by English.
       if (!field.lookup_model_id || !field.lookup_display_field) return null;
       const linked = allRecords[field.lookup_model_id] ?? [];
       const targetModel = models.find((m) => m.id === field.lookup_model_id);
+      const displayField = field.lookup_display_field;
       const dctx = { targetModel, allModels: models, allRecords };
       const ids = Array.isArray(value) ? (value as unknown[]) : [value];
       const labels = ids
         .map((id) => {
+          if (typeof id === 'string') {
+            const tr = ctx.translate?.(id, displayField, uiLang);
+            if (tr) return tr;
+          }
           const rec = linked.find((r) => r.id === id);
           if (!rec) return '';
-          const dv = resolveLookupDisplayValue(rec, field.lookup_display_field!, dctx);
+          const dv = resolveLookupDisplayValue(rec, displayField, dctx);
           return dv !== null && dv !== undefined && typeof dv !== 'object' ? String(dv) : '';
         })
         .filter(Boolean);
@@ -128,6 +150,12 @@ export function buildSortKey(field: ModelField, value: unknown, ctx: SortCtx): n
     default:
       // text, textarea, email, phone, url, auto_id, multi_link, etc. — natural
       // string compare (numeric:true on the comparator gives "PRJ-2" < "PRJ-10").
+      // Free text sorts by its translated display in the current language (W5)
+      // so the order matches what the user reads.
+      if ((field.type === 'text' || field.type === 'textarea') && entityId && typeof value === 'string') {
+        const tr = ctx.translate?.(entityId, field.name, uiLang);
+        if (tr) return tr;
+      }
       return String(value);
   }
 }
@@ -158,7 +186,7 @@ export function sortRecordsByFieldName(
   // is too expensive and the UX is unclear (v1 limitation). Leave order as-is.
   if (!field || field.type === 'mirror') return records as AppRecord[];
 
-  const decorated = records.map((r) => ({ r, key: buildSortKey(field, r.data[fieldName], ctx) }));
+  const decorated = records.map((r) => ({ r, key: buildSortKey(field, r.data[fieldName], ctx, r.id) }));
   decorated.sort((a, b) => {
     if (a.key === null && b.key === null) return 0;
     if (a.key === null) return 1;

@@ -18,6 +18,7 @@ import { PageSizeSelector, PageNavigator } from './components/PaginationControls
 import { exportToExcel, exportTemplate } from '@/lib/excelUtils';
 import { applyConditions } from '@/lib/dashboardUtils';
 import { buildRecordSearchText, buildExpandedFieldSearchText, normalizeForSearch } from '@/lib/recordSearch';
+import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import { collectViewFields, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import {
   adhocStorageKey,
@@ -49,6 +50,8 @@ export default function RecordListPage() {
   const { t } = useTranslation();
   const { models, records, summaryLoadState, loadSummaryRecords, views, language, currentUserId, users, deleteRecord, addToast, setRecordNavContext, loadChatsFromHaberchat } = useAppStore();
   const isAr = language === 'ar';
+  // Rebuilds the search index when record translations arrive (W5).
+  const translationVersion = useRecordTranslationVersion();
 
   const model = models.find((m) => m.name === modelName);
   // Summary models (e.g. market_listings) browse the NORMAL full-store
@@ -267,7 +270,11 @@ export default function RecordListPage() {
       }
       return idx;
     }
-    const ctx = { models, records };
+    // Bilingual W5: resolve assignee names + translated field displays so a
+    // cross-language query matches. `getEntityFieldText` also enqueues any
+    // un-hydrated record for translation fetch; when those land the store's
+    // version bumps and this memo (keyed on translationVersion) rebuilds.
+    const ctx = { models, records, users, translate: getEntityFieldText };
     const scopedField =
       searchField === 'all' ? null : expandedSearchFields.find((f) => f.id === searchField) ?? null;
     for (const rec of modelRecords) {
@@ -277,7 +284,7 @@ export default function RecordListPage() {
       idx.set(rec.id, normalizeForSearch(text));
     }
     return idx;
-  }, [isSummary, modelRecords, model, models, records, searchField, expandedSearchFields]);
+  }, [isSummary, modelRecords, model, models, records, users, searchField, expandedSearchFields, translationVersion]);
 
   const searchPlaceholder = (() => {
     if (searchField === 'all') return t('records.search_placeholder');
@@ -321,9 +328,11 @@ export default function RecordListPage() {
   // whatever the user sorted by here.
   const orderedFilteredRecords = useMemo(() => {
     if (!model) return filteredRecords;
-    const ctx: SortCtx = { isAr, allRecords: records, models, users };
+    // W5: sort text/lookup columns by their translated display in the current
+    // language (re-sorts as translations hydrate via translationVersion).
+    const ctx: SortCtx = { isAr, allRecords: records, models, users, translate: getEntityFieldText };
     return sortRecordsByFieldName(filteredRecords, model, sortFieldName, sortDir, ctx);
-  }, [filteredRecords, model, sortFieldName, sortDir, isAr, records, models, users]);
+  }, [filteredRecords, model, sortFieldName, sortDir, isAr, records, models, users, translationVersion]);
 
   // One property, many broker listings: collapse rows the database resolved to
   // the same property_key into a single representative row carrying the agent
