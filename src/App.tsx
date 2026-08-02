@@ -75,6 +75,10 @@ import MarketingWorkspace, { RequireMarketingWorkspace } from '@/pages/Marketing
 import MarketingOverviewPage from '@/pages/Marketing/OverviewPage';
 import MarketingWorkPage from '@/pages/Marketing/WorkPage';
 import MarketingTeamPage from '@/pages/Marketing/TeamPage';
+import MarketingAssetDetailPage from '@/pages/Marketing/AssetDetailPage';
+import MarketingShootRequestPage from '@/pages/Marketing/ShootRequestPage';
+import MarketingLibraryUnusedPage from '@/pages/Marketing/LibraryUnusedPage';
+import MarketingAccountPage from '@/pages/Marketing/AccountPage';
 import MarketingContentListPage from '@/pages/Marketing/ContentListPage';
 import MarketingSearchPage from '@/pages/Marketing/SearchPage';
 import MarketingContentDetailPage from '@/pages/Marketing/ContentDetailPage';
@@ -453,7 +457,11 @@ export default function App() {
           <Route path="/m/calendar" element={<MarketingCalendarPage />} />
           <Route path="/m/library" element={<MarketingLibraryPage />} />
           <Route path="/m/library/upload" element={<MarketingUploadPage />} />
+          <Route path="/m/library/unused" element={<MarketingLibraryUnusedPage />} />
+          <Route path="/m/library/:assetId" element={<MarketingAssetDetailPage />} />
           <Route path="/m/shoots" element={<MarketingShootsPage />} />
+          <Route path="/m/shoots/:requestId" element={<MarketingShootRequestPage />} />
+          <Route path="/m/account" element={<MarketingAccountPage />} />
           <Route path="/m/campaigns" element={<MarketingCampaignsPage />} />
           <Route path="/m/campaigns/:campaignId" element={<MarketingCampaignDetailPage />} />
           {/* The bottom layer — screen 21. Literal "exec" segment keeps it
