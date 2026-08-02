@@ -507,6 +507,12 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       auto_fill_from_lookup_field_id: field?.auto_fill_from_lookup_field_id,
       auto_fill_source_field_name: field?.auto_fill_source_field_name,
       default_dynamic: field?.default_dynamic,
+      // Bilingual W1: explicit translation policy override. Set via seeds/
+      // migrations/Review UI; the SQL policy refresher
+      // (refresh_model_translation_policies) reads it as the highest-priority
+      // classification input. Dropping it here would silently revert a field
+      // to heuristic classification on the next Builder edit.
+      translate_policy: field?.translate_policy,
       unit_picker_unit_model_id: type === 'unit_picker' ? unitPickerUnitModelIdEffective : field?.unit_picker_unit_model_id,
       unit_picker_project_link_field: type === 'unit_picker' ? (unitPickerLinkFieldEffective || undefined) : field?.unit_picker_project_link_field,
       assignee_role_ids: type === 'assignee' ? (assigneeFilterMode === 'restricted' ? assigneeRoleIds : []) : undefined,

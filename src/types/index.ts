@@ -389,6 +389,14 @@ export interface ModelField {
   // `is_rollup` this does NOT force read-only everywhere — read-only is decided
   // per-record in SectionBlock based on whether the project has linked units.
   auto_from_units?: boolean;
+  // Bilingual value-translation policy override (W1, 2026-09-01 migrations).
+  // 'auto' = translate/transliterate per the SQL refresher's heuristics;
+  // 'transliterate' / 'copy' force the treatment; 'skip' = never translate.
+  // Absent = heuristic classification. Read by
+  // refresh_model_translation_policies (SQL) and valueTranslation/config.ts.
+  // MUST stay in FieldEditor's buildSavedField carry-through block or Builder
+  // edits silently strip it.
+  translate_policy?: 'auto' | 'transliterate' | 'copy' | 'skip';
 }
 
 // ── Computed-field rollup kinds ────────────────────────────────────────

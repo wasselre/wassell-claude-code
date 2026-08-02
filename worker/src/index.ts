@@ -31,6 +31,7 @@ import { runCallAnalysisJob, type CallAnalysisJob } from './runCallAnalysisJob.j
 import { runCleanTextJob, type CleanTextJob } from './runCleanTextJob.js';
 import { runVideoConvertJob, type VideoConvertJob } from './runVideoConvertJob.js';
 import { runListingMirrorJob, type ListingMirrorJob } from './runListingMirrorJob.js';
+import { runTranslationJob } from './runTranslationJob.js';
 import { runCompressJob, type CompressJob } from './runCompressJob.js';
 import { configurePush, runPushJob, type PushOutboxRow } from './runPushJob.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
@@ -148,6 +149,15 @@ let marketingWakeRequested = false;
 // we observe the platform's health even when collection is paused/disabled.
 let marketingOpsBusy = false;
 let wahaWatchdogBusy = false;
+// Bilingual value translation (translation_jobs, W1 2026-09-01). Claims a
+// coalesced per-record job and resolves every changed translatable field
+// through official→glossary→TM→DeepSeek(→Haiku) with generation-CAS
+// activation. Gated on DEEPSEEK_API_KEY (decision D-1) — deploying this code
+// is a no-op until the secret exists AND translation_settings.is_enabled.
+// The loop also owns the lane's maintenance ticks (watchdog + reconcile +
+// search-doc rebuild every ~5 min; GC daily).
+let translationBusy = false;
+let translationWakeRequested = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -616,6 +626,85 @@ async function listingMirrorPollLoop(): Promise<void> {
     }
     const wokeAt = Date.now();
     while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !mirrorWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Bilingual value translation — translation_jobs queue (W1).
+
+async function claimAndRunOneTranslation(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('translation_job_claim_next', {
+    p_worker: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] translation claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string; resource_kind: string; entity_id: string;
+    model_id: string | null; changed_paths: string[]; attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job = {
+    id: row.job_id, resourceKind: row.resource_kind, entityId: row.entity_id,
+    modelId: row.model_id, changedPaths: row.changed_paths ?? [], attempts: row.attempts,
+  };
+  console.log(`[worker] claimed translation job=${job.id} entity=${job.entityId} paths=${job.changedPaths.length || 'all'}`);
+  try {
+    const result = await runTranslationJob({ supabase, env, job });
+    const { error: doneErr } = await supabase.rpc('translation_job_complete', { p_job: job.id });
+    if (doneErr) console.error(`[worker] translation_job_complete failed: ${doneErr.message}`);
+    else console.log(`[worker] completed translation job=${job.id} ${JSON.stringify(result)}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] translation job=${job.id} FAILED:`, msg);
+    const { error: failErr } = await supabase.rpc('translation_job_fail', { p_job: job.id, p_error: msg });
+    if (failErr) console.error(`[worker] translation_job_fail RPC failed: ${failErr.message}`);
+  }
+  return true;
+}
+
+let translationMaintLast = 0;
+let translationGcLast = 0;
+
+async function translationPollLoop(): Promise<void> {
+  while (!shuttingDown) {
+    translationBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneTranslation();
+      // Lane-owned maintenance: watchdog + reconcile + search rebuild ~5 min.
+      if (Date.now() - translationMaintLast > 5 * 60_000) {
+        translationMaintLast = Date.now();
+        const [wd, rec, sd] = await Promise.all([
+          supabase.rpc('translation_jobs_watchdog'),
+          supabase.rpc('translation_reconcile', { p_limit: 200 }),
+          supabase.rpc('search_documents_rebuild_dirty', { p_limit: 200 }),
+        ]);
+        for (const [name, r] of [['watchdog', wd], ['reconcile', rec], ['search_rebuild', sd]] as const) {
+          if (r.error) console.error(`[worker] translation ${name} failed: ${r.error.message}`);
+        }
+      }
+      if (Date.now() - translationGcLast > 24 * 60 * 60_000) {
+        translationGcLast = Date.now();
+        const { data: gc, error: gcErr } = await supabase.rpc('translation_gc');
+        if (gcErr) console.error(`[worker] translation_gc failed: ${gcErr.message}`);
+        else console.log(`[worker] translation_gc: ${JSON.stringify(gc)}`);
+      }
+    } catch (err) {
+      console.error('[worker] translation poll iteration error:', err);
+    }
+    translationBusy = false;
+
+    if (didClaim || translationWakeRequested) {
+      translationWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !translationWakeRequested && !shuttingDown) {
       await sleep(200);
     }
   }
@@ -2088,6 +2177,8 @@ const server = http.createServer((req, res) => {
         marketing_busy: marketingBusy,
         marketing_enabled: env.MARKETING_COLLECTION_ENABLED,
         marketing_ops_busy: marketingOpsBusy,
+        translation_busy: translationBusy,
+        translation_enabled: Boolean(env.DEEPSEEK_API_KEY),
         worker_id: env.WORKER_ID,
         uptime_s: Math.round(process.uptime()),
       }),
@@ -2112,6 +2203,7 @@ const server = http.createServer((req, res) => {
     regaWakeRequested = true;
     scheduledWaWakeRequested = true;
     marketingWakeRequested = true;
+    translationWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
     return;
@@ -2697,6 +2789,17 @@ if (env.WORKFLOW_PROOF_ONLY) {
     loops.push(callAnalysisPollLoop());
   } else {
     console.log('[worker] call-analysis loop disabled (DEEPSEEK_API_KEY unset)');
+  }
+  // Bilingual value-translation loop (translation_jobs, W1). Same DeepSeek
+  // gate (decision D-1); even when the key exists the DB stays authoritative
+  // (translation_settings.is_enabled + per-resource enabled + confirmed
+  // policies all ship OFF), so deploying this code changes nothing until the
+  // Review-confirmation cutover.
+  if (env.DEEPSEEK_API_KEY) {
+    console.log('[worker] translation loop enabled (DB flags still gate actual runs)');
+    loops.push(translationPollLoop());
+  } else {
+    console.log('[worker] translation loop disabled (DEEPSEEK_API_KEY unset)');
   }
   // Scheduled-reports loop only runs when the shared secret is set (feature on).
   if (env.REPORTS_RUNNER_SECRET) {

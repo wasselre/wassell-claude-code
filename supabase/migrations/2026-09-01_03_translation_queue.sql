@@ -268,6 +268,56 @@ BEGIN
   RETURN v_count;
 END $$;
 
+-- ── Atomic CAS activation (REV 4 blocker 4) ───────────────────────────────
+-- ONE statement: the variant activates only if the unit is STILL at the
+-- worker's claimed generation and the variant is machine-owned. A save that
+-- landed mid-provider-call bumped the generation → 0 rows → caller discards.
+CREATE OR REPLACE FUNCTION public.translation_variant_activate(
+  p_kind text, p_entity uuid, p_path text, p_lang text,
+  p_revision_id uuid, p_claimed_generation bigint,
+  p_text text, p_json jsonb DEFAULT NULL
+) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_hit boolean;
+BEGIN
+  UPDATE translation_variants v SET
+    state = 'translated', generation = u.generation,
+    display_text = p_text, display_json = p_json,
+    active_revision_id = p_revision_id, last_error = NULL, attempts = 0
+  FROM translation_units u
+  WHERE u.resource_kind = v.resource_kind AND u.entity_id = v.entity_id
+    AND u.field_path = v.field_path
+    AND v.resource_kind = p_kind AND v.entity_id = p_entity
+    AND v.field_path = p_path AND v.lang = p_lang
+    AND v.role = 'target' AND v.machine_owned
+    AND u.generation = p_claimed_generation
+  RETURNING true INTO v_hit;
+  IF NOT COALESCE(v_hit, false) THEN RETURN false; END IF;
+  UPDATE translation_revisions SET status = 'active' WHERE id = p_revision_id AND status = 'candidate';
+  RETURN true;
+END $$;
+
+-- Post-job completion: clear dirty ONLY for units whose machine-owned targets
+-- are all resolved; failed/pending ones stay dirty with a retry backoff so
+-- translation_reconcile re-queues them (REV 3 blocker 8).
+CREATE OR REPLACE FUNCTION public.translation_unit_finalize(p_kind text, p_entity uuid)
+RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  WITH cleared AS (
+    UPDATE translation_units u SET dirty = false, next_retry_at = NULL, updated_at = now()
+    WHERE u.resource_kind = p_kind AND u.entity_id = p_entity AND u.dirty
+      AND NOT EXISTS (
+        SELECT 1 FROM translation_variants v
+        WHERE v.resource_kind = u.resource_kind AND v.entity_id = u.entity_id
+          AND v.field_path = u.field_path AND v.role = 'target' AND v.machine_owned
+          AND v.state IN ('pending','failed'))
+    RETURNING 1
+  ), deferred AS (
+    UPDATE translation_units u SET next_retry_at = now() + interval '15 minutes', updated_at = now()
+    WHERE u.resource_kind = p_kind AND u.entity_id = p_entity AND u.dirty
+    RETURNING 1
+  )
+  SELECT COALESCE((SELECT count(*) FROM cleared), 0)::int;
+$$;
+
 -- ── Twin fill (REV 4 §B9): conditional, GUC-marked, machine-owned only ────
 CREATE OR REPLACE FUNCTION public.record_twin_fill(
   p_record_id uuid, p_source_path text, p_target_path text, p_value text,
@@ -441,7 +491,9 @@ BEGIN
     'translation_job_fail(uuid,text)','translation_jobs_watchdog()',
     'translation_reconcile(int)','record_twin_fill(uuid,text,text,text,text,text)',
     'record_translation_seed_from_cache(uuid)','translation_gc()',
-    'translation_stats()','translation_memory_purge(text)'
+    'translation_stats()','translation_memory_purge(text)',
+    'translation_variant_activate(text,uuid,text,text,uuid,bigint,text,jsonb)',
+    'translation_unit_finalize(text,uuid)'
   ] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated', fn);
     EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO service_role', fn);
