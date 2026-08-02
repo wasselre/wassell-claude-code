@@ -102,6 +102,22 @@ export function dateStamp(iso: string | null | undefined, isAr: boolean): string
   return `${shortDate(iso, isAr)}، ${num(h12, isAr)}:${isAr ? toArabicDigits(m) : m}${suffix}`;
 }
 
+/**
+ * Screen 06's publishing-plan slot — «١٠ أغسطس · ٧:٠٠ م» / "Aug 10 · 7:00 pm".
+ * Same short ص/م suffix as `dateStamp`, but a «·» separator and a space, which
+ * is the mockup's own shape for scheduled slots.
+ */
+export function dateTimeShort(iso: string | null | undefined, isAr: boolean): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const h = d.getHours();
+  const m = d.getMinutes().toString().padStart(2, '0');
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  const suffix = isAr ? (h < 12 ? 'ص' : 'م') : h < 12 ? 'am' : 'pm';
+  return `${shortDate(iso, isAr)} · ${num(h12, isAr)}:${isAr ? toArabicDigits(m) : m} ${suffix}`;
+}
+
 /** Whole days between now and `iso`. Negative = in the past. */
 export function daysFromNow(iso: string | null | undefined): number | null {
   if (!iso) return null;

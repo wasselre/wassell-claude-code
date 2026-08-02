@@ -1,0 +1,565 @@
+/**
+ * Asset detail — design screen 22 (/m/library/:assetId).
+ *
+ * One asset, and everything about it. The usage list is the point — this clip
+ * may be inside four records, one of them a paid ad still spending. That is why
+ * deleting an asset can never be a silent act, and why a crop produces a
+ * VERSION instead of replacing the original.
+ *
+ * «الحذف ممنوع لا محذَّر منه»: an asset that is in use cannot be removed — the
+ * button explains itself instead of firing a confirm dialog nobody reads. The
+ * server is the authority: asset_delete answers 409 { error: 'in_use' } and
+ * this screen renders that answer, offering أرشفة as the working alternative.
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useAppStore } from '@/stores/appStore';
+import {
+  ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosApiError, MosAsset, MosAssetUsage,
+  archiveAsset, bulkAssets, deleteAsset, fetchAssetDetail, saveAsset,
+} from '@/lib/marketingOS/client';
+import { useWorkspace } from './MarketingWorkspace';
+import { Empty, Field, LoadError, Modal, PageHead, Pill, ReadField, Skeleton } from './components/kit';
+import { IconLibrary, IconPlus } from './components/icons';
+import { daysFromNow, num, shortDate, toArabicDigits } from './lib/format';
+import { formatBytes } from './lib/upload';
+import './styles/pages-remaining.css';
+
+/** mm:ss with the screen's digit shape — Arabic-Indic in Arabic («٠٠:٢٢»). */
+function mmss(seconds: number, isAr: boolean): string {
+  const s = Math.max(0, Math.round(seconds));
+  const mm = Math.floor(s / 60).toString().padStart(2, '0');
+  const ss = (s % 60).toString().padStart(2, '0');
+  const out = `${mm}:${ss}`;
+  return isAr ? toArabicDigits(out) : out;
+}
+
+/** «بعد ١١ شهرًا» — the rights-expiry countdown chip. */
+function expiryCountdown(iso: string, isAr: boolean): string {
+  const days = daysFromNow(iso);
+  if (days === null) return '';
+  if (days < 0) return isAr ? 'انتهت' : 'expired';
+  if (days < 31) return isAr ? `بعد ${num(days, true)} يومًا` : `in ${days} days`;
+  const months = Math.round(days / 30.4);
+  return isAr ? `بعد ${num(months, true)} ${months <= 10 ? 'أشهر' : 'شهرًا'}` : `in ${months} months`;
+}
+
+const LINK_ROLE_LABELS: Record<string, { ar: string; en: string }> = {
+  source:    { ar: 'مصدر',  en: 'Source' },
+  final:     { ar: 'نهائي', en: 'Final' },
+  reference: { ar: 'مرجع',  en: 'Reference' },
+};
+
+export default function AssetDetailPage() {
+  const { assetId } = useParams<{ assetId: string }>();
+  const { isAr, can, projectName, contentTypes } = useWorkspace();
+  const navigate = useNavigate();
+  const addToast = useAppStore((s) => s.addToast);
+
+  const [asset, setAsset] = useState<MosAsset | null>(null);
+  const [usedIn, setUsedIn] = useState<MosAssetUsage[]>([]);
+  const [versions, setVersions] = useState<Array<{ id: string; title: string; created_at: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  /** The server's 409 explanation, shown in the تحذير card after a blocked delete. */
+  const [blocked, setBlocked] = useState<MosAssetUsage[] | null>(null);
+  const [addingTag, setAddingTag] = useState(false);
+  const [tagDraft, setTagDraft] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!assetId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetchAssetDetail(assetId);
+      setAsset(res.asset);
+      setUsedIn(res.used_in);
+      setVersions(res.versions);
+      setBlocked(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [assetId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const liveAds = useMemo(() => usedIn.filter((u) => u.live_ad), [usedIn]);
+  const inUse = usedIn.length > 0;
+
+  const kindLabel = asset
+    ? (isAr ? ASSET_KIND_LABELS[asset.kind]?.ar : ASSET_KIND_LABELS[asset.kind]?.en) ?? asset.kind
+    : '';
+  const sourceLabel = asset
+    ? (isAr ? ASSET_SOURCE_LABELS[asset.source]?.ar : ASSET_SOURCE_LABELS[asset.source]?.en) ?? asset.source
+    : '';
+
+  /** The spec caption — only what is actually known: duration · size. */
+  const spec = useMemo(() => {
+    if (!asset) return '';
+    const parts: string[] = [];
+    if (asset.duration_seconds != null && asset.duration_seconds > 0) parts.push(mmss(asset.duration_seconds, false));
+    if (asset.size_bytes != null && asset.size_bytes > 0) parts.push(formatBytes(asset.size_bytes, false));
+    return parts.join(' · ');
+  }, [asset]);
+
+  const archive = async (): Promise<void> => {
+    if (!asset) return;
+    setBusy(true);
+    try {
+      await archiveAsset(asset.id, true);
+      addToast(
+        isAr
+          ? 'أُرشفت — خرجت من البحث والمكتبة وتبقى قابلة للاسترجاع.'
+          : 'Archived — out of search and the library, always recoverable.',
+        'success',
+      );
+      navigate('/m/library');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Delete is attempted, never pre-judged: the server is the authority on
+   * in-use. A 409 in_use renders the blocked explanation in the تحذير card.
+   */
+  const remove = async (): Promise<void> => {
+    if (!asset) return;
+    setBusy(true);
+    try {
+      await deleteAsset(asset.id);
+      addToast(isAr ? 'حُذفت المادة.' : 'Asset deleted.', 'success');
+      navigate('/m/library');
+    } catch (e) {
+      if (e instanceof MosApiError && e.status === 409 && e.payload.error === 'in_use') {
+        const list = Array.isArray(e.payload.used_in) ? (e.payload.used_in as MosAssetUsage[]) : usedIn;
+        setBlocked(list);
+        addToast(
+          isAr
+            ? 'الحذف ممنوع — المادة مستخدمة. الأرشفة هي البديل.'
+            : 'Delete is blocked — the asset is in use. Archiving is the alternative.',
+          'error',
+        );
+      } else {
+        addToast(e instanceof Error ? e.message : String(e), 'error');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addTag = async (): Promise<void> => {
+    const t = tagDraft.trim();
+    if (!asset || !t) { setAddingTag(false); setTagDraft(''); return; }
+    setBusy(true);
+    try {
+      const res = await saveAsset({ id: asset.id, tags: [...asset.tags.filter((x) => x !== t), t] });
+      setAsset(res.asset);
+      setAddingTag(false);
+      setTagDraft('');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!assetId) return null;
+
+  return (
+    <>
+      <PageHead
+        title={asset?.title ?? (isAr ? 'تفاصيل المادة' : 'Asset detail')}
+        crumb={
+          <>
+            <button type="button" onClick={() => navigate('/m/library')}>
+              {isAr ? 'مكتبة المواد' : 'Asset library'}
+            </button>
+            {asset?.project_id && (
+              <>
+                <span className="sep">/</span>
+                <span>{projectName(asset.project_id)}</span>
+              </>
+            )}
+            <span className="sep">/</span>
+            <span>{kindLabel || (isAr ? 'مادة' : 'Asset')}</span>
+          </>
+        }
+        sub={asset && (
+          <span className="chips">
+            <span className="tag">{kindLabel} · {sourceLabel}</span>
+            {spec && <span className="tag ltr">{spec}</span>}
+            {asset.project_id && <span className="tag">{projectName(asset.project_id)}</span>}
+            {inUse ? (
+              <Pill tone="go">{isAr ? `مستخدم في ${num(usedIn.length, true)}` : `Used in ${usedIn.length}`}</Pill>
+            ) : (
+              <span className="tag">{isAr ? 'غير مستخدمة' : 'Unused'}</span>
+            )}
+          </span>
+        )}
+      >
+        {asset?.url && (
+          <a className="btn btn-d" href={asset.url} target="_blank" rel="noreferrer" download>
+            {isAr ? 'تنزيل' : 'Download'}
+          </a>
+        )}
+        {can('manage_assets') && (
+          <button type="button" className="btn" onClick={() => navigate('/m/library/upload')}>
+            {isAr ? 'نسخة جديدة' : 'New version'}
+          </button>
+        )}
+        {can('write_content') && (
+          <button type="button" className="btn btn-p" onClick={() => setCreating(true)}>
+            {isAr ? 'استخدام في محتوى' : 'Use in content'}
+          </button>
+        )}
+      </PageHead>
+
+      <div className="body">
+        {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
+        {loading && !asset && <Skeleton rows={6} />}
+
+        {!loading && !asset && !error && (
+          <Empty
+            title={isAr ? 'المادة غير موجودة' : 'Asset not found'}
+            body={isAr ? 'ربما حُذفت أو أُرشفت.' : 'It may have been deleted or archived.'}
+          />
+        )}
+
+        {asset && (
+          <div className="grid" style={{ gridTemplateColumns: '1fr 304px', alignItems: 'start' }}>
+            {/* ── main column ─────────────────────────────────────────── */}
+            <div style={{ display: 'grid', gap: 16 }}>
+              <div className="pr-preview">
+                {asset.kind === 'video' && asset.url ? (
+                  <video src={asset.url} controls preload="metadata" />
+                ) : (asset.kind === 'photo' || asset.kind === 'design') && (asset.url || asset.thumb_url) ? (
+                  <img src={asset.url ?? asset.thumb_url ?? undefined} alt={asset.title} />
+                ) : (
+                  <div className="pr-play" aria-hidden="true">
+                    {asset.kind === 'video'
+                      ? <svg viewBox="0 0 24 24"><path d="M18 4L4 12l14 8z" /></svg>
+                      : <IconLibrary style={{ width: 17, height: 17, stroke: '#fff' }} />}
+                  </div>
+                )}
+                {spec && <span className="pr-spec">{spec}</span>}
+              </div>
+
+              {/* «مستخدم في» — the list that makes delete a non-silent act. */}
+              <div className="card">
+                <div className="card-h">
+                  <h4>{isAr ? 'مستخدم في' : 'Used in'}</h4>
+                  <span className="r">
+                    {usedIn.length === 0
+                      ? isAr ? 'لا شيء بعد' : 'nothing yet'
+                      : liveAds.length > 0
+                        ? isAr
+                          ? `${num(usedIn.length, true)} سجلات · واحد ينفق الآن`
+                          : `${usedIn.length} records · one is spending now`
+                        : isAr
+                          ? `${num(usedIn.length, true)} سجلات`
+                          : `${usedIn.length} records`}
+                  </span>
+                </div>
+                {usedIn.length === 0 ? (
+                  <div className="card-b" style={{ fontSize: 12, color: 'var(--mute)', lineHeight: 1.8 }}>
+                    {isAr
+                      ? 'لم يُشر إليها أي محتوى قط — تظهر ضمن «غير المستخدمة».'
+                      : 'No content has ever referenced it — it appears under “Unused”.'}
+                  </div>
+                ) : (
+                  <div className="tbl-wrap">
+                    <table className="tbl">
+                      <tbody>
+                        {usedIn.map((u) => (
+                          <tr key={u.content_id} className="click" onClick={() => navigate(`/m/content/${u.content_id}`)}>
+                            <td style={{ width: 58 }} className="id">{u.ref ?? '—'}</td>
+                            <td className="ttl">{u.title}</td>
+                            <td style={{ width: 110 }}>
+                              <span className="tag">
+                                {(isAr ? LINK_ROLE_LABELS[u.role]?.ar : LINK_ROLE_LABELS[u.role]?.en) ?? u.role}
+                              </span>
+                            </td>
+                            <td style={{ width: 180, fontSize: 11.5, color: 'var(--copper)', fontWeight: 700 }}>
+                              {u.live_ad ? (isAr ? 'يعمل كإعلان مدفوع الآن' : 'Running as a paid ad now') : ''}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* «النسخ» — the original is never edited; crops become versions. */}
+              <div className="card">
+                <div className="card-h">
+                  <h4>{isAr ? 'النسخ' : 'Versions'}</h4>
+                  <span className="r">{isAr ? 'الأصل لا يُعدَّل أبدًا' : 'the original is never edited'}</span>
+                  {can('manage_assets') && (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      style={{ marginInlineStart: 10 }}
+                      onClick={() => navigate('/m/library/upload')}
+                    >
+                      {isAr ? 'إضافة نسخة' : 'Add a version'}
+                    </button>
+                  )}
+                </div>
+                <div className="card-b">
+                  {versions.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--mute)', lineHeight: 1.8 }}>
+                      {isAr
+                        ? 'لا نسخ بعد — القصّ أو إعادة القياس يُنتج نسخة هنا بدل استبدال الأصل.'
+                        : 'No versions yet — a crop or resize lands here instead of replacing the original.'}
+                    </div>
+                  ) : (
+                    versions.map((v, i) => (
+                      <button
+                        key={v.id}
+                        type="button"
+                        className="file"
+                        style={{
+                          width: '100%',
+                          textAlign: 'start',
+                          cursor: v.id === asset.id ? 'default' : 'pointer',
+                          borderColor: v.id === asset.id ? 'var(--copper)' : undefined,
+                          marginBottom: i === versions.length - 1 ? 0 : undefined,
+                        }}
+                        onClick={() => { if (v.id !== asset.id) navigate(`/m/library/${v.id}`); }}
+                      >
+                        <div className="th" style={{ background: 'linear-gradient(135deg,#3A2A1E,#B8734F)' }}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="#fff"><path d="M15 10l5-3v10l-5-3M3 7h12v10H3z" /></svg>
+                        </div>
+                        <div>
+                          <div className="nm">{v.title}</div>
+                          <div className="mt">{shortDate(v.created_at, isAr)}</div>
+                        </div>
+                        <div className="rt">
+                          <span className="ver">{i === 0 ? (isAr ? 'الأصل' : 'Original') : `v${num(i + 1, false)}`}</span>
+                          {i === 0 && <Pill tone="go">{isAr ? 'النسخة الرئيسية' : 'Master copy'}</Pill>}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* ── rail ────────────────────────────────────────────────── */}
+            <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
+              <div className="card">
+                <div className="card-h"><h4>{isAr ? 'التفاصيل' : 'Details'}</h4></div>
+                <div className="card-b">
+                  <ReadField label={isAr ? 'المشروع' : 'Project'}>
+                    {asset.project_id ? projectName(asset.project_id) : '—'}
+                  </ReadField>
+                  {asset.shoot_request_id && (
+                    <ReadField label={isAr ? 'التصوير' : 'The shoot'}>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ color: 'var(--copper)', borderColor: 'transparent', padding: 0 }}
+                        onClick={() => navigate(`/m/shoots/${asset.shoot_request_id}`)}
+                      >
+                        {isAr ? 'فتح طلب التصوير' : 'Open the shoot request'}
+                      </button>
+                    </ReadField>
+                  )}
+                  <ReadField label={isAr ? 'صوّرها' : 'Shot by'}>{asset.shot_by ?? '—'}</ReadField>
+                  {asset.shot_on && (
+                    <ReadField label={isAr ? 'صُوِّرت' : 'Shot on'}>{shortDate(asset.shot_on, isAr)}</ReadField>
+                  )}
+                  <ReadField label={isAr ? 'أُضيفت' : 'Added'}>{shortDate(asset.created_at, isAr)}</ReadField>
+                  <ReadField label={isAr ? 'الوسوم' : 'Tags'}>
+                    <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
+                      {asset.tags.map((t) => <span key={t} className="tag">{t}</span>)}
+                      {can('manage_assets') && !addingTag && (
+                        <button type="button" className="tag tag-t" style={{ cursor: 'pointer' }} onClick={() => setAddingTag(true)}>
+                          {isAr ? '+ إضافة' : '+ Add'}
+                        </button>
+                      )}
+                      {addingTag && (
+                        <input
+                          className="inp"
+                          style={{ padding: '3px 8px', fontSize: 11.5, width: 110 }}
+                          value={tagDraft}
+                          autoFocus
+                          disabled={busy}
+                          onChange={(e) => setTagDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') void addTag(); if (e.key === 'Escape') { setAddingTag(false); setTagDraft(''); } }}
+                          onBlur={() => void addTag()}
+                        />
+                      )}
+                    </span>
+                  </ReadField>
+                </div>
+              </div>
+
+              {/* حقوق الاستخدام — the field a real-estate marketing team
+                  actually needs, and a folder tree never had. */}
+              <div className="card" style={{ borderColor: 'color-mix(in srgb, var(--wait) 40%, transparent)' }}>
+                <div className="card-h" style={{ background: 'color-mix(in srgb, var(--wait) 8%, transparent)' }}>
+                  <h4>{isAr ? 'حقوق الاستخدام' : 'Usage rights'}</h4>
+                  {asset.rights_expiry && (
+                    <span style={{ marginInlineStart: 'auto' }}>
+                      <Pill tone="wait">{isAr ? 'تنتهي' : 'Expires'}</Pill>
+                    </span>
+                  )}
+                </div>
+                <div className="card-b">
+                  <ReadField label={isAr ? 'الترخيص' : 'Licence'}>{asset.usage_rights ?? '—'}</ReadField>
+                  {asset.rights_expiry && (
+                    <ReadField label={isAr ? 'تنتهي' : 'Expires'}>
+                      <span style={{ color: 'var(--wait)', fontWeight: 700 }}>
+                        {shortDate(asset.rights_expiry, isAr)} · {expiryCountdown(asset.rights_expiry, isAr)}
+                      </span>
+                    </ReadField>
+                  )}
+                  <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 9, lineHeight: 1.75 }}>
+                    {isAr
+                      ? 'التصاميم الواردة من المطورين تحمل غالبًا قيودًا أضيق من التصوير المُكلَّف. الحقل موجود حتى لا يضطر أحد لتذكّر أيها أي.'
+                      : 'Designs supplied by developers usually carry tighter restrictions than commissioned shoots. The field exists so nobody has to remember which is which.'}
+                  </div>
+                </div>
+              </div>
+
+              {/* تحذير — delete is forbidden, not warned about. */}
+              {can('manage_assets') && (
+                <div className="card">
+                  <div className="card-h"><h4>{isAr ? 'تحذير' : 'Warning'}</h4></div>
+                  <div className="card-b" style={{ fontSize: 12, lineHeight: 1.85, color: 'var(--ink-2)' }}>
+                    {inUse
+                      ? isAr
+                        ? <>
+                          {liveAds.length > 0
+                            ? 'هذه المادة تعمل الآن داخل إعلان مدفوع. '
+                            : ''}
+                          حذفها سيكسر {(blocked ?? usedIn).slice(0, 3).map((u, i) => (
+                            <b key={u.content_id} className="ltr">{i > 0 ? ' · ' : ''}{u.ref ?? u.title}</b>
+                          ))}
+                          {usedIn.length > 3 ? ` و${num(usedIn.length - 3, true)} غيرها` : ''}
+                          {liveAds.length > 0 ? '، والإعلان العامل الآن.' : '.'}
+                        </>
+                        : <>
+                          {liveAds.length > 0 ? 'This asset is inside a paid ad right now. ' : ''}
+                          Deleting it would break {(blocked ?? usedIn).slice(0, 3).map((u) => u.ref ?? u.title).join(' · ')}
+                          {usedIn.length > 3 ? ` and ${usedIn.length - 3} more` : ''}
+                          {liveAds.length > 0 ? ', and the ad that is running.' : '.'}
+                        </>
+                      : isAr
+                        ? 'المادة غير مستخدمة — يمكن أرشفتها، والحذف متاح فقط لمواد لم تُستخدم قط ومضى عليها عام.'
+                        : 'The asset is unused — it can be archived; real delete is reserved for assets never used and a full year old.'}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
+                      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void archive()}>
+                        {isAr ? 'أرشفة' : 'Archive'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={inUse ? { color: 'var(--mute)', borderStyle: 'dashed' } : undefined}
+                        disabled={busy}
+                        onClick={() => void remove()}
+                      >
+                        {inUse
+                          ? isAr ? 'حذف · ممنوع' : 'Delete · blocked'
+                          : isAr ? 'حذف' : 'Delete'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {creating && asset && (
+        <UseInContentModal
+          isAr={isAr}
+          asset={asset}
+          contentTypes={contentTypes.filter((t) => t.is_active)}
+          onClose={() => setCreating(false)}
+          onCreated={(contentId) => navigate(`/m/content/${contentId}`)}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * «استخدام في محتوى» — the s41 flow pointed at one asset: a content item is
+ * created with the asset pre-linked, then the person lands on it.
+ */
+function UseInContentModal({
+  isAr, asset, contentTypes, onClose, onCreated,
+}: {
+  isAr: boolean;
+  asset: MosAsset;
+  contentTypes: Array<{ key: string; label_ar: string; label_en: string }>;
+  onClose: () => void;
+  onCreated: (contentId: string) => void;
+}) {
+  const addToast = useAppStore((s) => s.addToast);
+  const [typeKey, setTypeKey] = useState(contentTypes[0]?.key ?? '');
+  const [title, setTitle] = useState(asset.title);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (): Promise<void> => {
+    if (!typeKey) {
+      addToast(isAr ? 'اختر نوع المحتوى.' : 'Pick a content type.', 'error');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await bulkAssets([asset.id], 'create_content', {
+        content_type_key: typeKey,
+        title: title.trim() || asset.title,
+      });
+      if (!res.content_id) throw new Error(isAr ? 'لم يُنشأ المحتوى.' : 'The content was not created.');
+      onCreated(res.content_id);
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={isAr ? 'استخدام في محتوى' : 'Use in content'}
+      sub={isAr
+        ? 'يفتح «محتوى جديد» مع هذه المادة مربوطة مسبقًا.'
+        : 'Opens “New content” with this asset already linked.'}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
+            {isAr ? 'إلغاء' : 'Cancel'}
+          </button>
+          <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy}>
+            <IconPlus />
+            {busy ? (isAr ? 'جارٍ…' : 'Working…') : isAr ? 'إنشاء المحتوى' : 'Create the content'}
+          </button>
+        </>
+      }
+    >
+      <Field label={isAr ? 'النوع' : 'Type'}>
+        <select className="inp" value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
+          {contentTypes.map((t) => (
+            <option key={t.key} value={t.key}>{isAr ? t.label_ar : t.label_en}</option>
+          ))}
+        </select>
+      </Field>
+      <Field label={isAr ? 'العنوان' : 'Title'}>
+        <input className="inp" value={title} onChange={(e) => setTitle(e.target.value)} />
+      </Field>
+    </Modal>
+  );
+}

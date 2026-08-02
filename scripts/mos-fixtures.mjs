@@ -387,7 +387,7 @@ const CAMPAIGNS = [
 //
 /* ---- RECONCILIATION — mock-vs-dataset discrepancies left behind ---------
  * Read later to write manifest row notes. Each: screen · mock value →
- * dataset value · why. (18 entries; anything NOT listed here matches.)
+ * dataset value · why. (20 entries; anything NOT listed here matches.)
  *
  *  1. s01 week card row 2 · «الاثنين ٢٨ · تيك توك · V-002» → V-002 tiktok on
  *     ٣١ يوليو — s12/s50 need the 31-July «ناقص» row and s13 cells it on 31;
@@ -398,7 +398,9 @@ const CAMPAIGNS = [
  *     — same: s03's title wins.
  *  4. s01 stalled ages + row order · «٤/٣/٢/٢ أيام», V-004 first → ages and
  *     order derive from mos_content.updated_at (real build clock), which no
- *     API action sets. They render from the build's real timestamps.
+ *     API action sets. They render from the build's real timestamps. (The
+ *     «بانتظارك أنت» subline's «منذ ٣ أيام» shares this root —
+ *     waiting_oldest_at is updated_at too.)
  *  5. s01 weekday labels · «الاثنين ٢٨ / الأربعاء ٣٠ / الخميس ٣١ / الجمعة ١»
  *     → the mock pairs 2025 weekdays with 2026 dates; the app formats the
  *     true 2026 weekday (الثلاثاء ٢٨ …). Not fixable from data.
@@ -439,6 +441,17 @@ const CAMPAIGNS = [
  * 18. s03 P-022 due cell · «٢٨ يوليو» → «٢٩ يوليو» — s02+s35 both say
  *     «اليوم» (= the 29th at the capture epoch), and a 28th due would make
  *     P-022 a FIFTH overdue task, breaking «متأخر ٤».
+ * 19. s01 week card rows · the mock draws ٤ scheduled rows → the app renders
+ *     all ٩ — the mock's own substat «٩ مجدولة» requires nine scheduled
+ *     slots to exist (the seven published week rows + P-030 الجمعة ٣١ +
+ *     P-028 السبت ١), and the card maps data.week without truncation. The
+ *     four rows the mock draws all render with the mock's platform + slot.
+ * 20. s01 late subline · «٢ في التصميم · ٢ بانتظار المراجعة» → «٢ في
+ *     التصميم · ١ في مراجعة النص» — the two late review tasks sit at
+ *     DIFFERENT steps (V-004 مراجعة النص · P-021 مراجعة الكتابة, both
+ *     mock-pinned) and lateDetail shows the top-2 exact step-label groups;
+ *     it cannot merge them into a generic «بانتظار المراجعة». App behavior,
+ *     not data.
  * ------------------------------------------------------------------------ */
 const CONTENT = [
   { ref: 'V-001', type: 'video', title: 'مينا ٥٢ — فيديو الإطلاق', project: 'mina', campaign: 'C-002', purpose: 'paid', drive: 'done', target_publish_at: '2026-06-05T19:00:00+03' },
@@ -601,10 +614,16 @@ const EXECUTIONS = {
   ],
 };
 
-// Publications (s06/s11/s50). snapshots recorded as ops (نور — s12 «أدخلتها نور»).
+// Publications (s01 week card + s06/s11/s50). The overview's «٩ مجدولة»
+// counts mos_publication_v rows whose scheduled_at falls inside the fixture
+// week (Sun 2026-07-26 .. Sat 2026-08-01) — published_at does NOT count — so
+// every in-week row carries its slot in scheduled_at (a published post was a
+// scheduled post first; s02 even prints V-002's slot: «يُنشر الاثنين ٢٨
+// يوليو، ٧:٠٠ مساءً»). Exactly nine rows land in-week: seven published +
+// P-030/P-028 still scheduled. snapshots recorded as ops (s12 «أدخلتها نور»).
 const PUBLICATIONS = [
   { content: 'V-001', platform: 'instagram', status: 'published', published_at: '2026-06-05T19:04:00+03' },
-  { content: 'V-002', platform: 'instagram', status: 'published', published_at: '2026-07-28T19:04:00+03',
+  { content: 'V-002', platform: 'instagram', status: 'published', scheduled_at: '2026-07-28T19:00:00+03', published_at: '2026-07-28T19:04:00+03',
     caption: '١٤٢ مترًا، ثلاث غرف، وإطلالة على الحدائق 🌿\nمن ٩٨٠ ألف ريال — راسلنا على واتساب.',
     external_url: 'https://instagram.com/reel/C9xR2mK',
     snapshots: [
@@ -612,27 +631,30 @@ const PUBLICATIONS = [
       { views: 27410, engagement: 792, enquiries: 14, extra: { saves: 302 } },
     ] },
   // The «ناقص» case: published, deliberately NO snapshot (s12).
-  { content: 'V-002', platform: 'tiktok', status: 'published', published_at: '2026-07-31T20:00:00+03',
+  { content: 'V-002', platform: 'tiktok', status: 'published', scheduled_at: '2026-07-31T20:00:00+03', published_at: '2026-07-31T20:00:00+03',
     caption: 'جولة في شقة ١٤٢ مترًا بشمال الرياض 👀\nالأسعار في الوصف.' },
   // «بحاجة لموعد» — a draft with no schedule (s11).
   { content: 'V-002', platform: 'snapchat', status: 'draft' },
-  { content: 'V-003', platform: 'tiktok', status: 'published', published_at: '2026-07-31T20:00:00+03' },
+  // s01 week card «الخميس ٣١ · سناب شات» + s13 + s50 — V-003 goes out on snap.
+  { content: 'V-003', platform: 'snapchat', status: 'published', scheduled_at: '2026-07-31T20:00:00+03', published_at: '2026-07-31T20:00:00+03' },
   { content: 'V-005', platform: 'instagram', status: 'published', published_at: '2026-07-19T19:00:00+03' },
-  { content: 'V-010', platform: 'instagram', status: 'published', published_at: '2026-07-12T19:00:00+03' },
   // V-004's publishing plan (s06): three drafts, two carrying target dates.
   { content: 'V-004', platform: 'instagram', status: 'draft', scheduled_at: '2026-08-10T19:00:00+03' },
   { content: 'V-004', platform: 'tiktok', status: 'draft', scheduled_at: '2026-08-11T20:00:00+03' },
   { content: 'V-004', platform: 'snapchat', status: 'draft' },
-  { content: 'P-011', platform: 'instagram', status: 'published', published_at: '2026-07-26T18:00:00+03' },
+  { content: 'P-011', platform: 'instagram', status: 'published', scheduled_at: '2026-07-26T18:00:00+03', published_at: '2026-07-26T18:00:00+03' },
   { content: 'P-013', platform: 'instagram', status: 'published', published_at: '2026-07-15T18:00:00+03' },
-  { content: 'P-014', platform: 'instagram', status: 'published', published_at: '2026-07-28T18:00:00+03',
+  { content: 'P-014', platform: 'instagram', status: 'published', scheduled_at: '2026-07-28T18:00:00+03', published_at: '2026-07-28T18:00:00+03',
     snapshots: [{ views: 8400, engagement: 203, enquiries: 4 }] },
   { content: 'P-015', platform: 'instagram', status: 'published', published_at: '2026-07-22T18:00:00+03' },
   // The s50 «أدخل» row: published, no numbers yet.
-  { content: 'P-016', platform: 'instagram', status: 'published', published_at: '2026-07-30T18:00:00+03' },
+  { content: 'P-016', platform: 'instagram', status: 'published', scheduled_at: '2026-07-30T18:00:00+03', published_at: '2026-07-30T18:00:00+03' },
   { content: 'P-017', platform: 'instagram', status: 'published', published_at: '2026-07-24T18:00:00+03' },
-  { content: 'P-020', platform: 'instagram', status: 'published', published_at: '2026-07-26T18:00:00+03' },
-  { content: 'P-023', platform: 'instagram', status: 'published', published_at: '2026-07-29T18:00:00+03' },
+  { content: 'P-023', platform: 'instagram', status: 'published', scheduled_at: '2026-07-29T18:00:00+03', published_at: '2026-07-29T18:00:00+03' },
+  // Scheduled, not yet published at the epoch — rows ٨ and ٩ of «٩ مجدولة».
+  // Both sit at publish_check, i.e. past the scheduling step (RECONCILIATION 19).
+  { content: 'P-030', platform: 'instagram', status: 'scheduled', scheduled_at: '2026-07-31T18:00:00+03' },
+  { content: 'P-028', platform: 'instagram', status: 'scheduled', scheduled_at: '2026-08-01T18:00:00+03' },
 ];
 
 // Assets (s16 sections + s41 unused). links: [content ref, role].
@@ -880,6 +902,34 @@ async function phase1() {
     console.log(`[ok] ${item.ref} → ${item.drive}`);
   }
 
+  /* -- 5b. due dates — align every open task to the fixture epoch ------ */
+  // The engine stamps due_at from the REAL clock at task-open time (open
+  // time + the step's due_days), which is useless for the mockups' due
+  // columns. Override every in-production item's OPEN task explicitly so the
+  // due cells and «متأخر ٤» compute against the 2026-07-29T10:00+03 epoch.
+  // Convergent: probe the open task, patch only when the value differs.
+  console.log('\n-- due dates --');
+  {
+    let patched = 0;
+    for (const [ref, dueAt] of Object.entries(TASK_DUE_DATES)) {
+      const id = contentByRef[ref]?.id;
+      if (!id) throw new Error(`due dates: ${ref} not in content map`);
+      const d = await api('marketing_manager', 'content_detail', { id });
+      const open = (d.tasks ?? []).find((t) => t.status === 'open');
+      if (!open) {
+        throw new Error(
+          `due dates: ${ref} has no open task — TASK_DUE_DATES and the drive matrix disagree`);
+      }
+      const want = new Date(dueAt).getTime();
+      const have = open.due_at ? new Date(open.due_at).getTime() : null;
+      if (have === want) continue; // already aligned (re-run)
+      await api('marketing_manager', 'task_update', { task_id: open.id, due_at: dueAt });
+      patched += 1;
+    }
+    console.log(`[ok] task due dates aligned to the fixture epoch `
+      + `(${patched} patched · ${Object.keys(TASK_DUE_DATES).length} total)`);
+  }
+
   /* -- 6. executions + ads + daily entries ---------------------------- */
   console.log('\n-- executions / ads / daily --');
   for (const [campaignRef, execs] of Object.entries(EXECUTIONS)) {
@@ -1018,23 +1068,50 @@ async function phase1() {
   console.log(`[ok] usage links replayed (${ASSETS.filter((a) => a.links.length === 0).length} assets left unused for s41)`);
 
   /* -- 9. publications + metric snapshots ------------------------------ */
+  // Convergent: an existing (content, platform) row is COMPARED field by
+  // field and patched in place when any declared value drifted (the value-
+  // reconciliation pass moved slots and platforms). Snapshots stay create-
+  // only — the metrics ledger is append-only and cannot be diffed safely.
   console.log('\n-- publications / metrics --');
   const pubList = await api('writer', 'publication_list', { limit: 500 });
-  const pubExists = new Set((pubList.publications ?? []).map((p) => `${p.content_id}:${p.platform}`));
+  const pubByKey = new Map((pubList.publications ?? [])
+    .map((p) => [`${p.content_id}:${p.platform}`, p]));
+  const PUB_FIELDS = ['status', 'scheduled_at', 'published_at', 'caption', 'external_url'];
+  const tsFields = new Set(['scheduled_at', 'published_at']);
+  const pubSame = (field, a, b) => {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    if (tsFields.has(field)) return new Date(a).getTime() === new Date(b).getTime();
+    return a === b;
+  };
   for (const p of PUBLICATIONS) {
     const contentId = contentByRef[p.content]?.id;
     if (!contentId) throw new Error(`publication: ${p.content} missing`);
-    if (pubExists.has(`${contentId}:${p.platform}`)) {
-      console.log(`[skip] ${p.content} ${p.platform}`);
+    const want = {
+      platform: p.platform, status: p.status,
+      scheduled_at: p.scheduled_at ?? null, published_at: p.published_at ?? null,
+      caption: p.caption ?? null, external_url: p.external_url ?? null,
+    };
+    const existing = pubByKey.get(`${contentId}:${p.platform}`);
+    if (existing) {
+      const drifted = PUB_FIELDS.filter((k) => !pubSame(k, want[k], existing[k] ?? null));
+      if (drifted.length === 0) {
+        console.log(`[skip] ${p.content} ${p.platform}`);
+      } else {
+        // Send the FULL declared shape, not just the drifted keys: a patch
+        // carrying status='published' without published_at would make the
+        // endpoint stamp published_at=now() over the fixture date.
+        await api('writer', 'publication_save', {
+          content_id: contentId,
+          publication: { id: existing.id, ...want },
+        });
+        console.log(`[ok] ${p.content} ${p.platform} patched (${drifted.join(', ')})`);
+      }
       continue;
     }
     const r = await api('writer', 'publication_save', {
       content_id: contentId,
-      publication: {
-        platform: p.platform, status: p.status,
-        scheduled_at: p.scheduled_at ?? null, published_at: p.published_at ?? null,
-        caption: p.caption ?? null, external_url: p.external_url ?? null,
-      },
+      publication: want,
     });
     const pub = (r.publications ?? []).find((x) => x.platform === p.platform);
     console.log(`[ok] ${p.content} ${p.platform} (${p.status})`);
@@ -1193,8 +1270,8 @@ async function verify() {
   }
 
   console.table([
-    { object: 'content: video', count: byType.video ?? 0, expected: 11 },
-    { object: 'content: post', count: byType.post ?? 0, expected: 11 },
+    { object: 'content: video', count: byType.video ?? 0, expected: 14 },
+    { object: 'content: post', count: byType.post ?? 0, expected: 19 },
     { object: 'content: carousel', count: byType.carousel ?? 0, expected: 3 },
     { object: 'campaigns', count: campaigns.length, expected: 8 },
     { object: 'executions', count: execCount, expected: 7 },
@@ -1215,6 +1292,59 @@ async function verify() {
     process.exit(1);
   }
   console.log('[ok] V-004 sits at مراجعة النص (script_review) · round 2');
+
+  /* ---- s01 value assertions (fixture epoch 2026-07-29T10:00+03) ------ */
+  // The four stats the mock hardcodes must COMPUTE from live state through
+  // the same predicates the app uses. Production / waiting / week counts
+  // come straight from the overview action with week_of pinned to the
+  // fixture week. The overdue count CANNOT use overview.counts.late — that
+  // predicate runs against the API server's REAL clock (only the capture
+  // stack freezes Date) — so it recomputes the identical predicate (open
+  // task due_at < epoch) from the work_list task rows instead.
+  const EPOCH = Date.parse('2026-07-29T10:00:00+03:00');
+  const overview = await api('marketing_manager', 'overview', { week_of: '2026-07-29T12:00:00+03:00' });
+  const weekRows = overview.week ?? [];
+  const unscheduled = overview.unscheduled ?? [];
+  const openTasks = (work.tasks ?? []).filter((t) => t.status === 'open');
+  const overdue = openTasks.filter((t) => t.due_at && Date.parse(t.due_at) < EPOCH);
+
+  // Paid card sums (active+planning campaigns) — the same reduction the UI
+  // runs. The budget DENOMINATOR is deliberately NOT asserted against the
+  // mock's ٦٠,٠٠٠ (RECONCILIATION 6 — C-008's unsigned 75k is required by
+  // s34); spend / leads / qualified / CPL land exactly.
+  const paid = overview.campaigns ?? [];
+  const paidSpend = Math.round(paid.reduce((a, c) => a + (c.total_spend ?? 0), 0));
+  const paidLeads = paid.reduce((a, c) => a + (c.total_leads ?? 0), 0);
+  const paidQualified = paid.reduce((a, c) => a + (c.total_qualified ?? 0), 0);
+  const paidCpl = paidLeads > 0 ? Math.round(paidSpend / paidLeads) : null;
+
+  const mismatches = [];
+  const assertVal = (label, live, mock) => {
+    if (live !== mock) mismatches.push(`${label}: dataset computes ${live}, mock says ${mock}`);
+    return { assertion: label, live, mock, ok: live === mock };
+  };
+  console.table([
+    assertVal('s01 تحت الإنتاج (in production)', overview.counts?.in_production ?? 0, 23),
+    assertVal('s01 بانتظارك أنت (manager waiting)', overview.counts?.waiting_on_me ?? 0, 7),
+    assertVal('s01 يُنشر هذا الأسبوع (total)', overview.counts?.publishing_this_week ?? 0, 12),
+    assertVal('s01 مجدولة (scheduled in week)', weekRows.length, 9),
+    assertVal('s01 بلا موعد (needs a slot)', unscheduled.length, 3),
+    assertVal('s01 متأخر (open tasks past due at epoch)', overdue.length, 4),
+    assertVal('s01 المصروف (paid spend)', paidSpend, 38400),
+    assertVal('s01 العملاء (paid leads)', paidLeads, 211),
+    assertVal('s01 المؤهلون (paid qualified)', paidQualified, 63),
+    assertVal('s01 تكلفة العميل (CPL)', paidCpl, 182),
+  ]);
+  const slotRefs = unscheduled.map((u) => u.ref).join('، ');
+  if (slotRefs !== 'P-019، P-020، V-007') {
+    mismatches.push(`s01 needs-a-slot refs: dataset renders «${slotRefs}», mock says «P-019، P-020، V-007»`);
+  }
+  if (mismatches.length > 0) {
+    console.error(`FAIL: ${mismatches.length} s01 value mismatch(es):`);
+    for (const m of mismatches) console.error(`  - ${m}`);
+    process.exit(1);
+  }
+  console.log('[ok] s01 computes from state: ٢٣ تحت الإنتاج · ٧ بانتظارك · ١٢ (٩ مجدولة + ٣ بلا موعد) · ٤ متأخر');
   console.log('=== VERIFY passed ===');
 }
 

@@ -1,0 +1,367 @@
+/*
+ * Marketing Workspace — mobile shell (design screens 46 + 48).
+ *
+ * The phone layer of the workspace: a bottom tab bar (اليوم · المحتوى ·
+ * التصوير · المزيد), the «المزيد» rounded-top sheet that reaches every
+ * remaining surface, and the «حسابي» account page. Everything is scoped
+ * under `.mos-root` and reads only the design tokens from mos.css, so the
+ * dark palette and RTL/LTR come free — the same posture as mos.css itself.
+ *
+ * The tab bar exists ONLY below the 760px breakpoint (the media query at
+ * the bottom hides it entirely on desktop). The sheet and account styles
+ * are width-agnostic: «حسابي» works on desktop too, just mobile-first.
+ */
+
+/* ── Bottom tab bar (s46/s48 .ph-tabs) ────────────────────────────────── */
+.mos-root .mos-tabbar {
+  display: none;
+}
+
+.mos-root .mos-tab {
+  font: inherit;
+}
+
+/* ── «المزيد» sheet (s48) — scrim + rounded top sheet + rows with icons ─ */
+.mos-root .mos-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(46, 42, 38, 0.45);
+  z-index: 60;
+  border: 0;
+  padding: 0;
+  cursor: default;
+}
+
+.mos-root .mos-sheet {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 61;
+  background: var(--cream);
+  border-radius: 16px 16px 0 0;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 6px 14px calc(16px + env(safe-area-inset-bottom));
+  box-shadow: 0 -12px 40px rgba(70, 50, 30, 0.22);
+  animation: mos-sheet-up 0.18s ease;
+}
+
+@keyframes mos-sheet-up {
+  from { transform: translateY(24px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.mos-root .mos-sheet-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--sand);
+  margin: 6px auto 10px;
+}
+
+.mos-root .mos-sheet-head {
+  padding: 2px 4px 10px;
+}
+.mos-root .mos-sheet-head h4 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 700;
+}
+.mos-root .mos-sheet-head .sub {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 2px;
+}
+
+.mos-root .mos-sheet-lbl {
+  margin: 14px 0 8px;
+}
+
+.mos-root .mos-sheet-card {
+  overflow: hidden;
+}
+
+.mos-root .mos-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 44px; /* touch target */
+  padding: 12px 14px;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: start;
+}
+.mos-root .mos-sheet-row + .mos-sheet-row {
+  border-top: 1px solid var(--line-soft);
+}
+.mos-root .mos-sheet-row:active {
+  background: var(--sand-2);
+}
+.mos-root .mos-sheet-row svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.7;
+  color: var(--copper);
+  flex: none;
+}
+.mos-root .mos-sheet-row .t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mos-root .mos-sheet-row .c {
+  color: var(--mute);
+  font-weight: 400;
+}
+.mos-root .mos-sheet-row .av {
+  width: 20px;
+  height: 20px;
+  font-size: 9px;
+  flex: 0 0 20px;
+}
+
+/* ── «حسابي» account page (s46) ───────────────────────────────────────── */
+.mos-root .mos-acct {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+}
+
+.mos-root .mos-acct-lbl {
+  margin: 18px 0 9px;
+}
+
+.mos-root .mos-acct-card {
+  padding: 14px 15px;
+}
+
+/* The role card — «أنت الآن». `.hot` (multi-role) carries the copper tint. */
+.mos-root .mos-acct-role {
+  padding: 14px 15px;
+}
+.mos-root .mos-acct-role.hot {
+  border-color: color-mix(in srgb, var(--copper) 42%, transparent);
+  background: color-mix(in srgb, var(--copper) 5%, var(--paper));
+}
+.mos-root .mos-acct-role-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.mos-root .mos-acct-role-name {
+  font-size: 15.5px;
+  font-weight: 700;
+}
+.mos-root .mos-acct-meta {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 1px;
+}
+
+/* The ACTIVE-role switcher — only rendered when the person holds 2+ roles. */
+.mos-root .mos-acct-roles {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.mos-root .mos-acct-rolebtn {
+  flex: 1;
+  min-width: 120px;
+  min-height: 44px; /* touch target */
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 8px 10px;
+  opacity: 0.65;
+}
+.mos-root .mos-acct-rolebtn.on {
+  border-color: var(--copper);
+  color: var(--copper);
+  opacity: 1;
+}
+
+.mos-root .mos-acct-note {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 10px;
+  line-height: 1.75;
+}
+
+/* The load card — «حملي هذا الأسبوع». */
+.mos-root .mos-acct-load-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12.5px;
+  margin-bottom: 9px;
+}
+.mos-root .mos-acct-load-top .n {
+  color: var(--mute);
+}
+.mos-root .mos-acct-load-top .verdict {
+  font-weight: 700;
+}
+.mos-root .mos-acct-load-top .verdict.over {
+  color: var(--late);
+}
+.mos-root .mos-acct-load-top .verdict.ok {
+  color: var(--go);
+}
+
+/* Notification prefs — s46's toggle rows. */
+.mos-root .mos-acct-prefs {
+  padding: 4px 15px;
+}
+.mos-root .mos-pref-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  min-height: 56px;
+}
+.mos-root .mos-pref-row + .mos-pref-row {
+  border-top: 1px solid var(--line-soft);
+}
+.mos-root .mos-pref-t {
+  flex: 1;
+  min-width: 0;
+}
+.mos-root .mos-pref-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.mos-root .mos-pref-sub {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 1px;
+}
+
+/* s46's switch: 40×23 track, go-green when on, white 19px knob. */
+.mos-root .mos-toggle {
+  width: 40px;
+  height: 23px;
+  border-radius: 12px;
+  background: var(--sand);
+  border: 0;
+  position: relative;
+  flex: 0 0 40px;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s;
+}
+.mos-root .mos-toggle i {
+  position: absolute;
+  top: 2px;
+  inset-inline-start: 2px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s;
+}
+.mos-root .mos-toggle.on {
+  background: var(--go);
+}
+.mos-root .mos-toggle.on i {
+  transform: translateX(17px);
+}
+[dir='rtl'] .mos-root .mos-toggle.on i {
+  transform: translateX(-17px);
+}
+.mos-root .mos-toggle:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mos-root .mos-pref-select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 44px; /* touch target */
+}
+
+/* «على الحاسوب فقط» — the desktop-only list, verbatim from s46. */
+.mos-root .mos-acct-desktop-list {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.85;
+}
+
+.mos-root .mos-acct-action {
+  margin-top: 11px;
+  min-height: 44px; /* touch target */
+  width: 100%;
+}
+
+/* ── The phone breakpoint: tab bar on, content padded clear of it ─────── */
+@media (max-width: 760px) {
+  .mos-root .mos-tabbar {
+    display: flex;
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    /* Below the rail drawer (z 40) + its scrim (39) so an open drawer covers
+       it; below the sheet (60/61) and modals (80). */
+    z-index: 30;
+    background: var(--paper);
+    border-top: 1px solid var(--line);
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    gap: 2px;
+  }
+  .mos-root .mos-tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 52px; /* touch target */
+    border-radius: 10px;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--mute);
+    padding: 6px 4px;
+  }
+  .mos-root .mos-tab svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 1.7;
+  }
+  .mos-root .mos-tab.on {
+    color: var(--copper);
+  }
+  .mos-root .mos-tab:active {
+    background: var(--sand-2);
+  }
+  .mos-root .mos-tab:focus-visible {
+    outline: 2px solid var(--copper);
+    outline-offset: -2px;
+  }
+  /* Keep the last card clear of the fixed bar. */
+  .mos-root .mos-main {
+    padding-bottom: 78px;
+  }
+}

@@ -24,6 +24,13 @@ const STATUS_BG: Record<string, string> = {
   // mockup paints it in the same wait tone as «تُصنع».
   template: 'var(--wait)',
 };
+/** The read state's single pill per row — screen 07's p-go / p-wait / p-late. */
+const STATUS_PILL: Record<MosScene['footage_status'], string> = {
+  have: 'p-go',
+  to_make: 'p-wait',
+  missing: 'p-late',
+  template: 'p-wait',
+};
 /** The strip's palette cycle — the design's warm sequence, not status colors. */
 const STRIP = ['var(--choc)', 'var(--copper)', 'var(--terracotta)', 'var(--copper)', 'var(--gold)', 'var(--choc)'];
 
@@ -73,6 +80,10 @@ export default function SceneTable({
 
   const missing = scenes.filter((s) => s.footage_status === 'missing');
   const have = scenes.filter((s) => s.footage_status === 'have').length;
+  // «لقطتان من ٥ لديها تصوير» — screen 07 counts against the shots that NEED
+  // footage: a «قالب» scene is nobody's filming job, so it leaves the total.
+  const needFootage = scenes.filter((s) => s.footage_status !== 'template').length;
+  const haveTextAr = have === 1 ? 'لقطة' : have === 2 ? 'لقطتان' : num(have, true);
   const totalSeconds = scenes.reduce((a, s) => Math.max(a, s.end_sec ?? 0), 0);
   const timed = scenes.filter((s) => duration(s) > 0);
   const timedTotal = timed.reduce((a, s) => a + duration(s), 0);
@@ -107,8 +118,8 @@ export default function SceneTable({
         <h4>{isAr ? 'المشاهد' : 'The scenes'}</h4>
         <span className="r">
           {isAr
-            ? `${num(scenes.length, true)} مشاهد${totalSeconds > 0 ? ` · ${num(totalSeconds, true)} ثانية` : ''} · ${num(have, true)} من ${num(scenes.length, true)} لديها تصوير`
-            : `${scenes.length} scenes${totalSeconds > 0 ? ` · ${totalSeconds}s` : ''} · ${have} of ${scenes.length} have footage`}
+            ? `${num(scenes.length, true)} مشاهد${totalSeconds > 0 ? ` · ${num(totalSeconds, true)} ثانية` : ''} · ${haveTextAr} من ${num(needFootage, true)} لديها تصوير`
+            : `${scenes.length} scenes${totalSeconds > 0 ? ` · ${totalSeconds}s` : ''} · ${have} of ${needFootage} have footage`}
         </span>
         {missing.length > 0 && (canEdit || canRaiseShoot) && (
           <button
@@ -172,12 +183,14 @@ export default function SceneTable({
               <table className="tbl" style={{ fontSize: 12 }}>
                 <thead>
                   <tr>
+                    {/* Read widths are the mockup's (62/104); edit mode widens
+                        the two control columns to fit its inputs and buttons. */}
                     <th style={{ width: 32 }}>#</th>
-                    <th style={{ width: 96 }}>{isAr ? 'التوقيت' : 'Timing'}</th>
+                    <th style={{ width: canEdit ? 96 : 62 }}>{isAr ? 'التوقيت' : 'Timing'}</th>
                     <th style={{ width: 180 }}>{isAr ? 'الصورة' : 'The shot'}</th>
                     <th>{isAr ? 'التعليق الصوتي' : 'Voice-over'}</th>
                     <th style={{ width: 150 }}>{isAr ? 'نص على الشاشة' : 'On-screen text'}</th>
-                    <th style={{ width: 168 }}>{isAr ? 'التصوير' : 'Footage'}</th>
+                    <th style={{ width: canEdit ? 168 : 104 }}>{isAr ? 'التصوير' : 'Footage'}</th>
                     {canEdit && <th style={{ width: 36 }} />}
                   </tr>
                 </thead>
@@ -222,39 +235,52 @@ export default function SceneTable({
                       </td>
                       {(['visual', 'voiceover', 'on_screen_text'] as const).map((f) => (
                         <td key={f} style={{ padding: 6 }}>
-                          <textarea
-                            defaultValue={(s[f] as string | null) ?? ''}
-                            disabled={!canEdit || busy}
-                            rows={2}
-                            className="inp"
-                            style={{ fontSize: 12, padding: '4px 6px', border: '1px solid transparent', background: 'transparent' }}
-                            onBlur={(e) => {
-                              if (e.target.value !== ((s[f] as string | null) ?? '')) {
-                                void run(() => saveScene(contentId, { id: s.id, [f]: e.target.value || null }));
-                              }
-                            }}
-                          />
+                          {canEdit ? (
+                            <textarea
+                              defaultValue={(s[f] as string | null) ?? ''}
+                              disabled={busy}
+                              rows={2}
+                              className="inp"
+                              style={{ fontSize: 12, padding: '4px 6px', border: '1px solid transparent', background: 'transparent' }}
+                              onBlur={(e) => {
+                                if (e.target.value !== ((s[f] as string | null) ?? '')) {
+                                  void run(() => saveScene(contentId, { id: s.id, [f]: e.target.value || null }));
+                                }
+                              }}
+                            />
+                          ) : (
+                            // Screen 07's filled state — plain text, «—» when empty.
+                            (s[f] as string | null) || '—'
+                          )}
                         </td>
                       ))}
                       <td style={{ padding: 6 }}>
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          {STATUSES.map((st) => (
-                            <button
-                              key={st}
-                              type="button"
-                              disabled={!canEdit || busy}
-                              onClick={() => void run(() => saveScene(contentId, { id: s.id, footage_status: st }))}
-                              className="pill"
-                              style={
-                                s.footage_status === st
-                                  ? { background: STATUS_BG[st], color: '#FFF9F2', cursor: 'pointer' }
-                                  : { background: 'var(--sand-2)', color: 'var(--mute)', border: '1px solid var(--line)', cursor: 'pointer' }
-                              }
-                            >
-                              {isAr ? FOOTAGE_LABELS[st]?.ar : FOOTAGE_LABELS[st]?.en}
-                            </button>
-                          ))}
-                        </div>
+                        {canEdit ? (
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            {STATUSES.map((st) => (
+                              <button
+                                key={st}
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void run(() => saveScene(contentId, { id: s.id, footage_status: st }))}
+                                className="pill"
+                                style={
+                                  s.footage_status === st
+                                    ? { background: STATUS_BG[st], color: '#FFF9F2', cursor: 'pointer' }
+                                    : { background: 'var(--sand-2)', color: 'var(--mute)', border: '1px solid var(--line)', cursor: 'pointer' }
+                                }
+                              >
+                                {isAr ? FOOTAGE_LABELS[st]?.ar : FOOTAGE_LABELS[st]?.en}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          // Screen 07: read mode shows ONE pill — never a row of
+                          // disabled controls (screen 36's no-refusals rule).
+                          <span className={`pill ${STATUS_PILL[s.footage_status]}`}>
+                            {isAr ? FOOTAGE_LABELS[s.footage_status]?.ar : FOOTAGE_LABELS[s.footage_status]?.en}
+                          </span>
+                        )}
                       </td>
                       {canEdit && (
                         <td style={{ padding: 6 }}>

@@ -25,9 +25,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   MosAccount, MosComment, MosContentRow, MosContentVersion, MosPublication, MosScene,
   MosStep, MosTask, PLATFORM_LABELS, PUB_STATUS_LABELS, ROLE_LABELS, RolePerson,
-  addComment, completeTask, fetchCampaigns, fetchComments, fetchContentDetail,
-  fetchContentVersions, fetchPublications, fieldSchemaEntries, fieldSchemaKeys,
-  isOverdue, updateContent,
+  addComment, completeTask, fetchAssets, fetchCampaigns, fetchComments,
+  fetchContentDetail, fetchContentVersions, fetchPublications,
+  fieldSchemaEntries, fieldSchemaKeys, isOverdue, updateContent,
 } from '@/lib/marketingOS/client';
 import { useAppStore } from '@/stores/appStore';
 import { useWorkspace } from './MarketingWorkspace';
@@ -43,7 +43,7 @@ import PerformanceTab from './components/PerformanceTab';
 import MaterialsTab from './components/MaterialsTab';
 import RequestChangesModal from './components/RequestChangesModal';
 import { IconBack, IconCheck, IconForward, IconSend } from './components/icons';
-import { daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
+import { dateTimeShort, daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
 
 type Tab = 'overview' | 'content' | 'materials' | 'tasks' | 'publishing' | 'performance';
 
@@ -153,6 +153,21 @@ export default function ContentDetailPage() {
     return () => { alive = false; };
   }, [campaignId]);
 
+  // The «المواد» tab badge — screen 06 shows the count from page open, before
+  // the tab is ever visited. Non-fatal: a failure hides the badge and is
+  // logged, never swallowed; MaterialsTab's own onCount keeps it fresh later.
+  useEffect(() => {
+    if (!contentId) return;
+    let alive = true;
+    fetchAssets()
+      .then((res) => {
+        if (!alive) return;
+        setMaterialCount(res.links.filter((l) => l.content_id === contentId).length);
+      })
+      .catch((e: unknown) => { console.error('[marketing] material count unavailable', e); });
+    return () => { alive = false; };
+  }, [contentId]);
+
   const openTask = tasks.find((t) => t.status === 'open') ?? null;
   const currentStep = openTask ? steps.find((s) => s.id === openTask.step_id) ?? null : null;
   const type = item ? contentTypes.find((t) => t.key === item.content_type_key) ?? null : null;
@@ -173,8 +188,12 @@ export default function ContentDetailPage() {
   const canEditNow = useMemo(() => {
     if (role === 'ceo') return false;
     if (!openTask) return false;
+    // An approval stage edits NOTHING — the manager holds write_content in the
+    // matrix, but s36 is explicit: «لا يستطيع تعديل النص بنفسه». Writing opens
+    // only on a writing step that sits with my role.
+    if (currentStep?.is_approval) return false;
     return roles.includes(openTask.role) && can('write_content');
-  }, [role, openTask, roles, can]);
+  }, [role, openTask, currentStep, roles, can]);
 
   /** Approving the creative (headline pick, approve button) — the reviewer's action. */
   const canApproveCreative = useMemo(
@@ -374,8 +393,10 @@ export default function ContentDetailPage() {
             </div>
           </div>
           <div className="acts">
-            {/* «مقارنة بالنسخة ١» — anyone who can read may compare. */}
-            {version > 1 && (
+            {/* «مقارنة بالنسخة ١» — anyone who may read the SCRIPT may compare.
+                The CEO may not (s36): the panel renders the writing fields, so
+                offering it would leak the very sections the CEO never sees. */}
+            {version > 1 && !ceoView && (
               <button type="button" className="btn btn-d" onClick={openCompare}>
                 {isAr ? `مقارنة بالنسخة ${num(version - 1, true)}` : `Compare with version ${version - 1}`}
               </button>
@@ -565,7 +586,7 @@ export default function ContentDetailPage() {
                               <td className="ltr" style={{ color: 'var(--mute)' }}>{p.account_handle ?? '—'}</td>
                               <td style={{ width: 170, color: 'var(--mute)' }}>
                                 {p.published_at || p.scheduled_at
-                                  ? shortDate(p.published_at ?? p.scheduled_at, isAr)
+                                  ? dateTimeShort(p.published_at ?? p.scheduled_at, isAr)
                                   : (isAr ? 'بلا موعد' : 'no time set')}
                               </td>
                               <td style={{ width: 110 }}>

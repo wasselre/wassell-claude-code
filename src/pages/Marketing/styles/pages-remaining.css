@@ -1,0 +1,212 @@
+/**
+ * Remaining desktop pages — screens 22, 24, 41, 44, 45, 50.
+ *
+ * Additive, `.mos-root`-scoped classes only. mos.css stays untouched; this file
+ * carries just what those screens need beyond the shared primitives.
+ */
+
+/* ── s22 — asset detail ──────────────────────────────────────────────── */
+
+/* The version chip on a «النسخ» row: v2, v3 … and «الأصل». */
+.mos-root .ver {
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--mute);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 7px;
+  background: var(--sand-2);
+  white-space: nowrap;
+}
+
+/* The player / preview block above the usage table. */
+.mos-root .pr-preview {
+  min-height: 250px;
+  border-radius: 11px;
+  background: linear-gradient(140deg, #241a12, #7a5b3e);
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  position: relative;
+  overflow: hidden;
+}
+.mos-root .pr-preview img,
+.mos-root .pr-preview video {
+  width: 100%;
+  height: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  display: block;
+}
+.mos-root .pr-play {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1.5px solid rgba(255, 255, 255, 0.5);
+  display: grid;
+  place-items: center;
+}
+.mos-root .pr-play svg {
+  width: 17px;
+  height: 17px;
+  fill: #fff;
+}
+.mos-root .pr-spec {
+  position: absolute;
+  bottom: 11px;
+  inset-inline-end: 13px;
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.75);
+  direction: ltr;
+}
+
+/* ── s24 — shoot request ─────────────────────────────────────────────── */
+
+/* The catch-all «أي شيء آخر ما دمتِ هناك» row. */
+.mos-root .pr-catch td {
+  opacity: 0.6;
+}
+
+/* The shot-list tick: an outline circle that becomes a check. */
+.mos-root .pr-tick {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--mute);
+  font-size: 13px;
+  padding: 0;
+  line-height: 1;
+}
+.mos-root .pr-tick.done {
+  color: var(--go);
+  font-weight: 700;
+}
+.mos-root .pr-tick:disabled {
+  cursor: default;
+}
+
+/* ── s44 — search excerpts ───────────────────────────────────────────── */
+
+/* The one element the excerpt splitter is allowed to produce. */
+.mos-root mark {
+  background: color-mix(in srgb, var(--gold) 45%, transparent);
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* ── s41 / s22 — action-with-explanation rows ────────────────────────── */
+
+.mos-root .pr-act {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.mos-root .pr-act .btn {
+  flex: 0 0 auto;
+}
+.mos-root .pr-act .tx {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  line-height: 1.8;
+}
+
+/* A selected asset card in the unused grid. */
+.mos-root .ass.pick {
+  border-color: var(--copper);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--copper) 20%, transparent);
+}
+
+/* ── s45 — first-day checklist ───────────────────────────────────────── */
+
+.mos-root .ph-chk {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mos-root .ph-chk:last-child {
+  border-bottom: 0;
+}
+.mos-root .ph-chk .bx {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border-radius: 6px;
+  border: 1.5px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--go);
+}
+.mos-root .ph-chk .bx svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.4;
+}
+.mos-root .ph-chk.ok2 .bx {
+  border-color: color-mix(in srgb, var(--go) 55%, transparent);
+  background: color-mix(in srgb, var(--go) 10%, transparent);
+}
+.mos-root .ph-chk .tx2 {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.mos-root .ph-chk .mt3 {
+  font-size: 11px;
+  color: var(--mute);
+  margin-top: 2px;
+  line-height: 1.7;
+}
+
+/* The «ماذا يحدث بعد أول إنشاء» rule lines. */
+.mos-root .rule {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+}
+.mos-root .rule .arw {
+  color: var(--copper);
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+/* ── s50 — weekly numbers entry ──────────────────────────────────────── */
+
+/* The platform colour square in each card header. */
+.mos-root .pdot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: 0 0 9px;
+}
+
+/* A row skipped with a reason — visually distinct from entered AND missing. */
+.mos-root .tbl tr.nm-skip td {
+  opacity: 0.55;
+}
+.mos-root .nm-reason {
+  font-size: 10.5px;
+  color: var(--wait);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* The compact metric input; the first still-missing box gets the copper edge. */
+.mos-root .nm-inp {
+  padding: 5px 9px;
+  font-size: 12px;
+  width: 88px;
+  display: inline-block;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.mos-root .nm-inp.first {
+  border-color: var(--copper);
+}

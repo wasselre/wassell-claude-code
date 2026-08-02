@@ -49,6 +49,22 @@ function joinLabels(labels: string[], isAr: boolean): string {
   return `${labels.slice(0, -1).join(isAr ? '، ' : ', ')}${isAr ? ' و' : ' and '}${last}`;
 }
 
+/**
+ * «١٠ ← ١٢ أغسطس» — the mockup collapses the month when both dates share it,
+ * so the shift reads as one phrase, not two dates.
+ */
+function publishShift(fromIso: string, toIso: string, isAr: boolean): string {
+  const a = new Date(fromIso);
+  const b = new Date(toIso);
+  const sameMonth = a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+  if (isAr) {
+    const from = sameMonth ? num(a.getDate(), true) : shortDate(fromIso, true);
+    return `${from} ← ${shortDate(toIso, true)}`;
+  }
+  const to = sameMonth ? String(b.getDate()) : shortDate(toIso, false);
+  return `${shortDate(fromIso, false)} → ${to}`;
+}
+
 const DAY_MS = 86_400_000;
 
 export default function RequestChangesModal({
@@ -92,6 +108,11 @@ export default function RequestChangesModal({
   const returnStepLabel = returnStep ? (isAr ? returnStep.label_ar : returnStep.label_en) : '';
   // One OTHER role on the path, drawn dimmed like the mockup's «دور آخر» card.
   const otherRole = steps.find((s) => returnStep && s.role !== returnStep.role)?.role ?? null;
+
+  // The thing under revision is the RETURN step's work — s38 says «النسخة ٢ من
+  // النص» and «تعديل النص», never the review step's own name.
+  const revisedLabel = returnStepLabel || stepLabel;
+  const sentAgo = daysAgo(openTask.opened_at, isAr);
 
   /* ── the change-area chips ── */
   const chipDefs = useMemo(() => {
@@ -163,8 +184,8 @@ export default function RequestChangesModal({
     <Modal
       title={isAr ? `طلب تعديلات · ${item.ref ?? ''}` : `Request changes · ${item.ref ?? ''}`}
       sub={isAr
-        ? `النسخة ${num(round, true)} من ${stepLabel} — أرسلها ${returnRoleLabel} ${daysAgo(openTask.opened_at, true)}`
-        : `Version ${round} of ${stepLabel} — sent by the ${returnRoleLabel} ${daysAgo(openTask.opened_at, false)} ago`}
+        ? `النسخة ${num(round, true)} من ${revisedLabel} — أرسلها ${returnRoleLabel}${sentAgo === 'اليوم' ? ' اليوم' : ` قبل ${sentAgo}`}`
+        : `Version ${round} of ${revisedLabel} — sent by the ${returnRoleLabel} ${sentAgo === 'today' ? 'today' : `${sentAgo} ago`}`}
       onClose={onClose}
       footer={
         <>
@@ -310,7 +331,7 @@ export default function RequestChangesModal({
             {!item.target_publish_at
               ? isAr ? 'بلا تاريخ نشر مستهدف' : 'No target publish date'
               : shiftedPublish
-                ? `${shortDate(item.target_publish_at, isAr)} ← ${shortDate(shiftedPublish, isAr)}`
+                ? publishShift(item.target_publish_at, shiftedPublish, isAr)
                 : isAr ? 'لا تغيير متوقع' : 'No change expected'}
           </div>
         </div>
@@ -325,7 +346,7 @@ export default function RequestChangesModal({
           <>
             {' — تُنشأ مهمة '}
             <b style={{ color: 'var(--ink)' }}>
-              «تعديل {stepLabel}
+              «تعديل {revisedLabel}
               {targetLabels.length > 0 ? ` — ${joinLabels(targetLabels, true)}` : ''}»
             </b>
             {' ل'}{returnRoleLabel}
@@ -339,7 +360,7 @@ export default function RequestChangesModal({
           <>
             {' — a task '}
             <b style={{ color: 'var(--ink)' }}>
-              “Revise {stepLabel}
+              “Revise {revisedLabel}
               {targetLabels.length > 0 ? ` — ${joinLabels(targetLabels, false)}` : ''}”
             </b>
             {' '}opens for the {returnRoleLabel}

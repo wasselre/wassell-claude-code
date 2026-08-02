@@ -1,0 +1,252 @@
+/*
+ * Settings engine surfaces — design screens 17 / 25 / 33 / 37 / 43.
+ *
+ * Additions ONLY: this file augments mos.css with the classes those five
+ * screens need and mos.css does not define (.rule/.arw consequence lines, the
+ * expanded step editor, the index icon tiles, the clickable access-matrix
+ * cells, the notification bell + centre). Everything is scoped under
+ * `.mos-root`, uses the mos.css tokens, and never overrides an existing rule.
+ */
+
+/* ── s17 — the «ثم» consequence preview lines ───────────────────────── */
+.mos-root .rule {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.85;
+}
+.mos-root .rule + .rule {
+  margin-top: 4px;
+}
+.mos-root .arw {
+  color: var(--copper);
+  font-weight: 700;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* ── s17 — expanded step editor ─────────────────────────────────────── */
+.mos-root .wstep.exp {
+  border-color: color-mix(in srgb, var(--copper) 45%, transparent);
+  background: color-mix(in srgb, var(--copper) 3%, transparent);
+}
+.mos-root .se-wf-grid {
+  display: grid;
+  grid-template-columns: 1fr 286px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .mos-root .se-wf-grid {
+    grid-template-columns: 1fr;
+  }
+}
+/* The collapsed step body doubles as the expand button. */
+.mos-root button.se-step-open {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+}
+/* Inline chip-adder for required fields / files. */
+.mos-root input.se-chip-inp {
+  border: 1px dashed var(--line);
+  background: transparent;
+  border-radius: 999px;
+  padding: 3px 11px;
+  font: inherit;
+  font-size: 12px;
+  width: 140px;
+  color: var(--ink);
+}
+.mos-root input.se-chip-inp:focus {
+  outline: none;
+  border-color: var(--copper);
+}
+
+/* ── s25 — index card icon tiles ────────────────────────────────────── */
+.mos-root .se-ic {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--copper) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--copper) 30%, transparent);
+}
+.mos-root .se-ic svg {
+  width: 17px;
+  height: 17px;
+  color: var(--copper);
+  stroke-width: 1.7;
+}
+.mos-root .se-ic.late {
+  background: color-mix(in srgb, var(--late) 12%, transparent);
+  border-color: color-mix(in srgb, var(--late) 32%, transparent);
+}
+.mos-root .se-ic.late svg {
+  color: var(--late);
+}
+.mos-root .se-banner {
+  margin-top: 18px;
+  background: var(--sand-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 13px 16px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.9;
+  max-width: 76ch;
+}
+
+/* ── s33 — editable access-matrix cells ─────────────────────────────── */
+.mos-root button.se-cell {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
+  display: grid;
+  place-items: center;
+}
+.mos-root button.se-cell:disabled {
+  cursor: default;
+}
+.mos-root button.se-cell:not(:disabled):hover .mk2 {
+  outline: 1px solid color-mix(in srgb, var(--copper) 45%, transparent);
+  outline-offset: 2px;
+  border-radius: 999px;
+}
+.mos-root .se-side {
+  width: 280px;
+  flex: 0 0 280px;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+.mos-root .se-split {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+@media (max-width: 980px) {
+  .mos-root .se-split {
+    flex-direction: column;
+  }
+  .mos-root .se-side {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+}
+
+/* ── s43 — editable rule cells render as bare buttons ───────────────── */
+.mos-root button.se-rule-cell {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  font: inherit;
+  cursor: pointer;
+}
+.mos-root button.se-rule-cell:disabled {
+  cursor: default;
+}
+.mos-root button.se-rule-cell:not(:disabled):hover {
+  filter: brightness(0.94);
+}
+
+/* ── s43 — the bell + notification centre ───────────────────────────── */
+.mos-root .se-bell {
+  position: relative;
+}
+.mos-root button.se-bell-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.mos-root button.se-bell-btn:hover {
+  border-color: var(--copper);
+  color: var(--copper);
+}
+.mos-root .se-bell-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.mos-root .se-bell-badge {
+  position: absolute;
+  top: -5px;
+  inset-inline-end: -5px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--copper);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+}
+.mos-root .se-bell-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  inset-inline-end: 0;
+  width: min(340px, 88vw);
+  z-index: 60;
+  box-shadow: 0 12px 34px rgba(70, 50, 30, 0.16);
+}
+.mos-root button.se-notif {
+  display: flex;
+  gap: 10px;
+  padding: 11px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  width: 100%;
+  background: none;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  color: inherit;
+}
+.mos-root button.se-notif:last-child {
+  border-bottom: 0;
+}
+.mos-root button.se-notif.unread {
+  background: color-mix(in srgb, var(--copper) 5%, transparent);
+}
+.mos-root .se-notif-t {
+  font-size: 12px;
+  font-weight: 700;
+}
+.mos-root .se-notif-b {
+  font-size: 11px;
+  color: var(--mute);
+  margin-top: 2px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.mos-root .se-notif-w {
+  font-size: 10.5px;
+  color: var(--mute);
+  margin-top: 4px;
+}
+.mos-root .se-notif.unread .se-notif-w {
+  color: var(--copper);
+  font-weight: 700;
+}

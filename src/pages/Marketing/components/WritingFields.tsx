@@ -366,9 +366,10 @@ export default function WritingFields({
                 )}
                 {tagList.length > 0 && (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
-                    {tagList.slice(0, 6).map((t) => <span key={t} className="tag">{t}</span>)}
-                    {tagList.length > 6 && (
-                      <span className="tag tag-t">+{num(tagList.length - 6, isAr)}</span>
+                    {/* Four tags then «+٣» — screen 08's collapse point. */}
+                    {tagList.slice(0, 4).map((t) => <span key={t} className="tag">{t}</span>)}
+                    {tagList.length > 4 && (
+                      <span className="tag tag-t">+{num(tagList.length - 4, isAr)}</span>
                     )}
                   </div>
                 )}
@@ -560,6 +561,12 @@ export default function WritingFields({
               onCommit={(v) => set('headlines', [...headlines, v])}
             />
           )}
+          {/* Screen 08 draws FOUR cards always — the slots after the input row
+              stay visible as dashed placeholders, so the writer sees how many
+              are still owed before «إرسال للمراجعة». */}
+          {Array.from({ length: Math.max(0, TARGET - headlines.length - 1) }).map((_, i) => (
+            <EmptyHeadlineRow key={`empty-${i}`} index={headlines.length + 2 + i} isAr={isAr} />
+          ))}
         </div>
       )}
 
@@ -580,9 +587,10 @@ export default function WritingFields({
                 <>
                   {tagList.length > 0 && (
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
-                      {tagList.slice(0, 6).map((t) => <span key={t} className="tag">{t}</span>)}
-                      {tagList.length > 6 && (
-                        <span className="tag tag-t">+{num(tagList.length - 6, isAr)}</span>
+                      {/* Four tags then «+٣» — screen 08's collapse point. */}
+                      {tagList.slice(0, 4).map((t) => <span key={t} className="tag">{t}</span>)}
+                      {tagList.length > 4 && (
+                        <span className="tag tag-t">+{num(tagList.length - 4, isAr)}</span>
                       )}
                     </div>
                   )}
