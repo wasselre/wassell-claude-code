@@ -41,6 +41,39 @@ jobs:
       - name: Unit tests (vitest — src/, api/, worker/)
         run: npm test
 
+  db-migrations:
+    # Ephemeral-database integration stage (bilingual W1): executes the
+    # translation migrations against a blank Postgres 17 with the fixture
+    # bootstrap, then runs the smoke assertions. This is the designated
+    # validator for the 2026-09-01_* migration set — production apply is
+    # gated on this job being green.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: wassell_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/wassell_ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bootstrap fixture
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/bootstrap_fixture.sql
+      - name: Apply translation migrations (01..05)
+        run: |
+          for f in supabase/migrations/2026-09-01_0*.sql; do
+            echo "== $f"
+            psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
+          done
+      - name: Smoke assertions
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_translation.sql
+
   worker-typecheck:
     # worker/ is a standalone package (third tsconfig) — not covered by the
     # root build (see reference: tsc --noEmit skips api/; worker is separate).
