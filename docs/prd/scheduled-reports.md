@@ -1,7 +1,7 @@
 # PRD: Scheduled Reports
 
 **Status:** Live + verified in prod (2026-06-17) — run-now, automatic scheduler, and source-value match all confirmed. Email is **draft-only** today (`RESEND_API_KEY` not configured). See Verified.
-**Last updated:** 2026-06-17
+**Last updated:** 2026-08-02 (**Bilingual W4 — report language:** each report has a `language` (ar/en, picker in the create/edit modal, default follows the creator's UI language; column `scheduled_reports.language`, default 'ar'). The runner + email render chrome, direction (rtl/ltr), section titles, and row labels in that language — previously the email was hardcoded English chrome with label_en-first rows. Free-text group labels without a translation fall back to source text.)
 **Related PRDs:** [dashboards.md](dashboards.md), [workflow-automation.md](workflow-automation.md), [access-control.md](access-control.md), [logs.md](logs.md)
 
 ## What it is (in plain English)
