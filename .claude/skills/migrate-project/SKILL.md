@@ -171,6 +171,33 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   generic `brochure_link`. `developer_content` is an attachment field.
 - **[2026-06-28] Map:** the "الوصول لموقع المشروع" map link → `project_location`; also set
   `latitude`/`longitude`.
+- **[2026-08-02] EXACT COORDINATES ARE MANDATORY — every project MUST have `latitude` + `longitude`:**
+  a place-name maps link (`.../maps/search/?api=1&query=<Project District>`) is NOT coordinates and is
+  NOT sufficient on its own. When the source only gives a place-name/search link (common — e.g. Binghatti's
+  public pages embed `google.com/maps/embed/v1/place?q=<Project>, <Area>` with no lat/lng), you MUST RESOLVE
+  it to exact coordinates: **open the Google-Maps link in a browser and read the resolved `@<lat>,<lng>,<zoom>`
+  from the redirected URL** (Google recenters on the matched place), or geocode `<Project>, <District>, <City>`
+  and take the top hit's lat/lng. Store the numeric `latitude`/`longitude` on the project. Verify at the end
+  that NO migrated project has null lat/lng (the 2026-08-02 Binghatti batch shipped 31/32 projects with only a
+  search link and no coordinates — a real miss caught by the user; backfilled by opening each maps link).
+  If a place-name query resolves only to the district centroid (building not yet in Google), store that +
+  flag `geo_confidence:'district'` in the record so it's known to be approximate, not exact.
+- **[2026-08-03] READ IMAGE-ONLY BROCHURE PAGES WITH GPU OCR — don't skip amenity/spec pages baked as images:**
+  luxury brochures put real content (amenity lists, spec tables, floor-plan labels) on pages that have NO
+  PDF text layer — `page.get_text()` returns ~nothing, so text-only extraction silently misses it (the
+  2026-08-02 Binghatti batch: 57,557 chars of amenity/spec text lived only in images; Cullinan's "PRIVATE
+  GOLF COURSE / dedicated gym / CONCIERGE" and Skyrise's "TENNIS COURT" were invisible until OCR'd). Recipe:
+  (1) render ONLY the thin-text pages to PNG (`len(page.get_text().strip()) < 100`) — keeps the GPU job small;
+  (2) OCR them on **Modal** (serverless GPU — Fly's org has NO GPU access) running `baidu/Unlimited-OCR`
+  (DeepSeek-OCR-style custom `.infer()` API, needs `trust_remote_code` + `matplotlib`), fanned out with
+  `OCR.parse.map()` across ~12 L40S lanes; (3) merge OCR text with the text-layer pages in page order. The
+  deployed app is `wassel-ocr` (see `scratchpad/ocr/modal_ocr.py` + `run_batch.py`); Modal auth is headless
+  (`modal token set --token-id … --token-secret …`). Then map amenities to `preferred_amenities` option
+  values with a **deterministic word-boundary keyword matcher** (`scratchpad/ocr/enrich_amenities.py`) —
+  additive-only union, token-free, no LLM (use `\b<phrase>\b` for Latin to avoid spa⊂"green space"). Zero
+  Anthropic spend for the reading. **If a project has no brochure AND its marketing copy lists no amenity
+  keywords (the 11 branded/marquee Binghatti projects — Bugatti, Burj Binghatti, Maybach×3, Mercedes-Benz…),
+  leave `preferred_amenities` empty and REPORT the gap — never fabricate amenities from the brand name.**
 - **[2026-06-28] Plans:** download each unit plan into the `unit_plan` IMAGE field (real file in
   wassel-files), AND read the plan to extract components + confirm beds/baths. Plan coverage is often
   sparse (developer attaches one plan per layout, not per unit). Propagation policy for the un-planned
