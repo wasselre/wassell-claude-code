@@ -250,7 +250,7 @@ export default function ExecutionDetailPage() {
       </div>
 
       <div className="body">
-        <div className="grid" style={{ gridTemplateColumns: 'minmax(0,1fr) 266px', alignItems: 'start' }}>
+        <div className="grid m4-xd">
           <div style={{ minWidth: 0 }}>
             {tab === 'ads' && (
               <div className="card">
@@ -280,7 +280,7 @@ export default function ExecutionDetailPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="tbl-wrap">
+                    <div className="tbl-wrap m4-desk">
                       <table className="tbl">
                         <thead>
                           <tr>
@@ -381,6 +381,112 @@ export default function ExecutionDetailPage() {
                           })}
                         </tbody>
                       </table>
+                    </div>
+
+                    {/* s32 — the same ads as cards: cost per qualified is
+                        the dominant number; the rest sit under it in a
+                        smaller line. */}
+                    <div className="m4-mob" style={{ padding: '10px 12px 12px' }}>
+                      <div className="m4-cards">
+                        {ads.map((ad) => {
+                          const c = contentOf(ad.content_id);
+                          const wrongProject = Boolean(
+                            c && campaign?.project_id && c.project_id && c.project_id !== campaign.project_id,
+                          );
+                          const waitingOnContent = ad.status === 'waiting' && c && c.status_key !== 'done';
+                          const value = cpq(ad);
+                          const isBest = ad.id === bestAdId;
+                          return (
+                            <button
+                              key={ad.id}
+                              type="button"
+                              className={`m4-vcard${wrongProject ? ' late2' : ''}${ad.status === 'waiting' ? ' dim' : ''}`}
+                              onClick={() => setEditingAd(ad)}
+                            >
+                              <div className="m4-vtop">
+                                <span className="id ltr">{c?.ref ?? '—'}</span>
+                                {isBest ? (
+                                  <Pill tone="go">{isAr ? 'الأفضل' : 'Best'}</Pill>
+                                ) : wrongProject ? (
+                                  <Pill tone="late">{isAr ? 'المشروع الخطأ' : 'Wrong project'}</Pill>
+                                ) : (
+                                  <Pill tone={AD_TONE[ad.status] ?? 'idle'}>
+                                    {(isAr ? AD_STATUS_LABELS[ad.status]?.ar : AD_STATUS_LABELS[ad.status]?.en)
+                                      ?? ad.status}
+                                  </Pill>
+                                )}
+                              </div>
+                              <div className="m4-vt">
+                                {c?.title ?? ad.label ?? (isAr ? 'بلا محتوى' : 'No content')}
+                              </div>
+                              {(wrongProject || waitingOnContent) && (
+                                <div className={`m4-vwarn${wrongProject ? ' bad' : ''}`}>
+                                  {wrongProject && c
+                                    ? isAr
+                                      ? `المشروع الخطأ — محتوى ${projectName(c.project_id)} في حملة ${projectLabel ?? ''}`
+                                      : `Wrong project — ${projectName(c.project_id)} content in a ${projectLabel ?? ''} campaign`
+                                    : isAr
+                                      ? 'في الانتظار — لا يعمل قبل اعتماد المحتوى'
+                                      : 'Waiting — does not run before the content is approved'}
+                                </div>
+                              )}
+                              <div className="m4-vnum">
+                                <span
+                                  className="n lg"
+                                  style={{ color: value === null ? 'var(--mute)' : isBest ? 'var(--go)' : undefined }}
+                                >
+                                  {value === null ? '—' : num(Math.round(value), isAr)}
+                                </span>
+                                <span className="s">{isAr ? 'ريال لكل مؤهل' : 'SAR per qualified'}</span>
+                              </div>
+                              <div className="m4-vstats">
+                                <span>
+                                  {isAr
+                                    ? <>صُرف <b>{num(ad.spend, true)}</b></>
+                                    : <><b>{num(ad.spend, false)}</b> spent</>}
+                                </span>
+                                <span>{isAr ? `${num(ad.clicks, true)} نقرة` : `${num(ad.clicks, false)} clicks`}</span>
+                                <span>{isAr ? `${num(ad.leads, true)} عميلًا` : `${num(ad.leads, false)} leads`}</span>
+                                <span>{isAr ? `${num(ad.qualified, true)} مؤهلًا` : `${num(ad.qualified, false)} qualified`}</span>
+                              </div>
+                              {wrongProject && canEnter && (
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  className="btn btn-sm m4-vact"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void (async () => {
+                                      try {
+                                        setAds((await deleteAd(execution.id, ad.id)).ads);
+                                        addToast(isAr ? 'أُزيل الإعلان.' : 'Ad removed.', 'success');
+                                      } catch (err) {
+                                        addToast(err instanceof Error ? err.message : String(err), 'error');
+                                      }
+                                    })();
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      void (async () => {
+                                        try {
+                                          setAds((await deleteAd(execution.id, ad.id)).ads);
+                                          addToast(isAr ? 'أُزيل الإعلان.' : 'Ad removed.', 'success');
+                                        } catch (err) {
+                                          addToast(err instanceof Error ? err.message : String(err), 'error');
+                                        }
+                                      })();
+                                    }
+                                  }}
+                                >
+                                  {isAr ? 'إزالة' : 'Remove'}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                     {insight && (
                       <div
@@ -717,7 +823,7 @@ function AdModal({
           ))}
         </div>
       </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 13 }}>
+      <div className="m4-adnum">
         <Field label={isAr ? 'الإنفاق' : 'Spend'}>
           <input className="inp" inputMode="numeric" value={spend} onChange={(e) => setSpend(e.target.value)} />
         </Field>
@@ -781,7 +887,7 @@ function TargetingEditor({
           {isAr ? 'وصف الإعداد على المنصة — نص حر' : 'describes the platform setup — free text'}
         </span>
       </div>
-      <div className="card-b" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+      <div className="card-b m4-2col">
         {TARGETING_FIELDS.map((f) => (
           <Field key={f.key} label={isAr ? f.ar : f.en}>
             <input
@@ -915,7 +1021,7 @@ function DailyTab({
               {isAr ? 'إعادة إدخال يومٍ تُصحّحه، لا تكرّره' : 're-entering a day corrects it, never duplicates it'}
             </span>
           </div>
-          <div className="card-b" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, alignItems: 'end' }}>
+          <div className="card-b m4-daily">
             <Field label={isAr ? 'اليوم' : 'Day'}>
               <input type="date" className="inp ltr" value={day} onChange={(e) => setDay(e.target.value)} />
             </Field>

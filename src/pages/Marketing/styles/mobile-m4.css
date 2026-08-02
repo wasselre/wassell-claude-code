@@ -1,0 +1,456 @@
+/*
+ * Mobile layer — part 4 (design screens 32 / 48 / 49 / 51 / 52).
+ *
+ * The wide-table screens. Below 760px every eight-column table becomes a card
+ * per row with ONE dominant number carrying the decision and the rest in a
+ * smaller line under it — the pattern s32 sets for the whole system. Also:
+ * the roles matrix becomes a role-first list (s49), the workflow editor
+ * becomes an accordion (s51), the library gets its fixed upload CTA (s51),
+ * and weekly numbers get a one-at-a-time task mode (s52).
+ *
+ * `.mos-root`-scoped, additive only — mos.css stays untouched. Imported from
+ * CampaignsPage.tsx (statically bundled, so every /m page sees it).
+ *
+ * The `.m4-desk` / `.m4-mob` pair is the toggle: desktop DOM keeps rendering
+ * unchanged inside `.m4-desk`; the phone shape lives in `.m4-mob` and only
+ * exists below the breakpoint.
+ */
+
+.mos-root .m4-mob {
+  display: none;
+}
+
+/* ── relocated inline grids (desktop-identical; they only exist so the
+      breakpoint below can restack them) ─────────────────────────────── */
+
+/* Execution detail: main column + the 266px side rail (s21). */
+.mos-root .m4-xd {
+  grid-template-columns: minmax(0, 1fr) 266px;
+  align-items: start;
+}
+
+/* Two-column field grids (workflow step editor, targeting editor). */
+.mos-root .m4-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 13px;
+}
+
+/* The daily-entry row: day + three numbers + the button (s21 «يوميًا»). */
+.mos-root .m4-daily {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+
+/* The ad modal's four number boxes. */
+.mos-root .m4-adnum {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 13px;
+}
+
+/* ── s32/s48 — verdict cards (campaign list rows, execution rows, ads) ─ */
+
+.mos-root .m4-cards {
+  display: grid;
+  gap: 10px;
+}
+
+.mos-root .m4-vcard {
+  display: block;
+  width: 100%;
+  text-align: start;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 13px 14px;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  min-height: 44px; /* touch target */
+}
+.mos-root .m4-vcard:active {
+  background: var(--sand-2);
+}
+.mos-root .m4-vcard.late2 {
+  border-color: color-mix(in srgb, var(--late) 40%, transparent);
+}
+.mos-root .m4-vcard.dim {
+  opacity: 0.65;
+}
+
+/* Top row: ref / tag / platform dot — pill pushed to the inline end. */
+.mos-root .m4-vtop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mos-root .m4-vtop .id {
+  font-size: 11.5px;
+  color: var(--mute);
+  font-variant-numeric: tabular-nums;
+}
+.mos-root .m4-vtop .pill {
+  margin-inline-start: auto;
+}
+.mos-root .m4-vdot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+  display: inline-block;
+}
+.mos-root .m4-vname {
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+/* The card title (campaign list). */
+.mos-root .m4-vt {
+  font-size: 14.5px;
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+/* The dominant number + its unit line. */
+.mos-root .m4-vnum {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 9px;
+}
+.mos-root .m4-vnum .n {
+  font-family: var(--serif);
+  font-size: 26px;
+  line-height: 1.2;
+}
+.mos-root .m4-vnum .n.lg {
+  font-size: 29px;
+}
+.mos-root .m4-vnum .s {
+  font-size: 12px;
+  color: var(--mute);
+}
+
+.mos-root .m4-vcard .meter {
+  height: 4px;
+  margin-top: 8px;
+}
+
+/* The judgment line — every card carries one (s48). */
+.mos-root .m4-verdict {
+  font-size: 11.5px;
+  font-weight: 700;
+  margin-top: 7px;
+}
+.mos-root .m4-verdict.mute {
+  color: var(--mute);
+  font-weight: 400;
+}
+
+/* The small stats line under the number (s32 execution cards). */
+.mos-root .m4-vstats {
+  display: flex;
+  gap: 14px;
+  margin-top: 9px;
+  font-size: 11.5px;
+  color: var(--mute);
+  flex-wrap: wrap;
+}
+.mos-root .m4-vstats b {
+  color: var(--ink);
+}
+
+/* The warning / waiting sub-line on ad cards. */
+.mos-root .m4-vwarn {
+  font-size: 11px;
+  margin-top: 6px;
+  color: var(--mute);
+}
+.mos-root .m4-vwarn.bad {
+  color: var(--late);
+  font-weight: 700;
+}
+
+/* The in-card action («حوّل الـ٣,١٠٠ إلى جوجل» / «إزالة») — s32. */
+.mos-root .m4-vact {
+  margin-top: 11px;
+  width: 100%;
+  min-height: 44px; /* touch target */
+  justify-content: center;
+}
+
+/* ── s49 phone2 — roles: pick a role, read its list ───────────────────── */
+
+.mos-root .m4-roles .m4-rolechips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 12px;
+}
+.mos-root .m4-roles .m4-rolechips .fbtn {
+  flex: 0 0 auto;
+  min-height: 44px; /* touch target */
+}
+
+.mos-root .m4-rolenote {
+  background: var(--sand-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px 13px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.8;
+}
+
+.mos-root .m4-permcard {
+  padding: 0;
+  overflow: hidden;
+  margin-bottom: 2px;
+}
+.mos-root .m4-permcard.dim {
+  opacity: 0.6;
+}
+.mos-root .m4-permrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px; /* touch target */
+  padding: 11px 13px;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  text-align: start;
+  cursor: pointer;
+}
+.mos-root .m4-permrow:disabled {
+  cursor: default;
+}
+.mos-root .m4-permrow + .m4-permrow {
+  border-top: 1px solid var(--line-soft);
+}
+.mos-root .m4-permrow:not(:disabled):active {
+  background: var(--sand-2);
+}
+.mos-root .m4-permrow .t {
+  flex: 1;
+  min-width: 0;
+}
+
+.mos-root .m4-permhint {
+  font-size: 11.5px;
+  color: var(--mute);
+  line-height: 1.8;
+  padding: 12px 4px 0;
+}
+
+/* ── s51 phone1 — the workflow accordion chevron ──────────────────────── */
+
+.mos-root .m4-chev {
+  display: none;
+}
+
+/* The collapsed step's phone summary («الكاتب · يومان») — mobile only. */
+.mos-root .m4-wf-sub {
+  display: none;
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 2px;
+}
+
+/* ── s51 phone2 — the fixed upload CTA over the library grid ──────────── */
+
+.mos-root .m4-fixcta {
+  position: fixed;
+  inset-inline: 14px;
+  /* Clear of the tab bar (52px targets + 12px padding) plus breathing room. */
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  z-index: 31; /* above the tab bar (30), below the «المزيد» sheet (60). */
+}
+.mos-root .m4-fixbtn {
+  width: 100%;
+  min-height: 48px; /* touch target */
+  justify-content: center;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(40, 26, 12, 0.28);
+}
+
+/* ── s52 phone1 — weekly numbers, one publication at a time ───────────── */
+
+.mos-root .m4-task-head {
+  margin-bottom: 12px;
+}
+.mos-root .m4-task-head .crumb-ln {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-bottom: 3px;
+}
+.mos-root .m4-task-head .cnt {
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 700;
+}
+.mos-root .m4-task-head .meter {
+  height: 5px;
+  margin-top: 9px;
+}
+
+.mos-root .m4-task-pub {
+  padding: 14px 15px;
+  margin-bottom: 12px;
+}
+.mos-root .m4-task-pub .plat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--mute);
+}
+.mos-root .m4-task-pub .t {
+  font-size: 14.5px;
+  font-weight: 700;
+  margin-top: 7px;
+}
+.mos-root .m4-task-pub .mt {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 3px;
+}
+
+.mos-root .m4-task-fields {
+  display: grid;
+  gap: 12px;
+  margin-top: 6px;
+}
+/* Big inputs — a 30px-tall box on a phone keyboard is how the weekly task
+   dies (s52's own note). */
+.mos-root .m4-task-inp {
+  font-family: var(--serif);
+  font-size: 22px;
+  padding: 14px 15px;
+  min-height: 54px; /* touch target */
+  width: 100%;
+}
+.mos-root .m4-task-inp.first {
+  border-color: var(--copper);
+}
+
+.mos-root .m4-task-nav {
+  display: flex;
+  gap: 9px;
+  margin-top: 16px;
+}
+.mos-root .m4-task-nav .btn {
+  min-height: 48px; /* touch target — the keyboard covers the bottom half */
+  justify-content: center;
+}
+.mos-root .m4-task-nav .skip {
+  flex: 0 0 96px;
+}
+.mos-root .m4-task-nav .next {
+  flex: 1;
+}
+
+.mos-root .m4-task-note {
+  font-size: 11.5px;
+  color: var(--mute);
+  text-align: center;
+  margin-top: 12px;
+  line-height: 1.7;
+}
+
+.mos-root .m4-task-done {
+  padding: 22px 16px;
+  text-align: center;
+}
+.mos-root .m4-task-done .n {
+  font-family: var(--serif);
+  font-size: 34px;
+}
+.mos-root .m4-task-done .tx {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.8;
+  margin-top: 6px;
+}
+
+/* ── the breakpoint ───────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  .mos-root .m4-desk {
+    display: none;
+  }
+  .mos-root .m4-mob {
+    display: block;
+  }
+
+  /* s32 phone2 — the campaign record: «مقابل الهدف» first, then the side
+     stack, then the main column's tables-as-cards. */
+  .mos-root .cd-oview {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .mos-root .cd-oview .cd-side {
+    order: -1;
+    width: 100%;
+  }
+  .mos-root .cd-bignum {
+    font-size: 42px;
+  }
+
+  /* Restack the relocated grids. */
+  .mos-root .m4-xd {
+    grid-template-columns: 1fr;
+  }
+  .mos-root .m4-2col {
+    grid-template-columns: 1fr;
+  }
+  .mos-root .m4-daily {
+    grid-template-columns: 1fr 1fr;
+  }
+  .mos-root .m4-daily > :first-child,
+  .mos-root .m4-daily > :last-child {
+    grid-column: 1 / -1;
+  }
+  .mos-root .m4-adnum {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* s51 phone1 — the collapsed step reads as one accordion row: number,
+     name, «الدور · الاستحقاق», chevron. The desktop 4-cell summary hides
+     (it wears .m4-desk in the markup) and the phone sub-line shows. */
+  .mos-root .m4-wf-sub {
+    display: block;
+  }
+  .mos-root .m4-chev {
+    display: block;
+    position: absolute;
+    inset-inline-end: 12px;
+    top: 15px;
+    color: var(--mute);
+    font-size: 15px;
+    line-height: 1;
+  }
+  .mos-root button.se-step-open {
+    min-height: 44px; /* touch target */
+  }
+  /* One decision at a time: the expanded editor's inputs get room. */
+  .mos-root .wstep {
+    scroll-margin-top: 12px;
+  }
+
+  /* s51 phone2 — keep the last library row clear of the fixed upload CTA
+     (which itself sits clear of the tab bar). */
+  .mos-root .body.m4-cta-pad {
+    padding-bottom: 150px;
+  }
+}

@@ -181,6 +181,8 @@ export default function NumbersPage() {
   const [busy, setBusy] = useState(false);
   const [byContent, setByContent] = useState(false);
   const [skipping, setSkipping] = useState<WeekPublication | null>(null);
+  /** s52 phone1 — the position in the one-at-a-time queue (<760px). */
+  const [mobIdx, setMobIdx] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -280,6 +282,60 @@ export default function NumbersPage() {
 
   const filled = allRows.filter(({ pub }) =>
     rowState(pub) === 'missing' && draftHasValue(pub.publication_id));
+
+  /* ── s52 phone1 — one publication at a time ───────────────────────
+     The queue keeps allRows' platform grouping, so every Instagram item
+     comes before the first TikTok one — the app is opened once, not once
+     per row. Saved and skipped rows leave the queue on their own. */
+
+  const queue = allRows.filter(({ pub }) => rowState(pub) === 'missing');
+  const doneCount = entered + skipped;
+  const cur = queue.length > 0 ? queue[Math.min(mobIdx, queue.length - 1)] : undefined;
+
+  /** Save ONE row's filled boxes — the task mode's «التالي». */
+  const saveOne = async (platform: string, pub: WeekPublication): Promise<void> => {
+    const d = drafts[pub.publication_id] ?? {};
+    const cols = platformCols(platform);
+    const values: {
+      views?: number | null; engagement?: number | null; enquiries?: number | null;
+      extra?: Record<string, unknown>;
+    } = {};
+    const savedRow: Partial<Record<ColKey, number | null>> = {};
+    for (const col of cols) {
+      const v = parse(d[col.key]);
+      if (v === undefined) continue;
+      if (col.key === 'watch') {
+        values.extra = { ...(values.extra ?? {}), watch_seconds: v };
+      } else {
+        values[col.key] = v;
+      }
+      savedRow[col.key] = v;
+    }
+    setBusy(true);
+    try {
+      await recordMetrics(pub.publication_id, values);
+      setSavedNow((s) => ({ ...s, [pub.publication_id]: savedRow }));
+    } catch (e) {
+      console.error('[marketing] metric row failed', pub.publication_id, e);
+      addToast(
+        isAr ? 'تعذّر حفظ الصف — أعد المحاولة.' : 'The row failed to save — try again.',
+        'error',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** «التالي»: a filled card saves (and leaves the queue); an empty one is
+      passed over — empty is not zero, so nothing is written. */
+  const mobNext = async (): Promise<void> => {
+    if (!cur) return;
+    if (draftHasValue(cur.pub.publication_id)) {
+      await saveOne(cur.platform, cur.pub);
+      return;
+    }
+    setMobIdx((i) => (queue.length <= 1 ? 0 : (Math.min(i, queue.length - 1) + 1) % queue.length));
+  };
 
   /**
    * Save every filled row. Sequential on purpose: each row is its own append,
@@ -510,6 +566,7 @@ export default function NumbersPage() {
 
         {total > 0 && (
           <>
+          <div className="m4-desk">
             {/* ── progress header ──────────────────────────────────── */}
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-b" style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '13px 16px', flexWrap: 'wrap' }}>
@@ -702,6 +759,119 @@ export default function NumbersPage() {
                 </button>
               )}
             </div>
+          </div>
+
+          {/* ── s52 phone1 — the one-at-a-time task mode (<760px): three
+                big boxes per screen, progress on top, the buttons mid-screen
+                because the keyboard owns the bottom half. ─────────────── */}
+          <div className="m4-mob">
+            <div className="m4-task-head">
+              <div className="crumb-ln">
+                {isAr ? 'مهمة أسبوعية · إدخال أرقام الأسبوع' : 'Weekly task · numbers entry'}
+              </div>
+              <div className="cnt">
+                {isAr ? `${num(doneCount, true)} من ${num(total, true)}` : `${doneCount} of ${total}`}
+              </div>
+              <div className="meter">
+                <i style={{ width: `${pct}%`, background: 'var(--copper)' }} />
+              </div>
+            </div>
+
+            {cur ? (() => {
+              const cols = platformCols(cur.platform);
+              const color = PLATFORM_COLORS[cur.platform] ?? 'var(--copper)';
+              const plat = platforms.find((p) => p.platform === cur.platform);
+              const label = (isAr ? PLATFORM_LABELS[cur.platform]?.ar : PLATFORM_LABELS[cur.platform]?.en)
+                ?? cur.platform;
+              return (
+                <>
+                  <div className="card m4-task-pub">
+                    <div className="plat">
+                      <span className="pdot" style={{ background: color }} />
+                      <span>
+                        {label}
+                        {plat?.account_handle && <> · <span className="ltr">{plat.account_handle}</span></>}
+                      </span>
+                    </div>
+                    <div className="t">
+                      {cur.pub.content_ref ? <>{cur.pub.content_ref} · </> : null}
+                      {cur.pub.title}
+                    </div>
+                    <div className="mt">
+                      {cur.pub.published_at
+                        ? isAr
+                          ? `نُشر ${shortDate(cur.pub.published_at, true)}`
+                          : `Published ${shortDate(cur.pub.published_at, false)}`
+                        : isAr ? 'بلا تاريخ نشر' : 'No publish date'}
+                    </div>
+                  </div>
+
+                  <div className="m4-task-fields">
+                    {cols.map((c, ci) => (
+                      <div key={c.key}>
+                        <div className="lbl" style={{ margin: '0 0 6px' }}>{isAr ? c.ar : c.en}</div>
+                        <input
+                          className={`inp m4-task-inp${ci === 0 ? ' first' : ''}`}
+                          inputMode="numeric"
+                          disabled={!can('enter_metrics') || busy}
+                          value={drafts[cur.pub.publication_id]?.[c.key] ?? ''}
+                          onChange={(e) => setDraft(cur.pub.publication_id, c.key, e.target.value)}
+                          placeholder={ci === 0 ? (isAr ? 'أدخل' : 'enter') : '—'}
+                          aria-label={isAr ? c.ar : c.en}
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="m4-task-nav">
+                    <button
+                      type="button"
+                      className="btn skip"
+                      disabled={busy || !can('enter_metrics')}
+                      onClick={() => setSkipping(cur.pub)}
+                    >
+                      {isAr ? 'تخطٍ' : 'Skip'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-p next"
+                      disabled={busy || !can('enter_metrics')}
+                      onClick={() => void mobNext()}
+                    >
+                      {busy
+                        ? isAr ? 'جارٍ الحفظ…' : 'Saving…'
+                        : isAr ? 'التالي ←' : 'Next →'}
+                    </button>
+                  </div>
+
+                  <div className="m4-task-note">
+                    {isAr
+                      ? 'عناصر كل منصة تأتي متتالية — تفتح التطبيق مرة واحدة، لا مرة لكل صف.'
+                      : 'Each platform’s items come in a row — the app opens once, not once per row.'}
+                  </div>
+                </>
+              );
+            })() : (
+              <div className="card m4-task-done">
+                <div className="n">
+                  {isAr ? `${num(doneCount, true)} من ${num(total, true)}` : `${doneCount} of ${total}`}
+                </div>
+                <div className="tx">
+                  {isAr
+                    ? 'اكتمل الأسبوع — كل الصفوف مُدخلة أو متخطّاة بسبب.'
+                    : 'Week complete — every row entered or skipped with a reason.'}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-p"
+                  style={{ marginTop: 12, minHeight: 48 }}
+                  onClick={() => navigate('/m/my-work')}
+                >
+                  {isAr ? 'العودة إلى مهامي' : 'Back to my work'}
+                </button>
+              </div>
+            )}
+          </div>
           </>
         )}
       </div>

@@ -62,6 +62,41 @@ const SURFACE_GROUPS: Array<{ ar: string; en: string; keys: Array<{ key: Surface
 
 const NEXT_LEVEL: Record<SurfaceLevel, SurfaceLevel> = { full: 'read', read: 'hidden', hidden: 'full' };
 
+/**
+ * s49 phone2 — the one-line answer to «ماذا يرى هذا الدور؟», shown above the
+ * selected role's list. The approval split is the design's core rule: creative
+ * to the marketing manager, process to the ops supervisor, nothing to the CEO.
+ */
+const ROLE_NOTES: Record<string, { ar: string; en: string }> = {
+  ceo: {
+    ar: 'لا يعتمد أي محتوى إطلاقًا، ويوقّع الميزانيات فوق الحد فقط.',
+    en: 'Approves no content at all, and only signs budgets above the threshold.',
+  },
+  marketing_manager: {
+    ar: 'يعتمد العمل نفسه — الفكرة والنص والنسخة والتصميم والمونتاج النهائي.',
+    en: 'Approves the work itself — the idea, the script, the copy, the design and the final cut.',
+  },
+  ops_supervisor: {
+    ar: 'يعتمد الإجراءات — اكتمال المواد، وصحة الجدولة، والتقاط الرابط. ولا يعتمد أي عمل إبداعي.',
+    en: 'Approves process — material completeness, schedule correctness, capturing the publish link. Never creative work.',
+  },
+  writer: {
+    ar: 'ينتج — يكتب الأفكار والنصوص، ولا يعتمد شيئًا.',
+    en: 'Produces — writes ideas and scripts, approves nothing.',
+  },
+  montage: {
+    ar: 'ينتج — يصمم ويحرّر، ولا يعتمد شيئًا.',
+    en: 'Produces — designs and edits, approves nothing.',
+  },
+};
+
+/** The mobile group headings, in the mockup's order and wording. */
+const LEVEL_GROUPS: Array<{ level: SurfaceLevel; ar: string; en: string }> = [
+  { level: 'full',   ar: 'وصول كامل',    en: 'Full access' },
+  { level: 'read',   ar: 'للاطلاع فقط',  en: 'Read only' },
+  { level: 'hidden', ar: 'غير ظاهر',     en: 'Not visible' },
+];
+
 function LevelMark({ level }: { level: SurfaceLevel }) {
   if (level === 'full') return <span className="mk2 mk-f">●</span>;
   if (level === 'read') return <span className="mk2 mk-r">○</span>;
@@ -78,6 +113,8 @@ export default function SettingsAccess({ canManage, isAr }: { canManage: boolean
   const [cells, setCells] = useState<Map<string, SurfaceLevel>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** s49 phone2 — the role the phone list is answering for. */
+  const [mobRole, setMobRole] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -156,7 +193,83 @@ export default function SettingsAccess({ canManage, isAr }: { canManage: boolean
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
         {loading && <Skeleton rows={6} />}
         {!loading && !error && (
-          <div className="se-split">
+          <>
+          {/* ── s49 phone2 — one role at a time, a list of what it sees.
+                Nobody reads a matrix on a phone; they ask «ماذا يرى هذا
+                الدور؟». Tapping a row still cycles the level. ─────────── */}
+          <div className="m4-mob m4-roles">
+            {(() => {
+              const activeRole = mobRole ?? columns[0] ?? null;
+              if (!activeRole) return null;
+              const note = ROLE_NOTES[activeRole];
+              const roleName = ROLE_LABELS[activeRole as MosPathRole]
+                ? (isAr ? ROLE_LABELS[activeRole as MosPathRole].ar : ROLE_LABELS[activeRole as MosPathRole].en)
+                : activeRole;
+              const allKeys = groups.flatMap((g) => g.keys);
+              return (
+                <>
+                  <div className="m4-rolechips">
+                    {columns.map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        className={`fbtn${r === activeRole ? ' on' : ''}`}
+                        onClick={() => setMobRole(r)}
+                      >
+                        {ROLE_LABELS[r as MosPathRole]
+                          ? (isAr ? ROLE_LABELS[r as MosPathRole].ar : ROLE_LABELS[r as MosPathRole].en)
+                          : r}
+                      </button>
+                    ))}
+                  </div>
+                  {note && (
+                    <div className="m4-rolenote">
+                      <b>{roleName}</b> {isAr ? note.ar : note.en}
+                    </div>
+                  )}
+                  {LEVEL_GROUPS.map((lg) => {
+                    const rows = allKeys.filter((s) => levelOf(activeRole, s.key) === lg.level);
+                    if (rows.length === 0) return null;
+                    return (
+                      <div key={lg.level}>
+                        <div className="lbl" style={{ margin: '14px 0 8px' }}>{isAr ? lg.ar : lg.en}</div>
+                        <div className={`card m4-permcard${lg.level === 'hidden' ? ' dim' : ''}`}>
+                          {rows.map((s) => (
+                            <button
+                              key={s.key}
+                              type="button"
+                              className="m4-permrow"
+                              disabled={!canManage}
+                              title={canManage
+                                ? isAr
+                                  ? 'كامل ← قراءة ← مخفي — اضغط للتبديل'
+                                  : 'Full → read → hidden — tap to cycle'
+                                : undefined}
+                              onClick={() => void cycle(activeRole, s.key)}
+                            >
+                              <LevelMark level={lg.level} />
+                              <span className="t">{isAr ? s.ar : s.en}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="m4-permhint">
+                    {canManage
+                      ? isAr
+                        ? 'اللمس يبدّل: كامل ← قراءة ← مخفي. «مخفي» تعني أن العنصر غير موجود في قائمة الدور أصلًا — لا زرًّا يرفض.'
+                        : 'Tapping cycles: full → read → hidden. "Hidden" means the item simply does not exist in that role\'s menu — not a button that refuses.'
+                      : isAr
+                        ? '«مخفي» تعني أن العنصر غير موجود في قائمة الدور أصلًا — لا زرًّا يرفض.'
+                        : '"Hidden" means the item simply does not exist in that role\'s menu — not a button that refuses.'}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+
+          <div className="se-split m4-desk">
             <div className="card" style={{ flex: 1, minWidth: 0 }}>
               <div className="tbl-wrap">
                 <table className="mx">
@@ -279,6 +392,7 @@ export default function SettingsAccess({ canManage, isAr }: { canManage: boolean
               </div>
             </div>
           </div>
+          </>
         )}
       </div>
     </>

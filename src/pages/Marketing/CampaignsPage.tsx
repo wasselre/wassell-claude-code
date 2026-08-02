@@ -20,6 +20,7 @@ import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
 import { IconCampaigns, IconCheck, IconMetrics, IconPlus } from './components/icons';
 import { num, shortDate } from './lib/format';
+import './styles/mobile-m4.css';
 
 const AR_MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
 const EN_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -51,6 +52,136 @@ function subPlatform(p: string, isAr: boolean): string {
 
 type StatusFilter = 'all' | 'active' | 'planning' | 'done';
 type KindFilter = 'all' | 'paid' | 'organic';
+
+const AR_DIGIT_MAP = '٠١٢٣٤٥٦٧٨٩';
+
+/**
+ * The goal's numeric target («١٥٠ عميلًا مؤهلًا…» → 150) — same recipe as the
+ * detail page's goalTarget: a lead-count success threshold wins; otherwise the
+ * first number in the goal sentence (Latin or Arabic-Indic digits).
+ */
+function goalNumber(c: MosCampaign): number | null {
+  if (c.success_metric === 'leads' && c.success_threshold !== null && c.success_threshold > 0) {
+    return c.success_threshold;
+  }
+  const src = (c.goal ?? c.name ?? '').replace(/[٠-٩]/g, (d) => String(AR_DIGIT_MAP.indexOf(d)));
+  const m = src.match(/\d[\d,]*/);
+  if (!m) return null;
+  const n = Number(m[0].replace(/,/g, ''));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** «٧٧٪ من الشهر مضى» — elapsed share of the campaign window, when dated. */
+function timePctOf(c: MosCampaign): number | null {
+  if (!c.starts_on || !c.ends_on) return null;
+  const start = new Date(c.starts_on).getTime();
+  const end = new Date(c.ends_on).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return null;
+  return Math.max(0, Math.min(100, Math.round(((Date.now() - start) / (end - start)) * 100)));
+}
+
+interface VerdictCard {
+  big: string;
+  sub: string;
+  meterPct: number;
+  meterColor: string;
+  verdict: string;
+  verdictClass: string; // '' (colored via style) or 'mute'
+  verdictColor?: string;
+}
+
+/**
+ * s48 phone2 — one dominant number and one judgment per campaign card,
+ * derived from the same fields the table shows. «الرقم وحده على شاشة صغيرة
+ * لا يكفي لاتخاذ موقف» — every card carries a verdict.
+ */
+function verdictCardOf(c: MosCampaign, isAr: boolean): VerdictCard {
+  const qualified = c.total_qualified ?? 0;
+  const spend = c.total_spend ?? 0;
+  const budget = c.budget_total ?? 0;
+  const target = goalNumber(c);
+  const timePct = timePctOf(c);
+
+  if (c.kind === 'organic') {
+    const count = c.content_count ?? 0;
+    return {
+      big: num(count, isAr),
+      sub: target !== null
+        ? isAr ? `من ${num(target, true)} منشورًا` : `of ${num(target, false)} posts`
+        : isAr ? 'عناصر محتوى' : 'content items',
+      meterPct: target !== null && target > 0 ? Math.min(100, Math.round((count / target) * 100)) : 0,
+      meterColor: 'var(--gold)',
+      verdict: isAr ? 'لا ميزانية — حملة عضوية' : 'No budget — an organic campaign',
+      verdictClass: 'mute',
+    };
+  }
+
+  if (c.status === 'planning') {
+    return {
+      big: num(budget > 0 ? budget : null, isAr),
+      sub: budget > 0
+        ? isAr ? 'ريال ميزانية معتمدة' : 'SAR budget committed'
+        : isAr ? 'الميزانية لاحقًا' : 'budget comes later',
+      meterPct: 0,
+      meterColor: 'var(--sand)',
+      verdict: isAr ? 'مخططة — لم تُطلق' : 'Planned — not launched',
+      verdictClass: 'mute',
+    };
+  }
+
+  // Paid and launched with money out but nothing measurable — s48's «تحتاج قرارًا».
+  if (qualified === 0 && spend > 0) {
+    return {
+      big: num(0, isAr),
+      sub: isAr ? `مؤهل على ${num(spend, true)} ريال` : `qualified on ${num(spend, false)} SAR`,
+      meterPct: budget > 0 ? Math.min(100, Math.round((spend / budget) * 100)) : 100,
+      meterColor: 'var(--late)',
+      verdict: isAr ? 'تحتاج قرارًا' : 'Needs a decision',
+      verdictClass: '',
+      verdictColor: 'var(--late)',
+    };
+  }
+
+  if (target !== null && target > 0) {
+    const targetPct = Math.min(100, Math.round((qualified / target) * 100));
+    const behind = timePct !== null && targetPct < timePct - 10;
+    return {
+      big: num(qualified, isAr),
+      sub: isAr
+        ? `من ${num(target, true)} مؤهلًا · ${num(targetPct, true)}٪`
+        : `of ${num(target, false)} qualified · ${targetPct}%`,
+      meterPct: targetPct,
+      meterColor: behind ? 'var(--late)' : 'var(--copper)',
+      verdict: timePct === null
+        ? isAr ? 'بلا مدة — لا وتيرة تُحسب' : 'No dates — no pace to compute'
+        : behind
+          ? isAr ? 'متأخرة عن الوتيرة' : 'Behind pace'
+          : isAr ? 'على الوتيرة' : 'On pace',
+      verdictClass: timePct === null ? 'mute' : '',
+      verdictColor: timePct === null ? undefined : behind ? 'var(--late)' : 'var(--go)',
+    };
+  }
+
+  // No numeric target: judge the spend pace instead.
+  const spendPct = budget > 0 ? Math.min(100, Math.round((spend / budget) * 100)) : 0;
+  const under = timePct !== null && spendPct < timePct - 10;
+  const over = timePct !== null && spendPct > timePct + 10;
+  return {
+    big: num(qualified, isAr),
+    sub: isAr ? `مؤهلًا · المصروف ${num(spend, true)}` : `qualified · ${num(spend, false)} spent`,
+    meterPct: spendPct,
+    meterColor: over ? 'var(--late)' : under ? 'var(--wait)' : 'var(--copper)',
+    verdict: timePct === null
+      ? isAr ? 'بلا مدة — لا وتيرة تُحسب' : 'No dates — no pace to compute'
+      : over
+        ? isAr ? 'إنفاق زائد' : 'Overspending'
+        : under
+          ? isAr ? 'إنفاق ناقص' : 'Underspending'
+          : isAr ? 'على الوتيرة' : 'On pace',
+    verdictClass: timePct === null ? 'mute' : '',
+    verdictColor: timePct === null ? undefined : over ? 'var(--late)' : under ? 'var(--wait)' : 'var(--go)',
+  };
+}
 
 export default function CampaignsPage() {
   const { isAr, can, projects, projectName } = useWorkspace();
@@ -296,7 +427,7 @@ export default function CampaignsPage() {
                 {isAr ? 'لا حملات تطابق هذه المرشحات.' : 'No campaigns match these filters.'}
               </div>
             ) : (
-              <div className="card">
+              <div className="card m4-desk">
                 <div className="tbl-wrap">
                   <table className="tbl">
                     <thead>
@@ -385,6 +516,49 @@ export default function CampaignsPage() {
                       })}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            )}
+
+            {/* ── s48 phone2 — the same rows as verdict cards (<760px) ── */}
+            {filtered.length > 0 && (
+              <div className="m4-mob">
+                <div className="m4-cards">
+                  {filtered.map((c) => {
+                    const st = TABLE_STATUS[c.status] ?? FALLBACK_STATUS;
+                    const dimmed = c.status === 'done' || c.status === 'cancelled';
+                    const card = verdictCardOf(c, isAr);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className={`m4-vcard${dimmed ? ' dim' : ''}`}
+                        onClick={() => navigate(`/m/campaigns/${c.id}`)}
+                      >
+                        <div className="m4-vtop">
+                          <span className="id ltr">{c.ref ?? '—'}</span>
+                          <span className="tag">
+                            {c.kind === 'paid' ? (isAr ? 'مدفوعة' : 'Paid') : (isAr ? 'عضوية' : 'Organic')}
+                          </span>
+                          <Pill tone={st.tone}>{isAr ? st.ar : st.en}</Pill>
+                        </div>
+                        <div className="m4-vt">{c.name}</div>
+                        <div className="m4-vnum">
+                          <span className="n">{card.big}</span>
+                          <span className="s">{card.sub}</span>
+                        </div>
+                        <div className="meter">
+                          <i style={{ width: `${card.meterPct}%`, background: card.meterColor }} />
+                        </div>
+                        <div
+                          className={`m4-verdict${card.verdictClass ? ` ${card.verdictClass}` : ''}`}
+                          style={card.verdictColor ? { color: card.verdictColor } : undefined}
+                        >
+                          {card.verdict}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}

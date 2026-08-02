@@ -222,7 +222,7 @@ export default function LibraryPage() {
         )}
       </PageHead>
 
-      <div className="body">
+      <div className={`body${can('manage_assets') ? ' m4-cta-pad' : ''}`}>
         <div className="filt">
           {KIND_ORDER.filter((k) => KIND_SECTION[k]).map((k) => (
             <button
@@ -389,6 +389,22 @@ export default function LibraryPage() {
           );
         })}
       </div>
+
+      {/* s51 phone2 — the fixed upload CTA. Phone photos are the library's
+          main intake, so the action floats above the grid instead of hiding
+          in the header. */}
+      {can('manage_assets') && (
+        <div className="m4-mob m4-fixcta">
+          <button
+            type="button"
+            className="btn btn-p m4-fixbtn"
+            onClick={() => navigate('/m/library/upload')}
+          >
+            {uploadIcon}
+            {isAr ? 'رفع من الجوال' : 'Upload from the phone'}
+          </button>
+        </div>
+      )}
     </>
   );
 }

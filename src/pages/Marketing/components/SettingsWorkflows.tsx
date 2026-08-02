@@ -217,7 +217,17 @@ function StepRow({
         {!expanded && (
           <button type="button" className="se-step-open" onClick={onOpen}>
             <div className="nm3">{isAr ? step.label_ar : step.label_en}</div>
-            <div className="rowx">
+            {/* s51 phone1 — the collapsed accordion row shows only the role
+                and the due window (+ «اعتماد» when the step is one): enough
+                to browse; the details open on demand. */}
+            <div className="m4-wf-sub">
+              {roleLabel(step.role_key, isAr)}
+              {' · '}
+              {dueLabel(step.due_days, isAr)}
+              {step.is_approval ? (isAr ? ' · اعتماد' : ' · approval') : ''}
+            </div>
+            <span className="m4-chev" aria-hidden="true">{isAr ? '‹' : '›'}</span>
+            <div className="rowx m4-desk">
               <div className="cell">
                 <div className="k2">{isAr ? 'الدور' : 'Role'}</div>
                 <div className="v2">{roleLabel(step.role_key, isAr)}</div>
@@ -263,7 +273,7 @@ function StepRow({
               )}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13, marginTop: 13 }}>
+            <div className="m4-2col" style={{ marginTop: 13 }}>
               <div>
                 <div className="lbl" style={{ marginBottom: 5 }}>{isAr ? 'الاسم بالعربية' : 'Arabic label'}</div>
                 <input

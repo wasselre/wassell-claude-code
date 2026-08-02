@@ -1015,7 +1015,8 @@ export default function CampaignDetailPage() {
                         : 'No executions yet. Add one row per platform running under this goal.'}
                     </p>
                   ) : (
-                    <div className="tbl-wrap">
+                    <>
+                    <div className="tbl-wrap m4-desk">
                       <table className="tbl">
                         <thead>
                           <tr>
@@ -1070,6 +1071,127 @@ export default function CampaignDetailPage() {
                         </tbody>
                       </table>
                     </div>
+
+                    {/* s32 phone2 — the same rows as cards: cost per
+                        qualified is the dominant number because it is the
+                        number the decision is made on. */}
+                    <div className="m4-mob" style={{ padding: '10px 12px 12px' }}>
+                      <div className="m4-cards">
+                        {execStats.map((s) => {
+                          const x = s.exec;
+                          const remaining = (x.budget ?? 0) - (x.spend ?? 0);
+                          const under = !s.weak && !s.noQual
+                            && s.spendPct !== null && timePct !== null && s.spendPct < timePct - 10;
+                          const ratio = s.weak && bestStat && bestStat.cpq !== null && s.cpq !== null
+                            ? Math.round((s.cpq / bestStat.cpq) * 10) / 10
+                            : null;
+                          const pill = s.weak
+                            ? { tone: 'late' as Tone, text: isAr ? 'أداء ضعيف' : 'Weak performer' }
+                            : s.noQual
+                              ? { tone: 'idle' as Tone, text: isAr ? 'بلا مؤهلين' : 'No qualified' }
+                              : under
+                                ? { tone: 'wait' as Tone, text: isAr ? 'إنفاق ناقص' : 'Underspending' }
+                                : x.status === 'running'
+                                  ? { tone: 'go' as Tone, text: isAr ? 'على الوتيرة' : 'On pace' }
+                                  : {
+                                      tone: 'idle' as Tone,
+                                      text: (isAr ? EXEC_STATUS_LABELS[x.status]?.ar : EXEC_STATUS_LABELS[x.status]?.en)
+                                        ?? x.status,
+                                    };
+                          return (
+                            <button
+                              key={x.id}
+                              type="button"
+                              className={`m4-vcard${s.weak ? ' late2' : ''}${s.noQual ? ' dim' : ''}`}
+                              onClick={() => navigate(`/m/campaigns/${item.id}/exec/${x.id}`)}
+                            >
+                              <div className="m4-vtop">
+                                <span
+                                  className="m4-vdot"
+                                  style={{ background: PLATFORM_DOT[x.platform] ?? 'var(--copper)' }}
+                                />
+                                <span className="m4-vname">{pname(x.platform)}</span>
+                                <Pill tone={pill.tone}>{pill.text}</Pill>
+                              </div>
+                              {!s.noQual && (
+                                <>
+                                  <div className="m4-vnum">
+                                    <span
+                                      className="n lg"
+                                      style={{
+                                        color: s.cpq === null
+                                          ? 'var(--mute)'
+                                          : s.weak ? 'var(--late)' : 'var(--go)',
+                                      }}
+                                    >
+                                      {s.cpq === null ? '—' : num(Math.round(s.cpq), isAr)}
+                                    </span>
+                                    <span className="s">
+                                      {isAr ? 'ريال لكل مؤهل' : 'SAR per qualified'}
+                                      {ratio !== null && bestName
+                                        ? isAr
+                                          ? ` · ${num(ratio, true)} ضعف ${bestName}`
+                                          : ` · ${num(ratio, false)}× ${bestName}`
+                                        : s.isBestCpq
+                                          ? isAr ? ' · الأرخص' : ' · the cheapest'
+                                          : ''}
+                                    </span>
+                                  </div>
+                                  <div className="meter">
+                                    <i
+                                      style={{
+                                        width: `${Math.min(100, Math.max(0, s.spendPct ?? 0))}%`,
+                                        background: s.weak ? 'var(--late)' : under ? 'var(--wait)' : 'var(--copper)',
+                                      }}
+                                    />
+                                  </div>
+                                </>
+                              )}
+                              <div className="m4-vstats">
+                                <span>
+                                  {s.weak
+                                    ? isAr
+                                      ? <>تبقّى <b>{num(Math.max(0, remaining), true)}</b> ريال</>
+                                      : <><b>{num(Math.max(0, remaining), false)}</b> SAR remain</>
+                                    : x.budget !== null
+                                      ? isAr
+                                        ? <>صُرف <b>{num(x.spend, true)}</b> من {num(x.budget, true)}</>
+                                        : <><b>{num(x.spend, false)}</b> of {num(x.budget, false)} spent</>
+                                      : isAr
+                                        ? <>صُرف <b>{num(x.spend, true)}</b> ريال</>
+                                        : <><b>{num(x.spend, false)}</b> SAR spent</>}
+                                </span>
+                                <span>{isAr ? `${num(x.leads, true)} عميلًا` : `${num(x.leads, false)} leads`}</span>
+                                <span>{isAr ? `${num(x.qualified, true)} مؤهلًا` : `${num(x.qualified, false)} qualified`}</span>
+                              </div>
+                              {s.weak && bestStat && bestName && remaining > 0 && can('approve_budget') && (
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  className="btn btn-p btn-sm m4-vact"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShift({ from: x.id, to: bestStat.exec.id, amount: remaining });
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setShift({ from: x.id, to: bestStat.exec.id, amount: remaining });
+                                    }
+                                  }}
+                                >
+                                  {isAr
+                                    ? `حوّل الـ${num(remaining, true)} إلى ${bestName}`
+                                    : `Shift the ${num(remaining, false)} to ${bestName}`}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    </>
                   )}
                 </div>
 
@@ -1779,7 +1901,9 @@ export default function CampaignDetailPage() {
               </div>
             </div>
 
-            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+            {/* Stacks to one column on phones — s52's rule: dashboards are
+                stacked in priority order, never compressed. */}
+            <div className="grid g3">
               <div className="card">
                 <div className="card-h">
                   <h4>{isAr ? 'تكلفة العميل المؤهل' : 'Cost per qualified'}</h4>
