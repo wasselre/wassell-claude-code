@@ -333,6 +333,62 @@ function mapRoleTask(t: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+/**
+ * The pinned path each listed subject is following: its open task's step key +
+ * the pinned workflow version's steps. Screens 02 («القادم إليك») and 35 (the
+ * creative/process approval split) both read steps from the PINNED version,
+ * never from the workflow's current definition — the item keeps following the
+ * path it started on.
+ */
+async function loadPinnedStepMeta(
+  sb: SupabaseClient,
+  subjectIds: string[],
+): Promise<
+  | { bySubject: Map<string, { steps: StepDef[]; currentStepKey: string | null }> }
+  | { fail: Response }
+> {
+  const bySubject = new Map<string, { steps: StepDef[]; currentStepKey: string | null }>();
+  if (subjectIds.length === 0) return { bySubject };
+
+  const taskRes = await sb.from('workflow_role_tasks')
+    .select('subject_id, step_key, workflow_version_id')
+    .eq('subject_table', 'mos_content')
+    .in('subject_id', subjectIds)
+    .eq('status', 'open');
+  if (taskRes.error) {
+    const fail = dbFail(taskRes.error);
+    if (fail) return { fail };
+    return { bySubject };
+  }
+  const tasks = (taskRes.data ?? []) as Array<{
+    subject_id: string; step_key: string | null; workflow_version_id: string | null;
+  }>;
+  const versionIds = Array.from(new Set(
+    tasks.map((t) => t.workflow_version_id).filter((v): v is string => typeof v === 'string' && v !== ''),
+  ));
+  const stepsByVersion = new Map<string, StepDef[]>();
+  if (versionIds.length > 0) {
+    const verRes = await sb.from('workflow_versions').select('id, definition').in('id', versionIds);
+    if (verRes.error) {
+      const fail = dbFail(verRes.error);
+      if (fail) return { fail };
+      return { bySubject };
+    }
+    for (const v of verRes.data ?? []) {
+      const row = v as { id: string; definition: unknown };
+      const metadata = (row.definition as { metadata?: unknown } | null)?.metadata;
+      stepsByVersion.set(row.id, stepsOf(metadata));
+    }
+  }
+  for (const t of tasks) {
+    bySubject.set(t.subject_id, {
+      steps: (t.workflow_version_id ? stepsByVersion.get(t.workflow_version_id) : undefined) ?? [],
+      currentStepKey: t.step_key,
+    });
+  }
+  return { bySubject };
+}
+
 /** StepDefs → the step shape the SPA renders (id = key, position = 1-based index). */
 function mapStepDefs(workflowId: string, steps: StepDef[]): Array<Record<string, unknown>> {
   return steps.map((s, i) => ({
@@ -556,14 +612,12 @@ async function openFirstTask(
     const pinFail = dbFail(pin.error);
     if (pinFail) return pinFail;
   }
-  const dueAt = new Date(Date.now() + first.due_days * 86_400_000).toISOString();
-  const taskRes = await sb.from('workflow_role_tasks').insert({
-    subject_table: 'mos_content',
-    subject_id: contentId,
-    workflow_version_id: versionId,
-    step_key: first.key,
-    role_key: first.role_key,
-    due_at: dueAt,
+  // Definer-rights RPC: screen 33 grants creation to Writer/Ops, but the task
+  // INSERT policy requires 'assign' — opening the first task on create is an
+  // engine concern, not a caller privilege (migration 08).
+  const taskRes = await sb.rpc('workflow_role_path_start', {
+    p_subject_table: 'mos_content',
+    p_subject_id: contentId,
   });
   return dbFail(taskRes.error);
 }
@@ -704,7 +758,38 @@ export default async function handler(req: Request): Promise<Response> {
 
         const fail = dbFail(error);
         if (fail) return fail;
-        return jsonOk({ content: data ?? [] });
+
+        // Screen 03's campaign column and platform filter need two facts the
+        // content view does not carry: the campaign's NAME and which platforms
+        // each item is headed to. Both are one batched lookup, never per-row.
+        const rows = (data ?? []) as Row[];
+        const ids = rows.map((r) => r.id as string);
+        const campaignIds = Array.from(new Set(
+          rows.map((r) => r.campaign_id as string | null).filter((c): c is string => Boolean(c)),
+        ));
+        const camps = campaignIds.length > 0
+          ? await sb.from('mos_campaigns').select('id, name').in('id', campaignIds)
+          : { data: [] as Array<{ id: string; name: string }>, error: null };
+        const pubs = ids.length > 0
+          ? await sb.from('mos_publications').select('content_id, platform').in('content_id', ids)
+          : { data: [] as Array<{ content_id: string; platform: string }>, error: null };
+        const fail2 = dbFail(camps.error) ?? dbFail(pubs.error);
+        if (fail2) return fail2;
+
+        const campName = new Map((camps.data ?? []).map((c) => [c.id, c.name]));
+        const plats = new Map<string, string[]>();
+        for (const p of pubs.data ?? []) {
+          const arr = plats.get(p.content_id) ?? [];
+          if (p.platform && !arr.includes(p.platform)) arr.push(p.platform);
+          plats.set(p.content_id, arr);
+        }
+        return jsonOk({
+          content: rows.map((r) => ({
+            ...r,
+            campaign_name: r.campaign_id ? campName.get(r.campaign_id as string) ?? null : null,
+            platforms: plats.get(r.id as string) ?? [],
+          })),
+        });
       }
 
       /* -------------------------------------------------------- */
@@ -981,6 +1066,27 @@ export default async function handler(req: Request): Promise<Response> {
         });
         const f = dbFail(res.error);
         if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      /* -------------------------------------------------------- */
+      /* «تأجيل / تقديم» (s35) — move an open task's due date.     */
+      /* RLS gates the write to roles holding 'assign' (manager /  */
+      /* ops supervisor / admin), the same gate as transfer.       */
+      /* -------------------------------------------------------- */
+      case 'task_update': {
+        const taskId = str(body.task_id);
+        const dueAt = str(body.due_at);
+        if (!taskId) return jsonError(400, 'task_id is required');
+        if (!dueAt) return jsonError(400, 'due_at is required');
+        if (Number.isNaN(new Date(dueAt).getTime())) return jsonError(400, 'due_at must be a date');
+        const upd = await sb.from('workflow_role_tasks')
+          .update({ due_at: new Date(dueAt).toISOString() })
+          .eq('id', taskId).eq('subject_table', 'mos_content').eq('status', 'open')
+          .select('id').maybeSingle();
+        const f = dbFail(upd.error);
+        if (f) return f;
+        if (!upd.data) return jsonError(404, 'open task not found');
         return jsonOk({ ok: true });
       }
 
@@ -1569,7 +1675,12 @@ export default async function handler(req: Request): Promise<Response> {
       /* -------------------------------------------------------- */
       case 'overview': {
         const nowIso = new Date().toISOString();
-        const { weekStart, weekEnd } = weekBounds(str(body.week_of));
+        // Screen 01's segmented control: هذا الأسبوع / الشهر / الربع. The
+        // response shape is unchanged — week_start/week_end carry the bounds
+        // of whichever period was asked for.
+        const periodRaw = str(body.period);
+        const period = periodRaw === 'month' || periodRaw === 'quarter' ? periodRaw : 'week';
+        const { weekStart, weekEnd } = periodBounds(period, str(body.week_of));
         const roleRes = await sb.rpc('wassell_mos_role', { p_auth_uid: user.userId });
         const roleFail = dbFail(roleRes.error);
         if (roleFail) return roleFail;
@@ -1583,7 +1694,7 @@ export default async function handler(req: Request): Promise<Response> {
           .is('archived_at', null).not('status_key', 'in', '("draft","done")')
           .lt('current_task_due_at', nowIso);
 
-        const [liveRes, mineRes, lateRes, stalled, week, spend, byType] = await Promise.all([
+        const [liveRes, mineRes, lateRes, stalled, week, spend, byType, mineOldest, lateRows] = await Promise.all([
           live,
           mine,
           late,
@@ -1594,31 +1705,91 @@ export default async function handler(req: Request): Promise<Response> {
             .order('updated_at', { ascending: true }).limit(8),
           sb.from('mos_publication_v')
             .select('id, content_id, platform, status, scheduled_at, published_at')
-            .gte('scheduled_at', weekStart).lte('scheduled_at', weekEnd)
+            .gte('scheduled_at', weekStart).lt('scheduled_at', weekEnd)
             .order('scheduled_at', { ascending: true }).limit(60),
           sb.from('mos_campaign_v')
             .select('id, ref, name, status, budget_total, total_spend, total_leads, total_qualified')
             .in('status', ['active', 'planning']).limit(20),
           sb.from('mos_content_v').select('content_type_key, status_key')
             .is('archived_at', null).not('status_key', 'in', '("draft","done")').limit(1000),
+          // «أقدمها منتظر منذ …» — the oldest item sitting with my role.
+          sb.from('mos_content_v').select('updated_at')
+            .is('archived_at', null).eq('owner_role', myRole)
+            .order('updated_at', { ascending: true }).limit(1),
+          // The late stat's breakdown («٢ في التصميم · ٢ بانتظار المراجعة»).
+          sb.from('mos_content_v').select('current_step_label_ar, current_step_label_en')
+            .is('archived_at', null).not('status_key', 'in', '("draft","done")')
+            .lt('current_task_due_at', nowIso).limit(200),
         ]);
 
         const f = dbFail(liveRes.error) ?? dbFail(mineRes.error) ?? dbFail(lateRes.error)
-          ?? dbFail(stalled.error) ?? dbFail(week.error) ?? dbFail(spend.error) ?? dbFail(byType.error);
+          ?? dbFail(stalled.error) ?? dbFail(week.error) ?? dbFail(spend.error) ?? dbFail(byType.error)
+          ?? dbFail(mineOldest.error) ?? dbFail(lateRows.error);
         if (f) return f;
+
+        // Titles for the week card rows — one extra query beats N.
+        const weekContentIds = Array.from(new Set(
+          (week.data ?? []).map((p) => (p as unknown as Row).content_id as string),
+        ));
+        let weekTitles = new Map<string, { ref: string | null; title: string }>();
+        if (weekContentIds.length > 0) {
+          const t = await sb.from('mos_content_v').select('id, ref, title').in('id', weekContentIds);
+          const tf = dbFail(t.error);
+          if (tf) return tf;
+          weekTitles = new Map((t.data ?? []).map((r) => {
+            const row = r as unknown as { id: string; ref: string | null; title: string };
+            return [row.id, { ref: row.ref, title: row.title }];
+          }));
+        }
+        const weekRows = (week.data ?? []).map((p) => {
+          const row = p as unknown as Row;
+          const t = weekTitles.get(row.content_id as string);
+          return { ...row, ref: t?.ref ?? null, title: t?.title ?? null };
+        });
+
+        // «بحاجة لموعد نشر» — aimed at this period but nothing scheduled yet.
+        const unscheduledRes = await sb.from('mos_content_v')
+          .select('id, ref, title, target_publish_at')
+          .is('archived_at', null).not('status_key', 'in', '("draft","done")')
+          .gte('target_publish_at', weekStart).lt('target_publish_at', weekEnd)
+          .order('target_publish_at', { ascending: true }).limit(20);
+        const uf = dbFail(unscheduledRes.error);
+        if (uf) return uf;
+        const unscheduled = (unscheduledRes.data ?? []).filter((r) =>
+          !weekContentIds.includes((r as unknown as Row).id as string));
+
+        // Aggregate the late rows by stage label for the stat's detail line.
+        const mixMap = new Map<string, { label_ar: string; label_en: string; n: number }>();
+        for (const r of lateRows.data ?? []) {
+          const row = r as unknown as { current_step_label_ar: string | null; current_step_label_en: string | null };
+          const key = row.current_step_label_ar ?? row.current_step_label_en ?? '';
+          if (!key) continue;
+          const cur = mixMap.get(key);
+          if (cur) cur.n += 1;
+          else mixMap.set(key, {
+            label_ar: row.current_step_label_ar ?? key,
+            label_en: row.current_step_label_en ?? key,
+            n: 1,
+          });
+        }
+        const lateMix = Array.from(mixMap.values()).sort((a, b) => b.n - a.n).slice(0, 3);
 
         return jsonOk({
           role: myRole,
+          period,
           counts: {
             in_production: liveRes.count ?? 0,
             waiting_on_me: mineRes.count ?? 0,
-            publishing_this_week: (week.data ?? []).length,
+            publishing_this_week: weekRows.length + unscheduled.length,
             late: lateRes.count ?? 0,
           },
           stalled: stalled.data ?? [],
-          week: week.data ?? [],
+          week: weekRows,
+          unscheduled,
           campaigns: spend.data ?? [],
           mix: byType.data ?? [],
+          waiting_oldest_at: (mineOldest.data?.[0] as { updated_at?: string } | undefined)?.updated_at ?? null,
+          late_mix: lateMix,
           week_start: weekStart,
           week_end: weekEnd,
         });
@@ -1660,7 +1831,67 @@ export default async function handler(req: Request): Promise<Response> {
           if (tf) return tf;
           tasks = (t.data ?? []).map((row) => mapRoleTask(row as Record<string, unknown>));
         }
-        return jsonOk({ role: myRole, content: rows.data ?? [], tasks });
+
+        // Pinned-version steps for the listed tasks — one read drives both the
+        // approval split on screen 35 (is_approval / approval_kind per task)
+        // and screen 02's «القادم إليك» band below.
+        const stepMeta = await loadPinnedStepMeta(sb, ids);
+        if ('fail' in stepMeta) return stepMeta.fail;
+        tasks = (tasks as Array<Record<string, unknown>>).map((t) => {
+          const meta = stepMeta.bySubject.get(t.content_id as string);
+          const step = meta?.steps.find((s) => s.key === t.step_id);
+          return {
+            ...t,
+            is_approval: step?.is_approval ?? false,
+            approval_kind: step?.approval_kind ?? null,
+          };
+        });
+
+        // «القادم إليك» (s02) — NOT tasks: in-flight items whose pinned path
+        // reaches my role at a FUTURE step, so I can prepare without my queue
+        // filling with work I cannot start yet.
+        let upcoming: unknown[] = [];
+        if (scope === 'mine' && (MOS_ROLE_KEYS as readonly string[]).includes(myRole)) {
+          const cand = await sb.from('mos_content_v')
+            .select('id, ref, title')
+            .is('archived_at', null).not('status_key', 'in', '("draft","done")')
+            .neq('owner_role', myRole).limit(200);
+          const cf = dbFail(cand.error);
+          if (cf) return cf;
+          const candIds = (cand.data ?? []).map((r) => (r as unknown as Row).id as string);
+          if (candIds.length > 0) {
+            const meta = await loadPinnedStepMeta(sb, candIds);
+            if ('fail' in meta) return meta.fail;
+            const titleBy = new Map((cand.data ?? []).map((r) => {
+              const row = r as unknown as { id: string; ref: string | null; title: string };
+              return [row.id, row];
+            }));
+            for (const [subjectId, m] of meta.bySubject) {
+              if (!m.currentStepKey) continue;
+              const idx = m.steps.findIndex((s) => s.key === m.currentStepKey);
+              if (idx < 0) continue;
+              for (let j = idx + 1; j < m.steps.length; j += 1) {
+                const s = m.steps[j];
+                if (s.role_key !== myRole) continue;
+                const c = titleBy.get(subjectId);
+                if (!c) break;
+                upcoming.push({
+                  content_id: subjectId,
+                  ref: c.ref,
+                  title: c.title,
+                  step_key: s.key,
+                  step_label_ar: s.label_ar,
+                  step_label_en: s.label_en,
+                  steps_away: j - idx,
+                });
+                break;
+              }
+            }
+            upcoming = (upcoming as Array<{ steps_away: number }>)
+              .sort((a, b) => a.steps_away - b.steps_away).slice(0, 12);
+          }
+        }
+        return jsonOk({ role: myRole, content: rows.data ?? [], tasks, upcoming });
       }
 
       /* -------------------------------------------------------- */
@@ -2215,6 +2446,132 @@ export default async function handler(req: Request): Promise<Response> {
         const mergedFail = dbFail(merged.error);
         if (mergedFail) return mergedFail;
         return jsonOk({ campaign: merged.row });
+      }
+
+      /* -------------------------------------------------------- */
+      /* CEO overview (s34) — three questions only: are we         */
+      /* producing enough, at what cost, and what came back. NO    */
+      /* task lists: the CEO is not a production manager.          */
+      /* -------------------------------------------------------- */
+      case 'ceo_overview': {
+        const periodRaw = str(body.period);
+        const period: 'month' | 'quarter' | 'year' =
+          periodRaw === 'quarter' || periodRaw === 'year' ? periodRaw : 'month';
+        const { weekStart: start, weekEnd: end } = periodBounds(period, null);
+        const { weekStart: prevStart, weekEnd: prevEnd } = previousPeriodBounds(period, null);
+
+        // The six calendar months ending this month — the production chart.
+        const now = new Date();
+        const monthKeys: string[] = [];
+        for (let i = 5; i >= 0; i -= 1) {
+          const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+          monthKeys.push(d.toISOString().slice(0, 7));
+        }
+        const sixMonthsAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1))
+          .toISOString();
+
+        const [publishedNow, publishedPrev, published6m, campaigns, pendingSig, threshold] =
+          await Promise.all([
+            sb.from('mos_publication_v').select('id', { count: 'exact', head: true })
+              .eq('status', 'published')
+              .gte('published_at', start).lt('published_at', end),
+            sb.from('mos_publication_v').select('id', { count: 'exact', head: true })
+              .eq('status', 'published')
+              .gte('published_at', prevStart).lt('published_at', prevEnd),
+            sb.from('mos_publication_v').select('published_at')
+              .eq('status', 'published')
+              .gte('published_at', sixMonthsAgo).limit(2000),
+            // Campaigns the CEO judges: anything running or recently ended.
+            sb.from('mos_campaign_v')
+              .select('id, ref, name, status, kind, objective, budget_total, total_spend, total_leads, total_qualified, success_metric, success_threshold, goal, starts_on, ends_on')
+              .in('status', ['active', 'paused', 'done'])
+              .order('total_spend', { ascending: false, nullsFirst: false })
+              .limit(8),
+            sb.from('mos_campaigns')
+              .select('id, ref, name, budget_total, success_metric, success_threshold, goal')
+              .eq('requires_signature', true)
+              .is('signed_at', null)
+              .is('archived_at', null)
+              .order('budget_total', { ascending: false })
+              .limit(10),
+            readSignatureThreshold(sb),
+          ]);
+        const f = dbFail(publishedNow.error) ?? dbFail(publishedPrev.error)
+          ?? dbFail(published6m.error) ?? dbFail(campaigns.error) ?? dbFail(pendingSig.error);
+        if (f) return f;
+
+        // The funnel's bottom half lives in the attribution ledger — aggregate
+        // mos_campaign_outcomes over the campaigns on the list.
+        const campaignRows = (campaigns.data ?? []) as Array<Record<string, unknown>>;
+        const outcomeByCampaign = new Map<string, {
+          appointments: number; reservations: number; reservation_value: number;
+        }>();
+        const outcomeResults = await Promise.all(
+          campaignRows.map((c) => sb.rpc('mos_campaign_outcomes', { p_campaign_id: c.id as string })),
+        );
+        for (let i = 0; i < campaignRows.length; i += 1) {
+          const res = outcomeResults[i];
+          const of = dbFail(res.error);
+          if (of) return of;
+          const o = (res.data ?? {}) as Record<string, unknown>;
+          outcomeByCampaign.set(campaignRows[i].id as string, {
+            appointments: typeof o.appointments === 'number' ? o.appointments : 0,
+            reservations: typeof o.reservations === 'number' ? o.reservations : 0,
+            reservation_value: typeof o.reservation_value === 'number' ? o.reservation_value : 0,
+          });
+        }
+
+        const totals = campaignRows.reduce(
+          (acc, c) => {
+            const o = outcomeByCampaign.get(c.id as string);
+            acc.spend += typeof c.total_spend === 'number' ? c.total_spend : 0;
+            acc.committed += typeof c.budget_total === 'number' ? c.budget_total : 0;
+            acc.leads += typeof c.total_leads === 'number' ? c.total_leads : 0;
+            acc.qualified += typeof c.total_qualified === 'number' ? c.total_qualified : 0;
+            acc.appointments += o?.appointments ?? 0;
+            acc.reservations += o?.reservations ?? 0;
+            acc.reservation_value += o?.reservation_value ?? 0;
+            return acc;
+          },
+          { spend: 0, committed: 0, leads: 0, qualified: 0, appointments: 0, reservations: 0, reservation_value: 0 },
+        );
+
+        const monthCount = new Map<string, number>(monthKeys.map((k) => [k, 0]));
+        for (const p of published6m.data ?? []) {
+          const at = (p as { published_at?: string | null }).published_at;
+          if (!at) continue;
+          const key = at.slice(0, 7);
+          if (monthCount.has(key)) monthCount.set(key, (monthCount.get(key) ?? 0) + 1);
+        }
+
+        return jsonOk({
+          period,
+          period_start: start,
+          period_end: end,
+          produced: publishedNow.count ?? 0,
+          produced_prev: publishedPrev.count ?? 0,
+          ...totals,
+          campaigns: campaignRows.map((c) => {
+            const o = outcomeByCampaign.get(c.id as string);
+            const spend = typeof c.total_spend === 'number' ? c.total_spend : 0;
+            const reservations = o?.reservations ?? 0;
+            return {
+              id: c.id,
+              ref: c.ref ?? null,
+              name: c.name ?? '',
+              status: c.status,
+              objective: c.objective ?? null,
+              starts_on: c.starts_on ?? null,
+              spend,
+              qualified: typeof c.total_qualified === 'number' ? c.total_qualified : 0,
+              reservations,
+              cost_per_reservation: reservations > 0 ? Math.round(spend / reservations) : null,
+            };
+          }),
+          production_by_month: monthKeys.map((k) => ({ month: k, count: monthCount.get(k) ?? 0 })),
+          pending_signature: pendingSig.data ?? [],
+          signature_threshold: threshold,
+        });
       }
 
       /* -------------------------------------------------------- */
@@ -3551,4 +3908,67 @@ function weekBounds(iso: string | null): { weekStart: string; weekEnd: string } 
   const end = new Date(start);
   end.setUTCDate(start.getUTCDate() + 7);
   return { weekStart: start.toISOString(), weekEnd: end.toISOString() };
+}
+
+/**
+ * Screen 01/34's segmented periods. `week` is the publishing week above;
+ * `month` / `quarter` / `year` are calendar UTC bounds, `[start, end)`.
+ */
+function periodBounds(
+  period: 'week' | 'month' | 'quarter' | 'year',
+  iso: string | null,
+): { weekStart: string; weekEnd: string } {
+  if (period === 'week') return weekBounds(iso);
+  const base = iso ? new Date(iso) : new Date();
+  const y = base.getUTCFullYear();
+  const m = base.getUTCMonth();
+  if (period === 'month') {
+    return {
+      weekStart: new Date(Date.UTC(y, m, 1)).toISOString(),
+      weekEnd: new Date(Date.UTC(y, m + 1, 1)).toISOString(),
+    };
+  }
+  if (period === 'quarter') {
+    const q = Math.floor(m / 3) * 3;
+    return {
+      weekStart: new Date(Date.UTC(y, q, 1)).toISOString(),
+      weekEnd: new Date(Date.UTC(y, q + 3, 1)).toISOString(),
+    };
+  }
+  return {
+    weekStart: new Date(Date.UTC(y, 0, 1)).toISOString(),
+    weekEnd: new Date(Date.UTC(y + 1, 0, 1)).toISOString(),
+  };
+}
+
+/** The bounds of the period of the same length immediately before [start, end). */
+function previousPeriodBounds(
+  period: 'week' | 'month' | 'quarter' | 'year',
+  iso: string | null,
+): { weekStart: string; weekEnd: string } {
+  const base = iso ? new Date(iso) : new Date();
+  if (period === 'week') {
+    const prev = new Date(base);
+    prev.setUTCDate(base.getUTCDate() - 7);
+    return weekBounds(prev.toISOString());
+  }
+  const y = base.getUTCFullYear();
+  const m = base.getUTCMonth();
+  if (period === 'month') {
+    return {
+      weekStart: new Date(Date.UTC(y, m - 1, 1)).toISOString(),
+      weekEnd: new Date(Date.UTC(y, m, 1)).toISOString(),
+    };
+  }
+  if (period === 'quarter') {
+    const q = Math.floor(m / 3) * 3;
+    return {
+      weekStart: new Date(Date.UTC(y, q - 3, 1)).toISOString(),
+      weekEnd: new Date(Date.UTC(y, q, 1)).toISOString(),
+    };
+  }
+  return {
+    weekStart: new Date(Date.UTC(y - 1, 0, 1)).toISOString(),
+    weekEnd: new Date(Date.UTC(y, 0, 1)).toISOString(),
+  };
 }
