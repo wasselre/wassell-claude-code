@@ -1,4 +1,9 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
+
+// Rows rendered per expand/"show more" click in the category list. Big enough
+// that most categories fit in one page; small enough that the worst category
+// (options, ≈1,700 rows × two inputs each) can never freeze the main thread.
+const CATEGORY_PAGE_SIZE = 60;
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { needsTranslation } from '@/lib/autoTranslate';
@@ -60,6 +65,11 @@ export default function TranslationSettingsPage() {
   const [editAr, setEditAr] = useState('');
   const [editEn, setEditEn] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['models']));
+  // Per-category render cap (freeze fix, 2026-08-02): rows commit a page at a
+  // time instead of all ≈1,700 at once. Reset whenever the visible item set
+  // changes shape (search / filter), so a narrowed list starts from page one.
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
+  useEffect(() => { setVisibleCounts({}); }, [search, filter]);
 
   // Build the flat list of all translatable items
   const allItems = useMemo((): TranslationItem[] => {
@@ -699,7 +709,13 @@ export default function TranslationSettingsPage() {
 
             {expandedCategories.has(catKey) && (
               <div className="border-t border-sand/10">
-                {items.map((item) => {
+                {/* Incremental rendering: expanding a big category (fields ≈590,
+                    options ≈1,700 rows, each with two edit inputs) used to
+                    commit EVERY row at once and froze the main thread for tens
+                    of seconds (reproduced live 2026-08-02 — the renderer hung
+                    past a 45 s CDP timeout). Render a page at a time; search/
+                    filter still operate on the FULL list upstream. */}
+                {items.slice(0, visibleCounts[catKey] ?? CATEGORY_PAGE_SIZE).map((item) => {
                   const needs = needsTranslation(item.label_ar, item.label_en);
                   const isEditing = editingId === item.id;
 
@@ -779,6 +795,21 @@ export default function TranslationSettingsPage() {
                     </div>
                   );
                 })}
+                {items.length > (visibleCounts[catKey] ?? CATEGORY_PAGE_SIZE) && (
+                  <button
+                    onClick={() =>
+                      setVisibleCounts((v) => ({
+                        ...v,
+                        [catKey]: (v[catKey] ?? CATEGORY_PAGE_SIZE) + CATEGORY_PAGE_SIZE * 3,
+                      }))
+                    }
+                    className="w-full px-5 py-3 text-sm font-bold text-copper hover:bg-cream/40 transition-colors"
+                  >
+                    {isAr
+                      ? `عرض المزيد (${items.length - (visibleCounts[catKey] ?? CATEGORY_PAGE_SIZE)} متبقٍ)`
+                      : `Show more (${items.length - (visibleCounts[catKey] ?? CATEGORY_PAGE_SIZE)} remaining)`}
+                  </button>
+                )}
               </div>
             )}
           </div>
