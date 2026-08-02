@@ -24,7 +24,7 @@ function displayText(
   ctx: AnalyticsContext,
   raw: string,
   lang: 'ar' | 'en',
-  meta?: { kind?: 'name' | 'text'; field_hint?: string },
+  meta?: { kind?: 'name' | 'text'; field_hint?: string; entity_id?: string },
 ): string {
   return ctx.resolveText ? ctx.resolveText(raw, lang, meta) : raw;
 }
@@ -90,7 +90,7 @@ function resolveLinkedLabel(id: string, field: ModelField, ctx: AnalyticsContext
   return v === null || v === undefined || v === '' ? id : String(v);
 }
 
-function scalarKey(value: unknown, field: ModelField, ctx: AnalyticsContext): GroupKey {
+function scalarKey(value: unknown, field: ModelField, ctx: AnalyticsContext, entityId?: string): GroupKey {
   if (value === null || value === undefined || value === '') return emptyKey(field.id);
   switch (field.type) {
     case 'dropdown':
@@ -114,8 +114,8 @@ function scalarKey(value: unknown, field: ModelField, ctx: AnalyticsContext): Gr
       return {
         field_id: field.id,
         raw: String(value),
-        label_ar: displayText(ctx, label, 'ar', { kind: 'name' }),
-        label_en: displayText(ctx, label, 'en', { kind: 'name' }),
+        label_ar: displayText(ctx, label, 'ar', { kind: 'name', entity_id: String(value) }),
+        label_en: displayText(ctx, label, 'en', { kind: 'name', entity_id: String(value) }),
       };
     }
     default: {
@@ -125,8 +125,8 @@ function scalarKey(value: unknown, field: ModelField, ctx: AnalyticsContext): Gr
         return {
           field_id: field.id,
           raw: s,
-          label_ar: displayText(ctx, s, 'ar', { kind, field_hint: field.name }),
-          label_en: displayText(ctx, s, 'en', { kind, field_hint: field.name }),
+          label_ar: displayText(ctx, s, 'ar', { kind, field_hint: field.name, entity_id: entityId }),
+          label_en: displayText(ctx, s, 'en', { kind, field_hint: field.name, entity_id: entityId }),
         };
       }
       return { field_id: field.id, raw: s, label_ar: s, label_en: s };
@@ -181,9 +181,9 @@ export function groupKeysForRecord(
     if (raw.length === 0) return [emptyKey(field.id)];
     const fan = cfg.fan_out_multi !== false;
     const vals = fan ? raw : [raw.map((x) => String(x)).join(', ')];
-    return vals.map((v) => scalarKey(v, field, ctx));
+    return vals.map((v) => scalarKey(v, field, ctx, record.id));
   }
-  return [scalarKey(raw, field, ctx)];
+  return [scalarKey(raw, field, ctx, record.id)];
 }
 
 /**

@@ -108,7 +108,7 @@ export default function PreferencesTab({ client, clientsModel, isAr, canEdit }: 
               />
             ) : (
               <div className="form-input min-h-[2.5rem] bg-cream/40">
-                <DynamicCell field={field} value={client.data[field.name]} allRecords={records} recordData={client.data} />
+                <DynamicCell field={field} value={client.data[field.name]} allRecords={records} recordData={client.data} recordId={client.id} />
               </div>
             )}
           </div>

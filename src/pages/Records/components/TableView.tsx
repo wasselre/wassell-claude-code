@@ -379,6 +379,7 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                           value={value}
                           allRecords={allRecords}
                           recordData={effectiveData}
+                          recordId={record.id}
                         />
                       )}
                     </td>

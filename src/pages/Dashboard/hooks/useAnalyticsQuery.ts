@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { runAnalyticsQuery } from '@/lib/analytics/engine';
-import { resolveDisplayText, useValueTranslationVersion } from '@/lib/valueTranslation/runtime';
+import { resolveFieldDisplay, useFieldDisplayVersion } from '@/lib/recordTranslation/resolver';
 import type { AnalyticsContext } from '@/lib/analytics/context';
 import type { AnalyticsQuery, AnalyticsResult } from '@/lib/analytics/types';
 
@@ -35,10 +35,10 @@ export function useAnalyticsQuery(
   const comparison = !!opts.comparison;
   const includeRecordIds = !!opts.includeRecordIds;
   const key = query ? safeStringify(query) : null;
-  // Re-run the query when async value translations arrive so chart labels fill
-  // in. The resolver itself is INJECTED into the context — the engine must stay
+  // Re-run the query when async translations arrive so chart labels fill in.
+  // The resolver itself is INJECTED into the context — the engine must stay
   // importable from server bundles that can't load the browser runtime.
-  const translationVersion = useValueTranslationVersion();
+  const translationVersion = useFieldDisplayVersion();
 
   const data = useMemo<AnalyticsResult | null>(() => {
     if (!query) return null;
@@ -50,7 +50,8 @@ export function useAnalyticsQuery(
       savedViews: views ?? EMPTY,
       metrics: metrics ?? EMPTY,
       isAr: language === 'ar',
-      resolveText: resolveDisplayText,
+      resolveText: (raw, lang, meta) =>
+        resolveFieldDisplay(meta?.entity_id, meta?.field_hint ?? '', raw, lang, meta),
       now: new Date(),
       options: { include_record_ids: includeRecordIds, comparison },
     };

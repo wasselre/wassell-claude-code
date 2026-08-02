@@ -31,7 +31,7 @@ export interface AnalyticsContext {
    * pulled into a server bundle (the shipped `grouping.ts` regression this
    * replaces).
    */
-  resolveText?: (raw: string, lang: 'ar' | 'en', meta?: { kind?: 'name' | 'text'; field_hint?: string }) => string;
+  resolveText?: (raw: string, lang: 'ar' | 'en', meta?: { kind?: 'name' | 'text'; field_hint?: string; entity_id?: string }) => string;
   /** Injectable clock so date windows are deterministic. Defaults to new Date(). */
   now?: Date;
   options?: {

@@ -31,6 +31,7 @@ import type {
 } from '../../types';
 import { upsertRow as upsertCachedRow, removeRow as removeCachedRow } from '../recordsCache';
 import { isLazyModelName, isSummaryModelName, slimSummaryData } from '../lazyModels';
+import { invalidateEntityTranslations } from '../recordTranslation/store';
 
 export type RealtimeOutcome = 'applied' | 'skipped_stale' | 'skipped_unknown_model' | 'noop';
 export type PgEvent = 'INSERT' | 'UPDATE' | 'DELETE';
@@ -115,6 +116,11 @@ export function mergeRecord(
   // INSERT / UPDATE
   const row = payload.new;
   if (!row?.id || !row.model_id) return 'noop';
+
+  // Bilingual W3: a record change means its translations were synchronously
+  // cleared server-side (capture trigger) — drop the client cache so the next
+  // render re-hydrates fresh variants instead of serving pre-edit ones.
+  invalidateEntityTranslations(row.id);
 
   let outcome: RealtimeOutcome = 'noop';
   setState((s) => {

@@ -53,7 +53,7 @@ export default function DrillThroughModal({
                 >
                   {cols.map((f) => (
                     <td key={f.id} className="px-2 py-1.5">
-                      <DynamicCell field={f} value={rec.data[f.name]} allRecords={records} recordData={rec.data} />
+                      <DynamicCell field={f} value={rec.data[f.name]} allRecords={records} recordData={rec.data} recordId={rec.id} />
                     </td>
                   ))}
                 </tr>

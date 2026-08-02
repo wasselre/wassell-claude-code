@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
 import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
-import { resolveDisplayText, useValueTranslationVersion } from '@/lib/valueTranslation/runtime';
+import { resolveFieldDisplay, useFieldDisplayVersion } from '@/lib/recordTranslation/resolver';
 import { Search, X, Plus } from 'lucide-react';
 
 interface LookupComboboxProps {
@@ -34,8 +34,8 @@ export default function LookupCombobox({
 }: LookupComboboxProps) {
   const { models, records, language, saveRecord } = useAppStore();
   const isAr = language === 'ar';
-  // Re-render when async value translations arrive (picker labels resolve).
-  useValueTranslationVersion();
+  // Re-render when async translations arrive (picker labels resolve).
+  useFieldDisplayVersion();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -92,7 +92,7 @@ export default function LookupCombobox({
   // for the current UI language. Search matches BOTH the source label and the
   // translated label so typing either "مساكن" or "Masaken" finds the record.
   const displayFor = (rec: { id: string; data: Record<string, unknown> }): string =>
-    resolveDisplayText(labelFor(rec), isAr ? 'ar' : 'en', { kind: 'name', field_hint: lookupDisplayField });
+    resolveFieldDisplay(rec.id, lookupDisplayField, labelFor(rec), isAr ? 'ar' : 'en', { kind: 'name' });
 
   // Normalize value: in multi mode always string[]; in single mode a string or undefined.
   const selectedIds = useMemo<string[]>(() => {

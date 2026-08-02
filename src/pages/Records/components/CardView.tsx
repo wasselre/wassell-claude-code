@@ -5,7 +5,7 @@ import Badge from '@/components/ui/Badge';
 import DynamicCell from './DynamicCell';
 import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
-import { resolveDisplayText, useValueTranslationVersion } from '@/lib/valueTranslation/runtime';
+import { resolveFieldDisplay as resolveTranslatedText, useFieldDisplayVersion } from '@/lib/recordTranslation/resolver';
 import { isTranslatableField, kindForField } from '@/lib/valueTranslation/config';
 import type { AppModel, AppRecord, ModelField, FieldOption } from '@/types';
 
@@ -23,7 +23,7 @@ function resolveFieldDisplay(
   if (field.type === 'mirror') {
     const res = resolveMirror(field, record.data, allRecords, allModels);
     if (res.status !== 'ok' || !res.targetField) return '—';
-    return formatScalar(res.targetField, res.value, isAr);
+    return formatScalar(res.targetField, res.value, isAr, res.targetRecord?.id);
   }
   if (field.type === 'lookup') {
     if (!field.lookup_model_id || !field.lookup_display_field) return '—';
@@ -36,7 +36,7 @@ function resolveFieldDisplay(
       if (!linked) return null;
       const v = resolveLookupDisplayValue(linked, field.lookup_display_field!, { targetModel, allModels, allRecords });
       if (v === null || v === undefined || typeof v === 'object') return null;
-      return resolveDisplayText(String(v), isAr ? 'ar' : 'en', { kind: 'name', field_hint: field.lookup_display_field! });
+      return resolveTranslatedText(linked.id, field.lookup_display_field!, String(v), isAr ? 'ar' : 'en', { kind: 'name' });
     };
     if (Array.isArray(raw)) {
       const labels = raw.map(resolveOne).filter((x): x is string => !!x);
@@ -62,10 +62,10 @@ function resolveFieldDisplay(
       .filter((x): x is string => !!x);
     return labels.length > 0 ? labels.join(isAr ? '، ' : ', ') : '—';
   }
-  return formatScalar(field, record.data[field.name], isAr);
+  return formatScalar(field, record.data[field.name], isAr, record.id);
 }
 
-function formatScalar(field: ModelField, value: unknown, isAr: boolean): string {
+function formatScalar(field: ModelField, value: unknown, isAr: boolean, entityId?: string): string {
   if (value === undefined || value === null || value === '') return '—';
   if (field.type === 'dropdown') {
     const opt = field.options?.find((o) => o.value === value);
@@ -89,7 +89,7 @@ function formatScalar(field: ModelField, value: unknown, isAr: boolean): string 
     return links.length ? links.join(isAr ? '، ' : ', ') : '—';
   }
   if (isTranslatableField(field)) {
-    return resolveDisplayText(value, isAr ? 'ar' : 'en', { kind: kindForField(field), field_hint: field.name });
+    return resolveTranslatedText(entityId, field.name, value, isAr ? 'ar' : 'en', { kind: kindForField(field) });
   }
   return String(value);
 }
@@ -139,7 +139,7 @@ function displayExpandedField(
       if (!linked) return null;
       const v = resolveLookupDisplayValue(linked, field.lookup_display_field!, { targetModel, allModels, allRecords });
       if (v === null || v === undefined || typeof v === 'object') return null;
-      return resolveDisplayText(String(v), isAr ? 'ar' : 'en', { kind: 'name', field_hint: field.lookup_display_field! });
+      return resolveTranslatedText(linked.id, field.lookup_display_field!, String(v), isAr ? 'ar' : 'en', { kind: 'name' });
     };
     if (Array.isArray(value)) {
       const labels = value.map(resolveOne).filter((x): x is string => !!x);
@@ -177,8 +177,8 @@ export default function CardView({ model, records, onCardClick, selectedIds, onT
   const { t } = useTranslation();
   const { language, records: allRecords, models } = useAppStore();
   const isAr = language === 'ar';
-  // Re-render when async value translations arrive (titles/subtitles resolve).
-  useValueTranslationVersion();
+  // Re-render when async translations arrive (titles/subtitles resolve).
+  useFieldDisplayVersion();
 
   const selectionEnabled = !!selectedIds && !!onToggleSelect && !!onToggleSelectAll;
   const allSelected = selectionEnabled && records.length > 0 && records.every((r) => selectedIds!.has(r.id));
@@ -288,6 +288,7 @@ export default function CardView({ model, records, onCardClick, selectedIds, onT
                           value={readExpandedValue(ef, record, allRecords, model, models)}
                           allRecords={allRecords}
                           recordData={record.data}
+                          recordId={record.id}
                         />
                       </div>
                     ))}

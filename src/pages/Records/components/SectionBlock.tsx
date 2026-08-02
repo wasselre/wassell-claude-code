@@ -338,6 +338,7 @@ export default function SectionBlock({
                         value={formData[field.name]}
                         allRecords={records}
                         recordData={formData}
+                        recordId={recordId}
                       />
                     </div>
                   </div>
@@ -498,6 +499,7 @@ export default function SectionBlock({
                       value={effective[child.name]}
                       allRecords={records}
                       recordData={effective}
+                      recordId={recordId}
                     />
                   </div>
                 )}

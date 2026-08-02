@@ -15,7 +15,7 @@ import {
   AttachmentCell,
 } from './DriveCells';
 import { VideoCell, MultiVideoCell } from './VideoField';
-import { resolveDisplayText, useValueTranslationVersion } from '@/lib/valueTranslation/runtime';
+import { resolveFieldDisplay, useFieldDisplayVersion } from '@/lib/recordTranslation/resolver';
 import { isTranslatableField, kindForField } from '@/lib/valueTranslation/config';
 import type { ModelField, AppRecord, AttachmentRef, NoteEntry, LocationLevel, TableColumn } from '@/types';
 
@@ -24,15 +24,23 @@ interface DynamicCellProps {
   value: unknown;
   allRecords: Record<string, AppRecord[]>;
   recordData?: Record<string, unknown>;
+  /**
+   * The owning record's id (bilingual W3). With it, free-text display resolves
+   * AUTHORITATIVELY against the per-record translation store; without it the
+   * cell falls back to the legacy text-keyed overlay until its consumer
+   * threads the id through.
+   */
+  recordId?: string;
 }
 
-export default function DynamicCell({ field, value, allRecords, recordData }: DynamicCellProps) {
+export default function DynamicCell({ field, value, allRecords, recordData, recordId }: DynamicCellProps) {
   const { t } = useTranslation();
   const { language, addToast, models, openChatComposer } = useAppStore();
   const isAr = language === 'ar';
   const lang = isAr ? ('ar' as const) : ('en' as const);
-  // Re-render when async value translations arrive (cache misses resolve).
-  useValueTranslationVersion();
+  // Re-render when async translations arrive (record-store hydration or the
+  // legacy overlay's misses resolving).
+  useFieldDisplayVersion();
 
   // Mirror fields resolve at render time by hopping through a sibling lookup.
   // Handle BEFORE the empty check so sibling-not-selected / deleted-record states render correctly.
@@ -56,6 +64,7 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
               value={v}
               allRecords={allRecords}
               recordData={res.targetRecord?.data}
+              recordId={res.targetRecord?.id}
             />
           ))}
         </div>
@@ -67,6 +76,7 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
         value={res.value}
         allRecords={allRecords}
         recordData={res.targetRecord?.data}
+        recordId={res.targetRecord?.id}
       />
     );
   }
@@ -100,7 +110,13 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
           {countLabel}
         </span>
         <span className="text-charcoal/40 truncate max-w-[16rem]">
-          {resolveDisplayText(latest.text, lang, { kind: 'text', field_hint: field.name })
+          {resolveFieldDisplay(
+            recordId && latest.id ? recordId : undefined,
+            latest.id ? `${field.name}[id=${latest.id}]` : field.name,
+            latest.text,
+            lang,
+            { kind: 'text', field_hint: field.name },
+          )
             .replace(/\s+/g, ' ')
             .slice(0, 60)}
         </span>
@@ -117,7 +133,7 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
       return (
         <span>
           {isTranslatableField(field)
-            ? resolveDisplayText(value, lang, { kind: kindForField(field), field_hint: field.name })
+            ? resolveFieldDisplay(recordId, field.name, value, lang, { kind: kindForField(field) })
             : String(value)}
         </span>
       );
@@ -380,7 +396,7 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
       return (
         <span className="truncate max-w-xs block">
           {isTranslatableField(field)
-            ? resolveDisplayText(value, lang, { kind: 'text', field_hint: field.name })
+            ? resolveFieldDisplay(recordId, field.name, value, lang, { kind: 'text' })
             : String(value)}
         </span>
       );
@@ -465,9 +481,10 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
           ? String(displayVal)
           : (displayVal ? String(displayVal) : id.slice(0, 8));
         // Lookup display fields are almost always names (project, developer,
-        // client) — overlay-translate so English mode shows "Masaken Al Aseel"
-        // instead of the raw Arabic project name.
-        return <span key={id} className="text-copper font-bold">{resolveDisplayText(text, lang, { kind: 'name', field_hint: displayFieldName })}</span>;
+        // client). The LINKED record's own id is at hand, so this resolves
+        // authoritatively against its translation store entry regardless of
+        // whether the parent cell got a recordId.
+        return <span key={id} className="text-copper font-bold">{resolveFieldDisplay(linkedRecord.id, displayFieldName, text, lang, { kind: 'name' })}</span>;
       };
 
       // Multi-select: chip list.
@@ -482,7 +499,7 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
                 if (!linkedRecord) return isAr ? 'سجل محذوف' : 'Deleted';
                 const dv = resolveLookupDisplayValue(linkedRecord, displayFieldName, displayCtx);
                 const text = dv !== null && dv !== undefined && typeof dv !== 'object' ? String(dv) : id.slice(0, 8);
-                return resolveDisplayText(text, lang, { kind: 'name', field_hint: displayFieldName });
+                return resolveFieldDisplay(linkedRecord.id, displayFieldName, text, lang, { kind: 'name' });
               })()} />
             ))}
           </div>

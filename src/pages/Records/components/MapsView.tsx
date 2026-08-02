@@ -21,7 +21,7 @@ import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import { formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { formatNumberWithCommas, formatRangeValue } from './RangeField';
-import { resolveDisplayText } from '@/lib/valueTranslation/runtime';
+import { resolveFieldDisplay } from '@/lib/recordTranslation/resolver';
 import { isTranslatableField, kindForField } from '@/lib/valueTranslation/config';
 import type { AppModel, AppRecord, MapsConfig, ModelField, NoteEntry, User } from '@/types';
 
@@ -54,6 +54,8 @@ export interface FormatCtx {
   models: AppModel[];
   users: User[];
   recordData: Record<string, unknown>;
+  /** Owning record id (bilingual W3) — enables authoritative translation lookups. */
+  recordId?: string;
 }
 
 /**
@@ -109,7 +111,7 @@ export function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx
         const dv = resolveLookupDisplayValue(rec, displayName, { targetModel, allModels: models, allRecords });
         if (dv === null || dv === undefined || typeof dv === 'object') return id.slice(0, 8);
         const s = String(dv);
-        return s.trim() === '' ? id.slice(0, 8) : resolveDisplayText(s, isAr ? 'ar' : 'en', { kind: 'name', field_hint: displayName });
+        return s.trim() === '' ? id.slice(0, 8) : resolveFieldDisplay(rec.id, displayName, s, isAr ? 'ar' : 'en', { kind: 'name' });
       };
       if (field.is_multi || Array.isArray(raw)) {
         const ids = Array.isArray(raw) ? raw : [];
@@ -204,7 +206,7 @@ export function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx
       if (Array.isArray(raw)) return raw.map((v) => String(v)).join(joinSep);
       if (typeof raw === 'object') return JSON.stringify(raw);
       if (isTranslatableField(field)) {
-        return resolveDisplayText(raw, isAr ? 'ar' : 'en', { kind: kindForField(field), field_hint: field.name });
+        return resolveFieldDisplay(ctx.recordId, field.name, raw, isAr ? 'ar' : 'en', { kind: kindForField(field) });
       }
       return String(raw);
   }
@@ -299,7 +301,7 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
       let label = `#${rec.id.slice(0, 8)}`;
       if (nameEf) {
         const value = readExpandedValue(nameEf, rec, allRecords, model, models);
-        const text = formatFieldValue(nameEf.field, value, { ...ctxBase, recordData: rec.data });
+        const text = formatFieldValue(nameEf.field, value, { ...ctxBase, recordData: rec.data, recordId: rec.id });
         if (text && text !== '—') label = text;
       }
       return { record: rec, label };
@@ -738,7 +740,7 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
       let label = `#${rec.id.slice(0, 8)}`;
       if (nameEf) {
         const value = readExpandedValue(nameEf, rec, allRecords, model, models);
-        const text = formatFieldValue(nameEf.field, value, { ...ctxBase, recordData: rec.data });
+        const text = formatFieldValue(nameEf.field, value, { ...ctxBase, recordData: rec.data, recordId: rec.id });
         if (text && text !== '—') label = text;
       }
       return { record: rec, label };
@@ -880,6 +882,7 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
           models,
           users,
           recordData: rec.data,
+          recordId: rec.id,
         });
         if (text && text !== '—') pillLabel = text;
       }
@@ -1130,7 +1133,7 @@ function PopupCard({
     .map((id) => expandedById.get(id))
     .filter((ef): ef is ExpandedField => Boolean(ef));
 
-  const ctx: FormatCtx = { isAr, t, allRecords, models, users, recordData: record.data };
+  const ctx: FormatCtx = { isAr, t, allRecords, models, users, recordData: record.data, recordId: record.id };
   // Read the value through the section mirror for mirrored children; for local
   // fields readExpandedValue returns record.data[field.name], so the path is
   // identical to before for the common case.

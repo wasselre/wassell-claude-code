@@ -49,7 +49,7 @@ export default function TableWidget({ widget }: TableWidgetProps) {
             <tr key={rec.id}>
               {shownFields.map((f) => f && (
                 <td key={f.id} className="py-1.5 px-2">
-                  <DynamicCell field={f} value={rec.data[f.name]} allRecords={allRecords} recordData={rec.data} />
+                  <DynamicCell field={f} value={rec.data[f.name]} allRecords={allRecords} recordData={rec.data} recordId={rec.id} />
                 </td>
               ))}
             </tr>

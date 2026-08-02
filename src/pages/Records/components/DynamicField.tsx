@@ -486,6 +486,7 @@ export default function DynamicField({
                   value={v}
                   allRecords={records}
                   recordData={res.targetRecord?.data}
+                  recordId={res.targetRecord?.id}
                 />
               ))}
             </div>
@@ -498,6 +499,7 @@ export default function DynamicField({
               value={res.value}
               allRecords={records}
               recordData={res.targetRecord?.data}
+              recordId={res.targetRecord?.id}
             />
           </div>
         );
