@@ -12,8 +12,22 @@ import type { AnalyticsContext } from './context';
 import { toNumeric } from './numeric.js';
 import { bucketDate } from './dateWindows.js';
 import { resolveLookupDisplayValue, resolveMirror } from '../mirrorResolver.js';
-import { resolveDisplayText } from '../valueTranslation/runtime';
-import { isTranslatableField, kindForField } from '../valueTranslation/config';
+import { isTranslatableField, kindForField } from '../valueTranslation/config.js';
+
+/**
+ * Display-text resolution comes from ctx.resolveText (injected by the BROWSER
+ * only — see AnalyticsContext). Server bundles (reportRunner, api/analytics)
+ * must never import the browser resolver module from here; when the resolver
+ * is absent, labels honestly fall back to the source text.
+ */
+function displayText(
+  ctx: AnalyticsContext,
+  raw: string,
+  lang: 'ar' | 'en',
+  meta?: { kind?: 'name' | 'text'; field_hint?: string },
+): string {
+  return ctx.resolveText ? ctx.resolveText(raw, lang, meta) : raw;
+}
 
 const EMPTY_AR = '(فارغ)';
 const EMPTY_EN = '(Empty)';
@@ -100,8 +114,8 @@ function scalarKey(value: unknown, field: ModelField, ctx: AnalyticsContext): Gr
       return {
         field_id: field.id,
         raw: String(value),
-        label_ar: resolveDisplayText(label, 'ar', { kind: 'name' }),
-        label_en: resolveDisplayText(label, 'en', { kind: 'name' }),
+        label_ar: displayText(ctx, label, 'ar', { kind: 'name' }),
+        label_en: displayText(ctx, label, 'en', { kind: 'name' }),
       };
     }
     default: {
@@ -111,8 +125,8 @@ function scalarKey(value: unknown, field: ModelField, ctx: AnalyticsContext): Gr
         return {
           field_id: field.id,
           raw: s,
-          label_ar: resolveDisplayText(s, 'ar', { kind, field_hint: field.name }),
-          label_en: resolveDisplayText(s, 'en', { kind, field_hint: field.name }),
+          label_ar: displayText(ctx, s, 'ar', { kind, field_hint: field.name }),
+          label_en: displayText(ctx, s, 'en', { kind, field_hint: field.name }),
         };
       }
       return { field_id: field.id, raw: s, label_ar: s, label_en: s };

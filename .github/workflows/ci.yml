@@ -1,0 +1,61 @@
+# CI gate (W0 of the bilingual-architecture plan, REV 4 Part E).
+#
+# Before this workflow existed the repo had NO automated gate — build,
+# typecheck, tests, and the service-client audit were local discipline only
+# (verified in the 2026-08-02 W-A audit). Every push/PR to main now runs them.
+#
+# The ephemeral-database integration stage (validated translation DDL + SQL
+# tests from supabase/tests/) is added by W1 alongside the migration files it
+# exercises — it needs the migrations + a schema bootstrap to exist first.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install (root)
+        run: npm ci
+      - name: Service-client factory audit
+        run: npm run check:service-clients
+      - name: Typecheck + build (tsc -b, tsconfig.api.json, vite)
+        run: npm run build
+        env:
+          # Build must succeed without secrets; Vite env is optional at build time.
+          CI: 'true'
+      - name: Unit tests (vitest — src/, api/, worker/)
+        run: npm test
+
+  worker-typecheck:
+    # worker/ is a standalone package (third tsconfig) — not covered by the
+    # root build (see reference: tsc --noEmit skips api/; worker is separate).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Install (worker)
+        working-directory: worker
+        run: npm ci
+      - name: Typecheck worker
+        working-directory: worker
+        run: npx tsc --noEmit

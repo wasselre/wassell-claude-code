@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { runAnalyticsQuery } from '@/lib/analytics/engine';
+import { resolveDisplayText, useValueTranslationVersion } from '@/lib/valueTranslation/runtime';
 import type { AnalyticsContext } from '@/lib/analytics/context';
 import type { AnalyticsQuery, AnalyticsResult } from '@/lib/analytics/types';
 
@@ -34,6 +35,10 @@ export function useAnalyticsQuery(
   const comparison = !!opts.comparison;
   const includeRecordIds = !!opts.includeRecordIds;
   const key = query ? safeStringify(query) : null;
+  // Re-run the query when async value translations arrive so chart labels fill
+  // in. The resolver itself is INJECTED into the context — the engine must stay
+  // importable from server bundles that can't load the browser runtime.
+  const translationVersion = useValueTranslationVersion();
 
   const data = useMemo<AnalyticsResult | null>(() => {
     if (!query) return null;
@@ -45,13 +50,14 @@ export function useAnalyticsQuery(
       savedViews: views ?? EMPTY,
       metrics: metrics ?? EMPTY,
       isAr: language === 'ar',
+      resolveText: resolveDisplayText,
       now: new Date(),
       options: { include_record_ids: includeRecordIds, comparison },
     };
     return runAnalyticsQuery(query, ctx);
     // `key` is the stable identity of `query`; the store slices are the inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, records, models, users, views, language, comparison, includeRecordIds]);
+  }, [key, records, models, users, views, language, comparison, includeRecordIds, translationVersion]);
 
   return { data, loading: false, error: null, refetch: () => {} };
 }

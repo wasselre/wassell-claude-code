@@ -22,6 +22,16 @@ export interface AnalyticsContext {
   metrics?: MetricDefinition[];
   /** Tie-break language for sorting by group label (both labels are always emitted). */
   isAr: boolean;
+  /**
+   * Optional display-text resolver for free-typed record values in group
+   * labels (W0 of the bilingual plan). The BROWSER injects the value-translation
+   * resolver here; server callers (reportRunner, api/analytics) leave it unset
+   * and labels fall back to the source text. This indirection exists because the
+   * browser resolver module imports React + import.meta.env and must never be
+   * pulled into a server bundle (the shipped `grouping.ts` regression this
+   * replaces).
+   */
+  resolveText?: (raw: string, lang: 'ar' | 'en', meta?: { kind?: 'name' | 'text'; field_hint?: string }) => string;
   /** Injectable clock so date windows are deterministic. Defaults to new Date(). */
   now?: Date;
   options?: {
