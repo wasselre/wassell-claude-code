@@ -421,7 +421,7 @@ export default function RecordListPage() {
   const handleBulkExport = () => {
     if (!model || selectedIds.size === 0) return;
     const selectedRecords = modelRecords.filter((r) => selectedIds.has(r.id));
-    exportToExcel(model, selectedRecords, language, records, models);
+    void exportToExcel(model, selectedRecords, language, records, models);
   };
 
   // Shared view-mode toggle, used both inline (table/cards) and floating
@@ -482,7 +482,7 @@ export default function RecordListPage() {
             </div>
             <div className="flex items-center gap-2">
               {perms.has('export') && (
-                <Button variant="ghost" onClick={() => exportToExcel(model, modelRecords, language, records, models)}>
+                <Button variant="ghost" onClick={() => void exportToExcel(model, modelRecords, language, records, models)}>
                   <Download size={16} />
                   {isAr ? 'تصدير' : 'Export'}
                 </Button>

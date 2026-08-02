@@ -79,7 +79,11 @@ export default function RecordDocumentsPanel({ modelId, recordId }: Props) {
     setGenerating(true);
     setGenError(null);
     try {
-      const { jobId } = await enqueueGenerateDocument({ recordId, modelId, templateId: tmpl.id });
+      // The PDF renders in the user's current UI language (W4): Arabic users
+      // get the Arabic document, English users the English one.
+      const { jobId } = await enqueueGenerateDocument({
+        recordId, modelId, templateId: tmpl.id, language: isAr ? 'ar' : 'en',
+      });
       const deadline = Date.now() + TIMEOUT_MS;
       while (Date.now() < deadline) {
         await sleep(POLL_MS);

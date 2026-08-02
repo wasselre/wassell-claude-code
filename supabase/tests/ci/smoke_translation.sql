@@ -165,3 +165,41 @@ BEGIN
   END IF;
   RAISE NOTICE 'W3 smoke 9 (durable dirty under backpressure): passed';
 END $$;
+
+-- 10) W4 server-language: enqueue carries the requested language (coerced to
+--     'ar' on garbage), and the claim returns it to the worker.
+DO $$
+DECLARE
+  v_tmpl uuid; v_job_en uuid; v_job_bad uuid; v_claim record;
+BEGIN
+  INSERT INTO document_templates (file_id, model_id)
+  VALUES (gen_random_uuid(), gen_random_uuid()) RETURNING id INTO v_tmpl;
+  -- The claim JOINs wassel_documents on the template's file_id.
+  INSERT INTO wassel_documents (file_id, content_json)
+  SELECT file_id, '{"type":"doc"}'::jsonb FROM document_templates WHERE id = v_tmpl;
+
+  SELECT document_job_enqueue(
+    gen_random_uuid(), gen_random_uuid(), v_tmpl,
+    (SELECT file_id FROM document_templates WHERE id = v_tmpl),
+    NULL, gen_random_uuid(), gen_random_uuid(), NULL, NULL, NULL, 'en'
+  ) INTO v_job_en;
+  IF (SELECT language FROM document_jobs WHERE id = v_job_en) <> 'en' THEN
+    RAISE EXCEPTION 'SMOKE 10 failed: enqueue dropped language=en';
+  END IF;
+
+  SELECT document_job_enqueue(
+    gen_random_uuid(), gen_random_uuid(), v_tmpl,
+    (SELECT file_id FROM document_templates WHERE id = v_tmpl),
+    NULL, gen_random_uuid(), gen_random_uuid(), NULL, NULL, NULL, 'xx'
+  ) INTO v_job_bad;
+  IF (SELECT language FROM document_jobs WHERE id = v_job_bad) <> 'ar' THEN
+    RAISE EXCEPTION 'SMOKE 10b failed: garbage language not coerced to ar';
+  END IF;
+
+  SELECT * INTO v_claim FROM document_job_claim_next('ci-worker');
+  IF NOT FOUND OR v_claim.language NOT IN ('ar','en') THEN
+    RAISE EXCEPTION 'SMOKE 10c failed: claim did not return language';
+  END IF;
+
+  RAISE NOTICE 'W4 smoke 10 (document language carrier): passed';
+END $$;

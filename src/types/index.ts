@@ -1769,6 +1769,8 @@ export interface ScheduledReport {
   timezone: string;
   recipients: string[];
   delivery_channel: 'email';
+  /** Bilingual W4: the language the report email renders in. Default 'ar'. */
+  language?: 'ar' | 'en';
   source_type: ReportSourceType;
   dashboard_id?: string | null;
   widget_id?: string | null;
@@ -2330,6 +2332,12 @@ export interface User {
    * for users without this flag, so it can never widen access by itself.
    */
   can_preview_profiles?: boolean;
+  /**
+   * Bilingual W4: the language this employee uses the app in. Stamped by the
+   * SPA on every header language toggle; the server workflow runner picks each
+   * push notification's message side from it. NULL ⇒ 'ar'.
+   */
+  preferred_language?: 'ar' | 'en' | null;
   created_at: string;
   updated_at: string;
 }

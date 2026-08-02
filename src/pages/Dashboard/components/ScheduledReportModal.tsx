@@ -37,6 +37,7 @@ export default function ScheduledReportModal({ open, onClose, existing }: Props)
   const [dow, setDow] = useState(0);
   const [dom, setDom] = useState(1);
   const [recipients, setRecipients] = useState('');
+  const [reportLang, setReportLang] = useState<'ar' | 'en'>('ar');
 
   useEffect(() => {
     if (!open) return;
@@ -51,9 +52,11 @@ export default function ScheduledReportModal({ open, onClose, existing }: Props)
       setDow(existing.day_of_week ?? 0);
       setDom(existing.day_of_month ?? 1);
       setRecipients((existing.recipients ?? []).join(', '));
+      setReportLang(existing.language === 'en' ? 'en' : 'ar');
     } else {
       setTitle(''); setSourceType('dashboard'); setDashboardId(''); setWidgetId(''); setMetricId('');
       setFrequency('daily'); setHour(8); setDow(0); setDom(1); setRecipients('');
+      setReportLang(isAr ? 'ar' : 'en');
     }
   }, [open, existing]);
 
@@ -84,6 +87,7 @@ export default function ScheduledReportModal({ open, onClose, existing }: Props)
       timezone: 'Asia/Riyadh',
       recipients: emails,
       delivery_channel: 'email',
+      language: reportLang,
       source_type: sourceType,
       dashboard_id: sourceType === 'dashboard' || sourceType === 'widget' ? dashboardId : null,
       widget_id: sourceType === 'widget' ? widgetId : null,
@@ -155,6 +159,17 @@ export default function ScheduledReportModal({ open, onClose, existing }: Props)
                 {Array.from({ length: 28 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
               </select>
             )}
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-bold text-charcoal">{isAr ? 'لغة التقرير' : 'Report language'}</label>
+          <div className="flex gap-1.5">
+            {([['ar', 'العربية', 'Arabic'], ['en', 'الإنجليزية', 'English']] as const).map(([v, ar, en]) => (
+              <button key={v} onClick={() => setReportLang(v)} className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${reportLang === v ? 'border-copper bg-copper/10 text-copper' : 'border-sand text-charcoal'}`}>
+                {isAr ? ar : en}
+              </button>
+            ))}
           </div>
         </div>
 

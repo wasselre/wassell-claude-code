@@ -39,7 +39,52 @@ CREATE VIEW public.unified_records AS
 
 CREATE TABLE public.wassel_documents (
   file_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  content_json jsonb, content_html text
+  content_json jsonb, content_html text, settings jsonb
+);
+
+-- W4 server-language carriers (stand-ins for the 2026-06/07 production tables
+-- the 2026-09-02 migration ALTERs; FKs dropped — irrelevant to what CI checks).
+CREATE TABLE public.users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  auth_uid uuid, is_active boolean NOT NULL DEFAULT true,
+  role_assignments jsonb NOT NULL DEFAULT '[]'::jsonb
+);
+CREATE TABLE public.document_templates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  file_id uuid NOT NULL, model_id uuid NOT NULL,
+  label_ar text NOT NULL DEFAULT '', label_en text NOT NULL DEFAULT '',
+  is_active boolean NOT NULL DEFAULT true
+);
+CREATE TABLE public.document_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_record_id uuid NOT NULL,
+  source_model_id uuid NOT NULL,
+  template_id uuid NOT NULL,
+  template_file_id uuid NOT NULL,
+  target_folder_id uuid,
+  owner_user_id uuid NOT NULL,
+  owner_auth_uid uuid NOT NULL,
+  client_record_id uuid, unit_record_id uuid, project_record_id uuid,
+  status text NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued','running','completed','failed')),
+  attempts int NOT NULL DEFAULT 0,
+  worker_id text, error text, result_file_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  started_at timestamptz, finished_at timestamptz
+);
+CREATE UNIQUE INDEX document_jobs_one_active_idx
+  ON public.document_jobs (source_record_id, template_id)
+  WHERE status IN ('queued','running');
+CREATE TABLE public.scheduled_reports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL DEFAULT '', owner_auth_uid uuid,
+  frequency text NOT NULL DEFAULT 'daily',
+  hour_of_day int NOT NULL DEFAULT 8,
+  day_of_week int, day_of_month int,
+  recipients jsonb NOT NULL DEFAULT '[]'::jsonb,
+  source_type text NOT NULL DEFAULT 'custom',
+  dashboard_id uuid, widget_id text, metric_id uuid, query jsonb,
+  status text NOT NULL DEFAULT 'active'
 );
 
 -- Legacy cache (seed-import source).

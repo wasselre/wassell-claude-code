@@ -40,6 +40,7 @@ import {
   type DocModel,
   type DocRecord,
 } from './documents/variables.js';
+import { fetchTranslationOverlay, localizeRecordData } from './lib/recordLang.js';
 
 const FILES_BUCKET = 'wassel-files';
 const PDF_MIME = 'application/pdf';
@@ -63,6 +64,8 @@ export interface DocumentJob {
   unitRecordId: string | null;
   projectRecordId: string | null;
   attempts: number;
+  /** Render language requested at enqueue (W4). */
+  language: 'ar' | 'en';
   templateLabelAr: string;
   templateLabelEn: string;
   contentJson: JSONContent;
@@ -82,9 +85,10 @@ interface LoadedRecord {
 }
 
 export async function runDocumentJob({ supabase, env, job }: RunDocumentJobArgs): Promise<string> {
-  // Arabic-first company — templates read in Arabic and the editor preview uses
-  // the app language; default ar so the generated PDF matches that preview.
-  const isAr = true;
+  // W4: the PDF renders in the language requested at enqueue (the caller's UI
+  // language; default 'ar'). Record values below are overlaid with their
+  // current translations for that language before token resolution.
+  const isAr = job.language !== 'en';
   const settings = normalizePageSettings(job.settings);
 
   // ── 1. Load models + every record we resolve tokens from ─────────────
@@ -116,6 +120,15 @@ export async function runDocumentJob({ supabase, env, job }: RunDocumentJobArgs)
 
   // ── 2. Build the {slug → value} token map ────────────────────────────
   const allRecords = [...loaded, ...(unitProject && !loaded.includes(unitProject) ? [unitProject] : [])];
+
+  // W4: overlay every record's translatable scalar fields with their current
+  // translation for the requested language, so {{tokens}} resolve localized
+  // (an English reservation shows the unit's English notes, not the Arabic
+  // source). Missing translations keep the source text — honest degradation.
+  const overlay = await fetchTranslationOverlay(supabase, allRecords.map((r) => r.id), job.language);
+  for (const r of allRecords) {
+    r.data = localizeRecordData(r.data, overlay, r.id);
+  }
   const recordsMap: Record<string, DocRecord[]> = {};
   for (const r of allRecords) {
     (recordsMap[r.model_id] ??= []).push({ id: r.id, data: r.data });

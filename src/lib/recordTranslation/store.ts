@@ -159,6 +159,28 @@ export function getEntityFieldText(
   return null;
 }
 
+/**
+ * Awaitable bulk hydration (bilingual W4 — exports). Queues every un-hydrated
+ * id and drains the fetch queue before resolving, so a synchronous walk over
+ * the records (Excel export) sees their translations. Resolves anyway after
+ * `timeoutMs` — an export must never hang on a translation fetch; un-hydrated
+ * records just export their source text.
+ */
+export async function ensureEntityTranslations(entityIds: string[], timeoutMs = 15_000): Promise<void> {
+  if (!supabase) return;
+  for (const id of entityIds) {
+    if (!hydrated.has(id)) pendingIds.add(id);
+  }
+  if (pendingIds.size === 0) return;
+  scheduleFlush();
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (entityIds.every((id) => hydrated.has(id))) return;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  console.error(`[recordTranslation] ensureEntityTranslations timed out — exporting with source text for un-hydrated records`);
+}
+
 /** Test-only reset. */
 export function __resetRecordTranslations(): void {
   entries.clear();

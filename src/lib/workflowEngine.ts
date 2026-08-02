@@ -21,6 +21,7 @@ import { v4 as uuid } from 'uuid';
 import { supabase } from '@/lib/supabase';
 import { normalizePhone } from '@/lib/phone';
 import { useAppStore } from '@/stores/appStore';
+import { getEntityFieldText } from '@/lib/recordTranslation/store';
 import {
   applyDateExpression as applyDateExpressionCore,
   evaluateCondition as evaluateConditionCore,
@@ -656,6 +657,11 @@ async function executeAction(
   const subCtx = {
     triggerModel: allModels.find((m) => m.id === triggerRecord.model_id),
     recordsByModel: allRecords,
+    models: allModels,
+    // Bilingual W4: |ar / |en token formatters resolve translations through the
+    // record-scoped store (same data the record UI renders).
+    localizeField: (recordId: string, fieldPath: string, lang: 'ar' | 'en') =>
+      getEntityFieldText(recordId, fieldPath, lang),
   };
 
   try {

@@ -2704,6 +2704,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
     document.documentElement.lang = lang;
     set({ language: lang });
+    // Bilingual W4: persist the preference so SERVER-side consumers (workflow
+    // push notifications) know each employee's language. Fire-and-forget with a
+    // loud log — a failed stamp only means the server keeps the previous
+    // preference; the UI language above is already switched.
+    const meId = get().currentUserId;
+    if (meId && supabase) {
+      void supabase
+        .from('users')
+        .update({ preferred_language: lang })
+        .eq('id', meId)
+        .then(({ error }) => {
+          if (error) console.error('[setLanguage] preferred_language stamp failed:', error.message);
+        });
+    }
   },
 
   // --- Toasts ---

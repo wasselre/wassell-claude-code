@@ -16,16 +16,18 @@ export async function authHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-/** Enqueue a generation job. Returns the job id to poll. */
+/** Enqueue a generation job. Returns the job id to poll. `language` picks the
+ *  render language of the PDF (W4) — callers pass the current UI language. */
 export async function enqueueGenerateDocument(input: {
   recordId: string;
   modelId: string;
   templateId: string;
+  language?: 'ar' | 'en';
 }): Promise<{ jobId: string }> {
   const res = await fetch('/api/generate-document', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, language: input.language === 'en' ? 'en' : 'ar' }),
   });
   const body = (await res.json().catch(() => ({}))) as { job_id?: string; error?: string };
   if (!res.ok || !body.job_id) {

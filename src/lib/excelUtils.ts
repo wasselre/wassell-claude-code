@@ -3,10 +3,19 @@ import ExcelJS from 'exceljs';
 import { v4 as uuid } from 'uuid';
 import { resolveMirror, resolveLookupDisplayValue } from './mirrorResolver';
 import { formatRangeValue } from '@/pages/Records/components/RangeField';
+import { resolveFieldDisplay } from '@/lib/recordTranslation/resolver';
+import { ensureEntityTranslations } from '@/lib/recordTranslation/store';
 import type { AppModel, AppRecord, ModelField, Language, NoteEntry } from '@/types';
 
-function formatCell(field: ModelField, val: unknown, isAr: boolean): string | number {
+/**
+ * `recordId` (bilingual W4): when given, free-text cells export the record's
+ * current TRANSLATION for the export language (same text the UI shows) instead
+ * of the raw source. Import stays raw/exact-value matching and only CREATES
+ * records, so a re-imported localized export can never overwrite a source.
+ */
+function formatCell(field: ModelField, val: unknown, isAr: boolean, recordId?: string): string | number {
   if (val === undefined || val === null) return '';
+  const lang = isAr ? 'ar' : 'en';
   switch (field.type) {
     case 'dropdown': {
       const opt = field.options?.find((o) => o.value === val);
@@ -38,10 +47,19 @@ function formatCell(field: ModelField, val: unknown, isAr: boolean): string | nu
         .filter((e) => e && typeof e.text === 'string')
         .map((e) => {
           const ts = e.created_at?.slice(0, 10) ?? '';
-          return ts ? `[${ts}] ${e.text}` : e.text;
+          // Same per-entry element path the record UI uses (`field[id=<uuid>]`).
+          const text = recordId && e.id
+            ? resolveFieldDisplay(recordId, `${field.name}[id=${e.id}]`, e.text, lang)
+            : e.text;
+          return ts ? `[${ts}] ${text}` : text;
         })
         .join('\n---\n');
     }
+    case 'text':
+    case 'textarea':
+      return recordId
+        ? resolveFieldDisplay(recordId, field.name, String(val), lang)
+        : String(val);
     default:
       return String(val);
   }
@@ -50,16 +68,21 @@ function formatCell(field: ModelField, val: unknown, isAr: boolean): string | nu
 /**
  * Export model records to an Excel file.
  * Mirrors resolve live via the sibling lookup — resolution requires allRecords + allModels.
+ * Async since W4: awaits translation hydration for the exported records so
+ * free-text cells export in the requested language (bounded — see
+ * ensureEntityTranslations; un-hydrated records export source text).
  */
-export function exportToExcel(
+export async function exportToExcel(
   model: AppModel,
   records: AppRecord[],
   language: Language,
   allRecords: Record<string, AppRecord[]>,
   allModels: AppModel[],
-): void {
+): Promise<void> {
   const isAr = language === 'ar';
   const allFields = model.schema.sections.flatMap((s) => s.fields);
+
+  await ensureEntityTranslations(records.map((r) => r.id));
 
   // Build header row using field labels
   const headers = allFields.map((f) => (isAr ? f.label_ar : f.label_en));
@@ -70,9 +93,9 @@ export function exportToExcel(
       if (field.type === 'mirror') {
         const res = resolveMirror(field, rec.data, allRecords, allModels);
         if (res.status !== 'ok' || !res.targetField) return '';
-        return formatCell(res.targetField, res.value, isAr);
+        return formatCell(res.targetField, res.value, isAr, res.targetRecord?.id);
       }
-      return formatCell(field, rec.data[field.name], isAr);
+      return formatCell(field, rec.data[field.name], isAr, rec.id);
     }),
   );
 

@@ -31,6 +31,8 @@ export interface ScheduledReport {
   widget_id: string | null;
   metric_id: string | null;
   query: AnalyticsQuery | null;
+  /** Bilingual W4: the language the email renders in (chrome + labels). */
+  language?: string | null;
 }
 
 export interface RunReportResult {
@@ -91,6 +93,10 @@ interface ResolvedSection {
 
 /** Resolve a report's source into one or more (title, query) sections. */
 async function resolveSections(service: SupabaseClient, report: ScheduledReport): Promise<ResolvedSection[]> {
+  // W4: section titles follow the report's language.
+  const isAr = report.language !== 'en';
+  const pickLabel = (ar: string | undefined, en: string | undefined) =>
+    (isAr ? ar || en : en || ar) ?? '';
   switch (report.source_type) {
     case 'custom': {
       if (!report.query) throw new Error('custom report has no query');
@@ -102,7 +108,7 @@ async function resolveSections(service: SupabaseClient, report: ScheduledReport)
       if (error) throw new Error(`load metric: ${error.message}`);
       if (!data) throw new Error('metric not found');
       const m = data as unknown as MetricDefinition;
-      return [{ title: m.label_en || m.label_ar, query: m.query, numberFormat: m.format ?? undefined }];
+      return [{ title: pickLabel(m.label_ar, m.label_en), query: m.query, numberFormat: m.format ?? undefined }];
     }
     case 'widget':
     case 'dashboard': {
@@ -119,7 +125,7 @@ async function resolveSections(service: SupabaseClient, report: ScheduledReport)
           : eligible;
       if (chosen.length === 0) throw new Error('no engine-backed widget found for this report');
       return chosen.map((w) => ({
-        title: w.title_en || w.title_ar || 'Widget',
+        title: pickLabel(w.title_ar, w.title_en) || (isAr ? 'عنصر' : 'Widget'),
         query: effectiveQuery(w),
         numberFormat: vizNumberFormat(effectiveViz(w)),
       }));
@@ -242,7 +248,10 @@ export async function runReportById(reportId: string, triggeredBy: 'schedule' | 
       report.dashboard_id && (report.source_type === 'dashboard' || report.source_type === 'widget')
         ? `${process.env.APP_URL ?? 'https://app.wassel.re'}/dashboards/${report.dashboard_id}`
         : null;
-    const email = renderReportEmail({ reportTitle: report.title, sections, dataAsOf, link });
+    const email = renderReportEmail({
+      reportTitle: report.title, sections, dataAsOf, link,
+      lang: report.language === 'en' ? 'en' : 'ar',
+    });
 
     const delivery = await deliver(recipients, email);
     const status: RunReportResult['status'] = delivery === 'sent' ? 'sent' : delivery === 'draft' ? 'draft' : 'partial';

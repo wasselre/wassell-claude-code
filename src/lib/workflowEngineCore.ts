@@ -11,7 +11,7 @@
  */
 
 import type { AppModel, AppRecord, Workflow, WorkflowBranch, WorkflowCondition, FieldMapping, User, SelectionStrategy } from '@/types';
-import { formatDateHumanAr } from './dateFormat.js';
+import { formatDateHumanAr, formatDateHumanEn } from './dateFormat.js';
 
 /**
  * Format a Date for storage in a record field so that the HTML form inputs
@@ -131,6 +131,16 @@ export interface SubstituteTokensContext {
   triggerModel?: AppModel | undefined;
   /** All records keyed by model_id. Accepts a Map (server sweeper) or a plain object (client store). */
   recordsByModel?: Map<string, AppRecord[]> | Record<string, AppRecord[]>;
+  /**
+   * Bilingual W4: resolves a record field's TRANSLATED display for a language
+   * — backing the `{slug|ar}` / `{slug|en}` formatters. Client: the
+   * recordTranslation store; server: a pre-fetched variant overlay. Absent ⇒
+   * those formatters fall back to the stored (source) value.
+   */
+  localizeField?: (recordId: string, fieldPath: string, lang: 'ar' | 'en') => string | null;
+  /** All models — lets `{lookup.field|ar}` resolve the TARGET model's option
+   *  labels. Optional; without it dot-path language formatting covers text only. */
+  models?: AppModel[];
 }
 
 function getModelRecords(
@@ -142,11 +152,47 @@ function getModelRecords(
   return byModel[modelId] ?? [];
 }
 
-function applyFormatter(value: unknown, formatter: string, debugToken: string): string {
+/** What produced the token's value — lets language formatters resolve option
+ *  labels (field metadata) and translations (owning record id). */
+interface TokenValueOrigin {
+  /** The record the value was read from (trigger, or the lookup target). */
+  recordId?: string;
+  /** The field definition of the slug that produced the value, if resolvable. */
+  field?: { name: string; type: string; options?: Array<{ value: string; label_ar: string; label_en: string }> };
+  /** The slug the value was read under (dot-path: the TARGET field slug). */
+  fieldSlug?: string;
+  localizeField?: SubstituteTokensContext['localizeField'];
+}
+
+/** `{slug|ar}` / `{slug|en}` — render the value in a specific language:
+ *  dropdown/multiselect values become option labels; free text resolves its
+ *  current translation (falling back to the stored source). */
+function formatLocalized(value: unknown, lang: 'ar' | 'en', origin: TokenValueOrigin): string {
+  const optionLabel = (v: unknown): string => {
+    const opt = origin.field?.options?.find((o) => o.value === v);
+    return opt ? (lang === 'ar' ? opt.label_ar : opt.label_en) || String(v) : String(v);
+  };
+  if (origin.field && (origin.field.type === 'dropdown' || origin.field.type === 'multiselect' || origin.field.type === 'section_selector')) {
+    if (Array.isArray(value)) return value.map(optionLabel).join('، ');
+    return optionLabel(value);
+  }
+  if (typeof value === 'string' && origin.recordId && origin.fieldSlug && origin.localizeField) {
+    return origin.localizeField(origin.recordId, origin.fieldSlug, lang) ?? value;
+  }
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function applyFormatter(value: unknown, formatter: string, debugToken: string, origin: TokenValueOrigin): string {
   if (value === null || value === undefined) return '';
   switch (formatter) {
     case 'human_ar':
       return formatDateHumanAr(value as string | Date);
+    case 'human_en':
+      return formatDateHumanEn(value as string | Date);
+    case 'ar':
+    case 'en':
+      return formatLocalized(value, formatter, origin);
     default: {
       // eslint-disable-next-line no-console
       console.warn(`[substituteFieldTokens] unknown formatter "${formatter}" on token "${debugToken}" — falling back to raw value`);
@@ -171,8 +217,15 @@ function applyFormatter(value: unknown, formatter: string, debugToken: string): 
  *                                             model (single hop)
  *   `{lookup_slug.target_field|formatter}`    dereference + format
  *
- * **Formatters (v1):**
+ * **Formatters:**
  *   `human_ar` — friendly Arabic date+time phrase (see `formatDateHumanAr`)
+ *   `human_en` — friendly English date+time phrase (bilingual W4)
+ *   `ar` / `en` — render the value in that language (bilingual W4): dropdown /
+ *                 multiselect values become the option's label in that
+ *                 language; free-text fields resolve their current translation
+ *                 via `context.localizeField`, falling back to the stored
+ *                 source. Bare `{slug}` stays RAW by design — workflow
+ *                 conditions and integrations depend on stored values.
  *
  * **Dot-path traversal** requires `context.triggerModel` and
  * `context.recordsByModel` so we can resolve the lookup. Without them,
@@ -192,6 +245,14 @@ export function substituteFieldTokens(
     /\{([a-zA-Z_]\w*)(?:\.([a-zA-Z_]\w*))?(?:\|([a-zA-Z_]\w*))?\}/g,
     (match, slug, dotField, formatter) => {
       let value: unknown = triggerRecord.data[slug];
+      // Origin of the value — the language formatters (|ar / |en) need to know
+      // which record + field produced it to resolve labels/translations.
+      const origin: TokenValueOrigin = {
+        recordId: triggerRecord.id,
+        field: context?.triggerModel?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === slug),
+        fieldSlug: slug,
+        localizeField: context?.localizeField,
+      };
 
       if (dotField) {
         if (!context?.triggerModel) {
@@ -213,10 +274,15 @@ export function substituteFieldTokens(
         const targetRecord = candidates.find((r) => r.id === targetId);
         if (!targetRecord) return '';
         value = targetRecord.data[dotField];
+        origin.recordId = targetRecord.id;
+        origin.fieldSlug = dotField;
+        origin.field = context.models
+          ?.find((m) => m.id === lookupField.lookup_model_id)
+          ?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === dotField);
       }
 
       if (value === null || value === undefined) return '';
-      if (formatter) return applyFormatter(value, formatter, match);
+      if (formatter) return applyFormatter(value, formatter, match, origin);
       if (typeof value === 'object') return JSON.stringify(value);
       return String(value);
     },

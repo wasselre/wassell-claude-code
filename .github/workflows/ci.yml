@@ -65,9 +65,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Bootstrap fixture
         run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/bootstrap_fixture.sql
-      - name: Apply translation migrations (01..05)
+      - name: Apply translation migrations (W1 set + W4 server-language)
         run: |
-          for f in supabase/migrations/2026-09-01_0*.sql; do
+          for f in supabase/migrations/2026-09-01_0*.sql supabase/migrations/2026-09-02_0*.sql; do
             echo "== $f"
             psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
           done

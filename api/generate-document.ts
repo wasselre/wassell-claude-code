@@ -26,6 +26,8 @@ interface Body {
   recordId?: string;
   modelId?: string;
   templateId?: string;
+  /** Render language for the generated PDF (W4). Anything but 'en' → 'ar'. */
+  language?: string;
 }
 
 /** Pull a single linked-record id out of a lookup / unit_picker field value
@@ -60,6 +62,7 @@ export default async function handler(req: Request): Promise<Response> {
     const recordId = (body.recordId ?? '').trim();
     const modelId = (body.modelId ?? '').trim();
     const templateId = (body.templateId ?? '').trim();
+    const language = body.language === 'en' ? 'en' : 'ar';
     if (!recordId) return jsonError(400, 'recordId is required');
     if (!modelId) return jsonError(400, 'modelId is required');
     if (!templateId) return jsonError(400, 'templateId is required');
@@ -114,6 +117,7 @@ export default async function handler(req: Request): Promise<Response> {
       p_client_record_id: clientRecordId,
       p_unit_record_id: unitRecordId,
       p_project_record_id: projectRecordId,
+      p_language: language,
     });
     if (enqErr) return jsonError(500, `enqueue failed: ${enqErr.message}`);
     if (!jobId) return jsonError(500, 'enqueue returned no job id');

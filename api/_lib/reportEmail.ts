@@ -17,6 +17,9 @@ export interface RenderInput {
   sections: ReportSection[];
   dataAsOf: string; // ISO
   link?: string | null;
+  /** Bilingual W4: render language — chrome strings, direction, label side.
+   *  Default 'ar' (Arabic-first company). */
+  lang?: 'ar' | 'en';
 }
 
 export interface RenderedEmail {
@@ -50,9 +53,11 @@ function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 }
 
-function sectionRows(r: AnalyticsResult): { label: string; value: number | null }[] {
+function sectionRows(r: AnalyticsResult, lang: 'ar' | 'en'): { label: string; value: number | null }[] {
+  const pick = (k: { label_ar?: string | null; label_en?: string | null; raw?: string | null }) =>
+    lang === 'ar' ? k.label_ar || k.label_en || k.raw : k.label_en || k.label_ar || k.raw;
   return r.rows.map((row) => ({
-    label: row.keys.map((k) => k.label_en || k.label_ar || k.raw).filter(Boolean).join(' / ') || '—',
+    label: row.keys.map(pick).filter(Boolean).join(' / ') || '—',
     value: row.value,
   }));
 }
@@ -63,7 +68,21 @@ function isScalar(r: AnalyticsResult): boolean {
 
 export function renderReportEmail(input: RenderInput): RenderedEmail {
   const { reportTitle, sections, dataAsOf, link } = input;
-  const asOf = new Date(dataAsOf).toLocaleString('en-GB', { timeZone: 'Asia/Riyadh', dateStyle: 'medium', timeStyle: 'short' });
+  const lang: 'ar' | 'en' = input.lang === 'en' ? 'en' : 'ar';
+  const isAr = lang === 'ar';
+  const dir = isAr ? 'rtl' : 'ltr';
+  const startAlign = isAr ? 'right' : 'left';
+  const endAlign = isAr ? 'left' : 'right';
+  const asOf = new Date(dataAsOf).toLocaleString(isAr ? 'ar-SA' : 'en-GB', { timeZone: 'Asia/Riyadh', dateStyle: 'medium', timeStyle: 'short' });
+  const L = {
+    category: isAr ? 'الفئة' : 'Category',
+    value: isAr ? 'القيمة' : 'Value',
+    asOf: isAr ? `البيانات حتى ${asOf} (توقيت الرياض)` : `Data as of ${asOf} (Asia/Riyadh)`,
+    open: isAr ? 'فتح في وصل ↗' : 'Open in Wassel ↗',
+    footer: isAr ? 'وصل — تقرير تحليلات مجدول.' : 'Wassel — scheduled analytics report.',
+    signoff: isAr ? '— تقرير وصل المجدول' : '— Wassel scheduled report',
+    warnings: isAr ? 'تنبيهات' : 'warnings',
+  };
 
   const htmlParts: string[] = [];
   const textParts: string[] = [];
@@ -77,18 +96,18 @@ export function renderReportEmail(input: RenderInput): RenderedEmail {
       htmlParts.push(`<div style="font-size:32px;font-weight:bold;color:${COPPER};" dir="ltr">${esc(fmt(total, sec.numberFormat))}</div>`);
       textParts.push(`${fmt(total, sec.numberFormat)}`);
     } else {
-      const rows = sectionRows(sec.result);
+      const rows = sectionRows(sec.result, lang);
       const cells = rows
         .map(
           (row) =>
             `<tr><td style="padding:6px 10px;border-bottom:1px solid ${SAND}66;color:${CHARCOAL};">${esc(row.label)}</td>` +
-            `<td style="padding:6px 10px;border-bottom:1px solid ${SAND}66;text-align:right;font-weight:bold;color:${CHARCOAL};" dir="ltr">${esc(fmt(row.value, sec.numberFormat))}</td></tr>`,
+            `<td style="padding:6px 10px;border-bottom:1px solid ${SAND}66;text-align:${endAlign};font-weight:bold;color:${CHARCOAL};" dir="ltr">${esc(fmt(row.value, sec.numberFormat))}</td></tr>`,
         )
         .join('');
       htmlParts.push(
         `<table style="border-collapse:collapse;width:100%;max-width:520px;font-size:13px;">` +
-          `<tr><th style="text-align:left;padding:6px 10px;border-bottom:2px solid ${COPPER};color:${COPPER};">Category</th>` +
-          `<th style="text-align:right;padding:6px 10px;border-bottom:2px solid ${COPPER};color:${COPPER};">Value</th></tr>${cells}</table>`,
+          `<tr><th style="text-align:${startAlign};padding:6px 10px;border-bottom:2px solid ${COPPER};color:${COPPER};">${L.category}</th>` +
+          `<th style="text-align:${endAlign};padding:6px 10px;border-bottom:2px solid ${COPPER};color:${COPPER};">${L.value}</th></tr>${cells}</table>`,
       );
       for (const row of rows) textParts.push(`  ${row.label}: ${fmt(row.value, sec.numberFormat)}`);
     }
@@ -97,28 +116,28 @@ export function renderReportEmail(input: RenderInput): RenderedEmail {
     if (warns.length > 0) {
       const w = warns.map((x) => x.code).join(', ');
       htmlParts.push(`<div style="font-size:11px;color:#b45309;margin-top:6px;">⚠ ${esc(w)}</div>`);
-      textParts.push(`  (warnings: ${w})`);
+      textParts.push(`  (${L.warnings}: ${w})`);
     }
   }
 
   const linkHtml = link
-    ? `<p style="margin-top:24px;"><a href="${esc(link)}" style="color:${COPPER};">Open in Wassel ↗</a></p>`
+    ? `<p style="margin-top:24px;"><a href="${esc(link)}" style="color:${COPPER};">${L.open}</a></p>`
     : '';
-  const linkText = link ? `\nOpen in Wassel: ${link}` : '';
+  const linkText = link ? `\n${isAr ? 'فتح في وصل' : 'Open in Wassel'}: ${link}` : '';
 
   const html =
-    `<div style="font-family:Arial,Helvetica,sans-serif;background:${CREAM};padding:24px;color:${CHARCOAL};">` +
+    `<div dir="${dir}" style="font-family:Arial,Helvetica,sans-serif;background:${CREAM};padding:24px;color:${CHARCOAL};">` +
     `<div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid ${SAND}66;border-radius:12px;padding:24px;">` +
     `<h1 style="color:${COPPER};font-size:20px;margin:0 0 4px;">${esc(reportTitle)}</h1>` +
-    `<div style="font-size:12px;color:${CHARCOAL}99;">Data as of ${esc(asOf)} (Asia/Riyadh)</div>` +
+    `<div style="font-size:12px;color:${CHARCOAL}99;">${esc(L.asOf)}</div>` +
     htmlParts.join('') +
     linkHtml +
     `<hr style="border:none;border-top:1px solid ${SAND}66;margin:24px 0 8px;">` +
-    `<div style="font-size:11px;color:${CHARCOAL}80;">Wassel — scheduled analytics report.</div>` +
+    `<div style="font-size:11px;color:${CHARCOAL}80;">${L.footer}</div>` +
     `</div></div>`;
 
   const text =
-    `${reportTitle}\nData as of ${asOf} (Asia/Riyadh)\n` + textParts.join('\n') + linkText + `\n\n— Wassel scheduled report`;
+    `${reportTitle}\n${L.asOf}\n` + textParts.join('\n') + linkText + `\n\n${L.signoff}`;
 
   return { subject: `${reportTitle} — ${asOf}`, html, text };
 }

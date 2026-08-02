@@ -169,3 +169,64 @@ export function formatDateHumanAr(value: string | Date | null | undefined): stri
   const monthName = MONTH_NAMES_AR[parsed.month - 1] ?? String(parsed.month);
   return `يوم ${dayName} ${parsed.day} ${monthName} ${parsed.year}، ${time}`;
 }
+
+const DAY_NAMES_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTH_NAMES_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** "at 6:00 PM" — pure time portion, 12-hour. */
+function formatTimePartEn(hour24: number, minute: number): string {
+  let h12 = hour24 % 12;
+  if (h12 === 0) h12 = 12;
+  const mm = String(minute).padStart(2, '0');
+  return `at ${h12}:${mm} ${hour24 < 12 ? 'AM' : 'PM'}`;
+}
+
+/**
+ * Public: English twin of `formatDateHumanAr` — the `human_en` workflow token
+ * formatter (bilingual W4). Same Riyadh wall-clock semantics and today /
+ * tomorrow / this-week / next-week buckets.
+ */
+export function formatDateHumanEn(value: string | Date | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '';
+
+  let parsed: RiyadhWallClock | null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return '';
+    const shifted = new Date(value.getTime() + RIYADH_TZ_OFFSET_HOURS * MS_PER_HOUR);
+    parsed = {
+      year: shifted.getUTCFullYear(),
+      month: shifted.getUTCMonth() + 1,
+      day: shifted.getUTCDate(),
+      hour: shifted.getUTCHours(),
+      minute: shifted.getUTCMinutes(),
+      weekday: shifted.getUTCDay(),
+      dateOnlyMs: Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()),
+    };
+  } else {
+    parsed = parseRiyadhWallClock(String(value));
+  }
+  if (!parsed) return String(value);
+
+  const now = getRiyadhNow();
+  const dayDiff = Math.round((parsed.dateOnlyMs - now.dateOnlyMs) / MS_PER_DAY);
+  const daysIntoThisWeek = now.weekday;
+  const startOfThisWeekDayDiff = -daysIntoThisWeek;
+  const endOfThisWeekDayDiff = 6 - daysIntoThisWeek;
+  const startOfNextWeekDayDiff = endOfThisWeekDayDiff + 1;
+  const endOfNextWeekDayDiff = endOfThisWeekDayDiff + 7;
+
+  const time = formatTimePartEn(parsed.hour, parsed.minute);
+  const dayName = DAY_NAMES_EN[parsed.weekday] ?? '';
+
+  if (dayDiff === 0) return `today ${time}`;
+  if (dayDiff === 1) return `tomorrow ${time}`;
+  if (dayDiff === 2) return `the day after tomorrow ${time}`;
+  if (dayDiff >= startOfThisWeekDayDiff && dayDiff <= endOfThisWeekDayDiff) {
+    return `this ${dayName} ${time}`;
+  }
+  if (dayDiff >= startOfNextWeekDayDiff && dayDiff <= endOfNextWeekDayDiff) {
+    return `next ${dayName} ${time}`;
+  }
+  const monthName = MONTH_NAMES_EN[parsed.month - 1] ?? String(parsed.month);
+  return `${dayName}, ${parsed.day} ${monthName} ${parsed.year} ${time}`;
+}

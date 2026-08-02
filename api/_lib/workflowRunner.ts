@@ -51,6 +51,8 @@ import { normalizePhone } from '../../src/lib/phone.js';
 // SAME server-side send path the on_due sweeper uses — no second WhatsApp impl.
 import { sendMessage as haberchatSendMessage, resolveDefaultDeviceId } from './whatsappGateway.js';
 import { resolveActorPublicUserId } from './actorMapping.js';
+import { fetchTranslationOverlay, overlayFieldText, type Lang, type TranslationOverlay } from './recordLang.js';
+import type { SubstituteTokensContext } from '../../src/lib/workflowEngineCore.js';
 
 export const SUPPORTED_ACTION_TYPES = new Set<WorkflowAction['type']>([
   'create_record', 'update_record', 'send_whatsapp_message', 'send_notification',
@@ -435,6 +437,73 @@ async function resolveDestinationPhone(dest: OutboundIvrDestination, ctx: Resolv
   }
 }
 
+/* ── token context (bilingual W4) ─────────────────────────────────────────────
+   The client engine resolves dot-path tokens ({project_id.project_name}) from
+   its in-memory store; the server has no store, and passing recordsByModel:{}
+   made every server-side lookup token silently substitute ''. This builder
+   loads exactly the lookup targets the templates reference, and — when a
+   template uses the |ar / |en language formatters — prefetches the translation
+   overlays those formatters resolve against. */
+
+const TOKEN_RE = /\{([a-zA-Z_]\w*)(?:\.([a-zA-Z_]\w*))?(?:\|([a-zA-Z_]\w*))?\}/g;
+
+async function buildTokenContext(
+  ctx: ResolveCtx,
+  templates: Array<string | undefined>,
+): Promise<SubstituteTokensContext> {
+  const triggerModel = ctx.models.find((m) => m.id === ctx.triggerModelId);
+  const recordsByModel: Record<string, AppRecord[]> = {};
+  const langsWanted = new Set<Lang>();
+  const dotSlugs = new Set<string>();
+
+  for (const tpl of templates) {
+    if (!tpl) continue;
+    for (const m of tpl.matchAll(TOKEN_RE)) {
+      if (m[2]) dotSlugs.add(m[1]!);
+      if (m[3] === 'ar' || m[3] === 'en') langsWanted.add(m[3]);
+    }
+  }
+
+  // Load the lookup targets referenced by dot-path tokens (one batched read).
+  const wantIds = new Set<string>();
+  const fields = triggerModel?.schema.sections.flatMap((s) => s.fields) ?? [];
+  for (const slug of dotSlugs) {
+    const f = fields.find((x) => x.name === slug);
+    if (!f || f.type !== 'lookup' || !f.lookup_model_id) continue;
+    const raw = ctx.triggerData[slug];
+    const id = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof id === 'string' && id) wantIds.add(id);
+  }
+  if (wantIds.size > 0) {
+    const { data, error } = await ctx.supabase
+      .from('unified_records')
+      .select('id, model_id, data')
+      .in('id', [...wantIds]);
+    if (error) {
+      console.error(`[workflow-runner] lookup-token context load failed: ${error.message}`);
+    }
+    for (const row of data ?? []) {
+      (recordsByModel[row.model_id as string] ??= []).push(row as unknown as AppRecord);
+    }
+  }
+
+  // Prefetch translation overlays for the |ar / |en formatters.
+  let localizeField: SubstituteTokensContext['localizeField'];
+  if (langsWanted.size > 0) {
+    const entityIds = [ctx.recordId, ...wantIds];
+    const overlays = new Map<Lang, TranslationOverlay>();
+    for (const lang of langsWanted) {
+      overlays.set(lang, await fetchTranslationOverlay(ctx.supabase, entityIds, lang));
+    }
+    localizeField = (recordId, fieldPath, lang) => {
+      const ov = overlays.get(lang);
+      return ov ? overlayFieldText(ov, recordId, fieldPath) : null;
+    };
+  }
+
+  return { triggerModel, recordsByModel, models: ctx.models, localizeField };
+}
+
 /* ── send_notification ────────────────────────────────────────────────────────
    Enqueues onto push_outbox; the Fly worker's push loop does the delivery. The
    action stays cheap and synchronous here, and a push service being slow can
@@ -504,33 +573,55 @@ async function execSendNotification(
     return { action_id: action.id, type: 'send_notification', status: 'failed', reason: reason ?? 'no_recipients' };
   }
 
-  const triggerModel = ctx.models.find((m) => m.id === ctx.triggerModelId);
   const asRecord = { id: ctx.recordId, model_id: ctx.triggerModelId, data: ctx.triggerData } as AppRecord;
-  const subst = (tpl: string) => substituteFieldTokens(tpl, asRecord, { triggerModel, recordsByModel: {} });
+  // W4: real token context — server-side lookup tokens resolve instead of
+  // silently substituting '' (the recordsByModel:{} defect), and |ar / |en
+  // formatters get their translation overlays.
+  const tokenCtx = await buildTokenContext(ctx, [
+    action.message_ar, action.message_en, action.title_ar, action.title_en, action.url,
+  ]);
+  const subst = (tpl: string) => substituteFieldTokens(tpl, asRecord, tokenCtx);
 
-  const body = subst(action.message_ar || action.message_en || '');
-  const title = subst(action.title_ar || action.title_en || 'وصل العقارية');
+  // W4: each recipient gets the message in THEIR language (users.preferred_language,
+  // default ar) — never Arabic-first for everyone. An empty side falls back to
+  // the other so a half-filled action still notifies.
+  const renderFor = (lang: 'ar' | 'en') => ({
+    body: subst((lang === 'en' ? action.message_en || action.message_ar : action.message_ar || action.message_en) ?? ''),
+    title: subst((lang === 'en' ? action.title_en || action.title_ar : action.title_ar || action.title_en) ?? '') ||
+      (lang === 'en' ? 'Wassel Real Estate' : 'وصل العقارية'),
+  });
+  const rendered = new Map<'ar' | 'en', { body: string; title: string }>();
+  const langOf = (uid: string): 'ar' | 'en' =>
+    ctx.users.find((u) => u.id === uid)?.preferred_language === 'en' ? 'en' : 'ar';
+  for (const uid of userIds) {
+    const lang = langOf(uid);
+    if (!rendered.has(lang)) rendered.set(lang, renderFor(lang));
+  }
+
   const url = action.url
     ? subst(action.url)
     : `/model/${ctx.models.find((m) => m.id === job.model_id)?.name ?? ''}/${job.record_id}`;
 
-  if (!body.trim()) {
+  if ([...rendered.values()].every((r) => !r.body.trim())) {
     return { action_id: action.id, type: 'send_notification', status: 'failed', reason: 'empty_body_after_substitution' };
   }
 
-  const rows = userIds.map((uid) => ({
-    user_id: uid,
-    kind: 'workflow',
-    title,
-    body,
-    url,
-    // Collapse repeat notifications about the same record on the device rather
-    // than stacking them.
-    tag: `wf-${job.record_id}`,
-    // One notification per recipient per run — a retried job must not notify
-    // the same person twice for the same run.
-    dedupe_key: `wf:${runId}:${action.id}:${uid}`,
-  }));
+  const rows = userIds.map((uid) => {
+    const r = rendered.get(langOf(uid))!;
+    return {
+      user_id: uid,
+      kind: 'workflow',
+      title: r.title,
+      body: r.body,
+      url,
+      // Collapse repeat notifications about the same record on the device rather
+      // than stacking them.
+      tag: `wf-${job.record_id}`,
+      // One notification per recipient per run — a retried job must not notify
+      // the same person twice for the same run.
+      dedupe_key: `wf:${runId}:${action.id}:${uid}`,
+    };
+  });
 
   const { error } = await ctx.supabase.from('push_outbox').insert(rows);
   if (error) {
@@ -539,7 +630,10 @@ async function execSendNotification(
 
   return {
     action_id: action.id, type: 'send_notification', status: 'executed',
-    detail: { recipients: userIds.length, title, url },
+    detail: {
+      recipients: userIds.length, url,
+      titles: Object.fromEntries([...rendered].map(([l, r]) => [l, r.title])),
+    },
   };
 }
 
@@ -551,11 +645,14 @@ async function execSendWhatsApp(action: WorkflowActionSendWhatsAppMessage, runId
   const phone = await resolveDestinationPhone(dest, ctx);
   if (!phone) return { action_id: action.id, type: 'send_whatsapp_message', status: 'failed', reason: 'no_destination_number' };
 
-  const triggerModel = ctx.models.find((m) => m.id === ctx.triggerModelId);
+  // W4: real token context — lookup tokens ({project_id.project_name}) resolve
+  // on the server, and |ar / |en formatters localize (a client-facing WhatsApp
+  // can quote the unit's English notes for an English-speaking client).
+  const tokenCtx = await buildTokenContext(ctx, [action.body_template]);
   const body = substituteFieldTokens(
     action.body_template ?? '',
     { id: ctx.recordId, model_id: ctx.triggerModelId, data: ctx.triggerData } as AppRecord,
-    { triggerModel, recordsByModel: {} },
+    tokenCtx,
   );
   if (!body.trim()) return { action_id: action.id, type: 'send_whatsapp_message', status: 'failed', reason: 'empty_body_after_substitution' };
 
@@ -616,7 +713,7 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
   if (mErr) throw new Error(`load models failed: ${mErr.message}`);
   const models = (modelRows ?? []) as unknown as AppModel[];
   const { data: userRows, error: uErr } = await supabase
-    .from('users').select('id, name_ar, name_en, email, profile_id, role_assignments, is_active, auth_uid');
+    .from('users').select('id, name_ar, name_en, email, profile_id, role_assignments, is_active, auth_uid, preferred_language');
   if (uErr) throw new Error(`load users failed: ${uErr.message}`);
   const users = (userRows ?? []) as unknown as User[];
 

@@ -1069,6 +1069,7 @@ async function claimAndRunOneDocument(): Promise<boolean> {
     unit_record_id: string | null;
     project_record_id: string | null;
     attempts: number;
+    language: string | null;
     template_label_ar: string;
     template_label_en: string;
     content_json: unknown;
@@ -1089,6 +1090,7 @@ async function claimAndRunOneDocument(): Promise<boolean> {
     unitRecordId: row.unit_record_id,
     projectRecordId: row.project_record_id,
     attempts: row.attempts,
+    language: row.language === 'en' ? 'en' : 'ar',
     templateLabelAr: row.template_label_ar,
     templateLabelEn: row.template_label_en,
     contentJson: (row.content_json ?? { type: 'doc', content: [] }) as DocumentJob['contentJson'],
