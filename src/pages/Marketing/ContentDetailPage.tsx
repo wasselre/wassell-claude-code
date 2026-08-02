@@ -14,7 +14,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   MosAccount, MosComment, MosContentRow, MosPublication, MosScene, MosStep, MosTask,
   PLATFORM_LABELS, PUB_STATUS_LABELS, PURPOSE_LABELS, ROLE_LABELS,
-  fetchComments, fetchContentDetail, fetchPublications, isOverdue, updateContent,
+  fetchComments, fetchContentDetail, fetchPublications, fieldSchemaKeys, isOverdue, updateContent,
 } from '@/lib/marketingOS/client';
 import { useAppStore } from '@/stores/appStore';
 import { useWorkspace } from './MarketingWorkspace';
@@ -347,7 +347,7 @@ export default function ContentDetailPage() {
             <div style={{ display: 'grid', gap: 16 }}>
               <WritingFields
                 contentId={item.id}
-                schema={type?.field_schema ?? []}
+                schema={fieldSchemaKeys(type?.field_schema ?? [])}
                 data={item.data ?? {}}
                 canEdit={canEditNow}
                 canApprove={can('approve_creative')}

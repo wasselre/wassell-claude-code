@@ -1864,3 +1864,42 @@
 .mos-root .arow .am b{display:block;font-size:12.5px;color:var(--ink);font-weight:700;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mos-root .arow .badge{flex:none}
 .mos-root .arow .ad{flex:none;width:86px;text-align:end;color:var(--mute);font-size:11px;white-space:nowrap}
+
+/* === s26/s27 additions === */
+/* Platform icon chip (screen 26): the 40px rounded square carrying the
+   platform's own colour and initials — IG / TT / Ads / SC / G. */
+.mos-root .s26-ic{width:40px;height:40px;flex:0 0 40px;border-radius:9px;display:grid;place-items:center;font-weight:700;font-size:13px}
+/* The gold decision banner (screens 26 «قرار: النشر يبقى يدويًا» and 27
+   «حذف الحقل محمي») — same treatment in both mockups. */
+.mos-root .s26-note{margin-top:16px;background:color-mix(in srgb,var(--gold) 13%,transparent);border:1px solid color-mix(in srgb,var(--gold) 38%,transparent);border-radius:9px;padding:14px 16px;font-size:12.5px;color:var(--ink-2);line-height:1.95;max-width:86ch}
+.mos-root .s26-note .n-f{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--gold) 40%,transparent)}
+/* Drag handle on the field rows (screen 27 «اسحب لإعادة الترتيب»). */
+.mos-root .hn{display:grid;place-items:center;width:18px;height:28px;color:var(--mute);cursor:grab;flex:none;touch-action:none}
+.mos-root .hn svg{width:14px;height:14px;stroke-width:2}
+.mos-root .hn:active{cursor:grabbing}
+/* The editor grid beside the 304px side column (screen 27). */
+.mos-root .s27-grid{grid-template-columns:1fr 304px;align-items:start}
+@media (max-width:980px){.mos-root .s27-grid{grid-template-columns:1fr}}
+/* Type head-form: name ar / name en / prefix / workflow on one row. */
+.mos-root .s27-head-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:13px;margin-bottom:16px}
+@media (max-width:980px){.mos-root .s27-head-grid{grid-template-columns:1fr 1fr}}
+/* Field rows: inline name inputs that look like the mockup's bold labels until
+   hovered/focused, and the kind select wearing the .tag style. */
+.mos-root .s27-field{display:flex;align-items:center;gap:10px;background:var(--paper)}
+.mos-root .s27-fname{width:140px;font:inherit;font-size:12.5px;font-weight:700;color:var(--ink);background:transparent;border:1px solid transparent;border-radius:6px;padding:3px 6px}
+.mos-root .s27-fname:hover{border-color:var(--line-soft)}
+.mos-root .s27-fname:focus{border-color:var(--copper);outline:none;background:var(--paper)}
+.mos-root .s27-fname.en{font-weight:400;color:var(--mute)}
+.mos-root .s27-fkind{font:inherit;font-size:11px;padding:2px 6px;border-radius:4px;background:var(--sand-2);color:var(--ink-2);border:1px solid var(--line-soft);cursor:pointer}
+/* The dashed «+ إضافة حقل» row. */
+.mos-root button.wstep.s27-add{width:100%;border-style:dashed;opacity:.75;cursor:pointer;background:none;font:inherit;color:inherit;text-align:start}
+.mos-root button.wstep.s27-add:hover{opacity:1;border-color:var(--copper)}
+/* Hidden (delete-as-hide) fields stay listed, muted, with a restore button. */
+.mos-root .s27-hidden{opacity:.55;display:flex;align-items:center;gap:10px}
+/* The active toggle on type rows — a small switch, go-green when on. */
+.mos-root .sw{position:relative;width:32px;height:18px;border-radius:999px;background:var(--sand-2);border:1px solid var(--line);cursor:pointer;padding:0;flex:none}
+.mos-root .sw::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--mute);transition:transform .15s}
+.mos-root .sw.on{background:color-mix(in srgb,var(--go) 22%,transparent);border-color:color-mix(in srgb,var(--go) 45%,transparent)}
+.mos-root .sw.on::after{transform:translateX(13px);background:var(--go)}
+[dir="rtl"] .mos-root .sw.on::after{transform:translateX(-13px)}
+.mos-root .sw:disabled{cursor:default;opacity:.6}

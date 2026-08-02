@@ -97,6 +97,30 @@ const DB_MESSAGES: Record<string, { en: string; ar: string }> = {
     en: 'Purpose must be organic, paid or both.',
     ar: 'الغرض يجب أن يكون عضويًا أو مدفوعًا أو الاثنين.',
   },
+  mos_campaign_executions_purpose_check: {
+    en: 'Execution purpose must be conversion, awareness, retargeting or traffic.',
+    ar: 'غرض التنفيذ يجب أن يكون تحويلًا أو وعيًا أو إعادة استهداف أو زيارات.',
+  },
+  mos_campaign_events_kind_check: {
+    en: 'That campaign event kind does not exist.',
+    ar: 'نوع حدث الحملة غير موجود.',
+  },
+  client_attributions_source_check: {
+    en: 'Attribution source must be lead_form, manual or import.',
+    ar: 'مصدر النسبة يجب أن يكون نموذج عميل أو يدويًا أو استيرادًا.',
+  },
+  client_attributions_touch_check: {
+    en: 'Touch type must be first or last.',
+    ar: 'نوع اللمسة يجب أن يكون الأولى أو الأخيرة.',
+  },
+  'MOS:ATTRIBUTION_IMMUTABLE': {
+    en: 'Attribution rows are append-only; correct by stamping a superseding row.',
+    ar: 'سجل النسبة غير قابل للتعديل؛ صحّح بإضافة صف جديد يحل محل القديم.',
+  },
+  mos_snap_not_empty_check: {
+    en: 'Enter at least one number, or skip this publication.',
+    ar: 'أدخل رقمًا واحدًا على الأقل، أو تخطَّ هذا المنشور.',
+  },
 };
 
 function translateDbError(error: PostgrestError): { status: number; en: string; ar: string } {
@@ -335,6 +359,249 @@ const slugify = (s: string): string =>
 /** roles.key 'mos_*' → the stripped key the API contract speaks in. */
 const stripMosPrefix = (key: string): string => key.replace(/^mos_/, '');
 
+/** Finite number or null — for budget/spend inputs that may arrive as null. */
+const numOrNull = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) ? v : null;
+
+/* ------------------------------------------------------------------ */
+/* notifications — every emission enters through notify_emit, and a    */
+/* notification failure must NEVER fail the business write that        */
+/* triggered it, so the one call site below swallows exactly that      */
+/* failure (console.error'd) and nothing else.                         */
+/* ------------------------------------------------------------------ */
+
+interface NotifyArgs {
+  event: string;
+  /** UNPREFIXED role keys ('writer'); the helper adds the mos_ prefix. */
+  roles?: string[];
+  users?: string[];
+  titleAr: string;
+  titleEn?: string | null;
+  bodyAr?: string | null;
+  bodyEn?: string | null;
+  url?: string | null;
+}
+
+async function emitNotify(sb: SupabaseClient, args: NotifyArgs): Promise<void> {
+  try {
+    const { error } = await sb.rpc('notify_emit', {
+      p_workspace: 'marketing',
+      p_event: args.event,
+      // roles.key is mos_*-prefixed; the API speaks in stripped keys.
+      p_role_keys: (args.roles ?? []).map((r) => (r.startsWith('mos_') ? r : `mos_${r}`)),
+      p_user_ids: args.users ?? [],
+      p_title_ar: args.titleAr,
+      p_title_en: args.titleEn ?? null,
+      p_body_ar: args.bodyAr ?? null,
+      p_body_en: args.bodyEn ?? null,
+      p_url: args.url ?? null,
+    });
+    // A failed emission is logged, never thrown: the content advance, the
+    // shoot delivery or the campaign save that triggered it already committed,
+    // and a lost notification must not read as a lost business write.
+    if (error) {
+      console.error('[marketing-os] notify_emit failed', args.event, error.code, error.message, error.details);
+    }
+  } catch (e) {
+    // Same posture for a transport-level throw: loud in the logs, invisible
+    // to the business write.
+    console.error('[marketing-os] notify_emit threw', args.event, e);
+  }
+}
+
+/**
+ * The caller's surface levels — the same read bootstrap makes, extracted so
+ * search can filter result types by exactly the same rules (hidden surface →
+ * the type is absent from results AND chips).
+ */
+async function callerSurfaces(
+  sb: SupabaseClient,
+): Promise<{ surfaces: Record<SurfaceKey, SurfaceLevel> } | { fail: Response }> {
+  const [rolesRes, accessRes] = await Promise.all([
+    sb.rpc('wassell_mos_roles'),
+    sb.from('surface_access').select('surface_key, level, roles!inner(key)'),
+  ]);
+  const fail = dbFail(rolesRes.error) ?? dbFail(accessRes.error);
+  if (fail) return { fail };
+  const held = (rolesRes.data as string[] | null) ?? [];
+  return { surfaces: computeSurfaces(held, accessRes.data ?? []) };
+}
+
+/** The role × event × channel matrix rows, in the contract's shape. */
+async function fetchNotificationRuleRows(
+  sb: SupabaseClient,
+): Promise<{ rules: Array<Record<string, unknown>> } | { fail: Response }> {
+  const res = await sb.from('notification_rules').select('event, channel, timing, enabled, roles!inner(key)');
+  const fail = dbFail(res.error);
+  if (fail) return { fail };
+  const rows = ((res.data ?? []) as unknown as Array<{
+    event: string;
+    channel: string;
+    timing: string;
+    enabled: boolean;
+    roles: { key: string } | Array<{ key: string }> | null;
+  }>)
+    .map((r) => {
+      const joined = Array.isArray(r.roles) ? r.roles[0] : r.roles;
+      const key = joined?.key ?? '';
+      return {
+        role_key: key.startsWith('mos_') ? stripMosPrefix(key) : '',
+        event: r.event,
+        channel: r.channel,
+        timing: r.timing,
+        enabled: r.enabled,
+      };
+    })
+    .filter((r) => r.role_key !== '');
+  // Deterministic order: role, then event, then channel.
+  rows.sort((a, b) =>
+    a.role_key.localeCompare(b.role_key)
+    || a.event.localeCompare(b.event)
+    || a.channel.localeCompare(b.channel));
+  return { rules: rows };
+}
+
+/**
+ * The campaign the UI renders = the view's aggregates + the base table's
+ * brief/signature columns (mos_campaign_v predates them and a view change is
+ * out of scope for this endpoint, so the two reads are merged here).
+ */
+async function readCampaignMerged(
+  sb: SupabaseClient,
+  id: string,
+): Promise<{ row: Record<string, unknown> | null; error: PostgrestError | null }> {
+  const [viewRes, baseRes] = await Promise.all([
+    sb.from('mos_campaign_v').select('*').eq('id', id).maybeSingle(),
+    sb.from('mos_campaigns').select('*').eq('id', id).maybeSingle(),
+  ]);
+  const error = viewRes.error ?? baseRes.error;
+  if (error) return { row: null, error };
+  if (!viewRes.data && !baseRes.data) return { row: null, error: null };
+  return {
+    row: {
+      ...((viewRes.data ?? {}) as Record<string, unknown>),
+      ...((baseRes.data ?? {}) as Record<string, unknown>),
+    },
+    error: null,
+  };
+}
+
+/**
+ * Append to the campaign's «ما الذي تغيّر» ledger. The ledger row is part of
+ * the audit trail, but the business write it describes has already committed
+ * by the time this runs — so an insert failure is console.error-ed and the
+ * action continues rather than falsely reporting the write itself failed.
+ */
+async function logCampaignEvent(
+  sb: SupabaseClient,
+  args: {
+    campaignId: string;
+    kind: string;
+    summaryAr: string;
+    summaryEn?: string | null;
+    detail?: Record<string, unknown>;
+    actorUserId: string | null;
+  },
+): Promise<void> {
+  const ins = await sb.from('mos_campaign_events').insert({
+    campaign_id: args.campaignId,
+    kind: args.kind,
+    summary_ar: args.summaryAr,
+    summary_en: args.summaryEn ?? null,
+    detail: (args.detail ?? {}) as Record<string, unknown>,
+    actor_user_id: args.actorUserId,
+  });
+  if (ins.error) {
+    console.error('[marketing-os] campaign event insert failed', args.kind,
+      ins.error.code, ins.error.message, ins.error.details);
+  }
+}
+
+/** mos_settings.signature_threshold → the amount above which a budget needs a signature. */
+async function readSignatureThreshold(sb: SupabaseClient): Promise<number> {
+  const res = await sb.from('mos_settings').select('value').eq('key', 'signature_threshold').maybeSingle();
+  if (res.error) {
+    console.error('[marketing-os] signature_threshold read failed', res.error.code, res.error.message);
+    return 50_000;
+  }
+  const amount = ((res.data as { value?: { amount?: unknown } } | null)?.value?.amount);
+  return typeof amount === 'number' && Number.isFinite(amount) ? amount : 50_000;
+}
+
+/**
+ * Open a freshly created content item on its workflow's first step: pin the
+ * current version, then insert the open task. Shared by content_create and
+ * assets_bulk's create_content so the two never drift.
+ */
+async function openFirstTask(
+  sb: SupabaseClient,
+  contentId: string,
+  workflowId: string,
+): Promise<Response | null> {
+  const [wfRes, verRes] = await Promise.all([
+    sb.from('workflows').select('id, metadata').eq('id', workflowId).maybeSingle(),
+    sb.from('workflow_versions').select('id, version_no')
+      .eq('workflow_id', workflowId)
+      .order('version_no', { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const wfFail = dbFail(wfRes.error) ?? dbFail(verRes.error);
+  if (wfFail) return wfFail;
+
+  const first = stepsOf((wfRes.data as { metadata?: unknown } | null)?.metadata ?? null)[0];
+  const versionId = (verRes.data as { id: string } | null)?.id ?? null;
+  if (!first) return null;
+  if (versionId) {
+    const pin = await sb.from('mos_content')
+      .update({ workflow_version_id: versionId }).eq('id', contentId);
+    const pinFail = dbFail(pin.error);
+    if (pinFail) return pinFail;
+  }
+  const dueAt = new Date(Date.now() + first.due_days * 86_400_000).toISOString();
+  const taskRes = await sb.from('workflow_role_tasks').insert({
+    subject_table: 'mos_content',
+    subject_id: contentId,
+    workflow_version_id: versionId,
+    step_key: first.key,
+    role_key: first.role_key,
+    due_at: dueAt,
+  });
+  return dbFail(taskRes.error);
+}
+
+/**
+ * Search excerpt: the matching text with the first case-insensitive hit
+ * wrapped in <mark>. indexOf (not RegExp) so any term — including regex
+ * metacharacters — is matched literally.
+ */
+function buildExcerpt(text: string, term: string): string | null {
+  const idx = text.toLowerCase().indexOf(term.toLowerCase());
+  if (idx < 0) return null;
+  const start = Math.max(0, idx - 40);
+  const end = Math.min(text.length, idx + term.length + 80);
+  return (start > 0 ? '…' : '')
+    + text.slice(start, idx)
+    + '<mark>'
+    + text.slice(idx, idx + term.length)
+    + '</mark>'
+    + text.slice(idx + term.length, end)
+    + (end < text.length ? '…' : '');
+}
+
+/** First field (in priority order) containing the term → the hit's reason + excerpt. */
+function matchIn(
+  fields: Array<[reason: string, text: string | null | undefined]>,
+  term: string,
+): { match_reason: string; excerpt: string } {
+  for (const [reason, text] of fields) {
+    if (!text) continue;
+    const excerpt = buildExcerpt(text, term);
+    if (excerpt !== null) return { match_reason: reason, excerpt };
+  }
+  // Unreachable when the caller only feeds rows the DB matched, but a row
+  // that slipped through reports the title rather than crashing the search.
+  return { match_reason: 'title', excerpt: '' };
+}
+
 /* ------------------------------------------------------------------ */
 /* handler                                                            */
 /* ------------------------------------------------------------------ */
@@ -527,36 +794,8 @@ export default async function handler(req: Request): Promise<Response> {
         // module exists to remove. The item is PINNED to the current version, so
         // a later edit to the path never moves running work.
         if (type.workflow_id) {
-          const [wfRes, verRes] = await Promise.all([
-            sb.from('workflows').select('id, metadata').eq('id', type.workflow_id).maybeSingle(),
-            sb.from('workflow_versions').select('id, version_no')
-              .eq('workflow_id', type.workflow_id)
-              .order('version_no', { ascending: false }).limit(1).maybeSingle(),
-          ]);
-          const wfFail = dbFail(wfRes.error) ?? dbFail(verRes.error);
-          if (wfFail) return wfFail;
-
-          const first = stepsOf((wfRes.data as { metadata?: unknown } | null)?.metadata ?? null)[0];
-          const versionId = (verRes.data as { id: string } | null)?.id ?? null;
-          if (first) {
-            if (versionId) {
-              const pin = await sb.from('mos_content')
-                .update({ workflow_version_id: versionId }).eq('id', row.id);
-              const pinFail = dbFail(pin.error);
-              if (pinFail) return pinFail;
-            }
-            const dueAt = new Date(Date.now() + first.due_days * 86_400_000).toISOString();
-            const taskRes = await sb.from('workflow_role_tasks').insert({
-              subject_table: 'mos_content',
-              subject_id: row.id,
-              workflow_version_id: versionId,
-              step_key: first.key,
-              role_key: first.role_key,
-              due_at: dueAt,
-            });
-            const taskFail = dbFail(taskRes.error);
-            if (taskFail) return taskFail;
-          }
+          const openFail = await openFirstTask(sb, row.id, type.workflow_id);
+          if (openFail) return openFail;
         }
 
         const full = await sb.from('mos_content_v')
@@ -689,6 +928,43 @@ export default async function handler(req: Request): Promise<Response> {
           .select(CONTENT_LIST_COLUMNS).eq('id', contentId).maybeSingle();
         const fullFail = dbFail(full.error);
         if (fullFail) return fullFail;
+
+        // Notifications: the engine has opened the NEXT task — its role is who
+        // gets interrupted. A rejection reopens the revision step (the writer),
+        // a submit/approval opens the following step. done=true opens nothing.
+        if (payload.opened_task_id) {
+          const nt = await sb.from('workflow_role_tasks')
+            .select('role_key, assignee_user_id').eq('id', payload.opened_task_id).maybeSingle();
+          if (nt.error) {
+            console.error('[marketing-os] next-task read for notification failed',
+              nt.error.code, nt.error.message);
+          } else if (nt.data) {
+            const next = nt.data as { role_key: string; assignee_user_id: string | null };
+            const itemTitle = ((full.data as { title?: string } | null)?.title) ?? '';
+            await emitNotify(sb, result === 'changes_requested'
+              ? {
+                  event: 'changes_requested',
+                  roles: [next.role_key],
+                  users: next.assignee_user_id ? [next.assignee_user_id] : [],
+                  titleAr: 'أُعيد العمل بتعديلات',
+                  titleEn: 'Changes requested',
+                  bodyAr: `«${itemTitle}» — ${note ?? ''}`,
+                  bodyEn: itemTitle,
+                  url: `/m/content/${contentId}?tab=tasks`,
+                }
+              : {
+                  event: 'task_assigned',
+                  roles: [next.role_key],
+                  users: next.assignee_user_id ? [next.assignee_user_id] : [],
+                  titleAr: 'فُتحت لك مهمة',
+                  titleEn: 'A task was assigned to you',
+                  bodyAr: `«${itemTitle}» بانتظار خطوتك.`,
+                  bodyEn: itemTitle,
+                  url: `/m/content/${contentId}?tab=tasks`,
+                });
+          }
+        }
+
         return jsonOk({ item: full.data, ...payload });
       }
 
@@ -720,6 +996,160 @@ export default async function handler(req: Request): Promise<Response> {
         const f = dbFail(res.error);
         if (f) return f;
         return jsonOk({ versions: res.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Notifications — the in-app inbox. RLS scopes every read   */
+      /* to the caller's own rows; writes happen via notify_emit.  */
+      /* -------------------------------------------------------- */
+      case 'notifications_list': {
+        const unreadOnly = body.unread_only === true;
+        // Filters before transforms: .order()/.limit() return the transform
+        // builder, which no longer accepts .is().
+        const base = sb.from('notifications')
+          .select('id, kind, title_ar, title_en, body_ar, body_en, url, read_at, created_at');
+        const filtered = unreadOnly ? base.is('read_at', null) : base;
+        const [rows, unread] = await Promise.all([
+          filtered.order('created_at', { ascending: false }).limit(cap(body.limit, 50, 200)),
+          sb.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null),
+        ]);
+        const f = dbFail(rows.error) ?? dbFail(unread.error);
+        if (f) return f;
+        return jsonOk({ rows: rows.data ?? [], unread: unread.count ?? 0 });
+      }
+
+      case 'notifications_read': {
+        const ids = Array.isArray(body.ids)
+          ? (body.ids as unknown[]).filter((x): x is string => typeof x === 'string' && x !== '')
+          : [];
+        if (ids.length === 0) return jsonError(400, 'ids must be a non-empty array');
+        if (ids.length > 500) return jsonError(400, 'at most 500 ids per call');
+        // The RPC re-checks ownership definer-side; ids belonging to someone
+        // else are no-ops, not leaks.
+        const res = await sb.rpc('mark_notifications_read', { p_ids: ids });
+        const f = dbFail(res.error);
+        if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      /* -------------------------------------------------------- */
+      /* The role × event × channel matrix (screen 43)             */
+      /* -------------------------------------------------------- */
+      case 'notification_rules': {
+        const res = await fetchNotificationRuleRows(sb);
+        if ('fail' in res) return res.fail;
+        return jsonOk({ rules: res.rules });
+      }
+
+      case 'notification_rule_set': {
+        const roleKey = str(body.role_key);
+        const event = str(body.event);
+        const channel = str(body.channel);
+        const timing = str(body.timing);
+        if (!roleKey || !(MOS_ROLE_KEYS as readonly string[]).includes(roleKey)) {
+          return jsonError(400, 'unknown role');
+        }
+        if (!event) return jsonError(400, 'event is required');
+        if (!channel || !['inapp', 'push', 'whatsapp'].includes(channel)) {
+          return jsonError(400, 'channel must be inapp, push or whatsapp');
+        }
+        if (typeof body.enabled !== 'boolean') return jsonError(400, 'enabled must be a boolean');
+        if (timing && !['immediate', 'digest'].includes(timing)) {
+          return jsonError(400, 'timing must be immediate or digest');
+        }
+        const roleRes = await sb.from('roles').select('id').eq('key', `mos_${roleKey}`).maybeSingle();
+        const roleFail = dbFail(roleRes.error);
+        if (roleFail) return roleFail;
+        if (!roleRes.data) return jsonError(400, 'unknown role');
+
+        const row: Record<string, unknown> = {
+          role_id: (roleRes.data as { id: string }).id,
+          event,
+          channel,
+          enabled: body.enabled,
+        };
+        if (timing) row.timing = timing;
+        const up = await sb.from('notification_rules').upsert(row, { onConflict: 'role_id,event,channel' });
+        const f = dbFail(up.error);
+        if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Per-user delivery prefs — whatsapp on/off, digest hour,   */
+      /* quiet hours. Absent row = defaults, so this is an upsert. */
+      /* -------------------------------------------------------- */
+      case 'notification_prefs_save': {
+        const appUserId = await resolveAppUserId(sb, user.userId);
+        if (!appUserId) return jsonError(400, 'no app user for this account');
+
+        const hour = (v: unknown, name: string): number | null | Response => {
+          if (v === undefined || v === null) return null;
+          if (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 23) return v;
+          return jsonError(400, `${name} must be an integer between 0 and 23`);
+        };
+        const digestHour = hour(body.digest_hour, 'digest_hour');
+        if (digestHour instanceof Response) return digestHour;
+        const quietFrom = hour(body.quiet_from, 'quiet_from');
+        if (quietFrom instanceof Response) return quietFrom;
+        const quietTo = hour(body.quiet_to, 'quiet_to');
+        if (quietTo instanceof Response) return quietTo;
+
+        const patch: Record<string, unknown> = { user_id: appUserId };
+        if (typeof body.whatsapp_enabled === 'boolean') patch.whatsapp_enabled = body.whatsapp_enabled;
+        if (digestHour !== null) patch.digest_hour = digestHour;
+        if (Object.prototype.hasOwnProperty.call(body, 'quiet_from')) patch.quiet_from = quietFrom;
+        if (Object.prototype.hasOwnProperty.call(body, 'quiet_to')) patch.quiet_to = quietTo;
+
+        const up = await sb.from('notification_prefs')
+          .upsert(patch, { onConflict: 'user_id' }).select('*').maybeSingle();
+        const f = dbFail(up.error);
+        if (f) return f;
+        return jsonOk({ prefs: up.data });
+      }
+
+      /* -------------------------------------------------------- */
+      /* «تذكير» (s01/s35) — a manual nudge to whoever holds the   */
+      /* item's open task.                                         */
+      /* -------------------------------------------------------- */
+      case 'remind': {
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+
+        const [taskRes, itemRes] = await Promise.all([
+          sb.from('workflow_role_tasks')
+            .select('id, role_key, assignee_user_id')
+            .eq('subject_table', 'mos_content')
+            .eq('subject_id', contentId)
+            .eq('status', 'open')
+            .maybeSingle(),
+          sb.from('mos_content_v').select('id, title').eq('id', contentId).maybeSingle(),
+        ]);
+        const f = dbFail(taskRes.error) ?? dbFail(itemRes.error);
+        if (f) return f;
+        const task = taskRes.data as { role_key: string; assignee_user_id: string | null } | null;
+        if (!task) {
+          return new Response(
+            JSON.stringify({
+              error: 'This item has no open task.',
+              error_ar: 'لا توجد مهمة مفتوحة لهذا العنصر.',
+            }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        const title = ((itemRes.data as { title?: string } | null)?.title) ?? '';
+
+        await emitNotify(sb, {
+          event: 'manual_reminder',
+          roles: [task.role_key],
+          users: task.assignee_user_id ? [task.assignee_user_id] : [],
+          titleAr: 'تذكير بمهمة',
+          titleEn: 'Task reminder',
+          bodyAr: `تذكير: «${title}» بانتظار خطوتك.`,
+          bodyEn: `Reminder: "${title}" is waiting on your step.`,
+          url: `/m/content/${contentId}?tab=tasks`,
+        });
+        return jsonOk({ ok: true });
       }
 
       /* -------------------------------------------------------- */
@@ -815,6 +1245,9 @@ export default async function handler(req: Request): Promise<Response> {
           if (!patch.published_at) patch.published_at = new Date().toISOString();
           patch.published_by_user_id = await resolveAppUserId(sb, user.userId);
         }
+        // Scheduling emits NOTHING here: «حان وقت النشر» (publish_due) fires at
+        // tick time from the worker's mos_notification_sweep, not at save time —
+        // a notification on save would arrive hours before anyone can act on it.
 
         if (id) {
           const upd = await sb.from('mos_publications').update(patch).eq('id', id).select('id').maybeSingle();
@@ -849,9 +1282,15 @@ export default async function handler(req: Request): Promise<Response> {
         const engagement = num(body.engagement);
         const enquiries = num(body.enquiries);
 
+        // Platform-specific readings (e.g. TikTok watch-time) ride in extra.
+        const extra = (body.extra && typeof body.extra === 'object' && !Array.isArray(body.extra))
+          ? (body.extra as Record<string, unknown>)
+          : {};
+
         // Mirrors mos_snap_not_empty_check so the user gets a sentence rather
         // than a constraint violation.
-        if (views === null && engagement === null && enquiries === null) {
+        if (views === null && engagement === null && enquiries === null
+            && Object.keys(extra).length === 0) {
           return new Response(
             JSON.stringify({
               error: 'Enter at least one number, or skip this publication.',
@@ -865,6 +1304,7 @@ export default async function handler(req: Request): Promise<Response> {
           publication_id: publicationId,
           source: 'manual',
           views, engagement, enquiries,
+          extra,
           entered_by_user_id: await resolveAppUserId(sb, user.userId),
         }).select('id').maybeSingle();
         const f = dbFail(ins.error);
@@ -875,6 +1315,131 @@ export default async function handler(req: Request): Promise<Response> {
         const hf = dbFail(hist.error);
         if (hf) return hf;
         return jsonOk({ snapshots: hist.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* «لا توجد أرقام» — a deliberate skip is a THIRD state,     */
+      /* distinct from both missing (nothing entered) and zero.    */
+      /* extra {skipped: reason} satisfies the not-empty CHECK.    */
+      /* -------------------------------------------------------- */
+      case 'metrics_skip': {
+        const publicationId = str(body.publication_id);
+        const reason = str(body.reason);
+        if (!publicationId || !reason) {
+          return jsonError(400, 'publication_id and reason are required');
+        }
+        const ins = await sb.from('mos_metric_snapshots').insert({
+          publication_id: publicationId,
+          source: 'manual',
+          views: null,
+          engagement: null,
+          enquiries: null,
+          extra: { skipped: reason },
+          entered_by_user_id: await resolveAppUserId(sb, user.userId),
+        }).select('id').maybeSingle();
+        const f = dbFail(ins.error);
+        if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      /* -------------------------------------------------------- */
+      /* The Friday entry screen (s50): everything published in    */
+      /* the week, grouped by platform, each publication carrying  */
+      /* its latest reading and its three-state status.            */
+      /* -------------------------------------------------------- */
+      case 'numbers_week': {
+        const { weekStart, weekEnd } = weekBounds(str(body.week_start));
+
+        const pubs = await sb.from('mos_publication_v').select('*')
+          .eq('status', 'published')
+          .gte('published_at', weekStart)
+          .lt('published_at', weekEnd)
+          .order('published_at', { ascending: false })
+          .limit(cap(body.limit, 300, 500));
+        const f = dbFail(pubs.error);
+        if (f) return f;
+        const pubRows = (pubs.data ?? []) as unknown as Array<Row & {
+          content_id: string; platform: string; published_at: string | null;
+        }>;
+
+        const pubIds = pubRows.map((p) => p.id);
+        const contentIds = Array.from(new Set(pubRows.map((p) => p.content_id)));
+        const [snaps, titles] = await Promise.all([
+          pubIds.length > 0
+            ? sb.from('mos_metric_snapshots').select('*')
+                .in('publication_id', pubIds)
+                .order('captured_at', { ascending: false })
+            : Promise.resolve({ data: [] as unknown[], error: null }),
+          contentIds.length > 0
+            ? sb.from('mos_content_v').select('id, ref, title').in('id', contentIds)
+            : Promise.resolve({ data: [] as unknown[], error: null }),
+        ]);
+        const f2 = dbFail(snaps.error) ?? dbFail(titles.error);
+        if (f2) return f2;
+
+        // Latest snapshot per publication (the list is captured_at DESC).
+        const latestByPub = new Map<string, Record<string, unknown>>();
+        for (const s of (snaps.data ?? []) as unknown as Array<Record<string, unknown>>) {
+          const pid = s.publication_id as string;
+          if (!latestByPub.has(pid)) latestByPub.set(pid, s);
+        }
+        const titleById = new Map(
+          ((titles.data ?? []) as unknown as Array<{ id: string; ref: string | null; title: string }>)
+            .map((c) => [c.id, c] as const),
+        );
+
+        const byPlatform = new Map<string, Array<Record<string, unknown>>>();
+        let entered = 0;
+        let missingCount = 0;
+        for (const p of pubRows) {
+          const latest = latestByPub.get(p.id) ?? null;
+          const extra = (latest?.extra ?? {}) as Record<string, unknown>;
+          const skippedReason = typeof extra.skipped === 'string' ? extra.skipped : null;
+          // Missing = nothing was ever entered. A skip is NOT missing — it is
+          // a deliberate statement, so it counts toward neither entered nor
+          // the remaining-work estimate.
+          const missing = latest === null;
+          if (missing) missingCount += 1;
+          else if (!skippedReason) entered += 1;
+
+          const entry: Record<string, unknown> = {
+            publication_id: p.id,
+            content_ref: titleById.get(p.content_id)?.ref ?? null,
+            title: titleById.get(p.content_id)?.title ?? '',
+            latest: latest
+              ? {
+                  captured_at: latest.captured_at ?? null,
+                  source: latest.source ?? null,
+                  views: latest.views ?? null,
+                  engagement: latest.engagement ?? null,
+                  enquiries: latest.enquiries ?? null,
+                  extra,
+                }
+              : null,
+            missing,
+            skipped_reason: skippedReason,
+          };
+          const list = byPlatform.get(p.platform) ?? [];
+          list.push(entry);
+          byPlatform.set(p.platform, list);
+        }
+
+        const platforms = Array.from(byPlatform.entries())
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([platform, publications]) => ({ platform, publications }));
+
+        return jsonOk({
+          platforms,
+          progress: {
+            entered,
+            total: pubRows.length,
+            // Two minutes per publication is the team's own estimate for the
+            // Friday round — it sizes the «باقي ~٢٠ دقيقة» line.
+            estimate_minutes: missingCount * 2,
+          },
+          week_start: weekStart,
+          week_end: weekEnd,
+        });
       }
 
       case 'metrics_history': {
@@ -1148,23 +1713,29 @@ export default async function handler(req: Request): Promise<Response> {
       case 'campaign_detail': {
         const id = str(body.id);
         if (!id) return jsonError(400, 'id is required');
-        const [item, execs, content, comments] = await Promise.all([
-          sb.from('mos_campaign_v').select('*').eq('id', id).maybeSingle(),
+        const [item, execs, content, comments, events] = await Promise.all([
+          // Merged read: the view's aggregates + the base row's brief and
+          // signature columns (see readCampaignMerged).
+          readCampaignMerged(sb, id),
           sb.from('mos_campaign_executions').select('*').eq('campaign_id', id)
             .order('created_at', { ascending: true }),
           sb.from('mos_content_v').select(CONTENT_LIST_COLUMNS).eq('campaign_id', id)
             .is('archived_at', null).limit(300),
           sb.from('mos_comments').select('*').eq('campaign_id', id)
             .order('created_at', { ascending: true }).limit(200),
+          sb.from('mos_campaign_events').select('*').eq('campaign_id', id)
+            .order('created_at', { ascending: false }).limit(200),
         ]);
-        const f = dbFail(item.error) ?? dbFail(execs.error) ?? dbFail(content.error) ?? dbFail(comments.error);
+        const f = dbFail(item.error) ?? dbFail(execs.error)
+          ?? dbFail(content.error) ?? dbFail(comments.error) ?? dbFail(events.error);
         if (f) return f;
-        if (!item.data) return jsonError(404, 'campaign not found');
+        if (!item.row) return jsonError(404, 'campaign not found');
         return jsonOk({
-          item: item.data,
+          item: item.row,
           executions: execs.data ?? [],
           content: content.data ?? [],
           comments: comments.data ?? [],
+          events: events.data ?? [],
         });
       }
 
@@ -1175,57 +1746,113 @@ export default async function handler(req: Request): Promise<Response> {
         for (const k of ['name', 'project_id', 'objective', 'status', 'starts_on',
                          'ends_on', 'budget_total', 'note',
                          'kind', 'goal', 'owner_role', 'success_metric',
-                         'success_threshold'] as const) {
+                         'success_threshold',
+                         // The brief (screen 19): who it's for, what it offers,
+                         // where it lands, how it's measured.
+                         'audience', 'offer', 'destination_url', 'measured_by'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
+
+        // The signature requirement is DATA (mos_settings.signature_threshold),
+        // recomputed on every save so a budget edit can raise — or clear — it.
+        const threshold = await readSignatureThreshold(sb);
+        const budgetOf = (v: unknown): number | null => numOrNull(v);
+        const appUserId = await resolveAppUserId(sb, user.userId);
+
         if (id) {
+          // Read the row first: the requires_signature flip detection (and the
+          // budget fallback when this save doesn't carry one) both need it.
+          const prev = await sb.from('mos_campaigns')
+            .select('id, budget_total, requires_signature').eq('id', id).maybeSingle();
+          const prevFail = dbFail(prev.error);
+          if (prevFail) return prevFail;
+          if (!prev.data) return jsonError(404, 'campaign not found');
+          const prevRow = prev.data as { budget_total: unknown; requires_signature: boolean };
+
+          const effectiveBudget = Object.prototype.hasOwnProperty.call(patch, 'budget_total')
+            ? budgetOf(patch.budget_total)
+            : budgetOf(prevRow.budget_total);
+          const requires = effectiveBudget !== null && effectiveBudget >= threshold;
+          patch.requires_signature = requires;
+
           const upd = await sb.from('mos_campaigns').update(patch).eq('id', id).select('id').maybeSingle();
           const f = dbFail(upd.error);
           if (f) return f;
           if (!upd.data) return jsonError(404, 'campaign not found');
-        } else {
-          // The design has no name field — the goal sentence IS the identity.
-          // The list still wants a short handle, so the name falls back to it.
-          if (!str(patch.name) && str(patch.goal)) patch.name = patch.goal;
-          if (!str(patch.name)) return jsonError(400, 'goal or name is required');
-          patch.created_by_user_id = await resolveAppUserId(sb, user.userId);
-          const ins = await sb.from('mos_campaigns').insert(patch).select('id').maybeSingle();
-          const f = dbFail(ins.error);
-          if (f) return f;
-          const created = ins.data as unknown as Row | null;
 
-          // "التنفيذات التي ستُنشأ" — the modal's promise, kept server-side in
-          // the same request: one DRAFT execution per chosen platform with its
-          // budget share. Drafts spend nothing until someone launches them on
-          // the platform itself.
-          const execs = Array.isArray(body.executions) ? (body.executions as unknown[]) : [];
-          if (created?.id && execs.length > 0) {
-            const rows = execs
-              .map((e) => e as Record<string, unknown>)
-              .filter((e) => typeof e.platform === 'string' && e.platform !== '')
-              .map((e) => ({
-                campaign_id: created.id,
-                platform: e.platform,
-                label: typeof e.label === 'string' ? e.label : null,
-                budget: typeof e.budget === 'number' && Number.isFinite(e.budget) ? e.budget : null,
-                status: 'draft',
-              }));
-            if (rows.length > 0) {
-              const execIns = await sb.from('mos_campaign_executions').insert(rows);
-              const ef = dbFail(execIns.error);
-              if (ef) return ef;
-            }
+          // The CEO's «ميزانية تنتظر توقيعك» card fires on the false→true flip.
+          if (!prevRow.requires_signature && requires) {
+            await emitNotify(sb, {
+              event: 'budget_signature',
+              roles: ['ceo'],
+              titleAr: 'ميزانية تنتظر توقيعك',
+              titleEn: 'A budget awaits your signature',
+              bodyAr: `حملة تجاوزت ميزانيتها حد التوقيع (${threshold} ر.س).`,
+              bodyEn: `A campaign budget crossed the signature threshold (${threshold} SAR).`,
+              url: `/m/campaigns/${id}`,
+            });
           }
 
-          const one = await sb.from('mos_campaign_v').select('*').eq('id', created?.id ?? '').maybeSingle();
-          const of_ = dbFail(one.error);
-          if (of_) return of_;
-          return jsonOk({ item: one.data });
+          const merged = await readCampaignMerged(sb, id);
+          const mergedFail = dbFail(merged.error);
+          if (mergedFail) return mergedFail;
+          return jsonOk({ item: merged.row });
         }
-        const one = await sb.from('mos_campaign_v').select('*').eq('id', id).maybeSingle();
-        const f = dbFail(one.error);
+
+        // The design has no name field — the goal sentence IS the identity.
+        // The list still wants a short handle, so the name falls back to it.
+        if (!str(patch.name) && str(patch.goal)) patch.name = patch.goal;
+        if (!str(patch.name)) return jsonError(400, 'goal or name is required');
+        const newBudget = budgetOf(patch.budget_total);
+        const requires = newBudget !== null && newBudget >= threshold;
+        patch.requires_signature = requires;
+        patch.created_by_user_id = appUserId;
+        const ins = await sb.from('mos_campaigns').insert(patch).select('id').maybeSingle();
+        const f = dbFail(ins.error);
         if (f) return f;
-        return jsonOk({ item: one.data });
+        const created = ins.data as unknown as Row | null;
+
+        // "التنفيذات التي ستُنشأ" — the modal's promise, kept server-side in
+        // the same request: one DRAFT execution per chosen platform with its
+        // budget share. Drafts spend nothing until someone launches them on
+        // the platform itself.
+        const execs = Array.isArray(body.executions) ? (body.executions as unknown[]) : [];
+        if (created?.id && execs.length > 0) {
+          const rows = execs
+            .map((e) => e as Record<string, unknown>)
+            .filter((e) => typeof e.platform === 'string' && e.platform !== '')
+            .map((e) => ({
+              campaign_id: created.id,
+              platform: e.platform,
+              label: typeof e.label === 'string' ? e.label : null,
+              budget: typeof e.budget === 'number' && Number.isFinite(e.budget) ? e.budget : null,
+              status: 'draft',
+            }));
+          if (rows.length > 0) {
+            const execIns = await sb.from('mos_campaign_executions').insert(rows);
+            const ef = dbFail(execIns.error);
+            if (ef) return ef;
+          }
+        }
+
+        // A brand-new campaign already over threshold is the false→true flip
+        // from the CEO's perspective — they had nothing to sign before.
+        if (created?.id && requires) {
+          await emitNotify(sb, {
+            event: 'budget_signature',
+            roles: ['ceo'],
+            titleAr: 'ميزانية تنتظر توقيعك',
+            titleEn: 'A budget awaits your signature',
+            bodyAr: `حملة جديدة تجاوزت ميزانيتها حد التوقيع (${threshold} ر.س).`,
+            bodyEn: `A new campaign budget crossed the signature threshold (${threshold} SAR).`,
+            url: `/m/campaigns/${created.id}`,
+          });
+        }
+
+        const merged = await readCampaignMerged(sb, created?.id ?? '');
+        const mergedFail = dbFail(merged.error);
+        if (mergedFail) return mergedFail;
+        return jsonOk({ item: merged.row });
       }
 
       case 'execution_save': {
@@ -1237,20 +1864,82 @@ export default async function handler(req: Request): Promise<Response> {
         for (const k of ['content_id', 'platform', 'account_id', 'label', 'status',
                          'starts_on', 'ends_on', 'budget', 'spend', 'impressions',
                          'clicks', 'leads', 'qualified', 'note',
-                         'targeting', 'lead_form_fields'] as const) {
+                         'targeting', 'lead_form_fields',
+                         // The platform's own campaign id + what the ad set is
+                         // FOR (conversion / awareness / retargeting / traffic).
+                         'platform_campaign_id', 'purpose'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
+        if (Object.prototype.hasOwnProperty.call(patch, 'purpose') && patch.purpose !== null
+            && !['conversion', 'awareness', 'retargeting', 'traffic'].includes(String(patch.purpose))) {
+          return new Response(
+            JSON.stringify({
+              error: 'Execution purpose must be conversion, awareness, retargeting or traffic.',
+              error_ar: 'غرض التنفيذ يجب أن يكون تحويلًا أو وعيًا أو إعادة استهداف أو زيارات.',
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+
+        const appUserId = await resolveAppUserId(sb, user.userId);
+
         if (id) {
+          // The previous status decides which ledger line this save writes.
+          const prev = await sb.from('mos_campaign_executions')
+            .select('id, status, label, platform').eq('id', id).maybeSingle();
+          const prevFail = dbFail(prev.error);
+          if (prevFail) return prevFail;
+          if (!prev.data) return jsonError(404, 'execution not found');
+          const prevRow = prev.data as { status: string; label: string | null; platform: string };
+
           const upd = await sb.from('mos_campaign_executions').update(patch).eq('id', id).select('id').maybeSingle();
           const f = dbFail(upd.error);
           if (f) return f;
           if (!upd.data) return jsonError(404, 'execution not found');
+
+          // «ما الذي تغيّر» — pause/resume is a decision someone made, not a
+          // number that drifted, so it belongs in the campaign's event ledger.
+          const nextStatus = typeof patch.status === 'string' ? patch.status : null;
+          if (nextStatus && nextStatus !== prevRow.status) {
+            const label = prevRow.label ?? prevRow.platform;
+            if (nextStatus === 'paused') {
+              await logCampaignEvent(sb, {
+                campaignId,
+                kind: 'execution_paused',
+                summaryAr: `أُوقف التنفيذ «${label}».`,
+                summaryEn: `Execution "${label}" paused.`,
+                detail: { execution_id: id },
+                actorUserId: appUserId,
+              });
+            } else if (nextStatus === 'running' && prevRow.status === 'paused') {
+              await logCampaignEvent(sb, {
+                campaignId,
+                kind: 'execution_resumed',
+                summaryAr: `استُؤنف التنفيذ «${label}».`,
+                summaryEn: `Execution "${label}" resumed.`,
+                detail: { execution_id: id },
+                actorUserId: appUserId,
+              });
+            }
+          }
         } else {
           if (!str(patch.platform)) return jsonError(400, 'platform is required');
           patch.campaign_id = campaignId;
           const ins = await sb.from('mos_campaign_executions').insert(patch).select('id').maybeSingle();
           const f = dbFail(ins.error);
           if (f) return f;
+          const createdId = (ins.data as unknown as Row | null)?.id ?? null;
+          if (createdId) {
+            const label = str(patch.label) ?? String(patch.platform);
+            await logCampaignEvent(sb, {
+              campaignId,
+              kind: 'execution_added',
+              summaryAr: `أُضيف تنفيذ جديد: «${label}».`,
+              summaryEn: `Execution added: "${label}".`,
+              detail: { execution_id: createdId },
+              actorUserId: appUserId,
+            });
+          }
         }
         const list = await sb.from('mos_campaign_executions').select('*')
           .eq('campaign_id', campaignId).order('created_at', { ascending: true });
@@ -1404,6 +2093,325 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
+      /* The «ما الذي تغيّر» ledger — append-only                 */
+      /* -------------------------------------------------------- */
+      case 'campaign_events': {
+        const campaignId = str(body.campaign_id);
+        if (!campaignId) return jsonError(400, 'campaign_id is required');
+        const rows = await sb.from('mos_campaign_events').select('*')
+          .eq('campaign_id', campaignId)
+          .order('created_at', { ascending: false })
+          .limit(cap(body.limit, 200, 500));
+        const f = dbFail(rows.error);
+        if (f) return f;
+        return jsonOk({ events: rows.data ?? [] });
+      }
+
+      case 'campaign_event_add': {
+        const campaignId = str(body.campaign_id);
+        const kind = str(body.kind);
+        const summaryAr = str(body.summary_ar);
+        if (!campaignId || !kind || !summaryAr) {
+          return jsonError(400, 'campaign_id, kind and summary_ar are required');
+        }
+        // Mirrors mos_campaign_events_kind_check so the user gets a sentence.
+        if (!['budget_shift', 'execution_added', 'execution_paused', 'execution_resumed',
+              'content_linked', 'content_unlinked', 'signed', 'note'].includes(kind)) {
+          return new Response(
+            JSON.stringify({
+              error: 'That campaign event kind does not exist.',
+              error_ar: 'نوع حدث الحملة غير موجود.',
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        const detail = (body.detail && typeof body.detail === 'object' && !Array.isArray(body.detail))
+          ? (body.detail as Record<string, unknown>)
+          : {};
+        const ins = await sb.from('mos_campaign_events').insert({
+          campaign_id: campaignId,
+          kind,
+          summary_ar: summaryAr,
+          summary_en: str(body.summary_en),
+          detail,
+          actor_user_id: await resolveAppUserId(sb, user.userId),
+        }).select('*').maybeSingle();
+        const f = dbFail(ins.error);
+        if (f) return f;
+        return jsonOk({ event: ins.data });
+      }
+
+      /* -------------------------------------------------------- */
+      /* What did this campaign actually produce? The derivation   */
+      /* lives in SQL (mos_campaign_outcomes) over the attribution */
+      /* ledger; this action also returns the settings it used.    */
+      /* -------------------------------------------------------- */
+      case 'campaign_outcomes': {
+        const campaignId = str(body.campaign_id);
+        if (!campaignId) return jsonError(400, 'campaign_id is required');
+
+        const exists = await sb.from('mos_campaigns').select('id').eq('id', campaignId).maybeSingle();
+        const existsFail = dbFail(exists.error);
+        if (existsFail) return existsFail;
+        if (!exists.data) return jsonError(404, 'campaign not found');
+
+        const [outcomes, attrSettings] = await Promise.all([
+          sb.rpc('mos_campaign_outcomes', { p_campaign_id: campaignId }),
+          sb.from('mos_settings').select('value').eq('key', 'attribution').maybeSingle(),
+        ]);
+        const f = dbFail(outcomes.error) ?? dbFail(attrSettings.error);
+        if (f) return f;
+        return jsonOk({
+          outcomes: outcomes.data ?? {},
+          settings: (attrSettings.data as { value?: unknown } | null)?.value ?? null,
+        });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Budget signature — the CEO's named sign-off               */
+      /* -------------------------------------------------------- */
+      case 'campaign_sign': {
+        const campaignId = str(body.campaign_id);
+        if (!campaignId) return jsonError(400, 'campaign_id is required');
+
+        // approve_budget is the capability; the role check narrows it to the
+        // people the design hands the pen to (CEO card on s43, manager/admin).
+        const [canRes, rolesRes] = await Promise.all([
+          sb.rpc('wassell_mos_can', { p_capability: 'approve_budget' }),
+          sb.rpc('wassell_mos_roles'),
+        ]);
+        const gateFail = dbFail(canRes.error) ?? dbFail(rolesRes.error);
+        if (gateFail) return gateFail;
+        const held = (rolesRes.data as string[] | null) ?? [];
+        const maySign = canRes.data === true
+          && held.some((r) => ['ceo', 'marketing_manager', 'administrator'].includes(r));
+        if (!maySign) {
+          return new Response(
+            JSON.stringify({
+              error: 'Only the CEO can sign a campaign budget.',
+              error_ar: 'التوقيع على ميزانية الحملة للرئيس التنفيذي فقط.',
+            }),
+            { status: 403, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+
+        const appUserId = await resolveAppUserId(sb, user.userId);
+        const upd = await sb.from('mos_campaigns')
+          .update({ signed_by_user_id: appUserId, signed_at: new Date().toISOString() })
+          .eq('id', campaignId).select('id').maybeSingle();
+        const f = dbFail(upd.error);
+        if (f) return f;
+        if (!upd.data) return jsonError(404, 'campaign not found');
+
+        await logCampaignEvent(sb, {
+          campaignId,
+          kind: 'signed',
+          summaryAr: 'وُقّعت ميزانية الحملة.',
+          summaryEn: 'Campaign budget signed.',
+          actorUserId: appUserId,
+        });
+
+        const merged = await readCampaignMerged(sb, campaignId);
+        const mergedFail = dbFail(merged.error);
+        if (mergedFail) return mergedFail;
+        return jsonOk({ campaign: merged.row });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Budget shift — move money between executions              */
+      /* -------------------------------------------------------- */
+      case 'budget_shift': {
+        const campaignId = str(body.campaign_id);
+        const fromId = str(body.from_execution_id);
+        const toId = str(body.to_execution_id);
+        const amount = numOrNull(body.amount);
+        if (!campaignId || !fromId || !toId) {
+          return jsonError(400, 'campaign_id, from_execution_id and to_execution_id are required');
+        }
+        if (fromId === toId) return jsonError(400, 'from and to executions must differ');
+        if (amount === null || amount <= 0) {
+          return jsonError(400, 'amount must be a positive number');
+        }
+
+        const execs = await sb.from('mos_campaign_executions')
+          .select('id, campaign_id, budget, label, platform')
+          .in('id', [fromId, toId]);
+        const execsFail = dbFail(execs.error);
+        if (execsFail) return execsFail;
+        const rows = (execs.data ?? []) as unknown as Array<{
+          id: string; campaign_id: string; budget: number | null; label: string | null; platform: string;
+        }>;
+        const from = rows.find((r) => r.id === fromId);
+        const to = rows.find((r) => r.id === toId);
+        if (!from || !to || from.campaign_id !== campaignId || to.campaign_id !== campaignId) {
+          return jsonError(404, 'execution not found in this campaign');
+        }
+        const fromBudget = numOrNull(from.budget);
+        if (fromBudget === null || fromBudget < amount) {
+          return new Response(
+            JSON.stringify({
+              error: 'The source execution does not have enough budget for this shift.',
+              error_ar: 'ميزانية التنفيذ المصدر لا تكفي لهذا التحويل.',
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+
+        // Two conditional updates, each re-checking the budget it relies on so
+        // a concurrent shift cannot push the source negative. (PostgREST has no
+        // multi-statement transaction; the guards are the atomicity we can get
+        // without a dedicated RPC.)
+        const dec = await sb.from('mos_campaign_executions')
+          .update({ budget: fromBudget - amount })
+          .eq('id', fromId).eq('budget', fromBudget).select('id').maybeSingle();
+        const decFail = dbFail(dec.error);
+        if (decFail) return decFail;
+        if (!dec.data) {
+          return new Response(
+            JSON.stringify({
+              error: 'The source budget changed while shifting; try again.',
+              error_ar: 'تغيّرت ميزانية المصدر أثناء التحويل؛ حاول مجددًا.',
+            }),
+            { status: 409, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        const inc = await sb.from('mos_campaign_executions')
+          .update({ budget: (numOrNull(to.budget) ?? 0) + amount })
+          .eq('id', toId);
+        const incFail = dbFail(inc.error);
+        if (incFail) return incFail;
+
+        await logCampaignEvent(sb, {
+          campaignId,
+          kind: 'budget_shift',
+          summaryAr: `حُوّل مبلغ ${amount} ر.س من «${from.label ?? from.platform}» إلى «${to.label ?? to.platform}».`,
+          summaryEn: `Shifted ${amount} SAR from "${from.label ?? from.platform}" to "${to.label ?? to.platform}".`,
+          detail: { from_execution_id: fromId, to_execution_id: toId, amount },
+          actorUserId: await resolveAppUserId(sb, user.userId),
+        });
+
+        const list = await sb.from('mos_campaign_executions').select('*')
+          .eq('campaign_id', campaignId).order('created_at', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ executions: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Attribution — the append-only client ↔ spend ledger. The  */
+      /* list reads the BASE table and flags superseded rows: the  */
+      /* effective view (client_attributions_effective) is exactly */
+      /* the rows where superseded = false, so one payload serves  */
+      /* both the effective list and the audit trail.              */
+      /* -------------------------------------------------------- */
+      case 'attribution_list': {
+        const campaignId = str(body.campaign_id);
+        const clientRecordId = str(body.client_record_id);
+        if (!campaignId && !clientRecordId) {
+          return jsonError(400, 'campaign_id or client_record_id is required');
+        }
+
+        // Filters before transforms — .order()/.limit() would drop .eq()/.or().
+        let q = sb.from('client_attributions').select('*');
+        if (clientRecordId) q = q.eq('client_record_id', clientRecordId);
+        if (campaignId) {
+          // A row attributes to the campaign directly, through one of its
+          // executions, or through an ad of one of its executions — the same
+          // three paths mos_campaign_outcomes walks.
+          const execs = await sb.from('mos_campaign_executions')
+            .select('id').eq('campaign_id', campaignId).limit(500);
+          const execsFail = dbFail(execs.error);
+          if (execsFail) return execsFail;
+          const execIds = (execs.data ?? []).map((e) => (e as unknown as Row).id);
+          let adIds: string[] = [];
+          if (execIds.length > 0) {
+            const ads = await sb.from('mos_execution_ads').select('id').in('execution_id', execIds).limit(1000);
+            const adsFail = dbFail(ads.error);
+            if (adsFail) return adsFail;
+            adIds = (ads.data ?? []).map((a) => (a as unknown as Row).id);
+          }
+          const ors = [`campaign_id.eq.${campaignId}`];
+          if (execIds.length > 0) ors.push(`execution_id.in.(${execIds.join(',')})`);
+          if (adIds.length > 0) ors.push(`ad_id.in.(${adIds.join(',')})`);
+          q = q.or(ors.join(','));
+        }
+        const rows = await q
+          .order('occurred_at', { ascending: false })
+          .limit(cap(body.limit, 200, 500));
+        const f = dbFail(rows.error);
+        if (f) return f;
+
+        // The supersession flag: a row is superseded when any other row points
+        // at it. Asked of the base table so the flag is true even when the
+        // correcting row falls outside this filter.
+        const data = (rows.data ?? []) as unknown as Array<Row & { supersedes_id: string | null }>;
+        const ids = data.map((r) => r.id);
+        const supersededIds = new Set<string>();
+        if (ids.length > 0) {
+          const sup = await sb.from('client_attributions')
+            .select('supersedes_id').in('supersedes_id', ids).limit(1000);
+          const supFail = dbFail(sup.error);
+          if (supFail) return supFail;
+          for (const s of (sup.data ?? []) as unknown as Array<{ supersedes_id: string | null }>) {
+            if (s.supersedes_id) supersededIds.add(s.supersedes_id);
+          }
+        }
+        return jsonOk({
+          rows: data.map((r) => ({ ...r, superseded: supersededIds.has(r.id) })),
+        });
+      }
+
+      case 'attribution_stamp': {
+        const clientRecordId = str(body.client_record_id);
+        const occurredAt = str(body.occurred_at);
+        const source = str(body.source);
+        if (!clientRecordId || !occurredAt || !source) {
+          return jsonError(400, 'client_record_id, occurred_at and source are required');
+        }
+        if (!['lead_form', 'manual', 'import'].includes(source)) {
+          return new Response(
+            JSON.stringify({
+              error: 'Attribution source must be lead_form, manual or import.',
+              error_ar: 'مصدر النسبة يجب أن يكون نموذج عميل أو يدويًا أو استيرادًا.',
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        const campaignId = str(body.campaign_id);
+        const executionId = str(body.execution_id);
+        const adId = str(body.ad_id);
+        // Mirrors the table CHECK: a row naming no spend object attributes nothing.
+        if (!campaignId && !executionId && !adId) {
+          return new Response(
+            JSON.stringify({
+              error: 'Name at least one of campaign, execution or ad.',
+              error_ar: 'حدّد حملة أو تنفيذًا أو إعلانًا واحدًا على الأقل.',
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        const touchType = str(body.touch_type);
+        if (touchType && !['first', 'last'].includes(touchType)) {
+          return jsonError(400, 'touch_type must be first or last');
+        }
+        const ins = await sb.from('client_attributions').insert({
+          client_record_id: clientRecordId,
+          campaign_id: campaignId,
+          execution_id: executionId,
+          ad_id: adId,
+          touch_type: touchType ?? 'first',
+          occurred_at: occurredAt,
+          source,
+          note: str(body.note),
+          supersedes_id: str(body.supersedes_id),
+          created_by_user_id: await resolveAppUserId(sb, user.userId),
+        }).select('*').maybeSingle();
+        const f = dbFail(ins.error);
+        if (f) return f;
+        return jsonOk({ row: ins.data });
+      }
+
+      /* -------------------------------------------------------- */
       /* Assets — the material library                             */
       /* -------------------------------------------------------- */
       case 'asset_list': {
@@ -1451,17 +2459,287 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ asset: ins.data });
       }
 
-      case 'asset_delete': {
-        const id = str(body.id);
-        if (!id) return jsonError(400, 'id is required');
-        // Archive rather than destroy: an asset referenced by shipped content
-        // should stop appearing without breaking the record of what was used.
+      /* -------------------------------------------------------- */
+      /* One asset: what uses it, its derivative versions, and     */
+      /* whether any publication depends on it (screen 22)         */
+      /* -------------------------------------------------------- */
+      case 'asset_detail': {
+        const assetId = str(body.asset_id);
+        if (!assetId) return jsonError(400, 'asset_id is required');
+
+        const asset = await sb.from('mos_assets').select('*').eq('id', assetId).maybeSingle();
+        const assetFail = dbFail(asset.error);
+        if (assetFail) return assetFail;
+        if (!asset.data) return jsonError(404, 'asset not found');
+        const row = asset.data as unknown as Row & { parent_asset_id: string | null };
+
+        const links = await sb.from('mos_asset_links')
+          .select('asset_id, content_id, role').eq('asset_id', assetId);
+        const linksFail = dbFail(links.error);
+        if (linksFail) return linksFail;
+        const linkRows = (links.data ?? []) as unknown as Array<{
+          asset_id: string; content_id: string; role: string;
+        }>;
+        const contentIds = Array.from(new Set(linkRows.map((l) => l.content_id)));
+
+        const [contents, liveAds, pubsCount, versions] = await Promise.all([
+          contentIds.length > 0
+            ? sb.from('mos_content_v').select('id, ref, title').in('id', contentIds)
+            : Promise.resolve({ data: [] as unknown[], error: null }),
+          contentIds.length > 0
+            ? sb.from('mos_execution_ads').select('content_id').in('content_id', contentIds).eq('status', 'running')
+            : Promise.resolve({ data: [] as unknown[], error: null }),
+          contentIds.length > 0
+            ? sb.from('mos_publications').select('id', { count: 'exact', head: true })
+                .in('content_id', contentIds)
+            : Promise.resolve({ count: 0, error: null }),
+          // Derivatives of the same root: the parent plus every child cut.
+          sb.from('mos_assets').select('id, title, created_at')
+            .or(`id.eq.${row.parent_asset_id ?? row.id},parent_asset_id.eq.${row.parent_asset_id ?? row.id}`)
+            .order('created_at', { ascending: true }),
+        ]);
+        const f = dbFail(contents.error) ?? dbFail(liveAds.error)
+          ?? dbFail(pubsCount.error) ?? dbFail(versions.error);
+        if (f) return f;
+
+        const titleById = new Map(
+          ((contents.data ?? []) as unknown as Array<{ id: string; ref: string | null; title: string }>)
+            .map((c) => [c.id, c] as const),
+        );
+        const liveContentIds = new Set(
+          ((liveAds.data ?? []) as unknown as Array<{ content_id: string | null }>)
+            .map((a) => a.content_id).filter((c): c is string => Boolean(c)),
+        );
+        const usedIn = linkRows
+          .map((l) => ({
+            content_id: l.content_id,
+            ref: titleById.get(l.content_id)?.ref ?? null,
+            title: titleById.get(l.content_id)?.title ?? '',
+            role: l.role,
+            live_ad: liveContentIds.has(l.content_id),
+          }))
+          // Deterministic: by content title, then role.
+          .sort((a, b) => a.title.localeCompare(b.title) || a.role.localeCompare(b.role));
+
+        return jsonOk({
+          asset: asset.data,
+          used_in: usedIn,
+          versions: versions.data ?? [],
+          publications_using: pubsCount.count ?? 0,
+        });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Archive / unarchive. Allowed even while in use — the      */
+      /* asset stops appearing in pickers without breaking the     */
+      /* record of what shipped.                                   */
+      /* -------------------------------------------------------- */
+      case 'asset_archive': {
+        const assetId = str(body.asset_id);
+        if (!assetId) return jsonError(400, 'asset_id is required');
+        if (typeof body.archived !== 'boolean') return jsonError(400, 'archived must be a boolean');
         const upd = await sb.from('mos_assets')
-          .update({ archived_at: new Date().toISOString() }).eq('id', id).select('id').maybeSingle();
+          .update({ archived_at: body.archived ? new Date().toISOString() : null })
+          .eq('id', assetId).select('*').maybeSingle();
         const f = dbFail(upd.error);
         if (f) return f;
         if (!upd.data) return jsonError(404, 'asset not found');
+        return jsonOk({ asset: upd.data });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Delete — blocked while anything references the asset.     */
+      /* In use → 409 {error:'in_use', used_in}; unused → real     */
+      /* delete (archiving is asset_archive's job).                */
+      /* -------------------------------------------------------- */
+      case 'asset_delete': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+
+        const links = await sb.from('mos_asset_links')
+          .select('asset_id, content_id, role').eq('asset_id', id);
+        const linksFail = dbFail(links.error);
+        if (linksFail) return linksFail;
+        const linkRows = (links.data ?? []) as unknown as Array<{
+          asset_id: string; content_id: string; role: string;
+        }>;
+        const contentIds = Array.from(new Set(linkRows.map((l) => l.content_id)));
+
+        let pubsUsing = 0;
+        let titleById = new Map<string, { id: string; ref: string | null; title: string }>();
+        if (contentIds.length > 0) {
+          const [contents, pubsCount] = await Promise.all([
+            sb.from('mos_content_v').select('id, ref, title').in('id', contentIds),
+            sb.from('mos_publications').select('id', { count: 'exact', head: true })
+              .in('content_id', contentIds),
+          ]);
+          const f = dbFail(contents.error) ?? dbFail(pubsCount.error);
+          if (f) return f;
+          titleById = new Map(
+            ((contents.data ?? []) as unknown as Array<{ id: string; ref: string | null; title: string }>)
+              .map((c) => [c.id, c] as const),
+          );
+          pubsUsing = pubsCount.count ?? 0;
+        }
+
+        if (linkRows.length > 0 || pubsUsing > 0) {
+          const usedIn = linkRows
+            .map((l) => ({
+              content_id: l.content_id,
+              ref: titleById.get(l.content_id)?.ref ?? null,
+              title: titleById.get(l.content_id)?.title ?? '',
+              role: l.role,
+            }))
+            .sort((a, b) => a.title.localeCompare(b.title) || a.role.localeCompare(b.role));
+          return new Response(
+            JSON.stringify({
+              error: 'in_use',
+              error_ar: 'المادة مستخدمة في محتوى أو منشورات؛ أرشفها بدل حذفها.',
+              used_in: usedIn,
+              publications_using: pubsUsing,
+            }),
+            { status: 409, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+
+        const del = await sb.from('mos_assets').delete().eq('id', id).select('id').maybeSingle();
+        const f = dbFail(del.error);
+        if (f) return f;
+        if (!del.data) return jsonError(404, 'asset not found');
         return jsonOk({ ok: true });
+      }
+
+      /* -------------------------------------------------------- */
+      /* The «غير مستخدمة» shelf (s41): not archived, no links,    */
+      /* and no publication touches a content it's linked to.      */
+      /* -------------------------------------------------------- */
+      case 'assets_unused': {
+        const [assets, links] = await Promise.all([
+          sb.from('mos_assets').select('*').is('archived_at', null)
+            .order('created_at', { ascending: false }).limit(cap(body.limit, 200, 500)),
+          sb.from('mos_asset_links').select('asset_id, content_id').limit(4000),
+        ]);
+        const f = dbFail(assets.error) ?? dbFail(links.error);
+        if (f) return f;
+        const linkRows = (links.data ?? []) as unknown as Array<{ asset_id: string; content_id: string }>;
+        const linkedAssetIds = new Set(linkRows.map((l) => l.asset_id));
+
+        // Publications reach assets only through content links — an asset with
+        // zero links is already unused, so this only ever refines linked ones.
+        const linkedContentIds = Array.from(new Set(linkRows.map((l) => l.content_id)));
+        const pubContentIds = new Set<string>();
+        if (linkedContentIds.length > 0) {
+          const pubs = await sb.from('mos_publications').select('content_id')
+            .in('content_id', linkedContentIds).limit(2000);
+          const pubsFail = dbFail(pubs.error);
+          if (pubsFail) return pubsFail;
+          for (const p of (pubs.data ?? []) as unknown as Array<{ content_id: string }>) {
+            pubContentIds.add(p.content_id);
+          }
+        }
+        const pubbedAssetIds = new Set(
+          linkRows.filter((l) => pubContentIds.has(l.content_id)).map((l) => l.asset_id),
+        );
+
+        const rows = ((assets.data ?? []) as unknown as Row[])
+          .filter((a) => !linkedAssetIds.has(a.id) && !pubbedAssetIds.has(a.id));
+        return jsonOk({ rows });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Bulk ops on the grid selection (s16): archive, tag, or    */
+      /* turn the selection into ONE content item pre-linked to    */
+      /* every asset in it.                                        */
+      /* -------------------------------------------------------- */
+      case 'assets_bulk': {
+        const ids = Array.isArray(body.ids)
+          ? (body.ids as unknown[]).filter((x): x is string => typeof x === 'string' && x !== '')
+          : [];
+        const op = str(body.op);
+        if (ids.length === 0) return jsonError(400, 'ids must be a non-empty array');
+        if (ids.length > 100) return jsonError(400, 'at most 100 assets per bulk operation');
+        if (!op || !['archive', 'tag', 'create_content'].includes(op)) {
+          return jsonError(400, 'op must be archive, tag or create_content');
+        }
+
+        if (op === 'archive') {
+          const upd = await sb.from('mos_assets')
+            .update({ archived_at: new Date().toISOString() }).in('id', ids).select('id');
+          const f = dbFail(upd.error);
+          if (f) return f;
+          const done = new Set(((upd.data ?? []) as unknown as Row[]).map((r) => r.id));
+          return jsonOk({ results: ids.map((assetId) => ({ id: assetId, ok: done.has(assetId) })) });
+        }
+
+        if (op === 'tag') {
+          const tag = str(body.tag);
+          if (!tag) return jsonError(400, 'tag is required for the tag op');
+          const assets = await sb.from('mos_assets').select('id, tags').in('id', ids);
+          const f = dbFail(assets.error);
+          if (f) return f;
+          const results: Array<{ id: string; ok: boolean }> = [];
+          for (const a of (assets.data ?? []) as unknown as Array<{ id: string; tags: unknown }>) {
+            const current = Array.isArray(a.tags) ? (a.tags as unknown[]).map(String) : [];
+            const next = current.includes(tag) ? current : [...current, tag];
+            const upd = await sb.from('mos_assets').update({ tags: next }).eq('id', a.id);
+            // A failed row is reported in results, not swallowed — the UI
+            // marks exactly which assets didn't take the tag.
+            if (upd.error) {
+              console.error('[marketing-os] bulk tag failed for asset', a.id, upd.error.code, upd.error.message);
+              results.push({ id: a.id, ok: false });
+            } else {
+              results.push({ id: a.id, ok: true });
+            }
+          }
+          return jsonOk({ results });
+        }
+
+        // create_content — one item carrying every selected asset as source
+        // material. Title falls back to the first asset's title.
+        const typeKey = str(body.content_type_key);
+        if (!typeKey) return jsonError(400, 'content_type_key is required for create_content');
+        const typeRes = await sb.from('mos_content_types')
+          .select('id, workflow_id').eq('key', typeKey).maybeSingle();
+        const typeFail = dbFail(typeRes.error);
+        if (typeFail) return typeFail;
+        if (!typeRes.data) return jsonError(400, 'unknown content type');
+        const type = typeRes.data as { id: string; workflow_id: string | null };
+
+        const assets = await sb.from('mos_assets').select('id, title').in('id', ids);
+        const assetsFail = dbFail(assets.error);
+        if (assetsFail) return assetsFail;
+        const firstTitle = ((assets.data ?? [])[0] as { title?: string } | undefined)?.title;
+
+        const title = str(body.title) ?? str(firstTitle);
+        if (!title) return jsonError(400, 'title is required when the selection has none');
+
+        const appUserId = await resolveAppUserId(sb, user.userId);
+        const created = await sb.from('mos_content').insert({
+          title,
+          content_type_id: type.id,
+          workflow_id: type.workflow_id,
+          created_by_user_id: appUserId,
+        }).select('id, ref').maybeSingle();
+        const createFail = dbFail(created.error);
+        if (createFail) return createFail;
+        if (!created.data) return jsonError(500, 'insert returned no row');
+        const contentId = (created.data as unknown as Row).id;
+
+        if (type.workflow_id) {
+          const openFail = await openFirstTask(sb, contentId, type.workflow_id);
+          if (openFail) return openFail;
+        }
+
+        const linkRows = ids.map((assetId) => ({ asset_id: assetId, content_id: contentId, role: 'source' }));
+        const linkIns = await sb.from('mos_asset_links')
+          .upsert(linkRows, { onConflict: 'asset_id,content_id' });
+        const linkFail = dbFail(linkIns.error);
+        if (linkFail) return linkFail;
+
+        return jsonOk({
+          results: ids.map((assetId) => ({ id: assetId, ok: true, content_id: contentId })),
+          content_id: contentId,
+        });
       }
 
       case 'asset_link': {
@@ -1556,7 +2834,7 @@ export default async function handler(req: Request): Promise<Response> {
         if (uf) return uf;
         if (!upd.data) return jsonError(404, 'shoot request not found');
 
-        const itemRows = await sb.from('mos_shoot_items').select('id, scene_id').eq('request_id', id);
+        const itemRows = await sb.from('mos_shoot_items').select('id, scene_id, content_id').eq('request_id', id);
         const irf = dbFail(itemRows.error);
         if (irf) return irf;
         const rows = (itemRows.data ?? []) as unknown as Array<{ id: string; scene_id: string | null }>;
@@ -1585,6 +2863,45 @@ export default async function handler(req: Request): Promise<Response> {
         ]);
         const rf = dbFail(reqsAfter.error) ?? dbFail(itemsAfter.error);
         if (rf) return rf;
+
+        // «وصل التصوير» — the contents whose scenes this shoot covered are
+        // unblocked; interrupt whoever holds their open task.
+        const shootContentIds = Array.from(new Set(
+          ((itemRows.data ?? []) as unknown as Array<{ content_id: string | null }>)
+            .map((r) => r.content_id).filter((c): c is string => Boolean(c)),
+        ));
+        if (shootContentIds.length > 0) {
+          const openTasks = await sb.from('workflow_role_tasks')
+            .select('subject_id, role_key, assignee_user_id')
+            .eq('subject_table', 'mos_content')
+            .in('subject_id', shootContentIds)
+            .eq('status', 'open');
+          if (openTasks.error) {
+            console.error('[marketing-os] open-task read for shoot_delivered failed',
+              openTasks.error.code, openTasks.error.message);
+          } else {
+            const taskRows = (openTasks.data ?? []) as unknown as Array<{
+              subject_id: string; role_key: string; assignee_user_id: string | null;
+            }>;
+            const roles = Array.from(new Set(taskRows.map((t) => t.role_key)));
+            const users = Array.from(new Set(
+              taskRows.map((t) => t.assignee_user_id).filter((u): u is string => Boolean(u)),
+            ));
+            if (roles.length > 0 || users.length > 0) {
+              await emitNotify(sb, {
+                event: 'shoot_delivered',
+                roles,
+                users,
+                titleAr: 'وصل التصوير',
+                titleEn: 'Shoot delivered',
+                bodyAr: 'سُلّمت مواد التصوير وأصبحت اللقطات الناقصة متوفرة.',
+                bodyEn: 'Shoot materials were delivered; the missing scenes are now covered.',
+                url: `/m/shoots/${id}`,
+              });
+            }
+          }
+        }
+
         return jsonOk({
           requests: reqsAfter.data ?? [],
           items: itemsAfter.data ?? [],
@@ -1658,6 +2975,83 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
+      /* One shoot request: the shot list with each item's scene   */
+      /* and owning content resolved (screen 24)                   */
+      /* -------------------------------------------------------- */
+      case 'shoot_detail': {
+        const requestId = str(body.request_id);
+        if (!requestId) return jsonError(400, 'request_id is required');
+
+        const [request, items, assetsCount] = await Promise.all([
+          sb.from('mos_shoot_requests').select('*').eq('id', requestId).maybeSingle(),
+          sb.from('mos_shoot_items').select('*').eq('request_id', requestId)
+            .order('created_at', { ascending: true }),
+          sb.from('mos_assets').select('id', { count: 'exact', head: true })
+            .eq('shoot_request_id', requestId).is('archived_at', null),
+        ]);
+        const f = dbFail(request.error) ?? dbFail(items.error) ?? dbFail(assetsCount.error);
+        if (f) return f;
+        if (!request.data) return jsonError(404, 'shoot request not found');
+
+        const itemRows = (items.data ?? []) as unknown as Array<Row & {
+          scene_id: string | null; content_id: string | null;
+        }>;
+        const sceneIds = Array.from(new Set(
+          itemRows.map((i) => i.scene_id).filter((s): s is string => Boolean(s)),
+        ));
+        const contentIds = Array.from(new Set(
+          itemRows.map((i) => i.content_id).filter((c): c is string => Boolean(c)),
+        ));
+
+        const [scenes, contents] = await Promise.all([
+          sceneIds.length > 0
+            ? sb.from('mos_scenes').select('*').in('id', sceneIds)
+            : Promise.resolve({ data: [] as unknown[], error: null }),
+          contentIds.length > 0
+            ? sb.from('mos_content_v').select('id, ref, title').in('id', contentIds)
+            : Promise.resolve({ data: [] as unknown[], error: null }),
+        ]);
+        const f2 = dbFail(scenes.error) ?? dbFail(contents.error);
+        if (f2) return f2;
+
+        const sceneById = new Map(
+          ((scenes.data ?? []) as unknown as Row[]).map((s) => [s.id, s] as const),
+        );
+        const contentById = new Map(
+          ((contents.data ?? []) as unknown as Array<{ id: string; ref: string | null; title: string }>)
+            .map((c) => [c.id, c] as const),
+        );
+
+        return jsonOk({
+          request: request.data,
+          items: itemRows.map((i) => ({
+            ...i,
+            scene: i.scene_id ? (sceneById.get(i.scene_id) ?? null) : null,
+            content_ref: i.content_id ? (contentById.get(i.content_id)?.ref ?? null) : null,
+            content_title: i.content_id ? (contentById.get(i.content_id)?.title ?? null) : null,
+          })),
+          assets_count: assetsCount.count ?? 0,
+        });
+      }
+
+      case 'shoot_item_add': {
+        const requestId = str(body.request_id);
+        const description = str(body.description);
+        if (!requestId || !description) {
+          return jsonError(400, 'request_id and description are required');
+        }
+        const ins = await sb.from('mos_shoot_items').insert({
+          request_id: requestId,
+          description,
+          scene_id: str(body.scene_id),
+          content_id: str(body.content_id),
+        }).select('*').maybeSingle();
+        const f = dbFail(ins.error);
+        if (f) return f;
+        return jsonOk({ item: ins.data });
+      }
+
+      /* -------------------------------------------------------- */
       /* Comments — the thread                                     */
       /* -------------------------------------------------------- */
       case 'comment_add': {
@@ -1699,7 +3093,7 @@ export default async function handler(req: Request): Promise<Response> {
       /* Settings — workflows, types, platforms, surface matrix    */
       /* -------------------------------------------------------- */
       case 'settings_data': {
-        const [wfRes, verRes, typesRes, accountsRes, settingsRes, surfRolesRes, surfCellsRes] =
+        const [wfRes, verRes, typesRes, accountsRes, settingsRes, surfRolesRes, surfCellsRes, rulesRes] =
           await Promise.all([
             sb.from('workflows')
               .select('id, label_ar, label_en, is_active, metadata')
@@ -1713,11 +3107,13 @@ export default async function handler(req: Request): Promise<Response> {
             sb.from('mos_settings').select('key, value'),
             sb.from('roles').select('id, key').like('key', 'mos\\_%').order('key', { ascending: true }),
             sb.from('surface_access').select('role_id, surface_key, level'),
+            fetchNotificationRuleRows(sb),
           ]);
         const f = dbFail(wfRes.error) ?? dbFail(verRes.error) ?? dbFail(typesRes.error)
           ?? dbFail(accountsRes.error) ?? dbFail(settingsRes.error)
           ?? dbFail(surfRolesRes.error) ?? dbFail(surfCellsRes.error);
         if (f) return f;
+        if ('fail' in rulesRes) return rulesRes.fail;
 
         const settings: Record<string, unknown> = {};
         for (const row of (settingsRes.data ?? []) as Array<{ key: string; value: unknown }>) {
@@ -1740,10 +3136,44 @@ export default async function handler(req: Request): Promise<Response> {
             roles: roleRows.map((r) => ({ key: stripMosPrefix(r.key), role_id: r.id })),
             cells,
           },
-          // Notification rules arrive with the notifications migration (…_04),
-          // which is not in this build yet.
-          notification_rules: [],
+          notification_rules: rulesRes.rules,
         });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Module settings — thresholds as data (screen 25 cards)    */
+      /* -------------------------------------------------------- */
+      case 'settings_save': {
+        const key = str(body.key);
+        if (!key) return jsonError(400, 'key is required');
+        if (!Object.prototype.hasOwnProperty.call(body, 'value')) {
+          return jsonError(400, 'value is required');
+        }
+        const value = body.value;
+        // mos_settings.value is jsonb — a scalar or array would break every
+        // reader that does value->>'field'. Objects only.
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+          return jsonError(400, 'value must be a JSON object');
+        }
+        const up = await sb.from('mos_settings').upsert(
+          {
+            key,
+            value: value as Record<string, unknown>,
+            updated_by_user_id: await resolveAppUserId(sb, user.userId),
+          },
+          { onConflict: 'key' },
+        );
+        const f = dbFail(up.error);
+        if (f) return f;
+
+        const all = await sb.from('mos_settings').select('key, value');
+        const allFail = dbFail(all.error);
+        if (allFail) return allFail;
+        const settings: Record<string, unknown> = {};
+        for (const row of (all.data ?? []) as Array<{ key: string; value: unknown }>) {
+          settings[row.key] = row.value;
+        }
+        return jsonOk({ ok: true, settings });
       }
 
       /* -------------------------------------------------------- */
@@ -1955,7 +3385,11 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
-      /* Search — one box, three kinds of object                   */
+      /* Search — one box over every object type the caller may    */
+      /* SEE. A hidden surface means its type is absent from both  */
+      /* the results and the count chips: search never hints at    */
+      /* something the sidebar doesn't show. Each hit carries the  */
+      /* field that matched and a <mark>-wrapped excerpt.          */
       /* -------------------------------------------------------- */
       case 'search': {
         const raw = str(body.q);
@@ -1963,22 +3397,137 @@ export default async function handler(req: Request): Promise<Response> {
         // containing those characters would produce a malformed filter rather
         // than a search. Strip them instead of shipping a broken query.
         const term = raw ? raw.replace(/[(),*]/g, ' ').trim() : null;
-        if (!term) return jsonOk({ content: [], campaigns: [], assets: [] });
+
+        const surf = await callerSurfaces(sb);
+        if ('fail' in surf) return surf.fail;
+        // Type → the surface that governs its visibility.
+        const TYPE_SURFACE = {
+          content: 'content',
+          campaign: 'campaigns',
+          asset: 'library',
+          shoot: 'shoots',
+        } as const;
+        type SearchType = keyof typeof TYPE_SURFACE;
+        const TYPE_ORDER: SearchType[] = ['content', 'campaign', 'asset', 'shoot'];
+        const visible = TYPE_ORDER.filter((t) => surf.surfaces[TYPE_SURFACE[t]] !== 'hidden');
+
+        if (!term) {
+          return jsonOk({
+            results: [],
+            chips: visible.map((t) => ({ type: t, count: 0 })),
+            content: [],
+            campaigns: [],
+            assets: [],
+            shoots: [],
+          });
+        }
         const like = `%${term}%`;
-        const [content, campaigns, assets] = await Promise.all([
-          sb.from('mos_content_v').select(CONTENT_LIST_COLUMNS)
-            .is('archived_at', null).or(`title.ilike.${like},ref.ilike.${like}`).limit(40),
-          sb.from('mos_campaign_v').select('*')
-            .is('archived_at', null).or(`name.ilike.${like},ref.ilike.${like}`).limit(20),
-          sb.from('mos_assets').select('*')
-            .is('archived_at', null).or(`title.ilike.${like},ref.ilike.${like}`).limit(20),
+
+        const [contentRes, campaignRes, assetRes, shootRes] = await Promise.all([
+          visible.includes('content')
+            ? sb.from('mos_content_v').select(CONTENT_LIST_COLUMNS)
+                .is('archived_at', null).or(`title.ilike.${like},ref.ilike.${like}`)
+                .order('updated_at', { ascending: false }).limit(20)
+            : Promise.resolve({ data: [] as unknown[], error: null }),
+          visible.includes('campaign')
+            ? sb.from('mos_campaign_v').select('*')
+                .is('archived_at', null).or(`name.ilike.${like},ref.ilike.${like},goal.ilike.${like}`)
+                .order('created_at', { ascending: false }).limit(10)
+            : Promise.resolve({ data: [] as unknown[], error: null }),
+          visible.includes('asset')
+            ? sb.from('mos_assets').select('*')
+                .is('archived_at', null).or(`title.ilike.${like},ref.ilike.${like},note.ilike.${like}`)
+                .order('created_at', { ascending: false }).limit(10)
+            : Promise.resolve({ data: [] as unknown[], error: null }),
+          visible.includes('shoot')
+            ? sb.from('mos_shoot_requests').select('*')
+                .or(`title.ilike.${like},ref.ilike.${like},location.ilike.${like}`)
+                .order('created_at', { ascending: false }).limit(10)
+            : Promise.resolve({ data: [] as unknown[], error: null }),
         ]);
-        const f = dbFail(content.error) ?? dbFail(campaigns.error) ?? dbFail(assets.error);
+        const f = dbFail(contentRes.error) ?? dbFail(campaignRes.error)
+          ?? dbFail(assetRes.error) ?? dbFail(shootRes.error);
         if (f) return f;
+
+        interface SearchHit {
+          type: SearchType;
+          id: string;
+          ref: string | null;
+          title: string;
+          thumb_url: string | null;
+          match_reason: string;
+          excerpt: string;
+        }
+        const hits: Record<SearchType, SearchHit[]> = { content: [], campaign: [], asset: [], shoot: [] };
+
+        for (const r of (contentRes.data ?? []) as unknown as Array<Record<string, unknown>>) {
+          const m = matchIn(
+            [['title', r.title as string | null], ['ref', r.ref as string | null]],
+            term,
+          );
+          hits.content.push({
+            type: 'content',
+            id: r.id as string,
+            ref: (r.ref as string | null) ?? null,
+            title: (r.title as string) ?? '',
+            thumb_url: null,
+            ...m,
+          });
+        }
+        for (const r of (campaignRes.data ?? []) as unknown as Array<Record<string, unknown>>) {
+          const m = matchIn(
+            [['name', r.name as string | null], ['ref', r.ref as string | null], ['goal', r.goal as string | null]],
+            term,
+          );
+          hits.campaign.push({
+            type: 'campaign',
+            id: r.id as string,
+            ref: (r.ref as string | null) ?? null,
+            title: (r.name as string) ?? '',
+            thumb_url: null,
+            ...m,
+          });
+        }
+        for (const r of (assetRes.data ?? []) as unknown as Array<Record<string, unknown>>) {
+          const m = matchIn(
+            [['title', r.title as string | null], ['ref', r.ref as string | null], ['note', r.note as string | null]],
+            term,
+          );
+          hits.asset.push({
+            type: 'asset',
+            id: r.id as string,
+            ref: (r.ref as string | null) ?? null,
+            title: (r.title as string) ?? '',
+            thumb_url: (r.thumb_url as string | null) ?? (r.url as string | null) ?? null,
+            ...m,
+          });
+        }
+        for (const r of (shootRes.data ?? []) as unknown as Array<Record<string, unknown>>) {
+          const m = matchIn(
+            [['title', r.title as string | null], ['ref', r.ref as string | null], ['location', r.location as string | null]],
+            term,
+          );
+          hits.shoot.push({
+            type: 'shoot',
+            id: r.id as string,
+            ref: (r.ref as string | null) ?? null,
+            title: (r.title as string) ?? '',
+            thumb_url: null,
+            ...m,
+          });
+        }
+
         return jsonOk({
-          content: content.data ?? [],
-          campaigns: campaigns.data ?? [],
-          assets: assets.data ?? [],
+          results: TYPE_ORDER.flatMap((t) => hits[t]),
+          chips: TYPE_ORDER.filter((t) => visible.includes(t))
+            .map((t) => ({ type: t, count: hits[t].length })),
+          // Legacy keys for the pre-s44 search page, populated ONLY for types
+          // whose surface the caller may see ([] when hidden — the same rule
+          // as results/chips). New UI consumes results/chips above.
+          content: contentRes.data ?? [],
+          campaigns: campaignRes.data ?? [],
+          assets: assetRes.data ?? [],
+          shoots: shootRes.data ?? [],
         });
       }
 

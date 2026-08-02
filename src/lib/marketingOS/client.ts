@@ -112,6 +112,57 @@ export interface MosContentVersion {
   created_at: string;
 }
 
+/**
+ * The seven writing-field kinds, transcribed from design screen 27's add-field
+ * row: «إضافة حقل — نص قصير، نص طويل، جدول، اختيار، تاريخ، رقم، ملف».
+ */
+export type MosFieldKind = 'short' | 'long' | 'table' | 'select' | 'date' | 'number' | 'file';
+
+export const FIELD_KIND_LABELS: Record<MosFieldKind, { ar: string; en: string }> = {
+  short:  { ar: 'نص قصير', en: 'Short text' },
+  long:   { ar: 'نص طويل', en: 'Long text' },
+  table:  { ar: 'جدول',    en: 'Table' },
+  select: { ar: 'اختيار',  en: 'Choice' },
+  date:   { ar: 'تاريخ',   en: 'Date' },
+  number: { ar: 'رقم',     en: 'Number' },
+  file:   { ar: 'ملف',     en: 'File' },
+};
+
+/**
+ * One writing field in a content type's schema. Legacy rows stored bare key
+ * strings; screen 27's editor writes objects. Both shapes are valid — always
+ * read the array through `fieldSchemaEntries` / `fieldSchemaKeys`, never raw.
+ * `is_hidden` is delete-as-hide (screen 27: «حذف الحقل محمي»): the field stops
+ * appearing on new records but existing records keep their data readable.
+ */
+export interface MosFieldDef {
+  key: string;
+  label_ar: string;
+  label_en: string;
+  kind: MosFieldKind;
+  required: boolean;
+  is_hidden?: boolean;
+}
+
+export type MosFieldSchemaEntry = string | MosFieldDef;
+
+const KINDS = new Set<string>(['short', 'long', 'table', 'select', 'date', 'number', 'file']);
+
+/** Normalize every entry to a MosFieldDef; legacy bare keys become long-text fields. */
+export function fieldSchemaEntries(schema: MosFieldSchemaEntry[]): MosFieldDef[] {
+  return schema.map((e) => {
+    if (typeof e === 'string') {
+      return { key: e, label_ar: e, label_en: e, kind: 'long', required: false };
+    }
+    return { ...e, kind: KINDS.has(e.kind) ? e.kind : 'long' };
+  });
+}
+
+/** The VISIBLE field keys — what WritingFields renders. Hidden fields stay stored. */
+export function fieldSchemaKeys(schema: MosFieldSchemaEntry[]): string[] {
+  return fieldSchemaEntries(schema).filter((f) => !f.is_hidden).map((f) => f.key);
+}
+
 export interface MosContentType {
   id: string;
   key: string;
@@ -119,8 +170,9 @@ export interface MosContentType {
   label_en: string;
   prefix: string;
   workflow_id: string | null;
-  field_schema: string[];
+  field_schema: MosFieldSchemaEntry[];
   sort_order: number;
+  is_active: boolean;
 }
 
 /**
@@ -250,13 +302,33 @@ async function call<T>(action: string, payload: Record<string, unknown> = {}): P
     body: JSON.stringify({ action, ...payload }),
   });
   if (!res.ok) {
-    const b = (await res.json().catch(() => ({}))) as { error?: string; error_ar?: string };
+    const b = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
+      error?: string; error_ar?: string;
+    };
     const isAr = useAppStore.getState().language === 'ar';
-    throw new Error(
+    throw new MosApiError(
       (isAr ? b?.error_ar || b?.error : b?.error) ?? `marketing-os ${action} failed (${res.status})`,
+      res.status,
+      b,
     );
   }
   return (await res.json()) as T;
+}
+
+/**
+ * A non-2xx from /api/marketing-os. Carries the HTTP status and the parsed
+ * body so callers can branch on structured errors — e.g. asset_delete's
+ * 409 `{ error: 'in_use', used_in }` (status 409, payload.used_in).
+ */
+export class MosApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public payload: Record<string, unknown> = {},
+  ) {
+    super(message);
+    this.name = 'MosApiError';
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -334,6 +406,8 @@ export interface MosAccount {
   is_connected: boolean;
   can_publish: boolean;
   can_read_metrics: boolean;
+  /** Access-token expiry, when a real connection set one (screen 26 «تنتهي…»). */
+  token_expires_at?: string | null;
 }
 
 export interface MosSnapshot {
@@ -344,6 +418,8 @@ export interface MosSnapshot {
   views: number | null;
   engagement: number | null;
   enquiries: number | null;
+  /** Platform-specific readings; a skip carries { skipped: reason }. */
+  extra?: Record<string, unknown>;
 }
 
 export const fetchRoles = () =>
@@ -380,8 +456,18 @@ export const savePublication = (contentId: string, publication: Record<string, u
 
 export const recordMetrics = (
   publicationId: string,
-  values: { views?: number | null; engagement?: number | null; enquiries?: number | null },
+  values: {
+    views?: number | null;
+    engagement?: number | null;
+    enquiries?: number | null;
+    /** Platform-specific readings (e.g. TikTok watch-time). */
+    extra?: Record<string, unknown>;
+  },
 ) => call<{ snapshots: MosSnapshot[] }>('metrics_record', { publication_id: publicationId, ...values });
+
+/** «لا توجد أرقام» — a deliberate skip, distinct from missing AND from zero. */
+export const skipMetrics = (publicationId: string, reason: string) =>
+  call<{ ok: true }>('metrics_skip', { publication_id: publicationId, reason });
 
 export const fetchMetricsHistory = (publicationId: string) =>
   call<{ snapshots: MosSnapshot[] }>('metrics_history', { publication_id: publicationId });
@@ -409,6 +495,15 @@ export interface MosCampaign {
   budget_total: number | null;
   note: string | null;
   created_at: string;
+  /** The brief (screen 19). Server merges these from the base table. */
+  audience?: string | null;
+  offer?: string | null;
+  destination_url?: string | null;
+  measured_by?: string | null;
+  /** Server-set on every save from mos_settings.signature_threshold. */
+  requires_signature?: boolean;
+  signed_by_user_id?: string | null;
+  signed_at?: string | null;
   execution_count: number;
   total_spend: number | null;
   total_leads: number | null;
@@ -436,6 +531,10 @@ export interface MosExecution {
   qualified: number | null;
   source: 'manual' | 'api';
   note: string | null;
+  /** The platform's own campaign id, once the ad set exists on it. */
+  platform_campaign_id?: string | null;
+  /** What the ad set is FOR. */
+  purpose?: 'conversion' | 'awareness' | 'retargeting' | 'traffic' | null;
   /** Screen 21's side panels — descriptive brief data on the execution. */
   targeting?: MosTargeting;
   lead_form_fields?: string[];
@@ -613,6 +712,7 @@ export const fetchCampaignDetail = (id: string) =>
     executions: MosExecution[];
     content: MosContentRow[];
     comments: MosComment[];
+    events: MosCampaignEvent[];
   }>('campaign_detail', { id });
 
 export const saveCampaign = (
@@ -662,7 +762,46 @@ export const fetchAssets = (filters: Record<string, unknown> = {}) =>
 export const saveAsset = (asset: Record<string, unknown>) =>
   call<{ asset: MosAsset }>('asset_save', { asset });
 
-export const archiveAsset = (id: string) => call<{ ok: true }>('asset_delete', { id });
+/** Archive (or un-archive). Allowed even while the asset is in use. */
+export const archiveAsset = (id: string, archived = true) =>
+  call<{ asset: MosAsset }>('asset_archive', { asset_id: id, archived });
+
+/**
+ * Hard delete. BLOCKED while anything references the asset: the server answers
+ * 409 `{ error: 'in_use', used_in }` — catch MosApiError and read
+ * `err.payload.used_in` to show where it's used (offer archive instead).
+ */
+export const deleteAsset = (id: string) => call<{ ok: true }>('asset_delete', { id });
+
+export interface MosAssetUsage {
+  content_id: string;
+  ref: string | null;
+  title: string;
+  role: string;
+  live_ad: boolean;
+}
+
+export const fetchAssetDetail = (assetId: string) =>
+  call<{
+    asset: MosAsset;
+    used_in: MosAssetUsage[];
+    versions: Array<{ id: string; title: string; created_at: string }>;
+    publications_using: number;
+  }>('asset_detail', { asset_id: assetId });
+
+export const fetchUnusedAssets = () => call<{ rows: MosAsset[] }>('assets_unused');
+
+export interface BulkAssetResult {
+  id: string;
+  ok: boolean;
+  content_id?: string;
+}
+
+export const bulkAssets = (
+  ids: string[],
+  op: 'archive' | 'tag' | 'create_content',
+  opts: { tag?: string; content_type_key?: string; title?: string } = {},
+) => call<{ results: BulkAssetResult[]; content_id?: string }>('assets_bulk', { ids, op, ...opts });
 
 export const linkAsset = (assetId: string, contentId: string, role = 'source') =>
   call<{ links: MosAssetLink[] }>('asset_link', { asset_id: assetId, content_id: contentId, role });
@@ -761,7 +900,7 @@ export interface SettingsData {
     roles: Array<{ key: string; role_id: string }>;
     cells: SurfaceCell[];
   };
-  notification_rules: unknown[];
+  notification_rules: MosNotificationRule[];
 }
 
 export const fetchSettings = async (): Promise<SettingsData> => {
@@ -795,8 +934,256 @@ export const fetchMetricsQueue = (since?: string) =>
     since ? { since } : {},
   );
 
-export const searchAll = (q: string) =>
-  call<{ content: MosContentRow[]; campaigns: MosCampaign[]; assets: MosAsset[] }>('search', { q });
+export type SearchHitType = 'content' | 'campaign' | 'asset' | 'shoot';
+
+export interface SearchHit {
+  type: SearchHitType;
+  id: string;
+  ref: string | null;
+  title: string;
+  thumb_url: string | null;
+  /** The field that matched ('title' | 'ref' | 'goal' | 'note' | 'location'). */
+  match_reason: string;
+  /** Server-built excerpt with the hit wrapped in <mark> — render as HTML. */
+  excerpt: string;
+}
+
+export interface SearchResponse {
+  results: SearchHit[];
+  /** Only surfaces the caller may see appear here (hidden = absent). */
+  chips: Array<{ type: SearchHitType; count: number }>;
+  /**
+   * Legacy keys for the pre-s44 search page — populated ONLY for types whose
+   * surface the caller may see ([] when hidden, same rule as results/chips).
+   * New UI should consume results/chips.
+   */
+  content: MosContentRow[];
+  campaigns: MosCampaign[];
+  assets: MosAsset[];
+  shoots: MosShootRequest[];
+}
+
+export const searchAll = (q: string) => call<SearchResponse>('search', { q });
+
+/* ------------------------------------------------------------------ */
+/* notifications                                                       */
+/* ------------------------------------------------------------------ */
+
+export interface MosNotification {
+  id: string;
+  kind: string;
+  title_ar: string;
+  title_en: string | null;
+  body_ar: string | null;
+  body_en: string | null;
+  url: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+export const fetchNotifications = (opts: { unread_only?: boolean; limit?: number } = {}) =>
+  call<{ rows: MosNotification[]; unread: number }>('notifications_list', opts);
+
+export const markNotificationsRead = (ids: string[]) =>
+  call<{ ok: true }>('notifications_read', { ids });
+
+export type NotificationChannel = 'inapp' | 'push' | 'whatsapp';
+export type NotificationTiming = 'immediate' | 'digest';
+
+export interface MosNotificationRule {
+  role_key: string;
+  event: string;
+  channel: NotificationChannel;
+  timing: NotificationTiming;
+  enabled: boolean;
+}
+
+export const fetchNotificationRules = () =>
+  call<{ rules: MosNotificationRule[] }>('notification_rules');
+
+export const setNotificationRule = (rule: {
+  role_key: string;
+  event: string;
+  channel: NotificationChannel;
+  enabled: boolean;
+  timing?: NotificationTiming;
+}) => call<{ ok: true }>('notification_rule_set', rule);
+
+export interface MosNotificationPrefs {
+  user_id: string;
+  whatsapp_enabled: boolean;
+  digest_hour: number;
+  quiet_from: number | null;
+  quiet_to: number | null;
+}
+
+export const saveNotificationPrefs = (prefs: {
+  whatsapp_enabled?: boolean;
+  digest_hour?: number;
+  quiet_from?: number | null;
+  quiet_to?: number | null;
+}) => call<{ prefs: MosNotificationPrefs }>('notification_prefs_save', prefs);
+
+/** «تذكير» — nudge whoever holds the item's open task. */
+export const remindContent = (contentId: string) =>
+  call<{ ok: true }>('remind', { content_id: contentId });
+
+/* ------------------------------------------------------------------ */
+/* campaign events / outcomes / signature / budget shift               */
+/* ------------------------------------------------------------------ */
+
+export type CampaignEventKind =
+  | 'budget_shift' | 'execution_added' | 'execution_paused' | 'execution_resumed'
+  | 'content_linked' | 'content_unlinked' | 'signed' | 'note';
+
+export interface MosCampaignEvent {
+  id: string;
+  campaign_id: string;
+  kind: CampaignEventKind;
+  summary_ar: string;
+  summary_en: string | null;
+  detail: Record<string, unknown>;
+  actor_user_id: string | null;
+  created_at: string;
+}
+
+export const fetchCampaignEvents = (campaignId: string) =>
+  call<{ events: MosCampaignEvent[] }>('campaign_events', { campaign_id: campaignId });
+
+export const addCampaignEvent = (
+  campaignId: string,
+  event: { kind: CampaignEventKind; summary_ar: string; summary_en?: string; detail?: Record<string, unknown> },
+) => call<{ event: MosCampaignEvent }>('campaign_event_add', { campaign_id: campaignId, ...event });
+
+export interface MosCampaignOutcomes {
+  attributed_clients: number;
+  appointments: number;
+  visits: number;
+  reservations: number;
+  reservation_value: number;
+  window_days: number;
+  touch: string;
+  computed_at: string;
+}
+
+export const fetchCampaignOutcomes = (campaignId: string) =>
+  call<{ outcomes: MosCampaignOutcomes; settings: Record<string, unknown> | null }>(
+    'campaign_outcomes',
+    { campaign_id: campaignId },
+  );
+
+/** The CEO's named budget sign-off. 403 unless the caller may sign. */
+export const signCampaign = (campaignId: string) =>
+  call<{ campaign: MosCampaign }>('campaign_sign', { campaign_id: campaignId });
+
+export const budgetShift = (
+  campaignId: string,
+  fromExecutionId: string,
+  toExecutionId: string,
+  amount: number,
+) => call<{ executions: MosExecution[] }>('budget_shift', {
+  campaign_id: campaignId,
+  from_execution_id: fromExecutionId,
+  to_execution_id: toExecutionId,
+  amount,
+});
+
+/* ------------------------------------------------------------------ */
+/* attribution — the append-only client ↔ spend ledger                 */
+/* ------------------------------------------------------------------ */
+
+export interface MosAttribution {
+  id: string;
+  client_record_id: string;
+  campaign_id: string | null;
+  execution_id: string | null;
+  ad_id: string | null;
+  touch_type: 'first' | 'last';
+  occurred_at: string;
+  source: 'lead_form' | 'manual' | 'import';
+  note: string | null;
+  supersedes_id: string | null;
+  created_by_user_id: string | null;
+  created_at: string;
+  /** True when a later row corrects this one (the effective view hides those). */
+  superseded: boolean;
+}
+
+export const fetchAttributions = (filter: { campaign_id?: string; client_record_id?: string }) =>
+  call<{ rows: MosAttribution[] }>('attribution_list', filter);
+
+/** INSERT-only. Corrections stamp a new row with supersedes_id. */
+export const stampAttribution = (row: {
+  client_record_id: string;
+  campaign_id?: string;
+  execution_id?: string;
+  ad_id?: string;
+  occurred_at: string;
+  source: 'lead_form' | 'manual' | 'import';
+  note?: string;
+  supersedes_id?: string;
+  touch_type?: 'first' | 'last';
+}) => call<{ row: MosAttribution }>('attribution_stamp', row);
+
+/* ------------------------------------------------------------------ */
+/* shoots                                                              */
+/* ------------------------------------------------------------------ */
+
+export interface MosShootItemDetail extends MosShootItem {
+  scene: MosScene | null;
+  content_ref: string | null;
+  content_title: string | null;
+}
+
+export const fetchShootDetail = (requestId: string) =>
+  call<{ request: MosShootRequest; items: MosShootItemDetail[]; assets_count: number }>(
+    'shoot_detail',
+    { request_id: requestId },
+  );
+
+export const addShootItem = (
+  requestId: string,
+  item: { description: string; scene_id?: string; content_id?: string },
+) => call<{ item: MosShootItem }>('shoot_item_add', { request_id: requestId, ...item });
+
+/* ------------------------------------------------------------------ */
+/* numbers — the Friday entry screen                                   */
+/* ------------------------------------------------------------------ */
+
+export interface MosNumbersPublication {
+  publication_id: string;
+  content_ref: string | null;
+  title: string;
+  latest: {
+    captured_at: string | null;
+    source: 'manual' | 'api' | null;
+    views: number | null;
+    engagement: number | null;
+    enquiries: number | null;
+    extra: Record<string, unknown>;
+  } | null;
+  /** No snapshot was ever entered. Distinct from skipped AND from zero. */
+  missing: boolean;
+  skipped_reason: string | null;
+}
+
+export interface MosNumbersWeek {
+  platforms: Array<{ platform: string; publications: MosNumbersPublication[] }>;
+  progress: { entered: number; total: number; estimate_minutes: number };
+  week_start: string;
+  week_end: string;
+}
+
+export const fetchNumbersWeek = (weekStart?: string) =>
+  call<MosNumbersWeek>('numbers_week', weekStart ? { week_start: weekStart } : {});
+
+/* ------------------------------------------------------------------ */
+/* settings                                                            */
+/* ------------------------------------------------------------------ */
+
+/** mos_settings upsert (threshold cards on screen 25). */
+export const saveSetting = (key: string, value: Record<string, unknown>) =>
+  call<{ ok: true; settings: Record<string, unknown> }>('settings_save', { key, value });
 
 /* ------------------------------------------------------------------ */
 /* bilingual labels — one map, never inline strings in JSX            */

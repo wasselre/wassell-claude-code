@@ -15,15 +15,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  MosAccount, MosContentType, MosPathRole, MosRole, MosStep, PLATFORM_LABELS, ROLE_LABELS,
-  StepDef, WorkflowDef, fetchSettings, grantRole, saveAccount,
-  saveContentType, saveWorkflow, stepDefToMosStep,
+  MosAccount, MosContentType, MosPathRole, MosRole, MosStep, ROLE_LABELS,
+  StepDef, WorkflowDef, fetchSettings, grantRole, saveWorkflow, stepDefToMosStep,
 } from '@/lib/marketingOS/client';
 import { useWorkspace, type Capability } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton } from './components/kit';
 import {
   IconBack, IconCalendar, IconContent, IconForward, IconPlus, IconRoles, IconSettings,
 } from './components/icons';
+import SettingsPlatforms from './components/SettingsPlatforms';
+import SettingsContentTypes from './components/SettingsContentTypes';
 import { num } from './lib/format';
 
 /* ------------------------------------------------------------------ */
@@ -38,7 +39,7 @@ const SECTIONS = [
     en_d: 'The stages, who owns each one, and how long it should take.',
   },
   {
-    slug: 'types', Icon: IconSettings,
+    slug: 'content-types', Icon: IconSettings,
     ar: 'أنواع المحتوى', en: 'Content types',
     ar_d: 'ما الذي يعنيه «منشور» أو «فيديو» — بادئة الرقم، والمسار، وحقول الكتابة.',
     en_d: 'What a Post or a Video actually is — its ref prefix, its workflow, its writing fields.',
@@ -136,12 +137,35 @@ export function SettingsSectionPage() {
   const meta = SECTIONS.find((s) => s.slug === section);
   const Back = isAr ? IconForward : IconBack;
   const canManage = can('manage_settings' as Capability);
+  // Screens 26/27 render their own header (sub + actions depend on live data).
+  const ownHead = section === 'platforms' || section === 'content-types';
 
   if (!meta) {
     return (
       <div className="body">
         <div className="notice">{isAr ? 'قسم غير معروف.' : 'Unknown settings section.'}</div>
       </div>
+    );
+  }
+
+  if (ownHead) {
+    return (
+      <>
+        {error && <div className="body"><LoadError message={error} onRetry={() => void load()} isAr={isAr} /></div>}
+        {loading && <div className="body"><Skeleton rows={5} /></div>}
+        {!loading && section === 'platforms' && (
+          <SettingsPlatforms accounts={accounts} canManage={canManage} isAr={isAr} onAccounts={setAccounts} />
+        )}
+        {!loading && section === 'content-types' && (
+          <SettingsContentTypes
+            types={types}
+            workflows={workflows}
+            canManage={canManage}
+            isAr={isAr}
+            onTypes={setTypes}
+          />
+        )}
+      </>
     );
   }
 
@@ -169,19 +193,6 @@ export function SettingsSectionPage() {
             onWorkflow={(saved) =>
               setWorkflows((ws) => ws.map((w) => (w.id === saved.id ? saved : w)))}
           />
-        )}
-        {!loading && section === 'types' && (
-          <TypesSection
-            types={types}
-            workflows={workflows}
-            steps={steps}
-            canManage={canManage}
-            isAr={isAr}
-            onTypes={setTypes}
-          />
-        )}
-        {!loading && section === 'platforms' && (
-          <PlatformsSection accounts={accounts} canManage={canManage} isAr={isAr} onAccounts={setAccounts} />
         )}
         {section === 'roles' && <RolesSection isAr={isAr} />}
       </div>
@@ -409,308 +420,6 @@ function StepModal({
           : 'This is an approval stage — it can be approved or sent back with a note'}
       </label>
     </Modal>
-  );
-}
-
-/* ── Content types (screen 27) ────────────────────────────────────── */
-
-function TypesSection({
-  types, workflows, steps, canManage, isAr, onTypes,
-}: {
-  types: MosContentType[];
-  workflows: WorkflowDef[];
-  steps: MosStep[];
-  canManage: boolean;
-  isAr: boolean;
-  onTypes: (types: MosContentType[]) => void;
-}) {
-  const [editing, setEditing] = useState<MosContentType | null>(null);
-  const [adding, setAdding] = useState(false);
-
-  return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <div className="card">
-        <div className="tbl-wrap">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>{isAr ? 'النوع' : 'Type'}</th>
-                <th style={{ width: 80 }}>{isAr ? 'البادئة' : 'Prefix'}</th>
-                <th style={{ width: 190 }}>{isAr ? 'المسار' : 'Workflow'}</th>
-                <th style={{ width: 90 }}>{isAr ? 'المراحل' : 'Stages'}</th>
-                <th>{isAr ? 'حقول الكتابة' : 'Writing fields'}</th>
-                {canManage && <th style={{ width: 90 }} />}
-              </tr>
-            </thead>
-            <tbody>
-              {types.map((t) => {
-                const w = workflows.find((x) => x.id === t.workflow_id);
-                const n = steps.filter((s) => s.workflow_id === t.workflow_id).length;
-                return (
-                  <tr key={t.id}>
-                    <td className="ttl">
-                      {isAr ? t.label_ar : t.label_en}
-                      <div style={{ fontSize: 11, color: 'var(--mute)', fontWeight: 400 }} className="ltr">{t.key}</div>
-                    </td>
-                    <td className="id">{t.prefix}</td>
-                    <td>{w ? (isAr ? w.label_ar : w.label_en) : '—'}</td>
-                    <td className="num">{num(n, isAr)}</td>
-                    <td className="ltr" style={{ fontSize: 11.5, color: 'var(--mute)' }}>
-                      {t.field_schema.join(', ') || '—'}
-                    </td>
-                    {canManage && (
-                      <td>
-                        <button type="button" className="btn btn-sm" onClick={() => setEditing(t)}>
-                          {isAr ? 'تعديل' : 'Edit'}
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="notice">
-        {isAr
-          ? 'إضافة نوع جديد — كتيّب، ستوري، إعلان — صفٌّ هنا، لا شاشة جديدة. هذه هي كل حجة «كيان محتوى واحد».'
-          : 'Adding a new type — a brochure, a story, an ad — is a row here, not a new screen. That is the whole "one content entity" argument.'}
-      </div>
-
-      {canManage && (
-        <div>
-          <button type="button" className="btn" onClick={() => setAdding(true)}>
-            <IconPlus />
-            {isAr ? 'نوع جديد' : 'New type'}
-          </button>
-        </div>
-      )}
-
-      {(editing || adding) && (
-        <TypeModal
-          type={editing}
-          workflows={workflows}
-          isAr={isAr}
-          onClose={() => { setEditing(null); setAdding(false); }}
-          onSaved={(rows) => { onTypes(rows); setEditing(null); setAdding(false); }}
-        />
-      )}
-    </div>
-  );
-}
-
-function TypeModal({
-  type, workflows, isAr, onClose, onSaved,
-}: {
-  type: MosContentType | null;
-  workflows: WorkflowDef[];
-  isAr: boolean;
-  onClose: () => void;
-  onSaved: (types: MosContentType[]) => void;
-}) {
-  const addToast = useAppStore((s) => s.addToast);
-  const [key, setKey] = useState(type?.key ?? '');
-  const [labelAr, setLabelAr] = useState(type?.label_ar ?? '');
-  const [labelEn, setLabelEn] = useState(type?.label_en ?? '');
-  const [prefix, setPrefix] = useState(type?.prefix ?? '');
-  const [workflowId, setWorkflowId] = useState(type?.workflow_id ?? '');
-  const [fields, setFields] = useState((type?.field_schema ?? []).join(', '));
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (): Promise<void> => {
-    if (!key.trim() || !prefix.trim() || !labelAr.trim() || !labelEn.trim()) {
-      addToast(isAr ? 'المفتاح والبادئة والاسمان إلزامية.' : 'Key, prefix and both labels are required.', 'error');
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await saveContentType({
-        id: type?.id,
-        key: key.trim(),
-        label_ar: labelAr.trim(),
-        label_en: labelEn.trim(),
-        prefix: prefix.trim(),
-        workflow_id: workflowId || null,
-        field_schema: fields.split(',').map((f) => f.trim()).filter(Boolean),
-      });
-      addToast(isAr ? 'حُفظ النوع.' : 'Type saved.', 'success');
-      onSaved(res.content_types);
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={type ? (isAr ? 'تعديل النوع' : 'Edit type') : (isAr ? 'نوع جديد' : 'New type')}
-      sub={isAr
-        ? 'البادئة تُستخدم في ترقيم العناصر. أنواع تتشارك البادئة تتشارك العدّاد نفسه.'
-        : 'The prefix numbers the items. Types sharing a prefix share one counter.'}
-      onClose={onClose}
-      footer={
-        <>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>
-            {isAr ? 'إلغاء' : 'Cancel'}
-          </button>
-          <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy}>
-            {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'حفظ' : 'Save'}
-          </button>
-        </>
-      }
-    >
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
-        <Field label={isAr ? 'الاسم بالعربية' : 'Arabic label'}>
-          <input className="inp" value={labelAr} onChange={(e) => setLabelAr(e.target.value)} />
-        </Field>
-        <Field label={isAr ? 'الاسم بالإنجليزية' : 'English label'}>
-          <input className="inp" dir="ltr" value={labelEn} onChange={(e) => setLabelEn(e.target.value)} />
-        </Field>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 13 }}>
-        <Field label={isAr ? 'المفتاح' : 'Key'} hint="snake_case">
-          <input className="inp" dir="ltr" value={key} onChange={(e) => setKey(e.target.value)} disabled={Boolean(type)} />
-        </Field>
-        <Field label={isAr ? 'البادئة' : 'Prefix'} hint="P- / V-">
-          <input className="inp" dir="ltr" value={prefix} onChange={(e) => setPrefix(e.target.value)} />
-        </Field>
-        <Field label={isAr ? 'المسار' : 'Workflow'}>
-          <select className="inp" value={workflowId} onChange={(e) => setWorkflowId(e.target.value)}>
-            <option value="">{isAr ? 'بلا مسار' : 'None'}</option>
-            {workflows.map((w) => (
-              <option key={w.id} value={w.id}>{isAr ? w.label_ar : w.label_en}</option>
-            ))}
-          </select>
-        </Field>
-      </div>
-      <Field
-        label={isAr ? 'حقول الكتابة' : 'Writing fields'}
-        hint={isAr ? 'مفصولة بفاصلة — idea, hook, script…' : 'comma separated — idea, hook, script…'}
-      >
-        <input className="inp" dir="ltr" value={fields} onChange={(e) => setFields(e.target.value)} />
-      </Field>
-    </Modal>
-  );
-}
-
-/* ── Platforms (screen 26) ────────────────────────────────────────── */
-
-function PlatformsSection({
-  accounts, canManage, isAr, onAccounts,
-}: {
-  accounts: MosAccount[];
-  canManage: boolean;
-  isAr: boolean;
-  onAccounts: (accounts: MosAccount[]) => void;
-}) {
-  const addToast = useAppStore((s) => s.addToast);
-  const [editing, setEditing] = useState<MosAccount | null>(null);
-  const [handle, setHandle] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const save = async (): Promise<void> => {
-    if (!editing) return;
-    setBusy(true);
-    try {
-      const res = await saveAccount({ id: editing.id, handle: handle.trim() || null });
-      onAccounts(res.accounts);
-      setEditing(null);
-      addToast(isAr ? 'حُفظ الحساب.' : 'Account saved.', 'success');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <div className="card">
-        <div className="tbl-wrap">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th style={{ width: 150 }}>{isAr ? 'المنصة' : 'Platform'}</th>
-                <th>{isAr ? 'الحساب' : 'Account'}</th>
-                <th style={{ width: 140 }}>{isAr ? 'الاتصال' : 'Connection'}</th>
-                <th style={{ width: 150 }}>{isAr ? 'النشر التلقائي' : 'Auto-publish'}</th>
-                <th style={{ width: 150 }}>{isAr ? 'قراءة الأرقام' : 'Reads metrics'}</th>
-                {canManage && <th style={{ width: 90 }} />}
-              </tr>
-            </thead>
-            <tbody>
-              {accounts.map((a) => (
-                <tr key={a.id}>
-                  <td className="ttl">
-                    {(isAr ? PLATFORM_LABELS[a.platform]?.ar : PLATFORM_LABELS[a.platform]?.en) ?? a.platform}
-                  </td>
-                  <td className="ltr" style={{ color: a.handle ? 'var(--ink)' : 'var(--mute)' }}>
-                    {a.handle ?? (isAr ? 'لم يُحدَّد' : 'not set')}
-                  </td>
-                  <td>
-                    <Pill tone={a.is_connected ? 'go' : 'idle'}>
-                      {a.is_connected ? (isAr ? 'موصول' : 'Connected') : (isAr ? 'غير موصول' : 'Not connected')}
-                    </Pill>
-                  </td>
-                  <td>
-                    <Pill tone={a.can_publish ? 'go' : 'idle'}>
-                      {a.can_publish ? (isAr ? 'ممكن' : 'Possible') : (isAr ? 'يدوي' : 'Manual')}
-                    </Pill>
-                  </td>
-                  <td>
-                    <Pill tone={a.can_read_metrics ? 'go' : 'idle'}>
-                      {a.can_read_metrics ? (isAr ? 'تلقائي' : 'Automatic') : (isAr ? 'يدوي' : 'By hand')}
-                    </Pill>
-                  </td>
-                  {canManage && (
-                    <td>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        onClick={() => { setEditing(a); setHandle(a.handle ?? ''); }}
-                      >
-                        {isAr ? 'تعديل' : 'Edit'}
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="notice">
-        {isAr
-          ? 'النشر يدوي بقرار — لا يوجد مفتاح هنا يجعله تلقائيًا. تشغيل النشر التلقائي يتطلب مراجعة تطبيق من ميتا وتيك توك، وهو قرار منفصل. الحالة أعلاه تقول الحقيقة كما هي، لا كما نتمنى.'
-          : 'Publishing is manual by decision — there is no switch here that makes it automatic. Turning it on would need Meta and TikTok app review, which is a separate decision. The states above say what is true, not what we would like.'}
-      </div>
-
-      {editing && (
-        <Modal
-          title={(isAr ? PLATFORM_LABELS[editing.platform]?.ar : PLATFORM_LABELS[editing.platform]?.en) ?? editing.platform}
-          sub={isAr ? 'اسم الحساب فقط — الاتصال ليس مفتاحًا في الواجهة.' : 'The handle only — a connection is not a checkbox.'}
-          onClose={() => setEditing(null)}
-          footer={
-            <>
-              <button type="button" className="btn" onClick={() => setEditing(null)} disabled={busy}>
-                {isAr ? 'إلغاء' : 'Cancel'}
-              </button>
-              <button type="button" className="btn btn-p" onClick={() => void save()} disabled={busy}>
-                {isAr ? 'حفظ' : 'Save'}
-              </button>
-            </>
-          }
-        >
-          <Field label={isAr ? 'اسم الحساب' : 'Handle'}>
-            <input className="inp" dir="ltr" value={handle} onChange={(e) => setHandle(e.target.value)} autoFocus />
-          </Field>
-        </Modal>
-      )}
-    </div>
   );
 }
 
