@@ -3,8 +3,9 @@
  *
  * The type you pick decides three things at once: the workflow, the ref prefix,
  * and who gets the first task. The panel at the bottom says all three out loud
- * BEFORE you commit, because the whole promise of this module is that nothing
- * lands in nobody's queue.
+ * BEFORE you commit — which workflow, which ref, whose queue the first task
+ * lands in — because the whole promise of this module is that nothing lands
+ * in nobody's queue. No silent automation.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -14,8 +15,10 @@ import {
   PLATFORM_LABELS,
   PURPOSE_LABELS,
   ROLE_LABELS,
+  WorkflowDef,
   createContent,
   fetchCampaigns,
+  fetchContentList,
   fetchSettings,
   savePublication,
   MosCampaign,
@@ -25,7 +28,29 @@ import { Field, Modal } from './kit';
 import { kindIcon } from './icons';
 import { num, shortDate } from '../lib/format';
 
-const PLATFORMS = ['instagram', 'tiktok', 'snapchat', 'x'] as const;
+const PLATFORMS = ['instagram', 'tiktok', 'snapchat', 'x', 'linkedin'] as const;
+
+/** Screen 05's five platform chips. LinkedIn predates PLATFORM_LABELS. */
+const PLATFORM_LOCAL: Record<string, { ar: string; en: string }> = {
+  linkedin: { ar: 'لينكدإن', en: 'LinkedIn' },
+};
+const platformLabel = (key: string, isAr: boolean): string =>
+  PLATFORM_LABELS[key]
+    ? (isAr ? PLATFORM_LABELS[key].ar : PLATFORM_LABELS[key].en)
+    : PLATFORM_LOCAL[key]
+      ? (isAr ? PLATFORM_LOCAL[key].ar : PLATFORM_LOCAL[key].en)
+      : key;
+
+/** The ref the item will get («V-011») — the highest existing suffix + 1. */
+function nextRef(prefix: string, refs: Array<string | null>): string {
+  let max = 0;
+  const re = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`);
+  for (const ref of refs) {
+    const m = ref?.match(re);
+    if (m?.[1]) max = Math.max(max, Number(m[1]));
+  }
+  return `${prefix}-${String(max + 1).padStart(3, '0')}`;
+}
 
 export default function NewContentModal({
   onClose, onCreated, presetProject, presetCampaign,
@@ -35,7 +60,7 @@ export default function NewContentModal({
   presetProject?: string | null;
   presetCampaign?: string | null;
 }) {
-  const { contentTypes, projects, isAr } = useWorkspace();
+  const { contentTypes, projects, people, isAr } = useWorkspace();
   const addToast = useAppStore((s) => s.addToast);
   const navigate = useNavigate();
 
@@ -47,7 +72,9 @@ export default function NewContentModal({
   const [publishAt, setPublishAt] = useState('');
   const [platforms, setPlatforms] = useState<string[]>(['instagram']);
   const [steps, setSteps] = useState<MosStep[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowDef[]>([]);
   const [campaigns, setCampaigns] = useState<MosCampaign[]>([]);
+  const [refs, setRefs] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -57,6 +84,7 @@ export default function NewContentModal({
       try {
         const [s, c] = await Promise.all([fetchSettings(), fetchCampaigns()]);
         setSteps(s.steps);
+        setWorkflows(s.workflows);
         setCampaigns(c.campaigns);
       } catch (e) {
         // Non-fatal: the modal still creates content, it just cannot preview the
@@ -70,7 +98,26 @@ export default function NewContentModal({
     })();
   }, [addToast, isAr]);
 
+  // The ref preview («V-011») follows the selected type: it is the next suffix
+  // on that type's prefix, computed from the existing items of the type.
+  useEffect(() => {
+    if (!typeKey) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetchContentList({ content_type_key: typeKey, limit: 500 });
+        if (!cancelled) setRefs(res.content.map((r) => r.ref ?? '').filter(Boolean));
+      } catch (e) {
+        // The preview degrades to the bare prefix; creation itself still works.
+        console.error('[marketing] ref preview unavailable', e);
+        if (!cancelled) setRefs([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [typeKey]);
+
   const type = contentTypes.find((t) => t.key === typeKey) ?? null;
+  const workflow = workflows.find((w) => w.id === type?.workflow_id) ?? null;
   const typeSteps = useMemo(
     () => steps.filter((s) => s.workflow_id === type?.workflow_id).sort((a, b) => a.position - b.position),
     [steps, type],
@@ -79,6 +126,29 @@ export default function NewContentModal({
   const dueAt = firstStep
     ? new Date(Date.now() + firstStep.due_days * 86_400_000).toISOString()
     : null;
+  const refPreview = type ? nextRef(type.prefix, refs) : null;
+
+  // «وكل مراجعة تذهب لمدير التسويق» — stated only when the path's approval
+  // steps all land on one role; a mixed-review path stays silent rather than
+  // simplify a lie.
+  const approvalRole = useMemo(() => {
+    const approvals = typeSteps.filter((s) => s.is_approval);
+    if (approvals.length === 0) return null;
+    const roles = new Set(approvals.map((s) => s.role));
+    return roles.size === 1 ? approvals[0]?.role ?? null : null;
+  }, [typeSteps]);
+
+  // The mockup names a person («مريم»). We name one only when the first
+  // step's role has exactly ONE holder — otherwise the role label is the
+  // honest answer.
+  const firstStepPerson = useMemo(() => {
+    if (!firstStep) return null;
+    const holders = people.filter((p) => p.roles.includes(firstStep.role));
+    if (holders.length !== 1) return null;
+    const p = holders[0];
+    if (!p) return null;
+    return isAr ? p.name_ar ?? p.name_en : p.name_en ?? p.name_ar;
+  }, [firstStep, people, isAr]);
 
   const stepCount = (workflowId: string | null): number =>
     workflowId ? steps.filter((s) => s.workflow_id === workflowId).length : 0;
@@ -134,7 +204,7 @@ export default function NewContentModal({
         <>
           <span className="note">
             {isAr
-              ? 'يُنشأ صفّ نشر كمسودة — واحد لكل منصة. الكابشن والتوقيت يُضبطان لكل منصة لاحقًا.'
+              ? 'يُنشأ صفّا نشر كمسودة — واحد لكل منصة. يمكن تغيير الكابشن والتوقيت لكل منصة لاحقًا.'
               : 'One draft publication row per platform. Caption and timing are set per platform later.'}
           </span>
           <button type="button" className="btn" onClick={onClose} disabled={busy}>
@@ -227,7 +297,7 @@ export default function NewContentModal({
               onClick={() => setPlatforms((cur) =>
                 cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p])}
             >
-              {isAr ? PLATFORM_LABELS[p]?.ar : PLATFORM_LABELS[p]?.en}
+              {platformLabel(p, isAr)}
             </button>
           ))}
         </div>
@@ -237,17 +307,26 @@ export default function NewContentModal({
         <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.9 }}>
           {firstStep ? (
             <>
-              <b style={{ color: 'var(--ink)' }}>
-                {isAr ? type?.label_ar : type?.label_en}
-              </b>{' '}
-              — {isAr ? `${num(typeSteps.length, true)} مراحل.` : `${typeSteps.length} stages.`}
+              <b style={{ color: 'var(--ink)', fontWeight: 700 }}>
+                {workflow ? (isAr ? workflow.label_ar : workflow.label_en) : isAr ? type?.label_ar : type?.label_en}
+              </b>
+              {' — '}
+              {isAr ? `${num(typeSteps.length, true)} مراحل` : `${typeSteps.length} stages`}
+              {approvalRole && (
+                isAr
+                  ? `، وكل مراجعة تذهب ل${ROLE_LABELS[approvalRole]?.ar ?? approvalRole}`
+                  : `, every review goes to the ${ROLE_LABELS[approvalRole]?.en ?? approvalRole}`
+              )}
+              .
               <br />
-              {isAr ? 'عند الإنشاء: الرقم يبدأ بـ ' : 'On create: the ref starts with '}
-              <b style={{ color: 'var(--ink)' }} className="ltr">{type?.prefix}</b>
+              {isAr ? 'عند الإنشاء: ' : 'On create: '}
+              <b style={{ color: 'var(--ink)', fontWeight: 700 }} className="ltr">{refPreview}</b>
               {isAr ? ' · المهمة الأولى ' : ' · first task '}
-              <b style={{ color: 'var(--ink)' }}>«{isAr ? firstStep.label_ar : firstStep.label_en}»</b>
-              {' → '}
-              {isAr ? ROLE_LABELS[firstStep.role]?.ar : ROLE_LABELS[firstStep.role]?.en}
+              <b style={{ color: 'var(--ink)', fontWeight: 700 }}>
+                «{isAr ? firstStep.label_ar : firstStep.label_en}»
+              </b>
+              {isAr ? ' ← ' : ' → '}
+              {firstStepPerson ?? (isAr ? ROLE_LABELS[firstStep.role]?.ar : ROLE_LABELS[firstStep.role]?.en)}
               {dueAt && <>{isAr ? '، الاستحقاق ' : ', due '}{shortDate(dueAt, isAr)}</>}
             </>
           ) : (
