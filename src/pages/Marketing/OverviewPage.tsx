@@ -30,6 +30,7 @@ import {
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, LoadError, PageHead, Pill, Skeleton, Stat } from './components/kit';
 import NewContentModal from './components/NewContentModal';
+import EmptyDayOne from './components/EmptyDayOne';
 import { IconPlus } from './components/icons';
 import { dayLabel, daysAgo, money, monthName, monthOf, num, shortDate } from './lib/format';
 
@@ -126,6 +127,13 @@ function ManagerOverview() {
       .map((m) => isAr ? `${num(m.n, true)} في ${m.label_ar}` : `${m.n} in ${m.label_en}`)
       .join(isAr ? ' · ' : ' · ');
   };
+
+  // Day one (screen 45): zero content AND zero campaigns = the honest empty
+  // state with the real-state setup checklist — never a wall of empty zeros.
+  if (data && inProduction === 0 && (data.mix ?? []).length === 0
+      && (data.campaigns ?? []).length === 0) {
+    return <EmptyDayOne />;
+  }
 
   return (
     <>
