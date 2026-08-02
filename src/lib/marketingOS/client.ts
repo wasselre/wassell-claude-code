@@ -228,6 +228,25 @@ export interface MosTask {
   opened_at: string;
   due_at: string | null;
   closed_at: string | null;
+  /** From the PINNED version's step — drives screen 35's approvals split. */
+  is_approval?: boolean;
+  approval_kind?: 'creative' | 'process' | 'budget' | null;
+}
+
+/**
+ * Screen 02's «القادم إليك» band — NOT a task: an in-flight item whose pinned
+ * path reaches MY role at a future step. Shown so the role can prepare; it
+ * becomes a real task only when the path advances to that step.
+ */
+export interface MosUpcoming {
+  content_id: string;
+  ref: string | null;
+  title: string;
+  step_key: string;
+  step_label_ar: string;
+  step_label_en: string;
+  /** How many steps stand between the current one and mine («بعد خطوتين»). */
+  steps_away: number;
 }
 
 export interface MosStep {
@@ -650,6 +669,8 @@ export interface MosProject {
 
 export interface MosOverview {
   role: MosRole;
+  /** The segmented control's value — week_start/week_end are ITS bounds. */
+  period: 'week' | 'month' | 'quarter';
   counts: {
     in_production: number;
     waiting_on_me: number;
@@ -675,10 +696,18 @@ export interface MosOverview {
     status: string;
     scheduled_at: string | null;
     published_at: string | null;
+    ref: string | null;
+    title: string | null;
   }>;
+  /** Aimed at the period (target_publish_at) but nothing scheduled yet. */
+  unscheduled: Array<{ id: string; ref: string | null; title: string; target_publish_at: string | null }>;
   campaigns: Array<Pick<MosCampaign,
     'id' | 'ref' | 'name' | 'status' | 'budget_total' | 'total_spend' | 'total_leads' | 'total_qualified'>>;
   mix: Array<{ content_type_key: string; status_key: string }>;
+  /** Oldest item sitting with my role — «أقدمها منتظر منذ …». */
+  waiting_oldest_at: string | null;
+  /** The late stat's stage breakdown («٢ في التصميم · ٢ بانتظار المراجعة»). */
+  late_mix: Array<{ label_ar: string; label_en: string; n: number }>;
   week_start: string;
   week_end: string;
 }
@@ -690,11 +719,69 @@ export interface MosTitleRef {
   content_type_key: string;
 }
 
-export const fetchOverview = (weekOf?: string) =>
-  call<MosOverview>('overview', weekOf ? { week_of: weekOf } : {});
+export type OverviewPeriod = 'week' | 'month' | 'quarter';
+
+export const fetchOverview = (period: OverviewPeriod = 'week') =>
+  call<MosOverview>('overview', { period });
 
 export const fetchWork = (scope: 'mine' | 'team') =>
-  call<{ role: MosRole; content: MosContentRow[]; tasks: MosTask[] }>('work_list', { scope });
+  call<{ role: MosRole; content: MosContentRow[]; tasks: MosTask[]; upcoming: MosUpcoming[] }>(
+    'work_list',
+    { scope },
+  );
+
+/** Screen 35's «تأجيل / تقديم» — move an open task's due date. */
+export const updateTask = (taskId: string, patch: { due_at: string }) =>
+  call<{ ok: true }>('task_update', { task_id: taskId, ...patch });
+
+/* ------------------------------------------------------------------ */
+/* CEO overview (s34) — results, not activity; no task lists           */
+/* ------------------------------------------------------------------ */
+
+export type CeoPeriod = 'month' | 'quarter' | 'year';
+
+export interface MosCeoOverview {
+  period: CeoPeriod;
+  period_start: string;
+  period_end: string;
+  /** Publications published in the period, and in the one before it. */
+  produced: number;
+  produced_prev: number;
+  spend: number;
+  committed: number;
+  leads: number;
+  qualified: number;
+  appointments: number;
+  reservations: number;
+  reservation_value: number;
+  campaigns: Array<{
+    id: string;
+    ref: string | null;
+    name: string;
+    status: MosCampaign['status'];
+    objective: MosCampaign['objective'] | null;
+    starts_on: string | null;
+    spend: number;
+    qualified: number;
+    reservations: number;
+    cost_per_reservation: number | null;
+  }>;
+  /** The six calendar months ending this one — the production chart. */
+  production_by_month: Array<{ month: string; count: number }>;
+  pending_signature: Array<{
+    id: string;
+    ref: string | null;
+    name: string;
+    budget_total: number | null;
+    success_metric: string | null;
+    success_threshold: number | null;
+    goal: string | null;
+  }>;
+  signature_threshold: number;
+}
+
+export const fetchCeoOverview = (period: CeoPeriod = 'month') =>
+  call<MosCeoOverview>('ceo_overview', { period });
 
 export const fetchCalendar = (from: string, to: string) =>
   call<{

@@ -54,6 +54,28 @@ export function dayName(iso: string | null | undefined, isAr: boolean): string {
   return (isAr ? AR_DAYS : EN_DAYS)[d.getDay()] ?? '';
 }
 
+/** Month name by 0-based index — «أغسطس» / "Aug". */
+export function monthName(monthIndex: number, isAr: boolean): string {
+  return (isAr ? AR_MONTHS : EN_MONTHS)[monthIndex] ?? '';
+}
+
+/** The month name of an ISO date — for «الإعلانات المدفوعة — أغسطس». */
+export function monthOf(iso: string | null | undefined, isAr: boolean): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return monthName(d.getMonth(), isAr);
+}
+
+/** «الاثنين ٢٨» / "Mon 28" — the week-card row's leading label. */
+export function dayLabel(iso: string | null | undefined, isAr: boolean): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const name = dayName(iso, isAr);
+  return name ? `${name} ${num(d.getDate(), isAr)}` : num(d.getDate(), isAr);
+}
+
 export function dateTime(iso: string | null | undefined, isAr: boolean): string {
   if (!iso) return '—';
   const d = new Date(iso);

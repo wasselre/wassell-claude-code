@@ -762,7 +762,7 @@ export default async function handler(req: Request): Promise<Response> {
         // Screen 03's campaign column and platform filter need two facts the
         // content view does not carry: the campaign's NAME and which platforms
         // each item is headed to. Both are one batched lookup, never per-row.
-        const rows = (data ?? []) as Row[];
+        const rows = (data ?? []) as unknown as Row[];
         const ids = rows.map((r) => r.id as string);
         const campaignIds = Array.from(new Set(
           rows.map((r) => r.campaign_id as string | null).filter((c): c is string => Boolean(c)),
@@ -1736,7 +1736,7 @@ export default async function handler(req: Request): Promise<Response> {
           const t = await sb.from('mos_content_v').select('id, ref, title').in('id', weekContentIds);
           const tf = dbFail(t.error);
           if (tf) return tf;
-          weekTitles = new Map((t.data ?? []).map((r) => {
+          weekTitles = new Map((t.data ?? []).map((r): [string, { ref: string | null; title: string }] => {
             const row = r as unknown as { id: string; ref: string | null; title: string };
             return [row.id, { ref: row.ref, title: row.title }];
           }));
@@ -1862,17 +1862,19 @@ export default async function handler(req: Request): Promise<Response> {
           if (candIds.length > 0) {
             const meta = await loadPinnedStepMeta(sb, candIds);
             if ('fail' in meta) return meta.fail;
-            const titleBy = new Map((cand.data ?? []).map((r) => {
-              const row = r as unknown as { id: string; ref: string | null; title: string };
-              return [row.id, row];
-            }));
+            const titleBy = new Map((cand.data ?? []).map(
+              (r): [string, { id: string; ref: string | null; title: string }] => {
+                const row = r as unknown as { id: string; ref: string | null; title: string };
+                return [row.id, row];
+              },
+            ));
             for (const [subjectId, m] of meta.bySubject) {
               if (!m.currentStepKey) continue;
               const idx = m.steps.findIndex((s) => s.key === m.currentStepKey);
               if (idx < 0) continue;
               for (let j = idx + 1; j < m.steps.length; j += 1) {
                 const s = m.steps[j];
-                if (s.role_key !== myRole) continue;
+                if (!s || s.role_key !== myRole) continue;
                 const c = titleBy.get(subjectId);
                 if (!c) break;
                 upcoming.push({
@@ -2511,17 +2513,22 @@ export default async function handler(req: Request): Promise<Response> {
         );
         for (let i = 0; i < campaignRows.length; i += 1) {
           const res = outcomeResults[i];
+          const camp = campaignRows[i];
+          if (!res || !camp) continue;
           const of = dbFail(res.error);
           if (of) return of;
           const o = (res.data ?? {}) as Record<string, unknown>;
-          outcomeByCampaign.set(campaignRows[i].id as string, {
+          outcomeByCampaign.set(camp.id as string, {
             appointments: typeof o.appointments === 'number' ? o.appointments : 0,
             reservations: typeof o.reservations === 'number' ? o.reservations : 0,
             reservation_value: typeof o.reservation_value === 'number' ? o.reservation_value : 0,
           });
         }
 
-        const totals = campaignRows.reduce(
+        const totals = campaignRows.reduce<{
+          spend: number; committed: number; leads: number; qualified: number;
+          appointments: number; reservations: number; reservation_value: number;
+        }>(
           (acc, c) => {
             const o = outcomeByCampaign.get(c.id as string);
             acc.spend += typeof c.total_spend === 'number' ? c.total_spend : 0;
@@ -2536,7 +2543,7 @@ export default async function handler(req: Request): Promise<Response> {
           { spend: 0, committed: 0, leads: 0, qualified: 0, appointments: 0, reservations: 0, reservation_value: 0 },
         );
 
-        const monthCount = new Map<string, number>(monthKeys.map((k) => [k, 0]));
+        const monthCount = new Map<string, number>(monthKeys.map((k): [string, number] => [k, 0]));
         for (const p of published6m.data ?? []) {
           const at = (p as { published_at?: string | null }).published_at;
           if (!at) continue;

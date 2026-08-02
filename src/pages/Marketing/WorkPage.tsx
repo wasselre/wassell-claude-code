@@ -1,10 +1,16 @@
 /**
- * My work (screen 02) and Team work (screen 35) — the same query, two scopes.
+ * My work — design screen 02 (مهامي).
  *
- * Three groups in this order: late, yours now, someone else's. The third group
- * is deliberately faded so nobody chases a task that isn't theirs. Row buttons
- * NAME the action ("Start writing", "Schedule") rather than saying "Open" —
- * the verb comes from the workflow step itself.
+ * The screen the writer and the editor live in. Three groups in this order:
+ * late, yours today, someone else's — the third deliberately faded so nobody
+ * chases a task that isn't theirs. Row buttons NAME the action («ابدئي
+ * الكتابة», «جدولة»), not a generic «فتح» — the verb comes from the workflow
+ * step itself.
+ *
+ * The «القادم إليك» band is NOT tasks: future steps for my role on in-flight
+ * items, from each item's pinned path. It exists so the role can prepare
+ * without their queue filling with work they cannot start yet (s36's note:
+ * «قادم إليك ليست مهمة»).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -12,13 +18,14 @@ import {
   MosContentRow,
   MosRole,
   MosTask,
+  MosUpcoming,
   ROLE_LABELS,
   fetchWork,
   isOverdue,
   statusLabel,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, KindCell, LoadError, PageHead, Pill, RoleChip, Skeleton } from './components/kit';
+import { Empty, KindCell, LoadError, PageHead, Pill, Skeleton } from './components/kit';
 import { IconSearch } from './components/icons';
 import { daysAgo, num, shortDate } from './lib/format';
 
@@ -31,24 +38,25 @@ function actionLabel(row: MosContentRow, isAr: boolean): string {
   const key = row.status_key;
   if (key.includes('approve') || key.includes('review')) return isAr ? 'مراجعة' : 'Review';
   if (key.includes('write') || key.includes('script') || key.includes('caption')) {
-    return isAr ? 'ابدأ الكتابة' : 'Start writing';
+    return isAr ? 'ابدئي الكتابة' : 'Start writing';
   }
   if (key.includes('design') || key.includes('edit') || key.includes('montage')) {
-    return isAr ? 'ابدأ التنفيذ' : 'Start work';
+    return isAr ? 'ابدئي التنفيذ' : 'Start work';
   }
   if (key.includes('schedule') || key.includes('publish')) return isAr ? 'جدولة' : 'Schedule';
   if (key.includes('shoot') || key.includes('footage') || key.includes('material')) {
-    return isAr ? 'جهّز المواد' : 'Gather material';
+    return isAr ? 'جهّزي المواد' : 'Gather material';
   }
   return isAr ? 'فتح' : 'Open';
 }
 
-export default function WorkPage({ scope }: { scope: 'mine' | 'team' }) {
+export default function WorkPage() {
   const { isAr, typeLabel, projectName, setBadge } = useWorkspace();
   const navigate = useNavigate();
 
   const [rows, setRows] = useState<MosContentRow[]>([]);
   const [tasks, setTasks] = useState<MosTask[]>([]);
+  const [upcoming, setUpcoming] = useState<MosUpcoming[]>([]);
   const [myRole, setMyRole] = useState<MosRole>('viewer');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,17 +66,18 @@ export default function WorkPage({ scope }: { scope: 'mine' | 'team' }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWork(scope);
+      const res = await fetchWork('mine');
       setRows(res.content);
       setTasks(res.tasks);
+      setUpcoming(res.upcoming ?? []);
       setMyRole(res.role);
-      if (scope === 'mine') setBadge('mywork', res.content.length);
+      setBadge('mywork', res.content.length);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [scope, setBadge]);
+  }, [setBadge]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -82,21 +91,8 @@ export default function WorkPage({ scope }: { scope: 'mine' | 'team' }) {
   );
 
   const late = filtered.filter((r) => isOverdue(r));
-  const mine = filtered.filter((r) => !isOverdue(r) && (scope === 'team' || r.owner_role === myRole));
-  const others = scope === 'mine'
-    ? filtered.filter((r) => !isOverdue(r) && r.owner_role !== myRole)
-    : [];
-
-  const byRole = useMemo(() => {
-    const m = new Map<string, MosContentRow[]>();
-    for (const r of filtered) {
-      const key = r.owner_role ?? 'none';
-      const list = m.get(key) ?? [];
-      list.push(r);
-      m.set(key, list);
-    }
-    return Array.from(m.entries()).sort((a, b) => b[1].length - a[1].length);
-  }, [filtered]);
+  const mine = filtered.filter((r) => !isOverdue(r) && r.owner_role === myRole);
+  const others = filtered.filter((r) => !isOverdue(r) && r.owner_role !== myRole);
 
   const taskFor = (contentId: string): MosTask | undefined =>
     tasks.find((t) => t.content_id === contentId);
@@ -133,6 +129,7 @@ export default function WorkPage({ scope }: { scope: 'mine' | 'team' }) {
               <tbody>
                 {items.map((r) => {
                   const task = taskFor(r.id);
+                  const isMine = r.owner_role === myRole;
                   return (
                     <tr key={r.id} className="click" onClick={() => navigate(`/m/content/${r.id}`)}>
                       <td style={{ width: 38 }}>
@@ -151,8 +148,9 @@ export default function WorkPage({ scope }: { scope: 'mine' | 'team' }) {
                       <td style={{ width: 190 }}>
                         {isOverdue(r) ? (
                           <Pill tone="late">
-                            {isAr ? 'متأخر ' : 'late by '}
-                            {daysAgo(r.current_task_due_at ?? r.due_at, isAr)}
+                            {isAr
+                              ? `استحقاق ${shortDate(r.current_task_due_at ?? r.due_at, true)} · متأخر ${daysAgo(r.current_task_due_at ?? r.due_at, true)}`
+                              : `due ${shortDate(r.current_task_due_at ?? r.due_at, false)} · ${daysAgo(r.current_task_due_at ?? r.due_at, false)} late`}
                           </Pill>
                         ) : (
                           <Pill tone={tone === 'idle' ? 'wait' : 'now'}>
@@ -165,7 +163,7 @@ export default function WorkPage({ scope }: { scope: 'mine' | 'team' }) {
                         )}
                       </td>
                       <td style={{ width: 130, textAlign: 'end' }}>
-                        {scope === 'team' || r.owner_role === myRole ? (
+                        {isMine ? (
                           <span className={`btn btn-sm${faded ? ' btn-d' : ' btn-p'}`}>
                             {actionLabel(r, isAr)}
                           </span>
@@ -189,20 +187,16 @@ export default function WorkPage({ scope }: { scope: 'mine' | 'team' }) {
   return (
     <>
       <PageHead
-        title={scope === 'mine' ? (isAr ? 'مهامي' : 'My work') : (isAr ? 'متابعة الفريق' : 'Team work')}
-        sub={scope === 'mine'
-          ? isAr
-            ? `${roleLabel} · ${num(rows.length, true)} مفتوحة، ${num(late.length, true)} متأخرة`
-            : `${roleLabel} · ${rows.length} open, ${late.length} late`
-          : isAr
-            ? `${num(rows.length, true)} عنصرًا مفتوحًا عبر ${num(byRole.length, true)} أدوار`
-            : `${rows.length} open items across ${byRole.length} roles`}
+        title={isAr ? 'مهامي' : 'My work'}
+        sub={isAr
+          ? `${roleLabel} · ${num(mine.length + late.length, true)} مفتوحة، ${num(late.length, true)} متأخرة`
+          : `${roleLabel} · ${mine.length + late.length} open, ${late.length} late`}
       >
         <div className="seg">
-          <button type="button" className={scope === 'mine' ? 'on' : ''} onClick={() => navigate('/m/my-work')}>
+          <button type="button" className="on">
             {isAr ? 'مهامي' : 'Mine'}
           </button>
-          <button type="button" className={scope === 'team' ? 'on' : ''} onClick={() => navigate('/m/team')}>
+          <button type="button" onClick={() => navigate('/m/team')}>
             {isAr ? 'الجميع' : 'Everyone'}
           </button>
         </div>
@@ -211,7 +205,7 @@ export default function WorkPage({ scope }: { scope: 'mine' | 'team' }) {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={isAr ? 'ابحث بالعنوان أو الرقم' : 'Search by title or ref'}
+            placeholder={isAr ? 'ابحث في مهامي' : 'Search my work'}
           />
         </div>
       </PageHead>
@@ -220,56 +214,65 @@ export default function WorkPage({ scope }: { scope: 'mine' | 'team' }) {
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
         {loading && rows.length === 0 && <Skeleton rows={5} />}
 
-        {!loading && filtered.length === 0 && !error && (
+        {!loading && filtered.length === 0 && upcoming.length === 0 && !error && (
           <Empty
-            title={scope === 'mine'
-              ? isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'
-              : isAr ? 'لا عمل مفتوح' : 'No open work'}
-            body={scope === 'mine'
-              ? isAr
-                ? 'حين تصل خطوة إلى دورك ستظهر هنا مباشرة، مرتبة حسب الاستحقاق.'
-                : 'When a stage reaches your role it appears here, ordered by what is due first.'
-              : isAr
-                ? 'لا يوجد عنصر تحت الإنتاج الآن.'
-                : 'Nothing is in production right now.'}
+            title={isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'}
+            body={isAr
+              ? 'حين تصل خطوة إلى دورك ستظهر هنا مباشرة، مرتبة حسب الاستحقاق.'
+              : 'When a stage reaches your role it appears here, ordered by what is due first.'}
           />
         )}
 
-        {scope === 'mine' ? (
+        <Group label={isAr ? 'متأخر · ابدئي بهذا' : 'Late · start here'} tone="late" items={late} />
+        <Group label={isAr ? 'مطلوب منكِ اليوم' : 'Yours today'} tone="now" items={mine} />
+
+        {/* «القادم إليك» — visible preparation, explicitly NOT tasks. */}
+        {upcoming.length > 0 && (
           <>
-            <Group label={isAr ? 'متأخر · ابدأ بهذا' : 'Late · start here'} tone="late" items={late} />
-            <Group label={isAr ? 'مطلوب منك' : 'Yours now'} tone="now" items={mine} />
-            <Group
-              label={isAr ? 'بانتظار شخص آخر — لا إجراء منك' : 'Waiting on someone else — no action from you'}
-              tone="idle"
-              items={others}
-              faded
-            />
-          </>
-        ) : (
-          <>
-            <Group label={isAr ? 'متأخر' : 'Late'} tone="late" items={late} />
-            {byRole.map(([roleKey, items]) => {
-              const open = items.filter((r) => !isOverdue(r));
-              if (open.length === 0) return null;
-              const label = ROLE_LABELS[roleKey as MosRole];
-              return (
-                <div key={roleKey}>
-                  <div className="lbl" style={{ marginBottom: 9, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <RoleChip role={roleKey as MosRole} isAr={isAr} />
-                    <span style={{ color: 'var(--mute)' }}>
-                      {isAr
-                        ? `${num(open.length, true)} مفتوحة`
-                        : `${open.length} open`}
-                    </span>
-                    {!label && <span>{roleKey}</span>}
-                  </div>
-                  <Group label="" tone="now" items={open} />
+            <div className="lbl" style={{ marginBottom: 9 }}>
+              {isAr ? 'القادم إليك — ليست مهامًا بعد' : 'Coming to you — not tasks yet'}
+            </div>
+            <div className="card" style={{ marginBottom: 22 }}>
+              <div className="card-b" style={{ padding: '10px 14px 12px' }}>
+                <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.8, marginBottom: 8 }}>
+                  {isAr
+                    ? 'خطوات قادمة لدورك في محتوى يعمل عليه غيرك الآن — تظهر هنا لتستعد، وتنتقل إلى مهامك حين تصل إليك.'
+                    : 'Upcoming steps for your role on items others are working on now — shown so you can prepare; they become tasks when they reach you.'}
                 </div>
-              );
-            })}
+                {upcoming.map((u) => (
+                  <button
+                    key={`${u.content_id}:${u.step_key}`}
+                    type="button"
+                    className="up-row"
+                    onClick={() => navigate(`/m/content/${u.content_id}`)}
+                  >
+                    <span className="up-row-main">
+                      <b className="ltr">{u.ref ?? ''}</b>
+                      {' · '}
+                      {u.title}
+                      {' · '}
+                      <span style={{ color: 'var(--ink-2)' }}>
+                        {isAr ? u.step_label_ar : u.step_label_en}
+                      </span>
+                    </span>
+                    <Pill tone="idle">
+                      {u.steps_away <= 1
+                        ? isAr ? 'قادم إليك · الخطوة التالية' : 'next step'
+                        : isAr ? `قادم إليك · بعد ${num(u.steps_away, true)} خطوات` : `${u.steps_away} steps away`}
+                    </Pill>
+                  </button>
+                ))}
+              </div>
+            </div>
           </>
         )}
+
+        <Group
+          label={isAr ? 'بانتظار شخص آخر — لا إجراء منكِ' : 'Waiting on someone else — no action from you'}
+          tone="idle"
+          items={others}
+          faded
+        />
       </div>
     </>
   );

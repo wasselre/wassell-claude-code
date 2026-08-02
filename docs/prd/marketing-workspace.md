@@ -1,7 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
-**Last updated:** 2026-08-01
+**Last updated:** 2026-08-02
 **Related PRDs:** [access-control.md](access-control.md), [marketing-intelligence.md](marketing-intelligence.md), [posts-content.md](posts-content.md), [projects-units.md](projects-units.md), [navigation-layout.md](navigation-layout.md)
 
 ## What it is (in plain English)
@@ -86,23 +86,47 @@ This workspace answers the three questions the old process could not:
    the numbers are entered on Friday from the Weekly numbers screen.
 
 2. **Bottleneck hunt (manager).** Overview → four counters answer "is the machine
-   running?", then "stalled — nothing has moved" lists the oldest-untouched open
-   work, longest first.
+   running?", then "stalled — nothing moved in 48h" lists the oldest-untouched
+   open work, longest first, each row carrying a «تذكير» button that nudges the
+   open task's holder (`remind`). A working segmented control (هذا الأسبوع /
+   الشهر / الربع) re-runs the same screen over a month or a quarter
+   (`overview` takes a `period` param); the week card also shows items aimed at
+   the period but still lacking a slot («بحاجة لموعد نشر»).
 
 3. **A maker's day (writer / editor).** My work → three groups in order: late,
-   yours now, someone else's. The third is deliberately faded so nobody chases a
-   task that is not theirs. Row buttons name the action ("Start writing",
-   "Schedule"), not "Open".
+   yours today, someone else's. The third is deliberately faded so nobody chases
+   a task that is not theirs. Row buttons name the action ("ابدئي الكتابة",
+   "جدولة"), not "فتح". Below them sits the «القادم إليك» band — future steps
+   for MY role on in-flight items, derived from each item's PINNED workflow
+   version (`work_list.upcoming`). It is explicitly NOT a task list: the item
+   becomes a task only when the path advances to that step.
 
-4. **Empty states.** Every screen states what would fill it and why: an empty
+4. **Load balancing (ops supervisor).** Team work (`/m/team`) → four role-load
+   tiles (roles, not people), every open task sortable by role / project / due
+   date, stalled rows carrying «تذكير» and «نقل» (transfer inside the SAME
+   role), an imbalance card that only ever proposes «تأجيل / تقديم»
+   (`task_update` moves the due date — roles are not interchangeable and the UI
+   says so), the creative-vs-process approvals split, and a verbatim «ما لا
+   تستطيع فعله» card for the ops supervisor.
+
+5. **CEO overview (`/m` as CEO).** Same nav item, completely different content
+   (`ceo_overview`): month/quarter/year segmented — produced-vs-previous
+   period, spend vs committed, qualified leads, attributed reservations; a
+   riyal→reservation funnel (`campaign_outcomes` aggregated over the listed
+   campaigns); campaigns ordered by return; a six-month production chart; and
+   the «بانتظار توقيعك» card listing campaigns past the signature threshold
+   with the «توقيع» action (`campaign_sign`). NO task lists anywhere — the CEO
+   is not a production manager.
+
+6. **Empty states.** Every screen states what would fill it and why: an empty
    library explains that material is an object in its own right; empty Weekly
    numbers explains that rows appear once a publication is marked published.
 
-5. **Error state.** A failed load shows the message plus a Try again button.
+7. **Error state.** A failed load shows the message plus a Try again button.
    Nothing is swallowed. A partial save (Weekly numbers) reports how many rows
    saved and how many failed — never a blanket success.
 
-6. **No role granted yet.** Until someone is granted a marketing role, everyone
+8. **No role granted yet.** Until someone is granted a marketing role, everyone
    who is not an app admin is a Viewer: full read, no writes. Settings → Roles
    leads with that warning while it is empty.
 
@@ -127,8 +151,9 @@ This workspace answers the three questions the old process could not:
 |---|---|
 | `src/pages/Marketing/MarketingWorkspace.tsx` | The shell: rail, workspace switcher, workspace-wide context (role, content types, project names), access gate |
 | `src/pages/Marketing/mos.css` | The design system, scoped under `.mos-root` so the Sales theme is untouched |
-| `src/pages/Marketing/OverviewPage.tsx` | Overview — the four counters and the two lists that need a decision |
-| `src/pages/Marketing/WorkPage.tsx` | My work / Team work (one component, two scopes) |
+| `src/pages/Marketing/OverviewPage.tsx` | Overview — manager state (s01: counters, stalled, week, paid ads) and CEO state (s34: funnel, returns, production, signature) branched on the active role |
+| `src/pages/Marketing/WorkPage.tsx` | My work (s02) — late / yours today / someone else's + the «القادم إليك» band |
+| `src/pages/Marketing/TeamPage.tsx` | Team work (s35) — role-load tiles, every open task, imbalance + approvals cards |
 | `src/pages/Marketing/ContentListPage.tsx` | The content library — table and board |
 | `src/pages/Marketing/ContentDetailPage.tsx` | The content workspace — six tabs as local state, stage rail, thread |
 | `src/pages/Marketing/CampaignsPage.tsx` / `CampaignDetailPage.tsx` | Spend: campaigns, executions, results |

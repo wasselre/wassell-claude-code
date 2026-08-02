@@ -74,6 +74,7 @@ import MarketingIntelligencePage from '@/pages/MarketingIntelligence/MarketingIn
 import MarketingWorkspace, { RequireMarketingWorkspace } from '@/pages/Marketing/MarketingWorkspace';
 import MarketingOverviewPage from '@/pages/Marketing/OverviewPage';
 import MarketingWorkPage from '@/pages/Marketing/WorkPage';
+import MarketingTeamPage from '@/pages/Marketing/TeamPage';
 import MarketingContentListPage from '@/pages/Marketing/ContentListPage';
 import MarketingSearchPage from '@/pages/Marketing/SearchPage';
 import MarketingContentDetailPage from '@/pages/Marketing/ContentDetailPage';
@@ -444,8 +445,8 @@ export default function App() {
           }
         >
           <Route path="/m" element={<MarketingOverviewPage />} />
-          <Route path="/m/my-work" element={<MarketingWorkPage scope="mine" />} />
-          <Route path="/m/team" element={<MarketingWorkPage scope="team" />} />
+          <Route path="/m/my-work" element={<MarketingWorkPage />} />
+          <Route path="/m/team" element={<MarketingTeamPage />} />
           <Route path="/m/search" element={<MarketingSearchPage />} />
           <Route path="/m/content" element={<MarketingContentListPage />} />
           <Route path="/m/content/:contentId" element={<MarketingContentDetailPage />} />
