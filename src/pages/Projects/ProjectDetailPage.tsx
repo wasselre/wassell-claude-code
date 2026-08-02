@@ -331,7 +331,11 @@ function LocationTab({ view, record, isAr }: { view: ProjectView; record: import
           <div className="mt-3">
             <div className="text-xs font-bold uppercase tracking-wide text-copper mb-1">{isAr ? 'المعالم القريبة' : 'Nearby landmarks'}</div>
             <ul className="text-sm text-charcoal/70 list-disc list-inside">
-              {landmarks.slice(0, 12).map((row, i) => <li key={i}>{Object.values(row).filter((x) => x != null && x !== '').join(' — ')}</li>)}
+              {landmarks.slice(0, 12).map((row, i) => (
+                // Skip system keys (`_row_id` — the W1 element identity) so
+                // uuids never render into the landmarks list.
+                <li key={i}>{Object.entries(row).filter(([k, x]) => !k.startsWith('_') && x != null && x !== '').map(([, x]) => x).join(' — ')}</li>
+              ))}
             </ul>
           </div>
         )}

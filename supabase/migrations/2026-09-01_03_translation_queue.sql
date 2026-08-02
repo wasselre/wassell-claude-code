@@ -46,7 +46,9 @@ BEGIN
   SELECT s.is_enabled, s.debounce_seconds INTO v_enabled, v_debounce
   FROM translation_settings s WHERE s.id;
   IF NOT COALESCE(v_enabled, false) THEN RETURN NEW; END IF;
-  IF current_setting('wassell.system_write', true) = 'twin_fill' THEN RETURN NEW; END IF;
+  -- ANY marked system write (twin_fill, element_id_backfill, …) is derived
+  -- machine data — never re-capture it.
+  IF COALESCE(current_setting('wassell.system_write', true), '') <> '' THEN RETURN NEW; END IF;
   SELECT r.enabled INTO v_res_enabled FROM translation_resources r WHERE r.resource_kind = 'record';
   IF NOT COALESCE(v_res_enabled, false) THEN RETURN NEW; END IF;
   IF NOT EXISTS (SELECT 1 FROM translation_field_policies p
@@ -134,8 +136,9 @@ DECLARE
   v_parent   uuid;
   v_max      int := 5;
 BEGIN
-  -- W1 (bilingual): machine twin-fill writes are system-derived — skip capture.
-  IF current_setting('wassell.system_write', true) = 'twin_fill' THEN
+  -- W1 (bilingual): marked system writes (twin_fill, element_id_backfill, …)
+  -- are machine-derived — they must not fire workflows.
+  IF COALESCE(current_setting('wassell.system_write', true), '') <> '' THEN
     RETURN NULL;
   END IF;
 

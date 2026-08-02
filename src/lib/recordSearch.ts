@@ -147,7 +147,10 @@ function collectFieldSearchParts(
       if (Array.isArray(v)) {
         for (const row of v) {
           if (row && typeof row === 'object') {
-            for (const cell of Object.values(row as Record<string, unknown>)) {
+            for (const [cellKey, cell] of Object.entries(row as Record<string, unknown>)) {
+              // `_row_id` (W1 element identity) and other system keys must not
+              // pollute the search haystack.
+              if (cellKey.startsWith('_')) continue;
               if (cell !== null && cell !== undefined && cell !== '' && typeof cell !== 'object') {
                 out.push(String(cell));
               }

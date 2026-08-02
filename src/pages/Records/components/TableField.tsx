@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { v4 as uuid } from 'uuid';
 import { Plus, Trash2, ImagePlus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { ModelField, TableColumn } from '@/types';
@@ -37,7 +38,10 @@ export default function TableField({
   }
 
   const addRow = () => {
-    const blank: Row = {};
+    // `_row_id` is the row's PERMANENT identity (bilingual W1 element paths:
+    // `field[id=<uuid>].col`). Never derived from position — reordering or
+    // deleting neighbours must not re-attach another row's translations.
+    const blank: Row = { _row_id: uuid() };
     for (const col of columns) blank[col.name] = '';
     onChange([...rows, blank]);
   };

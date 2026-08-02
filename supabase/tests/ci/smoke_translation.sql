@@ -95,3 +95,45 @@ BEGIN
 
   RAISE NOTICE 'W1 smoke: all assertions passed';
 END $$;
+
+-- 8) Row-ID backfill: assigns _row_id, marks itself a system write (no
+--    translation job, no workflow capture), and is idempotent.
+DO $$
+DECLARE v_model uuid; v_rec uuid; v_n int; v_jobs_before int; v_wf_before int;
+BEGIN
+  INSERT INTO models (name, schema) VALUES ('smoke_tables', jsonb_build_object(
+    'sections', jsonb_build_array(jsonb_build_object(
+      'id','s1','label_ar','ع','label_en','G','fields', jsonb_build_array(
+        jsonb_build_object('id','t1','name','features','type','table',
+          'label_ar','مميزات','label_en','Features','required',false,'order',0,
+          'section_id','s1','width','full','show_in_table',false)
+  )))))
+  RETURNING id INTO v_model;
+  INSERT INTO workflow_capture_models (model_id, enabled) VALUES (v_model, true);
+  INSERT INTO records (model_id, data) VALUES (v_model,
+    '{"features":[{"name":"مصعد"},{"name":"مسبح","_row_id":"keep-me"}]}')
+  RETURNING id INTO v_rec;
+  SELECT count(*) INTO v_jobs_before FROM translation_jobs;
+  SELECT count(*) INTO v_wf_before FROM workflow_jobs;
+
+  SELECT translation_assign_row_ids(v_model, 100) INTO v_n;
+  IF v_n <> 1 THEN RAISE EXCEPTION 'SMOKE 8 failed: expected 1 record updated, got %', v_n; END IF;
+  IF EXISTS (SELECT 1 FROM records rec, jsonb_array_elements(rec.data->'features') e(el)
+             WHERE rec.id = v_rec AND NOT (e.el ? '_row_id')) THEN
+    RAISE EXCEPTION 'SMOKE 8b failed: a row is still missing _row_id';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM records rec, jsonb_array_elements(rec.data->'features') e(el)
+                 WHERE rec.id = v_rec AND e.el->>'_row_id' = 'keep-me') THEN
+    RAISE EXCEPTION 'SMOKE 8c failed: existing _row_id was rewritten';
+  END IF;
+  IF (SELECT count(*) FROM translation_jobs) <> v_jobs_before THEN
+    RAISE EXCEPTION 'SMOKE 8d failed: backfill enqueued a translation job';
+  END IF;
+  IF (SELECT count(*) FROM workflow_jobs) <> v_wf_before THEN
+    RAISE EXCEPTION 'SMOKE 8e failed: backfill fired workflow capture';
+  END IF;
+  SELECT translation_assign_row_ids(v_model, 100) INTO v_n;
+  IF v_n <> 0 THEN RAISE EXCEPTION 'SMOKE 8f failed: backfill not idempotent (%)', v_n; END IF;
+
+  RAISE NOTICE 'W1 smoke 8 (row ids): passed';
+END $$;
