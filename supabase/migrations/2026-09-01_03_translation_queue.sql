@@ -202,6 +202,12 @@ RETURNS TABLE (job_id uuid, resource_kind text, entity_id uuid, model_id uuid,
                changed_paths text[], attempts int)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 BEGIN
+  -- Kill switch gates the WHOLE pipeline (live gap 2026-08-02: reconcile
+  -- enqueued seed-dirtied units while disabled and the worker translated
+  -- ~1.5k variants pre-cutover — OFF must mean off everywhere).
+  IF NOT COALESCE((SELECT is_enabled FROM translation_settings WHERE id), false) THEN
+    RETURN;
+  END IF;
   RETURN QUERY
   UPDATE translation_jobs j SET status = 'running', claimed_at = now(),
     claimed_by = p_worker, attempts = j.attempts + 1, updated_at = now()
@@ -254,9 +260,13 @@ CREATE OR REPLACE FUNCTION public.translation_reconcile(p_limit int DEFAULT 200)
 RETURNS int LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE v_count int := 0; r record;
 BEGIN
+  IF NOT COALESCE((SELECT is_enabled FROM translation_settings WHERE id), false) THEN
+    RETURN 0;
+  END IF;
   FOR r IN
     SELECT DISTINCT u.resource_kind, u.entity_id, u.model_id
     FROM translation_units u
+    JOIN translation_resources tr ON tr.resource_kind = u.resource_kind AND tr.enabled
     WHERE u.dirty AND COALESCE(u.next_retry_at, now()) <= now()
       AND NOT EXISTS (SELECT 1 FROM translation_jobs j
                       WHERE j.resource_kind = u.resource_kind AND j.entity_id = u.entity_id
