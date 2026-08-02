@@ -109,3 +109,14 @@ Deploy: ONLY the single final deployment (approved plan). Migrations: BRANCH-ONL
 - GoTrue seeded users need ''-not-NULL token columns (see memory).
 - Branch has NO automation workflows/records data — only config seeds + what fixtures add.
 - Concurrent Kimi tasks must own DISJOINT files (marketing-os.ts is serialized).
+
+## KIMI FLEET SUSPENDED (2026-08-01 ~14:00) — awaiting Moonshot recharge
+Moonshot org org-4d0f622b… hit insufficient balance mid-wave; all 8 sessions died.
+Salvaged as WIP commit: content-detail-1 (substantial, compiles — VERIFY against its
+spec before calling done: header shortcuts/version compare/activity rail/s36 gating),
+fixture-reconciliation partial. Wrote NOTHING: content-detail-2, campaign-detail,
+settings-engine (2-line fragment reverted), pages-remaining, mobile-shell.
+RELAUNCH QUEUE after recharge (specs in kimi-specs/): verify-finish content-detail-1 →
+content-detail-2 + campaign-detail + settings-engine + pages-remaining + mobile-shell
+(all disjoint, can fan out) + fixture-value-reconciliation resume.
+Alternative if user prefers: Claude codes the remaining clusters directly.
