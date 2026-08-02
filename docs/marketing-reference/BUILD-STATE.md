@@ -120,3 +120,18 @@ RELAUNCH QUEUE after recharge (specs in kimi-specs/): verify-finish content-deta
 content-detail-2 + campaign-detail + settings-engine + pages-remaining + mobile-shell
 (all disjoint, can fan out) + fixture-value-reconciliation resume.
 Alternative if user prefers: Claude codes the remaining clusters directly.
+
+## CHECKPOINT 2026-08-01 ~15:00 — dual-limit pause, huge salvage integrated
+Claude session limit hit (resets 9pm Riyadh); Moonshot still awaiting recharge.
+LANDED + BUILD GREEN + s33 matrix verified live: CD1 complete (spec checklist,
+incl. real authz fix); SettingsWorkflows/Access/People mounted (people+roles
+sections split); AssetDetail/ShootRequest/LibraryUnused/Account routed;
+MobileTabBar mounted. Legacy WorkflowsSection/RolesSection/StepModal deleted.
+STILL TO BUILD: cd2 tabs (s09-12) — nothing written; campaign-detail cluster —
+nothing written; settings s25 home cards + s43 notifications page + bell;
+pages-remaining leftovers (SearchPage/NumbersPage/ShootsPage edits, EmptyDayOne);
+mobile responsive pass (d-mobile-layer minus shell); fixture reconciliation
+finish; B6 overlay; captures/approvals; journeys; gates. All specs in kimi-specs/.
+RESUME: after 9pm say continue (Claude agents) OR recharge Moonshot anytime
+(kimi-code.sh pipeline — independent budget). Browser gotcha: after vite HMR
+bursts, hard-reload the tab before judging runtime errors (stale module mix).
