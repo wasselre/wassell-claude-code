@@ -79,8 +79,9 @@ export default function RecordValueTranslationsPanel() {
         : (isAr ? `تم رفض دفعة ${fieldPath} — ستُعاد ترجمتها` : `Rejected ${fieldPath} batch — will be regenerated`),
       'success',
     );
-    // refresh both levels
-    setFields((f) => ({ ...f, [modelId]: undefined as unknown as FieldSummary[] }));
+    // Refresh in place — keep the current list rendered while the fresh data
+    // loads (blanking it to "Loading…" flashed the whole panel on every
+    // accept/reject).
     const { data: fresh } = await supabase.rpc('translation_seed_field_summary', { p_model_id: modelId });
     setFields((f) => ({ ...f, [modelId]: (fresh ?? []) as FieldSummary[] }));
     void load();
