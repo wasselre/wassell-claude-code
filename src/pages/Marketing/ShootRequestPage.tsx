@@ -8,20 +8,33 @@
  * «رفع التصوير» deep-links to /m/library/upload?shoot=<id> — the existing
  * delivery wire: files arriving for this request mark its waiting scenes
  * covered and the blocked tasks open automatically.
+ *
+ * SITE MODE (?mode=site — design screen 30): the phone-first surface for the
+ * person standing AT the location. Big tick rows, a camera button per shot,
+ * and the offline queue from lib/offline.ts — ticks and captures land in
+ * IndexedDB when there is no signal and drain automatically when connectivity
+ * returns (online / visibilitychange / mount — the honest foreground paths,
+ * nothing claimed beyond what the platform provides).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   MosRole, MosShootItemDetail, MosShootRequest, ROLE_LABELS, SHOOT_STATUS_LABELS,
   addShootItem, deliverShoot, fetchBootstrap, fetchShootDetail, fetchShoots,
-  saveShoot, toggleShootItem,
+  saveAsset, saveShoot, toggleShootItem,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, ReadField, Skeleton } from './components/kit';
 import { IconCheck, IconShoot } from './components/icons';
-import { dateTime, initial, isoDateTimeLocal, num, roleAvatarClass } from './lib/format';
+import { dateTime, dayName, initial, isoDateTimeLocal, num, roleAvatarClass, shortDate } from './lib/format';
+import {
+  DrainHandlers, OfflineQueueState, OfflineQuotaError, drain, enqueueCapture,
+  enqueueTick, retryItem, startAutoDrain, subscribe,
+} from './lib/offline';
+import { formatBytes, isBrowserImage, kindFromFile } from './lib/upload';
 import './styles/pages-remaining.css';
+import './styles/mobile-m3.css';
 
 const TONE: Record<string, 'idle' | 'now' | 'go' | 'live'> = {
   requested: 'idle',
@@ -42,6 +55,9 @@ function shotCount(n: number, isAr: boolean): string {
 
 export default function ShootRequestPage() {
   const { requestId } = useParams<{ requestId: string }>();
+  const [searchParams] = useSearchParams();
+  /** Screen 30 — the phone-first at-the-location surface. Query-driven. */
+  const siteMode = searchParams.get('mode') === 'site';
   const { isAr, can, projectName } = useWorkspace();
   const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
@@ -74,12 +90,17 @@ export default function ShootRequestPage() {
     }
   }, [requestId]);
 
-  useEffect(() => { void load(); }, [load]);
+  // Site mode fetches for itself (SiteModeView below) — skip the desktop load.
+  useEffect(() => {
+    if (siteMode) return;
+    void load();
+  }, [load, siteMode]);
 
   // The copper side-note: shots piling up on OTHER projects, and the threshold
   // that will trigger the next suggestion. Informational — a failure here logs
   // (network / RLS on the list action) and the note simply doesn't render.
   useEffect(() => {
+    if (siteMode) return;
     let alive = true;
     void (async () => {
       try {
@@ -109,7 +130,7 @@ export default function ShootRequestPage() {
       }
     })();
     return () => { alive = false; };
-  }, [requestId]);
+  }, [requestId, siteMode]);
 
   /** The «يفكّ تعطّل» groups — this request's items, by content record. */
   const unblocks = useMemo(() => {
@@ -157,6 +178,8 @@ export default function ShootRequestPage() {
     : assignedRole;
 
   if (!requestId) return null;
+
+  if (siteMode) return <SiteModeView requestId={requestId} />;
 
   return (
     <>
@@ -532,5 +555,518 @@ function RescheduleModal({
         <input type="datetime-local" className="inp" value={when} onChange={(e) => setWhen(e.target.value)} autoFocus />
       </Field>
     </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* SITE MODE — design screen 30 (?mode=site)                          */
+/* ------------------------------------------------------------------ */
+
+/** «بلا شبكة — …» — the offline banner line, count-aware. */
+function offlinePhrase(n: number, isAr: boolean): string {
+  if (!isAr) {
+    if (n === 0) return 'No network — what you capture is saved on the phone and uploads on Wi-Fi';
+    return `No network — ${n} saved on the phone, uploading when Wi-Fi is back`;
+  }
+  if (n === 0) return 'بلا شبكة — ما تسجّلينه يُحفظ على الجوال ويُرفع على الواي فاي';
+  if (n === 1) return 'بلا شبكة — عنصر واحد محفوظ على الجوال، سيُرفع على الواي فاي';
+  if (n === 2) return 'بلا شبكة — عنصران محفوظان على الجوال، سيُرفعان على الواي فاي';
+  if (n <= 10) return `بلا شبكة — ${num(n, true)} عناصر محفوظة على الجوال، ستُرفع على الواي فاي`;
+  return `بلا شبكة — ${num(n, true)} عنصرًا محفوظًا على الجوال، ستُرفع على الواي فاي`;
+}
+
+/** A synced capture kept on screen with its «تم» chip after it left the queue. */
+interface SyncedRow {
+  id: string;
+  name: string;
+  size: number;
+}
+
+function SiteModeView({ requestId }: { requestId: string }) {
+  const { isAr, can } = useWorkspace();
+  const addToast = useAppStore((s) => s.addToast);
+  const canManage = can('manage_assets');
+
+  const [request, setRequest] = useState<MosShootRequest | null>(null);
+  const [items, setItems] = useState<MosShootItemDetail[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [queue, setQueue] = useState<OfflineQueueState | null>(null);
+  const [online, setOnline] = useState(() => navigator.onLine);
+  /** Object-URL previews keyed by capture id (= the future asset id). */
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  /** shoot item id → the capture the camera button linked to it. */
+  const [itemCapture, setItemCapture] = useState<Record<string, string>>({});
+  const [syncedRows, setSyncedRows] = useState<SyncedRow[]>([]);
+  const [unblock, setUnblock] = useState<{ scenes: number } | null>(null);
+
+  const requestRef = useRef<MosShootRequest | null>(null);
+  const handlersRef = useRef<DrainHandlers | null>(null);
+  const drainingRef = useRef(false);
+  const deliverSetRef = useRef<Set<string>>(new Set());
+  const pendingItemRef = useRef<MosShootItemDetail | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const previewsRef = useRef<Record<string, string>>({});
+  const shootsCacheRef = useRef<Promise<MosShootRequest[]> | null>(null);
+
+  const load = useCallback(async (silent = false): Promise<void> => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
+    try {
+      const res = await fetchShootDetail(requestId);
+      setRequest(res.request);
+      setItems(res.items);
+    } catch (e) {
+      if (silent) {
+        // A background refresh after a drain — the list on screen stays
+        // usable; the failure is still visible here, never swallowed.
+        console.error('[marketing] site-mode silent refresh failed', e);
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, [requestId]);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { requestRef.current = request; }, [request]);
+
+  // Online / offline — drives the banner; the drain wiring listens on its own.
+  useEffect(() => {
+    const up = (): void => setOnline(true);
+    const down = (): void => setOnline(false);
+    window.addEventListener('online', up);
+    window.addEventListener('offline', down);
+    return () => {
+      window.removeEventListener('online', up);
+      window.removeEventListener('offline', down);
+    };
+  }, []);
+
+  // Object URLs must be released on unmount.
+  useEffect(() => () => {
+    Object.values(previewsRef.current).forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+
+  // The offline engine: subscribe for live chips, then startAutoDrain with the
+  // real handlers — ticks replay through shoot_item_toggle, captures register
+  // through the same asset_save call the upload page's ?shoot= wire makes.
+  useEffect(() => {
+    const rightsLabel = isAr ? 'ملكية كاملة — بلا قيود' : 'Full ownership — no restrictions';
+
+    const projectOf = async (shootReqId: string): Promise<string | null> => {
+      if (shootReqId === requestId) return requestRef.current?.project_id ?? null;
+      if (!shootsCacheRef.current) {
+        shootsCacheRef.current = fetchShoots()
+          .then((r) => r.requests)
+          .catch((err: unknown) => {
+            // Project attribution only — the asset still registers, untagged.
+            console.error('[marketing] shoot list unavailable for project attribution', err);
+            return [];
+          });
+      }
+      const reqs = await shootsCacheRef.current;
+      return reqs.find((r) => r.id === shootReqId)?.project_id ?? null;
+    };
+
+    const handlers: DrainHandlers = {
+      toggleShootItem: async (shootItemId, done) => {
+        await toggleShootItem(shootItemId, done);
+      },
+      registerAsset: async (meta) => {
+        const kind = kindFromFile(new File([], meta.fileName, { type: meta.mimeType }));
+        const title = meta.note?.trim() || meta.fileName.replace(/\.[^.]+$/, '');
+        await saveAsset({
+          title,
+          kind,
+          source: 'shoot',
+          project_id: await projectOf(meta.shootRequestId),
+          url: meta.publicUrl,
+          thumb_url: /^image\//i.test(meta.mimeType) ? meta.publicUrl : null,
+          shot_on: null,
+          tags: [],
+          file_path: meta.storagePath,
+          mime_type: meta.mimeType,
+          size_bytes: meta.size,
+          original_name: meta.fileName,
+          usage_rights: rightsLabel,
+          shoot_request_id: meta.shootRequestId,
+          note: meta.note ?? null,
+        });
+        deliverSetRef.current.add(meta.shootRequestId);
+        setSyncedRows((cur) => [...cur, { id: meta.assetId, name: title, size: meta.size }]);
+      },
+    };
+    handlersRef.current = handlers;
+
+    const unsub = subscribe((state) => {
+      setQueue(state);
+      const was = drainingRef.current;
+      drainingRef.current = state.draining;
+      if (was && !state.draining) {
+        // A drain pass just ended: refresh the list silently, and if captures
+        // landed, run the delivery wire so waiting scenes flip to covered.
+        void load(true);
+        const ids = Array.from(deliverSetRef.current);
+        deliverSetRef.current.clear();
+        if (ids.length > 0) {
+          void (async () => {
+            for (const id of ids) {
+              try {
+                const res = await deliverShoot(id);
+                if (id === requestId) {
+                  if (res.scenes_marked > 0) setUnblock({ scenes: res.scenes_marked });
+                  void load(true);
+                } else {
+                  addToast(
+                    isAr
+                      ? `سُلِّم طلب آخر — عُلِّمت ${num(res.scenes_marked, true)} لقطة منتظرة كمتوفرة.`
+                      : `Another request delivered — ${res.scenes_marked} waiting shots marked covered.`,
+                    'success',
+                  );
+                }
+              } catch (e) {
+                addToast(e instanceof Error ? e.message : String(e), 'error');
+              }
+            }
+          })();
+        }
+      }
+    });
+    const teardown = startAutoDrain(handlers);
+    return () => {
+      teardown();
+      unsub();
+    };
+  }, [requestId, isAr, load, addToast]);
+
+  /** The big tick target — offline enqueues, online hits the API directly. */
+  const tickToggle = async (item: MosShootItemDetail): Promise<void> => {
+    const next = !item.done;
+    setItems((cur) => cur.map((i) => (i.id === item.id ? { ...i, done: next } : i)));
+    if (!navigator.onLine) {
+      try {
+        await enqueueTick(item.id, next);
+      } catch (e) {
+        setItems((cur) => cur.map((i) => (i.id === item.id ? { ...i, done: item.done } : i)));
+        addToast(
+          e instanceof OfflineQuotaError
+            ? (isAr ? e.message_ar : e.message_en)
+            : e instanceof Error ? e.message : String(e),
+          'error',
+        );
+      }
+      return;
+    }
+    try {
+      const res = await toggleShootItem(item.id, next);
+      setItems((cur) => cur.map((i) => (i.id === item.id ? { ...i, done: res.item.done } : i)));
+    } catch (e) {
+      setItems((cur) => cur.map((i) => (i.id === item.id ? { ...i, done: item.done } : i)));
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
+  /** Every capture goes through the queue; online just drains it right away. */
+  const onCapturePicked = async (file: File): Promise<void> => {
+    const item = pendingItemRef.current;
+    pendingItemRef.current = null;
+    try {
+      const captureId = await enqueueCapture({
+        shootRequestId: requestId,
+        file,
+        note: item?.description,
+      });
+      if (isBrowserImage(file)) {
+        const url = URL.createObjectURL(file);
+        previewsRef.current[captureId] = url;
+        setPreviews((cur) => ({ ...cur, [captureId]: url }));
+      }
+      if (item) setItemCapture((cur) => ({ ...cur, [item.id]: captureId }));
+      if (navigator.onLine) {
+        const h = handlersRef.current;
+        if (h) {
+          drain(h).catch((err: unknown) => {
+            console.error('[marketing] drain after capture failed', err);
+          });
+        }
+      }
+    } catch (e) {
+      addToast(
+        e instanceof OfflineQuotaError
+          ? (isAr ? e.message_ar : e.message_en)
+          : e instanceof Error ? e.message : String(e),
+        'error',
+      );
+    }
+  };
+
+  const retry = async (id: string): Promise<void> => {
+    try {
+      await retryItem(id);
+      if (navigator.onLine) {
+        const h = handlersRef.current;
+        if (h) await drain(h);
+      }
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
+  const doneCount = items.filter((i) => i.done).length;
+  const unblocksCount = new Set(items.map((i) => i.content_id).filter(Boolean)).size;
+  const captures = queue?.captures ?? [];
+  const failedTicks = (queue?.ticks ?? []).filter((t) => t.lastError);
+  const queuedCount = (queue?.ticks.length ?? 0) + captures.length;
+  const totalFiles = captures.length + syncedRows.length;
+  const totalBytes = captures.reduce((a, c) => a + c.size, 0) + syncedRows.reduce((a, r) => a + r.size, 0);
+  const draining = queue?.draining ?? false;
+  const when = request?.scheduled_at ?? request?.created_at ?? null;
+  const refs = Array.from(new Set(items.map((i) => i.content_ref).filter((r): r is string => Boolean(r))));
+
+  return (
+    <div className="body">
+      <div className="m3-site">
+        {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
+        {loading && !request && <Skeleton rows={6} />}
+        {!loading && !request && !error && (
+          <Empty
+            title={isAr ? 'الطلب غير موجود' : 'Request not found'}
+            body={isAr ? 'ربما حُذف أو أُلغي.' : 'It may have been removed or cancelled.'}
+          />
+        )}
+
+        {request && (
+          <>
+            <div className="m3-head">
+              <div className="s">
+                {request.ref && <span className="ltr">{request.ref}</span>}
+                {when && <> · {dayName(when, isAr)} {shortDate(when, isAr)}</>}
+              </div>
+              <h4>{request.title}</h4>
+              <div className="m3-chips">
+                <span className="pill p-now">
+                  {isAr
+                    ? `${num(doneCount, true)} من ${num(items.length, true)} تمت`
+                    : `${doneCount} of ${items.length} done`}
+                </span>
+                {unblocksCount > 0 && (
+                  <span className="m">
+                    {isAr ? `تفكّ ${num(unblocksCount, true)} سجلات` : `Unblocks ${unblocksCount} records`}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {!online && (
+              <div className="m3-offline">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden>
+                  <path d="M12 8v5M12 16.5v.5" />
+                  <circle cx="12" cy="12" r="9" />
+                </svg>
+                <span>{offlinePhrase(queuedCount, isAr)}</span>
+              </div>
+            )}
+
+            <div className="m3-list">
+              {items.map((item) => {
+                const capId = itemCapture[item.id];
+                const prev = capId ? previews[capId] : undefined;
+                return (
+                  <div key={item.id} className={`m3-chk${item.done ? ' ok2' : ''}`}>
+                    <button
+                      type="button"
+                      className="m3-chk-main"
+                      disabled={!canManage}
+                      aria-label={item.done ? (isAr ? 'أُنجزت' : 'Done') : (isAr ? 'لم تُنجز' : 'Not done')}
+                      onClick={() => void tickToggle(item)}
+                    >
+                      <span className="bx">
+                        {item.done && (
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden>
+                            <path d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span className="tx2" style={{ display: 'block' }}>{item.description}</span>
+                        <span className="mt3" style={{ display: 'block' }}>
+                          {item.content_ref && <span className="ltr">{item.content_ref}</span>}
+                          {item.scene && <> {isAr ? `مشهد ${num(item.scene.position, true)}` : `scene ${item.scene.position}`}</>}
+                          {item.scene?.note
+                            ? <> · {item.scene.note}</>
+                            : !item.content_id && <>{isAr ? 'إضافية' : 'extra'}</>}
+                        </span>
+                      </span>
+                    </button>
+                    {capId ? (
+                      <span
+                        className="m3-thumbcell"
+                        style={prev ? { backgroundImage: `url(${prev})` } : undefined}
+                        aria-hidden
+                      />
+                    ) : canManage ? (
+                      <button
+                        type="button"
+                        className="m3-cam"
+                        aria-label={isAr ? 'صوّري هذه اللقطة' : 'Capture this shot'}
+                        onClick={() => {
+                          pendingItemRef.current = item;
+                          inputRef.current?.click();
+                        }}
+                      >
+                        <IconShoot />
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            {(totalFiles > 0 || failedTicks.length > 0) && (
+              <div className="m3-card">
+                <div className="m3-up-head">
+                  <b>
+                    {draining
+                      ? isAr ? 'جارٍ الرفع' : 'Uploading'
+                      : online
+                        ? isAr ? 'طابور الرفع' : 'Upload queue'
+                        : isAr ? 'بانتظار الاتصال' : 'Waiting for connection'}
+                  </b>
+                  <span className="n">
+                    {request.ref && <><span className="ltr">{request.ref}</span> · </>}
+                    {shotCount(totalFiles, isAr)} · {formatBytes(totalBytes, isAr)}
+                  </span>
+                </div>
+                {totalFiles > 0 && (
+                  <>
+                    <div className="m3-up-head" style={{ marginTop: 9 }}>
+                      <b>
+                        {isAr
+                          ? `${num(syncedRows.length, true)} من ${num(totalFiles, true)} ملفًا`
+                          : `${syncedRows.length} of ${totalFiles} files`}
+                      </b>
+                    </div>
+                    <div className="meter m3-up-meter" style={{ height: 5 }}>
+                      <i style={{ width: `${(syncedRows.length / totalFiles) * 100}%`, background: 'var(--copper)' }} />
+                    </div>
+                  </>
+                )}
+
+                {syncedRows.map((r) => (
+                  <div key={r.id} className="m3-file-row">
+                    <span
+                      className="th"
+                      style={previews[r.id] ? { backgroundImage: `url(${previews[r.id]})` } : undefined}
+                      aria-hidden
+                    />
+                    <div className="t">
+                      <b>{r.name}</b>
+                      <div className="m">{formatBytes(r.size, isAr)}</div>
+                    </div>
+                    <Pill tone="go">{isAr ? 'تم' : 'Done'}</Pill>
+                  </div>
+                ))}
+
+                {captures.map((c) => {
+                  const prev = previews[c.id];
+                  return (
+                    <div key={c.id} className="m3-file-row">
+                      <span className="th" style={prev ? { backgroundImage: `url(${prev})` } : undefined} aria-hidden />
+                      <div className="t">
+                        <b className={c.note ? undefined : 'ltr'}>{c.note?.trim() || c.fileName}</b>
+                        <div className={`m${c.status === 'failed' ? ' err' : ''}`}>
+                          {formatBytes(c.size, isAr)}
+                          {' · '}
+                          {c.status === 'uploading'
+                            ? isAr ? 'يُرفع' : 'uploading'
+                            : c.status === 'failed'
+                              ? c.lastError ?? (isAr ? 'فشل الرفع' : 'upload failed')
+                              : isAr ? 'في الطابور' : 'queued'}
+                        </div>
+                      </div>
+                      {c.status === 'uploading' && <Pill tone="now">{isAr ? 'يُرفع' : 'Uploading'}</Pill>}
+                      {c.status === 'queued' && <Pill tone="idle">{isAr ? 'انتظار' : 'Waiting'}</Pill>}
+                      {c.status === 'failed' && (
+                        <button type="button" className="btn btn-sm m3-retry" onClick={() => void retry(c.id)}>
+                          {isAr ? 'إعادة المحاولة' : 'Retry'}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {failedTicks.map((t) => (
+                  <div key={t.id} className="m3-file-row">
+                    <span className="th" aria-hidden />
+                    <div className="t">
+                      <b>{items.find((i) => i.id === t.shootItemId)?.description ?? (isAr ? 'علامة إنجاز لقطة' : 'A shot tick')}</b>
+                      <div className="m err">{t.lastError}</div>
+                    </div>
+                    <button type="button" className="btn btn-sm m3-retry" onClick={() => void retry(t.id)}>
+                      {isAr ? 'إعادة المحاولة' : 'Retry'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {unblock && (
+              <div className="m3-unblock">
+                <div className="h">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden>
+                    <path d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span>
+                    {refs.length === 1
+                      ? isAr
+                        ? <><span className="ltr">{refs[0]}</span> فُكّ تعطّله</>
+                        : <><span className="ltr">{refs[0]}</span> unblocked</>
+                      : isAr ? 'فُكّ التعطّل' : 'Unblocked'}
+                  </span>
+                </div>
+                <div className="b">
+                  {isAr
+                    ? <>عُلِّمت <b>{num(unblock.scenes, true)}</b> لقطة منتظرة كمتوفرة، وفُتحت المهام المنتظرة تلقائيًا.</>
+                    : <><b>{unblock.scenes}</b> waiting shots marked covered — the waiting tasks opened automatically.</>}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {canManage && request && request.status !== 'cancelled' && (
+        <div className="m3-fix">
+          <button
+            type="button"
+            className="m3-btn p"
+            onClick={() => {
+              pendingItemRef.current = null;
+              inputRef.current?.click();
+            }}
+          >
+            <IconShoot />
+            {isAr ? 'صوّري شيئًا إضافيًا' : 'Shoot something extra'}
+          </button>
+        </div>
+      )}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*,video/*"
+        capture="environment"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) void onCapturePicked(f);
+        }}
+      />
+    </div>
   );
 }

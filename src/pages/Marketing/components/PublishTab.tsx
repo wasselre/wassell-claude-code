@@ -15,8 +15,14 @@
  * Publishing is manual by decision (design answer 4: «النشر ليس تلقائي»). No
  * account here can publish until someone connects it, and the screen says so
  * rather than implying an automation that does not exist.
+ *
+ * PHONE (<760px — design screen 31): the Publish Assistant bottom sheet makes
+ * the manual path NINETY SECONDS instead of ten minutes — the caption copies
+ * with one tap, the approved file is one tap away, the platform opens for
+ * you, and «تعليمه كمنشور» confirms with the post link through the same
+ * publication_save the desktop modal uses. Desktop is unchanged.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import {
   MosAccount, MosAsset, MosPublication, PLATFORM_LABELS, PUB_STATUS_LABELS,
@@ -25,7 +31,8 @@ import {
 import { useWorkspace } from '../MarketingWorkspace';
 import { Field, Modal, Pill } from './kit';
 import { IconPlus } from './icons';
-import { dateTimeShort, isoDateTimeLocal, num, shortDate } from '../lib/format';
+import { dateTimeShort, isoDateTimeLocal, num, shortDate, toArabicDigits } from '../lib/format';
+import '../styles/mobile-m3.css';
 
 const PLATFORMS = ['instagram', 'tiktok', 'snapchat', 'x', 'youtube', 'website'] as const;
 
@@ -41,6 +48,57 @@ const PLATFORM_COLOR: Record<string, string> = {
 const PLATFORM_INITIALS: Record<string, string> = {
   instagram: 'IG', tiktok: 'TT', snapchat: 'SC', x: 'X', youtube: 'YT', website: 'WEB',
 };
+
+/* ------------------------------------------------------------------ */
+/* Phone helpers — screen 31's Publish Assistant                       */
+/* ------------------------------------------------------------------ */
+
+/** The tab bar breakpoint — the assistant exists only below it. */
+function useIsPhone(): boolean {
+  const [phone, setPhone] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 760px)');
+    const onChange = (e: MediaQueryListEvent): void => setPhone(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return phone;
+}
+
+/** «٧:٠٠ م» / "7:00 PM" — the mock's time-only pill shape. */
+function timeShort(iso: string | null | undefined, isAr: boolean): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const h = d.getHours();
+  const m = d.getMinutes().toString().padStart(2, '0');
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  const suffix = isAr ? (h < 12 ? 'ص' : 'م') : h < 12 ? 'AM' : 'PM';
+  return `${num(h12, isAr)}:${isAr ? toArabicDigits(m) : m} ${suffix}`;
+}
+
+function sameLocalDay(a: string, b: string): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return da.getFullYear() === db.getFullYear()
+    && da.getMonth() === db.getMonth()
+    && da.getDate() === db.getDate();
+}
+
+/** «افتحي انستقرام» — the deep link the assistant's primary button opens. */
+function platformLink(platform: string, handle: string | null): string | null {
+  const h = (handle ?? '').replace(/^@/, '').trim();
+  switch (platform) {
+    case 'instagram': return h ? `https://www.instagram.com/${h}/` : 'https://www.instagram.com/';
+    case 'tiktok': return h ? `https://www.tiktok.com/@${h}` : 'https://www.tiktok.com/';
+    case 'snapchat': return h ? `https://www.snapchat.com/add/${h}` : 'https://www.snapchat.com/';
+    case 'x': return h ? `https://x.com/${h}` : 'https://x.com/';
+    case 'youtube': return 'https://www.youtube.com/';
+    default: return null; // website — nothing sensible to deep-link to
+  }
+}
 
 /**
  * TODO(client): `mos_publication_v` also returns `file_id` and
@@ -133,6 +191,98 @@ export default function PublishTab({
 
   const platformLabel = (p: string): string =>
     (isAr ? PLATFORM_LABELS[p]?.ar : PLATFORM_LABELS[p]?.en) ?? p;
+
+  /* ── screen 31 — the phone Publish Assistant ─────────────────────── */
+  const isPhone = useIsPhone();
+  const [assistId, setAssistId] = useState<string | null>(null);
+  const [assistStage, setAssistStage] = useState<'steps' | 'confirm'>('steps');
+  const [assistUrl, setAssistUrl] = useState('');
+  const [assistCopied, setAssistCopied] = useState(false);
+  const [assistFileDone, setAssistFileDone] = useState(false);
+  const [assistBusy, setAssistBusy] = useState(false);
+
+  /** The next scheduled slot — the assistant's target. */
+  const nextDue = useMemo(() => {
+    const scheduled = publications
+      .filter((p) => p.status === 'scheduled' && p.scheduled_at)
+      .sort((a, b) => (a.scheduled_at ?? '').localeCompare(b.scheduled_at ?? ''));
+    return scheduled[0] ?? null;
+  }, [publications]);
+
+  const assistPub = assistId ? publications.find((p) => p.id === assistId) ?? null : null;
+
+  /** Honest wording: «حان وقت النشر» only when the slot is actually here. */
+  const isDue = (p: MosPublication): boolean =>
+    Boolean(p.scheduled_at && new Date(p.scheduled_at).getTime() <= Date.now() + 30 * 60_000);
+
+  const schedLabel = (p: MosPublication): string => {
+    if (!p.scheduled_at) return isAr ? 'مجدول' : 'Scheduled';
+    const t = sameLocalDay(p.scheduled_at, new Date().toISOString())
+      ? timeShort(p.scheduled_at, isAr)
+      : dateTimeShort(p.scheduled_at, isAr);
+    return isAr ? `مجدول ${t}` : `Scheduled ${t}`;
+  };
+
+  /** The other slots still scheduled the same night — the confirm box's list. */
+  const remainingTonight = useMemo(() => {
+    if (!assistPub?.scheduled_at) return [] as MosPublication[];
+    const anchor = assistPub.scheduled_at;
+    return publications.filter((p) =>
+      p.id !== assistPub.id && p.status === 'scheduled' && p.scheduled_at
+      && sameLocalDay(p.scheduled_at, anchor));
+  }, [publications, assistPub]);
+
+  const openAssist = (pub: MosPublication): void => {
+    setAssistId(pub.id);
+    setAssistStage('steps');
+    setAssistUrl(pub.external_url ?? '');
+    setAssistCopied(false);
+    setAssistFileDone(false);
+  };
+  const closeAssist = (): void => setAssistId(null);
+
+  const copyCaption = async (pub: MosPublication): Promise<void> => {
+    if (!pub.caption) return;
+    try {
+      await navigator.clipboard.writeText(pub.caption);
+      setAssistCopied(true);
+      addToast(isAr ? 'نُسخ الكابشن' : 'Caption copied', 'success');
+    } catch (e) {
+      // Clipboard access needs a secure context + user gesture; when it is
+      // refused the caption is still on screen — say so instead of pretending.
+      console.error('[marketing] caption copy failed', e);
+      addToast(
+        isAr ? 'تعذّر النسخ — انسخيه يدويًا من الصندوق' : 'Copy failed — select it from the box manually',
+        'error',
+      );
+    }
+  };
+
+  /** «تعليمه كمنشور» — the same publication_save the desktop modal uses. */
+  const markPublished = async (): Promise<void> => {
+    const pub = assistPub as PubRow | null;
+    if (!pub) return;
+    setAssistBusy(true);
+    try {
+      const res = await savePublication(contentId, {
+        id: pub.id,
+        platform: pub.platform,
+        account_id: pub.account_id,
+        status: 'published',
+        scheduled_at: pub.scheduled_at,
+        caption: pub.caption,
+        external_url: assistUrl.trim() || pub.external_url || null,
+        file_id: pub.file_id ?? null,
+      });
+      onChange(res.publications);
+      addToast(isAr ? 'عُلِّم كمنشور' : 'Marked published', 'success');
+      closeAssist();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setAssistBusy(false);
+    }
+  };
 
   /** The approved asset a publication actually carries, resolved by file id. */
   const fileAssetOf = (pub: PubRow): MosAsset | null => {
@@ -329,6 +479,25 @@ export default function PublishTab({
   return (
     <div className="cd2-split">
       <div style={{ display: 'grid', gap: 13, minWidth: 0 }}>
+        {/* s31 — the assistant's entry card. Phone-only, next scheduled slot. */}
+        {isPhone && canEdit && nextDue && (
+          <button type="button" className="m3-assist" onClick={() => openAssist(nextDue)}>
+            <span className="dot" style={{ background: PLATFORM_COLOR[nextDue.platform] ?? 'var(--copper)' }} />
+            <span className="t">
+              <b>
+                {isDue(nextDue)
+                  ? isAr ? 'حان وقت النشر' : 'Time to post'
+                  : isAr ? 'التالي للنشر' : 'Next up to post'}
+              </b>
+              <span className="s">
+                {platformLabel(nextDue.platform)}
+                {nextDue.account_handle && <> · <span className="ltr">{nextDue.account_handle}</span></>}
+              </span>
+            </span>
+            <Pill tone="now">{schedLabel(nextDue)}</Pill>
+          </button>
+        )}
+
         {publications.length === 0 ? (
           <div className="card">
             <p style={{ padding: 26, textAlign: 'center', fontSize: 13, color: 'var(--mute)' }}>
@@ -416,6 +585,193 @@ export default function PublishTab({
           onSave={(payload, picked) => void save(payload, picked)}
         />
       )}
+
+      {/* ── s31 — the Publish Assistant bottom sheet (phone only) ───────── */}
+      {isPhone && assistPub && (() => {
+        const pub = assistPub as PubRow;
+        const fileAsset = fileAssetOf(pub);
+        const link = platformLink(pub.platform, pub.account_handle);
+        const remainList = remainingTonight
+          .map((p) => `${platformLabel(p.platform)} ${timeShort(p.scheduled_at, isAr)}`)
+          .join(isAr ? '، ' : ', ');
+        const check = (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden>
+            <path d="M5 13l4 4L19 7" />
+          </svg>
+        );
+        return (
+          <>
+            <button type="button" className="m3-scrim" aria-label={isAr ? 'إغلاق' : 'Close'} onClick={closeAssist} />
+            <div className="m3-sheet" role="dialog" aria-modal="true">
+              <div className="m3-grab" />
+              {assistStage === 'steps' ? (
+                <>
+                  <div className="m3-sheet-title">
+                    {isDue(pub)
+                      ? isAr ? 'حان وقت النشر' : 'Time to post'
+                      : isAr ? 'التالي للنشر' : 'Next up to post'}
+                  </div>
+                  <div className="m3-sheet-sub">
+                    {platformLabel(pub.platform)}
+                    {pub.account_handle && <> · <span className="ltr">{pub.account_handle}</span></>}
+                    {pub.scheduled_at && <> · {schedLabel(pub)}</>}
+                  </div>
+                  <div className="m3-thumb">
+                    {fileAsset?.thumb_url && <img src={fileAsset.thumb_url} alt="" />}
+                    <span className="lb">
+                      {fileAsset ? (isAr ? 'معتمد' : 'Approved') : (isAr ? 'لا ملف معتمد' : 'No approved file')}
+                    </span>
+                  </div>
+
+                  {/* ١ — the approved file row */}
+                  <div className={`m3-step${assistFileDone ? ' did' : ' on2'}`}>
+                    <span className="n6">{assistFileDone ? check : num(1, isAr)}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="st">{isAr ? 'احفظي الملف في صورك' : 'Save the file to your photos'}</div>
+                      <button
+                        type="button"
+                        className="m3-filebtn"
+                        disabled={!fileAsset?.url}
+                        onClick={() => {
+                          if (!fileAsset?.url) return;
+                          window.open(fileAsset.url, '_blank', 'noopener');
+                          setAssistFileDone(true);
+                        }}
+                      >
+                        <span
+                          className="th"
+                          style={fileAsset?.thumb_url ? { backgroundImage: `url(${fileAsset.thumb_url})` } : undefined}
+                          aria-hidden
+                        />
+                        <span className="t">
+                          <b>{fileAsset ? fileAsset.title : (isAr ? 'لا ملف معتمد بعد' : 'No approved file yet')}</b>
+                          <span className="s">
+                            {fileAsset
+                              ? isAr ? 'معتمد — اضغطي للفتح والحفظ' : 'approved — tap to open and save'
+                              : isAr ? 'الملفات المعتمدة وحدها تُنشر' : 'only approved files get published'}
+                          </span>
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ٢ — copy the caption */}
+                  <div className={`m3-step${assistCopied ? ' did' : assistFileDone ? ' on2' : ''}`}>
+                    <span className="n6">{assistCopied ? check : num(2, isAr)}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="st">{isAr ? 'انسخي الكابشن' : 'Copy the caption'}</div>
+                      {pub.caption ? (
+                        <div className="m3-capbox">{pub.caption}</div>
+                      ) : (
+                        <div className="m3-capbox empty">
+                          {isAr ? 'لم يُكتب كابشن لهذه المنصة' : 'No caption written for this platform'}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        className="m3-btn p sm2"
+                        style={{ marginTop: 9 }}
+                        disabled={!pub.caption}
+                        onClick={() => void copyCaption(pub)}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden>
+                          <rect x="9" y="9" width="12" height="12" rx="2" />
+                          <path d="M5 15V5h10" />
+                        </svg>
+                        {isAr ? 'نسخ الكابشن' : 'Copy the caption'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ٣ — open the platform and post */}
+                  <div className={`m3-step${assistCopied ? ' on2' : ''}`}>
+                    <span className="n6">{num(3, isAr)}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="st">
+                        {isAr
+                          ? `افتحي ${platformLabel(pub.platform)} وانشري`
+                          : `Open ${platformLabel(pub.platform)} and post`}
+                      </div>
+                      <div className="sm">{isAr ? 'ثم عودي هنا بعد نشره' : 'then come back here once it is posted'}</div>
+                    </div>
+                  </div>
+
+                  <div className="m3-sheet-actions">
+                    <button type="button" className="m3-btn w0" onClick={closeAssist}>
+                      {isAr ? 'تأجيل' : 'Postpone'}
+                    </button>
+                    <button
+                      type="button"
+                      className="m3-btn p"
+                      onClick={() => {
+                        if (link) window.open(link, '_blank', 'noopener');
+                        setAssistStage('confirm');
+                      }}
+                    >
+                      {link
+                        ? isAr ? `افتحي ${platformLabel(pub.platform)}` : `Open ${platformLabel(pub.platform)}`
+                        : isAr ? 'نُشر — للتأكيد' : 'Posted — confirm'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="m3-sheet-title">{isAr ? 'هل نُشر؟' : 'Was it posted?'}</div>
+                  <div className="m3-sheet-sub">
+                    {isAr ? 'على ' : 'On '}
+                    {platformLabel(pub.platform)}
+                    {pub.account_handle && <>{isAr ? '، ' : ', '}<span className="ltr">{pub.account_handle}</span></>}
+                  </div>
+
+                  <div className="m3-lbl">{isAr ? 'الصقي رابط المنشور' : 'Paste the post link'}</div>
+                  <input
+                    className="inp ltr"
+                    dir="ltr"
+                    inputMode="url"
+                    placeholder={pub.platform === 'instagram' ? 'instagram.com/p/…' : 'https://…'}
+                    value={assistUrl}
+                    onChange={(e) => setAssistUrl(e.target.value)}
+                  />
+                  <div className="m3-note">
+                    {isAr
+                      ? 'اختياري، لكن بدونه لا يمكننا جمع أداء هذا المنشور لاحقًا.'
+                      : 'Optional — but without it we cannot collect this post’s performance later.'}
+                  </div>
+
+                  <div className="m3-infobox">
+                    {isAr ? (
+                      <>
+                        تعليمه كمنشور يُغلق هذا الصف وينقله إلى «منشور».{' '}
+                        {remainingTonight.length > 0
+                          ? <>والمتبقي الليلة: {remainList}.</>
+                          : 'لا شيء آخر مجدول الليلة.'}
+                      </>
+                    ) : (
+                      <>
+                        Marking it published closes this row and moves it to “published”.{' '}
+                        {remainingTonight.length > 0
+                          ? <>Still scheduled tonight: {remainList}.</>
+                          : 'Nothing else is scheduled tonight.'}
+                      </>
+                    )}
+                  </div>
+
+                  <div className="m3-sheet-actions">
+                    <button type="button" className="m3-btn w0" onClick={closeAssist} disabled={assistBusy}>
+                      {isAr ? 'ليس بعد' : 'Not yet'}
+                    </button>
+                    <button type="button" className="m3-btn g" onClick={() => void markPublished()} disabled={assistBusy}>
+                      {assistBusy
+                        ? isAr ? 'جارٍ الحفظ…' : 'Saving…'
+                        : isAr ? 'تعليمه كمنشور' : 'Mark it published'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

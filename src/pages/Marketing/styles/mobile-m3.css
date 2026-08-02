@@ -1,0 +1,588 @@
+/*
+ * Marketing Workspace — mobile layer part 3 (design screens 30 + 31).
+ *
+ * s30: the shoot SITE MODE (/m/shoots/:id?mode=site) — big tick rows, the
+ * per-item camera button, the offline banner and the upload-queue card. The
+ * mode is QUERY-driven (a photographer opens it on purpose), so its styles
+ * are not fenced behind the phone breakpoint — the column is mobile-first
+ * and simply centers itself on a desktop viewport.
+ *
+ * s31: the Publish Assistant bottom sheet on the publish tab. Phone-only
+ * (<760px) — the component gates itself on matchMedia and the styles live
+ * inside the media query; the desktop publish cards are untouched.
+ *
+ * Everything is scoped under `.mos-root` and reads only the design tokens
+ * from mos.css — same posture as mobile-shell.css. All touch targets ≥44px.
+ */
+
+/* ── s30 · site mode ──────────────────────────────────────────────────── */
+
+.mos-root .m3-site {
+  max-width: 430px;
+  margin-inline: auto;
+  padding: 8px 16px 170px;
+}
+
+.mos-root .m3-head .s {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-bottom: 3px;
+}
+.mos-root .m3-head h4 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.mos-root .m3-chips {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.mos-root .m3-chips .m {
+  font-size: 11.5px;
+  color: var(--mute);
+}
+
+/* The «بلا شبكة» banner — s30 phone 1's sand strip. */
+.mos-root .m3-offline {
+  background: var(--sand-2);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: 12px 0 2px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  line-height: 1.7;
+}
+.mos-root .m3-offline svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.9;
+  flex: 0 0 15px;
+  color: var(--wait);
+}
+
+/* Check rows — the mock's .ph-chk. The whole main area is ONE button, so the
+   tick target is the full row height (≥44px), not just the 23px box. */
+.mos-root .m3-list {
+  margin-top: 4px;
+}
+.mos-root .m3-chk {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mos-root .m3-chk:last-child {
+  border-bottom: 0;
+}
+.mos-root .m3-chk-main {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex: 1;
+  min-width: 0;
+  min-height: 44px; /* touch target */
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: start;
+  font: inherit;
+  color: var(--ink);
+}
+.mos-root .m3-chk-main:disabled {
+  cursor: default;
+}
+.mos-root .m3-chk .bx {
+  width: 23px;
+  height: 23px;
+  border-radius: 7px;
+  border: 1.5px solid var(--line);
+  flex: 0 0 23px;
+  display: grid;
+  place-items: center;
+  background: var(--paper);
+}
+.mos-root .m3-chk.ok2 .bx {
+  background: var(--go);
+  border-color: var(--go);
+}
+.mos-root .m3-chk.ok2 .bx svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+  color: #fff;
+}
+.mos-root .m3-chk .tx2 {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.mos-root .m3-chk.ok2 .tx2 {
+  color: var(--mute);
+  text-decoration: line-through;
+}
+.mos-root .m3-chk .mt3 {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 2px;
+}
+
+/* The per-item camera button (copper outline) and the captured thumb cell. */
+.mos-root .m3-cam {
+  width: 44px;
+  height: 44px; /* touch target */
+  border-radius: 11px;
+  border: 1.5px solid var(--copper);
+  background: none;
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  cursor: pointer;
+  padding: 0;
+}
+.mos-root .m3-cam svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.7;
+  color: var(--copper);
+}
+.mos-root .m3-cam:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.mos-root .m3-thumbcell {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  flex: 0 0 44px;
+  background: linear-gradient(135deg, #3a2a1e, #7a5b3e) center/cover no-repeat;
+}
+
+/* The upload-queue card — s30 phone 2. */
+.mos-root .m3-card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  padding: 13px 15px;
+  margin-top: 14px;
+}
+.mos-root .m3-up-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+  align-items: baseline;
+}
+.mos-root .m3-up-head b {
+  font-weight: 700;
+}
+.mos-root .m3-up-head .n {
+  color: var(--mute);
+  font-size: 11.5px;
+}
+.mos-root .m3-up-meter {
+  margin: 9px 0 4px;
+}
+.mos-root .m3-file-row {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  padding: 10px 0;
+  min-height: 44px;
+}
+.mos-root .m3-file-row + .m3-file-row {
+  border-top: 1px solid var(--line-soft);
+}
+.mos-root .m3-file-row .th {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  flex: 0 0 44px;
+  background: var(--sand-2) center/cover no-repeat;
+}
+.mos-root .m3-file-row .t {
+  flex: 1;
+  min-width: 0;
+}
+.mos-root .m3-file-row .t b {
+  font-size: 13px;
+  font-weight: 700;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mos-root .m3-file-row .t .m {
+  font-size: 11.5px;
+  color: var(--mute);
+  margin-top: 2px;
+  line-height: 1.6;
+}
+.mos-root .m3-file-row .t .m.err {
+  color: var(--late);
+}
+.mos-root .m3-retry {
+  min-height: 44px; /* touch target */
+}
+
+/* The green «فُكّ تعطّله» card — s30 phone 2's closing loop. */
+.mos-root .m3-unblock {
+  background: color-mix(in srgb, var(--go) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--go) 34%, transparent);
+  border-radius: 13px;
+  padding: 13px 14px;
+  margin-top: 14px;
+}
+.mos-root .m3-unblock .h {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--go);
+}
+.mos-root .m3-unblock .h svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.4;
+  flex: 0 0 16px;
+}
+.mos-root .m3-unblock .b {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.7;
+}
+
+/* Shared button — the mock's .ph-btn (46px, radius 13). */
+.mos-root .m3-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 46px; /* touch target */
+  border-radius: 13px;
+  font-size: 14.5px;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0 16px;
+}
+.mos-root .m3-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+}
+.mos-root .m3-btn.p {
+  background: var(--copper);
+  border-color: var(--copper);
+  color: #fff9f2;
+}
+.mos-root .m3-btn.g {
+  background: var(--go);
+  border-color: var(--go);
+  color: #f4fbf7;
+}
+.mos-root .m3-btn.sm2 {
+  min-height: 44px; /* mock is 38px — lifted to the touch floor */
+  font-size: 13.5px;
+  border-radius: 11px;
+}
+.mos-root .m3-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Fixed CTA — «صوّري شيئًا إضافيًا». Sits clear of the mobile tab bar. */
+.mos-root .m3-fix {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 22px;
+  display: flex;
+  justify-content: center;
+  z-index: 31; /* above the tab bar (30), below drawers/sheets/modals */
+  padding: 0 16px;
+  pointer-events: none;
+}
+.mos-root .m3-fix .m3-btn {
+  pointer-events: auto;
+  flex: 1;
+  max-width: 398px;
+}
+
+@media (max-width: 760px) {
+  .mos-root .m3-fix {
+    bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+}
+
+/* ── s31 · publish assistant (phone-only) ─────────────────────────────── */
+
+@media (max-width: 760px) {
+  /* The trigger card at the top of the publish tab. */
+  .mos-root .m3-assist {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 56px; /* touch target */
+    background: color-mix(in srgb, var(--copper) 7%, var(--paper));
+    border: 1px solid color-mix(in srgb, var(--copper) 42%, transparent);
+    border-radius: 13px;
+    padding: 12px 14px;
+    cursor: pointer;
+    font: inherit;
+    text-align: start;
+    color: var(--ink);
+  }
+  .mos-root .m3-assist .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: 0 0 9px;
+  }
+  .mos-root .m3-assist .t {
+    flex: 1;
+    min-width: 0;
+  }
+  .mos-root .m3-assist .t b {
+    font-size: 14px;
+    font-weight: 700;
+    display: block;
+  }
+  .mos-root .m3-assist .t .s {
+    font-size: 11.5px;
+    color: var(--mute);
+    margin-top: 1px;
+    display: block;
+  }
+
+  /* Scrim + rounded-top sheet — the mock's .ph-scrim / .ph-sheet. */
+  .mos-root .m3-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(40, 28, 20, 0.42);
+    z-index: 63;
+    border: 0;
+    padding: 0;
+    cursor: default;
+  }
+  .mos-root .m3-sheet {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 64;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-bottom: 0;
+    border-radius: 22px 22px 0 0;
+    padding: 9px 18px calc(20px + env(safe-area-inset-bottom));
+    box-shadow: 0 -14px 40px rgba(50, 32, 20, 0.22);
+    max-height: 86vh;
+    overflow-y: auto;
+    animation: m3-sheet-up 0.18s ease;
+  }
+  @keyframes m3-sheet-up {
+    from { transform: translateY(26px); opacity: 0.6; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  .mos-root .m3-grab {
+    width: 38px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--sand);
+    margin: 0 auto 14px;
+  }
+  .mos-root .m3-sheet-title {
+    font-family: var(--serif);
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .mos-root .m3-sheet-sub {
+    font-size: 12.5px;
+    color: var(--mute);
+    margin-top: 4px;
+    line-height: 1.7;
+  }
+
+  /* The approved-file hero thumb — «معتمد». */
+  .mos-root .m3-thumb {
+    width: 100%;
+    height: 132px;
+    border-radius: 12px;
+    margin: 12px 0 2px;
+    position: relative;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(140deg, #6b4226, #d9b57f);
+    overflow: hidden;
+  }
+  .mos-root .m3-thumb img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .mos-root .m3-thumb .lb {
+    position: relative;
+    font-size: 11.5px;
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 700;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  }
+
+  /* Numbered steps — the mock's .ph-step / .n6 / .on2 / .did. */
+  .mos-root .m3-step {
+    display: flex;
+    gap: 11px;
+    align-items: flex-start;
+    padding: 11px 0;
+  }
+  .mos-root .m3-step .n6 {
+    width: 23px;
+    height: 23px;
+    border-radius: 50%;
+    flex: 0 0 23px;
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--sand-2);
+    border: 1px solid var(--line);
+    color: var(--mute);
+  }
+  .mos-root .m3-step .n6 svg {
+    width: 11px;
+    height: 11px;
+    stroke-width: 3;
+  }
+  .mos-root .m3-step.on2 .n6 {
+    background: var(--copper);
+    border-color: var(--copper);
+    color: #fff9f2;
+  }
+  .mos-root .m3-step.did .n6 {
+    background: color-mix(in srgb, var(--go) 16%, transparent);
+    border-color: var(--go);
+    color: var(--go);
+  }
+  .mos-root .m3-step .st {
+    font-size: 13.5px;
+    font-weight: 700;
+  }
+  .mos-root .m3-step .sm {
+    font-size: 12.5px;
+    color: var(--mute);
+    margin-top: 1px;
+    line-height: 1.65;
+  }
+
+  /* Caption box + the approved-file row. */
+  .mos-root .m3-capbox {
+    background: var(--sand-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 13px;
+    font-size: 12.5px;
+    line-height: 1.85;
+    white-space: pre-wrap;
+    margin-top: 7px;
+  }
+  .mos-root .m3-capbox.empty {
+    color: var(--mute);
+  }
+  .mos-root .m3-filebtn {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    width: 100%;
+    min-height: 56px; /* touch target */
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    padding: 8px 10px;
+    cursor: pointer;
+    font: inherit;
+    text-align: start;
+    color: var(--ink);
+    margin-top: 7px;
+  }
+  .mos-root .m3-filebtn:disabled {
+    cursor: default;
+    opacity: 0.7;
+  }
+  .mos-root .m3-filebtn .th {
+    width: 40px;
+    height: 40px;
+    border-radius: 9px;
+    flex: 0 0 40px;
+    background: var(--sand-2) center/cover no-repeat;
+  }
+  .mos-root .m3-filebtn .t {
+    flex: 1;
+    min-width: 0;
+  }
+  .mos-root .m3-filebtn b {
+    font-size: 13px;
+    font-weight: 700;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mos-root .m3-filebtn .s {
+    font-size: 11px;
+    color: var(--mute);
+    margin-top: 1px;
+    display: block;
+  }
+
+  /* Confirm stage — link field, note, info box, actions. */
+  .mos-root .m3-lbl {
+    font-size: 11px;
+    color: var(--mute);
+    font-weight: 700;
+    margin: 16px 0 7px;
+  }
+  .mos-root .m3-note {
+    font-size: 11.5px;
+    color: var(--mute);
+    margin-top: 7px;
+    line-height: 1.7;
+  }
+  .mos-root .m3-infobox {
+    background: var(--sand-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 11px 13px;
+    margin-top: 14px;
+    font-size: 12px;
+    color: var(--ink-2);
+    line-height: 1.7;
+  }
+  .mos-root .m3-sheet-actions {
+    display: flex;
+    gap: 9px;
+    margin-top: 15px;
+  }
+  .mos-root .m3-sheet-actions .m3-btn {
+    flex: 1;
+  }
+  .mos-root .m3-sheet-actions .m3-btn.w0 {
+    flex: 0 0 112px;
+  }
+}
