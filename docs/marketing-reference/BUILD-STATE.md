@@ -142,3 +142,49 @@ User switched the session to claude-opus-4-8 and asked all future agents to run 
 launched just before the switch (ac2970/a3c2d4/ab3360/a17ae0) finish on Fable 5 — left
 alone rather than killed mid-file. Kimi pipeline (kimi-code.sh) is a separate budget,
 unaffected.
+
+## DEFINITIVE SWEEP + DIAGNOSIS (2026-08-03) — all 46 screens built & measured
+Full app built (desktop + mobile), build green. SSIM map: 106 scored 0.47-0.89,
+18 no-score (capture-setup gaps: s11/s12/s17/s40 tab-state recipes, mobile
+phone-subframe recipes). NONE at the 0.98 gate yet.
+DIAGNOSIS (overlay zoom, s01): LAYOUTS ARE PIXEL-ALIGNED — cards/table/rail/
+borders + digits overlay as single crisp images. Residual gap is (1) sub-pixel
+text rendering (live React+mos.css vs the static mockup HTML/CSS — two CSS
+implementations of one design differ at the sub-pixel level everywhere text is
+dense), (2) documented mock-vs-data divergences (RECONCILIATION: badge counts,
+some sublabels the mockups contradict), (3) minor per-screen spacing/color.
+Tested + REJECTED the single-systematic-fix hypothesis: adding Noto Naskh (was
+missing vs reference) moved s01 0.767->0.768 — kept for parity, not a lever.
+OPEN QUESTION FOR USER: 0.98 SSIM between a React reimplementation and a static
+HTML artifact is an extremely tight bar; text-dense screens may cap ~0.90-0.95
+even at character-perfect parity. Polish grind (46 screens x rounds, Opus) is
+the largest remaining spend. Decision needed: chase 0.98 hard, or set the gate
+at an achievable per-screen ceiling with human sign-off on the overlay.
+
+## OPTION-A DONE + DEPLOY PLAN (2026-08-03)
+Real fixes shipped: 48h stalled cutoff (api) + notification trim (fixtures) —
+verified on branch (stalled 8->4, unread 66->0, s01 0.767->0.792). The other
+two "bugs" were interactive-tab artifacts (wrong width = mobile branch showed
+short labels; real clock = +5d ages), NOT real — the frozen-clock DESKTOP
+capture was already correct. Desktop labels (بانتظارك أنت / ٩ مجدولة · ٣) already
+right in code. Deep cosmetic SSIM grind DEFERRED per user (gap = sub-pixel
+React-vs-static-HTML rendering, invisible to a person). B6 bilingual overlay:
+still PENDING (not in option-a scope; journey 9 = documented partial).
+
+Journeys (E): running on an Opus agent (scripts/mos-journeys.mjs).
+
+DEPLOY (F) — NOT YET EXECUTED, needs explicit go (irreversible prod cutover):
+- Branch is 45 commits ahead; origin/main DIVERGED (a 2026-08-03 whatsapp
+  migration landed from another session) — MUST rebase onto origin/main first.
+- 13 migrations reach prod incl. 01 which DROPS mos_workflows/steps/tasks/
+  role_grants and rebuilds the canonical engine. PROD HAS REAL (small) DATA:
+  3 content, 4 campaigns, 5 tasks, 2 workflows, 3 role_grants, 2 assets, 4 types.
+  Migration 01's data-migration was validated on branch FIXTURES, not prod's
+  exact rows — re-validate against prod before/at apply.
+- Migrations reach prod MANUALLY (Supabase MCP apply_migration), NOT via Vercel.
+  Order: apply migrations to prod FIRST, then push code to main (else the shipped
+  app expects an engine the DB doesn't have yet). Coordinate tightly.
+- Cutover steps: rebase -> full build -> apply 01..11 to prod (verify 01's
+  validation block passes on prod data) -> push HEAD:main -> verify newest READY
+  Vercel SHA -> live smoke as each role -> final report -> delete branch
+  fc7fc812 / czdznzadjqzajrnjoafi.
