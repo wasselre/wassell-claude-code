@@ -59,7 +59,7 @@
  *   TTL + watchdog are the recovery path; on Linux/Fly (the production target)
  *   the container runtime delivers the signal and the graceful path runs.
  */
-import { createClient } from '@supabase/supabase-js';
+import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -99,7 +99,7 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
   console.error('[runner] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing — check .env.local');
   process.exit(1);
 }
-const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+const supa = makeIdentifiedClient('script:claude-study-runner', SUPABASE_URL, SERVICE_KEY);
 
 // ── singleton lease + graceful shutdown state ───────────────────────────────
 // Which LANE this process serves. Each lane is its own singleton — exactly one

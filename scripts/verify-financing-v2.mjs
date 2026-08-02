@@ -10,7 +10,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { createClient } from '@supabase/supabase-js';
+import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
 import { runFinancing } from '../src/lib/financing/engine.ts';
 
 function readEnv(file) {
@@ -27,10 +27,10 @@ for (const f of [path.join(process.cwd(), '.env.local'),
                  'C:/Users/rayan/Claude/wassell-claude-code/.env.local',
                  'C:/Users/rayan/Claude/wassell-claude-code/.env']) env = { ...readEnv(f), ...env };
 
-const db = createClient(
+const db = makeIdentifiedClient(
+  'script:verify-financing-v2',
   process.env.SUPABASE_URL ?? env.SUPABASE_URL ?? env.VITE_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false } },
 );
 
 let pass = 0, fail = 0;
