@@ -1256,6 +1256,16 @@ VALUES (${q(s.client_record_id)}, ${s.execution_id ? q(s.execution_id) : 'NULL'}
     console.log(`[ok] ${stamps.length} attribution stamps → C-002 (mid-June, CRM rows in window)`);
   }
 
+  /* -- 10.5 mark historical notifications read ------------------------- */
+  // Driving 25 items through their workflow steps emits a task_assigned
+  // notification at every hop — ~66 in-app rows, which lit the bell badge at
+  // «٦٦». That is build noise, not a demo state a person would land in. Mark
+  // everything read, THEN fire the one reminder below so the bell shows a
+  // realistic single unread. (read_at uses SQL now() — Postgres real time, not
+  // the frozen capture clock; the badge is a count, unaffected by the clock.)
+  await exec(`UPDATE public.notifications SET read_at = now() WHERE read_at IS NULL;`);
+  console.log('[ok] historical notifications marked read (bell reset before the reminder)');
+
   /* -- 11. one manual reminder (V-004 is the stalled item, s35) -------- */
   if (createdRefs.has('V-004')) {
     try {

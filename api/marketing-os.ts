@@ -1703,9 +1703,14 @@ export default async function handler(req: Request): Promise<Response> {
           mine,
           late,
           // Oldest-touched open work first — the bottleneck, by definition.
+          // «متوقف — لم يتحرك منذ ٤٨ ساعة»: only items untouched for 48h count
+          // as stalled. Without this every in-production item showed, including
+          // ones that moved today. nowIso is the frozen epoch on the capture
+          // server and real now in prod — correct in both.
           sb.from('mos_content_v')
             .select('id, ref, title, status_key, current_step_label_ar, current_step_label_en, owner_role, current_task_due_at, updated_at, content_type_key')
             .is('archived_at', null).not('status_key', 'in', '("draft","done")')
+            .lt('updated_at', new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString())
             .order('updated_at', { ascending: true }).limit(8),
           sb.from('mos_publication_v')
             .select('id, content_id, platform, status, scheduled_at, published_at')
