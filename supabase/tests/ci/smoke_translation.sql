@@ -137,3 +137,31 @@ BEGIN
 
   RAISE NOTICE 'W1 smoke 8 (row ids): passed';
 END $$;
+
+-- 9) Durable dirty state under queue backpressure (live-gap fix 2026-08-02):
+--    a NEVER-translated record saved while the queue is at the depth cap must
+--    still leave a stub unit for reconcile — the signal is never lost.
+DO $$
+DECLARE v_model uuid; v_rec uuid; v_stub record;
+BEGIN
+  SELECT m.id INTO v_model FROM models m WHERE m.name = 'smoke_projects';
+  UPDATE translation_settings SET max_queue_depth = 0 WHERE id;   -- force refusal
+  INSERT INTO records (model_id, data) VALUES (v_model, '{"project_analysis":"نص جديد لم يُترجم قط"}')
+  RETURNING id INTO v_rec;
+  IF EXISTS (SELECT 1 FROM translation_jobs WHERE entity_id = v_rec) THEN
+    RAISE EXCEPTION 'SMOKE 9 failed: job enqueued despite depth cap 0';
+  END IF;
+  SELECT * INTO v_stub FROM translation_units
+  WHERE resource_kind='record' AND entity_id = v_rec AND field_path = 'project_analysis';
+  IF NOT FOUND OR NOT v_stub.dirty THEN
+    RAISE EXCEPTION 'SMOKE 9b failed: no dirty stub unit for the refused record';
+  END IF;
+  UPDATE translation_settings SET max_queue_depth = 500 WHERE id;
+  IF (SELECT translation_reconcile(50)) < 1 THEN
+    RAISE EXCEPTION 'SMOKE 9c failed: reconcile did not recover the stub';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM translation_jobs WHERE entity_id = v_rec AND status = 'queued') THEN
+    RAISE EXCEPTION 'SMOKE 9d failed: recovered job missing';
+  END IF;
+  RAISE NOTICE 'W3 smoke 9 (durable dirty under backpressure): passed';
+END $$;

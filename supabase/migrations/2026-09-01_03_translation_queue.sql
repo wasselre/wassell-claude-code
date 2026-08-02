@@ -84,12 +84,31 @@ BEGIN
       updated_at = now();
   END IF;
 
+  -- DURABLE dirty state (live-gap fix 2026-08-02): upsert STUB units for the
+  -- changed scalar policy paths — a depth-cap refusal on a never-translated
+  -- record must still leave a durable signal for reconcile (REV 3 blocker 8).
+  -- The worker overwrites the stub's detection fields on first processing.
+  INSERT INTO translation_units (resource_kind, entity_id, field_path, org_id, model_id,
+    source_lang, source_rev, generation, dirty, next_retry_at)
+  SELECT 'record', NEW.id, p.field_path, '00000000-0000-0000-0000-000000000001', NEW.model_id,
+    'und', 'stub', 1, true, now()
+  FROM translation_field_policies p
+  WHERE p.resource_kind='record' AND p.scope_id = NEW.model_id
+    AND p.classification_status='confirmed' AND p.treatment <> 'skip'
+    AND p.field_path !~ '\[' AND p.field_path NOT LIKE 'pair:%'
+    AND p.field_path = ANY (v_changed)
+    AND COALESCE(btrim(NEW.data->>p.field_path),'') <> ''
+  ON CONFLICT (resource_kind, entity_id, field_path) DO UPDATE SET
+    generation = translation_units.generation + 1, dirty = true,
+    next_retry_at = now(), updated_at = now();
+
+  -- Element-path units (worker-managed) still bump on their parent's change —
   -- SYNCHRONOUS stale-out (REV 4 §B4): from this commit no reader/search can
   -- serve the previous generation's translations for the changed fields.
   UPDATE translation_units u SET
     generation = u.generation + 1, dirty = true, next_retry_at = now(), updated_at = now()
   WHERE u.resource_kind = 'record' AND u.entity_id = NEW.id
-    AND split_part(u.field_path,'[',1) = ANY (v_changed);
+    AND u.field_path ~ '\[' AND split_part(u.field_path,'[',1) = ANY (v_changed);
   UPDATE translation_variants v SET display_text = NULL, display_json = NULL,
     active_revision_id = NULL, state = 'pending'
   WHERE v.resource_kind = 'record' AND v.entity_id = NEW.id
