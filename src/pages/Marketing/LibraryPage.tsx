@@ -1,23 +1,24 @@
 /**
- * Asset library — design screens 16, 22 and 41.
+ * Asset library — design screen 16 (مكتبة المواد).
  *
  * Material is an object in its own right, not a file bolted to one post. That
- * is what makes "shot in March, used twice, never used" answerable — and screen
- * 41 (unused material) is a LEFT JOIN on the link table rather than a counter
- * anyone maintains.
+ * is what makes "shot in March, used twice, never used" answerable — usage is
+ * a LEFT JOIN on the link table rather than a counter anyone maintains, and
+ * the «لم تُستخدم قط» banner is that JOIN rendered as a number.
+ *
+ * Cards open the asset page (screen 22, /m/library/:assetId); the unused
+ * banner's CTA opens screen 41 (/m/library/unused). Both routes land with
+ * their own screens — link anyway per the design.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAppStore } from '@/stores/appStore';
 import {
-  ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosAsset, MosAssetLink,
-  archiveAsset, fetchAssets, fetchContentList, MosContentRow,
+  ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosAsset, MosAssetLink, fetchAssets,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, LoadError, Modal, PageHead, ReadField, Skeleton } from './components/kit';
-import { NewAssetModal } from './components/MaterialsTab';
-import { IconLibrary, IconPlus, IconSearch, IconTrash } from './components/icons';
-import { num, shortDate } from './lib/format';
+import { Empty, LoadError, PageHead, Skeleton } from './components/kit';
+import { IconSearch } from './components/icons';
+import { num, shortDate, toArabicDigits } from './lib/format';
 import { formatBytes } from './lib/upload';
 
 const KIND_BG: Record<string, string> = {
@@ -28,133 +29,264 @@ const KIND_BG: Record<string, string> = {
   document: 'linear-gradient(135deg,#5A6570,#8A7F72)',
 };
 
+/** Section order follows the mockup: الفيديو first, then الصور, then the rest. */
+const KIND_ORDER = ['video', 'photo', 'design', 'audio', 'document'];
+
+/** Filter chips are plural («صور»); section titles are definite («الصور»). */
+const KIND_SECTION: Record<string, { ar: string; en: string; unitAr: string; unitEn: string; chipAr: string; chipEn: string }> = {
+  video:    { ar: 'الفيديو',   en: 'Videos',    unitAr: 'مقطعًا',  unitEn: 'clips',    chipAr: 'فيديو',   chipEn: 'Videos' },
+  photo:    { ar: 'الصور',     en: 'Photos',    unitAr: 'صورة',    unitEn: 'photos',   chipAr: 'صور',     chipEn: 'Photos' },
+  design:   { ar: 'التصاميم',  en: 'Designs',   unitAr: 'تصميمًا', unitEn: 'designs',  chipAr: 'تصاميم',  chipEn: 'Designs' },
+  audio:    { ar: 'الصوتيات',  en: 'Audio',     unitAr: 'مقطعًا',  unitEn: 'tracks',   chipAr: 'صوتيات',  chipEn: 'Audio' },
+  document: { ar: 'المستندات', en: 'Documents', unitAr: 'مستندًا', unitEn: 'documents', chipAr: 'مستندات', chipEn: 'Documents' },
+};
+
+/** mm:ss with the screen's digit shape — Arabic-Indic in Arabic («٠٠:٢٢»). */
+function duration(seconds: number, isAr: boolean): string {
+  const s = Math.max(0, Math.round(seconds));
+  const mm = Math.floor(s / 60).toString().padStart(2, '0');
+  const ss = (s % 60).toString().padStart(2, '0');
+  const out = `${mm}:${ss}`;
+  return isAr ? toArabicDigits(out) : out;
+}
+
 export default function LibraryPage() {
   const { isAr, can, projectName, projects } = useWorkspace();
   const navigate = useNavigate();
-  const addToast = useAppStore((s) => s.addToast);
 
   const [assets, setAssets] = useState<MosAsset[]>([]);
   const [links, setLinks] = useState<MosAssetLink[]>([]);
-  const [content, setContent] = useState<MosContentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState('');
   const [projectId, setProjectId] = useState('');
+  const [tag, setTag] = useState('');
   const [unusedOnly, setUnusedOnly] = useState(false);
   const [q, setQ] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [detail, setDetail] = useState<MosAsset | null>(null);
+  const [view, setView] = useState<'grid' | 'list'>('grid');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [a, c] = await Promise.all([
-        fetchAssets({ kind: kind || undefined, project_id: projectId || undefined }),
-        fetchContentList({ limit: 500 }),
-      ]);
+      const a = await fetchAssets({ limit: 500 });
       setAssets(a.assets);
       setLinks(a.links);
-      setContent(c.content);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [kind, projectId]);
+  }, []);
 
   useEffect(() => { void load(); }, [load]);
 
+  /** asset_id → number of content items using it. Unused is a fact, not a counter. */
   const useCount = useMemo(() => {
     const m = new Map<string, number>();
     for (const l of links) m.set(l.asset_id, (m.get(l.asset_id) ?? 0) + 1);
     return m;
   }, [links]);
 
+  /** Assets linked as a content item's final cut wear «نسخة معتمدة». */
+  const finalSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const l of links) if (l.role === 'final') s.add(l.asset_id);
+    return s;
+  }, [links]);
+
+  /** Parent asset → children count, for the «مجموعة ن» badge. */
+  const childCount = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of assets) {
+      if (a.parent_asset_id) m.set(a.parent_asset_id, (m.get(a.parent_asset_id) ?? 0) + 1);
+    }
+    return m;
+  }, [assets]);
+
+  const allTags = useMemo(() => {
+    const s = new Set<string>();
+    for (const a of assets) for (const t of a.tags ?? []) s.add(t);
+    return Array.from(s).sort();
+  }, [assets]);
+
   const term = q.trim().toLowerCase();
   const filtered = assets.filter((a) => {
+    if (kind && a.kind !== kind) return false;
+    if (projectId && a.project_id !== projectId) return false;
+    if (tag && !(a.tags ?? []).includes(tag)) return false;
     if (unusedOnly && (useCount.get(a.id) ?? 0) > 0) return false;
-    if (term && !a.title.toLowerCase().includes(term) && !(a.ref ?? '').toLowerCase().includes(term)) return false;
+    if (term) {
+      const hay = `${a.title} ${a.ref ?? ''} ${(a.tags ?? []).join(' ')} ${projectName(a.project_id)}`.toLowerCase();
+      if (!hay.includes(term)) return false;
+    }
     return true;
   });
 
-  const unusedCount = assets.filter((a) => (useCount.get(a.id) ?? 0) === 0).length;
+  const unusedInView = filtered.filter((a) => (useCount.get(a.id) ?? 0) === 0).length;
 
-  const remove = async (id: string): Promise<void> => {
-    try {
-      await archiveAsset(id);
-      setAssets((cur) => cur.filter((a) => a.id !== id));
-      setDetail(null);
-      addToast(isAr ? 'أُرشفت المادة.' : 'Material archived.', 'success');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
+  /** Group by project × kind, exactly the mockup's sections. Unfiled («بدون مشروع») last. */
+  const groups = useMemo(() => {
+    const byKey = new Map<string, MosAsset[]>();
+    for (const a of filtered) {
+      const k = `${a.project_id ?? ''}::${a.kind}`;
+      const arr = byKey.get(k);
+      if (arr) arr.push(a); else byKey.set(k, [a]);
     }
+    const projectOrder: string[] = [];
+    for (const p of projects) projectOrder.push(p.id);
+    for (const a of filtered) {
+      const pid = a.project_id ?? '';
+      if (pid && !projectOrder.includes(pid)) projectOrder.push(pid);
+    }
+    projectOrder.push(''); // unfiled last
+    const out: { projectId: string; kind: string; items: MosAsset[] }[] = [];
+    for (const pid of projectOrder) {
+      for (const k of KIND_ORDER) {
+        const items = byKey.get(`${pid}::${k}`);
+        if (items && items.length > 0) out.push({ projectId: pid, kind: k, items });
+      }
+    }
+    return out;
+  }, [filtered, projects]);
+
+  const projectCount = useMemo(() => {
+    const s = new Set<string>();
+    for (const a of assets) if (a.project_id) s.add(a.project_id);
+    return s.size;
+  }, [assets]);
+
+  const totalBytes = useMemo(
+    () => assets.reduce((sum, a) => sum + (a.size_bytes ?? 0), 0),
+    [assets],
+  );
+
+  /** The thumb badge, in the mockup's priority: unused → approved → set → kind/source. */
+  const badgeFor = (a: MosAsset): { text: string; bad: boolean } => {
+    const uses = useCount.get(a.id) ?? 0;
+    if (uses === 0) return { text: isAr ? 'لم تُستخدم' : 'Never used', bad: true };
+    if (finalSet.has(a.id)) return { text: isAr ? 'نسخة معتمدة' : 'Approved cut', bad: false };
+    const kids = childCount.get(a.id) ?? 0;
+    if (kids > 0) return { text: isAr ? `مجموعة ${num(kids, true)}` : `Set of ${kids}`, bad: false };
+    if (a.kind === 'video') return { text: isAr ? 'فيديو خام' : 'Raw video', bad: false };
+    const src = ASSET_SOURCE_LABELS[a.source];
+    return { text: (isAr ? src?.ar : src?.en) ?? a.source, bad: false };
   };
+
+  /** The meta line under the title: «مستخدمة في ٥ · ١٢ مارس». */
+  const metaFor = (a: MosAsset): string => {
+    const uses = useCount.get(a.id) ?? 0;
+    const usage = uses === 0
+      ? isAr ? 'لم تُستخدم' : 'never used'
+      : isAr
+        ? a.kind === 'photo' ? `مستخدمة في ${num(uses, true)}` : `مستخدم في ${num(uses, true)}`
+        : `used in ${uses}`;
+    return a.shot_on ? `${usage} · ${shortDate(a.shot_on, isAr)}` : usage;
+  };
+
+  const uploadIcon = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M12 16V4M7 9l5-5 5 5M4 20h16" />
+    </svg>
+  );
 
   return (
     <>
       <PageHead
         title={isAr ? 'مكتبة المواد' : 'Asset library'}
         sub={isAr
-          ? `${num(assets.length, true)} مادة · ${num(unusedCount, true)} لم تُستخدم بعد`
-          : `${assets.length} items · ${unusedCount} never used`}
+          ? `${num(assets.length, true)} مادة · ${num(projectCount, true)} مشروعًا · ${toArabicDigits(formatBytes(totalBytes, true))}`
+          : `${num(assets.length, false)} items · ${num(projectCount, false)} projects · ${formatBytes(totalBytes, false)}`}
       >
         <div className="search">
           <IconSearch />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={isAr ? 'ابحث بالاسم أو الرقم' : 'Search by name or ref'}
+            placeholder={isAr ? 'ابحث بالمشروع أو الوسم' : 'Search by project or tag'}
           />
         </div>
-        <button type="button" className="btn" onClick={() => navigate('/m/shoots')}>
-          {isAr ? 'طلبات التصوير' : 'Shoot requests'}
-        </button>
+        <div className="seg" role="group" aria-label={isAr ? 'طريقة العرض' : 'View'}>
+          <button type="button" className={view === 'grid' ? 'on' : ''} onClick={() => setView('grid')}>
+            {isAr ? 'شبكة' : 'Grid'}
+          </button>
+          <button type="button" className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>
+            {isAr ? 'قائمة' : 'List'}
+          </button>
+        </div>
         {can('manage_assets') && (
-          <>
-            {/* Links are the exception; FILES are the library. Upload is primary. */}
-            <button type="button" className="btn" onClick={() => setAdding(true)}>
-              {isAr ? 'إضافة رابط' : 'Add a link'}
-            </button>
-            <button type="button" className="btn btn-p" onClick={() => navigate('/m/library/upload')}>
-              <IconPlus />
-              {isAr ? 'رفع ملفات' : 'Upload files'}
-            </button>
-          </>
+          <button type="button" className="btn btn-p" onClick={() => navigate('/m/library/upload')}>
+            {uploadIcon}
+            {isAr ? 'رفع' : 'Upload'}
+          </button>
         )}
       </PageHead>
 
       <div className="body">
         <div className="filt">
+          {KIND_ORDER.filter((k) => KIND_SECTION[k]).map((k) => (
+            <button
+              key={k}
+              type="button"
+              className={`fbtn${kind === k ? ' on' : ''}`}
+              onClick={() => setKind((cur) => (cur === k ? '' : k))}
+            >
+              {isAr ? KIND_SECTION[k]?.chipAr : KIND_SECTION[k]?.chipEn}
+              {kind === k && <span className="x">×</span>}
+            </button>
+          ))}
           <button
             type="button"
             className={`fbtn${unusedOnly ? ' on' : ''}`}
             onClick={() => setUnusedOnly((v) => !v)}
           >
-            {isAr ? 'لم تُستخدم' : 'Never used'}
+            {isAr ? 'غير مستخدمة' : 'Unused'}
             {unusedOnly && <span className="x">×</span>}
           </button>
-          <select className="fsel" value={kind} onChange={(e) => setKind(e.target.value)}>
-            <option value="">{isAr ? 'النوع: الكل' : 'Kind: all'}</option>
-            {Object.keys(ASSET_KIND_LABELS).map((k) => (
-              <option key={k} value={k}>{isAr ? ASSET_KIND_LABELS[k]?.ar : ASSET_KIND_LABELS[k]?.en}</option>
-            ))}
-          </select>
           <select className="fsel" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
             <option value="">{isAr ? 'المشروع: الكل' : 'Project: all'}</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>{p.project_name ?? p.id.slice(0, 8)}</option>
             ))}
           </select>
+          {allTags.length > 0 && (
+            <select className="fsel fsel-dashed" value={tag} onChange={(e) => setTag(e.target.value)}>
+              <option value="">{isAr ? '+ وسم' : '+ tag'}</option>
+              {allTags.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          )}
           <span style={{ marginInlineStart: 'auto', fontSize: 11.5, color: 'var(--mute)' }}>
             {isAr
-              ? `${num(filtered.length, true)} من ${num(assets.length, true)}`
-              : `${filtered.length} of ${assets.length}`}
+              ? `${num(filtered.length, true)} مادة${projectId ? ` في ${projectName(projectId)}` : ''} · ${num(unusedInView, true)} لم تُستخدم قط`
+              : `${num(filtered.length, false)} items${projectId ? ` in ${projectName(projectId)}` : ''} · ${num(unusedInView, false)} never used`}
           </span>
         </div>
 
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
         {loading && assets.length === 0 && <Skeleton rows={5} />}
+
+        {!loading && unusedInView > 0 && !error && (
+          <div className="unused-banner">
+            <div>
+              <div className="lbl">{isAr ? 'لم تُستخدم قط' : 'Never used'}</div>
+              <div className="ub-n">{num(unusedInView, isAr)}</div>
+            </div>
+            <div className="ub-t">
+              {isAr
+                ? `${num(unusedInView, true)} مادة${projectId ? ' في هذا المشروع' : ''} لم يشر إليها أي محتوى قط. إما مادة تستحق الاستخدام، أو تصوير لم يكن ضروريًا — وهو رقم لم تستطع شجرة المجلدات إظهاره أبدًا.`
+                : `${num(unusedInView, false)} items${projectId ? ' in this project' : ''} no content has ever referenced. Either material worth using, or a shoot that wasn't needed — a number a folder tree could never show.`}
+            </div>
+            <button
+              type="button"
+              className="btn btn-p btn-sm"
+              onClick={() => navigate('/m/library/unused')}
+            >
+              {isAr ? 'مراجعة غير المستخدمة' : 'Review unused'}
+            </button>
+          </div>
+        )}
 
         {!loading && filtered.length === 0 && !error && (
           <Empty
@@ -169,181 +301,94 @@ export default function LibraryPage() {
           >
             {assets.length === 0 && can('manage_assets') && (
               <button type="button" className="btn btn-p" onClick={() => navigate('/m/library/upload')}>
-                <IconPlus />
+                {uploadIcon}
                 {isAr ? 'رفع أول الملفات' : 'Upload the first files'}
               </button>
             )}
           </Empty>
         )}
 
-        {filtered.length > 0 && (
-          <div className="agrid">
-            {filtered.map((a) => {
-              const uses = useCount.get(a.id) ?? 0;
-              return (
-                <button key={a.id} type="button" className="ass" onClick={() => setDetail(a)}>
-                  <div className="im" style={{ background: KIND_BG[a.kind] ?? 'var(--sand)' }}>
-                    {a.thumb_url
-                      ? <img src={a.thumb_url} alt="" />
-                      : (isAr ? ASSET_KIND_LABELS[a.kind]?.ar : ASSET_KIND_LABELS[a.kind]?.en) ?? a.kind}
-                    <span className="bd badge">
-                      {uses === 0
-                        ? isAr ? 'لم تُستخدم' : 'unused'
-                        : isAr ? `استُخدمت ${num(uses, true)}` : `used ${uses}×`}
-                    </span>
-                  </div>
-                  <div className="mt2">
-                    <b>{a.title}</b>
-                    <span className="ltr">{a.ref}</span>
-                    {a.shot_on && <> · {shortDate(a.shot_on, isAr)}</>}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {adding && (
-        <NewAssetModal
-          isAr={isAr}
-          projectId={projectId || null}
-          onClose={() => setAdding(false)}
-          onCreated={(asset) => { setAssets((cur) => [asset, ...cur]); setAdding(false); }}
-        />
-      )}
-
-      {detail && (
-        <Modal
-          title={detail.title}
-          sub={detail.ref ?? undefined}
-          onClose={() => setDetail(null)}
-          wide
-          footer={
-            can('manage_assets') ? (
-              <>
-                <span className="note">
-                  {isAr
-                    ? 'الأرشفة تُخفي المادة دون كسر سجل ما استُخدم فيها.'
-                    : 'Archiving hides the material without breaking the record of what used it.'}
+        {!loading && groups.map((g) => {
+          const sec = KIND_SECTION[g.kind];
+          const projLabel = g.projectId
+            ? projectName(g.projectId)
+            : isAr ? 'بدون مشروع' : 'No project';
+          return (
+            <div key={`${g.projectId}-${g.kind}`} className="agroup">
+              <div className="lbl" style={{ margin: '4px 0 9px' }}>
+                {projLabel}
+                {' · '}
+                {isAr ? sec?.ar : sec?.en}
+                {' '}
+                <span style={{ fontWeight: 400, color: 'var(--mute)' }}>
+                  — {isAr
+                    ? `${num(g.items.length, true)} ${sec?.unitAr ?? ''}`
+                    : `${num(g.items.length, false)} ${sec?.unitEn ?? ''}`}
                 </span>
-                <button type="button" className="btn btn-late" onClick={() => void remove(detail.id)}>
-                  <IconTrash />
-                  {isAr ? 'أرشفة' : 'Archive'}
-                </button>
-              </>
-            ) : undefined
-          }
-        >
-          {/* The preview knows the medium: video plays, audio plays, an image
-              shows, a document opens. A grey block is the last resort. */}
-          {detail.kind === 'video' && detail.url ? (
-            <video
-              src={detail.url}
-              controls
-              preload="metadata"
-              style={{ width: '100%', maxHeight: 320, borderRadius: 10, background: '#000' }}
-            />
-          ) : detail.kind === 'audio' && detail.url ? (
-            <div
-              style={{
-                borderRadius: 10, background: KIND_BG.audio, padding: '26px 16px',
-                display: 'grid', gap: 12, placeItems: 'center',
-              }}
-            >
-              <audio src={detail.url} controls style={{ width: '100%' }} />
-            </div>
-          ) : (
-            <div
-              className="im"
-              style={{
-                height: 180,
-                borderRadius: 10,
-                background: KIND_BG[detail.kind] ?? 'var(--sand)',
-                display: 'grid',
-                placeItems: 'center',
-                color: '#fff',
-                overflow: 'hidden',
-              }}
-            >
-              {detail.thumb_url
-                ? <img src={detail.thumb_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : <IconLibrary style={{ width: 28, height: 28 }} />}
-            </div>
-          )}
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 26px' }}>
-            <ReadField label={isAr ? 'النوع' : 'Kind'}>
-              {(isAr ? ASSET_KIND_LABELS[detail.kind]?.ar : ASSET_KIND_LABELS[detail.kind]?.en) ?? detail.kind}
-            </ReadField>
-            <ReadField label={isAr ? 'المصدر' : 'Source'}>
-              {(isAr ? ASSET_SOURCE_LABELS[detail.source]?.ar : ASSET_SOURCE_LABELS[detail.source]?.en) ?? detail.source}
-            </ReadField>
-            <ReadField label={isAr ? 'المشروع' : 'Project'}>
-              {detail.project_id ? projectName(detail.project_id) : '—'}
-            </ReadField>
-            <ReadField label={isAr ? 'تاريخ التصوير' : 'Shot on'}>{shortDate(detail.shot_on, isAr)}</ReadField>
-            <ReadField label={isAr ? 'الوسوم' : 'Tags'}>
-              {detail.tags.length > 0
-                ? detail.tags.map((t) => <span key={t} className="tag" style={{ marginInlineEnd: 5 }}>{t}</span>)
-                : '—'}
-            </ReadField>
-            <ReadField label={isAr ? 'الملف' : 'The file'}>
-              {detail.size_bytes ? (
-                <>
-                  <span className="ltr">{detail.original_name ?? ''}</span>
-                  {' · '}{formatBytes(detail.size_bytes, isAr)}
-                  {detail.url && (
-                    <>
-                      {' · '}
-                      <a href={detail.url} target="_blank" rel="noreferrer">{isAr ? 'فتح' : 'Open'}</a>
-                    </>
-                  )}
-                </>
-              ) : detail.url ? (
-                <a href={detail.url} target="_blank" rel="noreferrer" className="ltr">
-                  {isAr ? 'رابط خارجي — فتح' : 'External link — open'}
-                </a>
-              ) : '—'}
-            </ReadField>
-            {detail.usage_rights && (
-              <ReadField label={isAr ? 'حقوق الاستخدام' : 'Usage rights'}>{detail.usage_rights}</ReadField>
-            )}
-          </div>
-
-          <div>
-            <div className="lbl" style={{ marginBottom: 8 }}>{isAr ? 'استُخدمت في' : 'Used in'}</div>
-            {links.filter((l) => l.asset_id === detail.id).length === 0 ? (
-              <div className="drop">
-                {isAr
-                  ? 'لم تُستخدم بعد. هذه هي القائمة التي تستحق مراجعة شهرية.'
-                  : 'Never used. This is the list worth reviewing monthly.'}
               </div>
-            ) : (
-              links
-                .filter((l) => l.asset_id === detail.id)
-                .map((l) => {
-                  const c = content.find((x) => x.id === l.content_id);
-                  return (
-                    <button
-                      key={l.content_id}
-                      type="button"
-                      className="file"
-                      style={{ width: '100%', textAlign: 'start', cursor: 'pointer' }}
-                      onClick={() => navigate(`/m/content/${l.content_id}`)}
-                    >
-                      <div className="th"><IconLibrary /></div>
-                      <div>
-                        <div className="nm">{c?.title ?? l.content_id.slice(0, 8)}</div>
-                        <div className="mt"><span className="ltr">{c?.ref ?? ''}</span> · {l.role}</div>
-                      </div>
-                    </button>
-                  );
-                })
-            )}
-          </div>
-        </Modal>
-      )}
+
+              {view === 'grid' ? (
+                <div className="agrid">
+                  {g.items.map((a) => {
+                    const badge = badgeFor(a);
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        className="ass"
+                        onClick={() => navigate(`/m/library/${a.id}`)}
+                      >
+                        <div className="im" style={{ background: KIND_BG[a.kind] ?? 'var(--sand)' }}>
+                          {a.thumb_url
+                            ? <img src={a.thumb_url} alt="" />
+                            : (isAr ? ASSET_KIND_LABELS[a.kind]?.ar : ASSET_KIND_LABELS[a.kind]?.en) ?? a.kind}
+                          <span className={`bd badge${badge.bad ? ' b-bad' : ''}`}>{badge.text}</span>
+                          {a.kind === 'video' && a.duration_seconds != null && a.duration_seconds > 0 && (
+                            <span className="dur">{duration(a.duration_seconds, isAr)}</span>
+                          )}
+                        </div>
+                        <div className="mt2">
+                          <b>{a.title}</b>
+                          {metaFor(a)}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="alist">
+                  {g.items.map((a) => {
+                    const badge = badgeFor(a);
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        className="arow"
+                        onClick={() => navigate(`/m/library/${a.id}`)}
+                      >
+                        <span className="ath" style={{ background: KIND_BG[a.kind] ?? 'var(--sand)' }}>
+                          {a.thumb_url
+                            ? <img src={a.thumb_url} alt="" />
+                            : (isAr ? ASSET_KIND_LABELS[a.kind]?.ar : ASSET_KIND_LABELS[a.kind]?.en) ?? a.kind}
+                          {a.kind === 'video' && a.duration_seconds != null && a.duration_seconds > 0 && (
+                            <span className="dur">{duration(a.duration_seconds, isAr)}</span>
+                          )}
+                        </span>
+                        <span className="am">
+                          <b>{a.title}</b>
+                          {metaFor(a)}
+                        </span>
+                        <span className={`badge${badge.bad ? ' b-bad' : ''}`}>{badge.text}</span>
+                        <span className="ad">{shortDate(a.shot_on, isAr)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </>
   );
 }

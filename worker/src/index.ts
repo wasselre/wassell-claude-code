@@ -34,6 +34,7 @@ import { runListingMirrorJob, type ListingMirrorJob } from './runListingMirrorJo
 import { runTranslationJob } from './runTranslationJob.js';
 import { runCompressJob, type CompressJob } from './runCompressJob.js';
 import { configurePush, runPushJob, type PushOutboxRow } from './runPushJob.js';
+import { runNotificationDelivery, type NotificationDeliveryRow } from './runNotificationDelivery.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
 import { runDocumentJob, type DocumentJob } from './runDocumentJob.js';
 import { runImageJob, type ImageJob } from './runImageJob.js';
@@ -102,6 +103,13 @@ let compressBusy = false;
 let compressWakeRequested = false;
 let pushBusy = false;
 let pushWakeRequested = false;
+// Notification WhatsApp deliveries (notification_deliveries, 2026-08-01) get
+// their own loop: the worker claims rows and POSTs each to the app's internal
+// send endpoint (it never talks to WAHA directly). The same loop ticks the
+// scheduled sweeps (publish_due / task_overdue every ~5 min, the daily digest
+// hourly). Self-disables when WORKFLOW_RUNNER_SECRET is unset.
+let notificationBusy = false;
+let notificationWakeRequested = false;
 // Scheduled Reports (2026-06-17) get a FIFTH independent, time-gated loop:
 // claim due reports (next_run_at passed) and trigger the owner-scoped runner on
 // the app. Self-disables when REPORTS_RUNNER_SECRET is unset.
@@ -1432,6 +1440,126 @@ async function pushPollLoop(): Promise<void> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Notification deliveries — notification_deliveries queue (WhatsApp lane of
+// the notifications platform, 2026-08-01_04). The worker claims rows and
+// POSTs each to the app's internal send endpoint; it never talks to WAHA
+// directly. The same loop also ticks the SCHEDULED side of the platform:
+// mos_notification_sweep() every ~5 min and mos_notification_digest() hourly.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim and deliver one batch of queued notification deliveries. Batched like
+ * the push loop: notify_emit fans one event out to several recipients at
+ * once, and each delivery is a short HTTPS POST to the app.
+ */
+async function claimAndRunNotificationBatch(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('notification_delivery_claim_next', {
+    p_worker: env.WORKER_ID,
+    p_limit: 10,
+  });
+  if (error) {
+    console.error(`[worker] notification claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as NotificationDeliveryRow[];
+  if (rows.length === 0) return false;
+
+  for (const job of rows) {
+    try {
+      await runNotificationDelivery(job, env);
+      const { error: completeErr } = await supabase.rpc('notification_delivery_complete', { p_id: job.id });
+      // Surface this rather than assuming it landed (same posture as the push
+      // loop). Note: for endpoint-skipped deliveries the row already left
+      // 'running', so this no-ops and 'skipped' survives — that is intended.
+      if (completeErr) {
+        console.error(`[notify] could not record completion for ${job.id}:`, completeErr.message);
+      }
+      console.log(`[notify] delivery=${job.id} notification=${job.notification_id} sent`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[notify] delivery ${job.id} failed:`, message);
+      // notification_delivery_fail requeues until attempts >= 5, then gives
+      // up. For failures the ENDPOINT already recorded (no-phone, missing
+      // notification) this no-ops — the row already left 'running'.
+      const { error: failErr } = await supabase.rpc('notification_delivery_fail', {
+        p_id: job.id,
+        p_error: message.slice(0, 500),
+      });
+      if (failErr) console.error(`[notify] could not record failure for ${job.id}:`, failErr.message);
+    }
+  }
+  return true;
+}
+
+// ~5s between idle polls. The other queues use POLL_INTERVAL_MS (3s); this
+// lane is fan-out-from-events rather than user-waiting-on-it, so a slightly
+// slower cadence is fine and keeps PostgREST quieter.
+const NOTIFICATION_POLL_MS = 5000;
+
+/**
+ * Notification-queue twin of the other poll loops, with its own busy/wake
+ * flags. Also the platform's SCHEDULER (no pg_cron on this project):
+ *   - every WATCHDOG_INTERVAL_MS: notification_deliveries_watchdog() (sweep
+ *     deliveries a crashed worker left claimed) + mos_notification_sweep()
+ *     (publish_due + task_overdue — both idempotent, safe to re-run).
+ *   - once per hour change: mos_notification_digest(riyadhHour).
+ */
+async function notificationPollLoop(): Promise<void> {
+  let lastSweep = 0;
+  let lastDigestHour = -1;
+  while (!shuttingDown) {
+    notificationBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunNotificationBatch();
+    } catch (err) {
+      console.error('[worker] notification poll iteration error:', err);
+    }
+    notificationBusy = false;
+
+    if (Date.now() - lastSweep > env.WATCHDOG_INTERVAL_MS) {
+      lastSweep = Date.now();
+      const { error: wdErr } = await supabase.rpc('notification_deliveries_watchdog');
+      if (wdErr) console.error('[worker] notification watchdog failed:', wdErr.message);
+      const { data: sweep, error: sweepErr } = await supabase.rpc('mos_notification_sweep');
+      if (sweepErr) {
+        console.error('[worker] mos_notification_sweep failed:', sweepErr.message);
+      } else {
+        const counts = (sweep ?? {}) as { publish_due?: number; task_overdue?: number };
+        if ((counts.publish_due ?? 0) > 0 || (counts.task_overdue ?? 0) > 0) {
+          console.log(`[worker] notification sweep: publish_due=${counts.publish_due ?? 0} task_overdue=${counts.task_overdue ?? 0}`);
+        }
+      }
+    }
+
+    // The digest fires at each user's digest_hour in THEIR time — which for
+    // every user of this app is Asia/Riyadh. KSA is UTC+3 year-round (no
+    // DST), so the Riyadh hour is a fixed offset from UTC; no tz database
+    // needed. Fires once per hour-change, so within an hour the loop's faster
+    // ticks don't re-call it (the dedupe key would absorb a double-call
+    // anyway, but skipping it here keeps the DB quiet).
+    const riyadhHour = (new Date().getUTCHours() + 3) % 24;
+    if (riyadhHour !== lastDigestHour) {
+      lastDigestHour = riyadhHour;
+      const { data: digested, error: digErr } = await supabase.rpc('mos_notification_digest', { p_hour: riyadhHour });
+      if (digErr) console.error('[worker] mos_notification_digest failed:', digErr.message);
+      else if (typeof digested === 'number' && digested > 0) {
+        console.log(`[worker] notification digest queued for ${digested} user(s) (hour=${riyadhHour} Asia/Riyadh)`);
+      }
+    }
+
+    if (didClaim || notificationWakeRequested) {
+      notificationWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < NOTIFICATION_POLL_MS && !notificationWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
 /**
  * Document-queue twin of the other poll loops. Runs concurrently with its own
  * busy/wake flags. Ticks document_jobs_watchdog() on the same interval.
@@ -2165,6 +2293,8 @@ const server = http.createServer((req, res) => {
         compress_busy: compressBusy,
         push_busy: pushBusy,
         push_enabled: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),
+        notification_busy: notificationBusy,
+        notification_enabled: !!env.WORKFLOW_RUNNER_SECRET,
         document_busy: documentBusy,
         migration_busy: migrationBusy,
         reports_busy: reportsBusy,
@@ -2203,6 +2333,8 @@ const server = http.createServer((req, res) => {
     reportsWakeRequested = true;
     workflowWakeRequested = true;
     regaWakeRequested = true;
+    pushWakeRequested = true;
+    notificationWakeRequested = true;
     scheduledWaWakeRequested = true;
     marketingWakeRequested = true;
     translationWakeRequested = true;
@@ -2226,7 +2358,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || scheduledWaBusy || marketingBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -2828,6 +2960,16 @@ if (env.WORKFLOW_PROOF_ONLY) {
     loops.push(pushPollLoop());
   } else {
     console.log('[worker] web-push loop disabled (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY unset)');
+  }
+  // Notification delivery loop (notification_deliveries → WhatsApp via the
+  // app's internal send endpoint) + the scheduled sweeps/digest. Gated on the
+  // same shared secret as the workflow runner — deploying this code is a
+  // no-op for the queue until the secret exists on BOTH Vercel and Fly.
+  if (env.WORKFLOW_RUNNER_SECRET) {
+    console.log('[worker] notification delivery loop enabled');
+    loops.push(notificationPollLoop());
+  } else {
+    console.log('[worker] notification delivery loop disabled (WORKFLOW_RUNNER_SECRET unset)');
   }
   // REGA advertiser-phone lookup loop — only when Browserbase creds are set
   // (deploying this code is a no-op for the queue until both secrets exist).

@@ -57,10 +57,12 @@ export interface WorkerEnv {
    *  scheduled-reports loop self-disables (so the worker boots fine before the
    *  Scheduled Reports feature is enabled). Set it to turn reports on. */
   REPORTS_RUNNER_SECRET: string | null;
-  /** Shared secret for POST /api/internal/run-workflow-job (server-authoritative
-   *  workflow runner). When UNSET the worker's workflow loop self-disables, so
-   *  the worker boots fine while the feature is inert. Set it (matching the
-   *  Vercel prod env) to turn the workflow queue on. */
+  /** Shared secret for the worker→app internal surface: POST
+   *  /api/internal/run-workflow-job (server-authoritative workflow runner) AND
+   *  POST /api/internal/send-notification-wa (notification_deliveries →
+   *  WhatsApp). When UNSET both loops self-disable, so the worker boots fine
+   *  while the features are inert. Set it (matching the Vercel prod env) to
+   *  turn them on. */
   WORKFLOW_RUNNER_SECRET: string | null;
   /** LOCAL PROOF MODE: when '1', the worker registers ONLY the workflow loop
    *  (skips deck/image/preview/compress/document/migration/reports/conflict),

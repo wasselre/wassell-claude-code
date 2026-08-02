@@ -1,7 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
-**Last updated:** 2026-07-30
+**Last updated:** 2026-08-01
 **Related PRDs:** [access-control.md](access-control.md), [marketing-intelligence.md](marketing-intelligence.md), [posts-content.md](posts-content.md), [projects-units.md](projects-units.md), [navigation-layout.md](navigation-layout.md)
 
 ## What it is (in plain English)
@@ -63,7 +63,12 @@ This workspace answers the three questions the old process could not:
   — a CHECK constraint refuses an all-empty reading.
 - **The shoot backlog is derived.** Every scene still marked `missing` is a shot
   someone has to film, whether or not a request exists for it yet.
-- **"Unused material" is a LEFT JOIN**, not a counter anyone maintains.
+- **"Unused material" is a LEFT JOIN**, not a counter anyone maintains. The
+  library (design screen 16) groups cards by project × kind, stamps each card
+  with its usage («مستخدمة في ٥», «نسخة معتمدة» for a final cut, «مجموعة ن»
+  for a grouped set, mm:ss for videos), toggles between grid and list, and
+  leads with a «لم تُستخدم قط» banner that links to the unused-material screen
+  (`/m/library/unused`). Cards open the asset page (`/m/library/:assetId`).
 - **Cost per lead is computed** from the execution rows, never typed.
 - **Refs come from one row-locked allocator** (`mos_next_ref`), so two concurrent
   creates can never mint the same number. The allocator is `SECURITY DEFINER`:
