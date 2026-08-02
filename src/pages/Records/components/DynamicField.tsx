@@ -25,6 +25,8 @@ import { shortenGoogleMapsUrl } from '@/lib/urlUtils';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { slugifyOptionLabel, findExistingOption, uniqueOptionValue } from '@/lib/optionSlug';
 import { translateLabel } from '@/lib/translateLabel';
+import { isTranslatableField } from '@/lib/valueTranslation/config';
+import LocalizedTextInput from './LocalizedTextInput';
 import {
   ImageFieldInput,
   MultiImageFieldInput,
@@ -192,9 +194,27 @@ export default function DynamicField({
   // placeholders so empty cells don't echo the same label on every row.
   const placeholder = compact ? '' : label;
 
+  // Bilingual W3b: existing translatable fields on saved records edit through
+  // the ONE-input contract (translation shown in the user's language; edits
+  // route as translation corrections or source edits by BASIS — see
+  // LocalizedTextInput). New records / non-translatable fields keep the plain
+  // inputs.
+  const useLocalizedEditing = Boolean(recordId) && isTranslatableField(field);
+
   const renderInput = () => {
     switch (field.type) {
       case 'text':
+        if (useLocalizedEditing) {
+          return (
+            <LocalizedTextInput
+              recordId={recordId!}
+              fieldName={field.name}
+              value={(value as string) ?? ''}
+              onChange={onChange}
+              placeholder={placeholder}
+            />
+          );
+        }
         return (
           <input
             type="text"
@@ -206,6 +226,18 @@ export default function DynamicField({
         );
 
       case 'textarea':
+        if (useLocalizedEditing) {
+          return (
+            <LocalizedTextInput
+              recordId={recordId!}
+              fieldName={field.name}
+              value={(value as string) ?? ''}
+              onChange={onChange}
+              multiline
+              placeholder={placeholder}
+            />
+          );
+        }
         return (
           <AutoGrowTextarea
             value={(value as string) ?? ''}
