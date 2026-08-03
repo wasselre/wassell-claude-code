@@ -188,3 +188,21 @@ DEPLOY (F) — NOT YET EXECUTED, needs explicit go (irreversible prod cutover):
   validation block passes on prod data) -> push HEAD:main -> verify newest READY
   Vercel SHA -> live smoke as each role -> final report -> delete branch
   fc7fc812 / czdznzadjqzajrnjoafi.
+
+## SHIPPED (2026-08-03) — production cutover complete
+DB: 12 migrations applied to PROD (zhqqsxwealdwqzrbpwyv) via a temporary
+token-gated exec fn (dropped after), recorded in schema_migrations. Prod's real
+pilot data migrated losslessly (2 workflows→role_path, 5 tasks→workflow_role_tasks,
+3 grants→role_assignments, 3 content pinned, 4 legacy tables dropped) — migration
+01's validation block passed on prod data. Backup: _backup_*_20260803 tables (drop
+after pilot confirms).
+CODE: pushed to main; first deploy ERRORED (`fatal: bad object <prev-sha>` — rebase
+made VERCEL_GIT_PREVIOUS_SHA a non-ancestor absent from the shallow clone). Fixed
+vercel.json ignoreCommand to fall back to HEAD^ on a missing prev SHA; redeploy
+READY = SHA 9d3713a8. Live smoke: app.wassel.re boots clean, 0 console errors;
+prod engine SQL sanity all green incl. the COALESCE auth-fix present.
+POST-DEPLOY OPEN ITEMS: (1) authed /m prod click-through as a real marketing role
+(needs pilot login + TOTP). (2) drop _backup_*_20260803 after pilot confirms.
+(3) fixture branch czdznzadjqzajrnjoafi still running (~$0.014/hr) — delete when
+B6/polish no longer need it. (4) B6 bilingual EN overlay still PENDING. (5) deep
+cosmetic SSIM polish deferred (layouts pixel-aligned; gap = sub-pixel rendering).
