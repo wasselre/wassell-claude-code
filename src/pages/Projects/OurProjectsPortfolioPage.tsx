@@ -9,6 +9,7 @@ import {
   resolveProjectView, modelByName, fieldByCandidates, optionFor, formatPriceRange,
   asString, asFiniteNumber, type ProjectView, type OptionView,
 } from '@/lib/projects/projectView';
+import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
 
 interface PortfolioItem {
@@ -41,6 +42,7 @@ export default function OurProjectsPortfolioPage() {
   const exclusiveField = fieldByCandidates(ourModel, ['exclusive_status']);
   const projectField = fieldByCandidates(ourModel, ['project']);
 
+  const translationVersion = useRecordTranslationVersion();
   const items: PortfolioItem[] = useMemo(() => {
     if (!ourModel || !allModel) return [];
     const ourRecords = records[ourModel.id] ?? [];
@@ -55,7 +57,7 @@ export default function OurProjectsPortfolioPage() {
         ourId: r.id,
         ourData: data,
         linkedId,
-        linked: linkedRec ? resolveProjectView({ models, records }, linkedRec) : null,
+        linked: linkedRec ? resolveProjectView({ models, records }, linkedRec, { isAr, translate: getEntityFieldText }) : null,
         status: optionFor(statusField, data.portfolio_status),
         priority: optionFor(priorityField, data.sales_priority),
         exclusive: optionFor(exclusiveField, data.exclusive_status),
@@ -73,7 +75,8 @@ export default function OurProjectsPortfolioPage() {
       if (da !== db) return da - db;
       return (a.linked?.name ?? '').localeCompare(b.linked?.name ?? '');
     });
-  }, [ourModel, allModel, records, models, projectField, statusField, priorityField, exclusiveField]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ourModel, allModel, records, models, projectField, statusField, priorityField, exclusiveField, isAr, translationVersion]);
 
   // ── simple filters ──────────────────────────────────────────────────────────
   const [search, setSearch] = useState('');
@@ -216,7 +219,7 @@ function PortfolioCard({ item, isAr, onOpenDetail, onEdit }: { item: PortfolioIt
       <div className="p-3 flex-1 flex flex-col">
         <div className="font-bold text-charcoal truncate cursor-pointer hover:text-copper" onClick={onOpenDetail}>{name}</div>
         <div className="text-sm text-charcoal/50 flex items-center gap-1 mt-0.5">
-          <MapPin size={13} /> <span className="truncate">{[linked?.district, linked?.city].filter(Boolean).join('، ') || dash}</span>
+          <MapPin size={13} /> <span className="truncate">{[linked?.district, linked?.city].filter(Boolean).join(isAr ? '، ' : ', ') || dash}</span>
         </div>
         <div className="mt-1 flex flex-wrap gap-1">
           {item.priority && <span className="text-[11px] px-1.5 py-0.5 rounded bg-cream text-charcoal/70 border border-sand/50">{isAr ? 'أولوية: ' : 'Priority: '}{isAr ? item.priority.label_ar : item.priority.label_en}</span>}

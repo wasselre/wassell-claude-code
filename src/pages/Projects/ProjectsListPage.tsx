@@ -233,7 +233,7 @@ export default function ProjectsListPage() {
           {filtered.map((v) => (
             <button key={v.id} onClick={() => navigate(`/model/all_projects/${v.id}`)} className="w-full text-start p-3 flex items-center gap-4 hover:bg-cream/50 transition-colors">
               <div className="font-bold text-charcoal flex-1 min-w-0 truncate">{v.name ?? `#${v.id.slice(0, 8)}`}</div>
-              <div className="text-sm text-charcoal/50 hidden md:block w-40 truncate">{[v.district, v.city].filter(Boolean).join('، ') || '—'}</div>
+              <div className="text-sm text-charcoal/50 hidden md:block w-40 truncate">{[v.district, v.city].filter(Boolean).join(isAr ? '، ' : ', ') || '—'}</div>
               <div className="text-sm text-charcoal/50 hidden lg:block w-40 truncate">{v.developer ?? '—'}</div>
               <div className="text-sm text-charcoal/70 w-44 text-end">{formatPriceRange(v.priceRange, isAr) ?? (isAr ? 'غير متوفر' : 'N/A')}</div>
               <div className="text-sm text-charcoal/50 w-20 text-end">{v.availableUnits ?? '—'}</div>
@@ -276,7 +276,7 @@ function ProjectCard({ v, isAr, onOpen }: { v: ProjectView; isAr: boolean; onOpe
         <div className="font-bold text-charcoal truncate">{v.name ?? `#${v.id.slice(0, 8)}`}</div>
         <div className="text-sm text-charcoal/50 flex items-center gap-1 mt-0.5">
           <MapPin size={13} className="shrink-0" />
-          <span className="truncate">{[v.district, v.city].filter(Boolean).join('، ') || (isAr ? 'موقع غير محدد' : 'No location')}</span>
+          <span className="truncate">{[v.district, v.city].filter(Boolean).join(isAr ? '، ' : ', ') || (isAr ? 'موقع غير محدد' : 'No location')}</span>
         </div>
         {v.developer && <div className="text-xs text-charcoal/40 mt-0.5 truncate">{v.developer}</div>}
 

@@ -134,7 +134,7 @@ export default function ProjectDetailPage() {
               {view?.isTargeted && <Badge label={isAr ? 'مستهدف' : 'Targeted'} color="#8E4E3A" />}
             </div>
             <div className="text-sm text-charcoal/60 mt-1 flex items-center gap-1">
-              <MapPin size={14} /> {[view?.district, view?.city].filter(Boolean).join('، ') || dash}
+              <MapPin size={14} /> {[view?.district, view?.city].filter(Boolean).join(isAr ? '، ' : ', ') || dash}
             </div>
             {view?.developer && <div className="text-sm text-charcoal/40 mt-0.5">{view.developer}</div>}
           </div>
