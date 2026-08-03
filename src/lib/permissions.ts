@@ -92,7 +92,13 @@ function modelEntryFor(
   profile: Profile,
   modelId: string,
 ): ProfileModelPermissions | undefined {
-  return profile.model_permissions.find((mp) => mp.model_id === modelId);
+  // Defensive: a malformed profile row (e.g. `model_permissions: {}` instead of
+  // `[]`) must not `.find`-crash the whole app — one bad row would white-screen
+  // every surface that runs a permission check. A non-array reads as "no
+  // explicit per-model grants", which correctly falls back to default access.
+  const entries = profile.model_permissions;
+  if (!Array.isArray(entries)) return undefined;
+  return entries.find((mp) => mp.model_id === modelId);
 }
 
 // ────────────────────────────────────────────────────────────────────

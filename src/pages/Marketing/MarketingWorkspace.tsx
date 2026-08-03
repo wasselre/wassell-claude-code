@@ -15,7 +15,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type ReactNode,
 } from 'react';
-import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { useCanAccessPage } from '@/hooks/usePermission';
@@ -39,9 +39,10 @@ import { initial, num } from './lib/format';
 import {
   BrandMark, IconCalendar, IconCampaigns, IconContent, IconLibrary, IconMenu,
   IconMetrics, IconMyWork, IconOverview, IconSearch, IconSettings, IconShoot,
-  IconSwap, IconTeam,
+  IconTeam,
 } from './components/icons';
 import NotificationBell from './components/NotificationBell';
+import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import MobileTabBar from './components/MobileTabBar';
 import './mos.css';
 import './styles/rail-badges.css';
@@ -248,7 +249,7 @@ export default function MarketingWorkspace() {
   const isAr = useAppStore((s) => s.language) === 'ar';
   const setLanguage = useAppStore((s) => s.setLanguage);
   const authEmail = useAppStore((s) => s.authEmail);
-  const navigate = useNavigate();
+
   const location = useLocation();
 
   const [role, setRole] = useState<MosRole>('viewer');
@@ -425,18 +426,7 @@ export default function MarketingWorkspace() {
           </div>
 
           {/* The switcher — the one control that makes two workspaces one app. */}
-          <button
-            type="button"
-            className="ws-switch"
-            onClick={() => navigate('/')}
-            title={isAr ? 'الانتقال إلى مساحة المبيعات' : 'Switch to the Sales workspace'}
-          >
-            <IconSwap />
-            <span>
-              {isAr ? 'مساحة التسويق' : 'Marketing workspace'}
-              <span className="sw-sub">{isAr ? 'التبديل إلى المبيعات' : 'Switch to Sales'}</span>
-            </span>
-          </button>
+          <WorkspaceSwitcher variant="marketing" canAccessMarketing isAr={isAr} />
 
           {NAV.map((group, gi) => {
             const items = group.items.filter(navVisible);

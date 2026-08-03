@@ -155,6 +155,9 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Marketing Workspace',
     icon: ClipboardListIcon,
     default_access: 'admin',
+    // Reached via the workspace switcher at the top of the sidebar, not a nav
+    // row — keeping the route + access rules but out of the sidebar list.
+    hidden_from_sidebar: true,
   },
   {
     id: 'marketing_intelligence',
