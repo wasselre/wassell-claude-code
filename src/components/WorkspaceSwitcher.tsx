@@ -20,8 +20,12 @@
 import { useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-/** The official Wassel castle mark (served from /public/assets). */
-const LOGO = '/assets/logo-castle.png';
+/**
+ * The official Wassel castle mark (from the "Wassel Branding" folder, copied to
+ * /public/assets). Copper on light shells, white on the dark Marketing rail.
+ */
+const LOGO_COLOR = '/assets/wassel-icon.png';
+const LOGO_WHITE = '/assets/wassel-icon-white.png';
 
 interface WorkspaceSwitcherProps {
   /** Which shell it renders in — decides theme AND which segment is active. */
@@ -39,10 +43,10 @@ const SALES = { key: 'sales' as const, to: '/', ar: 'المبيعات', en: 'Sal
 const MARKETING = { key: 'marketing' as const, to: '/m', ar: 'التسويق', en: 'Marketing' };
 const SEGMENTS = [SALES, MARKETING];
 
-function Logo({ size }: { size: number }): JSX.Element {
+function Logo({ size, src }: { size: number; src: string }): JSX.Element {
   return (
     <img
-      src={LOGO}
+      src={src}
       alt="Wassel"
       width={size}
       height={size}
@@ -63,6 +67,8 @@ export default function WorkspaceSwitcher({
 
   const dark = variant === 'marketing';
   const current: Key = variant;
+  // White mark reads on the dark Marketing rail; copper on the light Sales shell.
+  const logo = dark ? LOGO_WHITE : LOGO_COLOR;
 
   // Collapsed (Sales rail only): a single Wassel-logo button that jumps to the
   // other workspace. Collapse only happens in Sales, so "other" is Marketing.
@@ -87,7 +93,7 @@ export default function WorkspaceSwitcher({
           cursor: 'pointer',
         }}
       >
-        <Logo size={26} />
+        <Logo size={26} src={logo} />
       </button>
     );
   }
@@ -152,7 +158,7 @@ export default function WorkspaceSwitcher({
           >
             {/* Dim the logo on the inactive segment so the active one reads as "here". */}
             <span style={{ display: 'inline-flex', opacity: active ? 1 : 0.65 }}>
-              <Logo size={20} />
+              <Logo size={20} src={logo} />
             </span>
             <span>{isAr ? seg.ar : seg.en}</span>
           </button>

@@ -196,7 +196,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
         >
           <div className={`flex items-center gap-3 ${railCollapsed ? 'justify-center' : ''}`}>
             <img
-              src="/assets/logo-castle.png"
+              src="/assets/wassel-icon.png"
               alt="Wassel"
               className={`${railCollapsed ? 'w-10 h-10' : 'w-12 h-12'} object-contain`}
             />

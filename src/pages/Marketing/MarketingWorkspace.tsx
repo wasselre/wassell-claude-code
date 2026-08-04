@@ -37,7 +37,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { initial, num } from './lib/format';
 import {
-  BrandMark, IconCalendar, IconCampaigns, IconContent, IconLibrary, IconMenu,
+  IconCalendar, IconCampaigns, IconContent, IconLibrary, IconMenu,
   IconMetrics, IconMyWork, IconOverview, IconSearch, IconSettings, IconShoot,
   IconTeam,
 } from './components/icons';
@@ -216,7 +216,7 @@ function BootShell({ isAr }: { isAr: boolean }) {
     <div className="mos-root">
       <aside className="mos-rail">
         <div className="brand">
-          <BrandMark className="brand-mark" />
+          <img src="/assets/wassel-icon-white.png" className="brand-mark" style={{ objectFit: 'contain' }} alt="Wassel" />
           <div className="brand-txt">
             <b>{isAr ? 'وصل' : 'Wassel'}</b>
             <span>{isAr ? 'التسويق' : 'Marketing'}</span>
@@ -417,7 +417,7 @@ export default function MarketingWorkspace() {
         />
         <aside className={`mos-rail${railOpen ? ' open' : ''}`}>
           <div className="brand">
-            <BrandMark className="brand-mark" />
+            <img src="/assets/wassel-icon-white.png" className="brand-mark" style={{ objectFit: 'contain' }} alt="Wassel" />
             <div className="brand-txt">
               <b>{isAr ? 'وصل' : 'Wassel'}</b>
               <span>{isAr ? 'التسويق' : 'Marketing'}</span>
