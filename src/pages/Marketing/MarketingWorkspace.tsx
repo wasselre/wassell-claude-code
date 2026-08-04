@@ -42,6 +42,7 @@ import {
   IconTeam,
 } from './components/icons';
 import NotificationBell from './components/NotificationBell';
+import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import MobileTabBar from './components/MobileTabBar';
 import './mos.css';
@@ -249,6 +250,7 @@ export default function MarketingWorkspace() {
   const isAr = useAppStore((s) => s.language) === 'ar';
   const setLanguage = useAppStore((s) => s.setLanguage);
   const authEmail = useAppStore((s) => s.authEmail);
+  const translationVersion = useRecordTranslationVersion();
 
   const location = useLocation();
 
@@ -382,7 +384,9 @@ export default function MarketingWorkspace() {
     ready,
     projectName: (id) => {
       if (!id) return isAr ? 'بلا مشروع' : 'No project';
-      return projectMap.get(id) ?? (isAr ? 'مشروع محذوف' : 'Deleted project');
+      // W6: render the project name in the UI language (translation, else source).
+      const tr = getEntityFieldText(id, 'project_name', isAr ? 'ar' : 'en');
+      return tr ?? projectMap.get(id) ?? (isAr ? 'مشروع محذوف' : 'Deleted project');
     },
     typeLabel: (key) => {
       const t = typeMap.get(key);
@@ -393,7 +397,8 @@ export default function MarketingWorkspace() {
     // Capability truth is the UNION over every held role — a person who is
     // Writer AND Ops Supervisor gets both sets, exactly like wassell_mos_can.
     can: (capability) => roles.some((r) => (MATRIX[r] ?? []).includes(capability)),
-  }), [role, roles, surfaces, setActiveRole, appUserId, contentTypes, projects, people, reloadGrants, isAr, ready, projectMap, typeMap, applyBadge]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [role, roles, surfaces, setActiveRole, appUserId, contentTypes, projects, people, reloadGrants, isAr, ready, projectMap, typeMap, applyBadge, translationVersion]);
 
   const roleLabel = ROLE_LABELS[role] ? (isAr ? ROLE_LABELS[role].ar : ROLE_LABELS[role].en) : role;
 
