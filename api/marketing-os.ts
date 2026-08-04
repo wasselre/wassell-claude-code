@@ -168,7 +168,7 @@ interface Row {
  */
 const CONTENT_LIST_COLUMNS = [
   'id', 'ref', 'title', 'content_type_key', 'content_type_label_ar', 'content_type_label_en',
-  'project_id', 'campaign_id', 'purpose',
+  'project_id', 'project_ids', 'campaign_id', 'purpose',
   'status_key', 'current_step_label_ar', 'current_step_label_en',
   'owner_role', 'current_assignee_user_id', 'current_task_due_at', 'current_round',
   'due_at', 'target_publish_at', 'updated_at',
@@ -176,10 +176,29 @@ const CONTENT_LIST_COLUMNS = [
 
 /** Patchable content fields. Identity and provenance are excluded by omission. */
 const CONTENT_EDITABLE = [
-  'title', 'project_id', 'campaign_id', 'purpose', 'language',
+  'title', 'project_id', 'project_ids', 'campaign_id', 'purpose', 'language',
   'goal', 'audience', 'angle', 'cta',
   'target_publish_at', 'due_at', 'data',
 ] as const;
+
+/**
+ * A campaign or content item can link to SEVERAL projects (`project_ids`, a
+ * searchable multi-select restricted to Our Projects) while `project_id` is kept
+ * as the PRIMARY (first) project — so every existing filter, join, attribution
+ * read, and single-name display keeps working unchanged. Call this on any patch
+ * that carries `project_ids`: it normalizes the array (drops blanks, dedupes) and
+ * derives the primary. If the caller sent `project_ids` we always re-derive
+ * `project_id` from it, so the two can never disagree.
+ */
+function applyProjectIds(patch: Record<string, unknown>): void {
+  if (!Object.prototype.hasOwnProperty.call(patch, 'project_ids')) return;
+  const raw = patch.project_ids;
+  const ids = Array.isArray(raw)
+    ? Array.from(new Set(raw.filter((v): v is string => typeof v === 'string' && v.length > 0)))
+    : [];
+  patch.project_ids = ids;
+  patch.project_id = ids[0] ?? null;
+}
 
 /* ------------------------------------------------------------------ */
 /* the canonical engine (workflows kind='role_path' + workflow_role_   */
@@ -751,7 +770,9 @@ export default async function handler(req: Request): Promise<Response> {
         const search = str(body.q);
         if (typeKey) q = q.eq('content_type_key', typeKey);
         if (statusKey) q = q.eq('status_key', statusKey);
-        if (projectId) q = q.eq('project_id', projectId);
+        // Match membership, not just the primary project — an item filtered by a
+        // project it's tagged with (even as a secondary) should surface.
+        if (projectId) q = q.contains('project_ids', [projectId]);
         if (role) q = q.eq('owner_role', role);
         if (search) q = q.ilike('title', `%${search}%`);
 
@@ -867,6 +888,7 @@ export default async function handler(req: Request): Promise<Response> {
         for (const k of CONTENT_EDITABLE) {
           if (Object.prototype.hasOwnProperty.call(body, k)) insert[k] = body[k];
         }
+        applyProjectIds(insert);
         insert.title = title;
         insert.content_type_id = type.id;
         insert.workflow_id = type.workflow_id;
@@ -906,6 +928,7 @@ export default async function handler(req: Request): Promise<Response> {
         for (const k of CONTENT_EDITABLE) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
+        applyProjectIds(patch);
         if (Object.keys(patch).length === 0) return jsonError(400, 'no editable fields in patch');
 
         const upd = await sb.from('mos_content').update(patch).eq('id', id).select('id').maybeSingle();
@@ -1985,7 +2008,7 @@ export default async function handler(req: Request): Promise<Response> {
         const raw = (body.campaign ?? {}) as Record<string, unknown>;
         const id = str(raw.id);
         const patch: Record<string, unknown> = {};
-        for (const k of ['name', 'project_id', 'objective', 'status', 'starts_on',
+        for (const k of ['name', 'project_id', 'project_ids', 'objective', 'status', 'starts_on',
                          'ends_on', 'budget_total', 'note',
                          'kind', 'goal', 'owner_role', 'success_metric',
                          'success_threshold',
@@ -1993,6 +2016,31 @@ export default async function handler(req: Request): Promise<Response> {
                          // where it lands, how it's measured.
                          'audience', 'offer', 'destination_url', 'measured_by'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        // Multi-project: normalize the array and re-derive the primary project_id.
+        applyProjectIds(patch);
+
+        // Multi-measure success criteria: sanitize the array to the known shape
+        // and derive the back-compat primary (success_metric / success_threshold
+        // = the first measure) so the list / overview / judgment reads that still
+        // consult the scalar pair keep working unchanged.
+        if (Object.prototype.hasOwnProperty.call(raw, 'success_measures') && Array.isArray(raw.success_measures)) {
+          const clean = (raw.success_measures as unknown[])
+            .map((e) => {
+              const o = (e ?? {}) as Record<string, unknown>;
+              return {
+                type_key: str(o.type_key) ?? '',
+                label_ar: str(o.label_ar) ?? '',
+                label_en: str(o.label_en) ?? '',
+                direction: o.direction === 'lower' ? 'lower' : 'higher',
+                unit: o.unit === 'currency' ? 'currency' : 'count',
+                threshold: numOrNull(o.threshold),
+              };
+            })
+            .filter((m) => m.type_key !== '');
+          patch.success_measures = clean;
+          patch.success_metric = clean[0]?.type_key ?? null;
+          patch.success_threshold = clean[0]?.threshold ?? null;
         }
 
         // The signature requirement is DATA (mos_settings.signature_threshold),
@@ -3692,6 +3740,57 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ content_types: list.data ?? [] });
       }
 
+      /* -------------------------------------------------------- */
+      /* Success-measure types — the managed registry a campaign's */
+      /* success criteria are picked from (four presets seeded).   */
+      /* -------------------------------------------------------- */
+      case 'measure_types_list': {
+        const list = await sb.from('mos_measure_types').select('*').is('archived_at', null)
+          .order('sort_order', { ascending: true });
+        const f = dbFail(list.error);
+        if (f) return f;
+        return jsonOk({ measure_types: list.data ?? [] });
+      }
+
+      case 'measure_type_save': {
+        const raw = (body.measure_type ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['key', 'label_ar', 'label_en', 'direction', 'unit',
+                         'sort_order', 'is_active'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        // Direction / unit are constrained by the table CHECK; normalize here so
+        // a bad client value fails as a 400 rather than a raw DB error.
+        if (patch.direction !== undefined && patch.direction !== 'higher' && patch.direction !== 'lower') {
+          return jsonError(400, 'direction must be higher or lower');
+        }
+        if (patch.unit !== undefined && patch.unit !== 'count' && patch.unit !== 'currency') {
+          return jsonError(400, 'unit must be count or currency');
+        }
+        if (id) {
+          // The key is the stable identity snapshotted onto campaigns — never
+          // reslug an existing type.
+          delete patch.key;
+          const upd = await sb.from('mos_measure_types').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'measure type not found');
+        } else {
+          if (!str(patch.key) || !str(patch.label_ar) || !str(patch.label_en)) {
+            return jsonError(400, 'key and both labels are required');
+          }
+          const ins = await sb.from('mos_measure_types').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+        }
+        const list = await sb.from('mos_measure_types').select('*').is('archived_at', null)
+          .order('sort_order', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ measure_types: list.data ?? [] });
+      }
+
       case 'account_save': {
         const raw = (body.account ?? {}) as Record<string, unknown>;
         const id = str(raw.id);
@@ -3724,7 +3823,11 @@ export default async function handler(req: Request): Promise<Response> {
       /* Projects — names for the brief, from the live CRM          */
       /* -------------------------------------------------------- */
       case 'projects_list': {
+        // Our Projects only — a project is "ours" iff all_projects.is_public = true
+        // (the same membership flag the website reads). The picker never offers the
+        // ~1,000 market/all projects, only the 49 we actually run.
         const rows = await sb.from('v_all_projects').select('id, project_name')
+          .eq('is_public', true)
           .order('project_name', { ascending: true }).limit(1000);
         const f = dbFail(rows.error);
         if (f) return f;

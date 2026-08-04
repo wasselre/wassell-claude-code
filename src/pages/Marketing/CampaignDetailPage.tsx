@@ -21,7 +21,7 @@ import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosCampaign, MosCampaignEvent,
   MosCampaignOutcomes, MosComment, MosContentRow, MosDailyEntry, MosExecution,
-  PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS,
+  PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS, successMeasureSuffix,
   addCampaignEvent, budgetShift, deleteExecution, fetchCampaignDetail,
   fetchCampaignEvents, fetchCampaignOutcomes, fetchContentDetail, fetchContentList,
   fetchExecutionDetail, saveCampaign, saveExecution, signCampaign, updateContent,
@@ -30,6 +30,9 @@ import { useWorkspace } from './MarketingWorkspace';
 import { Field, LoadError, Modal, Pill, ReadField, Skeleton, StatusPill, Tone } from './components/kit';
 import CommentThread from './components/CommentThread';
 import NewContentModal from './components/NewContentModal';
+import SuccessMeasuresEditor, {
+  MeasureDraft, measuresToDrafts, draftsToMeasures,
+} from './components/SuccessMeasuresEditor';
 import { IconBack, IconForward } from './components/icons';
 import { money, monthOf, num, shortDate } from './lib/format';
 import './styles/campaign-detail.css';
@@ -635,15 +638,23 @@ export default function CampaignDetailPage() {
     { key: 'notes', ar: 'ملاحظات', en: 'Notes' },
   ];
 
-  const successText = item.success_metric && SUCCESS_METRIC_LABELS[item.success_metric]
-    ? `${isAr
-        ? SUCCESS_METRIC_LABELS[item.success_metric]?.ar
-        : SUCCESS_METRIC_LABELS[item.success_metric]?.en} — ${
-        item.success_threshold !== null ? num(item.success_threshold, isAr) : '—'} ${
-        item.success_metric === 'leads' || item.success_metric === 'reach'
-          ? isAr ? 'أو أكثر' : 'or more'
-          : isAr ? 'ريال أو أقل' : 'SAR or less'}`
-    : isAr ? 'غير محدد — لا يمكن الحكم على الحملة' : 'Not set — the campaign cannot be judged';
+  // Every measure the campaign is judged by. Falls back to the legacy scalar
+  // pair for any row created before the multi-measure column existed.
+  const successMeasures = Array.isArray(item.success_measures) ? item.success_measures : [];
+  const successText = successMeasures.length > 0
+    ? successMeasures
+        .map((m) => `${isAr ? m.label_ar : m.label_en} — ${
+          m.threshold !== null ? num(m.threshold, isAr) : '—'} ${successMeasureSuffix(m.direction, m.unit, isAr)}`)
+        .join(isAr ? '، ' : ', ')
+    : item.success_metric && SUCCESS_METRIC_LABELS[item.success_metric]
+      ? `${isAr
+          ? SUCCESS_METRIC_LABELS[item.success_metric]?.ar
+          : SUCCESS_METRIC_LABELS[item.success_metric]?.en} — ${
+          item.success_threshold !== null ? num(item.success_threshold, isAr) : '—'} ${
+          item.success_metric === 'leads' || item.success_metric === 'reach'
+            ? isAr ? 'أو أكثر' : 'or more'
+            : isAr ? 'ريال أو أقل' : 'SAR or less'}`
+      : isAr ? 'غير محدد — لا يمكن الحكم على الحملة' : 'Not set — the campaign cannot be judged';
 
   /* «مقابل الهدف» pace math (s15). */
   const targetPct = target !== null && target > 0 ? Math.min(100, (qualified / target) * 100) : null;
@@ -825,7 +836,9 @@ export default function CampaignDetailPage() {
                   <span className="tag">
                     {item.kind === 'organic' ? (isAr ? 'عضوية' : 'Organic') : (isAr ? 'مدفوعة' : 'Paid')}
                   </span>
-                  {item.project_id && <span className="tag">{projectName(item.project_id)}</span>}
+                  {(item.project_ids ?? []).map((pid) => (
+                    <span key={pid} className="tag">{projectName(pid)}</span>
+                  ))}
                   <Pill tone={statusPill.tone}>{statusPill.text}</Pill>
                   <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
                     {isAr ? 'المسؤول ' : 'Owner '}
@@ -2148,6 +2161,7 @@ function BriefModal({
   const [audience, setAudience] = useState(campaign.audience ?? '');
   const [offer, setOffer] = useState(campaign.offer ?? '');
   const [destination, setDestination] = useState(campaign.destination_url ?? '');
+  const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(campaign.success_measures));
   const [busy, setBusy] = useState(false);
 
   const submit = async (): Promise<void> => {
@@ -2168,6 +2182,7 @@ function BriefModal({
         audience: audience.trim() || null,
         offer: offer.trim() || null,
         destination_url: destination.trim() || null,
+        success_measures: draftsToMeasures(measures),
       });
       addToast(isAr ? 'حُفظ الموجز.' : 'Brief saved.', 'success');
       onSaved(res.item);
@@ -2205,6 +2220,7 @@ function BriefModal({
       >
         <input className="inp" value={measuredBy} onChange={(e) => setMeasuredBy(e.target.value)} />
       </Field>
+      <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />
       <Field label={isAr ? 'الجمهور' : 'Audience'}>
         <input className="inp" value={audience} onChange={(e) => setAudience(e.target.value)} />
       </Field>

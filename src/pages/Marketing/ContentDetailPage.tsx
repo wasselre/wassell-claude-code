@@ -42,6 +42,7 @@ import PublishTab from './components/PublishTab';
 import PerformanceTab from './components/PerformanceTab';
 import MaterialsTab from './components/MaterialsTab';
 import RequestChangesModal from './components/RequestChangesModal';
+import ProjectMultiSelect from './components/ProjectMultiSelect';
 import ApprovalSheet, { useIsMobile } from './components/ApprovalSheet';
 import { IconBack, IconCheck, IconForward, IconSend } from './components/icons';
 import { dateTimeShort, daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
@@ -370,7 +371,9 @@ export default function ContentDetailPage() {
               {version > 1 && (
                 <span className="tag">{isAr ? `النسخة ${num(version, true)}` : `Version ${version}`}</span>
               )}
-              {item.project_id && <span className="tag">{projectName(item.project_id)}</span>}
+              {(item.project_ids ?? []).map((pid) => (
+                <span key={pid} className="tag">{projectName(pid)}</span>
+              ))}
               {campaignName && <span className="tag">{campaignName}</span>}
               <StatusPill row={item} isAr={isAr} />
               {ownerRoleLabel && (
@@ -1277,7 +1280,7 @@ function BriefForm({
   const [audience, setAudience] = useState(row.audience ?? '');
   const [angle, setAngle] = useState(row.angle ?? '');
   const [cta, setCta] = useState(row.cta ?? '');
-  const [projectId, setProjectId] = useState(row.project_id ?? '');
+  const [projectIds, setProjectIds] = useState<string[]>(row.project_ids ?? []);
   // «المدة والحجم المطلوب» — free text («٣٥–٤٥ ثانية · ٩:١٦», «١٠ تصاميم»),
   // not a date. Lives in data; the actual publish timing belongs to the
   // Publishing tab's per-platform rows.
@@ -1295,7 +1298,7 @@ function BriefForm({
         audience: audience || null,
         angle: angle || null,
         cta: cta || null,
-        project_id: projectId || null,
+        project_ids: projectIds,
         data: mergedData,
       });
       onSaved({ ...row, ...res.item, goal, audience, angle, cta, data: mergedData });
@@ -1328,12 +1331,7 @@ function BriefForm({
         </label>
         <label>
           <span className="lbl">{isAr ? 'المشروع' : 'Project'}</span>
-          <select className="inp" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">{isAr ? 'بدون' : 'None'}</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.project_name ?? p.id.slice(0, 8)}</option>
-            ))}
-          </select>
+          <ProjectMultiSelect projects={projects} value={projectIds} onChange={setProjectIds} isAr={isAr} />
         </label>
         <label>
           <span className="lbl">{isAr ? 'المدة والحجم المطلوب' : 'Required duration & volume'}</span>

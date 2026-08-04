@@ -28,6 +28,7 @@ import { Field, LoadError, Modal, PageHead, Skeleton } from './components/kit';
 import { IconBack, IconForward } from './components/icons';
 import SettingsPlatforms from './components/SettingsPlatforms';
 import SettingsContentTypes from './components/SettingsContentTypes';
+import SettingsMeasures from './components/SettingsMeasures';
 import SettingsWorkflows from './components/SettingsWorkflows';
 import SettingsAccess from './components/SettingsAccess';
 import SettingsPeople from './components/SettingsPeople';
@@ -51,6 +52,12 @@ const SECTIONS = [
     ar: 'أنواع المحتوى', en: 'Content types',
     ar_d: 'ما الذي يعنيه «منشور» أو «فيديو» — بادئة الرقم، والمسار، وحقول الكتابة.',
     en_d: 'What a Post or a Video actually is — its ref prefix, its workflow, its writing fields.',
+  },
+  {
+    slug: 'measures',
+    ar: 'معايير النجاح', en: 'Success measures',
+    ar_d: 'المعايير التي تُحكم بها الحملات — العدد أو التكلفة، والأكثر أو الأقل أفضل.',
+    en_d: 'The measures campaigns are judged by — a count or a cost, higher- or lower-is-better.',
   },
   {
     slug: 'platforms',
@@ -455,6 +462,22 @@ export default function SettingsPage() {
               />
 
               <IndexCard
+                icon={IC.campaigns}
+                title={isAr ? 'معايير النجاح' : 'Success measures'}
+                desc={isAr
+                  ? 'المعايير التي تُحكم بها الحملات. أضف نوعًا جديدًا هنا أو مباشرةً في موجز الحملة.'
+                  : 'The measures campaigns are judged by. Add a new type here or straight from a campaign brief.'}
+                tags={
+                  <>
+                    <span className="tag">{isAr ? 'عدد · تكلفة' : 'Count · Cost'}</span>
+                    <span className="tag">{isAr ? 'الأكثر/الأقل أفضل' : 'Higher/lower is better'}</span>
+                  </>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/measures')}
+              />
+
+              <IndexCard
                 icon={IC.people}
                 title={isAr ? 'الأدوار والأشخاص' : 'Roles and people'}
                 desc={isAr
@@ -584,7 +607,8 @@ export function SettingsSectionPage() {
   const load = useCallback(async () => {
     // These three fetch their own data (people/roles) or none at all
     // (notifications loads its rules itself) — settings_data would be waste.
-    if (section === 'roles' || section === 'people' || section === 'notifications') {
+    if (section === 'roles' || section === 'people' || section === 'notifications' || section === 'measures') {
+      // These fetch their own data (or none) — settings_data would be waste.
       setLoading(false);
       return;
     }
@@ -608,7 +632,7 @@ export function SettingsSectionPage() {
   const Back = isAr ? IconForward : IconBack;
   const canManage = can('manage_settings' as Capability);
   // Screens 26/27/43 render their own header (sub + actions depend on live data).
-  const ownHead = section === 'platforms' || section === 'content-types' || section === 'notifications';
+  const ownHead = section === 'platforms' || section === 'content-types' || section === 'notifications' || section === 'measures';
 
   if (!meta) {
     return (
@@ -637,6 +661,9 @@ export function SettingsSectionPage() {
         )}
         {!loading && section === 'notifications' && (
           <SettingsNotifications canManage={canManage} isAr={isAr} />
+        )}
+        {!loading && section === 'measures' && (
+          <SettingsMeasures canManage={canManage} isAr={isAr} />
         )}
       </>
     );

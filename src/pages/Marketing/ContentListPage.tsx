@@ -120,7 +120,7 @@ export default function ContentListPage() {
       list = list.filter((r) => r.status_key === statusSel);
     }
     if (platformSel) list = list.filter((r) => (r.platforms ?? []).includes(platformSel));
-    if (projectId) list = list.filter((r) => r.project_id === projectId);
+    if (projectId) list = list.filter((r) => (r.project_ids ?? []).includes(projectId));
     if (campaignId) list = list.filter((r) => r.campaign_id === campaignId);
     if (roleKey) list = list.filter((r) => r.owner_role === roleKey);
     if (term) {
@@ -472,7 +472,13 @@ export default function ContentListPage() {
                       <td className="id">{r.ref ?? '—'}</td>
                       <td><KindCell typeKey={r.content_type_key} label={typeLabel(r.content_type_key)} /></td>
                       <td className="ttl">{r.title}</td>
-                      <td>{r.project_id ? projectName(r.project_id) : '—'}</td>
+                      <td>{(() => {
+                        const ids = r.project_ids ?? [];
+                        if (ids.length === 0) return '—';
+                        const names = ids.map((id) => projectName(id));
+                        if (names.length <= 2) return names.join(isAr ? '، ' : ', ');
+                        return `${names.slice(0, 2).join(isAr ? '، ' : ', ')} +${num(names.length - 2, isAr)}`;
+                      })()}</td>
                       <td style={{ color: r.campaign_name ? undefined : 'var(--mute)' }}>
                         {r.campaign_name ?? '—'}
                       </td>

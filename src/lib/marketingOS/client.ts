@@ -191,7 +191,10 @@ export interface MosContentRow {
   content_type_key: string;
   content_type_label_ar: string;
   content_type_label_en: string;
+  /** PRIMARY project (first of project_ids) — kept for filters/joins/display. */
   project_id: string | null;
+  /** All linked Our-Projects (searchable multi-select). project_id === project_ids[0]. */
+  project_ids: string[];
   campaign_id: string | null;
   purpose: 'organic' | 'paid' | 'both';
   status_key: string;
@@ -501,11 +504,60 @@ export const fetchMetricsHistory = (publicationId: string) =>
 /* the rest of the workspace                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A managed measure type — the reusable registry a success criterion is picked
+ * from. The four presets ship seeded; more can be added in Settings or created
+ * inline on a campaign. `direction` decides the "or more" / "or less" wording;
+ * `unit:'currency'` prefixes the riyal unit.
+ */
+export interface MosMeasureType {
+  id: string;
+  key: string;
+  label_ar: string;
+  label_en: string;
+  direction: 'higher' | 'lower';
+  unit: 'count' | 'currency';
+  is_preset: boolean;
+  sort_order: number;
+  is_active: boolean;
+  archived_at: string | null;
+}
+
+/**
+ * One success measure ON a campaign. The label/direction/unit are SNAPSHOTTED
+ * from the measure type at save time (so a later rename/archive never rewrites
+ * history and every read surface renders without a join).
+ */
+export interface MosSuccessMeasure {
+  type_key: string;
+  label_ar: string;
+  label_en: string;
+  direction: 'higher' | 'lower';
+  unit: 'count' | 'currency';
+  threshold: number | null;
+}
+
+/** The "or more" / "SAR or less" tail after a measure's target number. */
+export function successMeasureSuffix(
+  direction: 'higher' | 'lower',
+  unit: 'count' | 'currency',
+  isAr: boolean,
+): string {
+  const more = direction === 'higher';
+  if (unit === 'currency') {
+    return more ? (isAr ? 'ريال أو أكثر' : 'SAR or more') : (isAr ? 'ريال أو أقل' : 'SAR or less');
+  }
+  return more ? (isAr ? 'أو أكثر' : 'or more') : (isAr ? 'أو أقل' : 'or less');
+}
+
 export interface MosCampaign {
   id: string;
   ref: string | null;
   name: string;
+  /** PRIMARY project (first of project_ids) — kept for filters/joins/display. */
   project_id: string | null;
+  /** All linked Our-Projects (searchable multi-select). project_id === project_ids[0]. */
+  project_ids: string[];
   objective: 'awareness' | 'leads' | 'traffic' | 'sales' | 'other';
   status: 'planning' | 'active' | 'paused' | 'done' | 'cancelled';
   /** Paid carries a budget and a target cost; organic is reach — screen 19's fork. */
@@ -513,8 +565,11 @@ export interface MosCampaign {
   /** The goal written as a RESULT («١٥٠ عميلًا مؤهلًا…») — the campaign's identity. */
   goal: string | null;
   owner_role: MosRole | null;
+  /** Back-compat scalar pair — mirrors success_measures[0]; kept for list/overview/judgment reads. */
   success_metric: string | null;
   success_threshold: number | null;
+  /** Every success measure the campaign is judged by (screen 15/19). */
+  success_measures: MosSuccessMeasure[];
   starts_on: string | null;
   ends_on: string | null;
   budget_total: number | null;
@@ -1020,6 +1075,14 @@ export const saveAccount = (account: Record<string, unknown>) =>
   call<{ accounts: MosAccount[] }>('account_save', { account });
 
 export const fetchProjects = () => call<{ projects: MosProject[] }>('projects_list');
+
+/** The managed measure-type registry (active + inactive; the picker filters). */
+export const fetchMeasureTypes = () =>
+  call<{ measure_types: MosMeasureType[] }>('measure_types_list');
+
+/** Create or update a measure type; returns the full refreshed list. */
+export const saveMeasureType = (measureType: Record<string, unknown>) =>
+  call<{ measure_types: MosMeasureType[] }>('measure_type_save', { measure_type: measureType });
 
 export const fetchMetricsQueue = (since?: string) =>
   call<{ publications: MosPublication[]; titles: MosTitleRef[]; since: string }>(

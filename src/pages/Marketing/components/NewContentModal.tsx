@@ -26,6 +26,7 @@ import {
 import { useWorkspace } from '../MarketingWorkspace';
 import { Field, Modal } from './kit';
 import { kindIcon } from './icons';
+import ProjectMultiSelect from './ProjectMultiSelect';
 import { num, shortDate } from '../lib/format';
 
 const PLATFORMS = ['instagram', 'tiktok', 'snapchat', 'x', 'linkedin'] as const;
@@ -66,7 +67,7 @@ export default function NewContentModal({
 
   const [typeKey, setTypeKey] = useState(contentTypes[0]?.key ?? '');
   const [title, setTitle] = useState('');
-  const [projectId, setProjectId] = useState(presetProject ?? '');
+  const [projectIds, setProjectIds] = useState<string[]>(presetProject ? [presetProject] : []);
   const [campaignId, setCampaignId] = useState(presetCampaign ?? '');
   const [purpose, setPurpose] = useState<'organic' | 'paid' | 'both'>('organic');
   const [publishAt, setPublishAt] = useState('');
@@ -163,7 +164,8 @@ export default function NewContentModal({
       const res = await createContent({
         title: title.trim(),
         content_type_key: typeKey,
-        project_id: projectId || null,
+        // Multi-project: the server derives the primary project_id from this.
+        project_ids: projectIds,
         campaign_id: campaignId || null,
         purpose,
         target_publish_at: publishAt ? new Date(publishAt).toISOString() : null,
@@ -247,13 +249,13 @@ export default function NewContentModal({
       </Field>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
-        <Field label={isAr ? 'المشروع' : 'Project'}>
-          <select className="inp" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">{isAr ? 'بدون' : 'None'}</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.project_name ?? p.id.slice(0, 8)}</option>
-            ))}
-          </select>
+        <Field label={isAr ? 'المشروع' : 'Project'} hint={isAr ? 'اختياري · متعدد' : 'optional · multiple'}>
+          <ProjectMultiSelect
+            projects={projects}
+            value={projectIds}
+            onChange={setProjectIds}
+            isAr={isAr}
+          />
         </Field>
         <Field label={isAr ? 'الحملة' : 'Campaign'} hint={isAr ? 'اختياري' : 'optional'}>
           <select className="inp" value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>

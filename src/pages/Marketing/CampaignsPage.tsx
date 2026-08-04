@@ -13,12 +13,16 @@ import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, EXEC_PURPOSE_LABELS, MosCampaign,
-  PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS,
+  PLATFORM_LABELS, ROLE_LABELS,
   fetchCampaignDetail, fetchCampaigns, fetchPublications, saveCampaign,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
 import { IconCampaigns, IconCheck, IconMetrics, IconPlus } from './components/icons';
+import ProjectMultiSelect from './components/ProjectMultiSelect';
+import SuccessMeasuresEditor, {
+  MeasureDraft, measuresToDrafts, draftsToMeasures, hasMeasureTarget,
+} from './components/SuccessMeasuresEditor';
 import { num, shortDate } from './lib/format';
 import './styles/mobile-m4.css';
 
@@ -223,7 +227,7 @@ export default function CampaignsPage() {
   const filtered = useMemo(() => rows.filter((c) =>
     (statusF === 'all' || c.status === statusF)
     && (kindF === 'all' || c.kind === kindF)
-    && (!projectF || c.project_id === projectF),
+    && (!projectF || (c.project_ids ?? []).includes(projectF)),
   ), [rows, statusF, kindF, projectF]);
 
   /* ── stats — scoped to this month while the month chip is on ────────── */
@@ -484,7 +488,13 @@ export default function CampaignsPage() {
                                 {c.kind === 'paid' ? (isAr ? 'مدفوعة' : 'Paid') : (isAr ? 'عضوية' : 'Organic')}
                               </span>
                             </td>
-                            <td>{c.project_id ? projectName(c.project_id) : (isAr ? 'كل المشاريع' : 'All projects')}</td>
+                            <td>{(() => {
+                              const ids = c.project_ids ?? [];
+                              if (ids.length === 0) return isAr ? 'كل المشاريع' : 'All projects';
+                              const names = ids.map((id) => projectName(id));
+                              if (names.length <= 2) return names.join(isAr ? '، ' : ', ');
+                              return `${names.slice(0, 2).join(isAr ? '، ' : ', ')} +${num(names.length - 2, isAr)}`;
+                            })()}</td>
                             <td>{duration(c, isAr)}</td>
                             <td><Pill tone={st.tone}>{isAr ? st.ar : st.en}</Pill></td>
                             <td className="num">{num(c.content_count, isAr)}</td>
@@ -662,13 +672,12 @@ export function CampaignModal({
 
   const [kind, setKind] = useState<MosCampaign['kind']>(campaign?.kind ?? 'paid');
   const [goal, setGoal] = useState(campaign?.goal ?? campaign?.name ?? '');
-  const [projectId, setProjectId] = useState(campaign?.project_id ?? '');
+  const [projectIds, setProjectIds] = useState<string[]>(campaign?.project_ids ?? []);
   const [ownerRole, setOwnerRole] = useState<string>(campaign?.owner_role ?? 'marketing_manager');
   const [startsOn, setStartsOn] = useState(campaign?.starts_on ?? '');
   const [endsOn, setEndsOn] = useState(campaign?.ends_on ?? '');
   const [budget, setBudget] = useState(campaign?.budget_total?.toString() ?? '');
-  const [metric, setMetric] = useState(campaign?.success_metric ?? 'cpl_qualified');
-  const [threshold, setThreshold] = useState(campaign?.success_threshold?.toString() ?? '');
+  const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(campaign?.success_measures));
   const [status, setStatus] = useState<MosCampaign['status']>(campaign?.status ?? 'planning');
   const [split, setSplit] = useState<Record<string, SplitRow>>(() =>
     Object.fromEntries(SPLIT_PLATFORMS.map((p) => [
@@ -698,7 +707,7 @@ export function CampaignModal({
     }
     // The design's note: معيار النجاح إلزامي. A paid campaign without a
     // criterion cannot be judged, so the form refuses it up front.
-    if (kind === 'paid' && threshold.trim() === '') {
+    if (kind === 'paid' && !hasMeasureTarget(measures)) {
       addToast(
         isAr ? 'حدّد معيار النجاح — حملة بلا معيار لا يمكن الحكم عليها.' : 'Set the success criterion — a campaign without one cannot be judged.',
         'error',
@@ -726,15 +735,17 @@ export function CampaignModal({
           name: goal.trim(),
           goal: goal.trim(),
           kind,
-          project_id: projectId || null,
+          // Multi-project: the server derives the primary project_id from this.
+          project_ids: projectIds,
           owner_role: ownerRole || null,
           objective: kind === 'organic' ? 'awareness' : 'leads',
           status,
           starts_on: startsOn || null,
           ends_on: endsOn || null,
           budget_total: kind === 'paid' ? totalBudget : null,
-          success_metric: metric || null,
-          success_threshold: threshold.trim() === '' ? null : Number(threshold),
+          // The server derives the back-compat primary (success_metric /
+          // success_threshold) from success_measures[0].
+          success_measures: draftsToMeasures(measures),
         },
         executions,
       );
@@ -814,13 +825,13 @@ export function CampaignModal({
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
-        <Field label={isAr ? 'المشروع' : 'Project'}>
-          <select className="inp" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">{isAr ? 'بدون' : 'None'}</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.project_name ?? p.id.slice(0, 8)}</option>
-            ))}
-          </select>
+        <Field label={isAr ? 'المشروع' : 'Project'} hint={isAr ? 'اختياري · متعدد' : 'optional · multiple'}>
+          <ProjectMultiSelect
+            projects={projects}
+            value={projectIds}
+            onChange={setProjectIds}
+            isAr={isAr}
+          />
         </Field>
         <Field label={isAr ? 'المسؤول' : 'Responsible'}>
           <select className="inp" value={ownerRole} onChange={(e) => setOwnerRole(e.target.value)}>
@@ -951,32 +962,7 @@ export function CampaignModal({
         </div>
       )}
 
-      <div>
-        <div className="lbl" style={{ marginBottom: 6 }}>{isAr ? 'معيار النجاح' : 'Success criterion'}</div>
-        <div style={{ display: 'flex', gap: 11, flexWrap: 'wrap' }}>
-          <select className="inp" style={{ flex: 1, minWidth: 180 }} value={metric} onChange={(e) => setMetric(e.target.value)}>
-            {Object.keys(SUCCESS_METRIC_LABELS).map((k) => (
-              <option key={k} value={k}>
-                {isAr ? SUCCESS_METRIC_LABELS[k]?.ar : SUCCESS_METRIC_LABELS[k]?.en}
-              </option>
-            ))}
-          </select>
-          <div className="inp inp-row" style={{ width: 170, padding: 0 }}>
-            <input
-              className="inp"
-              style={{ border: 0, flex: 1 }}
-              inputMode="numeric"
-              value={threshold}
-              onChange={(e) => setThreshold(e.target.value)}
-            />
-            <span style={{ fontSize: 11, color: 'var(--mute)', paddingInlineEnd: 11, whiteSpace: 'nowrap' }}>
-              {metric === 'leads' || metric === 'reach'
-                ? isAr ? 'أو أكثر' : 'or more'
-                : isAr ? 'ريال أو أقل' : 'SAR or less'}
-            </span>
-          </div>
-        </div>
-      </div>
+      <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />
 
       {!isNew && (
         <Field label={isAr ? 'الحالة' : 'Status'}>
