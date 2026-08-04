@@ -104,6 +104,8 @@ export interface FetchSuggestionsArgs {
   followupId?: string | null;
   usedDraftValues?: boolean;
   perGroup?: number;
+  /** Bilingual W6: UI language → geography names on the result cards. */
+  locale?: 'ar' | 'en';
 }
 
 async function authHeader(): Promise<Record<string, string>> {
@@ -126,6 +128,7 @@ export async function fetchSuggestedProjects(
       followup_id: args.followupId ?? undefined,
       used_draft_values: args.usedDraftValues ?? false,
       perGroup: args.perGroup,
+      locale: args.locale,
     }),
     signal,
   });

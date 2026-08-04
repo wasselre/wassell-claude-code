@@ -100,7 +100,7 @@ export default function SuggestionCard({
           <div className="font-bold text-sm text-charcoal truncate">{item.project_name}</div>
           <div className="flex items-center gap-1 text-[11px] text-charcoal/55 truncate">
             <MapPin size={11} className="text-copper shrink-0" />
-            {[district, city].filter(Boolean).join('، ') || L('الموقع غير محدد', 'Location not set')}
+            {[district, city].filter(Boolean).join(isAr ? '، ' : ', ') || L('الموقع غير محدد', 'Location not set')}
           </div>
         </div>
         {item.reason_code === 'no_criteria' ? (

@@ -36,6 +36,8 @@ interface SuggestBody {
   followup_id?: string;
   used_draft_values?: boolean;
   perGroup?: number;
+  /** Bilingual W6: UI language for the geography names on the result cards. */
+  locale?: 'ar' | 'en';
 }
 
 const num = (v: unknown): number | undefined => {
@@ -160,7 +162,9 @@ export default async function handler(req: Request): Promise<Response> {
     // this modal onto it is a separate, deferred phase. (The market scan here also
     // already approaches the edge timeout for ultra-dense districts — a pre-existing
     // perf characteristic of the market_listings inclusion, unrelated to geo.)
-    const core = await matchProjectsCore(supabase, requirements, { alwaysScoreAll: true, includeMarket: true });
+    const core = await matchProjectsCore(supabase, requirements, {
+      alwaysScoreAll: true, includeMarket: true, locale: body.locale === 'en' ? 'en' : 'ar',
+    });
     if (!core.ok) {
       // Surface loudly (never silently swallow) but keep a renderable shape.
       console.error('[suggest-projects] match core failed:', core.error);

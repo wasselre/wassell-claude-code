@@ -36,6 +36,7 @@ import {
   resolveConstraint, spanPassesBand, widenBand,
   type ConstraintField, type RequirementConstraints,
 } from './constraints.js';
+import { resolveLocalizedName, pickLocalized } from '../../src/lib/geo/localizedName.js';
 
 export const MATCH_MODEL = 'claude-opus-4-7';
 export const MATCH_MAX_TOKENS = 8_000;
@@ -1636,22 +1637,29 @@ function recordLocationIds(data: Record<string, unknown>): { district: string; c
   return { district: one(loc.district), city: one(loc.city) };
 }
 
-/** Build an id → display name map for a geography model over the given ids (chunked .in). */
+/** Build an id → display name map for a geography model over the given ids
+ *  (chunked .in). `locale` (bilingual W6) picks the OFFICIAL localized name:
+ *  'en' → the English place name (falling back to Arabic when a record has no
+ *  name_en); 'ar' (default) → the Arabic name, unchanged for every existing
+ *  caller incl. the AI sales-agent tools. */
 async function geoNameMap(
   supabase: SupabaseClient,
   modelName: 'cities' | 'districts',
   ids: string[],
+  locale: 'ar' | 'en' = 'ar',
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const uniq = [...new Set(ids.filter((x) => !!x))];
   if (!uniq.length) return map;
   const m = await getModelByName(supabase, modelName);
   if (!m) return map;
+  const isAr = locale !== 'en';
   for (let i = 0; i < uniq.length; i += 400) {
     const chunk = uniq.slice(i, i + 400);
     const { data } = await supabase.from('unified_records').select('id, data').eq('model_id', m.id).in('id', chunk);
     for (const r of (data ?? []) as RecordRow[]) {
-      const n = asStr(r.data.display_name) || asStr(r.data.name_ar);
+      const loc = resolveLocalizedName(r.id, r.data as Record<string, unknown>);
+      const n = loc ? pickLocalized(loc, isAr) : (asStr(r.data.display_name) || asStr(r.data.name_ar));
       if (n) map.set(r.id, n);
     }
   }
@@ -1733,6 +1741,11 @@ export interface MatchCoreOptions {
    *  the requested districts' centroids so every result's distance_km is measured
    *  to the NEAREST selected district OR element, labelled by `name`. */
   refPoints?: Array<{ lat: number; lng: number; name?: string | null }>;
+  /** Bilingual W6: language for the geography names on result facts
+   *  (projCityName / projDistrictName). Default 'ar' keeps the AI sales-agent
+   *  match_projects output byte-identical; the finder endpoints pass the caller's
+   *  UI language so the cards read in that language. */
+  locale?: 'ar' | 'en';
 }
 
 /** Resolve each row's containing district via the PostGIS `districts_for_points`
@@ -1994,12 +2007,13 @@ export async function matchProjectsCore(
   // Resolve each candidate project's location ids to display names (shown in the
   // facts). Include BOTH the stored district id AND the polygon-derived district id
   // so the facts show the verified district name even when the stored one differs.
+  const geoLocale = opts.locale ?? 'ar';
   const polyDistrictIds = [...polyMap.values()].filter((v): v is string => !!v);
   const districtNameById = await geoNameMap(supabase, 'districts', [
     ...rows.map((r) => recordLocationIds(r.data).district),
     ...polyDistrictIds,
-  ]);
-  const cityNameById = await geoNameMap(supabase, 'cities', rows.map((r) => recordLocationIds(r.data).city));
+  ], geoLocale);
+  const cityNameById = await geoNameMap(supabase, 'cities', rows.map((r) => recordLocationIds(r.data).city), geoLocale);
 
   // Rank by BAND first, then score — so a genuine good/strong match always
   // outranks a 'partial' one even if the partial has a higher raw score (e.g. a
@@ -2176,8 +2190,8 @@ export async function matchProjectsCore(
       try {
         const listingRows = fetched.rows;
         const noMarketVerify = new Map<string, string | null>();
-        for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district))) districtNameById.set(k, v);
-        for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city))) cityNameById.set(k, v);
+        for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district), geoLocale)) districtNameById.set(k, v);
+        for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city), geoLocale)) cityNameById.set(k, v);
         for (const r of listingRows) {
           const adapted = adaptListingToScorable(r.data);
           const name = asStr(adapted.project_name);

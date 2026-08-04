@@ -179,7 +179,7 @@ export default function FinderCard({
           <div className="truncate text-sm font-bold text-charcoal">{item.project_name}</div>
           <div className="flex items-center gap-1 truncate text-[11px] text-charcoal/55">
             <MapPin size={11} className="shrink-0 text-copper" />
-            {[district, city].filter(Boolean).join('، ') || L('الموقع غير محدد', 'Location not set')}
+            {[district, city].filter(Boolean).join(isAr ? '، ' : ', ') || L('الموقع غير محدد', 'Location not set')}
           </div>
         </div>
         <BandBadge band={item.match_band} score={item.score} isAr={isAr} />

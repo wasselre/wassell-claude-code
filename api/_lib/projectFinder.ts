@@ -481,6 +481,8 @@ export async function findMatchingProjects(
     verifyGeo: true,
     geoMatchIds: opts.geoMatchIds ?? null,
     refPoints: opts.refPoints,
+    // W6: geography names on result facts render in the caller's UI language.
+    locale: opts.locale ?? 'ar',
   });
   if (!core.ok) return { ok: false, error: core.error };
   return { ok: true, result: groupForFinder(core, req, opts) };
