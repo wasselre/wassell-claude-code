@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Building2, Database, Loader2, Plus, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import type { AppRecord } from '@/types';
 import {
   addDocumentLink,
   listLinksForFile,
@@ -41,6 +42,27 @@ export default function FileLinksPanel({ fileId, canEdit }: Props) {
   const [query, setQuery] = useState('');
 
   const projectModel = useMemo(() => models.find((m) => m.name === 'our_projects'), [models]);
+  const masterModel = useMemo(() => models.find((m) => m.name === 'all_projects'), [models]);
+
+  /** our_projects records carry no project_name of their own — the human name
+   *  lives on the linked master all_projects record (the 1:1 `project` lookup).
+   *  Resolve through it, falling back to the record's own title heuristic. */
+  const projectDisplayTitle = useCallback(
+    (record: AppRecord): string => {
+      const raw = record.data?.project;
+      const masterId = Array.isArray(raw)
+        ? (raw[0] as string | undefined)
+        : typeof raw === 'string'
+        ? raw
+        : undefined;
+      if (masterId && masterModel) {
+        const master = (recordsMap[masterModel.id] ?? []).find((x) => x.id === masterId);
+        if (master) return recordTitle(masterModel, master, isAr);
+      }
+      return recordTitle(projectModel, record, isAr);
+    },
+    [masterModel, recordsMap, isAr, projectModel],
+  );
 
   useEffect(() => {
     setQuery('');
@@ -69,10 +91,10 @@ export default function FileLinksPanel({ fileId, canEdit }: Props) {
     const linkedIds = new Set(links.filter((l) => l.model_id === projectModel.id).map((l) => l.record_id));
     const pool = (recordsMap[projectModel.id] ?? []).filter((r) => !linkedIds.has(r.id));
     const scored = q
-      ? pool.filter((r) => recordTitle(projectModel, r, isAr).toLowerCase().includes(q))
+      ? pool.filter((r) => projectDisplayTitle(r).toLowerCase().includes(q))
       : pool;
     return scored.slice(0, 8);
-  }, [projectModel, recordsMap, query, links, isAr]);
+  }, [projectModel, recordsMap, query, links, projectDisplayTitle]);
 
   const addProject = async (recordId: string) => {
     if (!projectModel || busy) return;
@@ -104,8 +126,13 @@ export default function FileLinksPanel({ fileId, canEdit }: Props) {
   const titleFor = (link: DocumentLink): { record: string; model: string } => {
     const m = models.find((x) => x.id === link.model_id);
     const r = (recordsMap[link.model_id] ?? []).find((x) => x.id === link.record_id);
+    const isProject = !!projectModel && link.model_id === projectModel.id;
     return {
-      record: r ? recordTitle(m, r, isAr) : t('doc.links.record_missing'),
+      record: r
+        ? isProject
+          ? projectDisplayTitle(r)
+          : recordTitle(m, r, isAr)
+        : t('doc.links.record_missing'),
       model: m ? (isAr ? m.label_ar : m.label_en) : '—',
     };
   };
@@ -147,7 +174,7 @@ export default function FileLinksPanel({ fileId, canEdit }: Props) {
                     >
                       <Plus size={14} className="text-copper shrink-0" />
                       <span className="text-sm text-charcoal truncate">
-                        {recordTitle(projectModel, r, isAr)}
+                        {projectDisplayTitle(r)}
                       </span>
                     </button>
                   ))}
