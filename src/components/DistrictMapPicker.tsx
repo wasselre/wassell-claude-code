@@ -10,6 +10,7 @@ import {
   type DistrictLocationItem, type DrawnAreaLocationItem, type ElementCondition, type ElementRuleLocationItem,
   type GeoPolarity, type LocationItem,
 } from '@/lib/geo/locationItems';
+import { toEnglishDisplay } from '@/lib/geo/localizedName';
 
 const isDistrictItem = (i: LocationItem): i is DistrictLocationItem => i.kind === 'district';
 const isDrawnItem = (i: LocationItem): i is DrawnAreaLocationItem => i.kind === 'drawn_area';
@@ -46,6 +47,9 @@ const isElementItem = (i: LocationItem): i is ElementRuleLocationItem => i.kind 
 interface DistrictShape {
   district_id: string;
   name: string;
+  /** English district name (bilingual W6) — the RPC returns it alongside `name`;
+   *  the derived `shapes` picks the display language into `name`. */
+  name_en?: string | null;
   geojson: { type: string; coordinates: unknown };
 }
 
@@ -124,6 +128,7 @@ interface LandmarkRow {
   external_id: string;
   display_name: string | null;
   name_ar: string | null;
+  name_en: string | null;
   element_type: string;
   latitude: number | null;
   longitude: number | null;
@@ -258,7 +263,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   const keyMissing = !isMapsKeyConfigured();
 
   const [map, setMap] = useState<google.maps.Map | null>(null);
-  const [shapes, setShapes] = useState<DistrictShape[] | null>(null);
+  const [rawShapes, setRawShapes] = useState<DistrictShape[] | null>(null);
   const [shapesError, setShapesError] = useState<string | null>(null);
   // PERF: the hovered-district chip is written straight to the DOM instead of
   // going through React state. Panning drags the cursor across many districts,
@@ -309,17 +314,29 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   useEffect(() => {
     if (!supabase) { setShapesError('offline'); return; }
     let cancelled = false;
-    setShapes(null);
+    setRawShapes(null);
     setShapesError(null);
     supabase
       .rpc('wassell_city_district_shapes', { p_city_id: cityId })
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error) { setShapesError(error.message); return; }
-        setShapes(Array.isArray(data) ? (data as DistrictShape[]) : []);
+        setRawShapes(Array.isArray(data) ? (data as DistrictShape[]) : []);
       });
     return () => { cancelled = true; };
   }, [cityId]);
+
+  // Bilingual W6: the RPC returns both `name` (Arabic-first) and `name_en`.
+  // Localize `name` to the UI language here so EVERY downstream reader (footer
+  // chips, coverage labels, drawn-area names, map labels) shows the display
+  // language without touching each site — and re-localizes on a language toggle.
+  const shapes = useMemo(
+    () => rawShapes?.map((s) => ({
+      ...s,
+      name: isAr ? s.name : toEnglishDisplay(s.name_en || s.name),
+    })) ?? rawShapes,
+    [rawShapes, isAr],
+  );
 
   // Names for the footer chips (id → name) from the loaded shapes.
   const nameById = useMemo(() => {
@@ -383,7 +400,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     let cancelled = false;
     supabase
       .from('geo_elements')
-      .select('external_id, display_name, name_ar, element_type, latitude, longitude')
+      .select('external_id, display_name, name_ar, name_en, element_type, latitude, longitude')
       .in('element_type', LANDMARK_TYPES)
       .eq('is_active', true)
       .eq('is_searchable', true)
@@ -407,7 +424,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     let cancelled = false;
     supabase
       .from('geo_elements')
-      .select('external_id, display_name, name_ar, element_type, latitude, longitude')
+      .select('external_id, display_name, name_ar, name_en, element_type, latitude, longitude')
       .in('element_type', ROAD_TYPES)
       .eq('is_active', true)
       .eq('is_searchable', true)
@@ -891,7 +908,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     const lmEntries: MarkerEntry[] = landmarks
       .filter((l) => l.latitude != null && l.longitude != null)
       .map((l) => {
-        const name = (isAr ? l.name_ar || l.display_name : l.display_name || l.name_ar) ?? '';
+        const name = (isAr ? l.name_ar || l.display_name : l.name_en || l.display_name || l.name_ar) ?? '';
         const position = { lat: l.latitude!, lng: l.longitude! };
         return {
           marker: new google.maps.Marker({
@@ -1325,7 +1342,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       const n = normSearch(name);
       return tokens.every((t) => n.includes(t));
     };
-    const nameOf = (l: LandmarkRow) => (isAr ? l.name_ar || l.display_name : l.display_name || l.name_ar) ?? '';
+    const nameOf = (l: LandmarkRow) => (isAr ? l.name_ar || l.display_name : l.name_en || l.display_name || l.name_ar) ?? '';
     const districtHits: SearchHit[] = (shapes ?? [])
       .filter((s) => hit(s.name))
       .slice(0, 8)
