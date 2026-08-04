@@ -32,6 +32,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { updateContent } from '@/lib/marketingOS/client';
 import { dateStamp, num } from '../lib/format';
+import { useMosText } from '../lib/useMosText';
 
 interface FieldDef {
   ar: string;
@@ -141,6 +142,11 @@ export default function WritingFields({
 
   const has = (k: string): boolean => schema.includes(k);
   const str = (k: string): string => asString(draft[k]);
+  // W6-M: readonly DISPLAY of a content value in the workspace language (English
+  // translates the Arabic source on demand). Never used on editable inputs —
+  // the user edits the source, so `str()` (raw) drives every input below.
+  const mosText = useMosText();
+  const disp = (k: string): string => mosText(str(k), k);
   const set = (k: string, v: unknown): void => setDraft((d) => ({ ...d, [k]: v }));
 
   const leftovers = useMemo(
@@ -170,7 +176,9 @@ export default function WritingFields({
   /* ── the voice-over read-speed chip: ~2.2 words/sec of read Arabic ── */
   const voWords = str('voiceover').trim() ? str('voiceover').trim().split(/\s+/).length : 0;
   const voSeconds = voWords > 0 ? Math.round(voWords / 2.2) : 0;
-  const voParagraphs = str('voiceover').split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  // Display paragraphs translate in EN (readonly view only); the read-speed
+  // estimate + copy-for-recording keep the raw Arabic source above.
+  const voParagraphs = disp('voiceover').split(/\n+/).map((p) => p.trim()).filter(Boolean);
 
   const copyVoiceover = async (): Promise<void> => {
     try {
@@ -206,7 +214,7 @@ export default function WritingFields({
   /* ── hashtags render as tags, edit as one line ── */
   const hashtags = str('hashtags');
   const tagList = hashtags.split(/\s+/).map((t) => t.trim()).filter(Boolean);
-  const captionParagraphs = str('caption').split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  const captionParagraphs = disp('caption').split(/\n+/).map((p) => p.trim()).filter(Boolean);
 
   const nothingComposed = !has('idea') && !has('voiceover') && !has('headlines')
     && !has('caption') && !has('design_brief') && !has('slides') && leftovers.length === 0;
@@ -267,16 +275,16 @@ export default function WritingFields({
           <div className="write">
             <div className="doc-lbl">{isAr ? 'الفكرة' : 'The idea'}</div>
             <p style={{ fontSize: 15.5, color: 'var(--ink)', lineHeight: 1.9 }}>
-              {str('idea') || '—'}
+              {disp('idea') || '—'}
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 26px', marginTop: 6 }}>
               <div className="fld">
                 <div className="k">{isAr ? 'الافتتاحية · أول ٣ ثوانٍ' : 'The hook · first 3 seconds'}</div>
-                <div className="v">{str('hook') || '—'}</div>
+                <div className="v">{disp('hook') || '—'}</div>
               </div>
               <div className="fld">
                 <div className="k">{isAr ? 'الرسالة الأساسية' : 'The core message'}</div>
-                <div className="v">{str('core_message') || '—'}</div>
+                <div className="v">{disp('core_message') || '—'}</div>
               </div>
             </div>
           </div>

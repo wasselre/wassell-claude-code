@@ -38,6 +38,7 @@ import StageRail from './components/StageRail';
 import TaskCard, { TasksApprovalsTab } from './components/TaskCard';
 import WritingFields from './components/WritingFields';
 import SceneTable from './components/SceneTable';
+import { useMosText } from './lib/useMosText';
 import PublishTab from './components/PublishTab';
 import PerformanceTab from './components/PerformanceTab';
 import MaterialsTab from './components/MaterialsTab';
@@ -93,6 +94,9 @@ export default function ContentDetailPage() {
   const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
   const { isAr, role, roles, can, typeLabel, projectName, contentTypes, people, projects, appUserId } = useWorkspace();
+  // W6-M: content field VALUES read in the workspace language (English pages
+  // translate the Arabic-authored text on demand; Arabic pages pass through).
+  const mosText = useMosText();
   // Screen 29 — the phone review flow renders its own pinned note, scene
   // list, fixed action bar and approval sheet below the 760px breakpoint.
   const isMobile = useIsMobile();
@@ -371,7 +375,7 @@ export default function ContentDetailPage() {
               <span className="sep">/</span>
               <span className="ltr">{item.ref}</span>
             </div>
-            <h3>{item.title}</h3>
+            <h3>{mosText(item.title, 'title')}</h3>
             <div className="chips">
               <KindCell typeKey={item.content_type_key} label={typeLabel(item.content_type_key)} />
               {version > 1 && (
@@ -572,10 +576,10 @@ export default function ContentDetailPage() {
                       />
                     ) : (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 26px' }}>
-                        <ReadField label={isAr ? 'الهدف' : 'Goal'}>{item.goal || '—'}</ReadField>
-                        <ReadField label={isAr ? 'الجمهور' : 'Audience'}>{item.audience || '—'}</ReadField>
-                        <ReadField label={isAr ? 'الزاوية' : 'Angle'}>{item.angle || '—'}</ReadField>
-                        <ReadField label={isAr ? 'دعوة الإجراء' : 'Call to action'}>{item.cta || '—'}</ReadField>
+                        <ReadField label={isAr ? 'الهدف' : 'Goal'}>{mosText(item.goal, 'goal') || '—'}</ReadField>
+                        <ReadField label={isAr ? 'الجمهور' : 'Audience'}>{mosText(item.audience, 'audience') || '—'}</ReadField>
+                        <ReadField label={isAr ? 'الزاوية' : 'Angle'}>{mosText(item.angle, 'angle') || '—'}</ReadField>
+                        <ReadField label={isAr ? 'دعوة الإجراء' : 'Call to action'}>{mosText(item.cta, 'cta') || '—'}</ReadField>
                         <ReadField label={isAr ? 'يُنشر على' : 'Publishing to'}>
                           {publications.length > 0
                             ? publications
