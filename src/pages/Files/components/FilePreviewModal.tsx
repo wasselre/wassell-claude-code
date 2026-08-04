@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Download, ExternalLink, Loader2, Pencil, RefreshCw, Share2, Shield, X, Trash2 } from 'lucide-react';
+import { Check, Download, ExternalLink, Link2, Loader2, Pencil, RefreshCw, Share2, Shield, X, Trash2 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { FileRow } from '@/types';
 import {
@@ -12,6 +12,7 @@ import {
 } from '@/lib/files/client';
 import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindIcon, kindLabel } from '@/lib/files/format';
+import FileLinksPanel from './FileLinksPanel';
 
 interface Props {
   file: FileRow | null;
@@ -57,6 +58,11 @@ export default function FilePreviewModal({
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
+  /** Links rail (project link + linked records). Open by default on wide
+   *  screens; a header toggle controls it everywhere. */
+  const [showLinks, setShowLinks] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 1024 : true,
+  );
 
   useEffect(() => {
     if (!open || !file) {
@@ -187,6 +193,12 @@ export default function FilePreviewModal({
         </div>
         {!renaming && (
           <div className="flex items-center gap-1">
+            <HeaderBtn
+              icon={Link2}
+              label={t('files.links.panel_toggle')}
+              active={showLinks}
+              onClick={() => setShowLinks((v) => !v)}
+            />
             <HeaderBtn icon={Download} label={t('files.actions.download')} onClick={handleDownload} />
             {showRename && (
               <HeaderBtn icon={Pencil} label={t('files.actions.rename')} onClick={handleStartRename} />
@@ -205,17 +217,20 @@ export default function FilePreviewModal({
         )}
       </div>
 
-      {/* Body */}
-      <div className="flex-1 flex items-center justify-center overflow-auto" onClick={(e) => e.stopPropagation()}>
-        {isOfficePreviewMime(file.mime_type) ? (
-          <OfficePreview file={file} onDownload={handleDownload} />
-        ) : (
-          <>
-            {loading && <Loader2 size={32} className="animate-spin text-white/70" />}
-            {!loading && url && <PreviewBody file={file} url={url} onDownload={handleDownload} />}
-            {!loading && !url && <div className="text-white/70">{t('files.upload.failed')}</div>}
-          </>
-        )}
+      {/* Body — media area + optional links rail */}
+      <div className="flex-1 flex min-h-0" onClick={(e) => e.stopPropagation()}>
+        <div className="flex-1 flex items-center justify-center overflow-auto">
+          {isOfficePreviewMime(file.mime_type) ? (
+            <OfficePreview file={file} onDownload={handleDownload} />
+          ) : (
+            <>
+              {loading && <Loader2 size={32} className="animate-spin text-white/70" />}
+              {!loading && url && <PreviewBody file={file} url={url} onDownload={handleDownload} />}
+              {!loading && !url && <div className="text-white/70">{t('files.upload.failed')}</div>}
+            </>
+          )}
+        </div>
+        {showLinks && <FileLinksPanel fileId={file.id} canEdit={canEdit} />}
       </div>
     </div>,
     document.body,
@@ -450,16 +465,23 @@ interface HBProps {
   label: string;
   onClick: () => void;
   danger?: boolean;
+  /** Toggle buttons (e.g. the links rail) render as pressed when active. */
+  active?: boolean;
 }
 
-function HeaderBtn({ icon: Icon, label, onClick, danger }: HBProps) {
+function HeaderBtn({ icon: Icon, label, onClick, danger, active }: HBProps) {
   return (
     <button
       onClick={onClick}
       title={label}
       aria-label={label}
+      aria-pressed={active}
       className={`p-2 rounded-lg transition-colors ${
-        danger ? 'text-red-400 hover:bg-red-500/20' : 'text-white/80 hover:bg-white/10'
+        danger
+          ? 'text-red-400 hover:bg-red-500/20'
+          : active
+          ? 'bg-copper text-white'
+          : 'text-white/80 hover:bg-white/10'
       }`}
     >
       <Icon size={18} />
