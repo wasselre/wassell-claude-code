@@ -125,7 +125,10 @@ export default function ProjectMultiSelect({
                   type="button"
                   style={chipX}
                   aria-label={isAr ? `إزالة ${label}` : `Remove ${label}`}
-                  onClick={(e) => { e.stopPropagation(); remove(id); }}
+                  // preventDefault cancels the <label>'s (Field) click-forwarding
+                  // to the first labelable descendant; stopPropagation keeps the
+                  // box's open-on-click from firing.
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); remove(id); }}
                 >×</button>
               )}
             </span>
@@ -166,8 +169,15 @@ export default function ProjectMultiSelect({
                   role="option"
                   aria-selected={false}
                   style={opt}
+                  // This picker lives inside a <label> (Field). WITHOUT the click's
+                  // preventDefault, the browser runs the label's activation on the
+                  // click and forwards it to the first labelable descendant — which,
+                  // once a chip exists, is that chip's × button — instantly removing
+                  // what we just added (verified live: mousedown→click→click@×).
+                  // preventDefault on the click cancels that forwarding; the
+                  // mousedown preventDefault keeps focus on the search input.
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => add(p.id)}
+                  onClick={(e) => { e.preventDefault(); add(p.id); }}
                   onMouseEnter={(e) => { (e.currentTarget.style.background = 'var(--sand-2)'); }}
                   onMouseLeave={(e) => { (e.currentTarget.style.background = 'transparent'); }}
                   title={label}
