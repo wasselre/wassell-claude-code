@@ -212,12 +212,6 @@ export default function ContentDetailPage() {
     return roles.includes(openTask.role) && can('write_content');
   }, [role, openTask, currentStep, roles, can]);
 
-  /** Approving the creative (headline pick, approve button) — the reviewer's action. */
-  const canApproveCreative = useMemo(
-    () => canAct && currentStep?.is_approval === true && can('approve_creative'),
-    [canAct, currentStep, can],
-  );
-
   /** CEO: read-only, and the script/scenes/comments are HIDDEN, not locked. */
   const ceoView = role === 'ceo';
 
@@ -269,21 +263,6 @@ export default function ContentDetailPage() {
         .filter((t) => t.result === 'changes_requested' && t.note)
         .sort((a, b) => (a.closed_at ?? '').localeCompare(b.closed_at ?? ''))
         .pop() ?? null
-    : null;
-
-  // Screen 08's approver meta: the latest creative approval's closer + time.
-  const lastApproval = [...tasks]
-    .filter((t) => t.status === 'done' && t.result === 'approved')
-    .sort((a, b) => (a.closed_at ?? '').localeCompare(b.closed_at ?? ''))
-    .pop() ?? null;
-  const nameOf = (userId: string | null | undefined): string | null => {
-    if (!userId) return null;
-    const u = people.find((x) => x.user_id === userId);
-    if (!u) return null;
-    return (isAr ? u.name_ar : u.name_en) ?? u.name_en ?? u.name_ar;
-  };
-  const approverMeta = lastApproval
-    ? { name: nameOf(lastApproval.closed_by_user_id), at: lastApproval.closed_at }
     : null;
 
   // The step under review (for «اعتماد النص») is the one BEFORE an approval step.
@@ -664,8 +643,6 @@ export default function ContentDetailPage() {
                 schema={fieldSchemaKeys(type?.field_schema ?? [])}
                 data={item.data ?? {}}
                 canEdit={canEditNow}
-                canApprove={canApproveCreative}
-                approver={approverMeta}
                 isAr={isAr}
                 onSaved={(data) => setItem({ ...item, data })}
               />

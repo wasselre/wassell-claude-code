@@ -53,6 +53,14 @@ This workspace answers the three questions the old process could not:
 - **Type is a column, not a module.** Post, Video, Carousel and Story are rows in
   `mos_content_types`; each names its workflow, its ref prefix and its writing
   fields. Adding a Brochure type later is a row, not a screen.
+- **Headlines ARE the post, not a shortlist.** In the Content tab's writing
+  surface the headlines are the copy that lands on the design. You write as many
+  as the piece needs — there is no forced count and no "approve one" picker; none
+  is discarded. (The legacy separate "on-design copy" field is gone — headlines
+  do that job — and the old `approved_headline` / `slides` keys are ignored if
+  present in older records.) The design brief's **Reference** is a *pick from the
+  content library* — the existing post/video this design should take after — not
+  free text.
 - **One publication row per platform** — never a multi-select. Each platform
   carries its own caption, time, link and result.
 - **Publishing is manual by decision.** `can_publish` defaults FALSE and nothing

@@ -7,31 +7,33 @@
  *   voiceover                           → the voice-over card with a read-speed chip,
  *                                         because a 38-second script must not become
  *                                         70 seconds silently
- *   headlines + approved_headline       → the headline picker: write several, APPROVE
- *                                         one. Approval is a recorded decision, not an
- *                                         edit that erases the alternatives — rejected
- *                                         headlines become paid-ad copy later.
+ *   headlines                           → the headlines that MAKE the post: the copy
+ *                                         that lands on the design. Write as many as
+ *                                         the piece needs; none is "approved" and none
+ *                                         is discarded — every headline is part of the
+ *                                         post, so there is no picker and no forced count.
  *   caption + hashtags                  → the caption card (per-platform captions live
  *                                         in the Publishing tab, and the card says so)
- *   design_brief + slides (+ format/direction/reference) → the structured design brief,
- *                                         so "what do I design" never drowns in a notes box
+ *   design_brief (+ format/reference)   → the structured design brief, so "what do I
+ *                                         design" never drowns in a notes box. The
+ *                                         reference is a PICK from the content library,
+ *                                         not free text — "make it like this piece."
  * Anything else in the schema renders as a plain field. Unknown keys degrade
  * quietly rather than crashing the tab.
  *
  * Two render modes (screen 36's rule): when the open stage sits with MY role
  * the cards are inputs; when it doesn't, the SAME cards render as locked TEXT —
  * the mockups' filled states — with the comment composer as the only live
- * surface on the page. The single exception is the headline radio: it stays
- * clickable for the reviewer (canApprove) because approving a headline IS
- * their task, not an edit.
+ * surface on the page.
  *
  * Values live in `mos_content.data` — free-form JSONB, so companion keys like
  * core_message need no migration.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { updateContent } from '@/lib/marketingOS/client';
-import { dateStamp, num } from '../lib/format';
+import { updateContent, fetchContentList, type MosContentRow } from '@/lib/marketingOS/client';
+import { Modal } from './kit';
+import { num } from '../lib/format';
 import { useMosText } from '../lib/useMosText';
 
 interface FieldDef {
@@ -49,7 +51,13 @@ const GENERIC_FIELDS: Record<string, FieldDef> = {
   expiry:       { ar: 'تاريخ الانتهاء', en: 'Expiry', kind: 'short' },
 };
 
-/** Keys the composed cards consume — everything else falls to the generic grid. */
+/**
+ * Keys the composed cards consume — everything else falls to the generic grid.
+ * `approved_headline` and `slides` are legacy keys: headlines are no longer
+ * picked from, and "on-design copy" is now the headlines' own job. They stay
+ * listed here so any historical data on those keys is quietly ignored rather
+ * than leaking into the generic field grid.
+ */
 const COMPOSED = new Set([
   'idea', 'hook', 'core_message', 'voiceover',
   'headlines', 'approved_headline', 'caption', 'hashtags',
@@ -60,14 +68,22 @@ const asString = (v: unknown): string => (typeof v === 'string' ? v : '');
 const asList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
-/** Who approved the headline + when — screen 08's «اعتمده ريان · ٢٧ يوليو، ٢:١٤م». */
-export interface ApproverMeta {
-  name: string | null;
-  at: string | null;
-}
+/** The muted order index that replaces the old approval radio on each headline row. */
+const idxBadge = {
+  flex: '0 0 auto', minWidth: 16, textAlign: 'center' as const,
+  fontSize: 12, fontWeight: 700, color: 'var(--mute)',
+};
+const delBtn = {
+  flex: '0 0 auto', border: 0, background: 'transparent', color: 'var(--mute)',
+  cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 4px',
+};
+const rowCentered = { alignItems: 'center' as const };
+const bareInput = {
+  border: '1px solid transparent', background: 'transparent', padding: '2px 4px', fontSize: 14,
+};
 
 /**
- * The dashed "next headline" row. Local state, committed on blur/Enter —
+ * The dashed "add a headline" row. Local state, committed on blur/Enter —
  * appending on every keystroke would fragment typing into one-char headlines.
  */
 function NewHeadlineRow({
@@ -85,58 +101,135 @@ function NewHeadlineRow({
     }
   };
   return (
-    <div className="opt" style={{ borderStyle: 'dashed' }}>
-      <span className="rd" style={{ opacity: 0.4 }} />
-      <div style={{ flex: 1 }}>
-        <input
-          className="inp"
-          style={{ border: '1px solid transparent', background: 'transparent', padding: '2px 4px', fontSize: 14 }}
-          placeholder={isAr
-            ? `العنوان ${num(index, true)} — لم يُكتب بعد`
-            : `Headline ${index} — not written yet`}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => { if (e.key === 'Enter') commit(); }}
-        />
-        <div className="mt">{isAr ? 'مطلوب قبل الإرسال للمراجعة' : 'expected before submitting for review'}</div>
-      </div>
+    <div className="opt" style={{ borderStyle: 'dashed', ...rowCentered }}>
+      <span style={{ ...idxBadge, opacity: 0.5 }}>{num(index, isAr)}</span>
+      <input
+        className="inp"
+        style={{ ...bareInput, flex: 1 }}
+        placeholder={isAr ? 'أضف عنوانًا…' : 'Add a headline…'}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }}
+      />
     </div>
   );
 }
 
-/** The locked-mode dashed slot — screen 08's unwritten fourth headline. */
-function EmptyHeadlineRow({ index, isAr }: { index: number; isAr: boolean }) {
+/**
+ * The Reference field's picker — a choice FROM the content library, not free
+ * text. Stores the chosen content item's id; a legacy free-text value that
+ * matches no item still renders verbatim so nothing already written is lost.
+ */
+function ReferencePicker({
+  value, contentList, currentId, loadError, isAr, onChange,
+}: {
+  value: string;
+  contentList: MosContentRow[];
+  currentId: string;
+  loadError: string | null;
+  isAr: boolean;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+
+  const selected = contentList.find((c) => c.id === value) ?? null;
+  const label = (c: MosContentRow): string => `${c.ref ? `${c.ref} — ` : ''}${c.title}`;
+  // Selected item → its label; legacy non-id text → itself; nothing → empty.
+  const display = selected ? label(selected) : value;
+
+  const term = q.trim().toLowerCase();
+  const options = contentList
+    .filter((c) => c.id !== currentId)
+    .filter((c) => !term || `${c.ref ?? ''} ${c.title}`.toLowerCase().includes(term));
+
   return (
-    <div className="opt" style={{ borderStyle: 'dashed' }}>
-      <span className="rd" style={{ opacity: 0.4 }} />
-      <div>
-        <div className="tx" style={{ color: 'var(--mute)' }}>
-          {isAr ? `العنوان ${num(index, true)} — لم يُكتب بعد` : `Headline ${index} — not written yet`}
-        </div>
-        <div className="mt">{isAr ? 'مطلوب قبل الإرسال للمراجعة' : 'expected before submitting for review'}</div>
+    <>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
+        <button
+          type="button"
+          className="inp"
+          style={{
+            flex: 1, textAlign: isAr ? 'right' : 'left', fontSize: 13, cursor: 'pointer',
+            color: display ? 'var(--copper)' : 'var(--mute)',
+          }}
+          onClick={() => setOpen(true)}
+        >
+          {display || (isAr ? 'اختر من مكتبة المحتوى…' : 'Pick from the content library…')}
+        </button>
+        {value && (
+          <button type="button" style={delBtn} onClick={() => onChange('')} aria-label={isAr ? 'إزالة المرجع' : 'Clear reference'}>
+            ×
+          </button>
+        )}
       </div>
-    </div>
+
+      {open && (
+        <Modal
+          title={isAr ? 'اختر مرجعًا من مكتبة المحتوى' : 'Pick a reference from the content library'}
+          sub={isAr ? 'المنشور أو الفيديو الذي يحتذي به هذا التصميم.' : 'The piece this design should take after.'}
+          onClose={() => setOpen(false)}
+        >
+          <input
+            className="inp"
+            autoFocus
+            style={{ marginBottom: 10 }}
+            placeholder={isAr ? 'ابحث بالرقم المرجعي أو العنوان' : 'Search by ref or title'}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          {loadError && (
+            <div className="notice" style={{ marginBottom: 10 }}>
+              {isAr ? 'تعذّر تحميل المحتوى: ' : 'Could not load content: '}{loadError}
+            </div>
+          )}
+          <div style={{ maxHeight: 360, overflowY: 'auto', display: 'grid', gap: 6 }}>
+            {options.length === 0 && !loadError && (
+              <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
+                {isAr ? 'لا محتوى مطابق.' : 'No matching content.'}
+              </div>
+            )}
+            {options.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className={`opt${c.id === value ? ' pick' : ''}`}
+                style={{ ...rowCentered, width: '100%', cursor: 'pointer', textAlign: isAr ? 'right' : 'left' }}
+                onClick={() => { onChange(c.id); setOpen(false); }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="tx">{c.title}</div>
+                  <div className="mt">
+                    {c.ref ? <span className="ltr">{c.ref}</span> : null}
+                    {c.ref ? ' · ' : ''}
+                    {isAr ? c.content_type_label_ar : c.content_type_label_en}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }
 
 export default function WritingFields({
-  contentId, schema, data, canEdit, canApprove, approver, isAr, onSaved,
+  contentId, schema, data, canEdit, isAr, onSaved,
 }: {
   contentId: string;
   schema: string[];
   data: Record<string, unknown>;
   canEdit: boolean;
-  /** Approving a headline is a decision, gated separately from writing. */
-  canApprove: boolean;
-  /** The latest creative approval's closer — screen 08's approver meta line. */
-  approver?: ApproverMeta | null;
   isAr: boolean;
   onSaved: (data: Record<string, unknown>) => void;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
+  const [contentList, setContentList] = useState<MosContentRow[]>([]);
+  const [refLoadError, setRefLoadError] = useState<string | null>(null);
 
   useEffect(() => { setDraft({ ...data }); }, [data]);
 
@@ -148,6 +241,31 @@ export default function WritingFields({
   const mosText = useMosText();
   const disp = (k: string): string => mosText(str(k), k);
   const set = (k: string, v: unknown): void => setDraft((d) => ({ ...d, [k]: v }));
+
+  // The reference field pulls from the content library. Load it once whenever a
+  // reference field is present — needed in BOTH edit (the picker) and locked
+  // (resolving a stored id to its title) modes.
+  const hasReference = schema.includes('design_reference');
+  useEffect(() => {
+    if (!hasReference) return;
+    let alive = true;
+    fetchContentList({ limit: 500 })
+      .then((r) => { if (alive) setContentList(r.content); })
+      .catch((e) => {
+        if (!alive) return;
+        // Surfaced in the picker rather than as a toast — a failed reference
+        // list must not look like a silent success, but it also must not block
+        // writing the rest of the brief.
+        console.error('[marketing] content library load failed', e);
+        setRefLoadError(e instanceof Error ? e.message : String(e));
+      });
+    return () => { alive = false; };
+  }, [hasReference]);
+
+  const referenceDisplay = (value: string): string => {
+    const hit = contentList.find((c) => c.id === value);
+    return hit ? `${hit.ref ? `${hit.ref} — ` : ''}${hit.title}` : value;
+  };
 
   const leftovers = useMemo(
     () => schema.filter((k) => !COMPOSED.has(k) && GENERIC_FIELDS[k]),
@@ -195,20 +313,22 @@ export default function WritingFields({
     }
   };
 
-  /* ── headlines: write several, approve ONE ── */
+  /* ── headlines: the copy that makes the post. Unlimited, none "approved". ── */
   const headlines = asList(draft.headlines ?? data.headlines);
-  const approved = str('approved_headline') || asString(data.approved_headline);
-  const TARGET = 4;
   const written = headlines.filter((h) => h.trim() !== '').length;
 
   const setHeadline = (i: number, v: string): void => {
     const next = [...headlines];
     next[i] = v;
-    set('headlines', next.filter((h, idx) => h.trim() !== '' || idx === i));
+    set('headlines', next);
+  };
+  const removeHeadline = (i: number): void => {
+    set('headlines', headlines.filter((_, idx) => idx !== i));
   };
 
-  const approve = (h: string): void => {
-    set('approved_headline', approved === h ? '' : h);
+  const headlineCountTag = (): string => {
+    if (written === 0) return isAr ? 'لا عناوين بعد' : 'none yet';
+    return isAr ? `${num(written, true)} عنوان` : `${written} headline${written === 1 ? '' : 's'}`;
   };
 
   /* ── hashtags render as tags, edit as one line ── */
@@ -217,7 +337,7 @@ export default function WritingFields({
   const captionParagraphs = disp('caption').split(/\n+/).map((p) => p.trim()).filter(Boolean);
 
   const nothingComposed = !has('idea') && !has('voiceover') && !has('headlines')
-    && !has('caption') && !has('design_brief') && !has('slides') && leftovers.length === 0;
+    && !has('caption') && !has('design_brief') && leftovers.length === 0;
 
   if (nothingComposed) {
     return (
@@ -227,23 +347,7 @@ export default function WritingFields({
     );
   }
 
-  const headlineMeta = (h: string): string => {
-    const isPicked = approved !== '' && h === approved;
-    if (isPicked) {
-      // Screen 08: «اعتمده ريان · ٢٧ يوليو، ٢:١٤م» — a recorded decision.
-      if (approver?.at) {
-        return isAr
-          ? `اعتمده ${approver.name ?? '—'} · ${dateStamp(approver.at, true)}`
-          : `Approved by ${approver.name ?? '—'} · ${dateStamp(approver.at, false)}`;
-      }
-      return isAr
-        ? 'المعتمد — القرار مسجَّل ولا يمحو البدائل'
-        : 'Approved — a recorded decision; the alternatives stay';
-    }
-    return isAr ? 'بديل · يصلح نسخة إعلان مدفوع لاحقًا' : 'Alternative · reusable as paid-ad copy later';
-  };
-
-  const saveBar = (canEdit || canApprove) ? (
+  const saveBar = canEdit ? (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       {dirty && (
         <>
@@ -322,46 +426,33 @@ export default function WritingFields({
 
         {has('headlines') && (
           <div className="write">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
               <div className="doc-lbl" style={{ margin: 0 }}>
-                {isAr ? `العناوين — تُكتب ${num(TARGET, true)}، ويُعتمد واحد` : `Headlines — ${TARGET} are written, one is approved`}
+                {isAr ? 'العناوين' : 'Headlines'}
               </div>
               <span className="tag tag-t" style={{ marginInlineStart: 'auto' }}>
-                {isAr ? `${num(written, true)} من ${num(TARGET, true)} مكتوبة` : `${written} of ${TARGET} written`}
+                {headlineCountTag()}
               </span>
             </div>
+            <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 12 }}>
+              {isAr ? 'العناوين التي تصنع المنشور — النص الذي يظهر على التصميم.' : 'The headlines that make the post — the copy shown on the design.'}
+            </div>
 
-            {headlines.map((h, i) => {
-              const isPicked = approved !== '' && h === approved;
-              return (
-                <div key={i} className={`opt${isPicked ? ' pick' : ''}`}>
-                  {/* The radio is the reviewer's one live control in locked
-                      mode — approving the headline is their task, not an edit. */}
-                  {canApprove ? (
-                    <button
-                      type="button"
-                      className="rd"
-                      onClick={() => approve(h)}
-                      aria-label={isAr ? 'اعتماد هذا العنوان' : 'Approve this headline'}
-                    />
-                  ) : (
-                    <span className="rd" />
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="tx">{h}</div>
-                    <div className="mt">{headlineMeta(h)}</div>
-                  </div>
+            {headlines.length === 0 ? (
+              <p style={{ color: 'var(--mute)' }}>—</p>
+            ) : (
+              headlines.map((h, i) => (
+                <div key={i} className="opt" style={rowCentered}>
+                  <span style={idxBadge}>{num(i + 1, isAr)}</span>
+                  <div className="tx" style={{ flex: 1, minWidth: 0 }}>{h || '—'}</div>
                 </div>
-              );
-            })}
-            {Array.from({ length: Math.max(0, TARGET - headlines.length) }).map((_, i) => (
-              <EmptyHeadlineRow key={`empty-${i}`} index={headlines.length + i + 1} isAr={isAr} />
-            ))}
+              ))
+            )}
           </div>
         )}
 
-        {(has('caption') || has('design_brief') || has('slides')) && (
-          <div className={has('caption') && (has('design_brief') || has('slides')) ? 'grid g2' : undefined}>
+        {(has('caption') || has('design_brief')) && (
+          <div className={has('caption') && has('design_brief') ? 'grid g2' : undefined}>
             {has('caption') && (
               <div className="write">
                 <div className="doc-lbl">{isAr ? 'الكابشن · انستقرام' : 'The caption · Instagram'}</div>
@@ -389,7 +480,7 @@ export default function WritingFields({
               </div>
             )}
 
-            {(has('design_brief') || has('slides')) && (
+            {has('design_brief') && (
               <div className="write">
                 <div className="doc-lbl">
                   {isAr ? 'موجز التصميم — للمونتير' : 'The design brief — for the editor'}
@@ -398,16 +489,6 @@ export default function WritingFields({
                   <div className="k">{isAr ? 'الصيغة' : 'Format'}</div>
                   <div className="v">{str('design_format') || '—'}</div>
                 </div>
-                {has('slides') && (
-                  <div className="fld">
-                    <div className="k">{isAr ? 'النص على التصميم' : 'On-design copy'}</div>
-                    <div className="v" style={{ whiteSpace: 'pre-line' }}>
-                      {asList(draft.slides ?? data.slides).length > 0
-                        ? asList(draft.slides ?? data.slides).map((s, i) => `${isAr ? `الشريحة ${num(i + 1, true)}` : `Slide ${i + 1}`}: ${s}`).join('\n')
-                        : '—'}
-                    </div>
-                  </div>
-                )}
                 <div className="fld">
                   <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
                   <div className="v">{str('design_brief') || '—'}</div>
@@ -415,7 +496,7 @@ export default function WritingFields({
                 <div className="fld">
                   <div className="k">{isAr ? 'مرجع' : 'Reference'}</div>
                   <div className="v" style={str('design_reference') ? { color: 'var(--copper)' } : undefined}>
-                    {str('design_reference') || '—'}
+                    {str('design_reference') ? referenceDisplay(str('design_reference')) : '—'}
                   </div>
                 </div>
               </div>
@@ -521,66 +602,54 @@ export default function WritingFields({
         </div>
       )}
 
-      {/* ── العناوين — يُكتب عدة، ويُعتمد واحد ─────────────────────── */}
+      {/* ── العناوين — تصنع المنشور، بلا عدد مفروض وبلا اعتماد ───────── */}
       {has('headlines') && (
         <div className="write">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
             <div className="doc-lbl" style={{ margin: 0 }}>
-              {isAr ? `العناوين — اكتب ${num(TARGET, true)}، ويُعتمد واحد` : `Headlines — write ${TARGET}, approve one`}
+              {isAr ? 'العناوين' : 'Headlines'}
             </div>
             <span className="tag tag-t" style={{ marginInlineStart: 'auto' }}>
-              {isAr ? `${num(written, true)} من ${num(TARGET, true)} مكتوبة` : `${written} of ${TARGET} written`}
+              {headlineCountTag()}
             </span>
           </div>
+          <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 12 }}>
+            {isAr
+              ? 'هذه العناوين هي نص المنشور الذي يظهر على التصميم — أضف ما يحتاجه العمل.'
+              : 'These headlines are the post copy shown on the design — add as many as the piece needs.'}
+          </div>
 
-          {headlines.map((h, i) => {
-            const isPicked = approved !== '' && h === approved;
-            return (
-              <div key={i} className={`opt${isPicked ? ' pick' : ''}`}>
-                {/* No `border: 0` here — that would erase the .rd circle and
-                    leave an invisible 14px button (shipped once; caught live). */}
-                {canApprove ? (
-                  <button
-                    type="button"
-                    className="rd"
-                    onClick={() => approve(h)}
-                    aria-label={isAr ? 'اعتماد هذا العنوان' : 'Approve this headline'}
-                  />
-                ) : (
-                  <span className="rd" />
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <input
-                    className="inp"
-                    style={{ border: '1px solid transparent', background: 'transparent', padding: '2px 4px', fontSize: 14 }}
-                    value={h}
-                    onChange={(e) => setHeadline(i, e.target.value)}
-                  />
-                  <div className="mt">{headlineMeta(h)}</div>
-                </div>
-              </div>
-            );
-          })}
-
-          {headlines.length < TARGET && (
-            <NewHeadlineRow
-              index={headlines.length + 1}
-              isAr={isAr}
-              onCommit={(v) => set('headlines', [...headlines, v])}
-            />
-          )}
-          {/* Screen 08 draws FOUR cards always — the slots after the input row
-              stay visible as dashed placeholders, so the writer sees how many
-              are still owed before «إرسال للمراجعة». */}
-          {Array.from({ length: Math.max(0, TARGET - headlines.length - 1) }).map((_, i) => (
-            <EmptyHeadlineRow key={`empty-${i}`} index={headlines.length + 2 + i} isAr={isAr} />
+          {headlines.map((h, i) => (
+            <div key={i} className="opt" style={rowCentered}>
+              <span style={idxBadge}>{num(i + 1, isAr)}</span>
+              <input
+                className="inp"
+                style={{ ...bareInput, flex: 1 }}
+                value={h}
+                onChange={(e) => setHeadline(i, e.target.value)}
+              />
+              <button
+                type="button"
+                style={delBtn}
+                onClick={() => removeHeadline(i)}
+                aria-label={isAr ? 'حذف هذا العنوان' : 'Remove this headline'}
+              >
+                ×
+              </button>
+            </div>
           ))}
+
+          <NewHeadlineRow
+            index={headlines.length + 1}
+            isAr={isAr}
+            onCommit={(v) => set('headlines', [...headlines, v])}
+          />
         </div>
       )}
 
       {/* ── الكابشن + موجز التصميم ─────────────────────────────────── */}
-      {(has('caption') || has('design_brief') || has('slides')) && (
-        <div className={has('caption') && (has('design_brief') || has('slides')) ? 'grid g2' : undefined}>
+      {(has('caption') || has('design_brief')) && (
+        <div className={has('caption') && has('design_brief') ? 'grid g2' : undefined}>
           {has('caption') && (
             <div className="write">
               <div className="doc-lbl">{isAr ? 'الكابشن · انستقرام' : 'The caption · Instagram'}</div>
@@ -620,7 +689,7 @@ export default function WritingFields({
             </div>
           )}
 
-          {(has('design_brief') || has('slides')) && (
+          {has('design_brief') && (
             <div className="write">
               <div className="doc-lbl">
                 {isAr ? 'موجز التصميم — للمونتير' : 'The design brief — for the editor'}
@@ -635,18 +704,6 @@ export default function WritingFields({
                   onChange={(e) => set('design_format', e.target.value)}
                 />
               </div>
-              {has('slides') && (
-                <div className="fld">
-                  <div className="k">{isAr ? 'النص على التصميم · شريحة في كل سطر' : 'On-design copy · one slide per line'}</div>
-                  <textarea
-                    className="inp"
-                    rows={4}
-                    style={{ marginTop: 4, fontSize: 13 }}
-                    value={asList(draft.slides ?? data.slides).join('\n')}
-                    onChange={(e) => set('slides', e.target.value.split('\n'))}
-                  />
-                </div>
-              )}
               <div className="fld">
                 <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
                 <textarea
@@ -660,12 +717,13 @@ export default function WritingFields({
               </div>
               <div className="fld">
                 <div className="k">{isAr ? 'مرجع' : 'Reference'}</div>
-                <input
-                  className="inp"
-                  style={{ marginTop: 4, fontSize: 13 }}
+                <ReferencePicker
                   value={str('design_reference')}
-                  placeholder={isAr ? 'P-014 — نفس التخطيط، أدّى جيدًا' : 'P-014 — same layout, performed well'}
-                  onChange={(e) => set('design_reference', e.target.value)}
+                  contentList={contentList}
+                  currentId={contentId}
+                  loadError={refLoadError}
+                  isAr={isAr}
+                  onChange={(v) => set('design_reference', v)}
                 />
               </div>
             </div>
