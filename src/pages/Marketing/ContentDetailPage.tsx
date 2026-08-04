@@ -190,15 +190,21 @@ export default function ContentDetailPage() {
 
   /**
    * Writing is editable only while the stage sits with MY role — s36: the
-   * manager approves or returns, «لا يستطيع تعديل النص بنفسه». CEO never.
+   * writer types on their step, others wait their turn. CEO never.
+   *
+   * Exception: administrators and the marketing manager can edit the writing
+   * fields at ANY writing stage regardless of which role owns it — the server
+   * already lets them act on any task (workflow_role_task_act), so the editor
+   * mirrors that override rather than forcing a reassign to type a correction.
    */
   const canEditNow = useMemo(() => {
     if (role === 'ceo') return false;
     if (!openTask) return false;
-    // An approval stage edits NOTHING — the manager holds write_content in the
-    // matrix, but s36 is explicit: «لا يستطيع تعديل النص بنفسه». Writing opens
-    // only on a writing step that sits with my role.
+    // An approval stage edits NOTHING — the fields shown are what's being
+    // approved, so it's read-only for everyone (admins/manager included);
+    // they approve or return, they don't rewrite mid-approval.
     if (currentStep?.is_approval) return false;
+    if (roles.includes('administrator') || roles.includes('marketing_manager')) return true;
     return roles.includes(openTask.role) && can('write_content');
   }, [role, openTask, currentStep, roles, can]);
 
