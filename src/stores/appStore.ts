@@ -288,7 +288,9 @@ function saveLocal<T>(key: string, data: T): void {
       localStorageWarned.add(key);
       try {
         useAppStore.getState().addToast(
-          'تجاوز الذاكرة المؤقتة — وضع عدم الاتصال معطل. حدّث الصفحة عند توفر اتصال.',
+          useAppStore.getState().language === 'ar'
+            ? 'تجاوز الذاكرة المؤقتة — وضع عدم الاتصال معطل. حدّث الصفحة عند توفر اتصال.'
+            : 'Cache limit exceeded — offline mode is disabled. Refresh the page when you have a connection.',
           'error',
         );
       } catch {
@@ -524,7 +526,9 @@ function savePendingQueue(queue: PendingWrite[]): void {
     console.error('[pendingQueue] persist failed:', err);
     try {
       useAppStore.getState().addToast(
-        'فشل حفظ قائمة المزامنة المعلّقة — قد تضيع تعديلات غير محفوظة.',
+        useAppStore.getState().language === 'ar'
+          ? 'فشل حفظ قائمة المزامنة المعلّقة — قد تضيع تعديلات غير محفوظة.'
+          : 'Could not save the pending-sync queue — unsynced edits may be lost.',
         'error',
       );
     } catch {
@@ -2257,7 +2261,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           // Surface the reason — without this the user just sees the
           // login page and assumes their password is wrong.
           get().addToast(
-            'حسابك معطّل — تواصل مع المسؤول للتفعيل.',
+            get().language === 'ar'
+              ? 'حسابك معطّل — تواصل مع المسؤول للتفعيل.'
+              : 'Your account is disabled — contact an administrator to reactivate it.',
             'error',
           );
           return;
