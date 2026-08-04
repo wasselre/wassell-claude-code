@@ -508,15 +508,18 @@ export const fetchMetricsHistory = (publicationId: string) =>
  * A managed measure type — the reusable registry a success criterion is picked
  * from. The four presets ship seeded; more can be added in Settings or created
  * inline on a campaign. `direction` decides the "or more" / "or less" wording;
- * `unit:'currency'` prefixes the riyal unit.
+ * `unit:'currency'` prefixes the riyal unit, `unit:'percent'` the % sign.
  */
+/** How a measure's target number reads: a bare count, riyals, or a percentage. */
+export type MosMeasureUnit = 'count' | 'currency' | 'percent';
+
 export interface MosMeasureType {
   id: string;
   key: string;
   label_ar: string;
   label_en: string;
   direction: 'higher' | 'lower';
-  unit: 'count' | 'currency';
+  unit: MosMeasureUnit;
   is_preset: boolean;
   sort_order: number;
   is_active: boolean;
@@ -533,19 +536,22 @@ export interface MosSuccessMeasure {
   label_ar: string;
   label_en: string;
   direction: 'higher' | 'lower';
-  unit: 'count' | 'currency';
+  unit: MosMeasureUnit;
   threshold: number | null;
 }
 
-/** The "or more" / "SAR or less" tail after a measure's target number. */
+/** The "or more" / "SAR or less" / "% or more" tail after a target number. */
 export function successMeasureSuffix(
   direction: 'higher' | 'lower',
-  unit: 'count' | 'currency',
+  unit: MosMeasureUnit,
   isAr: boolean,
 ): string {
   const more = direction === 'higher';
   if (unit === 'currency') {
     return more ? (isAr ? 'ريال أو أكثر' : 'SAR or more') : (isAr ? 'ريال أو أقل' : 'SAR or less');
+  }
+  if (unit === 'percent') {
+    return more ? (isAr ? '٪ أو أكثر' : '% or more') : (isAr ? '٪ أو أقل' : '% or less');
   }
   return more ? (isAr ? 'أو أكثر' : 'or more') : (isAr ? 'أو أقل' : 'or less');
 }

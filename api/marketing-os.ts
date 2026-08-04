@@ -2033,7 +2033,7 @@ export default async function handler(req: Request): Promise<Response> {
                 label_ar: str(o.label_ar) ?? '',
                 label_en: str(o.label_en) ?? '',
                 direction: o.direction === 'lower' ? 'lower' : 'higher',
-                unit: o.unit === 'currency' ? 'currency' : 'count',
+                unit: o.unit === 'currency' ? 'currency' : o.unit === 'percent' ? 'percent' : 'count',
                 threshold: numOrNull(o.threshold),
               };
             })
@@ -3765,8 +3765,8 @@ export default async function handler(req: Request): Promise<Response> {
         if (patch.direction !== undefined && patch.direction !== 'higher' && patch.direction !== 'lower') {
           return jsonError(400, 'direction must be higher or lower');
         }
-        if (patch.unit !== undefined && patch.unit !== 'count' && patch.unit !== 'currency') {
-          return jsonError(400, 'unit must be count or currency');
+        if (patch.unit !== undefined && patch.unit !== 'count' && patch.unit !== 'currency' && patch.unit !== 'percent') {
+          return jsonError(400, 'unit must be count, currency, or percent');
         }
         if (id) {
           // The key is the stable identity snapshotted onto campaigns — never

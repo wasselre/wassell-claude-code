@@ -10,8 +10,10 @@
  */
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
+import { useBilingualLabelAutofill } from '@/hooks/useBilingualLabelAutofill';
 import {
   MosMeasureType,
+  MosMeasureUnit,
   MosSuccessMeasure,
   fetchMeasureTypes,
   saveMeasureType,
@@ -24,7 +26,7 @@ export interface MeasureDraft {
   label_ar: string;
   label_en: string;
   direction: 'higher' | 'lower';
-  unit: 'count' | 'currency';
+  unit: MosMeasureUnit;
   threshold: string;
 }
 
@@ -85,8 +87,14 @@ export default function SuccessMeasuresEditor({
   const [nAr, setNAr] = useState('');
   const [nEn, setNEn] = useState('');
   const [nDir, setNDir] = useState<'higher' | 'lower'>('higher');
-  const [nUnit, setNUnit] = useState<'count' | 'currency'>('count');
+  const [nUnit, setNUnit] = useState<MosMeasureUnit>('count');
   const [savingType, setSavingType] = useState(false);
+
+  // Live auto-translate between the two name fields, like the rest of the app:
+  // type Arabic → English fills, and vice-versa.
+  const nameFill = useBilingualLabelAutofill({
+    ar: nAr, en: nEn, setAr: setNAr, setEn: setNEn, enabled: newForIndex !== -1,
+  });
 
   const active = types.filter((t) => t.is_active);
 
@@ -141,6 +149,7 @@ export default function SuccessMeasuresEditor({
     if (value === NEW) {
       setNewForIndex(i);
       setNAr(''); setNEn(''); setNDir('higher'); setNUnit('count');
+      nameFill.reset('', '');
       return;
     }
     const t = active.find((x) => x.key === value);
@@ -238,15 +247,24 @@ export default function SuccessMeasuresEditor({
                     style={{ flex: 1, minWidth: 150 }}
                     placeholder={isAr ? 'اسم المعيار' : 'Measure name'}
                     value={nAr}
-                    onChange={(e) => setNAr(e.target.value)}
+                    onChange={(e) => nameFill.onArChange(e.target.value)}
+                    onBlur={nameFill.onBlur}
                   />
-                  <input
-                    className="inp ltr"
-                    style={{ flex: 1, minWidth: 150 }}
-                    placeholder="English name"
-                    value={nEn}
-                    onChange={(e) => setNEn(e.target.value)}
-                  />
+                  <div style={{ flex: 1, minWidth: 150, position: 'relative', display: 'flex' }}>
+                    <input
+                      className="inp ltr"
+                      style={{ flex: 1 }}
+                      placeholder="English name"
+                      value={nEn}
+                      onChange={(e) => nameFill.onEnChange(e.target.value)}
+                      onBlur={nameFill.onBlur}
+                    />
+                    {nameFill.pending && (
+                      <span style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 10, color: 'var(--mute)', pointerEvents: 'none' }}>
+                        {isAr ? 'ترجمة…' : 'Translating…'}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', alignItems: 'center' }}>
                   <div className="seg">
@@ -263,6 +281,9 @@ export default function SuccessMeasuresEditor({
                     </button>
                     <button type="button" className={nUnit === 'currency' ? 'on' : ''} onClick={() => setNUnit('currency')}>
                       {isAr ? 'ريال' : 'SAR'}
+                    </button>
+                    <button type="button" className={nUnit === 'percent' ? 'on' : ''} onClick={() => setNUnit('percent')}>
+                      {isAr ? 'نسبة' : 'Percent'}
                     </button>
                   </div>
                 </div>

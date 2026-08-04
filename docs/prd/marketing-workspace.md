@@ -1,7 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
-**Last updated:** 2026-08-02
+**Last updated:** 2026-08-04
 **Related PRDs:** [access-control.md](access-control.md), [marketing-intelligence.md](marketing-intelligence.md), [posts-content.md](posts-content.md), [projects-units.md](projects-units.md), [navigation-layout.md](navigation-layout.md)
 
 ## What it is (in plain English)
@@ -70,6 +70,14 @@ This workspace answers the three questions the old process could not:
   leads with a «لم تُستخدم قط» banner that links to the unused-material screen
   (`/m/library/unused`). Cards open the asset page (`/m/library/:assetId`).
 - **Cost per lead is computed** from the execution rows, never typed.
+- **A campaign is judged by one or more success measures**, each picked from a
+  managed registry (`mos_measure_types`, four presets seeded) or defined inline.
+  A measure carries a **direction** (higher/lower is better → "or more"/"or less"
+  wording) and a **unit** — `count` (bare number), `currency` (riyals), or
+  `percent` (`٪`/`%`). The chosen label/direction/unit are snapshotted onto the
+  campaign so a later rename never rewrites history. Defining a measure (inline or
+  in Settings → Success measures) **auto-translates the name between Arabic and
+  English** as you type, the same live `/api/translate` flow the Builder uses.
 - **Refs come from one row-locked allocator** (`mos_next_ref`), so two concurrent
   creates can never mint the same number. The allocator is `SECURITY DEFINER`:
   a user allowed to insert the ROW must be able to get a NUMBER without being
@@ -161,6 +169,8 @@ This workspace answers the three questions the old process could not:
 | `src/pages/Marketing/NumbersPage.tsx` | The Friday data-entry screen |
 | `src/pages/Marketing/SettingsPage.tsx` | Workflows, content types, platforms, roles + the capability matrix |
 | `src/pages/Marketing/components/` | Shared primitives (`kit.tsx`), icons, task card, stage rail, writing fields, scenes, publishing, performance, material, thread |
+| `src/pages/Marketing/components/SuccessMeasuresEditor.tsx` / `SettingsMeasures.tsx` | A campaign's multi-measure success criteria + the managed measure-type registry (both auto-translate the name; unit = count/riyal/percent) |
+| `src/hooks/useBilingualLabelAutofill.ts` | Live Arabic⇄English name auto-fill for local-state label pairs (wraps `useDebouncedTranslation`) |
 | `src/pages/Marketing/lib/format.ts` | Arabic-Indic numerals and dates — one place that decides digit shape |
 | `api/marketing-os.ts` | The action-dispatch endpoint; runs on the caller's JWT, never service role |
 | `src/lib/marketingOS/client.ts` | Typed SPA client + the bilingual label maps |

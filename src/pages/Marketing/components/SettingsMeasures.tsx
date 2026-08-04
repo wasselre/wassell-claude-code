@@ -13,8 +13,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
+import { useBilingualLabelAutofill } from '@/hooks/useBilingualLabelAutofill';
 import {
-  MosMeasureType, fetchMeasureTypes, saveMeasureType, successMeasureSuffix,
+  MosMeasureType, MosMeasureUnit, fetchMeasureTypes, saveMeasureType, successMeasureSuffix,
 } from '@/lib/marketingOS/client';
 import { Field, LoadError, PageHead, Skeleton } from './kit';
 import { IconBack, IconForward } from './icons';
@@ -38,9 +39,14 @@ export default function SettingsMeasures({
   const [dAr, setDAr] = useState('');
   const [dEn, setDEn] = useState('');
   const [dDir, setDDir] = useState<'higher' | 'lower'>('higher');
-  const [dUnit, setDUnit] = useState<'count' | 'currency'>('count');
+  const [dUnit, setDUnit] = useState<MosMeasureUnit>('count');
   const [busy, setBusy] = useState(false);
   const [loadedFor, setLoadedFor] = useState<string | 'new' | null>(null);
+
+  // Live auto-translate between the two name fields, like the rest of the app.
+  const nameFill = useBilingualLabelAutofill({
+    ar: dAr, en: dEn, setAr: setDAr, setEn: setDEn, enabled: editingId !== null,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,6 +72,9 @@ export default function SettingsMeasures({
     setDEn(editing?.label_en ?? '');
     setDDir(editing?.direction ?? 'higher');
     setDUnit(editing?.unit ?? 'count');
+    // Re-seed the auto-translate touched state so an existing pair isn't
+    // re-translated and a fresh "new measure" form starts clean.
+    nameFill.reset(editing?.label_ar ?? '', editing?.label_en ?? '');
   }
 
   const save = async (): Promise<void> => {
@@ -162,7 +171,7 @@ export default function SettingsMeasures({
                         </div>
                       </td>
                       <td style={{ fontSize: 12 }}>{dirLabel(t.direction)}</td>
-                      <td style={{ fontSize: 12 }}>{t.unit === 'currency' ? (isAr ? 'ريال' : 'SAR') : (isAr ? 'عدد' : 'Count')}</td>
+                      <td style={{ fontSize: 12 }}>{t.unit === 'currency' ? (isAr ? 'ريال' : 'SAR') : t.unit === 'percent' ? (isAr ? 'نسبة' : 'Percent') : (isAr ? 'عدد' : 'Count')}</td>
                       <td style={{ fontSize: 11.5, color: 'var(--mute)' }}>
                         {num(100, isAr)} {successMeasureSuffix(t.direction, t.unit, isAr)}
                       </td>
@@ -200,10 +209,17 @@ export default function SettingsMeasures({
             <div className="card-b" style={{ display: 'grid', gap: 13 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
                 <Field label={isAr ? 'الاسم' : 'Name'}>
-                  <input className="inp" value={dAr} onChange={(e) => setDAr(e.target.value)} />
+                  <input className="inp" value={dAr} onChange={(e) => nameFill.onArChange(e.target.value)} onBlur={nameFill.onBlur} />
                 </Field>
                 <Field label={isAr ? 'الاسم بالإنجليزية' : 'English name'}>
-                  <input className="inp ltr" value={dEn} onChange={(e) => setDEn(e.target.value)} />
+                  <div style={{ position: 'relative', display: 'flex' }}>
+                    <input className="inp ltr" style={{ flex: 1 }} value={dEn} onChange={(e) => nameFill.onEnChange(e.target.value)} onBlur={nameFill.onBlur} />
+                    {nameFill.pending && (
+                      <span style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 10, color: 'var(--mute)', pointerEvents: 'none' }}>
+                        {isAr ? 'ترجمة…' : 'Translating…'}
+                      </span>
+                    )}
+                  </div>
                 </Field>
               </div>
               <div style={{ display: 'flex', gap: 13, flexWrap: 'wrap' }}>
@@ -226,6 +242,9 @@ export default function SettingsMeasures({
                     </button>
                     <button type="button" className={dUnit === 'currency' ? 'on' : ''} onClick={() => setDUnit('currency')}>
                       {isAr ? 'ريال' : 'SAR'}
+                    </button>
+                    <button type="button" className={dUnit === 'percent' ? 'on' : ''} onClick={() => setDUnit('percent')}>
+                      {isAr ? 'نسبة' : 'Percent'}
                     </button>
                   </div>
                 </div>
