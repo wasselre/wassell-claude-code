@@ -1,7 +1,7 @@
 # PRD: Public Marketing Website
 
 **Status:** Live
-**Last updated:** 2026-05-14
+**Last updated:** 2026-08-02 (**Bilingual W8 — translated project names on the EN site.** The English pages now render project NAMES as their approved transliteration from the CRM («ريفييرا 44» → "Riviera 44"), served by the anon-readable `v_website_public` view (is_public × allowlisted field × generation-valid translation — two-key rule: the field must be `public_publishable` in its translation policy AND have a `website_publish_fields` allowlist row). `all_projects.project_name` is the first published field (541 English variants). `js/wassel-data.js` overlays `value_en` onto `record.data.project_name` at data-load on `/en/*` (so every card/hero/detail/map reader shows the English name, no render change; Arabic pages untouched); `api/project.mjs` uses the English name in the `/en/project` OG/WhatsApp card. Geo names, dropdown labels and numbers were already language-aware (Issue #8 `localizedRecordName`). Descriptions/analysis stay unpublished — the site's project prose comes from `project_details`, not the internal `all_projects.project_analysis`.) | 2026-05-14
 **Related PRDs:** [model-builder.md](model-builder.md), [record-management.md](record-management.md), [data-storage.md](data-storage.md)
 
 ## What it is (in plain English)
