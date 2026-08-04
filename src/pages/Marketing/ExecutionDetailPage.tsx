@@ -119,8 +119,8 @@ export default function ExecutionDetailPage() {
       setExecution({ ...execution, status: next });
       addToast(
         next === 'paused'
-          ? isAr ? 'أُوقف التنفيذ.' : 'Execution paused.'
-          : isAr ? 'أُعيد تشغيل التنفيذ.' : 'Execution resumed.',
+          ? isAr ? 'أُوقفت الحملة الإعلانية.' : 'Ad campaign paused.'
+          : isAr ? 'أُعيد تشغيل الحملة الإعلانية.' : 'Ad campaign resumed.',
         'success',
       );
     } catch (e) {
@@ -137,7 +137,7 @@ export default function ExecutionDetailPage() {
   if (!execution) {
     return (
       <div className="body">
-        <div className="notice">{isAr ? 'التنفيذ غير موجود.' : 'That execution does not exist.'}</div>
+        <div className="notice">{isAr ? 'الحملة الإعلانية غير موجودة.' : 'That ad campaign does not exist.'}</div>
       </div>
     );
   }
@@ -185,7 +185,7 @@ export default function ExecutionDetailPage() {
                   <span className="sep">/</span>
                 </>
               )}
-              <span>{isAr ? 'التنفيذات' : 'Executions'}</span>
+              <span>{isAr ? 'الحملات الإعلانية' : 'Ad campaigns'}</span>
               <span className="sep">/</span>
               <span>{platformLabel}</span>
             </div>
@@ -216,8 +216,8 @@ export default function ExecutionDetailPage() {
             {canEnter && (
               <button type="button" className="btn btn-d" disabled={busy} onClick={() => void toggleExecStatus()}>
                 {execution.status === 'running'
-                  ? isAr ? 'إيقاف التنفيذ' : 'Pause execution'
-                  : isAr ? 'تشغيل التنفيذ' : 'Resume execution'}
+                  ? isAr ? 'إيقاف الحملة الإعلانية' : 'Pause ad campaign'
+                  : isAr ? 'تشغيل الحملة الإعلانية' : 'Resume ad campaign'}
               </button>
             )}
             {canEnter && (
@@ -255,7 +255,7 @@ export default function ExecutionDetailPage() {
             {tab === 'ads' && (
               <div className="card">
                 <div className="card-h">
-                  <h4>{isAr ? 'الإعلانات في هذا التنفيذ' : 'The ads in this execution'}</h4>
+                  <h4>{isAr ? 'الإعلانات في هذه الحملة الإعلانية' : 'The ads in this ad campaign'}</h4>
                   <span className="r">
                     {isAr
                       ? `${num(ads.length, true)} إعلانات · كل واحد سجل محتوى`

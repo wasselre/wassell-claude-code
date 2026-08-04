@@ -123,8 +123,8 @@ const PLATFORM_CARDS: Record<string, PlatformCardDef> = {
   },
   google: {
     initials: 'G', bg: '#4285F4', fg: '#fff', compact: true,
-    sub_ar: 'الإنفاق والتحويلات لتنفيذ البحث. أرخص عميل مؤهل في الحملة الحالية.',
-    sub_en: 'Spend and conversions for search executions. The cheapest qualified lead in the current campaign.',
+    sub_ar: 'الإنفاق والتحويلات لحملات البحث الإعلانية. أرخص عميل مؤهل في الحملة الحالية.',
+    sub_en: 'Spend and conversions for search ad campaigns. The cheapest qualified lead in the current campaign.',
     caps: [],
   },
 };

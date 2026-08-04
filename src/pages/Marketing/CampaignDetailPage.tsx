@@ -1,5 +1,5 @@
 /**
- * Campaign detail — design screens 15 (نظرة عامة), 20 (التنفيذات),
+ * Campaign detail — design screens 15 (نظرة عامة), 20 (الحملات الإعلانية),
  * 39 (المحتوى), 40 (النتائج), plus the ملاحظات thread.
  *
  * Four levels on one screen: the goal, the platform executions under it, the
@@ -514,7 +514,7 @@ export default function CampaignDetailPage() {
       }
       setExecutions(rows);
       addToast(
-        isAr ? `أُوقف ${num(running.length, true)} من التنفيذات.` : `Paused ${running.length} executions.`,
+        isAr ? `أُوقفت ${num(running.length, true)} من الحملات الإعلانية.` : `Paused ${running.length} ad campaigns.`,
         'success',
       );
       void refreshEvents();
@@ -624,7 +624,7 @@ export default function CampaignDetailPage() {
 
   const crumbTail: Record<Tab, { ar: string; en: string } | null> = {
     overview: null,
-    executions: { ar: 'التنفيذات', en: 'Executions' },
+    executions: { ar: 'الحملات الإعلانية', en: 'Ad campaigns' },
     content: { ar: 'المحتوى', en: 'Content' },
     results: { ar: 'النتائج', en: 'Results' },
     notes: { ar: 'ملاحظات', en: 'Notes' },
@@ -632,7 +632,7 @@ export default function CampaignDetailPage() {
 
   const tabs: Array<{ key: Tab; ar: string; en: string; badge?: number }> = [
     { key: 'overview', ar: 'نظرة عامة', en: 'Overview' },
-    { key: 'executions', ar: 'التنفيذات', en: 'Executions', badge: executions.length || undefined },
+    { key: 'executions', ar: 'الحملات الإعلانية', en: 'Ad campaigns', badge: executions.length || undefined },
     { key: 'content', ar: 'المحتوى', en: 'Content', badge: content.length || undefined },
     { key: 'results', ar: 'النتائج', en: 'Results' },
     { key: 'notes', ar: 'ملاحظات', en: 'Notes' },
@@ -867,7 +867,7 @@ export default function CampaignDetailPage() {
                 )}
                 {can('enter_metrics') && (
                   <button type="button" className="btn btn-p" onClick={() => setExecAdding(true)}>
-                    {isAr ? 'إضافة تنفيذ' : 'Add an execution'}
+                    {isAr ? 'إضافة حملة إعلانية' : 'Add an ad campaign'}
                   </button>
                 )}
               </>
@@ -1001,10 +1001,10 @@ export default function CampaignDetailPage() {
                   </div>
                 </div>
 
-                {/* تنفيذات المنصات */}
+                {/* الحملات الإعلانية للمنصات */}
                 <div className="card">
                   <div className="card-h">
-                    <h4>{isAr ? 'تنفيذات المنصات' : 'Platform executions'}</h4>
+                    <h4>{isAr ? 'الحملات الإعلانية للمنصات' : 'Platform ad campaigns'}</h4>
                     <span className="r">
                       {isAr
                         ? `${num(executions.length, true)} تعمل تحت هذا الهدف`
@@ -1017,15 +1017,15 @@ export default function CampaignDetailPage() {
                         style={{ marginInlineStart: 10 }}
                         onClick={() => setExecAdding(true)}
                       >
-                        {isAr ? 'إضافة تنفيذ' : 'Add an execution'}
+                        {isAr ? 'إضافة حملة إعلانية' : 'Add an ad campaign'}
                       </button>
                     )}
                   </div>
                   {executions.length === 0 ? (
                     <p style={{ padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--mute)' }}>
                       {isAr
-                        ? 'لا تنفيذات بعد. أضف صفًّا لكل منصة تعمل تحت هذا الهدف.'
-                        : 'No executions yet. Add one row per platform running under this goal.'}
+                        ? 'لا حملات إعلانية بعد. أضف صفًّا لكل منصة تعمل تحت هذا الهدف.'
+                        : 'No ad campaigns yet. Add one row per platform running under this goal.'}
                     </p>
                   ) : (
                     <>
@@ -1033,7 +1033,7 @@ export default function CampaignDetailPage() {
                       <table className="tbl">
                         <thead>
                           <tr>
-                            <th>{isAr ? 'التنفيذ' : 'Execution'}</th>
+                            <th>{isAr ? 'الحملة الإعلانية' : 'Ad campaign'}</th>
                             <th style={{ width: 92 }}>{isAr ? 'الغرض' : 'Purpose'}</th>
                             <th className="num" style={{ width: 64 }}>{isAr ? 'المحتوى' : 'Content'}</th>
                             <th className="num" style={{ width: 88 }}>{isAr ? 'الميزانية' : 'Budget'}</th>
@@ -1369,8 +1369,8 @@ export default function CampaignDetailPage() {
             {executions.length === 0 ? (
               <p style={{ padding: 26, textAlign: 'center', fontSize: 13, color: 'var(--mute)' }}>
                 {isAr
-                  ? 'لا تنفيذات. الحملة هدف؛ وما يعمل على كل منصة تنفيذٌ تحتها.'
-                  : 'No executions. The campaign is a goal; what runs on each platform is an execution under it.'}
+                  ? 'لا حملات إعلانية. الحملة هدف؛ وما يعمل على كل منصة حملةٌ إعلانية تحتها.'
+                  : 'No ad campaigns. The campaign is a goal; what runs on each platform is an ad campaign under it.'}
               </p>
             ) : (
               <div style={{ display: 'grid', gap: 12 }}>
@@ -1450,8 +1450,8 @@ export default function CampaignDetailPage() {
                     note = {
                       border: 'var(--gold)',
                       body: isAr
-                        ? <>أرخص مؤهل بين التنفيذات{smallest ? ' — على أصغر ميزانية' : ''}.</>
-                        : <>The cheapest qualified of the executions{smallest ? ' — on the smallest budget' : ''}.</>,
+                        ? <>أرخص مؤهل بين الحملات الإعلانية{smallest ? ' — على أصغر ميزانية' : ''}.</>
+                        : <>The cheapest qualified of the ad campaigns{smallest ? ' — on the smallest budget' : ''}.</>,
                     };
                   } else if (s.isMaxQualified) {
                     const underThreshold = item.success_threshold !== null
@@ -1460,8 +1460,8 @@ export default function CampaignDetailPage() {
                     note = {
                       border: 'var(--go)',
                       body: isAr
-                        ? <>أعلى حجم مؤهلين بين التنفيذات{underThreshold ? <>. وتحت معيار النجاح {num(item.success_threshold, true)} ريالًا</> : null}.</>
-                        : <>The highest qualified volume of the executions{underThreshold ? <>, under the {num(item.success_threshold, false)} SAR success bar</> : null}.</>,
+                        ? <>أعلى حجم مؤهلين بين الحملات الإعلانية{underThreshold ? <>. وتحت معيار النجاح {num(item.success_threshold, true)} ريالًا</> : null}.</>
+                        : <>The highest qualified volume of the ad campaigns{underThreshold ? <>, under the {num(item.success_threshold, false)} SAR success bar</> : null}.</>,
                     };
                   }
                   return (
@@ -1593,7 +1593,7 @@ export default function CampaignDetailPage() {
                 className={`fbtn${platFilter === 'all' ? ' on' : ''}`}
                 onClick={() => setPlatFilter('all')}
               >
-                {isAr ? 'كل التنفيذات' : 'All executions'}
+                {isAr ? 'كل الحملات الإعلانية' : 'All ad campaigns'}
               </button>
               {platformsInPlay.map((p) => (
                 <button
@@ -1607,8 +1607,8 @@ export default function CampaignDetailPage() {
               ))}
               <span className="cd-filtnote">
                 {isAr
-                  ? 'الأداء لكل عنصر يُجمَع من كل تنفيذ يعمل فيه'
-                  : 'Each item’s performance is summed from every execution it runs in'}
+                  ? 'الأداء لكل عنصر يُجمَع من كل حملة إعلانية يعمل فيها'
+                  : 'Each item’s performance is summed from every ad campaign it runs in'}
               </span>
             </div>
             {enrichError && (
@@ -1774,15 +1774,15 @@ export default function CampaignDetailPage() {
                     ? isAr
                       ? `الهدف ${num(target, true)} · متبقٍ ${num(days.left, true)} أيام`
                       : `Target ${num(target, false)} · ${days.left} days left`
-                    : isAr ? 'أرقام يومية من صفوف التنفيذ' : 'daily numbers from the execution rows'}
+                    : isAr ? 'أرقام يومية من صفوف الحملات الإعلانية' : 'daily numbers from the ad-campaign rows'}
                 </span>
               </div>
               <div className="card-b">
                 {cumulative.length === 0 ? (
                   <p style={{ padding: 12, textAlign: 'center', fontSize: 12.5, color: 'var(--mute)' }}>
                     {isAr
-                      ? 'لا أرقام يومية بعد — تُسجَّل من صفحة كل تنفيذ، تبويب «يوميًا».'
-                      : 'No daily numbers yet — they are recorded on each execution page, under “Daily”.'}
+                      ? 'لا أرقام يومية بعد — تُسجَّل من صفحة كل حملة إعلانية، تبويب «يوميًا».'
+                      : 'No daily numbers yet — they are recorded on each ad-campaign page, under “Daily”.'}
                   </p>
                 ) : (
                   <div className="cd-chartbox">
@@ -2104,8 +2104,8 @@ export default function CampaignDetailPage() {
         <Modal
           title={isAr ? 'إدخال أرقام اليوم' : 'Enter today’s numbers'}
           sub={isAr
-            ? 'الأرقام اليومية تعيش على التنفيذ — اختر أيها تخصّه أرقام اليوم.'
-            : 'Daily numbers live on the execution — pick the one today’s numbers belong to.'}
+            ? 'الأرقام اليومية تعيش على الحملة الإعلانية — اختر أيها تخصّه أرقام اليوم.'
+            : 'Daily numbers live on the ad campaign — pick the one today’s numbers belong to.'}
           onClose={() => setPickDaily(false)}
         >
           <div className="cd-picklist">
@@ -2289,7 +2289,7 @@ function ExecutionModal({
         leads: n(leads),
         qualified: n(qualified),
       });
-      addToast(isAr ? 'حُفظ التنفيذ.' : 'Execution saved.', 'success');
+      addToast(isAr ? 'حُفظت الحملة الإعلانية.' : 'Ad campaign saved.', 'success');
       onSaved(res.executions);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
@@ -2303,7 +2303,7 @@ function ExecutionModal({
     setBusy(true);
     try {
       const res = await deleteExecution(campaignId, execution.id);
-      addToast(isAr ? 'حُذف صف التنفيذ.' : 'Execution removed.', 'success');
+      addToast(isAr ? 'حُذفت الحملة الإعلانية.' : 'Ad campaign removed.', 'success');
       onSaved(res.executions);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
@@ -2314,7 +2314,7 @@ function ExecutionModal({
 
   return (
     <Modal
-      title={execution ? (isAr ? 'تعديل التنفيذ' : 'Edit execution') : (isAr ? 'تنفيذ جديد' : 'New execution')}
+      title={execution ? (isAr ? 'تعديل الحملة الإعلانية' : 'Edit ad campaign') : (isAr ? 'حملة إعلانية جديدة' : 'New ad campaign')}
       sub={isAr
         ? 'صف واحد لكل مجموعة إعلانية. الأرقام تُدخل يدويًا حتى تُربط المنصات.'
         : 'One row per ad set. Numbers are typed in by hand until the platforms are connected.'}
@@ -2448,7 +2448,7 @@ function BudgetShiftModal({
   const submit = async (): Promise<void> => {
     const value = Number(amount);
     if (!fromId || !toId || fromId === toId) {
-      addToast(isAr ? 'اختر تنفيذين مختلفين.' : 'Pick two different executions.', 'error');
+      addToast(isAr ? 'اختر حملتين إعلانيتين مختلفتين.' : 'Pick two different ad campaigns.', 'error');
       return;
     }
     if (!Number.isFinite(value) || value <= 0) {
@@ -2474,8 +2474,8 @@ function BudgetShiftModal({
     <Modal
       title={isAr ? 'تحويل الميزانية' : 'Shift the budget'}
       sub={isAr
-        ? 'ينقص من ميزانية تنفيذ ويزيد في آخر — ويُسجَّل الحدث تلقائيًا.'
-        : 'Takes from one execution’s budget and adds to another — the event is logged automatically.'}
+        ? 'ينقص من ميزانية حملة إعلانية ويزيد في أخرى — ويُسجَّل الحدث تلقائيًا.'
+        : 'Takes from one ad campaign’s budget and adds to another — the event is logged automatically.'}
       onClose={onClose}
       footer={
         <>
@@ -2490,7 +2490,7 @@ function BudgetShiftModal({
     >
       <Field label={isAr ? 'من' : 'From'}>
         <select className="inp" value={fromId} onChange={(e) => setFromId(e.target.value)}>
-          <option value="">{isAr ? 'اختر التنفيذ المصدر' : 'Pick the source execution'}</option>
+          <option value="">{isAr ? 'اختر الحملة الإعلانية المصدر' : 'Pick the source ad campaign'}</option>
           {executions.map((x) => (
             <option key={x.id} value={x.id}>{optionLabel(x)}</option>
           ))}
@@ -2498,7 +2498,7 @@ function BudgetShiftModal({
       </Field>
       <Field label={isAr ? 'إلى' : 'To'}>
         <select className="inp" value={toId} onChange={(e) => setToId(e.target.value)}>
-          <option value="">{isAr ? 'اختر التنفيذ الوجهة' : 'Pick the destination execution'}</option>
+          <option value="">{isAr ? 'اختر الحملة الإعلانية الوجهة' : 'Pick the destination ad campaign'}</option>
           {executions.filter((x) => x.id !== fromId).map((x) => (
             <option key={x.id} value={x.id}>{optionLabel(x)}</option>
           ))}

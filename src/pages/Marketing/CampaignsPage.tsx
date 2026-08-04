@@ -792,7 +792,7 @@ export function CampaignModal({
       if (isNew) {
         const execCount = executions?.length ?? 0;
         const clauses: string[] = [];
-        if (execCount > 0) clauses.push(isAr ? `${num(execCount, true)} تنفيذات` : `${execCount} draft executions`);
+        if (execCount > 0) clauses.push(isAr ? `${num(execCount, true)} حملات إعلانية` : `${execCount} draft ad campaigns`);
         if (contentOk > 0) clauses.push(isAr ? `${num(contentOk, true)} محتوى` : `${contentOk} content ${contentOk === 1 ? 'piece' : 'pieces'}`);
         const tail = clauses.length > 0 ? (isAr ? ` مع ${clauses.join(' و')}` : ` with ${clauses.join(' and ')}`) : '';
         const failTail = contentFail > 0 ? (isAr ? ` (تعذّر إنشاء ${num(contentFail, true)})` : ` (${contentFail} failed)`) : '';
@@ -817,15 +817,15 @@ export function CampaignModal({
     <Modal
       title={isNew ? (isAr ? 'حملة جديدة' : 'New campaign') : (isAr ? 'تعديل الحملة' : 'Edit campaign')}
       sub={isAr
-        ? 'هدف، ومدة، والمنصات التي ستعمل عليها. تُنشأ التنفيذات كمسودات.'
-        : 'A goal, a duration, and the platforms it runs on. Executions are created as drafts.'}
+        ? 'هدف، ومدة، والمنصات التي ستعمل عليها. تُنشأ الحملات الإعلانية كمسودات.'
+        : 'A goal, a duration, and the platforms it runs on. Ad campaigns are created as drafts.'}
       onClose={onClose}
       footer={
         <>
           <span className="note">
             {isAr
-              ? 'لا شيء ينفق مالًا هنا. التنفيذات مسودات حتى يطلقها أحد على المنصة نفسها.'
-              : 'Nothing here spends money. Executions stay drafts until someone launches them on the platform itself.'}
+              ? 'لا شيء ينفق مالًا هنا. الحملات الإعلانية مسودات حتى يطلقها أحد على المنصة نفسها.'
+              : 'Nothing here spends money. Ad campaigns stay drafts until someone launches them on the platform itself.'}
           </span>
           <button type="button" className="btn" onClick={onClose} disabled={busy}>
             {isAr ? 'إلغاء' : 'Cancel'}
@@ -918,7 +918,7 @@ export function CampaignModal({
       {kind === 'paid' && isNew && (
         <div>
           <div className="lbl" style={{ marginBottom: 7 }}>
-            {isAr ? 'التنفيذات التي ستُنشأ' : 'The executions this will create'}
+            {isAr ? 'الحملات الإعلانية التي ستُنشأ' : 'The ad campaigns this will create'}
           </div>
           <div style={{ border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden' }}>
             <table className="tbl">
@@ -1060,8 +1060,8 @@ export function CampaignModal({
           {kind === 'paid' && chosen.length > 0 && (
             <>
               {isAr
-                ? `، و${num(chosen.length, true)} تنفيذات كمسودات`
-                : `, and ${chosen.length} draft executions`}
+                ? `، و${num(chosen.length, true)} حملات إعلانية كمسودات`
+                : `, and ${chosen.length} draft ad campaigns`}
             </>
           )}
           {isAr
