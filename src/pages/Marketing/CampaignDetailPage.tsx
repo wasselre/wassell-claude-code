@@ -630,13 +630,18 @@ export default function CampaignDetailPage() {
     notes: { ar: 'ملاحظات', en: 'Notes' },
   };
 
-  const tabs: Array<{ key: Tab; ar: string; en: string; badge?: number }> = [
+  // Organic campaigns have no paid ad-platform buys, so the Ad campaigns tab, its
+  // overview card, and the budget-shift control are all hidden for them — an
+  // organic campaign runs through content, not ad campaigns.
+  const isOrganic = item.kind === 'organic';
+  const allTabs: Array<{ key: Tab; ar: string; en: string; badge?: number }> = [
     { key: 'overview', ar: 'نظرة عامة', en: 'Overview' },
     { key: 'executions', ar: 'الحملات الإعلانية', en: 'Ad campaigns', badge: executions.length || undefined },
     { key: 'content', ar: 'المحتوى', en: 'Content', badge: content.length || undefined },
     { key: 'results', ar: 'النتائج', en: 'Results' },
     { key: 'notes', ar: 'ملاحظات', en: 'Notes' },
   ];
+  const tabs = allTabs.filter((t) => !(isOrganic && t.key === 'executions'));
 
   // Every measure the campaign is judged by. Falls back to the legacy scalar
   // pair for any row created before the multi-measure column existed.
@@ -909,7 +914,7 @@ export default function CampaignDetailPage() {
                       : isAr ? 'استئناف' : 'Resume'}
                   </button>
                 )}
-                {can('approve_budget') && (
+                {!isOrganic && can('approve_budget') && (
                   <button
                     type="button"
                     className="btn btn-p"
@@ -1001,7 +1006,9 @@ export default function CampaignDetailPage() {
                   </div>
                 </div>
 
-                {/* الحملات الإعلانية للمنصات */}
+                {/* الحملات الإعلانية للمنصات — paid only: an organic campaign runs
+                    through content, not ad-platform buys, so it has no ad campaigns. */}
+                {!isOrganic && (
                 <div className="card">
                   <div className="card-h">
                     <h4>{isAr ? 'الحملات الإعلانية للمنصات' : 'Platform ad campaigns'}</h4>
@@ -1207,6 +1214,7 @@ export default function CampaignDetailPage() {
                     </>
                   )}
                 </div>
+                )}
 
                 {/* المحتوى المستخدم */}
                 <div className="card">
