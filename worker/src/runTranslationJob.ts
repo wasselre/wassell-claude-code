@@ -16,7 +16,9 @@
  * silently discarded; the new queued job re-translates. Candidate-revision
  * idempotency is the DB partial unique per (unit, lang, generation).
  *
- * Twin pairs ('pair:*' policies) are W7 — skipped here with a log line.
+ * Twin pairs ('pair:*' policies, W7): the authored side's translation is
+ * materialized into the EMPTY twin column via record_twin_fill (not a variant
+ * display — the app reads the twin columns directly). See the pair pass below.
  * Element paths ('slug[id=…]') are W-Docs/W1-element work — skipped likewise.
  * Oversized scalars: >200 KB → variant failed 'manual_review:oversized'
  * (loud, Review-listed); 20–200 KB translate via sequential sub-batches
@@ -50,6 +52,8 @@ interface FieldPolicy {
   tm_reuse: 'org' | 'global_terms' | 'never' | 'service_only';
   require_approval: boolean;
   official_counterpart_path: string | null;
+  /** For `pair:*` policies (W7): "<ar_path>|<en_path>" of the twin columns. */
+  twin_counterpart_path: string | null;
 }
 
 const ORG_ID = '00000000-0000-0000-0000-000000000001';
@@ -81,13 +85,16 @@ export async function runTranslationJob({ supabase, env, job }: Ctx): Promise<Re
 
   const { data: policies, error: polErr } = await supabase
     .from('translation_field_policies')
-    .select('field_path, treatment, semantic_class, sensitivity, provider_route, tm_reuse, require_approval, official_counterpart_path')
+    .select('field_path, treatment, semantic_class, sensitivity, provider_route, tm_reuse, require_approval, official_counterpart_path, twin_counterpart_path')
     .eq('resource_kind', 'record').eq('scope_id', entity.model_id)
     .eq('classification_status', 'confirmed').neq('treatment', 'skip');
   if (polErr) throw new Error(`policy read failed: ${polErr.message}`);
 
   const scalarPolicies = (policies ?? []).filter(
     (p): p is FieldPolicy => !p.field_path.includes('[') && !p.field_path.startsWith('pair:'),
+  );
+  const pairPolicies = (policies ?? []).filter(
+    (p): p is FieldPolicy => p.field_path.startsWith('pair:') && !!p.twin_counterpart_path,
   );
   const fieldSet = job.changedPaths.length === 0
     ? scalarPolicies
@@ -260,6 +267,54 @@ export async function runTranslationJob({ supabase, env, job }: Ctx): Promise<Re
           translated_text: r.translated, provider: r.provider,
         }, { onConflict: 'org_id,source_lang,target_lang,resource_kind,context_scope,semantic_class,treatment,prompt_version,glossary_version,source_hash' });
       }
+    }
+  }
+
+  // ── Twin pairs (W7): materialize the authored side's translation into the
+  //    EMPTY twin column (never a variant display — the app renders the twin
+  //    columns directly). Idempotent: only an empty target is filled, and
+  //    record_twin_fill CAS-guards against a human edit landing mid-translate.
+  //    v1 fills empty sides; re-translating a filled side after the source is
+  //    edited is deferred (a human can clear the target to re-fill). ─────────
+  const twinWork: Array<{ item: TranslateItem; policy: FieldPolicy; sourcePath: string; targetPath: string; sourceText: string }> = [];
+  for (const policy of pairPolicies) {
+    const [arPath, enPath] = (policy.twin_counterpart_path as string).split('|');
+    if (!arPath || !enPath) continue;
+    // Only act when THIS record's twin fields were part of the change (or the
+    // job is a full reconcile with no explicit paths).
+    if (job.changedPaths.length > 0
+        && !job.changedPaths.includes(arPath) && !job.changedPaths.includes(enPath)) continue;
+
+    const arText = typeof data[arPath] === 'string' ? (data[arPath] as string).trim() : '';
+    const enText = typeof data[enPath] === 'string' ? (data[enPath] as string).trim() : '';
+    // Exactly one side authored ⇒ fill the other. Both or neither ⇒ nothing to do.
+    let sourceText: string, sourcePath: string, targetPath: string, target: TargetLang;
+    if (arText && !enText) { sourceText = arText; sourcePath = arPath; targetPath = enPath; target = 'en'; }
+    else if (enText && !arText) { sourceText = enText; sourcePath = enPath; targetPath = arPath; target = 'ar'; }
+    else continue;
+    if (sourceText.length > MANUAL_REVIEW_BYTES) { stats.failed++; continue; }
+
+    twinWork.push({
+      item: { id: `pair:${policy.field_path}|${target}`, text: sourceText, treatment: policy.treatment as Treatment, targetLang: target, mixedSource: false },
+      policy, sourcePath, targetPath, sourceText,
+    });
+  }
+  if (twinWork.length > 0) {
+    const results = await translateItems(
+      { deepseekKey: env.DEEPSEEK_API_KEY, anthropicKey: env.ANTHROPIC_API_KEY },
+      twinWork.map((w) => w.item),
+    );
+    for (const w of twinWork) {
+      const r = results.get(w.item.id);
+      if (!r || r.error || !r.translated) { stats.failed++; continue; }
+      // record_twin_fill: source unchanged (sha) AND target still empty (''),
+      // then the GUC-marked write into the twin column. false ⇒ raced, skip.
+      const { data: filled, error: fillErr } = await supabase.rpc('record_twin_fill', {
+        p_record_id: job.entityId, p_source_path: w.sourcePath, p_target_path: w.targetPath,
+        p_value: r.translated, p_expected_source_rev: sha256(w.sourceText), p_expected_target_value: '',
+      });
+      if (fillErr) { stats.failed++; console.error(`[translate] twin_fill failed (${w.targetPath}): ${fillErr.message}`); continue; }
+      if (filled === true) stats.translated++; else stats.skipped++;
     }
   }
 

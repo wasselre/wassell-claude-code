@@ -204,6 +204,81 @@ BEGIN
   RAISE NOTICE 'W4 smoke 10 (document language carrier): passed';
 END $$;
 
+-- 13) W7 twin auto-fill: record_twin_fill CAS + translation_twin_backfill enqueue.
+DO $$
+DECLARE
+  v_model uuid; v_rec uuid; v_ar_sha text; v_ok boolean; v_jobs int; v_backfilled int; v_paths text[];
+BEGIN
+  INSERT INTO models (name, schema) VALUES ('smoke_twins', jsonb_build_object(
+    'sections', jsonb_build_array(jsonb_build_object(
+      'id','s1','label_ar','ع','label_en','G','fields', jsonb_build_array(
+        jsonb_build_object('id','b1','name','body_ar','type','textarea','label_ar','','label_en','',
+          'required',false,'order',0,'section_id','s1','width','full','show_in_table',false),
+        jsonb_build_object('id','b2','name','body_en','type','textarea','label_ar','','label_en','',
+          'required',false,'order',1,'section_id','s1','width','full','show_in_table',false)
+  )))))
+  RETURNING id INTO v_model;
+
+  -- The models trigger only hardcodes pair rows for chat_templates/posts_content,
+  -- so add the confirmed pair policy for this fixture model explicitly.
+  INSERT INTO translation_field_policies
+    (resource_kind, scope_id, field_path, ftype, semantic_class, treatment, sensitivity,
+     external_provider_allowed, redaction_required, public_publishable,
+     provider_route, tm_reuse, require_approval, twin_counterpart_path, classification_status)
+  VALUES ('record', v_model, 'pair:body', 'twin', 'prose', 'translate', 'normal',
+     true, false, false, 'deepseek', 'org', false, 'body_ar|body_en', 'confirmed');
+
+  -- One side authored, the other empty (the twin-fill target).
+  INSERT INTO records (model_id, data) VALUES (v_model, '{"body_ar":"مرحبا","body_en":""}')
+  RETURNING id INTO v_rec;
+
+  -- (a) Capture enqueue: the fixed predicate now recognizes the twin field
+  --     change, so this insert enqueued a job carrying the twin path.
+  SELECT changed_paths INTO v_paths FROM translation_jobs
+  WHERE entity_id = v_rec AND status='queued';
+  IF v_paths IS NULL OR NOT ('body_ar' = ANY(v_paths)) THEN
+    RAISE EXCEPTION 'SMOKE 13 failed: twin change did not enqueue (paths=%)', v_paths;
+  END IF;
+
+  -- (b) record_twin_fill: correct source sha + empty target ⇒ fills; a system write.
+  v_ar_sha := encode(extensions.digest('مرحبا','sha256'),'hex');
+  SELECT record_twin_fill(v_rec, 'body_ar', 'body_en', 'Hello', v_ar_sha, '') INTO v_ok;
+  IF NOT v_ok THEN RAISE EXCEPTION 'SMOKE 13b failed: twin_fill refused a valid fill'; END IF;
+  IF (SELECT data->>'body_en' FROM records WHERE id=v_rec) <> 'Hello' THEN
+    RAISE EXCEPTION 'SMOKE 13c failed: body_en not filled';
+  END IF;
+
+  -- CAS 1: a stale source sha is refused (source moved on).
+  IF record_twin_fill(v_rec, 'body_ar', 'body_en', 'Hi', 'deadbeef', 'Hello') THEN
+    RAISE EXCEPTION 'SMOKE 13d failed: twin_fill accepted a stale source rev';
+  END IF;
+
+  -- CAS 2: a human edit to the target (not the prior machine text) is protected.
+  UPDATE records SET data = jsonb_set(data,'{body_en}','"Human edit"') WHERE id=v_rec;
+  IF record_twin_fill(v_rec, 'body_ar', 'body_en', 'Hello2', v_ar_sha, 'Hello') THEN
+    RAISE EXCEPTION 'SMOKE 13e failed: twin_fill overwrote a human edit';
+  END IF;
+
+  -- (c) Backfill: enqueues for a one-side-empty record, NOT for a both-filled one.
+  --     Clear the capture jobs first so we measure the backfill in isolation.
+  DELETE FROM translation_jobs j USING records r
+   WHERE j.entity_id = r.id AND r.model_id = v_model;
+  INSERT INTO records (model_id, data) VALUES (v_model, '{"body_ar":"نص جديد","body_en":""}');    -- one-sided
+  INSERT INTO records (model_id, data) VALUES (v_model, '{"body_ar":"نص","body_en":"text"}');     -- both filled
+  DELETE FROM translation_jobs j USING records r    -- clear those two inserts' capture jobs too
+   WHERE j.entity_id = r.id AND r.model_id = v_model;
+  SELECT translation_twin_backfill(v_model) INTO v_backfilled;
+  SELECT count(*) INTO v_jobs FROM translation_jobs j JOIN records r ON r.id=j.entity_id
+    WHERE r.model_id=v_model AND j.status='queued';
+  -- v_rec (now both-filled after the human edit) + the both-filled insert are skipped;
+  -- only the one-sided insert enqueues.
+  IF v_backfilled <> 1 OR v_jobs <> 1 THEN
+    RAISE EXCEPTION 'SMOKE 13f failed: backfill enqueued % jobs / returned % (expected 1/1)', v_jobs, v_backfilled;
+  END IF;
+
+  RAISE NOTICE 'W7 smoke 13 (twin auto-fill + capture enqueue): passed';
+END $$;
+
 -- 11) W5 search folding: wassell_search_norm folds Arabic orthography (hamza
 --     forms → bare alef, ta-marbuta → heh, alef-maqsura → yeh, tatweel stripped,
 --     digits unified) and — critically — آ (alef-madda) folds to ا, NOT to a
