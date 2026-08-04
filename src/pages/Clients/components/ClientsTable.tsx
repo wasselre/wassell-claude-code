@@ -88,8 +88,8 @@ export default function ClientsTable({ views, isAr, returnTo, now = Date.now() }
                   <span>{v.ownerName ?? (isAr ? 'بدون مستشار' : 'No consultant')}</span>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <MetaChip label={v.stage} />
-                  {v.status && <Chip label={v.status} color="#8E4E3A" />}
+                  <MetaChip label={v.stageLabel} />
+                  {v.statusLabel && <Chip label={v.statusLabel} color="#8E4E3A" />}
                 </div>
               </div>
 

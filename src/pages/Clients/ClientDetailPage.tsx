@@ -16,6 +16,7 @@ import {
   nonEmptyString,
   type ClientViewCtx,
 } from './lib/clientView';
+import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import { useClientWhatsApp } from './lib/useClientWhatsApp';
 import DetailHeader from './components/DetailHeader';
 import DetailKpiRow from './components/DetailKpiRow';
@@ -73,7 +74,13 @@ export default function ClientDetailPage() {
   const canView = useCanViewRecord(clientsModel ?? undefined, client ?? undefined);
   const canEdit = useCanEditRecord(clientsModel ?? undefined, client ?? undefined);
 
-  const ctx: ClientViewCtx = useMemo(() => ({ models, records, users, language }), [models, records, users, language]);
+  const translationVersion = useRecordTranslationVersion();
+  const ctx: ClientViewCtx = useMemo(
+    () => ({ models, records, users, language, translate: getEntityFieldText }),
+    // translationVersion: re-resolve name/geo/project names as translations hydrate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [models, records, users, language, translationVersion],
+  );
   const view = useMemo(() => (client ? resolveClientView(client, ctx) : null), [client, ctx]);
 
   const [activeTab, setActiveTab] = useState<TabKey>('overview');

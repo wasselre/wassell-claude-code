@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { SlidersHorizontal, Users } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import RecordListPage from '@/pages/Records/RecordListPage';
+import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import {
   resolveClientView,
   fieldBySlug,
@@ -45,7 +46,12 @@ export default function ClientsListPage() {
 
   const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
 
-  const ctx: ClientViewCtx = useMemo(() => ({ models, records, users, language }), [models, records, users, language]);
+  const translationVersion = useRecordTranslationVersion();
+  const ctx: ClientViewCtx = useMemo(
+    () => ({ models, records, users, language, translate: getEntityFieldText }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [models, records, users, language, translationVersion],
+  );
 
   const views: ClientView[] = useMemo(() => {
     if (!clientsModel) return [];

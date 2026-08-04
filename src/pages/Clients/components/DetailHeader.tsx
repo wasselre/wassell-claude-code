@@ -57,8 +57,8 @@ export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreat
           </div>
 
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-            <MetaChip label={view.stage} />
-            {view.status && <Chip label={view.status} color="#8E4E3A" />}
+            <MetaChip label={view.stageLabel} />
+            {view.statusLabel && <Chip label={view.statusLabel} color="#8E4E3A" />}
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-4 text-xs">

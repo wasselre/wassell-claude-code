@@ -109,6 +109,75 @@ describe('preferred_projects vs preferred_market_listings separation', () => {
   });
 });
 
+describe('bilingual W6 localization', () => {
+  it('resolves stage/status to option LABELS in the UI language, keeping raw slugs for filters', () => {
+    const { ctx, clientsModel } = makeWorld();
+    // Give the stage/status dropdowns bilingual options.
+    const fields = clientsModel.schema.sections.flatMap((s) => s.fields);
+    fields.find((f) => f.name === 'client_stage')!.options = [
+      { id: 'o1', value: 'visit', label_ar: 'زيارة', label_en: 'Site Visit', color: '#10B981' },
+    ];
+    fields.find((f) => f.name === 'client_status')!.options = [
+      { id: 'o2', value: 'interested', label_ar: 'مهتم', label_en: 'Interested', color: '#8E4E3A' },
+    ];
+    const client = clientRecord(clientsModel.id, { client_stage: 'visit', client_status: 'interested' });
+    ctx.records[clientsModel.id] = [client];
+
+    ctx.language = 'en';
+    const en = resolveClientView(client, ctx);
+    expect(en.stage).toBe('visit');            // RAW slug — clientFilters compares this
+    expect(en.stageLabel).toBe('Site Visit');  // display label
+    expect(en.statusLabel).toBe('Interested');
+
+    ctx.language = 'ar';
+    const ar = resolveClientView(client, ctx);
+    expect(ar.stage).toBe('visit');            // still the raw slug in both languages
+    expect(ar.stageLabel).toBe('زيارة');
+  });
+
+  it('localizes the client name + preferred-project names via the translate resolver', () => {
+    const { ctx, clientsModel, projectsModel } = makeWorld();
+    ctx.records[projectsModel.id] = [genericRecord(projectsModel.id, 'proj-1', { project_name: 'برج مارينا' })];
+    const client = clientRecord(clientsModel.id, { client_name: 'أحمد', preferred_projects: ['proj-1'] });
+    ctx.records[clientsModel.id] = [client];
+
+    const translations: Record<string, string> = {
+      [`${client.id}|client_name|en`]: 'Ahmed',
+      'proj-1|project_name|en': 'Marina Tower',
+    };
+    ctx.language = 'en';
+    ctx.translate = (id, path, lang) => translations[`${id}|${path}|${lang}`] ?? null;
+
+    const v = resolveClientView(client, ctx);
+    expect(v.name).toBe('Ahmed');
+    expect(v.preferredProjects).toEqual([{ id: 'proj-1', name: 'Marina Tower' }]);
+  });
+
+  it('localizes preferred city/district to the official geo name, joined per language', () => {
+    const { ctx, clientsModel } = makeWorld();
+    // Add a location field + a district level pointing at a districts model.
+    const districtsModel = { id: 'districts-model', name: 'districts',
+      schema: { sections: [] } } as unknown as (typeof ctx.models)[number];
+    ctx.models.push(districtsModel);
+    const locField = clientsModel.schema.sections[1]!.fields;
+    locField.push({
+      id: 'f_loc', name: 'location', label_ar: '', label_en: '', type: 'location', required: false, order: 9,
+      location_levels: [{ key: 'district', model_id: 'districts-model', display_field: 'name_ar' }],
+    } as never);
+    ctx.records['districts-model'] = [
+      genericRecord('districts-model', 'd1', { name_ar: 'النرجس', name_en: 'Al Narjis' }),
+      genericRecord('districts-model', 'd2', { name_ar: 'الملقا', name_en: 'Al Malqa' }),
+    ];
+    const client = clientRecord(clientsModel.id, { location: { district: ['d1', 'd2'] } });
+    ctx.records[clientsModel.id] = [client];
+
+    ctx.language = 'en';
+    expect(resolveClientView(client, ctx).preferredDistrict).toBe('Al Narjis, Al Malqa');
+    ctx.language = 'ar';
+    expect(resolveClientView(client, ctx).preferredDistrict).toBe('النرجس، الملقا');
+  });
+});
+
 describe('lifecycle predicates', () => {
   const base = { stage: null, lifecycleHealth: null, nextFollowupId: null, nextActionDueAt: null, status: null, latestVisitRating: null } as const;
 

@@ -1,4 +1,5 @@
 import type { AppModel, AppRecord, ModelField, User } from '@/types';
+import { resolveLocalizedName, pickLocalized } from '@/lib/geo/localizedName';
 
 /**
  * Pure, reusable "Client 360" view resolver.
@@ -83,6 +84,12 @@ export interface ClientViewCtx {
   records: Record<string, AppRecord[]>;
   users: User[];
   language: 'ar' | 'en';
+  /**
+   * Bilingual W6: resolve a record field's TRANSLATION for a language — used for
+   * the client NAME and preferred-project names. Injected (browser: the
+   * recordTranslation store's getEntityFieldText). Absent ⇒ source text.
+   */
+  translate?: (entityId: string, fieldPath: string, lang: 'ar' | 'en') => string | null;
 }
 
 export type LifecycleHealth = 'on_track' | 'overdue' | 'no_next_action' | 'closed';
@@ -113,8 +120,15 @@ export interface ClientView {
   phone: string | null;
   ownerId: string | null;
   ownerName: string | null;
+  /** RAW option slugs — load-bearing for the client filters (clientFilters.ts
+   *  compares against them). Render with the `*Label` fields below. */
   stage: string | null;
   status: string | null;
+  /** Bilingual W6: option labels in the UI language for display (chips/rows). */
+  stageLabel: string | null;
+  statusLabel: string | null;
+  nextActionTypeLabel: string | null;
+  lostReasonLabel: string | null;
   lifecycleHealth: LifecycleHealth | null;
   nextActionType: string | null;
   nextActionDueAt: string | null;
@@ -236,6 +250,9 @@ function resolveLookupRef(
   const rec = (ctx.records[target.id] ?? []).find((r) => r.id === id);
   if (!rec) return { id, name: null };
   if (displayField) {
+    // W6: prefer the linked record's translation for the UI language.
+    const tr = ctx.translate?.(id, displayField, ctx.language);
+    if (tr) return { id, name: tr };
     const v = nonEmptyString(rec.data[displayField]);
     if (v) return { id, name: v };
   }
@@ -254,7 +271,21 @@ function resolveLookupField(ctx: ClientViewCtx, model: AppModel, slug: string, d
   return ids.map((id) => resolveLookupRef(ctx, field.lookup_model_id, field.lookup_display_field, id));
 }
 
-/** Resolve a level (city/district) of the `location` cascade field to name(s). */
+/** The option label for a dropdown/select field VALUE, in the UI language.
+ *  Returns the raw value when no matching option exists (so a drifted slug is
+ *  still shown, not blanked). */
+function optionLabel(model: AppModel | null, slug: string, value: unknown, lang: 'ar' | 'en'): string | null {
+  const v = nonEmptyString(value);
+  if (!v) return null;
+  const field = fieldBySlug(model, slug);
+  const opt = field?.options?.find((o) => o.value === v);
+  if (!opt) return v;
+  return (lang === 'ar' ? opt.label_ar : opt.label_en) || v;
+}
+
+/** Resolve a level (city/district) of the `location` cascade field to name(s).
+ *  Prefers the OFFICIAL localized geography name (W6) so English renders the
+ *  English place name; falls back to the raw display field. */
 function resolveLocationLevel(
   ctx: ClientViewCtx,
   locationField: ModelField | null,
@@ -266,9 +297,15 @@ function resolveLocationLevel(
   if (!compound || typeof compound !== 'object' || Array.isArray(compound)) return [];
   const level = (locationField.location_levels ?? []).find((l) => l.key === levelKey);
   if (!level) return [];
+  const isAr = ctx.language === 'ar';
   const ids = asStringArray((compound as Record<string, unknown>)[levelKey]);
   return ids
-    .map((id) => resolveLookupRef(ctx, level.model_id, level.display_field, id).name)
+    .map((id) => {
+      const rec = (ctx.records[level.model_id] ?? []).find((r) => r.id === id);
+      const loc = resolveLocalizedName(id, rec?.data as Record<string, unknown> | undefined);
+      if (loc) return pickLocalized(loc, isAr);
+      return resolveLookupRef(ctx, level.model_id, level.display_field, id).name;
+    })
     .filter((n): n is string => !!n);
 }
 
@@ -491,16 +528,23 @@ export function resolveClientView(client: AppRecord, ctx: ClientViewCtx): Client
 
   const cityNames = resolveLocationLevel(ctx, locationField, data, 'city');
   const districtNames = resolveLocationLevel(ctx, locationField, data, 'district');
+  const lang = ctx.language;
+  const rawName = nonEmptyString(data.client_name);
 
   return {
     id: client.id,
     clientId: nonEmptyString(data.client_id) ?? nonEmptyString(data.client_code),
-    name: nonEmptyString(data.client_name),
+    // W6: client name renders in the UI language (transliteration, else source).
+    name: (rawName && ctx.translate?.(client.id, 'client_name', lang)) || rawName,
     phone: nonEmptyString(data.phone_number),
     ownerId: readOwnerId(data.client_owner),
     ownerName: userDisplayName(ctx, readOwnerId(data.client_owner)),
     stage: nonEmptyString(data.client_stage),
     status: nonEmptyString(data.client_status),
+    stageLabel: optionLabel(model, 'client_stage', data.client_stage, lang),
+    statusLabel: optionLabel(model, 'client_status', data.client_status, lang),
+    nextActionTypeLabel: optionLabel(model, 'next_action_type', data.next_action_type, lang),
+    lostReasonLabel: optionLabel(model, 'lost_reason', data.lost_reason, lang),
     lifecycleHealth: asLifecycle(data.lifecycle_health),
     nextActionType: nonEmptyString(data.next_action_type),
     nextActionDueAt: nonEmptyString(data.next_action_due_at),
@@ -514,7 +558,7 @@ export function resolveClientView(client: AppRecord, ctx: ClientViewCtx): Client
     budget: readRange(data.budget),
     preferredCity: cityNames[0] ?? null,
     preferredDirection: asStringArray(data.preferred_direction),
-    preferredDistrict: districtNames.length ? districtNames.join('، ') : null,
+    preferredDistrict: districtNames.length ? districtNames.join(lang === 'ar' ? '، ' : ', ') : null,
     preferredProjects: model ? resolveLookupField(ctx, model, 'preferred_projects', data) : [],
     preferredMarketListings: model ? resolveLookupField(ctx, model, 'preferred_market_listings', data) : [],
     counts: {
