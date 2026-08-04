@@ -94,15 +94,16 @@ interface WorkspaceCtx {
 export type Capability =
   | 'read' | 'comment' | 'write_content' | 'assign' | 'schedule' | 'publish'
   | 'approve_creative' | 'approve_process' | 'approve_budget'
-  | 'manage_assets' | 'enter_metrics' | 'review_performance' | 'manage_settings';
+  | 'manage_assets' | 'enter_metrics' | 'review_performance'
+  | 'manage_settings' | 'manage_roles';
 
 const MATRIX: Record<MosRole, Capability[]> = {
   administrator: ['read', 'comment', 'write_content', 'assign', 'schedule', 'publish',
     'approve_creative', 'approve_process', 'approve_budget', 'manage_assets',
-    'enter_metrics', 'review_performance', 'manage_settings'],
+    'enter_metrics', 'review_performance', 'manage_settings', 'manage_roles'],
   marketing_manager: ['read', 'comment', 'write_content', 'assign', 'schedule', 'publish',
     'approve_creative', 'approve_process', 'approve_budget', 'manage_assets',
-    'enter_metrics', 'review_performance', 'manage_settings'],
+    'enter_metrics', 'review_performance', 'manage_settings', 'manage_roles'],
   ceo: ['read', 'comment', 'approve_budget', 'review_performance'],
   ops_supervisor: ['read', 'comment', 'assign', 'schedule', 'publish', 'approve_process',
     'manage_assets', 'enter_metrics', 'review_performance'],

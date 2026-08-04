@@ -693,9 +693,9 @@ export function SettingsSectionPage() {
               setWorkflows((ws) => ws.map((w) => (w.id === saved.id ? saved : w)))}
           />
         )}
-        {section === 'roles' && <SettingsAccess canManage={can('manage_roles' as Capability)} isAr={isAr} />}
+        {section === 'roles' && <SettingsAccess canManage={can('manage_roles')} isAr={isAr} />}
         {section === 'people' && (
-          <SettingsPeople workflows={workflows} settings={{}} canManage={can('manage_roles' as Capability)} isAr={isAr} />
+          <SettingsPeople workflows={workflows} settings={{}} canManage={can('manage_roles')} isAr={isAr} />
         )}
       </div>
     </>
