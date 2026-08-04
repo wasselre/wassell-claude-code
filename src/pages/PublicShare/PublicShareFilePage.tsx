@@ -143,7 +143,7 @@ function BrandHeader() {
       <div className="max-w-6xl mx-auto flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl bg-white shadow-md shadow-chocolate/10 p-2 flex items-center justify-center">
-            <img src="/assets/logo-castle.png" alt="Wassel" className="w-full h-full object-contain" />
+            <img src="/assets/wassel-icon.png" alt="Wassel" className="w-full h-full object-contain" />
           </div>
           <div>
             <div className="text-xl font-bold text-chocolate" style={{ fontFamily: '"Amiri", serif' }}>
@@ -169,7 +169,7 @@ function BrandFooter() {
     <footer className="px-6 lg:px-10 pb-6 pt-4">
       <div className="max-w-6xl mx-auto flex items-center justify-center">
         <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-white/40 backdrop-blur-sm border border-sand/30 text-xs text-chocolate/60">
-          <img src="/assets/logo-castle.png" alt="" className="w-5 h-5 object-contain opacity-80" />
+          <img src="/assets/wassel-icon.png" alt="" className="w-5 h-5 object-contain opacity-80" />
           <span className="font-bold tracking-wide" style={{ fontFamily: '"Amiri", serif' }}>
             {isAr ? 'مدعوم من وصل العقارية' : 'Powered by Wassel Real Estate'}
           </span>
@@ -183,13 +183,13 @@ function WatermarkSignature() {
   return (
     <>
       <img
-        src="/assets/logo-castle.png"
+        src="/assets/wassel-icon.png"
         alt=""
         aria-hidden="true"
         className="absolute -bottom-12 -end-12 w-80 h-80 object-contain opacity-[0.04] pointer-events-none select-none"
       />
       <img
-        src="/assets/logo-castle.png"
+        src="/assets/wassel-icon.png"
         alt=""
         aria-hidden="true"
         className="absolute -top-20 -start-20 w-72 h-72 object-contain opacity-[0.03] pointer-events-none select-none"

@@ -82,7 +82,7 @@ export default function ResetPassword() {
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
           <img
-            src="/assets/logo-castle.png"
+            src="/assets/wassel-icon.png"
             alt="Wassel"
             className="w-16 h-16 mb-4 object-contain"
             onError={(e) => {
