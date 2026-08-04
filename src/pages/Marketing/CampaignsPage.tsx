@@ -14,12 +14,14 @@ import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, EXEC_PURPOSE_LABELS, MosCampaign,
   PLATFORM_LABELS, ROLE_LABELS,
-  fetchCampaignDetail, fetchCampaigns, fetchPublications, saveCampaign,
+  createContent, fetchCampaignDetail, fetchCampaigns, fetchPublications,
+  saveCampaign, savePublication,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
 import { IconCampaigns, IconCheck, IconMetrics, IconPlus } from './components/icons';
 import ProjectMultiSelect from './components/ProjectMultiSelect';
+import CampaignContentBuilder, { type ContentDraft } from './components/CampaignContentBuilder';
 import SuccessMeasuresEditor, {
   MeasureDraft, measuresToDrafts, draftsToMeasures, hasMeasureTarget,
 } from './components/SuccessMeasuresEditor';
@@ -666,13 +668,15 @@ export function CampaignModal({
   onClose: () => void;
   onSaved: (campaign: MosCampaign) => void;
 }) {
-  const { projects } = useWorkspace();
+  const { projects, contentTypes } = useWorkspace();
   const addToast = useAppStore((s) => s.addToast);
   const isNew = !campaign;
 
   const [kind, setKind] = useState<MosCampaign['kind']>(campaign?.kind ?? 'paid');
   const [goal, setGoal] = useState(campaign?.goal ?? campaign?.name ?? '');
   const [projectIds, setProjectIds] = useState<string[]>(campaign?.project_ids ?? []);
+  // Bulk content planned alongside a NEW campaign (created on save; empty for edit).
+  const [drafts, setDrafts] = useState<ContentDraft[]>([]);
   const [ownerRole, setOwnerRole] = useState<string>(campaign?.owner_role ?? 'marketing_manager');
   const [startsOn, setStartsOn] = useState(campaign?.starts_on ?? '');
   const [endsOn, setEndsOn] = useState(campaign?.ends_on ?? '');
@@ -714,6 +718,12 @@ export function CampaignModal({
       );
       return;
     }
+    // Every planned content piece needs a working title before we create it —
+    // content_create rejects a blank one, so we catch it here with a clear line.
+    if (isNew && drafts.some((d) => !d.title.trim())) {
+      addToast(isAr ? 'أعطِ كل محتوى عنوانًا مبدئيًا.' : 'Give every content piece a working title.', 'error');
+      return;
+    }
     setBusy(true);
     try {
       const executions = isNew && kind === 'paid'
@@ -749,14 +759,52 @@ export function CampaignModal({
         },
         executions,
       );
-      addToast(
-        isNew
-          ? isAr
-            ? `أُنشئت الحملة ${res.item?.ref ?? ''} و${num(executions?.length ?? 0, true)} تنفيذات كمسودات.`
-            : `Created campaign ${res.item?.ref ?? ''} with ${executions?.length ?? 0} draft executions.`
-          : isAr ? 'حُفظت الحملة.' : 'Campaign saved.',
-        'success',
-      );
+      // Bulk content: create each planned piece linked to the just-created
+      // campaign, so ONE save spins up the campaign AND its production line.
+      // Mirrors the single-create path — content_create opens the first task,
+      // and each platform gets its own draft publication. A failure on one
+      // piece is surfaced but never rolls back the campaign or its siblings.
+      let contentOk = 0;
+      let contentFail = 0;
+      if (isNew && res.item?.id && drafts.length > 0) {
+        for (const d of drafts) {
+          try {
+            const cres = await createContent({
+              title: d.title.trim(),
+              content_type_key: d.typeKey,
+              project_ids: d.projectIds,
+              campaign_id: res.item.id,
+              purpose: d.purpose,
+              target_publish_at: d.targetDate ? new Date(d.targetDate).toISOString() : null,
+            });
+            const cid = cres.item?.id;
+            if (cid) {
+              for (const p of d.platforms) await savePublication(cid, { platform: p, status: 'draft' });
+            }
+            contentOk += 1;
+          } catch (err) {
+            contentFail += 1;
+            console.error('[mos] bulk content create failed', err);
+          }
+        }
+      }
+
+      if (isNew) {
+        const execCount = executions?.length ?? 0;
+        const clauses: string[] = [];
+        if (execCount > 0) clauses.push(isAr ? `${num(execCount, true)} تنفيذات` : `${execCount} draft executions`);
+        if (contentOk > 0) clauses.push(isAr ? `${num(contentOk, true)} محتوى` : `${contentOk} content ${contentOk === 1 ? 'piece' : 'pieces'}`);
+        const tail = clauses.length > 0 ? (isAr ? ` مع ${clauses.join(' و')}` : ` with ${clauses.join(' and ')}`) : '';
+        const failTail = contentFail > 0 ? (isAr ? ` (تعذّر إنشاء ${num(contentFail, true)})` : ` (${contentFail} failed)`) : '';
+        addToast(
+          isAr
+            ? `أُنشئت الحملة ${res.item?.ref ?? ''}${tail}${failTail}.`
+            : `Created campaign ${res.item?.ref ?? ''}${tail}${failTail}.`,
+          contentFail > 0 ? 'error' : 'success',
+        );
+      } else {
+        addToast(isAr ? 'حُفظت الحملة.' : 'Campaign saved.', 'success');
+      }
       onSaved(res.item);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
@@ -964,6 +1012,21 @@ export function CampaignModal({
 
       <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />
 
+      {isNew && (
+        <CampaignContentBuilder
+          isAr={isAr}
+          projects={projects}
+          contentTypes={contentTypes}
+          drafts={drafts}
+          onChange={setDrafts}
+          defaults={{
+            projectIds,
+            platforms: [],
+            purpose: kind === 'organic' ? 'organic' : 'paid',
+          }}
+        />
+      )}
+
       {!isNew && (
         <Field label={isAr ? 'الحالة' : 'Status'}>
           <div className="seg" style={{ width: '100%' }}>
@@ -1009,8 +1072,12 @@ export function CampaignModal({
             : ', and a goal judged by the criterion above.'}
           <br />
           {isAr
-            ? 'لا يُربط أي محتوى بعد؛ يُنسب المحتوى القائم من تبويب المحتوى.'
-            : 'No content is linked yet; existing content is attributed from the Content tab.'}
+            ? (drafts.length > 0
+                ? `و${num(drafts.length, true)} قطعة محتوى مربوطة بالحملة يبدأ مسار عملها فورًا.`
+                : 'لم يُضف محتوى بعد — أضِفه أعلاه، أو لاحقًا من تبويب المحتوى.')
+            : (drafts.length > 0
+                ? `and ${drafts.length} content ${drafts.length === 1 ? 'piece' : 'pieces'} linked to it, whose ${drafts.length === 1 ? 'workflow starts' : 'workflows start'} immediately.`
+                : 'No content added yet — add it above, or later from the Content tab.')}
         </div>
       )}
     </Modal>
