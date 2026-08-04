@@ -69,6 +69,19 @@ This workspace answers the three questions the old process could not:
   for a grouped set, mm:ss for videos), toggles between grid and list, and
   leads with a «لم تُستخدم قط» banner that links to the unused-material screen
   (`/m/library/unused`). Cards open the asset page (`/m/library/:assetId`).
+- **Material intake — upload OR link (2026-08-04).** The «مادة جديدة» (New
+  material) modal on a content piece's Materials tab (`NewAssetModal` in
+  `src/pages/Marketing/components/MaterialsTab.tsx`) now **uploads a file
+  directly** — a drag-drop/click zone streams the bytes browser→`marketing-assets`
+  bucket via `uploadToStorage` (`src/pages/Marketing/lib/upload.ts`, the same
+  engine as the bulk intake queue), with a live percentage, HEIC→JPEG conversion,
+  and auto-detected `kind`/seeded name. The original **link-only** path is kept as
+  the alternative (paste a Drive/anywhere URL; the link input disables once a file
+  is chosen). An uploaded file fills `mos_assets.url` (public URL) +
+  `file_path`/`mime_type`/`size_bytes`/`original_name`; a pasted link fills `url`
+  only. Same `saveAsset`/`mos_assets` persistence either way. The storage write is
+  gated by the `manage_assets` capability (link-only still works for roles without
+  it). Previously the modal was link-only ("الرابط يكفي — لا داعي لنسخ الملف مرتين").
 - **Cost per lead is computed** from the execution rows, never typed.
 - **A campaign is judged by one or more success measures**, each picked from a
   managed registry (`mos_measure_types`, four presets seeded) or defined inline.

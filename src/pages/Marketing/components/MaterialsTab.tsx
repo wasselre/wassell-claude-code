@@ -20,7 +20,8 @@
  * flow), because a shot the script needs and nobody filmed is a ROW, not an
  * absence.
  */
-import { useCallback, useEffect, useState, type SVGProps } from 'react';
+import { useCallback, useEffect, useRef, useState, type SVGProps } from 'react';
+import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import {
   ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosAsset, MosAssetLink, MosContentVersion,
@@ -28,6 +29,9 @@ import {
   fetchAssets, fetchContentDetail, fetchContentVersions, fetchShoots,
   linkAsset, saveAsset, saveShoot, unlinkAsset,
 } from '@/lib/marketingOS/client';
+import {
+  formatBytes, heicToJpeg, isBrowserImage, isHeic, kindFromFile, storagePath, uploadToStorage,
+} from '../lib/upload';
 import { useWorkspace } from '../MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, Skeleton } from './kit';
 import { IconLibrary, IconPlus, IconShoot, IconTrash } from './icons';
@@ -566,8 +570,9 @@ export default function MaterialsTab({
   );
 }
 
-/** Screen 23 — upload and intake. Link-first, because the bytes usually already
- *  live somewhere (Drive, the shoot folder) and copying them twice helps nobody. */
+/** Screen 23 — upload and intake. Upload the file directly (browser → the
+ *  marketing-assets bucket, the SAME engine as the intake queue), OR paste a
+ *  link if the bytes already live somewhere. */
 export function NewAssetModal({
   isAr, projectId, onClose, onCreated,
 }: {
@@ -584,38 +589,97 @@ export function NewAssetModal({
   const [shotOn, setShotOn] = useState('');
   const [tags, setTags] = useState('');
   const [busy, setBusy] = useState(false);
+  /** Chosen file to upload (null = link-only, the original behavior). */
+  const [file, setFile] = useState<File | null>(null);
+  /** Upload progress 0..1 while bytes are in flight; null otherwise. */
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Picking a file auto-detects the kind and seeds the name from the filename
+  // (only when the user hasn't typed one) — same conventions as the intake queue.
+  const pickFile = (f: File | null): void => {
+    setFile(f);
+    if (!f) return;
+    setKind(kindFromFile(f));
+    setTitle((cur) => (cur.trim() ? cur : f.name.replace(/\.[^.]+$/, '')));
+  };
 
   const submit = async (): Promise<void> => {
-    if (!title.trim()) {
+    const effectiveTitle = title.trim() || (file ? file.name.replace(/\.[^.]+$/, '') : '');
+    if (!effectiveTitle) {
       addToast(isAr ? 'اكتب اسمًا للمادة.' : 'Give the material a name.', 'error');
+      return;
+    }
+    if (!file && !url.trim()) {
+      addToast(isAr ? 'ارفع ملفًا أو الصق رابطًا.' : 'Upload a file or paste a link.', 'error');
       return;
     }
     setBusy(true);
     try {
+      // Real upload path: browser → marketing-assets bucket (same as intake).
+      // HEIC (iPhone default) is converted first so browsers can render it;
+      // a failed conversion falls back to the original — never a dropped file.
+      let uploaded: { publicUrl: string; path: string; mime: string | null; size: number; original: string } | null = null;
+      if (file) {
+        let toSend = file;
+        if (isHeic(file)) {
+          try {
+            toSend = await heicToJpeg(file);
+          } catch (convErr) {
+            console.error('[marketing] HEIC conversion failed', file.name, convErr);
+          }
+        }
+        setUploadPct(0);
+        const path = storagePath(uuid(), toSend.name);
+        const result = await uploadToStorage(toSend, path, (frac) => setUploadPct(frac));
+        uploaded = {
+          publicUrl: result.publicUrl,
+          path: result.path,
+          mime: toSend.type || null,
+          size: toSend.size,
+          original: file.name,
+        };
+      }
+
       const res = await saveAsset({
-        title: title.trim(),
+        title: effectiveTitle,
         kind,
         source,
         project_id: projectId,
-        url: url.trim() || null,
-        thumb_url: url.trim() || null,
+        // An uploaded file's public URL wins; otherwise the pasted link.
+        url: uploaded?.publicUrl ?? (url.trim() || null),
+        thumb_url: uploaded
+          ? (file && isBrowserImage(file) ? uploaded.publicUrl : null)
+          : (url.trim() || null),
         shot_on: shotOn || null,
         tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+        ...(uploaded
+          ? {
+              file_path: uploaded.path,
+              mime_type: uploaded.mime,
+              size_bytes: uploaded.size,
+              original_name: uploaded.original,
+            }
+          : {}),
       });
       await onCreated(res.asset);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
+      setUploadPct(null);
       setBusy(false);
     }
   };
+
+  const pct = uploadPct === null ? null : Math.round(uploadPct * 100);
 
   return (
     <Modal
       title={isAr ? 'مادة جديدة' : 'New material'}
       sub={isAr
-        ? 'الرابط يكفي — لا داعي لنسخ الملف مرتين. الوسوم هي ما يجعل المادة قابلة لإعادة الاستخدام لاحقًا.'
-        : 'A link is enough — no need to copy the file twice. The tags are what make it findable for reuse later.'}
+        ? 'ارفع الملف مباشرة، أو الصق رابطًا إن كان محفوظًا في مكان آخر. الوسوم هي ما يجعل المادة قابلة لإعادة الاستخدام لاحقًا.'
+        : 'Upload the file directly, or paste a link if it already lives elsewhere. The tags are what make it findable for reuse later.'}
       onClose={onClose}
       footer={
         <>
@@ -623,7 +687,11 @@ export function NewAssetModal({
             {isAr ? 'إلغاء' : 'Cancel'}
           </button>
           <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy}>
-            {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'إضافة' : 'Add'}
+            {busy
+              ? pct !== null
+                ? (isAr ? `جارٍ الرفع… ${pct}%` : `Uploading… ${pct}%`)
+                : (isAr ? 'جارٍ الحفظ…' : 'Saving…')
+              : isAr ? 'إضافة' : 'Add'}
           </button>
         </>
       }
@@ -631,6 +699,84 @@ export function NewAssetModal({
       <Field label={isAr ? 'الاسم' : 'Name'}>
         <input className="inp" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
       </Field>
+
+      {/* Upload zone — NOT wrapped in a <label> (Field) so the button/input
+          don't trigger label-click forwarding. Drag-drop or click to pick. */}
+      <div style={{ marginBottom: 13 }}>
+        <span className="lbl">
+          {isAr ? 'الملف' : 'File'}
+          <span style={{ fontWeight: 400, color: 'var(--mute)' }}>
+            {' · '}{isAr ? 'ارفعه مباشرة' : 'upload directly'}
+          </span>
+        </span>
+        <div style={{ marginTop: 6 }}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              pickFile(e.target.files?.[0] ?? null);
+              if (fileInputRef.current) fileInputRef.current.value = '';
+            }}
+          />
+          {!file ? (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => { if (!busy) fileInputRef.current?.click(); }}
+              onKeyDown={(e) => { if (!busy && (e.key === 'Enter' || e.key === ' ')) fileInputRef.current?.click(); }}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                if (!busy) pickFile(e.dataTransfer.files?.[0] ?? null);
+              }}
+              style={{
+                border: `1px dashed ${dragOver ? 'var(--copper)' : 'var(--line)'}`,
+                borderRadius: 10,
+                padding: '18px 12px',
+                textAlign: 'center',
+                color: 'var(--mute)',
+                cursor: busy ? 'default' : 'pointer',
+                background: dragOver ? 'var(--sand-2)' : 'transparent',
+                fontSize: 13,
+              }}
+            >
+              {isAr ? 'اسحب ملفًا هنا أو اضغط للاختيار' : 'Drag a file here, or click to choose'}
+            </div>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                border: '1px solid var(--line)',
+                borderRadius: 10,
+                padding: '10px 12px',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {file.name}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--mute)' }}>{formatBytes(file.size, isAr)}</div>
+                {pct !== null && (
+                  <div style={{ height: 4, borderRadius: 4, background: 'var(--line)', marginTop: 6, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${pct}%`, background: 'var(--copper)', transition: 'width .15s' }} />
+                  </div>
+                )}
+              </div>
+              {!busy && (
+                <button type="button" className="btn btn-d btn-sm" onClick={() => pickFile(null)}>
+                  {isAr ? 'إزالة' : 'Remove'}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
         <Field label={isAr ? 'النوع' : 'Kind'}>
           <select className="inp" value={kind} onChange={(e) => setKind(e.target.value as MosAsset['kind'])}>
@@ -647,8 +793,11 @@ export function NewAssetModal({
           </select>
         </Field>
       </div>
-      <Field label={isAr ? 'الرابط' : 'Link'} hint={isAr ? 'درايف أو أي مكان' : 'Drive or anywhere'}>
-        <input className="inp" dir="ltr" value={url} onChange={(e) => setUrl(e.target.value)} />
+      <Field
+        label={isAr ? 'الرابط' : 'Link'}
+        hint={file ? (isAr ? 'غير مطلوب مع الرفع' : 'not needed with an upload') : (isAr ? 'درايف أو أي مكان' : 'Drive or anywhere')}
+      >
+        <input className="inp" dir="ltr" value={url} onChange={(e) => setUrl(e.target.value)} disabled={!!file} />
       </Field>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
         <Field label={isAr ? 'تاريخ التصوير' : 'Shot on'}>
