@@ -1019,11 +1019,8 @@ export function CampaignModal({
           contentTypes={contentTypes}
           drafts={drafts}
           onChange={setDrafts}
-          defaults={{
-            projectIds,
-            platforms: [],
-            purpose: kind === 'organic' ? 'organic' : 'paid',
-          }}
+          paid={kind === 'paid'}
+          defaultProjectIds={projectIds}
         />
       )}
 
