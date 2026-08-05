@@ -363,7 +363,24 @@ export default function ContentDetailPage() {
               {(item.project_ids ?? []).map((pid) => (
                 <span key={pid} className="tag">{projectName(pid)}</span>
               ))}
-              {campaignName && <span className="tag">{campaignName}</span>}
+              {campaignName && campaignId && (
+                <span
+                  className="tag"
+                  role="button"
+                  tabIndex={0}
+                  title={isAr ? 'فتح الحملة' : 'Open campaign'}
+                  style={{ cursor: 'pointer', borderColor: 'var(--copper)', color: 'var(--copper)' }}
+                  onClick={() => navigate(`/m/campaigns/${campaignId}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      navigate(`/m/campaigns/${campaignId}`);
+                    }
+                  }}
+                >
+                  {isAr ? `الحملة: ${campaignName}` : `Campaign: ${campaignName}`}
+                </span>
+              )}
               <StatusPill row={item} isAr={isAr} />
               {ownerRoleLabel && (
                 <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>

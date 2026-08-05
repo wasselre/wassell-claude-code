@@ -729,6 +729,23 @@ export default function CampaignDetailPage() {
   const goalProgress = isOrganic ? organicImpressions : qualified;
   const goalUnitAr = isOrganic ? 'مشاهدة' : 'مؤهلًا';
   const goalUnitEn = isOrganic ? 'views' : 'qualified';
+  // Campaign-level reach for the organic «ما بعد النشر» card — summed from the
+  // linked content's publications, NULL when nothing has been read yet (so an
+  // unmeasured metric shows «—», not a misleading ٠).
+  const sumOrNull = (vals: Array<number | null>): number | null => {
+    let any = false;
+    let sum = 0;
+    for (const v of vals) if (v !== null) { any = true; sum += v; }
+    return any ? sum : null;
+  };
+  const organicReach = {
+    impressions: sumOrNull(contentStats.map((c) => c.impressions)),
+    likes: sumOrNull(contentStats.map((c) => c.likes)),
+    comments: sumOrNull(contentStats.map((c) => c.comments)),
+    saves: sumOrNull(contentStats.map((c) => c.saves)),
+    engagement: sumOrNull(contentStats.map((c) => c.engagement)),
+    enquiries: sumOrNull(contentStats.map((c) => c.enquiries)),
+  };
   const inProduction = content.filter((c) => c.status_key !== 'done').length;
 
   const statusPill = item.status === 'active' && days
@@ -1476,20 +1493,37 @@ export default function CampaignDetailPage() {
                     <h4>{isAr
                       ? (isOrganic ? 'ما بعد النشر' : 'ما بعد الإعلان')
                       : (isOrganic ? 'After publishing' : 'After the ad')}</h4>
-                    <span className="r">{isAr ? 'من نظام العملاء' : 'from the clients system'}</span>
+                    <span className="r">
+                      {isAr
+                        ? (isOrganic ? 'من المنصات' : 'من نظام العملاء')
+                        : (isOrganic ? 'from the platforms' : 'from the clients system')}
+                    </span>
                   </div>
                   <div className="card-b" style={{ display: 'grid', gap: 8 }}>
-                    {outcomesError && (
+                    {!isOrganic && outcomesError && (
                       <div style={{ fontSize: 11.5, color: 'var(--late)' }} role="alert">
                         {isAr ? 'تعذّر تحميل النتائج: ' : 'Outcomes failed to load: '}{outcomesError}
                       </div>
                     )}
-                    <div className="cd-kv"><span>{isAr ? 'عملاء محتملون' : 'Leads'}</span><b>{num(item.total_leads, isAr)}</b></div>
-                    <div className="cd-kv"><span>{isAr ? 'مؤهلون' : 'Qualified'}</span><b>{num(item.total_qualified, isAr)}</b></div>
-                    <div className="cd-kv"><span>{isAr ? 'مواعيد' : 'Appointments'}</span><b>{num(outcomes?.appointments ?? null, isAr)}</b></div>
-                    <div className="cd-kv"><span>{isAr ? 'زيارات' : 'Visits'}</span><b>{num(outcomes?.visits ?? null, isAr)}</b></div>
-                    <div className="cd-kv top"><span>{isAr ? 'حجوزات' : 'Reservations'}</span><b>{num(outcomes?.reservations ?? null, isAr)}</b></div>
-                    <div className="cd-kv"><span>{isAr ? 'القيمة' : 'Value'}</span><b>{compactMoney(outcomes?.reservation_value ?? null, isAr)}</b></div>
+                    {isOrganic ? (
+                      <>
+                        <div className="cd-kv"><span>{isAr ? 'المشاهدات' : 'Impressions'}</span><b>{num(organicReach.impressions, isAr)}</b></div>
+                        <div className="cd-kv"><span>{isAr ? 'التفاعل' : 'Engagement'}</span><b>{num(organicReach.engagement, isAr)}</b></div>
+                        <div className="cd-kv"><span>{isAr ? 'الإعجابات' : 'Likes'}</span><b>{num(organicReach.likes, isAr)}</b></div>
+                        <div className="cd-kv"><span>{isAr ? 'التعليقات' : 'Comments'}</span><b>{num(organicReach.comments, isAr)}</b></div>
+                        <div className="cd-kv"><span>{isAr ? 'الحفظ' : 'Saves'}</span><b>{num(organicReach.saves, isAr)}</b></div>
+                        <div className="cd-kv top"><span>{isAr ? 'استفسارات' : 'Enquiries'}</span><b>{num(organicReach.enquiries, isAr)}</b></div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="cd-kv"><span>{isAr ? 'عملاء محتملون' : 'Leads'}</span><b>{num(item.total_leads, isAr)}</b></div>
+                        <div className="cd-kv"><span>{isAr ? 'مؤهلون' : 'Qualified'}</span><b>{num(item.total_qualified, isAr)}</b></div>
+                        <div className="cd-kv"><span>{isAr ? 'مواعيد' : 'Appointments'}</span><b>{num(outcomes?.appointments ?? null, isAr)}</b></div>
+                        <div className="cd-kv"><span>{isAr ? 'زيارات' : 'Visits'}</span><b>{num(outcomes?.visits ?? null, isAr)}</b></div>
+                        <div className="cd-kv top"><span>{isAr ? 'حجوزات' : 'Reservations'}</span><b>{num(outcomes?.reservations ?? null, isAr)}</b></div>
+                        <div className="cd-kv"><span>{isAr ? 'القيمة' : 'Value'}</span><b>{compactMoney(outcomes?.reservation_value ?? null, isAr)}</b></div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2193,32 +2227,49 @@ export default function CampaignDetailPage() {
                   <h4>{isAr
                     ? (isOrganic ? 'ما بعد النشر' : 'ما بعد الإعلان')
                     : (isOrganic ? 'After publishing' : 'After the ad')}</h4>
-                  <span className="r">{isAr ? 'من نظام العملاء' : 'from the clients system'}</span>
+                  <span className="r">
+                    {isAr
+                      ? (isOrganic ? 'من المنصات' : 'من نظام العملاء')
+                      : (isOrganic ? 'from the platforms' : 'from the clients system')}
+                  </span>
                 </div>
                 <div className="card-b" style={{ display: 'grid', gap: 8 }}>
-                  {outcomesError && (
+                  {!isOrganic && outcomesError && (
                     <div style={{ fontSize: 11.5, color: 'var(--late)' }} role="alert">
                       {isAr ? 'تعذّر تحميل النتائج: ' : 'Outcomes failed to load: '}{outcomesError}
                     </div>
                   )}
-                  <div className="cd-kv"><span>{isAr ? 'مؤهلون' : 'Qualified'}</span><b>{num(item.total_qualified, isAr)}</b></div>
-                  <div className="cd-kv"><span>{isAr ? 'مواعيد' : 'Appointments'}</span><b>{num(outcomes?.appointments ?? null, isAr)}</b></div>
-                  <div className="cd-kv"><span>{isAr ? 'زيارات' : 'Visits'}</span><b>{num(outcomes?.visits ?? null, isAr)}</b></div>
-                  <div className="cd-kv top"><span>{isAr ? 'حجوزات' : 'Reservations'}</span><b>{num(outcomes?.reservations ?? null, isAr)}</b></div>
-                  <div className="cd-kv">
-                    <span>{isAr ? 'تكلفة الحجز' : 'Cost per reservation'}</span>
-                    <b>
-                      {spend !== null && (outcomes?.reservations ?? 0) > 0
-                        ? num(Math.round(spend / (outcomes?.reservations ?? 1)), isAr)
-                        : '—'}
-                    </b>
-                  </div>
-                  {gap !== null && gap > 0 && (outcomes?.reservations ?? 0) > 0 && (
-                    <div className="cd-kv-note">
-                      {isAr
-                        ? <>رغم تعثّر هدف المؤهلين، الحجوزات تتحقق. <b>الهدف قد يكون هو الخطأ.</b></>
-                        : <>The qualified target is slipping, yet reservations land. <b>The target may be the thing that’s wrong.</b></>}
-                    </div>
+                  {isOrganic ? (
+                    <>
+                      <div className="cd-kv"><span>{isAr ? 'المشاهدات' : 'Impressions'}</span><b>{num(organicReach.impressions, isAr)}</b></div>
+                      <div className="cd-kv"><span>{isAr ? 'التفاعل' : 'Engagement'}</span><b>{num(organicReach.engagement, isAr)}</b></div>
+                      <div className="cd-kv"><span>{isAr ? 'الإعجابات' : 'Likes'}</span><b>{num(organicReach.likes, isAr)}</b></div>
+                      <div className="cd-kv"><span>{isAr ? 'التعليقات' : 'Comments'}</span><b>{num(organicReach.comments, isAr)}</b></div>
+                      <div className="cd-kv"><span>{isAr ? 'الحفظ' : 'Saves'}</span><b>{num(organicReach.saves, isAr)}</b></div>
+                      <div className="cd-kv top"><span>{isAr ? 'استفسارات' : 'Enquiries'}</span><b>{num(organicReach.enquiries, isAr)}</b></div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="cd-kv"><span>{isAr ? 'مؤهلون' : 'Qualified'}</span><b>{num(item.total_qualified, isAr)}</b></div>
+                      <div className="cd-kv"><span>{isAr ? 'مواعيد' : 'Appointments'}</span><b>{num(outcomes?.appointments ?? null, isAr)}</b></div>
+                      <div className="cd-kv"><span>{isAr ? 'زيارات' : 'Visits'}</span><b>{num(outcomes?.visits ?? null, isAr)}</b></div>
+                      <div className="cd-kv top"><span>{isAr ? 'حجوزات' : 'Reservations'}</span><b>{num(outcomes?.reservations ?? null, isAr)}</b></div>
+                      <div className="cd-kv">
+                        <span>{isAr ? 'تكلفة الحجز' : 'Cost per reservation'}</span>
+                        <b>
+                          {spend !== null && (outcomes?.reservations ?? 0) > 0
+                            ? num(Math.round(spend / (outcomes?.reservations ?? 1)), isAr)
+                            : '—'}
+                        </b>
+                      </div>
+                      {gap !== null && gap > 0 && (outcomes?.reservations ?? 0) > 0 && (
+                        <div className="cd-kv-note">
+                          {isAr
+                            ? <>رغم تعثّر هدف المؤهلين، الحجوزات تتحقق. <b>الهدف قد يكون هو الخطأ.</b></>
+                            : <>The qualified target is slipping, yet reservations land. <b>The target may be the thing that’s wrong.</b></>}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

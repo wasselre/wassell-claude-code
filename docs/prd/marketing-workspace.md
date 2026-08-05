@@ -120,7 +120,16 @@ This workspace answers the three questions the old process could not:
   الهدف» pace card, the projection sentence and the results-gap verdict likewise
   count reach («مشاهدة») instead of qualified leads for an organic campaign.
   «الأفضل أداءً» is most-impressions (tie → most engagement) for organic, most-
-  qualified (tie → cheapest) for paid.
+  qualified (tie → cheapest) for paid. The overview/results **«ما بعد النشر»**
+  card (paid: «ما بعد الإعلان») shows the CRM funnel (leads → qualified →
+  appointments → visits → reservations, «من نظام العملاء») for a paid campaign,
+  but for an organic one it shows the **reach aggregate** — impressions,
+  engagement, likes, comments, saves, enquiries, «من المنصات» — summed across the
+  campaign's content (NULL, shown «—», when nothing is read yet).
+- **A content piece names its campaign.** The content detail header carries a
+  copper, clickable **«الحملة: …»** chip when the piece is linked to a campaign;
+  it opens that campaign's detail screen. (Previously the campaign name rendered
+  as a plain, unlabelled tag indistinguishable from the project tags.)
 - **A campaign is judged by one or more success measures**, each picked from a
   managed registry (`mos_measure_types`, four presets seeded) or defined inline.
   A measure carries a **direction** (higher/lower is better → "or more"/"or less"
