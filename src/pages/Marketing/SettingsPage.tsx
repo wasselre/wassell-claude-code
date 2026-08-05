@@ -29,6 +29,7 @@ import { IconBack, IconForward } from './components/icons';
 import SettingsPlatforms from './components/SettingsPlatforms';
 import SettingsContentTypes from './components/SettingsContentTypes';
 import SettingsMeasures from './components/SettingsMeasures';
+import SettingsAudiences from './components/SettingsAudiences';
 import SettingsWorkflows from './components/SettingsWorkflows';
 import SettingsAccess from './components/SettingsAccess';
 import SettingsPeople from './components/SettingsPeople';
@@ -58,6 +59,12 @@ const SECTIONS = [
     ar: 'معايير النجاح', en: 'Success measures',
     ar_d: 'المعايير التي تُحكم بها الحملات — العدد أو التكلفة، والأكثر أو الأقل أفضل.',
     en_d: 'The measures campaigns are judged by — a count or a cost, higher- or lower-is-better.',
+  },
+  {
+    slug: 'audiences',
+    ar: 'الجماهير', en: 'Audiences',
+    ar_d: 'الجماهير المحفوظة التي تُختار في موجز الحملة — اسم وتفاصيل، قابلة لإعادة الاستخدام.',
+    en_d: 'The saved audiences picked in the campaign brief — a name and details, reusable across campaigns.',
   },
   {
     slug: 'platforms',
@@ -479,6 +486,19 @@ export default function SettingsPage() {
 
               <IndexCard
                 icon={IC.people}
+                title={isAr ? 'الجماهير' : 'Audiences'}
+                desc={isAr
+                  ? 'الجماهير المحفوظة التي تُختار في موجز الحملة. أضف واحدًا هنا أو مباشرةً في الموجز.'
+                  : 'The saved audiences picked in the campaign brief. Add one here or straight from a brief.'}
+                tags={
+                  <span className="tag">{isAr ? 'اسم · تفاصيل' : 'Name · Details'}</span>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/audiences')}
+              />
+
+              <IndexCard
+                icon={IC.people}
                 title={isAr ? 'الأدوار والأشخاص' : 'Roles and people'}
                 desc={isAr
                   ? 'من يشغل كل دور. الخطوات تشير إلى أدوار، فاستبدال شخص تغيير واحد هنا.'
@@ -607,7 +627,8 @@ export function SettingsSectionPage() {
   const load = useCallback(async () => {
     // These three fetch their own data (people/roles) or none at all
     // (notifications loads its rules itself) — settings_data would be waste.
-    if (section === 'roles' || section === 'people' || section === 'notifications' || section === 'measures') {
+    if (section === 'roles' || section === 'people' || section === 'notifications'
+        || section === 'measures' || section === 'audiences') {
       // These fetch their own data (or none) — settings_data would be waste.
       setLoading(false);
       return;
@@ -632,7 +653,7 @@ export function SettingsSectionPage() {
   const Back = isAr ? IconForward : IconBack;
   const canManage = can('manage_settings' as Capability);
   // Screens 26/27/43 render their own header (sub + actions depend on live data).
-  const ownHead = section === 'platforms' || section === 'content-types' || section === 'notifications' || section === 'measures';
+  const ownHead = section === 'platforms' || section === 'content-types' || section === 'notifications' || section === 'measures' || section === 'audiences';
 
   if (!meta) {
     return (
@@ -664,6 +685,9 @@ export function SettingsSectionPage() {
         )}
         {!loading && section === 'measures' && (
           <SettingsMeasures canManage={canManage} isAr={isAr} />
+        )}
+        {!loading && section === 'audiences' && (
+          <SettingsAudiences canManage={canManage} isAr={isAr} />
         )}
       </>
     );

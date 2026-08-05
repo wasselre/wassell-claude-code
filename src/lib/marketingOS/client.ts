@@ -556,6 +556,22 @@ export function successMeasureSuffix(
   return more ? (isAr ? 'أو أكثر' : 'or more') : (isAr ? 'أو أقل' : 'or less');
 }
 
+/**
+ * A saved, reusable audience — the campaign brief's «الجمهور» picked from a
+ * managed registry (`mos_audiences`) instead of retyped every time. A title
+ * (`name`) plus a large free-text `details` field. Single-language, like the
+ * other brief fields (goal/offer); read-time translation is the overlay's job.
+ */
+export interface MosAudience {
+  id: string;
+  name: string;
+  details: string | null;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  archived_at: string | null;
+}
+
 export interface MosCampaign {
   id: string;
   ref: string | null;
@@ -583,6 +599,10 @@ export interface MosCampaign {
   created_at: string;
   /** The brief (screen 19). Server merges these from the base table. */
   audience?: string | null;
+  /** The chosen saved audience (`mos_audiences`). `audience` above is its name
+   *  snapshot; `audience_details` is resolved live for the read/edit surfaces. */
+  audience_id?: string | null;
+  audience_details?: string | null;
   offer?: string | null;
   destination_url?: string | null;
   measured_by?: string | null;
@@ -1089,6 +1109,14 @@ export const fetchMeasureTypes = () =>
 /** Create or update a measure type; returns the full refreshed list. */
 export const saveMeasureType = (measureType: Record<string, unknown>) =>
   call<{ measure_types: MosMeasureType[] }>('measure_type_save', { measure_type: measureType });
+
+/** The saved-audiences registry (active + inactive; the picker filters). */
+export const fetchAudiences = () =>
+  call<{ audiences: MosAudience[] }>('audiences_list');
+
+/** Create or update a saved audience; returns the full refreshed list. */
+export const saveAudience = (audience: Record<string, unknown>) =>
+  call<{ audiences: MosAudience[] }>('audience_save', { audience });
 
 export const fetchMetricsQueue = (since?: string) =>
   call<{ publications: MosPublication[]; titles: MosTitleRef[]; since: string }>(

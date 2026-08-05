@@ -1,7 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-05
 **Related PRDs:** [access-control.md](access-control.md), [marketing-intelligence.md](marketing-intelligence.md), [posts-content.md](posts-content.md), [projects-units.md](projects-units.md), [navigation-layout.md](navigation-layout.md)
 
 ## What it is (in plain English)
@@ -104,6 +104,19 @@ This workspace answers the three questions the old process could not:
   campaign so a later rename never rewrites history. Defining a measure (inline or
   in Settings → Success measures) **auto-translates the name between Arabic and
   English** as you type, the same live `/api/translate` flow the Builder uses.
+- **The campaign brief's «الجمهور» (audience) is a saved, reusable record**, not a
+  one-off line typed fresh each time. An audience is a title (`name`) plus a large
+  `details` field, kept in a managed registry (`mos_audiences`). On the brief you
+  **pick an existing audience or define a new one inline** (which persists it to the
+  registry for reuse and lists it in Settings → Audiences). The chosen record's
+  **name is snapshotted** onto `mos_campaigns.audience` so every join-free reader
+  (the brief read grid, search's `audience` match) keeps rendering a concise label,
+  while the campaign also stores `audience_id` and the read/edit surfaces resolve the
+  live `details` through it. Legacy campaigns that carry free-text audience with no
+  `audience_id` keep showing that text until the brief is edited and a saved audience
+  is chosen — nothing is dropped. Deactivating an audience is hide-not-erase (the
+  registry row stays; campaigns keep their name snapshot). Audiences are
+  single-language free text, like the goal/offer brief fields.
 - **Refs come from one row-locked allocator** (`mos_next_ref`), so two concurrent
   creates can never mint the same number. The allocator is `SECURITY DEFINER`:
   a user allowed to insert the ROW must be able to get a NUMBER without being
@@ -169,7 +182,8 @@ This workspace answers the three questions the old process could not:
 - **Reads/writes:** `mos_content`, `mos_tasks`, `mos_scenes`, `mos_publications`,
   `mos_metric_snapshots`, `mos_campaigns`, `mos_campaign_executions`,
   `mos_assets`, `mos_asset_links`, `mos_shoot_requests`, `mos_shoot_items`,
-  `mos_comments`, `mos_role_grants`, `mos_content_types`, `mos_workflows`,
+  `mos_comments`, `mos_role_grants`, `mos_content_types`, `mos_measure_types`,
+  `mos_audiences`, `mos_workflows`,
   `mos_workflow_steps`, `mos_platform_accounts`, `mos_ref_counters`.
 - **Views:** `mos_content_v` (derives status/owner from the open task),
   `mos_publication_v` (latest snapshot per publication), `mos_campaign_v`
@@ -196,6 +210,7 @@ This workspace answers the three questions the old process could not:
 | `src/pages/Marketing/SettingsPage.tsx` | Workflows, content types, platforms, roles + the capability matrix |
 | `src/pages/Marketing/components/` | Shared primitives (`kit.tsx`), icons, task card, stage rail, writing fields, scenes, publishing, performance, material, thread |
 | `src/pages/Marketing/components/SuccessMeasuresEditor.tsx` / `SettingsMeasures.tsx` | A campaign's multi-measure success criteria + the managed measure-type registry (both auto-translate the name; unit = count/riyal/percent) |
+| `src/pages/Marketing/components/AudiencePicker.tsx` / `SettingsAudiences.tsx` | The campaign brief's saved-audience picker (pick existing or create inline) + the managed audiences registry (`mos_audiences`: name + details) |
 | `src/hooks/useBilingualLabelAutofill.ts` | Live Arabic⇄English name auto-fill for local-state label pairs (wraps `useDebouncedTranslation`) |
 | `src/pages/Marketing/lib/format.ts` | Arabic-Indic numerals and dates — one place that decides digit shape |
 | `api/marketing-os.ts` | The action-dispatch endpoint; runs on the caller's JWT, never service role |

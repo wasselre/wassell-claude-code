@@ -33,6 +33,7 @@ import NewContentModal from './components/NewContentModal';
 import SuccessMeasuresEditor, {
   MeasureDraft, measuresToDrafts, draftsToMeasures,
 } from './components/SuccessMeasuresEditor';
+import AudiencePicker from './components/AudiencePicker';
 import { IconBack, IconForward } from './components/icons';
 import { money, monthOf, num, shortDate } from './lib/format';
 import './styles/campaign-detail.css';
@@ -983,7 +984,14 @@ export default function CampaignDetailPage() {
                   <div className="card-b cd-goalgrid">
                     <ReadField label={isAr ? 'الهدف' : 'Goal'}>{item.goal ?? item.name}</ReadField>
                     <ReadField label={isAr ? 'يُقاس بـ' : 'Measured by'}>{item.measured_by ?? '—'}</ReadField>
-                    <ReadField label={isAr ? 'الجمهور' : 'Audience'}>{item.audience ?? '—'}</ReadField>
+                    <ReadField label={isAr ? 'الجمهور' : 'Audience'}>
+                      {item.audience ?? '—'}
+                      {item.audience_details && item.audience_details.trim() !== '' && (
+                        <div style={{ fontSize: 11.5, color: 'var(--mute)', fontWeight: 400, marginTop: 3, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                          {item.audience_details}
+                        </div>
+                      )}
+                    </ReadField>
                     <ReadField label={isAr ? 'العرض' : 'Offer'}>{item.offer ?? '—'}</ReadField>
                     <ReadField label={isAr ? 'الوجهة' : 'Destination'}>
                       {item.destination_url ? (
@@ -2170,7 +2178,7 @@ function BriefModal({
   const addToast = useAppStore((s) => s.addToast);
   const [goal, setGoal] = useState(campaign.goal ?? campaign.name ?? '');
   const [measuredBy, setMeasuredBy] = useState(campaign.measured_by ?? '');
-  const [audience, setAudience] = useState(campaign.audience ?? '');
+  const [audienceId, setAudienceId] = useState<string | null>(campaign.audience_id ?? null);
   const [offer, setOffer] = useState(campaign.offer ?? '');
   const [destination, setDestination] = useState(campaign.destination_url ?? '');
   const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(campaign.success_measures));
@@ -2191,7 +2199,9 @@ function BriefModal({
         goal: goal.trim(),
         name: goal.trim(),
         measured_by: measuredBy.trim() || null,
-        audience: audience.trim() || null,
+        // The saved audience is the source of truth; the server snapshots its name
+        // into the `audience` text column. Sending null clears the link.
+        audience_id: audienceId,
         offer: offer.trim() || null,
         destination_url: destination.trim() || null,
         success_measures: draftsToMeasures(measures),
@@ -2234,7 +2244,12 @@ function BriefModal({
       </Field>
       <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />
       <Field label={isAr ? 'الجمهور' : 'Audience'}>
-        <input className="inp" value={audience} onChange={(e) => setAudience(e.target.value)} />
+        <AudiencePicker
+          audienceId={audienceId}
+          legacyText={campaign.audience ?? null}
+          onChange={setAudienceId}
+          isAr={isAr}
+        />
       </Field>
       <Field label={isAr ? 'العرض' : 'Offer'}>
         <input className="inp" value={offer} onChange={(e) => setOffer(e.target.value)} />
