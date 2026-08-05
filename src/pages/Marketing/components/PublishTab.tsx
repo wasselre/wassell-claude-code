@@ -437,6 +437,21 @@ export default function PublishTab({
                         <span style={{ fontSize: 10.5, color: 'var(--mute)' }}>{isAr ? 'تفاعل' : 'engagement'}</span>
                       </span>
                       <span>
+                        <b style={{ fontFamily: 'var(--serif)', fontSize: 18 }}>{num(pub.latest_likes, isAr)}</b>
+                        <br />
+                        <span style={{ fontSize: 10.5, color: 'var(--mute)' }}>{isAr ? 'إعجاب' : 'likes'}</span>
+                      </span>
+                      <span>
+                        <b style={{ fontFamily: 'var(--serif)', fontSize: 18 }}>{num(pub.latest_comments, isAr)}</b>
+                        <br />
+                        <span style={{ fontSize: 10.5, color: 'var(--mute)' }}>{isAr ? 'تعليق' : 'comments'}</span>
+                      </span>
+                      <span>
+                        <b style={{ fontFamily: 'var(--serif)', fontSize: 18 }}>{num(pub.latest_saves, isAr)}</b>
+                        <br />
+                        <span style={{ fontSize: 10.5, color: 'var(--mute)' }}>{isAr ? 'حفظ' : 'saves'}</span>
+                      </span>
+                      <span>
                         <b style={{ fontFamily: 'var(--serif)', fontSize: 18 }}>{num(pub.latest_enquiries, isAr)}</b>
                         <br />
                         <span style={{ fontSize: 10.5, color: 'var(--mute)' }}>{isAr ? 'استفسار' : 'enquiries'}</span>

@@ -192,6 +192,9 @@ export default function PerformanceTab({
                   <th>{isAr ? 'المنصة' : 'Platform'}</th>
                   <th className="num" style={{ width: 86 }}>{isAr ? 'المشاهدات' : 'Views'}</th>
                   <th className="num" style={{ width: 74 }}>{isAr ? 'التفاعل' : 'Engagement'}</th>
+                  <th className="num" style={{ width: 68 }}>{isAr ? 'الإعجابات' : 'Likes'}</th>
+                  <th className="num" style={{ width: 68 }}>{isAr ? 'التعليقات' : 'Comments'}</th>
+                  <th className="num" style={{ width: 60 }}>{isAr ? 'الحفظ' : 'Saves'}</th>
                   <th className="num" style={{ width: 82 }}>{isAr ? 'الاستفسارات' : 'Enquiries'}</th>
                   <th style={{ width: 116 }}>{isAr ? 'آخر تحديث' : 'Last update'}</th>
                   <th style={{ width: 74 }} />
@@ -210,6 +213,9 @@ export default function PerformanceTab({
                       <td><span className="tag">{platformLabel(p.platform)}</span></td>
                       {metricCell(p.latest_views, state)}
                       {metricCell(p.latest_engagement, state)}
+                      {metricCell(p.latest_likes, state)}
+                      {metricCell(p.latest_comments, state)}
+                      {metricCell(p.latest_saves, state)}
                       {metricCell(p.latest_enquiries, state)}
                       <td
                         className={state === 'missing' ? 'cd2-missing-cell' : undefined}
@@ -370,6 +376,18 @@ export default function PerformanceTab({
                   <div className="cd2-kpi-v">{num(last?.engagement ?? null, isAr)}</div>
                 </div>
                 <div>
+                  <div className="lbl">{isAr ? 'الإعجابات' : 'Likes'}</div>
+                  <div className="cd2-kpi-v">{num(last?.likes ?? null, isAr)}</div>
+                </div>
+                <div>
+                  <div className="lbl">{isAr ? 'التعليقات' : 'Comments'}</div>
+                  <div className="cd2-kpi-v">{num(last?.comments ?? null, isAr)}</div>
+                </div>
+                <div>
+                  <div className="lbl">{isAr ? 'الحفظ' : 'Saves'}</div>
+                  <div className="cd2-kpi-v">{num(last?.saves ?? null, isAr)}</div>
+                </div>
+                <div>
                   <div className="lbl">{isAr ? 'الاستفسارات' : 'Enquiries'}</div>
                   <div className="cd2-kpi-v">{num(last?.enquiries ?? null, isAr)}</div>
                   <div className="cd2-kpi-d">
@@ -489,6 +507,9 @@ export default function PerformanceTab({
                   <th>{isAr ? 'التاريخ' : 'Captured'}</th>
                   <th className="num">{isAr ? 'مشاهدات' : 'Views'}</th>
                   <th className="num">{isAr ? 'تفاعل' : 'Engagement'}</th>
+                  <th className="num">{isAr ? 'إعجابات' : 'Likes'}</th>
+                  <th className="num">{isAr ? 'تعليقات' : 'Comments'}</th>
+                  <th className="num">{isAr ? 'حفظ' : 'Saves'}</th>
                   <th className="num">{isAr ? 'استفسارات' : 'Enquiries'}</th>
                   <th>{isAr ? 'المصدر' : 'Source'}</th>
                 </tr>
@@ -499,6 +520,9 @@ export default function PerformanceTab({
                     <td>{dateTime(s.captured_at, isAr)}</td>
                     <td className="num">{num(s.views, isAr)}</td>
                     <td className="num">{num(s.engagement, isAr)}</td>
+                    <td className="num">{num(s.likes, isAr)}</td>
+                    <td className="num">{num(s.comments, isAr)}</td>
+                    <td className="num">{num(s.saves, isAr)}</td>
                     <td className="num">{num(s.enquiries, isAr)}</td>
                     <td>
                       <span className="tag tag-t">
@@ -528,6 +552,9 @@ export function MetricsModal({
   const [views, setViews] = useState('');
   const [engagement, setEngagement] = useState('');
   const [enquiries, setEnquiries] = useState('');
+  const [likes, setLikes] = useState('');
+  const [comments, setComments] = useState('');
+  const [saves, setSaves] = useState('');
   const [busy, setBusy] = useState(false);
 
   // Empty means "not measured", which is NOT zero. Sending 0 for a blank box
@@ -546,6 +573,9 @@ export function MetricsModal({
         views: parse(views),
         engagement: parse(engagement),
         enquiries: parse(enquiries),
+        likes: parse(likes),
+        comments: parse(comments),
+        saves: parse(saves),
       });
       addToast(isAr ? 'سُجِّلت القراءة.' : 'Reading recorded.', 'success');
       onSaved(res.snapshots);
@@ -587,6 +617,15 @@ export function MetricsModal({
         </Field>
         <Field label={isAr ? 'الاستفسارات' : 'Enquiries'}>
           <input className="inp" inputMode="numeric" value={enquiries} onChange={(e) => setEnquiries(e.target.value)} />
+        </Field>
+        <Field label={isAr ? 'الإعجابات' : 'Likes'}>
+          <input className="inp" inputMode="numeric" value={likes} onChange={(e) => setLikes(e.target.value)} />
+        </Field>
+        <Field label={isAr ? 'التعليقات' : 'Comments'}>
+          <input className="inp" inputMode="numeric" value={comments} onChange={(e) => setComments(e.target.value)} />
+        </Field>
+        <Field label={isAr ? 'الحفظ' : 'Saves'}>
+          <input className="inp" inputMode="numeric" value={saves} onChange={(e) => setSaves(e.target.value)} />
         </Field>
       </div>
       {publication.latest_captured_at && (

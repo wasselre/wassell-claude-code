@@ -70,7 +70,13 @@ This workspace answers the three questions the old process could not:
   an automation that does not exist.
 - **Metrics are append-only dated snapshots.** Nothing overwrites a reading, so
   two items can be compared at the same AGE. An empty box saves as NULL, never 0
-  — a CHECK constraint refuses an all-empty reading.
+  — a CHECK constraint refuses an all-empty reading. Each snapshot carries the
+  core readings — **views, engagement, enquiries** — plus the **engagement
+  breakdown: likes, comments, saves** (all first-class nullable integer columns
+  on `mos_metric_snapshots`; the not-empty CHECK counts any of the six, plus
+  `extra`). The Numbers capture grid and the Performance tab's «إدخال أرقام»
+  modal collect all of them; the per-publication view `mos_publication_v`
+  exposes each as `latest_*`.
 - **The shoot backlog is derived.** Every scene still marked `missing` is a shot
   someone has to film, whether or not a request exists for it yet.
 - **"Unused material" is a LEFT JOIN**, not a counter anyone maintains. The
@@ -105,9 +111,10 @@ This workspace answers the three questions the old process could not:
   card, and the budget-shift control are hidden; the Content tab's filter reads
   «كل المنصات» (not «كل الحملات الإعلانية») and lists the platforms the content
   was **published** to; and the content table swaps its أُنفق/عملاء/مؤهلون
-  columns for **المشاهدات / التفاعل / استفسارات** (impressions / engagement /
-  enquiries). Those organic numbers are summed **from each linked item's
-  publications** (`mos_publication_v` latest reading per publication), because
+  columns for **المشاهدات / الإعجابات / التعليقات / الحفظ** (impressions /
+  likes / comments / saves). Those organic numbers are summed **from each
+  linked item's publications** (`mos_publication_v` latest reading per
+  publication), because
   the campaign rollup (`mos_campaign_v.total_impressions`) only counts
   ad-campaign impressions — of which an organic campaign has none. The «مقابل
   الهدف» pace card, the projection sentence and the results-gap verdict likewise

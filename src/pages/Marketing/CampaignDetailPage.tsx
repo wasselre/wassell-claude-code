@@ -192,6 +192,9 @@ interface ContentStat {
   impressions: number | null;
   engagement: number | null;
   enquiries: number | null;
+  likes: number | null;
+  comments: number | null;
+  saves: number | null;
   watch: boolean;
   wrongProject: boolean;
   waiting: boolean;
@@ -427,10 +430,16 @@ export default function CampaignDetailPage() {
         let impressions: number | null = null;
         let engagement: number | null = null;
         let enquiries: number | null = null;
+        let likes: number | null = null;
+        let comments: number | null = null;
+        let saves: number | null = null;
         for (const p of published) {
           impressions = add(impressions, p.latest_views);
           engagement = add(engagement, p.latest_engagement);
           enquiries = add(enquiries, p.latest_enquiries);
+          likes = add(likes, p.latest_likes);
+          comments = add(comments, p.latest_comments);
+          saves = add(saves, p.latest_saves);
         }
         const uniq = Array.from(new Set(published.map((p) => p.platform)));
         return {
@@ -443,6 +452,9 @@ export default function CampaignDetailPage() {
           impressions,
           engagement,
           enquiries,
+          likes,
+          comments,
+          saves,
           watch: false,
           wrongProject,
           // Nothing is published yet — the piece is still in production.
@@ -485,6 +497,9 @@ export default function CampaignDetailPage() {
         impressions: null,
         engagement: null,
         enquiries: null,
+        likes: null,
+        comments: null,
+        saves: null,
         watch,
         wrongProject,
         waiting: uniq.length === 0,
@@ -1796,8 +1811,9 @@ export default function CampaignDetailPage() {
                         {isOrganic ? (
                           <>
                             <th className="num" style={{ width: 82 }}>{isAr ? 'المشاهدات' : 'Impressions'}</th>
-                            <th className="num" style={{ width: 64 }}>{isAr ? 'التفاعل' : 'Engagement'}</th>
-                            <th className="num" style={{ width: 70 }}>{isAr ? 'استفسارات' : 'Enquiries'}</th>
+                            <th className="num" style={{ width: 64 }}>{isAr ? 'الإعجابات' : 'Likes'}</th>
+                            <th className="num" style={{ width: 64 }}>{isAr ? 'التعليقات' : 'Comments'}</th>
+                            <th className="num" style={{ width: 60 }}>{isAr ? 'الحفظ' : 'Saves'}</th>
                           </>
                         ) : (
                           <>
@@ -1840,8 +1856,9 @@ export default function CampaignDetailPage() {
                             {isOrganic ? (
                               <>
                                 <td className="num">{num(s.impressions, isAr)}</td>
-                                <td className="num">{num(s.engagement, isAr)}</td>
-                                <td className="num">{num(s.enquiries, isAr)}</td>
+                                <td className="num">{num(s.likes, isAr)}</td>
+                                <td className="num">{num(s.comments, isAr)}</td>
+                                <td className="num">{num(s.saves, isAr)}</td>
                               </>
                             ) : (
                               <>

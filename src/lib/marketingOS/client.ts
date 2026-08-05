@@ -422,6 +422,10 @@ export interface MosPublication {
   latest_views: number | null;
   latest_engagement: number | null;
   latest_enquiries: number | null;
+  /** Engagement breakdown — latest reading per publication. */
+  latest_likes: number | null;
+  latest_comments: number | null;
+  latest_saves: number | null;
   snapshot_count: number;
 }
 
@@ -446,6 +450,9 @@ export interface MosSnapshot {
   views: number | null;
   engagement: number | null;
   enquiries: number | null;
+  likes: number | null;
+  comments: number | null;
+  saves: number | null;
   /** Platform-specific readings; a skip carries { skipped: reason }. */
   extra?: Record<string, unknown>;
 }
@@ -488,6 +495,9 @@ export const recordMetrics = (
     views?: number | null;
     engagement?: number | null;
     enquiries?: number | null;
+    likes?: number | null;
+    comments?: number | null;
+    saves?: number | null;
     /** Platform-specific readings (e.g. TikTok watch-time). */
     extra?: Record<string, unknown>;
   },

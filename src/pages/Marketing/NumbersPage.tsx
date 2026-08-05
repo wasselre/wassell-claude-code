@@ -38,6 +38,9 @@ interface WeekLatest {
   views: number | null;
   engagement: number | null;
   enquiries: number | null;
+  likes: number | null;
+  comments: number | null;
+  saves: number | null;
   extra?: Record<string, unknown> | null;
 }
 
@@ -102,7 +105,7 @@ async function fetchNumbersWeek(weekStart?: string): Promise<NumbersWeekResponse
 /* platform column sets                                                */
 /* ------------------------------------------------------------------ */
 
-type ColKey = 'views' | 'engagement' | 'enquiries' | 'watch';
+type ColKey = 'views' | 'engagement' | 'enquiries' | 'watch' | 'likes' | 'comments' | 'saves';
 
 interface ColDef {
   key: ColKey;
@@ -116,12 +119,18 @@ const COL_ENGAGE: ColDef =    { key: 'engagement', ar: 'التفاعل',       e
 const COL_ENQUIRIES: ColDef = { key: 'enquiries',  ar: 'الاستفسارات',   en: 'Enquiries',  width: 96 };
 /** TikTok's middle column — stored in the snapshot's `extra.watch_seconds`. */
 const COL_WATCH: ColDef =     { key: 'watch',      ar: 'متوسط المشاهدة', en: 'Avg watch',  width: 96 };
+/** The engagement breakdown — first-class columns on mos_metric_snapshots. */
+const COL_LIKES: ColDef =     { key: 'likes',      ar: 'الإعجابات',     en: 'Likes',      width: 90 };
+const COL_COMMENTS: ColDef =  { key: 'comments',   ar: 'التعليقات',     en: 'Comments',   width: 90 };
+const COL_SAVES: ColDef =     { key: 'saves',      ar: 'الحفظ',         en: 'Saves',      width: 84 };
 
-/** Exactly the mockup's per-platform column sets. Unknown platforms get the
- *  Instagram shape — three core numbers, nothing exotic. */
+/** Exactly the mockup's per-platform column sets, plus the likes/comments/saves
+ *  breakdown. Unknown platforms get the Instagram shape. */
 function platformCols(platform: string): ColDef[] {
-  if (platform === 'tiktok') return [COL_VIEWS, COL_WATCH, COL_ENQUIRIES];
-  return [COL_VIEWS, COL_ENGAGE, COL_ENQUIRIES];
+  if (platform === 'tiktok') {
+    return [COL_VIEWS, COL_WATCH, COL_LIKES, COL_COMMENTS, COL_SAVES, COL_ENQUIRIES];
+  }
+  return [COL_VIEWS, COL_ENGAGE, COL_LIKES, COL_COMMENTS, COL_SAVES, COL_ENQUIRIES];
 }
 
 /** «المنشور» vs «الفيديو» — the mockup titles TikTok's item column differently. */
@@ -298,6 +307,7 @@ export default function NumbersPage() {
     const cols = platformCols(platform);
     const values: {
       views?: number | null; engagement?: number | null; enquiries?: number | null;
+      likes?: number | null; comments?: number | null; saves?: number | null;
       extra?: Record<string, unknown>;
     } = {};
     const savedRow: Partial<Record<ColKey, number | null>> = {};
@@ -351,6 +361,7 @@ export default function NumbersPage() {
       const cols = platformCols(platform);
       const values: {
         views?: number | null; engagement?: number | null; enquiries?: number | null;
+        likes?: number | null; comments?: number | null; saves?: number | null;
         extra?: Record<string, unknown>;
       } = {};
       const savedRow: Partial<Record<ColKey, number | null>> = {};

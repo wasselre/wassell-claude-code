@@ -1460,6 +1460,11 @@ export default async function handler(req: Request): Promise<Response> {
         const views = num(body.views);
         const engagement = num(body.engagement);
         const enquiries = num(body.enquiries);
+        // The engagement breakdown — captured per publication, same posture as
+        // the three above (empty box → NULL, never 0).
+        const likes = num(body.likes);
+        const comments = num(body.comments);
+        const saves = num(body.saves);
 
         // Platform-specific readings (e.g. TikTok watch-time) ride in extra.
         const extra = (body.extra && typeof body.extra === 'object' && !Array.isArray(body.extra))
@@ -1469,6 +1474,7 @@ export default async function handler(req: Request): Promise<Response> {
         // Mirrors mos_snap_not_empty_check so the user gets a sentence rather
         // than a constraint violation.
         if (views === null && engagement === null && enquiries === null
+            && likes === null && comments === null && saves === null
             && Object.keys(extra).length === 0) {
           return new Response(
             JSON.stringify({
@@ -1483,6 +1489,7 @@ export default async function handler(req: Request): Promise<Response> {
           publication_id: publicationId,
           source: 'manual',
           views, engagement, enquiries,
+          likes, comments, saves,
           extra,
           entered_by_user_id: await resolveAppUserId(sb, user.userId),
         }).select('id').maybeSingle();
@@ -1592,6 +1599,9 @@ export default async function handler(req: Request): Promise<Response> {
                   views: latest.views ?? null,
                   engagement: latest.engagement ?? null,
                   enquiries: latest.enquiries ?? null,
+                  likes: latest.likes ?? null,
+                  comments: latest.comments ?? null,
+                  saves: latest.saves ?? null,
                   extra,
                 }
               : null,
