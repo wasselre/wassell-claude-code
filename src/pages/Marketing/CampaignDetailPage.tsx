@@ -1336,7 +1336,9 @@ export default function CampaignDetailPage() {
                 {/* ما بعد الإعلان */}
                 <div className="card">
                   <div className="card-h">
-                    <h4>{isAr ? 'ما بعد الإعلان' : 'After the ad'}</h4>
+                    <h4>{isAr
+                      ? (isOrganic ? 'ما بعد النشر' : 'ما بعد الإعلان')
+                      : (isOrganic ? 'After publishing' : 'After the ad')}</h4>
                     <span className="r">{isAr ? 'من نظام العملاء' : 'from the clients system'}</span>
                   </div>
                   <div className="card-b" style={{ display: 'grid', gap: 8 }}>
@@ -2002,7 +2004,9 @@ export default function CampaignDetailPage() {
 
               <div className="card">
                 <div className="card-h">
-                  <h4>{isAr ? 'ما بعد الإعلان' : 'After the ad'}</h4>
+                  <h4>{isAr
+                    ? (isOrganic ? 'ما بعد النشر' : 'ما بعد الإعلان')
+                    : (isOrganic ? 'After publishing' : 'After the ad')}</h4>
                   <span className="r">{isAr ? 'من نظام العملاء' : 'from the clients system'}</span>
                 </div>
                 <div className="card-b" style={{ display: 'grid', gap: 8 }}>
