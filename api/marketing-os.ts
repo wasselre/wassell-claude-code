@@ -556,13 +556,23 @@ async function readCampaignMerged(
   const error = viewRes.error ?? baseRes.error;
   if (error) return { row: null, error };
   if (!viewRes.data && !baseRes.data) return { row: null, error: null };
-  return {
-    row: {
-      ...((viewRes.data ?? {}) as Record<string, unknown>),
-      ...((baseRes.data ?? {}) as Record<string, unknown>),
-    },
-    error: null,
+  const row: Record<string, unknown> = {
+    ...((viewRes.data ?? {}) as Record<string, unknown>),
+    ...((baseRes.data ?? {}) as Record<string, unknown>),
   };
+  // Attach the chosen audience's LIVE details (the name is snapshotted on the
+  // campaign; the long details are resolved fresh so an edit to the record shows
+  // through). Non-fatal: a failed lookup just omits details, it never sinks the read.
+  const audienceId = str(row.audience_id);
+  if (audienceId) {
+    const aud = await sb.from('mos_audiences').select('details').eq('id', audienceId).maybeSingle();
+    if (aud.error) {
+      console.error('[marketing-os] audience details read failed', aud.error.code, aud.error.message);
+    } else if (aud.data) {
+      row.audience_details = (aud.data as { details: string | null }).details;
+    }
+  }
+  return { row, error: null };
 }
 
 /**
@@ -2014,11 +2024,28 @@ export default async function handler(req: Request): Promise<Response> {
                          'success_threshold',
                          // The brief (screen 19): who it's for, what it offers,
                          // where it lands, how it's measured.
-                         'audience', 'offer', 'destination_url', 'measured_by'] as const) {
+                         'audience', 'audience_id', 'offer', 'destination_url', 'measured_by'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
         // Multi-project: normalize the array and re-derive the primary project_id.
         applyProjectIds(patch);
+
+        // Audience: when a saved record is chosen, SNAPSHOT its name into the
+        // `audience` text column so every join-free reader (the brief read grid,
+        // search's `audience` match, list/overview) keeps rendering a concise
+        // label — the same posture as success_measures. Clearing the link
+        // (audience_id = null) leaves whatever free text the client sent.
+        if (Object.prototype.hasOwnProperty.call(patch, 'audience_id')) {
+          const audienceId = str(patch.audience_id);
+          patch.audience_id = audienceId; // normalize '' → null
+          if (audienceId) {
+            const aud = await sb.from('mos_audiences').select('name').eq('id', audienceId).maybeSingle();
+            const af = dbFail(aud.error);
+            if (af) return af;
+            if (!aud.data) return jsonError(400, 'audience not found');
+            patch.audience = (aud.data as { name: string }).name;
+          }
+        }
 
         // Multi-measure success criteria: sanitize the array to the known shape
         // and derive the back-compat primary (success_metric / success_threshold
@@ -3789,6 +3816,48 @@ export default async function handler(req: Request): Promise<Response> {
         const lf = dbFail(list.error);
         if (lf) return lf;
         return jsonOk({ measure_types: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Audiences — the managed registry the campaign brief's     */
+      /* «الجمهور» is picked from (name + large details).          */
+      /* -------------------------------------------------------- */
+      case 'audiences_list': {
+        const list = await sb.from('mos_audiences').select('*').is('archived_at', null)
+          .order('sort_order', { ascending: true }).order('created_at', { ascending: true });
+        const f = dbFail(list.error);
+        if (f) return f;
+        return jsonOk({ audiences: list.data ?? [] });
+      }
+
+      case 'audience_save': {
+        const raw = (body.audience ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['name', 'details', 'sort_order', 'is_active'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        // `name` is the identity shown everywhere — never let it be blanked.
+        if (Object.prototype.hasOwnProperty.call(patch, 'name') && !str(patch.name)) {
+          return jsonError(400, 'name is required');
+        }
+        if (id) {
+          const upd = await sb.from('mos_audiences').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'audience not found');
+        } else {
+          if (!str(patch.name)) return jsonError(400, 'name is required');
+          patch.created_by_user_id = await resolveAppUserId(sb, user.userId);
+          const ins = await sb.from('mos_audiences').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+        }
+        const list = await sb.from('mos_audiences').select('*').is('archived_at', null)
+          .order('sort_order', { ascending: true }).order('created_at', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ audiences: list.data ?? [] });
       }
 
       case 'account_save': {
