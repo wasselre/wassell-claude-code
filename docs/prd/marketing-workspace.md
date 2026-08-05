@@ -50,6 +50,16 @@ This workspace answers the three questions the old process could not:
 - **Approval is split three ways.** Marketing Manager approves creative,
   Operations Supervisor approves process, CEO signs off budget and approves no
   content. That split is what stops one person becoming everyone's queue.
+- **Each step controls its own notification.** In the Workflows editor every
+  step carries a `notify` on/off switch and a set of permitted channels
+  (in-app, push, WhatsApp). When a step becomes active the engine interrupts
+  its owning role only if `notify` is on, and only on the channels the step
+  permits **AND** that person's role settings (Settings → Notifications) also
+  enable — a step can narrow, never widen. `notify` off opens the task
+  silently: it still shows in «my work», it just doesn't ping. Legacy steps
+  with no setting default to notify-on / all-channels, so the role grid alone
+  decides, exactly as before. The rules are pinned per workflow version, so
+  editing a path never changes how in-flight records are notified.
 - **Type is a column, not a module.** Post, Video, Carousel and Story are rows in
   `mos_content_types`; each names its workflow, its ref prefix and its writing
   fields. Adding a Brochure type later is a row, not a screen.
@@ -219,6 +229,15 @@ This workspace answers the three questions the old process could not:
   `mos_comments`, `mos_role_grants`, `mos_content_types`, `mos_measure_types`,
   `mos_audiences`, `mos_workflows`,
   `mos_workflow_steps`, `mos_platform_accounts`, `mos_ref_counters`.
+- **Workflow engine + notifications:** `workflows` / `workflow_versions`
+  (canonical role paths + pinned per-record snapshots, steps live in
+  `metadata.steps` including each step's `notify` + `notify_channels`),
+  `workflow_role_tasks` (the open task, carrying `workflow_version_id` +
+  `step_key` so emission can read the pinned step's notification rules),
+  `notifications` (the in-app inbox), `notification_rules` (the role × event ×
+  channel grid), `notification_prefs`, `notification_deliveries` (WhatsApp
+  outbox), `push_outbox` (push queue). Every notification enters through the
+  `notify_emit` RPC, which now takes an optional per-step channel mask.
 - **Views:** `mos_content_v` (derives status/owner from the open task),
   `mos_publication_v` (latest snapshot per publication), `mos_campaign_v`
   (spend/leads summed from executions).
@@ -242,7 +261,8 @@ This workspace answers the three questions the old process could not:
 | `src/pages/Marketing/LibraryPage.tsx` / `ShootsPage.tsx` | Material library and the derived shoot backlog |
 | `src/pages/Marketing/NumbersPage.tsx` | The Friday data-entry screen |
 | `src/pages/Marketing/SettingsPage.tsx` | Workflows, content types, platforms, roles + the capability matrix |
-| `src/pages/Marketing/components/SettingsWorkflows.tsx` | The workflow path/step editor — each step carries an owning role and a **due-in-days** value (`due_days`, integer ≥ 0; `0` = same day, i.e. the task is due the day the step opens) that the engine turns into the task's `due_at` (`now() + due_days days`) |
+| `src/pages/Marketing/components/SettingsWorkflows.tsx` | The workflow path/step editor — each step carries an owning role, a **due-in-days** value (`due_days`, integer ≥ 0; `0` = same day, i.e. the task is due the day the step opens) that the engine turns into the task's `due_at` (`now() + due_days days`), approval + required fields, **and the per-step notification gate + channels** |
+| `supabase/migrations/2026-08-05_mos_step_notify_channels.sql` | Adds the per-step channel mask to `notify_emit` (AND-s step-permitted channels with each role's grid; back-compatible, mask defaults NULL) |
 | `src/pages/Marketing/components/` | Shared primitives (`kit.tsx`), icons, task card, stage rail, writing fields, scenes, publishing, performance, material, thread |
 | `src/pages/Marketing/components/SuccessMeasuresEditor.tsx` / `SettingsMeasures.tsx` | A campaign's multi-measure success criteria + the managed measure-type registry (both auto-translate the name; unit = count/riyal/percent) |
 | `src/pages/Marketing/components/AudiencePicker.tsx` / `SettingsAudiences.tsx` | The campaign brief's saved-audience picker (pick existing or create inline) + the managed audiences registry (`mos_audiences`: name + details) |
@@ -265,5 +285,11 @@ This workspace answers the three questions the old process could not:
   yet been walked screen-by-screen on a real phone-width viewport.
 - **The 2026 palette is not in this module.** It uses the palette the rest of the
   app ships; migrating the app-wide Tailwind theme is separate work.
-- Notifications (design screen 43) are not built — the task queue is the
-  notification surface for now.
+- **Notifications are built** — the in-app inbox, the role × event × channel
+  grid (Settings → Notifications, design screen 43), push (`push_outbox`) and
+  WhatsApp (`notification_deliveries`) all exist, and each workflow step now
+  carries its own notify gate + permitted channels (see Key behaviors). The
+  task queue remains the always-on surface; notifications are the interrupt on
+  top of it. Real WhatsApp send depends on the Fly worker draining
+  `notification_deliveries`, and the `external_effects` kill switch gates both
+  outward channels.
