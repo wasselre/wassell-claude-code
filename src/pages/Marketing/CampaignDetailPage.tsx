@@ -21,10 +21,11 @@ import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosCampaign, MosCampaignEvent,
   MosCampaignOutcomes, MosComment, MosContentRow, MosDailyEntry, MosExecution,
-  PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS, successMeasureSuffix,
+  MosPublication, PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS, successMeasureSuffix,
   addCampaignEvent, budgetShift, deleteExecution, fetchCampaignDetail,
   fetchCampaignEvents, fetchCampaignOutcomes, fetchContentDetail, fetchContentList,
-  fetchExecutionDetail, saveCampaign, saveExecution, signCampaign, updateContent,
+  fetchExecutionDetail, fetchPublications, saveCampaign, saveExecution, signCampaign,
+  updateContent,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Field, LoadError, Modal, Pill, ReadField, Skeleton, StatusPill, Tone } from './components/kit';
@@ -173,7 +174,13 @@ interface ExecStat {
   isMaxQualified: boolean;
 }
 
-/** Per-content rollups aggregated from every execution the item runs in. */
+/**
+ * Per-content rollups. For a PAID campaign these are summed from every ad
+ * campaign the item runs in (spend/leads/qualified). For an ORGANIC campaign
+ * the item earns reach, not spend, so the numbers come from the item's
+ * publications instead (impressions/engagement/enquiries — the same readings
+ * the Numbers screen captures per publication).
+ */
 interface ContentStat {
   row: MosContentRow;
   platforms: string[];
@@ -181,6 +188,10 @@ interface ContentStat {
   leads: number | null;
   qualified: number | null;
   cpq: number | null;
+  /** Organic-only: summed from the item's published publications. */
+  impressions: number | null;
+  engagement: number | null;
+  enquiries: number | null;
   watch: boolean;
   wrongProject: boolean;
   waiting: boolean;
@@ -202,6 +213,8 @@ export default function CampaignDetailPage() {
   const [outcomesError, setOutcomesError] = useState<string | null>(null);
   const [adsByExec, setAdsByExec] = useState<Record<string, MosAd[]>>({});
   const [dailyByExec, setDailyByExec] = useState<Record<string, MosDailyEntry[]>>({});
+  const [pubsByContent, setPubsByContent] = useState<Record<string, MosPublication[]>>({});
+  const [pubError, setPubError] = useState<string | null>(null);
   const [enrichError, setEnrichError] = useState<string | null>(null);
   const [angles, setAngles] = useState<Record<string, string | null> | null>(null);
   const [anglesError, setAnglesError] = useState<string | null>(null);
@@ -241,6 +254,29 @@ export default function CampaignDetailPage() {
     if (failed.length > 0) setEnrichError(failed.join(isAr ? '، ' : ', '));
   }, [isAr]);
 
+  /**
+   * Organic campaigns have no ad campaigns — their numbers live on each linked
+   * item's publications. Fan out per content and keep the latest reading per
+   * publication (mirrors the paid `enrich` fan-out over executions).
+   */
+  const enrichOrganic = useCallback(async (rows: MosContentRow[]): Promise<void> => {
+    setPubError(null);
+    const map: Record<string, MosPublication[]> = {};
+    const failed: string[] = [];
+    await Promise.all(rows.map(async (r) => {
+      try {
+        map[r.id] = (await fetchPublications(r.id)).publications;
+      } catch (e) {
+        // Partial failure degrades VISIBLY: the notice names the items whose
+        // numbers are missing, and the retry re-runs the whole fan-out.
+        console.error(`[marketing] organic publications enrich failed for ${r.id}`, e);
+        failed.push(r.ref ?? r.title);
+      }
+    }));
+    setPubsByContent(map);
+    if (failed.length > 0) setPubError(failed.join(isAr ? '، ' : ', '));
+  }, [isAr]);
+
   const load = useCallback(async (): Promise<void> => {
     if (!campaignId) return;
     setLoading(true);
@@ -254,7 +290,14 @@ export default function CampaignDetailPage() {
       setEvents(res.events);
       setAngles(null);
       setAnglesError(null);
-      void enrich(res.executions);
+      if (res.item.kind === 'organic') {
+        setAdsByExec({});
+        setDailyByExec({});
+        void enrichOrganic(res.content);
+      } else {
+        setPubsByContent({});
+        void enrich(res.executions);
+      }
       void (async () => {
         try {
           const o = await fetchCampaignOutcomes(campaignId);
@@ -271,7 +314,7 @@ export default function CampaignDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [campaignId, enrich]);
+  }, [campaignId, enrich, enrichOrganic]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -369,48 +412,102 @@ export default function CampaignDetailPage() {
     };
   }, [weakStat, bestStat]);
 
-  const contentStats = useMemo<ContentStat[]>(() => content.map((row) => {
-    const platforms: string[] = [];
-    let spend: number | null = null;
-    let leads: number | null = null;
-    let qualified: number | null = null;
-    let watch = false;
+  const contentStats = useMemo<ContentStat[]>(() => {
     const add = (s: number | null, v: number | null): number | null =>
       (v === null ? s : (s ?? 0) + v);
-    for (const x of executions) {
-      const ads = adsByExec[x.id] ?? [];
-      const mine = ads.filter((a) => a.content_id === row.id);
-      const viaExec = x.content_id === row.id;
-      if (mine.length > 0 || viaExec) platforms.push(x.platform);
-      for (const a of mine) {
-        spend = add(spend, a.spend);
-        leads = add(leads, a.leads);
-        qualified = add(qualified, a.qualified);
-        if (a.status === 'watch') watch = true;
-      }
-      // Envelope-level executions (no ads yet) still attribute their numbers.
-      if (viaExec && ads.length === 0) {
-        spend = add(spend, x.spend);
-        leads = add(leads, x.leads);
-        qualified = add(qualified, x.qualified);
-      }
-    }
-    const uniq = Array.from(new Set(platforms));
-    return {
-      row,
-      platforms: uniq,
-      spend,
-      leads,
-      qualified,
-      cpq: spend !== null && qualified !== null && qualified > 0 ? spend / qualified : null,
-      watch,
-      wrongProject: Boolean(row.project_id && item?.project_id && row.project_id !== item.project_id),
-      waiting: uniq.length === 0,
-    };
-  }), [content, executions, adsByExec, item]);
+    const organic = item?.kind === 'organic';
+    return content.map((row) => {
+      const wrongProject = Boolean(
+        row.project_id && item?.project_id && row.project_id !== item.project_id,
+      );
 
-  /** «الأفضل أداءً» — computed, never assigned: most qualified, tie → cheapest. */
+      // ── Organic: reach from the item's own publications, not ad spend. ──
+      if (organic) {
+        const published = (pubsByContent[row.id] ?? []).filter((p) => p.status === 'published');
+        let impressions: number | null = null;
+        let engagement: number | null = null;
+        let enquiries: number | null = null;
+        for (const p of published) {
+          impressions = add(impressions, p.latest_views);
+          engagement = add(engagement, p.latest_engagement);
+          enquiries = add(enquiries, p.latest_enquiries);
+        }
+        const uniq = Array.from(new Set(published.map((p) => p.platform)));
+        return {
+          row,
+          platforms: uniq,
+          spend: null,
+          leads: null,
+          qualified: null,
+          cpq: null,
+          impressions,
+          engagement,
+          enquiries,
+          watch: false,
+          wrongProject,
+          // Nothing is published yet — the piece is still in production.
+          waiting: uniq.length === 0,
+        };
+      }
+
+      // ── Paid: summed from every ad campaign the item runs in. ──
+      const platforms: string[] = [];
+      let spend: number | null = null;
+      let leads: number | null = null;
+      let qualified: number | null = null;
+      let watch = false;
+      for (const x of executions) {
+        const ads = adsByExec[x.id] ?? [];
+        const mine = ads.filter((a) => a.content_id === row.id);
+        const viaExec = x.content_id === row.id;
+        if (mine.length > 0 || viaExec) platforms.push(x.platform);
+        for (const a of mine) {
+          spend = add(spend, a.spend);
+          leads = add(leads, a.leads);
+          qualified = add(qualified, a.qualified);
+          if (a.status === 'watch') watch = true;
+        }
+        // Envelope-level executions (no ads yet) still attribute their numbers.
+        if (viaExec && ads.length === 0) {
+          spend = add(spend, x.spend);
+          leads = add(leads, x.leads);
+          qualified = add(qualified, x.qualified);
+        }
+      }
+      const uniq = Array.from(new Set(platforms));
+      return {
+        row,
+        platforms: uniq,
+        spend,
+        leads,
+        qualified,
+        cpq: spend !== null && qualified !== null && qualified > 0 ? spend / qualified : null,
+        impressions: null,
+        engagement: null,
+        enquiries: null,
+        watch,
+        wrongProject,
+        waiting: uniq.length === 0,
+      };
+    });
+  }, [content, executions, adsByExec, pubsByContent, item]);
+
+  /**
+   * «الأفضل أداءً» — computed, never assigned. Paid: most qualified, tie →
+   * cheapest. Organic: most impressions, tie → most engagement.
+   */
   const bestContentId = useMemo<string | null>(() => {
+    if (item?.kind === 'organic') {
+      const measured = contentStats.filter((s) => (s.impressions ?? 0) > 0);
+      if (measured.length < 2) return null;
+      const best = measured.reduce((a, b) => {
+        if ((a.impressions ?? 0) !== (b.impressions ?? 0)) {
+          return (a.impressions ?? 0) > (b.impressions ?? 0) ? a : b;
+        }
+        return (a.engagement ?? 0) >= (b.engagement ?? 0) ? a : b;
+      });
+      return best.row.id;
+    }
     const measured = contentStats.filter((s) => (s.qualified ?? 0) > 0);
     if (measured.length < 2) return null;
     const best = measured.reduce((a, b) => {
@@ -420,7 +517,7 @@ export default function CampaignDetailPage() {
       return (a.cpq ?? Number.POSITIVE_INFINITY) <= (b.cpq ?? Number.POSITIVE_INFINITY) ? a : b;
     });
     return best.row.id;
-  }, [contentStats]);
+  }, [contentStats, item]);
 
   /** Cumulative qualified per recorded day, across every execution (s40). */
   const cumulative = useMemo(() => {
@@ -605,9 +702,18 @@ export default function CampaignDetailPage() {
   /* ── header derivations ──────────────────────────────────────────── */
 
   const Back = isAr ? IconForward : IconBack;
+  const isOrganic = item.kind === 'organic';
   const spend = item.total_spend ?? null;
   const budget = item.budget_total ?? null;
   const qualified = item.total_qualified ?? 0;
+  // A paid campaign is judged on qualified leads; an organic one on reach. The
+  // organic total is summed from the linked content's publications, because the
+  // campaign rollup (mos_campaign_v) only counts ad-campaign impressions, which
+  // an organic campaign has none of.
+  const organicImpressions = contentStats.reduce((s, c) => s + (c.impressions ?? 0), 0);
+  const goalProgress = isOrganic ? organicImpressions : qualified;
+  const goalUnitAr = isOrganic ? 'مشاهدة' : 'مؤهلًا';
+  const goalUnitEn = isOrganic ? 'views' : 'qualified';
   const inProduction = content.filter((c) => c.status_key !== 'done').length;
 
   const statusPill = item.status === 'active' && days
@@ -633,8 +739,8 @@ export default function CampaignDetailPage() {
 
   // Organic campaigns have no paid ad-platform buys, so the Ad campaigns tab, its
   // overview card, and the budget-shift control are all hidden for them — an
-  // organic campaign runs through content, not ad campaigns.
-  const isOrganic = item.kind === 'organic';
+  // organic campaign runs through content, not ad campaigns. (`isOrganic` is
+  // derived up in the header block, above the goal-progress math.)
   const allTabs: Array<{ key: Tab; ar: string; en: string; badge?: number }> = [
     { key: 'overview', ar: 'نظرة عامة', en: 'Overview' },
     { key: 'executions', ar: 'الحملات الإعلانية', en: 'Ad campaigns', badge: executions.length || undefined },
@@ -662,11 +768,11 @@ export default function CampaignDetailPage() {
             : isAr ? 'ريال أو أقل' : 'SAR or less'}`
       : isAr ? 'غير محدد — لا يمكن الحكم على الحملة' : 'Not set — the campaign cannot be judged';
 
-  /* «مقابل الهدف» pace math (s15). */
-  const targetPct = target !== null && target > 0 ? Math.min(100, (qualified / target) * 100) : null;
+  /* «مقابل الهدف» pace math (s15) — `goalProgress` is qualified (paid) or reach (organic). */
+  const targetPct = target !== null && target > 0 ? Math.min(100, (goalProgress / target) * 100) : null;
   const timePct = days && days.total > 0 ? (days.elapsed / days.total) * 100 : null;
   const projection = days && days.elapsed > 0
-    ? Math.round((qualified / days.elapsed) * days.total)
+    ? Math.round((goalProgress / days.elapsed) * days.total)
     : null;
   const onPace = target !== null && projection !== null && projection >= target;
 
@@ -674,12 +780,12 @@ export default function CampaignDetailPage() {
   const requiredToday = target !== null && days && days.total > 0
     ? Math.round((target * days.elapsed) / days.total)
     : null;
-  const gap = requiredToday !== null ? requiredToday - qualified : null;
+  const gap = requiredToday !== null ? requiredToday - goalProgress : null;
   const needDaily = target !== null && days && days.left > 0
-    ? Math.round((target - qualified) / days.left)
+    ? Math.round((target - goalProgress) / days.left)
     : null;
   const dailyRate = days && days.elapsed > 0
-    ? Math.round((qualified / days.elapsed) * 10) / 10
+    ? Math.round((goalProgress / days.elapsed) * 10) / 10
     : null;
 
   /* «ماذا تقول الأرقام» — each sentence is a transcribed rule (s15). */
@@ -776,7 +882,11 @@ export default function CampaignDetailPage() {
   const weakName = weakStat ? pname(weakStat.exec.platform) : null;
   const bestName = bestStat ? pname(bestStat.exec.platform) : null;
 
-  const platformsInPlay = Array.from(new Set(executions.map((x) => x.platform)));
+  // Paid: the platforms its ad campaigns run on. Organic: the platforms its
+  // content was actually published to (from the per-item publication rollup).
+  const platformsInPlay = isOrganic
+    ? Array.from(new Set(contentStats.flatMap((s) => s.platforms)))
+    : Array.from(new Set(executions.map((x) => x.platform)));
   const filteredContent = platFilter === 'all'
     ? contentStats
     : contentStats.filter((s) => s.platforms.includes(platFilter));
@@ -1260,9 +1370,13 @@ export default function CampaignDetailPage() {
                                     ))}
                               </td>
                               <td style={{ width: 100 }} className="num">
-                                {s.leads === null
-                                  ? <span style={{ color: 'var(--mute)' }}>—</span>
-                                  : isAr ? `${num(s.leads, true)} عميلًا` : `${s.leads} leads`}
+                                {isOrganic
+                                  ? (s.impressions === null
+                                    ? <span style={{ color: 'var(--mute)' }}>—</span>
+                                    : isAr ? `${num(s.impressions, true)} مشاهدة` : `${s.impressions} views`)
+                                  : (s.leads === null
+                                    ? <span style={{ color: 'var(--mute)' }}>—</span>
+                                    : isAr ? `${num(s.leads, true)} عميلًا` : `${s.leads} leads`)}
                               </td>
                               <td style={{ width: 126 }}>
                                 {s.row.id === bestContentId ? (
@@ -1288,11 +1402,11 @@ export default function CampaignDetailPage() {
                   <div className="card-h"><h4>{isAr ? 'مقابل الهدف' : 'Against the goal'}</h4></div>
                   <div className="card-b">
                     <div className="cd-vs-line">
-                      <span className="cd-bignum">{num(qualified, isAr)}</span>
+                      <span className="cd-bignum">{num(goalProgress, isAr)}</span>
                       <span className="cd-vs-sub">
                         {target !== null
-                          ? isAr ? `من ${num(target, true)} مؤهلًا` : `of ${num(target, false)} qualified`
-                          : isAr ? 'مؤهلًا' : 'qualified'}
+                          ? isAr ? `من ${num(target, true)} ${goalUnitAr}` : `of ${num(target, false)} ${goalUnitEn}`
+                          : isAr ? goalUnitAr : goalUnitEn}
                       </span>
                     </div>
                     {target !== null && targetPct !== null && timePct !== null ? (
@@ -1310,8 +1424,8 @@ export default function CampaignDetailPage() {
                               {onPace ? (isAr ? 'على الوتيرة.' : 'On pace.') : (isAr ? 'متأخرة عن الوتيرة.' : 'Behind pace.')}
                             </b>{' '}
                             {isAr
-                              ? <>بالمعدل الحالي سيُغلق {monthOf(item.ends_on, true) || 'الشهر'} عند <b>{num(projection, true)} مؤهلًا</b> تقريبًا — {pctStr((projection / target) * 100, true)} من المستهدف.</>
-                              : <>At the current rate {monthOf(item.ends_on, false) || 'the month'} closes at roughly <b>{num(projection, false)} qualified</b> — {pctStr((projection / target) * 100, false)} of target.</>}
+                              ? <>بالمعدل الحالي سيُغلق {monthOf(item.ends_on, true) || 'الشهر'} عند <b>{num(projection, true)} {goalUnitAr}</b> تقريبًا — {pctStr((projection / target) * 100, true)} من المستهدف.</>
+                              : <>At the current rate {monthOf(item.ends_on, false) || 'the month'} closes at roughly <b>{num(projection, false)} {goalUnitEn}</b> — {pctStr((projection / target) * 100, false)} of target.</>}
                           </div>
                         )}
                       </>
@@ -1611,7 +1725,9 @@ export default function CampaignDetailPage() {
                 className={`fbtn${platFilter === 'all' ? ' on' : ''}`}
                 onClick={() => setPlatFilter('all')}
               >
-                {isAr ? 'كل الحملات الإعلانية' : 'All ad campaigns'}
+                {isOrganic
+                  ? (isAr ? 'كل المنصات' : 'All platforms')
+                  : (isAr ? 'كل الحملات الإعلانية' : 'All ad campaigns')}
               </button>
               {platformsInPlay.map((p) => (
                 <button
@@ -1624,12 +1740,16 @@ export default function CampaignDetailPage() {
                 </button>
               ))}
               <span className="cd-filtnote">
-                {isAr
-                  ? 'الأداء لكل عنصر يُجمَع من كل حملة إعلانية يعمل فيها'
-                  : 'Each item’s performance is summed from every ad campaign it runs in'}
+                {isOrganic
+                  ? isAr
+                    ? 'الأداء لكل عنصر يُجمَع من كل منصة نُشر عليها'
+                    : 'Each item’s performance is summed from every platform it was published to'
+                  : isAr
+                    ? 'الأداء لكل عنصر يُجمَع من كل حملة إعلانية يعمل فيها'
+                    : 'Each item’s performance is summed from every ad campaign it runs in'}
               </span>
             </div>
-            {enrichError && (
+            {!isOrganic && enrichError && (
               <div className="notice bad" role="alert" style={{ marginBottom: 12 }}>
                 {isAr ? 'تعذّر تحميل إعلانات: ' : 'Ads failed to load for: '}{enrichError}
                 <button
@@ -1637,6 +1757,19 @@ export default function CampaignDetailPage() {
                   className="btn btn-sm"
                   style={{ marginInlineStart: 10 }}
                   onClick={() => void enrich(executions)}
+                >
+                  {isAr ? 'إعادة المحاولة' : 'Try again'}
+                </button>
+              </div>
+            )}
+            {isOrganic && pubError && (
+              <div className="notice bad" role="alert" style={{ marginBottom: 12 }}>
+                {isAr ? 'تعذّر تحميل أرقام النشر لـ: ' : 'Publication numbers failed to load for: '}{pubError}
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  style={{ marginInlineStart: 10 }}
+                  onClick={() => void enrichOrganic(content)}
                 >
                   {isAr ? 'إعادة المحاولة' : 'Try again'}
                 </button>
@@ -1657,10 +1790,22 @@ export default function CampaignDetailPage() {
                         <th style={{ width: 60 }}>{isAr ? 'الرقم' : 'Ref'}</th>
                         <th>{isAr ? 'المحتوى' : 'Content'}</th>
                         <th style={{ width: 80 }}>{isAr ? 'النوع' : 'Type'}</th>
-                        <th style={{ width: 170 }}>{isAr ? 'يعمل في' : 'Runs in'}</th>
-                        <th className="num" style={{ width: 82 }}>{isAr ? 'أُنفق' : 'Spent'}</th>
-                        <th className="num" style={{ width: 64 }}>{isAr ? 'عملاء' : 'Leads'}</th>
-                        <th className="num" style={{ width: 70 }}>{isAr ? 'مؤهلون' : 'Qualified'}</th>
+                        <th style={{ width: 170 }}>
+                          {isOrganic ? (isAr ? 'نُشر في' : 'Published on') : (isAr ? 'يعمل في' : 'Runs in')}
+                        </th>
+                        {isOrganic ? (
+                          <>
+                            <th className="num" style={{ width: 82 }}>{isAr ? 'المشاهدات' : 'Impressions'}</th>
+                            <th className="num" style={{ width: 64 }}>{isAr ? 'التفاعل' : 'Engagement'}</th>
+                            <th className="num" style={{ width: 70 }}>{isAr ? 'استفسارات' : 'Enquiries'}</th>
+                          </>
+                        ) : (
+                          <>
+                            <th className="num" style={{ width: 82 }}>{isAr ? 'أُنفق' : 'Spent'}</th>
+                            <th className="num" style={{ width: 64 }}>{isAr ? 'عملاء' : 'Leads'}</th>
+                            <th className="num" style={{ width: 70 }}>{isAr ? 'مؤهلون' : 'Qualified'}</th>
+                          </>
+                        )}
                         <th style={{ width: 110 }}>{isAr ? 'الحالة' : 'Status'}</th>
                         <th style={{ width: 60 }} />
                       </tr>
@@ -1681,14 +1826,30 @@ export default function CampaignDetailPage() {
                             <td><span className="tag">{typeLabel(s.row.content_type_key)}</span></td>
                             <td>
                               {s.waiting
-                                ? <span className="tag tag-t">{isAr ? 'في الانتظار' : 'Waiting'}</span>
+                                ? (
+                                  <span className="tag tag-t">
+                                    {isOrganic
+                                      ? (isAr ? 'لم يُنشر بعد' : 'Not published')
+                                      : (isAr ? 'في الانتظار' : 'Waiting')}
+                                  </span>
+                                )
                                 : s.platforms.map((p) => (
                                     <span key={p} className="tag" style={{ marginInlineEnd: 4 }}>{pname(p)}</span>
                                   ))}
                             </td>
-                            <td className="num">{num(s.spend === null ? null : Math.round(s.spend), isAr)}</td>
-                            <td className="num">{num(s.leads, isAr)}</td>
-                            <td className="num">{num(s.qualified, isAr)}</td>
+                            {isOrganic ? (
+                              <>
+                                <td className="num">{num(s.impressions, isAr)}</td>
+                                <td className="num">{num(s.engagement, isAr)}</td>
+                                <td className="num">{num(s.enquiries, isAr)}</td>
+                              </>
+                            ) : (
+                              <>
+                                <td className="num">{num(s.spend === null ? null : Math.round(s.spend), isAr)}</td>
+                                <td className="num">{num(s.leads, isAr)}</td>
+                                <td className="num">{num(s.qualified, isAr)}</td>
+                              </>
+                            )}
                             <td>
                               {s.row.id === bestContentId ? (
                                 <Pill tone="go">{isAr ? 'الأفضل' : 'Best'}</Pill>
@@ -1699,7 +1860,7 @@ export default function CampaignDetailPage() {
                               ) : s.watch ? (
                                 <Pill tone="wait">{isAr ? 'مراقبة' : 'Watching'}</Pill>
                               ) : (
-                                <Pill tone="now">{isAr ? 'يعمل' : 'Running'}</Pill>
+                                <Pill tone="now">{isOrganic ? (isAr ? 'منشور' : 'Live') : (isAr ? 'يعمل' : 'Running')}</Pill>
                               )}
                             </td>
                             <td onClick={(e) => e.stopPropagation()}>
@@ -1899,29 +2060,29 @@ export default function CampaignDetailPage() {
                       <>
                         <b style={{ color: 'var(--go)' }}>{isAr ? 'لا فجوة.' : 'No gap.'}</b>{' '}
                         {isAr
-                          ? `الحملة على الوتيرة المطلوبة — المعدل الحالي ${num(dailyRate, true)} مؤهلًا يوميًا.`
-                          : `The campaign is on the required pace — the current rate is ${num(dailyRate, false)} qualified per day.`}
+                          ? `الحملة على الوتيرة المطلوبة — المعدل الحالي ${num(dailyRate, true)} ${goalUnitAr} يوميًا.`
+                          : `The campaign is on the required pace — the current rate is ${num(dailyRate, false)} ${goalUnitEn} per day.`}
                       </>
                     ) : days.left === 0 ? (
                       <>
                         <b style={{ color: 'var(--late)' }}>
-                          {isAr ? `الفجوة ${num(gap, true)} مؤهلًا.` : `The gap is ${num(gap, false)} qualified.`}
+                          {isAr ? `الفجوة ${num(gap, true)} ${goalUnitAr}.` : `The gap is ${num(gap, false)} ${goalUnitEn}.`}
                         </b>{' '}
                         {isAr
-                          ? `انتهت المدة عند ${num(qualified, true)} من ${num(target, true)}.`
-                          : `The window closed at ${num(qualified, false)} of ${num(target, false)}.`}
+                          ? `انتهت المدة عند ${num(goalProgress, true)} من ${num(target, true)}.`
+                          : `The window closed at ${num(goalProgress, false)} of ${num(target, false)}.`}
                       </>
                     ) : (
                       <>
                         <b style={{ color: 'var(--late)' }}>
-                          {isAr ? `الفجوة ${num(gap, true)} مؤهلًا.` : `The gap is ${num(gap, false)} qualified.`}
+                          {isAr ? `الفجوة ${num(gap, true)} ${goalUnitAr}.` : `The gap is ${num(gap, false)} ${goalUnitEn}.`}
                         </b>{' '}
                         {isAr
-                          ? <>لبلوغ الهدف يلزم {num(needDaily, true)} مؤهلًا يوميًا في الأيام الـ{num(days.left, true)} المتبقية، والمعدل الحالي {num(dailyRate, true)}.{' '}
+                          ? <>لبلوغ الهدف يلزم {num(needDaily, true)} {goalUnitAr} يوميًا في الأيام الـ{num(days.left, true)} المتبقية، والمعدل الحالي {num(dailyRate, true)}.{' '}
                               {needDaily !== null && dailyRate !== null && needDaily > 2 * dailyRate
                                 ? <>الهدف <b>غير قابل للتحقيق</b> بهذه الميزانية — والقرار الآن بين رفع الميزانية أو تعديل الهدف، لا انتظار نهاية الشهر.</>
                                 : <>الهدف <b>ما زال ممكنًا</b> — إن ارتفعت الوتيرة الآن، لا في الأسبوع الأخير.</>}</>
-                          : <>Reaching the target needs {num(needDaily, false)} qualified per day over the remaining {days.left} days; the current rate is {num(dailyRate, false)}.{' '}
+                          : <>Reaching the target needs {num(needDaily, false)} {goalUnitEn} per day over the remaining {days.left} days; the current rate is {num(dailyRate, false)}.{' '}
                               {needDaily !== null && dailyRate !== null && needDaily > 2 * dailyRate
                                 ? <>The target is <b>not reachable</b> on this budget — the decision now is raise the budget or amend the target, not wait for month-end.</>
                                 : <>The target is <b>still reachable</b> — if the pace rises now, not in the final week.</>}</>}

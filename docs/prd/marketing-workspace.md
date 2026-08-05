@@ -98,6 +98,22 @@ This workspace answers the three questions the old process could not:
   upload-only (paste-a-link is gone per user request). Pulling an existing library
   row into a piece still works via «سحب من المكتبة».
 - **Cost per lead is computed** from the execution rows, never typed.
+- **A campaign's whole detail screen is organic-vs-paid aware.** `kind` decides
+  what every metric surface shows. A PAID campaign is judged on qualified leads
+  and its content is scored on ad-campaign spend/leads/qualified. An ORGANIC
+  campaign has no ad buys, so: the Ad-campaigns tab, the overview's platform-ad
+  card, and the budget-shift control are hidden; the Content tab's filter reads
+  «كل المنصات» (not «كل الحملات الإعلانية») and lists the platforms the content
+  was **published** to; and the content table swaps its أُنفق/عملاء/مؤهلون
+  columns for **المشاهدات / التفاعل / استفسارات** (impressions / engagement /
+  enquiries). Those organic numbers are summed **from each linked item's
+  publications** (`mos_publication_v` latest reading per publication), because
+  the campaign rollup (`mos_campaign_v.total_impressions`) only counts
+  ad-campaign impressions — of which an organic campaign has none. The «مقابل
+  الهدف» pace card, the projection sentence and the results-gap verdict likewise
+  count reach («مشاهدة») instead of qualified leads for an organic campaign.
+  «الأفضل أداءً» is most-impressions (tie → most engagement) for organic, most-
+  qualified (tie → cheapest) for paid.
 - **A campaign is judged by one or more success measures**, each picked from a
   managed registry (`mos_measure_types`, four presets seeded) or defined inline.
   A measure carries a **direction** (higher/lower is better → "or more"/"or less"
