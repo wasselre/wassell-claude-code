@@ -223,6 +223,23 @@ const SURFACES = [
 type SurfaceKey = (typeof SURFACES)[number];
 type SurfaceLevel = 'full' | 'read' | 'hidden';
 
+/** The notification channels a step may permit; AND-ed with each role's grid. */
+const NOTIFY_CHANNELS = ['inapp', 'push', 'whatsapp'] as const;
+type NotifyChannel = (typeof NOTIFY_CHANNELS)[number];
+
+/**
+ * Normalize a raw `notify_channels` value from jsonb into a clean, deduped
+ * subset of the three known channels. Absent / non-array → all three (the
+ * legacy default: the role grid alone decides).
+ */
+function channelsOf(raw: unknown): NotifyChannel[] {
+  if (!Array.isArray(raw)) return [...NOTIFY_CHANNELS];
+  const out = NOTIFY_CHANNELS.filter((c) => (raw as unknown[]).includes(c));
+  // An explicitly empty array is a real state (step permits nothing); only an
+  // absent/garbage value falls back to "all three".
+  return out;
+}
+
 /** A role-path step as stored in workflows.metadata->'steps'. */
 interface StepDef {
   key: string;
@@ -236,6 +253,10 @@ interface StepDef {
   creates_revision: boolean;
   required_fields: string[];
   required_files: string[];
+  /** Whether opening this step fires a notification at all. */
+  notify: boolean;
+  /** Channels this step permits (AND-ed with each recipient's role settings). */
+  notify_channels: NotifyChannel[];
 }
 
 /** Defensive read of metadata.steps — metadata is jsonb, so nothing is guaranteed. */
@@ -259,6 +280,9 @@ function stepsOf(metadata: unknown): StepDef[] {
       creates_revision: r.creates_revision === true,
       required_fields: Array.isArray(r.required_fields) ? (r.required_fields as unknown[]).map(String) : [],
       required_files: Array.isArray(r.required_files) ? (r.required_files as unknown[]).map(String) : [],
+      // Absent on legacy rows → notify on, all channels (the original behavior).
+      notify: r.notify !== false,
+      notify_channels: 'notify_channels' in r ? channelsOf(r.notify_channels) : [...NOTIFY_CHANNELS],
     });
   }
   return out;
@@ -436,6 +460,8 @@ function mapStepDefs(workflowId: string, steps: StepDef[]): Array<Record<string,
     required_files: s.required_files,
     require_note_on_reject: s.require_note_on_reject,
     creates_revision: s.creates_revision,
+    notify: s.notify,
+    notify_channels: s.notify_channels,
   }));
 }
 
@@ -466,11 +492,17 @@ interface NotifyArgs {
   bodyAr?: string | null;
   bodyEn?: string | null;
   url?: string | null;
+  /**
+   * Per-step channel mask (subset of inapp/push/whatsapp). When present it is
+   * AND-ed with each recipient's role grid inside notify_emit — a step narrows,
+   * never widens. Omit for the role-grid-only behavior every other caller wants.
+   */
+  channels?: NotifyChannel[];
 }
 
 async function emitNotify(sb: SupabaseClient, args: NotifyArgs): Promise<void> {
   try {
-    const { error } = await sb.rpc('notify_emit', {
+    const params: Record<string, unknown> = {
       p_workspace: 'marketing',
       p_event: args.event,
       // roles.key is mos_*-prefixed; the API speaks in stripped keys.
@@ -481,7 +513,13 @@ async function emitNotify(sb: SupabaseClient, args: NotifyArgs): Promise<void> {
       p_body_ar: args.bodyAr ?? null,
       p_body_en: args.bodyEn ?? null,
       p_url: args.url ?? null,
-    });
+    };
+    // Only the per-step path passes a mask. Omitting p_channels entirely (rather
+    // than sending null) lets the four role-grid-only callers resolve against
+    // either notify_emit signature, so they never depend on this feature's
+    // migration having landed first; the mask itself needs the 10-arg version.
+    if (args.channels) params.p_channels = args.channels;
+    const { error } = await sb.rpc('notify_emit', params);
     // A failed emission is logged, never thrown: the content advance, the
     // shoot delivery or the campaign save that triggered it already committed,
     // and a lost notification must not read as a lost business write.
@@ -493,6 +531,32 @@ async function emitNotify(sb: SupabaseClient, args: NotifyArgs): Promise<void> {
     // to the business write.
     console.error('[marketing-os] notify_emit threw', args.event, e);
   }
+}
+
+/**
+ * Resolve a pinned step's notification gate + permitted channels from the
+ * version the task was opened under. workflow_versions.definition snapshots
+ * metadata.steps, so an in-flight record keeps the notification rules it
+ * started with. Anything missing (legacy version, deleted step, read error) →
+ * notify on, all channels: the engine's original behavior.
+ */
+async function resolveStepNotify(
+  sb: SupabaseClient,
+  versionId: string | null,
+  stepKey: string | null,
+): Promise<{ notify: boolean; channels: NotifyChannel[] }> {
+  const fallback = { notify: true, channels: [...NOTIFY_CHANNELS] as NotifyChannel[] };
+  if (!versionId || !stepKey) return fallback;
+  const res = await sb.from('workflow_versions')
+    .select('definition').eq('id', versionId).maybeSingle();
+  if (res.error) {
+    console.error('[marketing-os] step-notify version read failed', res.error.code, res.error.message);
+    return fallback;
+  }
+  if (!res.data) return fallback;
+  const def = (res.data as { definition?: unknown }).definition;
+  const step = stepsOf((def as { metadata?: unknown } | null)?.metadata).find((s) => s.key === stepKey);
+  return step ? { notify: step.notify, channels: step.notify_channels } : fallback;
 }
 
 /**
@@ -1099,34 +1163,49 @@ export default async function handler(req: Request): Promise<Response> {
         // a submit/approval opens the following step. done=true opens nothing.
         if (payload.opened_task_id) {
           const nt = await sb.from('workflow_role_tasks')
-            .select('role_key, assignee_user_id').eq('id', payload.opened_task_id).maybeSingle();
+            .select('role_key, assignee_user_id, workflow_version_id, step_key')
+            .eq('id', payload.opened_task_id).maybeSingle();
           if (nt.error) {
             console.error('[marketing-os] next-task read for notification failed',
               nt.error.code, nt.error.message);
           } else if (nt.data) {
-            const next = nt.data as { role_key: string; assignee_user_id: string | null };
-            const itemTitle = ((full.data as { title?: string } | null)?.title) ?? '';
-            await emitNotify(sb, result === 'changes_requested'
-              ? {
-                  event: 'changes_requested',
-                  roles: [next.role_key],
-                  users: next.assignee_user_id ? [next.assignee_user_id] : [],
-                  titleAr: 'أُعيد العمل بتعديلات',
-                  titleEn: 'Changes requested',
-                  bodyAr: `«${itemTitle}» — ${note ?? ''}`,
-                  bodyEn: itemTitle,
-                  url: `/m/content/${contentId}?tab=tasks`,
-                }
-              : {
-                  event: 'task_assigned',
-                  roles: [next.role_key],
-                  users: next.assignee_user_id ? [next.assignee_user_id] : [],
-                  titleAr: 'فُتحت لك مهمة',
-                  titleEn: 'A task was assigned to you',
-                  bodyAr: `«${itemTitle}» بانتظار خطوتك.`,
-                  bodyEn: itemTitle,
-                  url: `/m/content/${contentId}?tab=tasks`,
-                });
+            const next = nt.data as {
+              role_key: string;
+              assignee_user_id: string | null;
+              workflow_version_id: string | null;
+              step_key: string | null;
+            };
+            // The step that just became active decides whether — and on which
+            // channels — its owner is interrupted. `notify: false` opens the
+            // task silently (it still shows in «my work»); otherwise the step's
+            // permitted channels are AND-ed with the recipient's role grid.
+            const notifyCfg = await resolveStepNotify(sb, next.workflow_version_id, next.step_key);
+            if (notifyCfg.notify) {
+              const itemTitle = ((full.data as { title?: string } | null)?.title) ?? '';
+              await emitNotify(sb, result === 'changes_requested'
+                ? {
+                    event: 'changes_requested',
+                    roles: [next.role_key],
+                    users: next.assignee_user_id ? [next.assignee_user_id] : [],
+                    titleAr: 'أُعيد العمل بتعديلات',
+                    titleEn: 'Changes requested',
+                    bodyAr: `«${itemTitle}» — ${note ?? ''}`,
+                    bodyEn: itemTitle,
+                    url: `/m/content/${contentId}?tab=tasks`,
+                    channels: notifyCfg.channels,
+                  }
+                : {
+                    event: 'task_assigned',
+                    roles: [next.role_key],
+                    users: next.assignee_user_id ? [next.assignee_user_id] : [],
+                    titleAr: 'فُتحت لك مهمة',
+                    titleEn: 'A task was assigned to you',
+                    bodyAr: `«${itemTitle}» بانتظار خطوتك.`,
+                    bodyEn: itemTitle,
+                    url: `/m/content/${contentId}?tab=tasks`,
+                    channels: notifyCfg.channels,
+                  });
+            }
           }
         }
 
@@ -3721,6 +3800,11 @@ export default async function handler(req: Request): Promise<Response> {
             creates_revision: s.creates_revision === true,
             required_fields: Array.isArray(s.required_fields) ? (s.required_fields as unknown[]).map(String) : [],
             required_files: Array.isArray(s.required_files) ? (s.required_files as unknown[]).map(String) : [],
+            // Notification gate + permitted channels. Absent → notify on, all
+            // channels (legacy default). An explicit empty channel array is a
+            // real state kept verbatim (the step permits nothing).
+            notify: s.notify !== false,
+            notify_channels: 'notify_channels' in s ? channelsOf(s.notify_channels) : [...NOTIFY_CHANNELS],
           });
         }
 

@@ -23,7 +23,8 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useAppStore } from '@/stores/appStore';
 import {
-  MosPathRole, ROLE_LABELS, StepDef, WorkflowDef, saveWorkflow,
+  MosPathRole, NotificationChannel, ROLE_LABELS, STEP_NOTIFY_CHANNELS, StepDef,
+  WorkflowDef, saveWorkflow,
 } from '@/lib/marketingOS/client';
 import { Empty, PageHead, Pill } from './kit';
 import { IconBack, IconForward, IconPlus } from './icons';
@@ -37,6 +38,33 @@ const APPROVAL_KINDS: Array<{ key: NonNullable<StepDef['approval_kind']>; ar: st
   { key: 'process',  ar: 'اعتماد إجرائي', en: 'Process approval' },
   { key: 'budget',   ar: 'توقيع ميزانية', en: 'Budget signature' },
 ];
+
+const CHANNELS: Array<{ key: NotificationChannel; ar: string; en: string }> = [
+  { key: 'inapp',    ar: 'داخل التطبيق', en: 'In-app' },
+  { key: 'push',     ar: 'إشعار الجوال', en: 'Push' },
+  { key: 'whatsapp', ar: 'واتساب',        en: 'WhatsApp' },
+];
+
+/**
+ * Fill the notification fields on a step that may predate them (legacy rows in
+ * metadata.steps have neither). Absent → notify on, all channels: the same
+ * default the server applies, so the editor and the engine agree.
+ */
+function withNotifyDefaults(s: StepDef): StepDef {
+  return {
+    ...s,
+    notify: s.notify ?? true,
+    notify_channels: Array.isArray(s.notify_channels) ? s.notify_channels : [...STEP_NOTIFY_CHANNELS],
+  };
+}
+
+/** A compact «داخل التطبيق · واتساب» summary of a step's permitted channels. */
+function channelSummary(step: StepDef, isAr: boolean): string {
+  if (!step.notify) return isAr ? 'بلا إشعار' : 'no alert';
+  const on = CHANNELS.filter((c) => step.notify_channels.includes(c.key));
+  if (on.length === 0) return isAr ? 'بلا قناة' : 'no channel';
+  return on.map((c) => (isAr ? c.ar : c.en)).join(isAr ? ' · ' : ' · ');
+}
 
 const Grip = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h8M8 12h8M8 18h8" /></svg>
@@ -74,10 +102,17 @@ function ConsequenceLines({ steps, index, isAr }: { steps: StepDef[]; index: num
   const prev = steps[index - 1];
   // noUncheckedIndexedAccess: index always valid at call sites, but guard anyway.
   if (!step) return null;
+  // The «يُشعر» clause now reflects the target step's own notification gate:
+  // a step with notify off opens silently, so the preview says so.
+  const notifyClause = (s: StepDef): string => (
+    s.notify === false
+      ? (isAr ? 'دون إشعار' : 'no notification')
+      : (isAr ? `يُشعر ${roleLabel(s.role_key, true)}` : `${roleLabel(s.role_key, false)} is notified`)
+  );
   const nextLine = next
     ? (isAr
-      ? <>تُفتح الخطوة {num(index + 2, true)} <b>{next.label_ar}</b> · يُشعر {roleLabel(next.role_key, true)}</>
-      : <>step {index + 2} <b>{next.label_en}</b> opens · {roleLabel(next.role_key, false)} is notified</>)
+      ? <>تُفتح الخطوة {num(index + 2, true)} <b>{next.label_ar}</b> · {notifyClause(next)}</>
+      : <>step {index + 2} <b>{next.label_en}</b> opens · {notifyClause(next)}</>)
     : (isAr ? <>يكتمل المسار · يُغلق السجل</> : <>the path completes · the record closes</>);
 
   return (
@@ -94,8 +129,8 @@ function ConsequenceLines({ steps, index, isAr }: { steps: StepDef[]; index: num
             <span>
               {prev
                 ? (isAr
-                  ? <>العودة للخطوة {num(index, true)} <b>{prev.label_ar}</b>{step.creates_revision && ' · تُنشأ مهمة تعديل'} · يُشعر {roleLabel(prev.role_key, true)}</>
-                  : <>back to step {index} <b>{prev.label_en}</b>{step.creates_revision && ' · a revision task is created'} · {roleLabel(prev.role_key, false)} is notified</>)
+                  ? <>العودة للخطوة {num(index, true)} <b>{prev.label_ar}</b>{step.creates_revision && ' · تُنشأ مهمة تعديل'} · {notifyClause(prev)}</>
+                  : <>back to step {index} <b>{prev.label_en}</b>{step.creates_revision && ' · a revision task is created'} · {notifyClause(prev)}</>)
                 : (isAr
                   ? <>تبقى المهمة عند هذه الخطوة{step.creates_revision && ' · تُنشأ مهمة تعديل'}</>
                   : <>the task stays on this step{step.creates_revision && ' · a revision task is created'}</>)}
@@ -226,6 +261,7 @@ function StepRow({
               {' · '}
               {dueLabel(step.due_days, isAr)}
               {step.is_approval ? (isAr ? ' · اعتماد' : ' · approval') : ''}
+              {step.notify ? '' : (isAr ? ' · بلا إشعار' : ' · no alert')}
             </div>
             <span className="m4-chev" aria-hidden="true">{isAr ? '‹' : '›'}</span>
             <div className="rowx m4-desk">
@@ -251,6 +287,12 @@ function StepRow({
                   {step.required_fields.length + step.required_files.length > 0
                     ? [...step.required_fields, ...step.required_files].join(isAr ? '، ' : ', ')
                     : '—'}
+                </div>
+              </div>
+              <div className="cell">
+                <div className="k2">{isAr ? 'الإشعار' : 'Alert'}</div>
+                <div className="v2" style={step.notify ? undefined : { color: 'var(--mute)' }}>
+                  {channelSummary(step, isAr)}
                 </div>
               </div>
             </div>
@@ -382,6 +424,43 @@ function StepRow({
               </div>
             </div>
 
+            <div style={{ marginTop: 13 }}>
+              <div className="lbl" style={{ marginBottom: 6 }}>
+                {isAr ? 'الإشعار عند فتح الخطوة' : 'Notification when the step opens'}
+              </div>
+              <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+                {flag(
+                  isAr ? 'يُرسل إشعارًا' : 'Send a notification',
+                  step.notify,
+                  () => onChange({ ...step, notify: !step.notify }),
+                )}
+              </div>
+              {step.notify && (
+                <>
+                  <div
+                    className="lbl"
+                    style={{ marginTop: 9, marginBottom: 6, color: 'var(--mute)', fontWeight: 400 }}
+                  >
+                    {isAr
+                      ? 'القنوات — تُقيَّد بإعدادات كل دور في «الإشعارات»'
+                      : 'Channels — narrowed by each role’s settings in Notifications'}
+                  </div>
+                  <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+                    {CHANNELS.map((c) => flag(
+                      isAr ? c.ar : c.en,
+                      step.notify_channels.includes(c.key),
+                      () => onChange({
+                        ...step,
+                        notify_channels: step.notify_channels.includes(c.key)
+                          ? step.notify_channels.filter((k) => k !== c.key)
+                          : [...step.notify_channels, c.key],
+                      }),
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
             <ConsequenceLines steps={steps} index={index} isAr={isAr} />
 
             <div style={{ marginTop: 12 }}>
@@ -418,7 +497,7 @@ export default function SettingsWorkflows({
   );
 
   // The draft: the steps being edited, reset whenever the selection changes.
-  const [draft, setDraft] = useState<StepDef[]>(() => selected?.steps.map((s) => ({ ...s })) ?? []);
+  const [draft, setDraft] = useState<StepDef[]>(() => selected?.steps.map(withNotifyDefaults) ?? []);
   const [draftOf, setDraftOf] = useState<string | null>(selected?.id ?? null);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -430,7 +509,7 @@ export default function SettingsWorkflows({
   // Selection changed under us (picker click or fresh save response).
   if (selected && draftOf !== selected.id) {
     setDraftOf(selected.id);
-    setDraft(selected.steps.map((s) => ({ ...s })));
+    setDraft(selected.steps.map(withNotifyDefaults));
     setExpandedKey(null);
   }
 
@@ -478,6 +557,8 @@ export default function SettingsWorkflows({
       creates_revision: false,
       required_fields: [],
       required_files: [],
+      notify: true,
+      notify_channels: [...STEP_NOTIFY_CHANNELS],
     };
     setDraft((ds) => [...ds, next]);
     setExpandedKey(key);
@@ -538,7 +619,7 @@ export default function SettingsWorkflows({
       } else {
         // Re-seed the draft from the server's shape so `dirty` compares equal —
         // the server may normalize key order inside each step object.
-        setDraft(res.workflow.steps.map((s) => ({ ...s })));
+        setDraft(res.workflow.steps.map(withNotifyDefaults));
       }
       addToast(
         isAr

@@ -46,7 +46,24 @@ export interface StepDef {
   creates_revision: boolean;
   required_fields: string[];
   required_files: string[];
+  /**
+   * Whether opening this step interrupts its owning role with a notification.
+   * `false` = the task still opens (it shows in «my work»), but no alert fires.
+   * Absent on legacy rows → treated as `true` (the engine's original behavior).
+   */
+  notify: boolean;
+  /**
+   * Which channels this step is PERMITTED to use. Each is AND-ed with the
+   * recipient's own role settings (Settings → Notifications) — a step can
+   * narrow what a role already allows, never widen it. Absent on legacy rows →
+   * all three (so the role grid alone decides, exactly as before).
+   * `NotificationChannel` = 'inapp' | 'push' | 'whatsapp'.
+   */
+  notify_channels: NotificationChannel[];
 }
+
+/** The channels a step may permit, in the order the editor renders them. */
+export const STEP_NOTIFY_CHANNELS: readonly NotificationChannel[] = ['inapp', 'push', 'whatsapp'];
 
 /** A canonical workflow (kind='role_path') with its current version pinned on. */
 export interface WorkflowDef {
@@ -274,6 +291,10 @@ export interface MosStep {
   required_files?: string[] | null;
   require_note_on_reject?: boolean;
   creates_revision?: boolean;
+  /** See StepDef.notify — the per-step notification gate. */
+  notify?: boolean;
+  /** See StepDef.notify_channels — the per-step permitted channels. */
+  notify_channels?: NotificationChannel[];
 }
 
 export interface MosScene {
@@ -1064,6 +1085,8 @@ export function stepDefToMosStep(workflowId: string, s: StepDef, index: number):
     required_files: s.required_files,
     require_note_on_reject: s.require_note_on_reject,
     creates_revision: s.creates_revision,
+    notify: s.notify,
+    notify_channels: s.notify_channels,
   };
 }
 
@@ -1080,6 +1103,8 @@ export function mosStepToStepDef(s: MosStep): StepDef {
     creates_revision: s.creates_revision ?? false,
     required_fields: s.required_fields ?? [],
     required_files: s.required_files ?? [],
+    notify: s.notify ?? true,
+    notify_channels: s.notify_channels ?? [...STEP_NOTIFY_CHANNELS],
   };
 }
 
