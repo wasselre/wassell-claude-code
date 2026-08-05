@@ -2862,7 +2862,8 @@ export default async function handler(req: Request): Promise<Response> {
         for (const k of ['title', 'kind', 'source', 'project_id', 'file_id', 'url',
                          'thumb_url', 'shot_on', 'tags', 'note',
                          'file_path', 'mime_type', 'size_bytes', 'original_name',
-                         'usage_rights', 'shoot_request_id', 'width_px', 'height_px'] as const) {
+                         'usage_rights', 'shoot_request_id', 'width_px', 'height_px',
+                         'shot_by', 'rights_expiry'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
         if (id) {

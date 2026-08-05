@@ -112,6 +112,12 @@ This workspace answers the three questions the old process could not:
   on `mos_assets` alongside the existing `size_bytes` (byte size ≠ pixel size).
   Duplicate detection (name + byte-size match), skip/keep-both, and loud per-file
   retry all stay. Editing locks once a row is uploading/done.
+- **An existing library item is editable after upload (2026-08-05).** The asset
+  detail page (`AssetDetailPage.tsx`) grew a «تعديل» toggle on its Details rail:
+  with `manage_assets`, title, project, source, «صوّرها» (shot by), shot-on,
+  size (pixel dimensions) and the usage-rights licence all become editable and
+  save through the existing `asset_save` RPC; tags gained a remove (×) alongside
+  add. Previously only add-tag was possible — every other field was read-only.
 - **Cost per lead is computed** from the execution rows, never typed.
 - **A campaign is judged by one or more success measures**, each picked from a
   managed registry (`mos_measure_types`, four presets seeded) or defined inline.

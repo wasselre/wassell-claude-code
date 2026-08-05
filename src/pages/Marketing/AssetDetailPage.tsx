@@ -50,9 +50,15 @@ const LINK_ROLE_LABELS: Record<string, { ar: string; en: string }> = {
   reference: { ar: 'مرجع',  en: 'Reference' },
 };
 
+/** A positive integer, or null for a blank/invalid dimension input. */
+function toDimension(raw: string): number | null {
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 export default function AssetDetailPage() {
   const { assetId } = useParams<{ assetId: string }>();
-  const { isAr, can, projectName, contentTypes } = useWorkspace();
+  const { isAr, can, projectName, projects, contentTypes } = useWorkspace();
   const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
 
@@ -67,6 +73,14 @@ export default function AssetDetailPage() {
   const [addingTag, setAddingTag] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [creating, setCreating] = useState(false);
+  /** «تعديل التفاصيل» — the Details rail flips to an editable form. The backend
+   *  asset_save already accepts every one of these fields on an existing row. */
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<{
+    title: string; project_id: string; source: MosAsset['source'];
+    shot_by: string; shot_on: string; usage_rights: string;
+    width_px: number | null; height_px: number | null;
+  } | null>(null);
 
   const load = useCallback(async () => {
     if (!assetId) return;
@@ -166,6 +180,64 @@ export default function AssetDetailPage() {
       setAsset(res.asset);
       setAddingTag(false);
       setTagDraft('');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeTag = async (t: string): Promise<void> => {
+    if (!asset) return;
+    setBusy(true);
+    try {
+      const res = await saveAsset({ id: asset.id, tags: asset.tags.filter((x) => x !== t) });
+      setAsset(res.asset);
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startEdit = (): void => {
+    if (!asset) return;
+    setDraft({
+      title: asset.title,
+      project_id: asset.project_id ?? '',
+      source: asset.source,
+      shot_by: asset.shot_by ?? '',
+      shot_on: asset.shot_on ?? '',
+      usage_rights: asset.usage_rights ?? '',
+      width_px: asset.width_px ?? null,
+      height_px: asset.height_px ?? null,
+    });
+    setEditing(true);
+  };
+
+  const saveEdit = async (): Promise<void> => {
+    if (!asset || !draft) return;
+    if (!draft.title.trim()) {
+      addToast(isAr ? 'العنوان مطلوب.' : 'A title is required.', 'error');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await saveAsset({
+        id: asset.id,
+        title: draft.title.trim(),
+        project_id: draft.project_id || null,
+        source: draft.source,
+        shot_by: draft.shot_by.trim() || null,
+        shot_on: draft.shot_on || null,
+        usage_rights: draft.usage_rights.trim() || null,
+        width_px: draft.width_px,
+        height_px: draft.height_px,
+      });
+      setAsset(res.asset);
+      setEditing(false);
+      setDraft(null);
+      addToast(isAr ? 'حُفظت التفاصيل.' : 'Details saved.', 'success');
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
@@ -359,36 +431,113 @@ export default function AssetDetailPage() {
             {/* ── rail ────────────────────────────────────────────────── */}
             <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
               <div className="card">
-                <div className="card-h"><h4>{isAr ? 'التفاصيل' : 'Details'}</h4></div>
-                <div className="card-b">
-                  <ReadField label={isAr ? 'المشروع' : 'Project'}>
-                    {asset.project_id ? projectName(asset.project_id) : '—'}
-                  </ReadField>
-                  {asset.shoot_request_id && (
-                    <ReadField label={isAr ? 'التصوير' : 'The shoot'}>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        style={{ color: 'var(--copper)', borderColor: 'transparent', padding: 0 }}
-                        onClick={() => navigate(`/m/shoots/${asset.shoot_request_id}`)}
-                      >
-                        {isAr ? 'فتح طلب التصوير' : 'Open the shoot request'}
+                <div className="card-h">
+                  <h4>{isAr ? 'التفاصيل' : 'Details'}</h4>
+                  {can('manage_assets') && (editing && draft ? (
+                    <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 6 }}>
+                      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setEditing(false); setDraft(null); }}>
+                        {isAr ? 'إلغاء' : 'Cancel'}
                       </button>
-                    </ReadField>
-                  )}
-                  <ReadField label={isAr ? 'صوّرها' : 'Shot by'}>{asset.shot_by ?? '—'}</ReadField>
-                  {asset.shot_on && (
-                    <ReadField label={isAr ? 'صُوِّرت' : 'Shot on'}>{shortDate(asset.shot_on, isAr)}</ReadField>
-                  )}
-                  <ReadField label={isAr ? 'أُضيفت' : 'Added'}>{shortDate(asset.created_at, isAr)}</ReadField>
-                  {asset.width_px != null && asset.height_px != null && asset.width_px > 0 && asset.height_px > 0 && (
-                    <ReadField label={isAr ? 'المقاس' : 'Size'}>
-                      <span className="ltr">{asset.width_px}×{asset.height_px}{isAr ? ' بكسل' : ' px'}</span>
-                    </ReadField>
+                      <button type="button" className="btn btn-p btn-sm" disabled={busy} onClick={() => void saveEdit()}>
+                        {busy ? (isAr ? 'جارٍ…' : 'Saving…') : (isAr ? 'حفظ' : 'Save')}
+                      </button>
+                    </span>
+                  ) : (
+                    <button type="button" className="btn btn-sm" style={{ marginInlineStart: 'auto' }} onClick={startEdit}>
+                      {isAr ? 'تعديل' : 'Edit'}
+                    </button>
+                  ))}
+                </div>
+                <div className="card-b">
+                  {editing && draft ? (
+                    <>
+                      <Field label={isAr ? 'العنوان' : 'Title'}>
+                        <input className="inp" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
+                      </Field>
+                      <Field label={isAr ? 'المشروع' : 'Project'}>
+                        <select className="inp" value={draft.project_id} onChange={(e) => setDraft({ ...draft, project_id: e.target.value })}>
+                          <option value="">{isAr ? 'بدون' : 'None'}</option>
+                          {projects.map((p) => (
+                            <option key={p.id} value={p.id}>{p.project_name ?? p.id.slice(0, 8)}</option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label={isAr ? 'المصدر' : 'Source'}>
+                        <select className="inp" value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value as MosAsset['source'] })}>
+                          {Object.keys(ASSET_SOURCE_LABELS).map((k) => (
+                            <option key={k} value={k}>{isAr ? ASSET_SOURCE_LABELS[k]?.ar : ASSET_SOURCE_LABELS[k]?.en}</option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label={isAr ? 'صوّرها' : 'Shot by'}>
+                        <input className="inp" value={draft.shot_by} onChange={(e) => setDraft({ ...draft, shot_by: e.target.value })} />
+                      </Field>
+                      <Field label={isAr ? 'صُوِّرت' : 'Shot on'}>
+                        <input type="date" className="inp ltr" value={draft.shot_on} onChange={(e) => setDraft({ ...draft, shot_on: e.target.value })} />
+                      </Field>
+                      <Field label={isAr ? 'المقاس (بكسل)' : 'Size (px)'}>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} className="ltr">
+                          <input
+                            className="inp" style={{ width: 82, textAlign: 'center' }} inputMode="numeric"
+                            value={draft.width_px ?? ''} placeholder={isAr ? 'عرض' : 'W'}
+                            onChange={(e) => setDraft({ ...draft, width_px: toDimension(e.target.value) })}
+                          />
+                          <span style={{ color: 'var(--mute)' }}>×</span>
+                          <input
+                            className="inp" style={{ width: 82, textAlign: 'center' }} inputMode="numeric"
+                            value={draft.height_px ?? ''} placeholder={isAr ? 'ارتفاع' : 'H'}
+                            onChange={(e) => setDraft({ ...draft, height_px: toDimension(e.target.value) })}
+                          />
+                        </div>
+                      </Field>
+                    </>
+                  ) : (
+                    <>
+                      <ReadField label={isAr ? 'المشروع' : 'Project'}>
+                        {asset.project_id ? projectName(asset.project_id) : '—'}
+                      </ReadField>
+                      {asset.shoot_request_id && (
+                        <ReadField label={isAr ? 'التصوير' : 'The shoot'}>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            style={{ color: 'var(--copper)', borderColor: 'transparent', padding: 0 }}
+                            onClick={() => navigate(`/m/shoots/${asset.shoot_request_id}`)}
+                          >
+                            {isAr ? 'فتح طلب التصوير' : 'Open the shoot request'}
+                          </button>
+                        </ReadField>
+                      )}
+                      <ReadField label={isAr ? 'صوّرها' : 'Shot by'}>{asset.shot_by ?? '—'}</ReadField>
+                      {asset.shot_on && (
+                        <ReadField label={isAr ? 'صُوِّرت' : 'Shot on'}>{shortDate(asset.shot_on, isAr)}</ReadField>
+                      )}
+                      <ReadField label={isAr ? 'أُضيفت' : 'Added'}>{shortDate(asset.created_at, isAr)}</ReadField>
+                      {asset.width_px != null && asset.height_px != null && asset.width_px > 0 && asset.height_px > 0 && (
+                        <ReadField label={isAr ? 'المقاس' : 'Size'}>
+                          <span className="ltr">{asset.width_px}×{asset.height_px}{isAr ? ' بكسل' : ' px'}</span>
+                        </ReadField>
+                      )}
+                    </>
                   )}
                   <ReadField label={isAr ? 'الوسوم' : 'Tags'}>
                     <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
-                      {asset.tags.map((t) => <span key={t} className="tag">{t}</span>)}
+                      {asset.tags.map((t) => (
+                        <span key={t} className="tag">
+                          {t}
+                          {can('manage_assets') && (
+                            <button
+                              type="button"
+                              onClick={() => void removeTag(t)}
+                              disabled={busy}
+                              aria-label={isAr ? 'إزالة الوسم' : 'Remove tag'}
+                              style={{ marginInlineStart: 4, cursor: 'pointer', background: 'none', border: 'none', color: 'inherit', padding: 0, font: 'inherit' }}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </span>
+                      ))}
                       {can('manage_assets') && !addingTag && (
                         <button type="button" className="tag tag-t" style={{ cursor: 'pointer' }} onClick={() => setAddingTag(true)}>
                           {isAr ? '+ إضافة' : '+ Add'}
@@ -423,7 +572,18 @@ export default function AssetDetailPage() {
                   )}
                 </div>
                 <div className="card-b">
-                  <ReadField label={isAr ? 'الترخيص' : 'Licence'}>{asset.usage_rights ?? '—'}</ReadField>
+                  {editing && draft ? (
+                    <Field label={isAr ? 'الترخيص' : 'Licence'}>
+                      <input
+                        className="inp"
+                        value={draft.usage_rights}
+                        placeholder={isAr ? 'مثال: ملكية كاملة — بلا قيود' : 'e.g. Full ownership — no restrictions'}
+                        onChange={(e) => setDraft({ ...draft, usage_rights: e.target.value })}
+                      />
+                    </Field>
+                  ) : (
+                    <ReadField label={isAr ? 'الترخيص' : 'Licence'}>{asset.usage_rights ?? '—'}</ReadField>
+                  )}
                   {asset.rights_expiry && (
                     <ReadField label={isAr ? 'تنتهي' : 'Expires'}>
                       <span style={{ color: 'var(--wait)', fontWeight: 700 }}>
