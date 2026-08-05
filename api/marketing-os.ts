@@ -181,6 +181,13 @@ const CONTENT_EDITABLE = [
   'target_publish_at', 'due_at', 'data',
 ] as const;
 
+/** The live metric a success measure's target is tracked against (mirrors the
+ *  MosMeasureSource type + the mos_measure_types.source CHECK constraint). */
+const MEASURE_SOURCES: readonly string[] = [
+  'impressions', 'clicks', 'leads', 'qualified',
+  'spend', 'cpl', 'cpl_qualified', 'ctr', 'none',
+];
+
 /**
  * A campaign or content item can link to SEVERAL projects (`project_ids`, a
  * searchable multi-select restricted to Our Projects) while `project_id` is kept
@@ -2107,6 +2114,7 @@ export default async function handler(req: Request): Promise<Response> {
                 label_en: str(o.label_en) ?? '',
                 direction: o.direction === 'lower' ? 'lower' : 'higher',
                 unit: o.unit === 'currency' ? 'currency' : o.unit === 'percent' ? 'percent' : 'count',
+                source: MEASURE_SOURCES.includes(str(o.source) ?? '') ? (str(o.source) as string) : 'none',
                 threshold: numOrNull(o.threshold),
               };
             })
@@ -3829,17 +3837,20 @@ export default async function handler(req: Request): Promise<Response> {
         const raw = (body.measure_type ?? {}) as Record<string, unknown>;
         const id = str(raw.id);
         const patch: Record<string, unknown> = {};
-        for (const k of ['key', 'label_ar', 'label_en', 'direction', 'unit',
+        for (const k of ['key', 'label_ar', 'label_en', 'direction', 'unit', 'source',
                          'sort_order', 'is_active'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
-        // Direction / unit are constrained by the table CHECK; normalize here so
-        // a bad client value fails as a 400 rather than a raw DB error.
+        // Direction / unit / source are constrained by the table CHECKs; normalize
+        // here so a bad client value fails as a 400 rather than a raw DB error.
         if (patch.direction !== undefined && patch.direction !== 'higher' && patch.direction !== 'lower') {
           return jsonError(400, 'direction must be higher or lower');
         }
         if (patch.unit !== undefined && patch.unit !== 'count' && patch.unit !== 'currency' && patch.unit !== 'percent') {
           return jsonError(400, 'unit must be count, currency, or percent');
+        }
+        if (patch.source !== undefined && !MEASURE_SOURCES.includes(patch.source as string) && patch.source !== 'none') {
+          return jsonError(400, 'source is not a valid measure source');
         }
         if (id) {
           // The key is the stable identity snapshotted onto campaigns — never

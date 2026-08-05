@@ -523,6 +523,15 @@ export const fetchMetricsHistory = (publicationId: string) =>
 /** How a measure's target number reads: a bare count, riyals, or a percentage. */
 export type MosMeasureUnit = 'count' | 'currency' | 'percent';
 
+/**
+ * Which LIVE metric a measure's target is tracked against — so «مشاهدات = 200,000»
+ * computes pace against impressions, «مؤهلون = 150» against qualified, etc. `none`
+ * = a descriptive measure with no live actual (target shown, no pace).
+ */
+export type MosMeasureSource =
+  | 'impressions' | 'clicks' | 'leads' | 'qualified'
+  | 'spend' | 'cpl' | 'cpl_qualified' | 'ctr' | 'none';
+
 export interface MosMeasureType {
   id: string;
   key: string;
@@ -530,6 +539,7 @@ export interface MosMeasureType {
   label_en: string;
   direction: 'higher' | 'lower';
   unit: MosMeasureUnit;
+  source: MosMeasureSource;
   is_preset: boolean;
   sort_order: number;
   is_active: boolean;
@@ -547,6 +557,7 @@ export interface MosSuccessMeasure {
   label_en: string;
   direction: 'higher' | 'lower';
   unit: MosMeasureUnit;
+  source: MosMeasureSource;
   threshold: number | null;
 }
 

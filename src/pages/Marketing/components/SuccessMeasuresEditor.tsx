@@ -14,11 +14,28 @@ import { useBilingualLabelAutofill } from '@/hooks/useBilingualLabelAutofill';
 import {
   MosMeasureType,
   MosMeasureUnit,
+  MosMeasureSource,
   MosSuccessMeasure,
   fetchMeasureTypes,
   saveMeasureType,
   successMeasureSuffix,
 } from '@/lib/marketingOS/client';
+
+/** What each source tracks — labels for the new-type picker. */
+const SOURCE_LABELS: Record<MosMeasureSource, { ar: string; en: string }> = {
+  impressions: { ar: 'المشاهدات', en: 'Impressions' },
+  clicks: { ar: 'النقرات', en: 'Clicks' },
+  leads: { ar: 'العملاء المحتملون', en: 'Leads' },
+  qualified: { ar: 'العملاء المؤهلون', en: 'Qualified' },
+  spend: { ar: 'الإنفاق', en: 'Spend' },
+  cpl: { ar: 'تكلفة العميل المحتمل', en: 'Cost per lead' },
+  cpl_qualified: { ar: 'تكلفة العميل المؤهل', en: 'Cost per qualified' },
+  ctr: { ar: 'نسبة النقر', en: 'Click-through rate' },
+  none: { ar: 'بدون تتبّع (هدف فقط)', en: 'No tracking (target only)' },
+};
+const SOURCE_ORDER: MosMeasureSource[] = [
+  'impressions', 'clicks', 'leads', 'qualified', 'spend', 'cpl', 'cpl_qualified', 'ctr', 'none',
+];
 
 /** The in-form row — threshold is a string while it is being typed. */
 export interface MeasureDraft {
@@ -27,6 +44,7 @@ export interface MeasureDraft {
   label_en: string;
   direction: 'higher' | 'lower';
   unit: MosMeasureUnit;
+  source: MosMeasureSource;
   threshold: string;
 }
 
@@ -37,6 +55,7 @@ export function measuresToDrafts(measures: MosSuccessMeasure[] | undefined): Mea
     label_en: m.label_en,
     direction: m.direction,
     unit: m.unit,
+    source: m.source ?? 'none',
     threshold: m.threshold === null || m.threshold === undefined ? '' : String(m.threshold),
   }));
 }
@@ -51,6 +70,7 @@ export function draftsToMeasures(drafts: MeasureDraft[]): MosSuccessMeasure[] {
       label_en: d.label_en,
       direction: d.direction,
       unit: d.unit,
+      source: d.source,
       threshold: d.threshold.trim() === '' ? null : Number(d.threshold),
     }));
 }
@@ -68,6 +88,7 @@ const draftFromType = (t: MosMeasureType, threshold = ''): MeasureDraft => ({
   label_en: t.label_en,
   direction: t.direction,
   unit: t.unit,
+  source: t.source ?? 'none',
   threshold,
 });
 
@@ -88,6 +109,7 @@ export default function SuccessMeasuresEditor({
   const [nEn, setNEn] = useState('');
   const [nDir, setNDir] = useState<'higher' | 'lower'>('higher');
   const [nUnit, setNUnit] = useState<MosMeasureUnit>('count');
+  const [nSource, setNSource] = useState<MosMeasureSource>('none');
   const [savingType, setSavingType] = useState(false);
 
   // Live auto-translate between the two name fields, like the rest of the app:
@@ -141,19 +163,19 @@ export default function SuccessMeasuresEditor({
     const used = new Set(measures.map((m) => m.type_key));
     const next = active.find((t) => !used.has(t.key)) ?? active[0];
     onChange([...measures, next ? draftFromType(next) : {
-      type_key: '', label_ar: '', label_en: '', direction: 'higher', unit: 'count', threshold: '',
+      type_key: '', label_ar: '', label_en: '', direction: 'higher', unit: 'count', source: 'none', threshold: '',
     }]);
   };
 
   const onSelect = (i: number, value: string): void => {
     if (value === NEW) {
       setNewForIndex(i);
-      setNAr(''); setNEn(''); setNDir('higher'); setNUnit('count');
+      setNAr(''); setNEn(''); setNDir('higher'); setNUnit('count'); setNSource('none');
       nameFill.reset('', '');
       return;
     }
     const t = active.find((x) => x.key === value);
-    if (t) patchRow(i, { type_key: t.key, label_ar: t.label_ar, label_en: t.label_en, direction: t.direction, unit: t.unit });
+    if (t) patchRow(i, { type_key: t.key, label_ar: t.label_ar, label_en: t.label_en, direction: t.direction, unit: t.unit, source: t.source ?? 'none' });
   };
 
   const createType = async (i: number): Promise<void> => {
@@ -171,6 +193,7 @@ export default function SuccessMeasuresEditor({
         label_en: nEn.trim(),
         direction: nDir,
         unit: nUnit,
+        source: nSource,
         sort_order: types.length + 10,
         is_active: true,
       });
@@ -178,7 +201,7 @@ export default function SuccessMeasuresEditor({
       const created = res.measure_types.find((t) => t.key === key);
       if (created) patchRow(i, {
         type_key: created.key, label_ar: created.label_ar, label_en: created.label_en,
-        direction: created.direction, unit: created.unit,
+        direction: created.direction, unit: created.unit, source: created.source ?? 'none',
       });
       setNewForIndex(-1);
       addToast(isAr ? 'أُضيف نوع المعيار.' : 'Measure type added.', 'success');
@@ -287,6 +310,20 @@ export default function SuccessMeasuresEditor({
                     </button>
                   </div>
                 </div>
+                <label style={{ display: 'grid', gap: 4 }}>
+                  <span className="lbl" style={{ fontSize: 11 }}>
+                    {isAr ? 'يتتبّع (المصدر الفعلي للأرقام)' : 'Tracks (the live actual)'}
+                  </span>
+                  <select
+                    className="inp"
+                    value={nSource}
+                    onChange={(e) => setNSource(e.target.value as MosMeasureSource)}
+                  >
+                    {SOURCE_ORDER.map((s) => (
+                      <option key={s} value={s}>{isAr ? SOURCE_LABELS[s].ar : SOURCE_LABELS[s].en}</option>
+                    ))}
+                  </select>
+                </label>
                 <div style={{ display: 'flex', gap: 9 }}>
                   <button type="button" className="btn btn-p btn-sm" onClick={() => void createType(i)} disabled={savingType}>
                     {savingType ? (isAr ? 'جارٍ الإضافة…' : 'Adding…') : (isAr ? 'إضافة النوع' : 'Add type')}
