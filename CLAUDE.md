@@ -138,6 +138,14 @@ document_jobs     — queue for the templated-PDF generation worker (see "Docume
 listing_mirror_settings — kill switch + optional photo cap for the listing-photo mirror (see "Listing photo mirror")
 ```
 
+## Database migrations — apply them yourself (added 2026-08-05)
+
+**Standing rule from the user: NEVER ask whether to apply a migration — always apply it yourself.** When you write a migration under `supabase/migrations/`, apply it to the live database in the same session via the Supabase MCP (`apply_migration` against the `wassell-prod` project), then confirm it landed. Do not stop at "the migration must be applied" or "want me to apply it?" — that ask is exactly what the user has told us not to do.
+
+- This **overrides** any older "ask the user to run it" wording elsewhere in this file (e.g. the frozen-model migration template below).
+- Prefer backward-compatible migrations so applying early (before the code PR merges) is safe; call out explicitly if a migration is NOT backward-compatible and would break the currently-deployed code, but still apply it — don't withhold it pending a question.
+- After applying, verify (query the changed object / run the migration's own validation) and report what landed with proof, same as any other change.
+
 ## Frozen models (added 2026-05-05)
 
 Every model can be **frozen** — promoted from a JSONB row in the unified `records` table to its own physical Postgres table with proper typed columns + junction tables for multi-value fields + subtables for `table` fields. One-way action triggered from the Builder UI.
