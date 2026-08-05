@@ -103,6 +103,28 @@ This workspace answers the three questions the old process could not:
   ("الرابط يكفي…") through 2026-08-04 AM, then briefly upload-or-link; it is now
   upload-only (paste-a-link is gone per user request). Pulling an existing library
   row into a piece still works via «سحب من المكتبة».
+- **Project media auto-registers into the library — "link, don't copy" (2026-08-05).**
+  A photo or brochure attached to a project record (`all_projects` / `our_projects`
+  / `targeted_projects`) lived only as a `files` row in the private `wassel-files`
+  bucket, invisible to the marketing library — so the same image got uploaded
+  twice, once per system. Now an AFTER trigger on `files`
+  (`files_autoregister_library`, migration `2026-08-05_library_link_project_media.sql`)
+  registers it in the library by **referencing the same `files` row**
+  (`mos_assets.file_id`) — **no second copy** — and records the usage in the new
+  **`mos_asset_record_links`** table. The registration is a `SECURITY DEFINER` RPC
+  (`mos_register_record_file`) so it works even when the uploader (e.g. a sales
+  user) lacks `manage_assets`; a unique index on `mos_assets.file_id` guarantees
+  one library asset per underlying file. The library resolves a **signed URL** for
+  these private-bucket assets on read (`/api/files/sign-view-url`), so nothing
+  becomes public. The asset page gains a **«مرتبطة بمشاريع»** card listing the
+  project records the media belongs to (deep-linking `/model/<name>/<id>`), and
+  `asset_detail` returns `used_in_records`. Historical files are consolidated by
+  the operator-run `scripts/backfill-library-from-records.mjs` (dry-run by default;
+  reports byte-identical duplicate copies across the two systems and **deletes
+  nothing**). Scope is project photos + brochures only — units and other records
+  are excluded in v1. v1 limitation: the link is keyed off where the file was
+  uploaded (`files.record_id`), so re-picking the same file into a *different*
+  project does not auto-link the reuse.
 - **Cost per lead is computed** from the execution rows, never typed.
 - **A campaign's whole detail screen is organic-vs-paid aware.** `kind` decides
   what every metric surface shows. A PAID campaign is judged on qualified leads
@@ -215,7 +237,8 @@ This workspace answers the three questions the old process could not:
 
 - **Reads/writes:** `mos_content`, `mos_tasks`, `mos_scenes`, `mos_publications`,
   `mos_metric_snapshots`, `mos_campaigns`, `mos_campaign_executions`,
-  `mos_assets`, `mos_asset_links`, `mos_shoot_requests`, `mos_shoot_items`,
+  `mos_assets`, `mos_asset_links`, `mos_asset_record_links`, `mos_shoot_requests`,
+  `mos_shoot_items`,
   `mos_comments`, `mos_role_grants`, `mos_content_types`, `mos_measure_types`,
   `mos_audiences`, `mos_workflows`,
   `mos_workflow_steps`, `mos_platform_accounts`, `mos_ref_counters`.

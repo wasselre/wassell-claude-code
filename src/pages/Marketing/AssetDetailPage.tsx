@@ -15,9 +15,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosApiError, MosAsset, MosAssetUsage,
-  archiveAsset, bulkAssets, deleteAsset, fetchAssetDetail, saveAsset,
+  ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosApiError, MosAsset, MosAssetRecordUsage,
+  MosAssetUsage, archiveAsset, bulkAssets, deleteAsset, fetchAssetDetail, saveAsset,
 } from '@/lib/marketingOS/client';
+import { signViewUrl } from '@/lib/files/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, ReadField, Skeleton } from './components/kit';
 import { IconLibrary, IconPlus } from './components/icons';
@@ -50,6 +51,13 @@ const LINK_ROLE_LABELS: Record<string, { ar: string; en: string }> = {
   reference: { ar: 'مرجع',  en: 'Reference' },
 };
 
+/** The project models a library asset can be linked to (screen 22 «مرتبطة بمشاريع»). */
+const PROJECT_MODEL_LABELS: Record<string, { ar: string; en: string }> = {
+  all_projects:      { ar: 'كل المشاريع',        en: 'All projects' },
+  our_projects:      { ar: 'مشاريعنا',           en: 'Our projects' },
+  targeted_projects: { ar: 'المشاريع المستهدفة', en: 'Targeted projects' },
+};
+
 export default function AssetDetailPage() {
   const { assetId } = useParams<{ assetId: string }>();
   const { isAr, can, projectName, contentTypes } = useWorkspace();
@@ -58,6 +66,10 @@ export default function AssetDetailPage() {
 
   const [asset, setAsset] = useState<MosAsset | null>(null);
   const [usedIn, setUsedIn] = useState<MosAssetUsage[]>([]);
+  const [usedInRecords, setUsedInRecords] = useState<MosAssetRecordUsage[]>([]);
+  /** Signed URL for a library asset that references a private `files` object
+   *  (the "link, don't copy" case) — resolved on demand, never stored. */
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [versions, setVersions] = useState<Array<{ id: string; title: string; created_at: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +88,7 @@ export default function AssetDetailPage() {
       const res = await fetchAssetDetail(assetId);
       setAsset(res.asset);
       setUsedIn(res.used_in);
+      setUsedInRecords(res.used_in_records);
       setVersions(res.versions);
       setBlocked(null);
     } catch (e) {
@@ -86,6 +99,25 @@ export default function AssetDetailPage() {
   }, [assetId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // A file_id-backed asset (registered from a project record) lives in the
+  // private `files` bucket — resolve a signed URL for preview/download. An
+  // asset uploaded straight to the library already carries a public `url`.
+  useEffect(() => {
+    if (!asset) { setResolvedUrl(null); return; }
+    if (asset.url) { setResolvedUrl(asset.url); return; }
+    if (!asset.file_id) { setResolvedUrl(null); return; }
+    let alive = true;
+    void signViewUrl(asset.file_id)
+      .then((r) => { if (alive) setResolvedUrl(r.url); })
+      .catch((e: unknown) => {
+        // Not fatal — metadata + usage still render; only the preview is
+        // unavailable (e.g. the viewer lacks access to the underlying file).
+        console.error('[marketing] signed url for library asset failed', e);
+        if (alive) setResolvedUrl(null);
+      });
+    return () => { alive = false; };
+  }, [asset]);
 
   const liveAds = useMemo(() => usedIn.filter((u) => u.live_ad), [usedIn]);
   const inUse = usedIn.length > 0;
@@ -204,8 +236,8 @@ export default function AssetDetailPage() {
           </span>
         )}
       >
-        {asset?.url && (
-          <a className="btn btn-d" href={asset.url} target="_blank" rel="noreferrer" download>
+        {resolvedUrl && (
+          <a className="btn btn-d" href={resolvedUrl} target="_blank" rel="noreferrer" download>
             {isAr ? 'تنزيل' : 'Download'}
           </a>
         )}
@@ -237,10 +269,10 @@ export default function AssetDetailPage() {
             {/* ── main column ─────────────────────────────────────────── */}
             <div style={{ display: 'grid', gap: 16 }}>
               <div className="pr-preview">
-                {asset.kind === 'video' && asset.url ? (
-                  <video src={asset.url} controls preload="metadata" />
-                ) : (asset.kind === 'photo' || asset.kind === 'design') && (asset.url || asset.thumb_url) ? (
-                  <img src={asset.url ?? asset.thumb_url ?? undefined} alt={asset.title} />
+                {asset.kind === 'video' && resolvedUrl ? (
+                  <video src={resolvedUrl} controls preload="metadata" />
+                ) : (asset.kind === 'photo' || asset.kind === 'design') && resolvedUrl ? (
+                  <img src={resolvedUrl} alt={asset.title} />
                 ) : (
                   <div className="pr-play" aria-hidden="true">
                     {asset.kind === 'video'
@@ -296,6 +328,41 @@ export default function AssetDetailPage() {
                   </div>
                 )}
               </div>
+
+              {/* «مرتبطة بمشاريع» — the "link, don't copy" back-reference: which
+                  project records this photo/brochure is attached to. */}
+              {usedInRecords.length > 0 && (
+                <div className="card">
+                  <div className="card-h">
+                    <h4>{isAr ? 'مرتبطة بمشاريع' : 'Linked to projects'}</h4>
+                    <span className="r">
+                      {isAr ? `${num(usedInRecords.length, true)} سجل` : `${usedInRecords.length} records`}
+                    </span>
+                  </div>
+                  <div className="tbl-wrap">
+                    <table className="tbl">
+                      <tbody>
+                        {usedInRecords.map((r) => {
+                          const label = r.model_name
+                            ? (isAr ? PROJECT_MODEL_LABELS[r.model_name]?.ar : PROJECT_MODEL_LABELS[r.model_name]?.en) ?? r.model_name
+                            : '';
+                          const to = r.model_name ? `/model/${r.model_name}/${r.record_id}` : null;
+                          return (
+                            <tr
+                              key={r.record_id}
+                              className={to ? 'click' : undefined}
+                              onClick={to ? () => navigate(to) : undefined}
+                            >
+                              <td className="ttl">{r.title || (isAr ? 'سجل' : 'Record')}</td>
+                              <td style={{ width: 160 }}>{label && <span className="tag">{label}</span>}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* «النسخ» — the original is never edited; crops become versions. */}
               <div className="card">

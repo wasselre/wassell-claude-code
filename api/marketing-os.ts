@@ -3015,9 +3015,66 @@ export default async function handler(req: Request): Promise<Response> {
           // Deterministic: by content title, then role.
           .sort((a, b) => a.title.localeCompare(b.title) || a.role.localeCompare(b.role));
 
+        // Project/record usage — the "link, don't copy" back-reference
+        // (2026-08-05). A file attached to a project record registers here, so
+        // the library shows which project/unit a photo or brochure belongs to.
+        const recLinks = await sb.from('mos_asset_record_links')
+          .select('model_id, record_id, role').eq('asset_id', assetId);
+        const recLinksFail = dbFail(recLinks.error);
+        if (recLinksFail) return recLinksFail;
+        const recLinkRows = (recLinks.data ?? []) as unknown as Array<{
+          model_id: string | null; record_id: string; role: string;
+        }>;
+        let usedInRecords: Array<{
+          model_id: string | null; model_name: string | null;
+          record_id: string; title: string; role: string;
+        }> = [];
+        if (recLinkRows.length > 0) {
+          const modelIds = Array.from(new Set(
+            recLinkRows.map((r) => r.model_id).filter((m): m is string => Boolean(m)),
+          ));
+          const recordIds = Array.from(new Set(recLinkRows.map((r) => r.record_id)));
+          const [modelsRes, recsRes] = await Promise.all([
+            modelIds.length > 0
+              ? sb.from('models').select('id, name').in('id', modelIds)
+              : Promise.resolve({ data: [] as unknown[], error: null }),
+            // security_invoker view — records the caller cannot see resolve to no
+            // title (the link still renders with the model label + id).
+            sb.from('unified_records').select('id, data').in('id', recordIds),
+          ]);
+          const mf = dbFail(modelsRes.error) ?? dbFail(recsRes.error);
+          if (mf) return mf;
+          const nameByModel = new Map(
+            ((modelsRes.data ?? []) as unknown as Array<{ id: string; name: string }>)
+              .map((m) => [m.id, m.name] as const),
+          );
+          const dataByRecord = new Map(
+            ((recsRes.data ?? []) as unknown as Array<{ id: string; data: Record<string, unknown> }>)
+              .map((r) => [r.id, r.data] as const),
+          );
+          const pickTitle = (d: Record<string, unknown> | undefined): string => {
+            if (!d) return '';
+            for (const k of ['project_name', 'name', 'title', 'unit_name', 'label']) {
+              const v = d[k];
+              if (typeof v === 'string' && v.trim()) return v.trim();
+            }
+            return '';
+          };
+          usedInRecords = recLinkRows
+            .map((r) => ({
+              model_id: r.model_id,
+              model_name: r.model_id ? nameByModel.get(r.model_id) ?? null : null,
+              record_id: r.record_id,
+              title: pickTitle(dataByRecord.get(r.record_id)),
+              role: r.role,
+            }))
+            .sort((a, b) => (a.title || a.record_id).localeCompare(b.title || b.record_id));
+        }
+
         return jsonOk({
           asset: asset.data,
           used_in: usedIn,
+          used_in_records: usedInRecords,
           versions: versions.data ?? [],
           publications_using: pubsCount.count ?? 0,
         });
