@@ -68,6 +68,18 @@ const asString = (v: unknown): string => (typeof v === 'string' ? v : '');
 const asList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
+/** A content-library row as the picker consumes it — content_list decorates the
+ *  base row with a preview thumbnail (its final cut's image) + that asset's kind. */
+type PickerRow = MosContentRow & { thumb_url?: string | null; preview_kind?: string | null };
+
+/** Fallback tint for a content item's thumbnail box, keyed by content type. */
+const TYPE_BG: Record<string, string> = {
+  video: 'linear-gradient(135deg,#4A4E54,#6B4226)',
+  post: 'linear-gradient(135deg,#8E6A4F,#B8734F)',
+  carousel: 'linear-gradient(135deg,#7A5C86,#A6482A)',
+  story: 'linear-gradient(135deg,#3F6B52,#5A6570)',
+};
+
 /** The muted order index that replaces the old approval radio on each headline row. */
 const idxBadge = {
   flex: '0 0 auto', minWidth: 16, textAlign: 'center' as const,
@@ -121,28 +133,60 @@ function NewHeadlineRow({
  * text. Stores the chosen content item's id; a legacy free-text value that
  * matches no item still renders verbatim so nothing already written is lost.
  */
+/** The thumbnail box for one library row — the item's preview image, or a
+ *  type-tinted placeholder when the piece has no linked cut yet. */
+function RefThumb({ row, isAr, size = 46 }: { row: PickerRow; isAr: boolean; size?: number }) {
+  const bg = TYPE_BG[row.content_type_key] ?? 'var(--sand)';
+  return (
+    <span
+      style={{
+        flex: `0 0 ${size}px`, width: size, height: size, borderRadius: 8, overflow: 'hidden',
+        background: bg, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        color: '#fff', fontSize: 10, fontWeight: 700, textAlign: 'center', lineHeight: 1.2,
+      }}
+    >
+      {row.thumb_url
+        ? <img src={row.thumb_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        : (isAr ? row.content_type_label_ar : row.content_type_label_en)}
+    </span>
+  );
+}
+
 function ReferencePicker({
-  value, contentList, currentId, loadError, loading, isAr, onChange,
+  value, contentList, currentId, loadError, loading, isAr, projectName, onChange,
 }: {
   value: string;
-  contentList: MosContentRow[];
+  contentList: PickerRow[];
   currentId: string;
   loadError: string | null;
   loading: boolean;
   isAr: boolean;
+  projectName: (id: string | null | undefined) => string;
   onChange: (v: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  const [typeKey, setTypeKey] = useState('');   // '' = all types
+  const [projectId, setProjectId] = useState(''); // '' = all projects
 
   const selected = contentList.find((c) => c.id === value) ?? null;
-  const label = (c: MosContentRow): string => `${c.ref ? `${c.ref} — ` : ''}${c.title}`;
+  const label = (c: PickerRow): string => `${c.ref ? `${c.ref} — ` : ''}${c.title}`;
   // Selected item → its label; legacy non-id text → itself; nothing → empty.
   const display = selected ? label(selected) : value;
 
+  const pool = contentList.filter((c) => c.id !== currentId);
+
+  // Filter facets built from what the data actually holds, so no empty option
+  // ever shows — the same discipline as the content list's own filters.
+  const types = Array.from(
+    new Map(pool.map((c) => [c.content_type_key, isAr ? c.content_type_label_ar : c.content_type_label_en])).entries(),
+  );
+  const projectIds = Array.from(new Set(pool.flatMap((c) => c.project_ids ?? []).filter(Boolean)));
+
   const term = q.trim().toLowerCase();
-  const options = contentList
-    .filter((c) => c.id !== currentId)
+  const options = pool
+    .filter((c) => !typeKey || c.content_type_key === typeKey)
+    .filter((c) => !projectId || (c.project_ids ?? []).includes(projectId))
     .filter((c) => !term || `${c.ref ?? ''} ${c.title}`.toLowerCase().includes(term));
 
   return (
@@ -152,12 +196,16 @@ function ReferencePicker({
           type="button"
           className="inp"
           style={{
-            flex: 1, textAlign: isAr ? 'right' : 'left', fontSize: 13, cursor: 'pointer',
+            flex: 1, display: 'flex', alignItems: 'center', gap: 8,
+            textAlign: isAr ? 'right' : 'left', fontSize: 13, cursor: 'pointer',
             color: display ? 'var(--copper)' : 'var(--mute)',
           }}
           onClick={() => setOpen(true)}
         >
-          {display || (isAr ? 'اختر من مكتبة المحتوى…' : 'Pick from the content library…')}
+          {selected && <RefThumb row={selected} isAr={isAr} size={22} />}
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {display || (isAr ? 'اختر من مكتبة المحتوى…' : 'Pick from the content library…')}
+          </span>
         </button>
         {value && (
           <button type="button" style={delBtn} onClick={() => onChange('')} aria-label={isAr ? 'إزالة المرجع' : 'Clear reference'}>
@@ -180,6 +228,38 @@ function ReferencePicker({
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
+
+          {/* Filters — type chips + a project select, drawn only from what the
+              list actually contains. */}
+          {(types.length > 1 || projectIds.length > 1) && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+              {types.length > 1 && types.map(([key, lbl]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`tag${typeKey === key ? '' : ' tag-t'}`}
+                  style={{ cursor: 'pointer', border: 0 }}
+                  onClick={() => setTypeKey((cur) => (cur === key ? '' : key))}
+                >
+                  {lbl}
+                </button>
+              ))}
+              {projectIds.length > 1 && (
+                <select
+                  className="inp"
+                  style={{ width: 'auto', fontSize: 12.5, padding: '4px 8px', marginInlineStart: 'auto' }}
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                >
+                  <option value="">{isAr ? 'كل المشاريع' : 'All projects'}</option>
+                  {projectIds.map((pid) => (
+                    <option key={pid} value={pid}>{projectName(pid)}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
           {loadError && (
             <div className="notice" style={{ marginBottom: 10 }}>
               {isAr ? 'تعذّر تحميل المحتوى: ' : 'Could not load content: '}{loadError}
@@ -196,24 +276,31 @@ function ReferencePicker({
                 {isAr ? 'لا محتوى مطابق.' : 'No matching content.'}
               </div>
             )}
-            {options.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className={`opt${c.id === value ? ' pick' : ''}`}
-                style={{ ...rowCentered, width: '100%', cursor: 'pointer', textAlign: isAr ? 'right' : 'left' }}
-                onClick={() => { onChange(c.id); setOpen(false); }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="tx">{c.title}</div>
-                  <div className="mt">
-                    {c.ref ? <span className="ltr">{c.ref}</span> : null}
-                    {c.ref ? ' · ' : ''}
-                    {isAr ? c.content_type_label_ar : c.content_type_label_en}
+            {options.map((c) => {
+              const proj = (c.project_ids ?? [])[0];
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={`opt${c.id === value ? ' pick' : ''}`}
+                  style={{ ...rowCentered, gap: 10, width: '100%', cursor: 'pointer', textAlign: isAr ? 'right' : 'left' }}
+                  onClick={() => { onChange(c.id); setOpen(false); }}
+                >
+                  <RefThumb row={c} isAr={isAr} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="tx" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {c.title}
+                    </div>
+                    <div className="mt">
+                      {c.ref ? <span className="ltr">{c.ref}</span> : null}
+                      {c.ref ? ' · ' : ''}
+                      {isAr ? c.content_type_label_ar : c.content_type_label_en}
+                      {proj ? ` · ${projectName(proj)}` : ''}
+                    </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         </Modal>
       )}
@@ -222,19 +309,21 @@ function ReferencePicker({
 }
 
 export default function WritingFields({
-  contentId, schema, data, canEdit, isAr, onSaved,
+  contentId, schema, data, canEdit, isAr, projectName, onSaved,
 }: {
   contentId: string;
   schema: string[];
   data: Record<string, unknown>;
   canEdit: boolean;
   isAr: boolean;
+  /** Resolve an Our-Projects id to its display name — powers the picker's project filter. */
+  projectName: (id: string | null | undefined) => string;
   onSaved: (data: Record<string, unknown>) => void;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
-  const [contentList, setContentList] = useState<MosContentRow[]>([]);
+  const [contentList, setContentList] = useState<PickerRow[]>([]);
   const [refLoadError, setRefLoadError] = useState<string | null>(null);
   const [refLoading, setRefLoading] = useState(false);
 
@@ -737,6 +826,7 @@ export default function WritingFields({
                   loadError={refLoadError}
                   loading={refLoading}
                   isAr={isAr}
+                  projectName={projectName}
                   onChange={(v) => set('design_reference', v)}
                 />
               </div>

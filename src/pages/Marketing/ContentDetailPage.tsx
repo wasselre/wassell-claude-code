@@ -644,6 +644,7 @@ export default function ContentDetailPage() {
                 data={item.data ?? {}}
                 canEdit={canEditNow}
                 isAr={isAr}
+                projectName={projectName}
                 onSaved={(data) => setItem({ ...item, data })}
               />
               {/* Screen 29, phone 2: on the phone the scenes render as a

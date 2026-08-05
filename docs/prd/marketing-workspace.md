@@ -60,7 +60,9 @@ This workspace answers the three questions the old process could not:
   do that job — and the old `approved_headline` / `slides` keys are ignored if
   present in older records.) The design brief's **Reference** is a *pick from the
   content library* — the existing post/video this design should take after — not
-  free text.
+  free text. The picker browses the whole library (thumbnail preview per item —
+  the piece's final cut, or a type-tinted placeholder), searchable by ref/title
+  and filterable by content type and project.
 - **One publication row per platform** — never a multi-select. Each platform
   carries its own caption, time, link and result.
 - **Publishing is manual by decision.** `can_publish` defaults FALSE and nothing

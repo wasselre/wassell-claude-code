@@ -808,8 +808,23 @@ export default async function handler(req: Request): Promise<Response> {
         const pubs = ids.length > 0
           ? await sb.from('mos_publications').select('content_id, platform').in('content_id', ids)
           : { data: [] as Array<{ content_id: string; platform: string }>, error: null };
-        const fail2 = dbFail(camps.error) ?? dbFail(pubs.error);
+        // A preview THUMBNAIL for each item — its FINAL cut's image, falling back
+        // to a source/reference asset that actually has a thumb. Powers the
+        // reference chooser (screen 08) and any thumbnailed content list. Two
+        // batched reads, never per-row; RLS applies, so an unreadable asset is
+        // simply omitted (the item shows a typed placeholder instead).
+        const links = ids.length > 0
+          ? await sb.from('mos_asset_links').select('content_id, asset_id, role').in('content_id', ids)
+          : { data: [] as Array<{ content_id: string; asset_id: string; role: string }>, error: null };
+        const fail2 = dbFail(camps.error) ?? dbFail(pubs.error) ?? dbFail(links.error);
         if (fail2) return fail2;
+
+        const assetIds = Array.from(new Set((links.data ?? []).map((l) => l.asset_id)));
+        const assetsRes = assetIds.length > 0
+          ? await sb.from('mos_assets').select('id, thumb_url, kind').in('id', assetIds)
+          : { data: [] as Array<{ id: string; thumb_url: string | null; kind: string | null }>, error: null };
+        const fail3 = dbFail(assetsRes.error);
+        if (fail3) return fail3;
 
         const campName = new Map((camps.data ?? []).map((c) => [c.id, c.name]));
         const plats = new Map<string, string[]>();
@@ -818,12 +833,33 @@ export default async function handler(req: Request): Promise<Response> {
           if (p.platform && !arr.includes(p.platform)) arr.push(p.platform);
           plats.set(p.content_id, arr);
         }
+
+        // Choose one preview asset per content: an asset WITH a thumb wins over
+        // one without, and among those the final cut wins over source/reference.
+        const assetById = new Map((assetsRes.data ?? []).map((a) => [a.id, a]));
+        const ROLE_RANK: Record<string, number> = { final: 0, source: 1, reference: 2 };
+        const bestByContent = new Map<string, { thumb: string | null; kind: string | null; score: number }>();
+        for (const l of links.data ?? []) {
+          const a = assetById.get(l.asset_id);
+          if (!a) continue;
+          const score = (a.thumb_url ? 0 : 100) + (ROLE_RANK[l.role] ?? 3);
+          const cur = bestByContent.get(l.content_id);
+          if (!cur || score < cur.score) {
+            bestByContent.set(l.content_id, { thumb: a.thumb_url ?? null, kind: a.kind ?? null, score });
+          }
+        }
+
         return jsonOk({
-          content: rows.map((r) => ({
-            ...r,
-            campaign_name: r.campaign_id ? campName.get(r.campaign_id as string) ?? null : null,
-            platforms: plats.get(r.id as string) ?? [],
-          })),
+          content: rows.map((r) => {
+            const best = bestByContent.get(r.id as string);
+            return {
+              ...r,
+              campaign_name: r.campaign_id ? campName.get(r.campaign_id as string) ?? null : null,
+              platforms: plats.get(r.id as string) ?? [],
+              thumb_url: best?.thumb ?? null,
+              preview_kind: best?.kind ?? null,
+            };
+          }),
         });
       }
 
