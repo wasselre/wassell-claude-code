@@ -69,19 +69,24 @@ This workspace answers the three questions the old process could not:
   for a grouped set, mm:ss for videos), toggles between grid and list, and
   leads with a «لم تُستخدم قط» banner that links to the unused-material screen
   (`/m/library/unused`). Cards open the asset page (`/m/library/:assetId`).
-- **Material intake — upload OR link (2026-08-04).** The «مادة جديدة» (New
-  material) modal on a content piece's Materials tab (`NewAssetModal` in
-  `src/pages/Marketing/components/MaterialsTab.tsx`) now **uploads a file
-  directly** — a drag-drop/click zone streams the bytes browser→`marketing-assets`
-  bucket via `uploadToStorage` (`src/pages/Marketing/lib/upload.ts`, the same
-  engine as the bulk intake queue), with a live percentage, HEIC→JPEG conversion,
-  and auto-detected `kind`/seeded name. The original **link-only** path is kept as
-  the alternative (paste a Drive/anywhere URL; the link input disables once a file
-  is chosen). An uploaded file fills `mos_assets.url` (public URL) +
-  `file_path`/`mime_type`/`size_bytes`/`original_name`; a pasted link fills `url`
-  only. Same `saveAsset`/`mos_assets` persistence either way. The storage write is
-  gated by the `manage_assets` capability (link-only still works for roles without
-  it). Previously the modal was link-only ("الرابط يكفي — لا داعي لنسخ الملف مرتين").
+- **Material intake — direct multi-file upload (2026-08-04).** The «مادة جديدة»
+  (New material) modal on a content piece's Materials tab (`NewAssetModal` in
+  `src/pages/Marketing/components/MaterialsTab.tsx`) **uploads files directly** —
+  a drag-drop/click zone (`multiple`) queues one or MORE files and streams each
+  browser→`marketing-assets` bucket via `uploadToStorage`
+  (`src/pages/Marketing/lib/upload.ts`, the same engine as the bulk intake queue),
+  with per-file progress and HEIC→JPEG conversion. **One `mos_assets` row is
+  created per file** (each linked as role `source`); shared Source/Shot-on/Tags
+  apply to the whole batch, `kind` is the select for a single file and
+  auto-detected per file for a batch, and the name is the field for a single file
+  or each file's own filename for a batch. A per-file failure is surfaced and
+  skipped without sinking the rest (partial success links what succeeded). Each row
+  fills `mos_assets.url` (public URL) + `file_path`/`mime_type`/`size_bytes`/
+  `original_name`. The storage write is gated by the `manage_assets` capability.
+  **The old Drive/anywhere link field was removed** — the modal was link-only
+  ("الرابط يكفي…") through 2026-08-04 AM, then briefly upload-or-link; it is now
+  upload-only (paste-a-link is gone per user request). Pulling an existing library
+  row into a piece still works via «سحب من المكتبة».
 - **Cost per lead is computed** from the execution rows, never typed.
 - **A campaign is judged by one or more success measures**, each picked from a
   managed registry (`mos_measure_types`, four presets seeded) or defined inline.

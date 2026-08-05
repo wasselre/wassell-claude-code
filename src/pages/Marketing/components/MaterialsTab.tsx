@@ -559,10 +559,10 @@ export default function MaterialsTab({
           isAr={isAr}
           projectId={projectId}
           onClose={() => setAdding(false)}
-          onCreated={async (asset) => {
-            setAssets((cur) => [asset, ...cur]);
+          onCreated={async (created) => {
+            setAssets((cur) => [...created, ...cur]);
             setAdding(false);
-            await link(asset.id, 'source');
+            for (const a of created) await link(a.id, 'source');
           }}
         />
       )}
@@ -570,116 +570,137 @@ export default function MaterialsTab({
   );
 }
 
-/** Screen 23 — upload and intake. Upload the file directly (browser → the
- *  marketing-assets bucket, the SAME engine as the intake queue), OR paste a
- *  link if the bytes already live somewhere. */
+/** Screen 23 — upload and intake. Upload one or MORE files directly (browser →
+ *  the marketing-assets bucket, the SAME engine as the intake queue). One
+ *  material row per file; shared source/date/tags apply to the whole batch. */
 export function NewAssetModal({
   isAr, projectId, onClose, onCreated,
 }: {
   isAr: boolean;
   projectId: string | null;
   onClose: () => void;
-  onCreated: (asset: MosAsset) => void | Promise<void>;
+  /** All materials created in this batch — the caller links each as 'source'. */
+  onCreated: (assets: MosAsset[]) => void | Promise<void>;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [title, setTitle] = useState('');
   const [kind, setKind] = useState<MosAsset['kind']>('photo');
   const [source, setSource] = useState<MosAsset['source']>('shoot');
-  const [url, setUrl] = useState('');
   const [shotOn, setShotOn] = useState('');
   const [tags, setTags] = useState('');
   const [busy, setBusy] = useState(false);
-  /** Chosen file to upload (null = link-only, the original behavior). */
-  const [file, setFile] = useState<File | null>(null);
-  /** Upload progress 0..1 while bytes are in flight; null otherwise. */
-  const [uploadPct, setUploadPct] = useState<number | null>(null);
+  /** The files queued for upload — one material row is created per file. */
+  const [files, setFiles] = useState<File[]>([]);
+  /** Which file is uploading now + its 0..1 fraction + how many already done. */
+  const [uploading, setUploading] = useState<{ index: number; frac: number; done: number } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Picking a file auto-detects the kind and seeds the name from the filename
-  // (only when the user hasn't typed one) — same conventions as the intake queue.
-  const pickFile = (f: File | null): void => {
-    setFile(f);
-    if (!f) return;
-    setKind(kindFromFile(f));
-    setTitle((cur) => (cur.trim() ? cur : f.name.replace(/\.[^.]+$/, '')));
+  const single = files.length === 1;
+
+  // Add files (click or drop), de-duped by name+size so a double-pick doesn't
+  // create twins. Seeds kind (+ name, when it's the only file) from the first
+  // file we ever add — same conventions as the intake queue.
+  const addFiles = (list: FileList | File[] | null): void => {
+    const incoming = Array.from(list ?? []);
+    if (incoming.length === 0) return;
+    const wasEmpty = files.length === 0;
+    setFiles((cur) => {
+      const seen = new Set(cur.map((f) => `${f.name}:${f.size}`));
+      const merged = [...cur];
+      for (const f of incoming) {
+        const key = `${f.name}:${f.size}`;
+        if (!seen.has(key)) { seen.add(key); merged.push(f); }
+      }
+      return merged;
+    });
+    if (wasEmpty && incoming[0]) {
+      setKind(kindFromFile(incoming[0]));
+      setTitle((cur) => (cur.trim() ? cur : incoming[0]!.name.replace(/\.[^.]+$/, '')));
+    }
   };
 
+  const removeFile = (idx: number): void => setFiles((cur) => cur.filter((_, i) => i !== idx));
+
   const submit = async (): Promise<void> => {
-    const effectiveTitle = title.trim() || (file ? file.name.replace(/\.[^.]+$/, '') : '');
-    if (!effectiveTitle) {
-      addToast(isAr ? 'اكتب اسمًا للمادة.' : 'Give the material a name.', 'error');
-      return;
-    }
-    if (!file && !url.trim()) {
-      addToast(isAr ? 'ارفع ملفًا أو الصق رابطًا.' : 'Upload a file or paste a link.', 'error');
+    if (files.length === 0) {
+      addToast(isAr ? 'ارفع ملفًا واحدًا على الأقل.' : 'Add at least one file.', 'error');
       return;
     }
     setBusy(true);
+    const created: MosAsset[] = [];
+    let failed = 0;
     try {
-      // Real upload path: browser → marketing-assets bucket (same as intake).
-      // HEIC (iPhone default) is converted first so browsers can render it;
-      // a failed conversion falls back to the original — never a dropped file.
-      let uploaded: { publicUrl: string; path: string; mime: string | null; size: number; original: string } | null = null;
-      if (file) {
-        let toSend = file;
-        if (isHeic(file)) {
-          try {
-            toSend = await heicToJpeg(file);
-          } catch (convErr) {
-            console.error('[marketing] HEIC conversion failed', file.name, convErr);
-          }
-        }
-        setUploadPct(0);
-        const path = storagePath(uuid(), toSend.name);
-        const result = await uploadToStorage(toSend, path, (frac) => setUploadPct(frac));
-        uploaded = {
-          publicUrl: result.publicUrl,
-          path: result.path,
-          mime: toSend.type || null,
-          size: toSend.size,
-          original: file.name,
-        };
-      }
-
-      const res = await saveAsset({
-        title: effectiveTitle,
-        kind,
-        source,
-        project_id: projectId,
-        // An uploaded file's public URL wins; otherwise the pasted link.
-        url: uploaded?.publicUrl ?? (url.trim() || null),
-        thumb_url: uploaded
-          ? (file && isBrowserImage(file) ? uploaded.publicUrl : null)
-          : (url.trim() || null),
-        shot_on: shotOn || null,
-        tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
-        ...(uploaded
-          ? {
-              file_path: uploaded.path,
-              mime_type: uploaded.mime,
-              size_bytes: uploaded.size,
-              original_name: uploaded.original,
+      for (let i = 0; i < files.length; i += 1) {
+        const original = files[i];
+        if (!original) continue;
+        try {
+          // HEIC (iPhone default) is converted first so browsers can render it;
+          // a failed conversion falls back to the original — never a dropped file.
+          let toSend = original;
+          if (isHeic(original)) {
+            try {
+              toSend = await heicToJpeg(original);
+            } catch (convErr) {
+              console.error('[marketing] HEIC conversion failed', original.name, convErr);
             }
-          : {}),
-      });
-      await onCreated(res.asset);
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
+          }
+          setUploading({ index: i, frac: 0, done: created.length });
+          const path = storagePath(uuid(), toSend.name);
+          const result = await uploadToStorage(toSend, path, (frac) =>
+            setUploading((u) => (u ? { ...u, frac } : { index: i, frac, done: created.length })),
+          );
+          // Name: the single-file name field, else each file's own filename.
+          // Kind: the select for a single file, else auto-detected per file.
+          const fileTitle = single
+            ? (title.trim() || original.name.replace(/\.[^.]+$/, ''))
+            : original.name.replace(/\.[^.]+$/, '');
+          const fileKind = single ? kind : kindFromFile(toSend);
+          const res = await saveAsset({
+            title: fileTitle,
+            kind: fileKind,
+            source,
+            project_id: projectId,
+            url: result.publicUrl,
+            thumb_url: isBrowserImage(original) ? result.publicUrl : null,
+            shot_on: shotOn || null,
+            tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+            file_path: result.path,
+            mime_type: toSend.type || null,
+            size_bytes: toSend.size,
+            original_name: original.name,
+          });
+          created.push(res.asset);
+        } catch (e) {
+          // One failed file must not sink the whole batch — surface it, keep going.
+          failed += 1;
+          console.error('[marketing] material upload failed', original.name, e);
+          addToast(`${original.name}: ${e instanceof Error ? e.message : String(e)}`, 'error');
+        }
+      }
+      // Link + close only if at least one succeeded; otherwise keep the modal
+      // open so the user can retry the failures.
+      if (created.length > 0) {
+        if (failed > 0) {
+          addToast(
+            isAr ? `أُضيفت ${created.length}، وتعذّر ${failed}.` : `${created.length} added, ${failed} failed.`,
+            'info',
+          );
+        }
+        await onCreated(created);
+      }
     } finally {
-      setUploadPct(null);
+      setUploading(null);
       setBusy(false);
     }
   };
-
-  const pct = uploadPct === null ? null : Math.round(uploadPct * 100);
 
   return (
     <Modal
       title={isAr ? 'مادة جديدة' : 'New material'}
       sub={isAr
-        ? 'ارفع الملف مباشرة، أو الصق رابطًا إن كان محفوظًا في مكان آخر. الوسوم هي ما يجعل المادة قابلة لإعادة الاستخدام لاحقًا.'
-        : 'Upload the file directly, or paste a link if it already lives elsewhere. The tags are what make it findable for reuse later.'}
+        ? 'ارفع الملفات مباشرة — يمكنك اختيار أكثر من ملف. الوسوم هي ما يجعل المادة قابلة لإعادة الاستخدام لاحقًا.'
+        : 'Upload files directly — you can choose more than one. The tags are what make them findable for reuse later.'}
       onClose={onClose}
       footer={
         <>
@@ -688,103 +709,133 @@ export function NewAssetModal({
           </button>
           <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy}>
             {busy
-              ? pct !== null
-                ? (isAr ? `جارٍ الرفع… ${pct}%` : `Uploading… ${pct}%`)
+              ? uploading
+                ? (isAr
+                    ? `جارٍ الرفع… ${uploading.done + 1}/${files.length} · ${Math.round(uploading.frac * 100)}%`
+                    : `Uploading… ${uploading.done + 1}/${files.length} · ${Math.round(uploading.frac * 100)}%`)
                 : (isAr ? 'جارٍ الحفظ…' : 'Saving…')
-              : isAr ? 'إضافة' : 'Add'}
+              : files.length > 1
+                ? (isAr ? `إضافة ${files.length}` : `Add ${files.length}`)
+                : (isAr ? 'إضافة' : 'Add')}
           </button>
         </>
       }
     >
-      <Field label={isAr ? 'الاسم' : 'Name'}>
-        <input className="inp" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
-      </Field>
+      {/* Name applies only to a single file; a batch names each from its filename. */}
+      {files.length <= 1 && (
+        <Field label={isAr ? 'الاسم' : 'Name'}>
+          <input className="inp" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+        </Field>
+      )}
 
       {/* Upload zone — NOT wrapped in a <label> (Field) so the button/input
-          don't trigger label-click forwarding. Drag-drop or click to pick. */}
+          don't trigger label-click forwarding. Drag-drop or click, multiple. */}
       <div style={{ marginBottom: 13 }}>
         <span className="lbl">
-          {isAr ? 'الملف' : 'File'}
+          {isAr ? 'الملفات' : 'Files'}
           <span style={{ fontWeight: 400, color: 'var(--mute)' }}>
-            {' · '}{isAr ? 'ارفعه مباشرة' : 'upload directly'}
+            {' · '}{isAr ? 'ارفعها مباشرة' : 'upload directly'}
           </span>
         </span>
         <div style={{ marginTop: 6 }}>
           <input
             ref={fileInputRef}
             type="file"
+            multiple
             style={{ display: 'none' }}
             onChange={(e) => {
-              pickFile(e.target.files?.[0] ?? null);
+              addFiles(e.target.files);
               if (fileInputRef.current) fileInputRef.current.value = '';
             }}
           />
-          {!file ? (
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => { if (!busy) fileInputRef.current?.click(); }}
-              onKeyDown={(e) => { if (!busy && (e.key === 'Enter' || e.key === ' ')) fileInputRef.current?.click(); }}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragOver(false);
-                if (!busy) pickFile(e.dataTransfer.files?.[0] ?? null);
-              }}
-              style={{
-                border: `1px dashed ${dragOver ? 'var(--copper)' : 'var(--line)'}`,
-                borderRadius: 10,
-                padding: '18px 12px',
-                textAlign: 'center',
-                color: 'var(--mute)',
-                cursor: busy ? 'default' : 'pointer',
-                background: dragOver ? 'var(--sand-2)' : 'transparent',
-                fontSize: 13,
-              }}
-            >
-              {isAr ? 'اسحب ملفًا هنا أو اضغط للاختيار' : 'Drag a file here, or click to choose'}
-            </div>
-          ) : (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                border: '1px solid var(--line)',
-                borderRadius: 10,
-                padding: '10px 12px',
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {file.name}
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--mute)' }}>{formatBytes(file.size, isAr)}</div>
-                {pct !== null && (
-                  <div style={{ height: 4, borderRadius: 4, background: 'var(--line)', marginTop: 6, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${pct}%`, background: 'var(--copper)', transition: 'width .15s' }} />
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => { if (!busy) fileInputRef.current?.click(); }}
+            onKeyDown={(e) => { if (!busy && (e.key === 'Enter' || e.key === ' ')) fileInputRef.current?.click(); }}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              if (!busy) addFiles(e.dataTransfer.files);
+            }}
+            style={{
+              border: `1px dashed ${dragOver ? 'var(--copper)' : 'var(--line)'}`,
+              borderRadius: 10,
+              padding: '18px 12px',
+              textAlign: 'center',
+              color: 'var(--mute)',
+              cursor: busy ? 'default' : 'pointer',
+              background: dragOver ? 'var(--sand-2)' : 'transparent',
+              fontSize: 13,
+            }}
+          >
+            {isAr ? 'اسحب ملفات هنا أو اضغط للاختيار' : 'Drag files here, or click to choose'}
+          </div>
+
+          {/* Queued files — one material each, with per-file progress on upload. */}
+          {files.length > 0 && (
+            <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+              {files.map((f, i) => {
+                const active = uploading?.index === i;
+                const done = uploading ? i < uploading.index : false;
+                const rowPct = active ? Math.round((uploading?.frac ?? 0) * 100) : null;
+                return (
+                  <div
+                    key={`${f.name}:${f.size}:${i}`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      border: '1px solid var(--line)',
+                      borderRadius: 10,
+                      padding: '8px 12px',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {f.name}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--mute)' }}>
+                        {formatBytes(f.size, isAr)}{done ? (isAr ? ' · تم' : ' · done') : ''}
+                      </div>
+                      {rowPct !== null && (
+                        <div style={{ height: 4, borderRadius: 4, background: 'var(--line)', marginTop: 6, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${rowPct}%`, background: 'var(--copper)', transition: 'width .15s' }} />
+                        </div>
+                      )}
+                    </div>
+                    {!busy && (
+                      <button type="button" className="btn btn-d btn-sm" onClick={() => removeFile(i)}>
+                        {isAr ? 'إزالة' : 'Remove'}
+                      </button>
+                    )}
                   </div>
-                )}
-              </div>
-              {!busy && (
-                <button type="button" className="btn btn-d btn-sm" onClick={() => pickFile(null)}>
-                  {isAr ? 'إزالة' : 'Remove'}
-                </button>
-              )}
+                );
+              })}
             </div>
           )}
         </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
-        <Field label={isAr ? 'النوع' : 'Kind'}>
-          <select className="inp" value={kind} onChange={(e) => setKind(e.target.value as MosAsset['kind'])}>
-            {Object.keys(ASSET_KIND_LABELS).map((k) => (
-              <option key={k} value={k}>{isAr ? ASSET_KIND_LABELS[k]?.ar : ASSET_KIND_LABELS[k]?.en}</option>
-            ))}
-          </select>
-        </Field>
+        {files.length > 1 ? (
+          <div>
+            <span className="lbl">{isAr ? 'النوع' : 'Kind'}</span>
+            <div style={{ marginTop: 6, padding: '9px 0', fontSize: 13, color: 'var(--mute)' }}>
+              {isAr ? 'يُكتشف تلقائيًا لكل ملف' : 'auto-detected per file'}
+            </div>
+          </div>
+        ) : (
+          <Field label={isAr ? 'النوع' : 'Kind'}>
+            <select className="inp" value={kind} onChange={(e) => setKind(e.target.value as MosAsset['kind'])}>
+              {Object.keys(ASSET_KIND_LABELS).map((k) => (
+                <option key={k} value={k}>{isAr ? ASSET_KIND_LABELS[k]?.ar : ASSET_KIND_LABELS[k]?.en}</option>
+              ))}
+            </select>
+          </Field>
+        )}
         <Field label={isAr ? 'المصدر' : 'Source'}>
           <select className="inp" value={source} onChange={(e) => setSource(e.target.value as MosAsset['source'])}>
             {Object.keys(ASSET_SOURCE_LABELS).map((k) => (
@@ -793,12 +844,6 @@ export function NewAssetModal({
           </select>
         </Field>
       </div>
-      <Field
-        label={isAr ? 'الرابط' : 'Link'}
-        hint={file ? (isAr ? 'غير مطلوب مع الرفع' : 'not needed with an upload') : (isAr ? 'درايف أو أي مكان' : 'Drive or anywhere')}
-      >
-        <input className="inp" dir="ltr" value={url} onChange={(e) => setUrl(e.target.value)} disabled={!!file} />
-      </Field>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
         <Field label={isAr ? 'تاريخ التصوير' : 'Shot on'}>
           <input type="date" className="inp" value={shotOn} onChange={(e) => setShotOn(e.target.value)} />
