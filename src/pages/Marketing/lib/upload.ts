@@ -42,6 +42,62 @@ export function formatBytes(bytes: number, isAr: boolean): string {
   return `${n} ${units[u] ?? ''}`;
 }
 
+export interface Dimensions {
+  width: number;
+  height: number;
+}
+
+/**
+ * Read a file's pixel geometry (width × height) in the browser — the "size"
+ * the library records alongside byte size. Images decode into an <img>, videos
+ * report `videoWidth/Height` on `loadedmetadata`. Anything else (audio, PDF,
+ * design source) has no pixel size and resolves null.
+ *
+ * Resolves null (never rejects) on any failure: an un-probeable or corrupt file
+ * is a legitimate "unknown dimensions", NOT an error to surface — the user can
+ * still type the numbers in the intake table. HEIC can't be decoded until it is
+ * converted to JPEG, so it resolves null here and is re-probed post-conversion.
+ */
+export function readDimensions(file: File): Promise<Dimensions | null> {
+  const kind = kindFromFile(file);
+  if (kind === 'photo' && !isHeic(file)) return readImageDimensions(file);
+  if (kind === 'video') return readVideoDimensions(file);
+  return Promise.resolve(null);
+}
+
+function readImageDimensions(file: File): Promise<Dimensions | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const dim = img.naturalWidth > 0 && img.naturalHeight > 0
+        ? { width: img.naturalWidth, height: img.naturalHeight }
+        : null;
+      URL.revokeObjectURL(url);
+      resolve(dim);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+function readVideoDimensions(file: File): Promise<Dimensions | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      const dim = video.videoWidth > 0 && video.videoHeight > 0
+        ? { width: video.videoWidth, height: video.videoHeight }
+        : null;
+      URL.revokeObjectURL(url);
+      resolve(dim);
+    };
+    video.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    video.src = url;
+  });
+}
+
 export interface UploadResult {
   path: string;
   publicUrl: string;

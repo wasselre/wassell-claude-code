@@ -97,10 +97,13 @@ export default function AssetDetailPage() {
     ? (isAr ? ASSET_SOURCE_LABELS[asset.source]?.ar : ASSET_SOURCE_LABELS[asset.source]?.en) ?? asset.source
     : '';
 
-  /** The spec caption — only what is actually known: duration · size. */
+  /** The spec caption — only what is actually known: dimensions · duration · size. */
   const spec = useMemo(() => {
     if (!asset) return '';
     const parts: string[] = [];
+    if (asset.width_px != null && asset.height_px != null && asset.width_px > 0 && asset.height_px > 0) {
+      parts.push(`${asset.width_px}×${asset.height_px}`);
+    }
     if (asset.duration_seconds != null && asset.duration_seconds > 0) parts.push(mmss(asset.duration_seconds, false));
     if (asset.size_bytes != null && asset.size_bytes > 0) parts.push(formatBytes(asset.size_bytes, false));
     return parts.join(' · ');
@@ -378,6 +381,11 @@ export default function AssetDetailPage() {
                     <ReadField label={isAr ? 'صُوِّرت' : 'Shot on'}>{shortDate(asset.shot_on, isAr)}</ReadField>
                   )}
                   <ReadField label={isAr ? 'أُضيفت' : 'Added'}>{shortDate(asset.created_at, isAr)}</ReadField>
+                  {asset.width_px != null && asset.height_px != null && asset.width_px > 0 && asset.height_px > 0 && (
+                    <ReadField label={isAr ? 'المقاس' : 'Size'}>
+                      <span className="ltr">{asset.width_px}×{asset.height_px}{isAr ? ' بكسل' : ' px'}</span>
+                    </ReadField>
+                  )}
                   <ReadField label={isAr ? 'الوسوم' : 'Tags'}>
                     <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
                       {asset.tags.map((t) => <span key={t} className="tag">{t}</span>)}

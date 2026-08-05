@@ -1,7 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-05
 **Related PRDs:** [access-control.md](access-control.md), [marketing-intelligence.md](marketing-intelligence.md), [posts-content.md](posts-content.md), [projects-units.md](projects-units.md), [navigation-layout.md](navigation-layout.md)
 
 ## What it is (in plain English)
@@ -95,6 +95,23 @@ This workspace answers the three questions the old process could not:
   ("الرابط يكفي…") through 2026-08-04 AM, then briefly upload-or-link; it is now
   upload-only (paste-a-link is gone per user request). Pulling an existing library
   row into a piece still works via «سحب من المكتبة».
+- **Bulk library intake — an editable per-file table (screen 23,
+  `UploadPage.tsx`, 2026-08-05).** «إضافة إلى المكتبة» (`/m/library/upload`) drops
+  a whole card at once (files, or whole folders whose names become tags) and
+  streams each browser→bucket with real per-file progress + HEIC→JPEG. The
+  **«ينطبق على الجميع»** panel now sets *batch defaults* (project, shoot, source,
+  shot-on, usage rights, tags), and the queue below it is a **table where every
+  file is editable on its own row**: **title** (defaults to the filename),
+  **project** (each row defaults to «↑ from all» and inherits the batch project,
+  or you pick a different one per file), **tags** (this file's own tags, merged
+  with the batch tags + its folder tags), and **size** — the creative's **pixel
+  dimensions** (width × height), **auto-detected in the browser** from the
+  image/video at add time (`readDimensions` in `lib/upload.ts`; HEIC is re-probed
+  after conversion) and editable. So one project/tag set can apply to all, or each
+  file can differ, without leaving the table. Rows persist `width_px`/`height_px`
+  on `mos_assets` alongside the existing `size_bytes` (byte size ≠ pixel size).
+  Duplicate detection (name + byte-size match), skip/keep-both, and loud per-file
+  retry all stay. Editing locks once a row is uploading/done.
 - **Cost per lead is computed** from the execution rows, never typed.
 - **A campaign is judged by one or more success measures**, each picked from a
   managed registry (`mos_measure_types`, four presets seeded) or defined inline.

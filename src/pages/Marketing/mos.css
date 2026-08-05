@@ -1153,6 +1153,33 @@
   flex: 0 0 auto;
 }
 
+/* ── Upload intake table (screen 23) — per-file editable rows ──────────── */
+.mos-root .up-tbl td {
+  vertical-align: top;
+}
+.mos-root .up-tbl .th {
+  display: grid;
+  place-items: center;
+  background: var(--sand-2);
+  border: 1px solid var(--line-soft);
+  color: var(--mute);
+}
+.mos-root .up-tbl .th svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.7;
+}
+.mos-root .up-tbl .nm {
+  font-size: 12px;
+  font-weight: 700;
+}
+.mos-root .up-tbl .mt {
+  font-size: 10.5px;
+  color: var(--mute);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
 /* ── Comment thread ───────────────────────────────────────────────────── */
 .mos-root .thread {
   display: flex;

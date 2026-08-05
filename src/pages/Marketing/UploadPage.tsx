@@ -12,12 +12,12 @@
  * Files stream browser→storage with real progress; only metadata goes through
  * the endpoint. Photos, videos, audio, PDFs, design files — everything.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import {
-  ASSET_SOURCE_LABELS, MosAsset, MosShootRequest, deliverShoot, fetchAssets,
+  ASSET_SOURCE_LABELS, MosAsset, MosProject, MosShootRequest, deliverShoot, fetchAssets,
   fetchShoots, saveAsset,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
@@ -28,7 +28,7 @@ import {
 import { num } from './lib/format';
 import {
   PickedFile, collectDropped, formatBytes, heicToJpeg, isBrowserImage, isHeic,
-  kindFromFile, storagePath, tagsFromPath, uploadToStorage,
+  kindFromFile, readDimensions, storagePath, tagsFromPath, uploadToStorage,
 } from './lib/upload';
 
 type RowStatus = 'waiting' | 'converting' | 'uploading' | 'done' | 'failed' | 'duplicate' | 'skipped';
@@ -49,6 +49,16 @@ interface Row {
   convertedName: string | null;
   /** Set when conversion failed and the original was uploaded instead. */
   conversionFailed: boolean;
+  /* ── per-file, editable in the intake table ───────────────────────────── */
+  /** This file's asset title. Defaults to the filename (minus extension). */
+  title: string;
+  /** This file's project. '' = inherit «ينطبق على الجميع» at save time. */
+  projectId: string;
+  /** Tags for THIS file only — merged with the batch tags + folder tags. */
+  rowTags: string[];
+  /** Pixel geometry, auto-detected then editable. Null = unknown/not applicable. */
+  width: number | null;
+  height: number | null;
 }
 
 const KIND_LABEL: Record<string, { ar: string; en: string }> = {
@@ -131,46 +141,67 @@ export default function UploadPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const addFiles = useCallback((picked: PickedFile[]) => {
-    const list = picked.filter((p) => p.file.size > 0);
-    if (list.length === 0) return;
-    setRows((cur) => {
-      const seen = new Set(cur.map((r) => `${r.file.name}|${r.file.size}`));
-      const next = [...cur];
-      for (const { file, folderTags } of list) {
-        const key = `${file.name}|${file.size}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const dup = existing.find(
-          (a) => (a.original_name === file.name && a.size_bytes === file.size),
-        );
-        next.push({
-          id: uuid(),
-          file,
-          status: dup ? 'duplicate' : 'waiting',
-          progress: 0,
-          error: null,
-          duplicateOf: dup ? (dup.title || dup.ref || dup.id) : null,
-          previewUrl: isBrowserImage(file) ? URL.createObjectURL(file) : null,
-          assetRef: null,
-          folderTags,
-          convertedName: null,
-          conversionFailed: false,
-        });
-      }
-      return next;
-    });
-  }, [existing]);
+  // Stable so a memoized QueueRow only re-renders the row that actually changed
+  // — a 200-file batter of controlled inputs would jank if every keystroke
+  // re-rendered all rows.
+  const patchRow = useCallback((id: string, patch: Partial<Row>): void =>
+    setRows((cur) => cur.map((r) => (r.id === id ? { ...r, ...patch } : r))), []);
 
-  const patchRow = (id: string, patch: Partial<Row>): void =>
-    setRows((cur) => cur.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-
-  const removeRow = (id: string): void =>
+  const removeRow = useCallback((id: string): void =>
     setRows((cur) => {
       const row = cur.find((r) => r.id === id);
       if (row?.previewUrl) URL.revokeObjectURL(row.previewUrl);
       return cur.filter((r) => r.id !== id);
-    });
+    }), []);
+
+  const skipRow = useCallback((id: string): void => patchRow(id, { status: 'skipped' }), [patchRow]);
+  const keepBothRow = useCallback((id: string): void => patchRow(id, { status: 'waiting', duplicateOf: null }), [patchRow]);
+  const retryRow = useCallback((id: string): void => patchRow(id, { status: 'waiting', error: null }), [patchRow]);
+
+  const addFiles = useCallback((picked: PickedFile[]) => {
+    const list = picked.filter((p) => p.file.size > 0);
+    if (list.length === 0) return;
+    // Dedup against what is already queued (closure `rows`) AND within this
+    // batch — the same folder dropped twice must not double the queue.
+    const seen = new Set(rows.map((r) => `${r.file.name}|${r.file.size}`));
+    const created: Row[] = [];
+    for (const { file, folderTags } of list) {
+      const key = `${file.name}|${file.size}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const dup = existing.find(
+        (a) => (a.original_name === file.name && a.size_bytes === file.size),
+      );
+      created.push({
+        id: uuid(),
+        file,
+        status: dup ? 'duplicate' : 'waiting',
+        progress: 0,
+        error: null,
+        duplicateOf: dup ? (dup.title || dup.ref || dup.id) : null,
+        previewUrl: isBrowserImage(file) ? URL.createObjectURL(file) : null,
+        assetRef: null,
+        folderTags,
+        convertedName: null,
+        conversionFailed: false,
+        title: file.name.replace(/\.[^.]+$/, ''),
+        projectId: '',
+        rowTags: [],
+        width: null,
+        height: null,
+      });
+    }
+    if (created.length === 0) return;
+    setRows((cur) => [...cur, ...created]);
+    // Auto-detect pixel size for each new row (best-effort, async). A null
+    // result is a legitimate "unknown" — the row's inputs stay empty and
+    // editable, never a surfaced error. HEIC is re-probed post-conversion.
+    for (const row of created) {
+      void readDimensions(row.file).then((dim) => {
+        if (dim) patchRow(row.id, { width: dim.width, height: dim.height });
+      });
+    }
+  }, [rows, existing, patchRow]);
 
   const totalBytes = rows.reduce((a, r) => a + r.file.size, 0);
   const uploadable = rows.filter((r) => r.status === 'waiting' || r.status === 'failed');
@@ -185,6 +216,10 @@ export default function UploadPage() {
       // never a dropped file.
       let toSend = row.file;
       let conversionFailed = false;
+      // Track the row's pixel size locally: HEIC couldn't be probed at add
+      // time, so the first readable form is the converted JPEG below.
+      let width = row.width;
+      let height = row.height;
       if (isHeic(row.file)) {
         patchRow(row.id, { status: 'converting' });
         try {
@@ -203,6 +238,14 @@ export default function UploadPage() {
         return;
       }
 
+      // Fill in the pixel size if add-time detection hasn't landed yet (a fast
+      // Start click) or was impossible until now (HEIC → JPEG above). Null stays
+      // null for audio/PDF/design — a legitimate "no pixel size".
+      if (width == null) {
+        const dim = await readDimensions(toSend);
+        if (dim) { width = dim.width; height = dim.height; patchRow(row.id, { width, height }); }
+      }
+
       patchRow(row.id, { status: 'uploading', conversionFailed });
       const path = storagePath(assetId, toSend.name);
       const result = await uploadToStorage(
@@ -212,15 +255,17 @@ export default function UploadPage() {
         signal,
       );
       const kind = kindFromFile(toSend);
-      const title = toSend.name.replace(/\.[^.]+$/, '');
-      // Folder names ride in as tags — Photos/Amenities tagged the file
-      // before anyone typed anything.
-      const allTags = Array.from(new Set([...tags, ...row.folderTags]));
+      // Per-file title, falling back to the filename. Project falls back to the
+      // batch «ينطبق على الجميع» value when the row was left on «inherit».
+      const title = row.title.trim() || toSend.name.replace(/\.[^.]+$/, '');
+      // Three tag sources merge: batch tags (for all), this row's own tags, and
+      // the folder names the file arrived under.
+      const allTags = Array.from(new Set([...tags, ...row.rowTags, ...row.folderTags]));
       const res = await saveAsset({
         title,
         kind,
         source,
-        project_id: projectId || null,
+        project_id: row.projectId || projectId || null,
         url: result.publicUrl,
         thumb_url: isBrowserImage(toSend) ? result.publicUrl : null,
         shot_on: shotOn || null,
@@ -231,6 +276,8 @@ export default function UploadPage() {
         original_name: row.file.name,
         usage_rights: USAGE_RIGHTS.find((r) => r.key === rights)?.[isAr ? 'ar' : 'en'] ?? rights,
         shoot_request_id: shootId || null,
+        width_px: width,
+        height_px: height,
       });
       patchRow(row.id, { status: 'done', progress: 1, assetRef: res.asset.ref });
       successRef.current += 1;
@@ -356,6 +403,11 @@ export default function UploadPage() {
           <div className="card">
             <div className="card-h"><h4>{isAr ? 'ينطبق على الجميع' : 'Applies to all'}</h4></div>
             <div className="card-b" style={{ display: 'grid', gap: 13 }}>
+              <div style={{ fontSize: 11, color: 'var(--mute)', lineHeight: 1.7, marginBottom: -2 }}>
+                {isAr
+                  ? 'قيم افتراضية للدفعة كلها — واستطيع تخصيص المشروع والعنوان والوسوم والمقاس لكل ملف من الجدول.'
+                  : 'Defaults for the whole batch — you can still set the project, title, tags and size per file in the table.'}
+              </div>
               <Field label={isAr ? 'المشروع' : 'Project'}>
                 <select className="inp" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
                   <option value="">{isAr ? 'بدون' : 'None'}</option>
@@ -528,18 +580,36 @@ export default function UploadPage() {
                     <i style={{ width: `${rows.length > 0 ? (doneCount / rows.length) * 100 : 0}%`, background: 'var(--copper)' }} />
                   </div>
 
-                  {rows.map((r) => (
-                    <QueueRow
-                      key={r.id}
-                      row={r}
-                      isAr={isAr}
-                      running={running}
-                      onSkip={() => patchRow(r.id, { status: 'skipped' })}
-                      onKeepBoth={() => patchRow(r.id, { status: 'waiting', duplicateOf: null })}
-                      onRetry={() => patchRow(r.id, { status: 'waiting', error: null })}
-                      onRemove={() => removeRow(r.id)}
-                    />
-                  ))}
+                  <div className="tbl-wrap">
+                    <table className="tbl up-tbl">
+                      <thead>
+                        <tr>
+                          <th>{isAr ? 'الملف' : 'File'}</th>
+                          <th>{isAr ? 'العنوان' : 'Title'}</th>
+                          <th>{isAr ? 'المشروع' : 'Project'}</th>
+                          <th>{isAr ? 'الوسوم' : 'Tags'}</th>
+                          <th className="ltr">{isAr ? 'المقاس (بكسل)' : 'Size (px)'}</th>
+                          <th>{isAr ? 'الحالة' : 'Status'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r) => (
+                          <QueueRow
+                            key={r.id}
+                            row={r}
+                            isAr={isAr}
+                            running={running}
+                            projects={projects}
+                            onPatch={patchRow}
+                            onSkip={skipRow}
+                            onKeepBoth={keepBothRow}
+                            onRetry={retryRow}
+                            onRemove={removeRow}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -576,104 +646,216 @@ export default function UploadPage() {
   );
 }
 
-function QueueRow({
-  row, isAr, running, onSkip, onKeepBoth, onRetry, onRemove,
+/** A positive integer, or null for a blank/invalid dimension input. */
+function toDimension(raw: string): number | null {
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * One intake row — an editable table row. Memoized so a keystroke in one row
+ * (200-file batches are the norm) re-renders only that row: every callback prop
+ * is stable and identified by row id, and `projects` is context-stable.
+ */
+const QueueRow = memo(function QueueRow({
+  row, isAr, running, projects, onPatch, onSkip, onKeepBoth, onRetry, onRemove,
 }: {
   row: Row;
   isAr: boolean;
   running: boolean;
-  onSkip: () => void;
-  onKeepBoth: () => void;
-  onRetry: () => void;
-  onRemove: () => void;
+  projects: MosProject[];
+  onPatch: (id: string, patch: Partial<Row>) => void;
+  onSkip: (id: string) => void;
+  onKeepBoth: (id: string) => void;
+  onRetry: (id: string) => void;
+  onRemove: (id: string) => void;
 }) {
   const kind = kindFromFile(row.file);
   const kindLabel = isAr ? KIND_LABEL[kind]?.ar : KIND_LABEL[kind]?.en;
+  // Metadata is locked once the row is uploading/done; before that it is fully
+  // editable even mid-batch (only the row currently in flight is off-limits).
+  const editable = !running && row.status !== 'done' && row.status !== 'uploading' && row.status !== 'converting';
+  const [tagDraft, setTagDraft] = useState('');
+
+  const addRowTag = (): void => {
+    const t = tagDraft.trim();
+    if (t && !row.rowTags.includes(t)) onPatch(row.id, { rowTags: [...row.rowTags, t] });
+    setTagDraft('');
+  };
 
   return (
-    <div
-      className="file"
+    <tr
       style={{
-        opacity: row.status === 'skipped' ? 0.45 : 1,
-        borderColor:
+        opacity: row.status === 'skipped' ? 0.5 : 1,
+        background:
           row.status === 'duplicate'
-            ? 'color-mix(in srgb, var(--wait) 45%, transparent)'
+            ? 'color-mix(in srgb, var(--wait) 6%, transparent)'
             : row.status === 'failed'
-              ? 'color-mix(in srgb, var(--late) 45%, transparent)'
+              ? 'color-mix(in srgb, var(--late) 6%, transparent)'
               : undefined,
       }}
     >
-      <div className="th">
-        {row.previewUrl
-          ? <img src={row.previewUrl} alt="" />
-          : kind === 'video'
-            ? <IconVideo />
-            : <IconLibrary />}
-      </div>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div className="nm ltr" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {row.file.name}
-          {row.convertedName && <> → {row.convertedName}</>}
-        </div>
-        <div
-          className="mt"
-          style={row.status === 'duplicate' ? { color: 'var(--wait)' } : row.status === 'failed' ? { color: 'var(--late)' } : undefined}
-        >
-          {row.status === 'duplicate' && row.duplicateOf
-            ? isAr
-              ? <>تبدو مطابقة لـ <b>{row.duplicateOf}</b> الموجودة في المكتبة</>
-              : <>Looks identical to <b>{row.duplicateOf}</b> already in the library</>
-            : row.status === 'failed'
-              ? row.error
-              : (
-                <>
-                  {kindLabel} · {formatBytes(row.file.size, isAr)}
-                  {row.convertedName && <> · {isAr ? 'حُوِّلت إلى JPEG' : 'converted to JPEG'}</>}
-                  {row.conversionFailed && (
-                    <span style={{ color: 'var(--wait)' }}>
-                      {' · '}{isAr ? 'تعذّر التحويل — رُفع الأصل' : 'conversion failed — original uploaded'}
-                    </span>
-                  )}
-                  {row.folderTags.length > 0 && <> · {row.folderTags.join(' · ')}</>}
-                  {row.status === 'done' && row.assetRef && <> · <span className="ltr">{row.assetRef}</span></>}
-                </>
-              )}
-        </div>
-        {row.status === 'uploading' && (
-          <div className="meter" style={{ height: 4, marginTop: 6 }}>
-            <i style={{ width: `${row.progress * 100}%`, background: 'var(--copper)' }} />
+      {/* ── the file itself: thumb + name + status/duplicate/error note ── */}
+      <td style={{ minWidth: 220 }}>
+        <div style={{ display: 'flex', gap: 9, alignItems: 'center' }}>
+          <div className="th" style={{ flex: '0 0 auto', width: 40, height: 40, borderRadius: 7, overflow: 'hidden' }}>
+            {row.previewUrl
+              ? <img src={row.previewUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              : kind === 'video' ? <IconVideo /> : <IconLibrary />}
           </div>
-        )}
-      </div>
-      <div className="rt">
-        {row.status === 'done' && (
-          <span className="pill p-go"><IconCheck style={{ width: 10, height: 10 }} /> {isAr ? 'تم' : 'Done'}</span>
-        )}
-        {row.status === 'uploading' && (
-          <span className="pill p-now">{num(Math.round(row.progress * 100), isAr)}{isAr ? '٪' : '%'}</span>
-        )}
-        {row.status === 'converting' && (
-          <span className="pill p-wait">{isAr ? 'تُحوَّل…' : 'Converting…'}</span>
-        )}
-        {row.status === 'waiting' && <span className="pill p-idle">{isAr ? 'انتظار' : 'Waiting'}</span>}
-        {row.status === 'skipped' && <span className="pill p-idle">{isAr ? 'تُخطّي' : 'Skipped'}</span>}
-        {row.status === 'duplicate' && (
-          <>
-            <button type="button" className="btn btn-sm" onClick={onSkip}>{isAr ? 'تخطٍ' : 'Skip'}</button>
-            <button type="button" className="btn btn-sm" onClick={onKeepBoth}>
-              {isAr ? 'احتفظ بالاثنتين' : 'Keep both'}
+          <div style={{ minWidth: 0 }}>
+            <div className="nm ltr" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {row.file.name}
+              {row.convertedName && <> → {row.convertedName}</>}
+            </div>
+            <div
+              className="mt"
+              style={row.status === 'duplicate' ? { color: 'var(--wait)' } : row.status === 'failed' ? { color: 'var(--late)' } : undefined}
+            >
+              {row.status === 'duplicate' && row.duplicateOf
+                ? isAr
+                  ? <>تبدو مطابقة لـ <b>{row.duplicateOf}</b></>
+                  : <>Identical to <b>{row.duplicateOf}</b></>
+                : row.status === 'failed'
+                  ? row.error
+                  : (
+                    <>
+                      {kindLabel} · {formatBytes(row.file.size, isAr)}
+                      {row.convertedName && <> · {isAr ? 'JPEG' : 'JPEG'}</>}
+                      {row.conversionFailed && (
+                        <span style={{ color: 'var(--wait)' }}>
+                          {' · '}{isAr ? 'رُفع الأصل' : 'original uploaded'}
+                        </span>
+                      )}
+                      {row.status === 'done' && row.assetRef && <> · <span className="ltr">{row.assetRef}</span></>}
+                    </>
+                  )}
+            </div>
+            {row.status === 'uploading' && (
+              <div className="meter" style={{ height: 4, marginTop: 5, width: 190 }}>
+                <i style={{ width: `${row.progress * 100}%`, background: 'var(--copper)' }} />
+              </div>
+            )}
+          </div>
+        </div>
+      </td>
+
+      {/* ── title ── */}
+      <td style={{ minWidth: 150 }}>
+        <input
+          className="inp"
+          style={{ padding: '5px 8px', fontSize: 12 }}
+          value={row.title}
+          disabled={!editable}
+          placeholder={row.file.name.replace(/\.[^.]+$/, '')}
+          onChange={(e) => onPatch(row.id, { title: e.target.value })}
+        />
+      </td>
+
+      {/* ── project — '' inherits «ينطبق على الجميع» ── */}
+      <td style={{ minWidth: 150 }}>
+        <select
+          className="inp"
+          style={{ padding: '5px 8px', fontSize: 12 }}
+          value={row.projectId}
+          disabled={!editable}
+          onChange={(e) => onPatch(row.id, { projectId: e.target.value })}
+        >
+          <option value="">{isAr ? '↑ حسب «الجميع»' : '↑ From “all”'}</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>{p.project_name ?? p.id.slice(0, 8)}</option>
+          ))}
+        </select>
+      </td>
+
+      {/* ── tags — this file's own, plus its folder tags as fixed chips ── */}
+      <td style={{ minWidth: 160 }}>
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+          {row.folderTags.map((t) => (
+            <span key={`f-${t}`} className="tag" title={isAr ? 'من اسم المجلد' : 'from folder name'}>{t}</span>
+          ))}
+          {row.rowTags.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="fbtn on"
+              disabled={!editable}
+              onClick={() => onPatch(row.id, { rowTags: row.rowTags.filter((x) => x !== t) })}
+            >
+              {t} <span className="x">×</span>
             </button>
-          </>
-        )}
-        {row.status === 'failed' && (
-          <button type="button" className="btn btn-sm" onClick={onRetry}>{isAr ? 'إعادة المحاولة' : 'Retry'}</button>
-        )}
-        {(row.status === 'waiting' || row.status === 'skipped' || row.status === 'duplicate') && !running && (
-          <button type="button" className="btn btn-d btn-sm" onClick={onRemove} aria-label={isAr ? 'إزالة' : 'Remove'}>
-            <IconTrash />
-          </button>
-        )}
-      </div>
-    </div>
+          ))}
+          {editable && (
+            <input
+              className="fbtn"
+              style={{ borderStyle: 'dashed', minWidth: 58, outline: 'none' }}
+              placeholder={isAr ? '+ وسم' : '+ tag'}
+              value={tagDraft}
+              onChange={(e) => setTagDraft(e.target.value)}
+              onBlur={addRowTag}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRowTag(); } }}
+            />
+          )}
+        </div>
+      </td>
+
+      {/* ── size (pixels): width × height, auto-detected then editable ── */}
+      <td style={{ minWidth: 120 }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }} className="ltr">
+          <input
+            className="inp"
+            style={{ padding: '5px 6px', fontSize: 12, width: 58, textAlign: 'center' }}
+            inputMode="numeric"
+            value={row.width ?? ''}
+            disabled={!editable}
+            placeholder={isAr ? 'عرض' : 'W'}
+            onChange={(e) => onPatch(row.id, { width: toDimension(e.target.value) })}
+          />
+          <span style={{ color: 'var(--mute)' }}>×</span>
+          <input
+            className="inp"
+            style={{ padding: '5px 6px', fontSize: 12, width: 58, textAlign: 'center' }}
+            inputMode="numeric"
+            value={row.height ?? ''}
+            disabled={!editable}
+            placeholder={isAr ? 'ارتفاع' : 'H'}
+            onChange={(e) => onPatch(row.id, { height: toDimension(e.target.value) })}
+          />
+        </div>
+      </td>
+
+      {/* ── status + row actions ── */}
+      <td style={{ minWidth: 110 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          {row.status === 'done' && (
+            <span className="pill p-go"><IconCheck style={{ width: 10, height: 10 }} /> {isAr ? 'تم' : 'Done'}</span>
+          )}
+          {row.status === 'uploading' && (
+            <span className="pill p-now">{num(Math.round(row.progress * 100), isAr)}{isAr ? '٪' : '%'}</span>
+          )}
+          {row.status === 'converting' && (
+            <span className="pill p-wait">{isAr ? 'تُحوَّل…' : 'Converting…'}</span>
+          )}
+          {row.status === 'waiting' && <span className="pill p-idle">{isAr ? 'انتظار' : 'Waiting'}</span>}
+          {row.status === 'skipped' && <span className="pill p-idle">{isAr ? 'تُخطّي' : 'Skipped'}</span>}
+          {row.status === 'duplicate' && (
+            <>
+              <button type="button" className="btn btn-sm" onClick={() => onSkip(row.id)}>{isAr ? 'تخطٍ' : 'Skip'}</button>
+              <button type="button" className="btn btn-sm" onClick={() => onKeepBoth(row.id)}>
+                {isAr ? 'احتفظ بالاثنتين' : 'Keep both'}
+              </button>
+            </>
+          )}
+          {row.status === 'failed' && (
+            <button type="button" className="btn btn-sm" onClick={() => onRetry(row.id)}>{isAr ? 'إعادة' : 'Retry'}</button>
+          )}
+          {(row.status === 'waiting' || row.status === 'skipped' || row.status === 'duplicate') && !running && (
+            <button type="button" className="btn btn-d btn-sm" onClick={() => onRemove(row.id)} aria-label={isAr ? 'إزالة' : 'Remove'}>
+              <IconTrash />
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
   );
-}
+});

@@ -5303,6 +5303,8 @@ CREATE TABLE IF NOT EXISTS public."mos_assets" (
   "original_name" text,
   "usage_rights" text,
   "shoot_request_id" uuid,
+  "width_px" integer,
+  "height_px" integer,
   CONSTRAINT "mos_assets_kind_check" CHECK ((kind = ANY (ARRAY['photo'::text, 'video'::text, 'design'::text, 'audio'::text, 'document'::text]))),
   CONSTRAINT "mos_assets_source_check" CHECK ((source = ANY (ARRAY['shoot'::text, 'design'::text, 'developer'::text, 'stock'::text, 'ugc'::text]))),
   CONSTRAINT "mos_assets_pkey" PRIMARY KEY (id),

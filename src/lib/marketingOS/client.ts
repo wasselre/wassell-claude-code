@@ -681,6 +681,11 @@ export interface MosAsset {
   size_bytes?: number | null;
   original_name?: string | null;
   usage_rights?: string | null;
+  /** Pixel geometry — width × height, auto-detected at upload (screen 23),
+   *  editable per file. Null for audio/PDF/design source and un-probeable
+   *  formats. Distinct from `size_bytes` (the "50 MB" byte size). */
+  width_px?: number | null;
+  height_px?: number | null;
   /** The shoot request whose delivery brought this file in. */
   shoot_request_id?: string | null;
   /** Video runtime, seconds — drives the mm:ss thumb badge (screen 16). */
