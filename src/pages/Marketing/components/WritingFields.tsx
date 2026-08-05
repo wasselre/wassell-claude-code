@@ -122,12 +122,13 @@ function NewHeadlineRow({
  * matches no item still renders verbatim so nothing already written is lost.
  */
 function ReferencePicker({
-  value, contentList, currentId, loadError, isAr, onChange,
+  value, contentList, currentId, loadError, loading, isAr, onChange,
 }: {
   value: string;
   contentList: MosContentRow[];
   currentId: string;
   loadError: string | null;
+  loading: boolean;
   isAr: boolean;
   onChange: (v: string) => void;
 }) {
@@ -185,7 +186,12 @@ function ReferencePicker({
             </div>
           )}
           <div style={{ maxHeight: 360, overflowY: 'auto', display: 'grid', gap: 6 }}>
-            {options.length === 0 && !loadError && (
+            {loading && contentList.length === 0 && !loadError && (
+              <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
+                {isAr ? 'جارٍ تحميل المحتوى…' : 'Loading content…'}
+              </div>
+            )}
+            {options.length === 0 && !loadError && !(loading && contentList.length === 0) && (
               <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
                 {isAr ? 'لا محتوى مطابق.' : 'No matching content.'}
               </div>
@@ -230,6 +236,7 @@ export default function WritingFields({
   const [busy, setBusy] = useState(false);
   const [contentList, setContentList] = useState<MosContentRow[]>([]);
   const [refLoadError, setRefLoadError] = useState<string | null>(null);
+  const [refLoading, setRefLoading] = useState(false);
 
   useEffect(() => { setDraft({ ...data }); }, [data]);
 
@@ -242,13 +249,18 @@ export default function WritingFields({
   const disp = (k: string): string => mosText(str(k), k);
   const set = (k: string, v: unknown): void => setDraft((d) => ({ ...d, [k]: v }));
 
-  // The reference field pulls from the content library. Load it once whenever a
-  // reference field is present — needed in BOTH edit (the picker) and locked
-  // (resolving a stored id to its title) modes.
-  const hasReference = schema.includes('design_reference');
+  // The reference field pulls from the content library. It lives INSIDE the
+  // design-brief card, which renders whenever `design_brief` is in the schema —
+  // `design_reference` / `design_format` are companion keys that need not be
+  // separate schema entries. So load the library whenever that card is present
+  // (or a bare `design_reference` key exists). Needed in BOTH edit (the picker)
+  // and locked (resolving a stored id to its title) modes.
+  const needsContentLibrary =
+    schema.includes('design_brief') || schema.includes('design_reference');
   useEffect(() => {
-    if (!hasReference) return;
+    if (!needsContentLibrary) return;
     let alive = true;
+    setRefLoading(true);
     fetchContentList({ limit: 500 })
       .then((r) => { if (alive) setContentList(r.content); })
       .catch((e) => {
@@ -258,9 +270,10 @@ export default function WritingFields({
         // writing the rest of the brief.
         console.error('[marketing] content library load failed', e);
         setRefLoadError(e instanceof Error ? e.message : String(e));
-      });
+      })
+      .finally(() => { if (alive) setRefLoading(false); });
     return () => { alive = false; };
-  }, [hasReference]);
+  }, [needsContentLibrary]);
 
   const referenceDisplay = (value: string): string => {
     const hit = contentList.find((c) => c.id === value);
@@ -722,6 +735,7 @@ export default function WritingFields({
                   contentList={contentList}
                   currentId={contentId}
                   loadError={refLoadError}
+                  loading={refLoading}
                   isAr={isAr}
                   onChange={(v) => set('design_reference', v)}
                 />
