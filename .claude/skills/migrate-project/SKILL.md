@@ -198,6 +198,53 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   Anthropic spend for the reading. **If a project has no brochure AND its marketing copy lists no amenity
   keywords (the 11 branded/marquee Binghatti projects — Bugatti, Burj Binghatti, Maybach×3, Mercedes-Benz…),
   leave `preferred_amenities` empty and REPORT the gap — never fabricate amenities from the brand name.**
+- **[2026-08-03] MODEL-PLAN → units, done right (never blind-link):** when a developer publishes only a
+  few representative/model floor plans (the common case — verified live: the Almajdiah API returns
+  `chart_file_urls: []` for non-representative units), attach the model plan to units ONLY after analyzing it:
+  (1) **VIEW the plan page** — the GPU OCR garbles Arabic-Indic area digits into repeated glyphs
+  (`٢٥٥٥٥٥…`), but the rendered image is perfectly human-readable, so Read the rendered PNG, don't trust the
+  OCR'd numbers; (2) determine single-model vs multi-model (`SELECT count(distinct bedrooms), unit_type` on
+  the project's units — جزيل = 116 units, all one 4BR تاون هاوس model); (3) for a **single-model** project the
+  model plan is genuinely the right plan for EVERY unit → composite its floors into one image (PIL vertical
+  stack), upload once to `wassel-files`, set `unit_plan`=that file-id on all units; (4) **verify the units'
+  existing `unit_components` MATCH what the plan shows before trusting/adding** — for جزيل they already did
+  (مصعد/غرفة خادمة/ملابس/تراس/فتحة-سماوية/حديقة all present, from the prior API read), so no field change was
+  needed, only the image. For **multi-model** projects, match each model plan to units by (bedrooms + area);
+  never attach a plan whose beds/area don't match the unit. جزيل run 2026-08-03: 116/116 units got the
+  analyzed villa model plan. Script pattern: `scratchpad/ourprojects/jazeel_attach.py`.
+- **[2026-08-03] MULTI-MODEL apartment plans — READ each model's bedroom count by eye (OCR numbers are
+  positionally scrambled):** alajlan/almajdiah apartment brochures publish per-model plans (نموذج A/B or
+  "Two/Three Bedroom model"). The OCR **cannot** be trusted for the bedroom count — the spec numbers come out
+  positionally jumbled (a "Model B 86m²" whose OCR read "غرف نوم 2" was actually 1 bedroom / 2 bathrooms when
+  VIEWED). So render + Read each model page, note its real `غرف نوم` count, then attach that model plan to the
+  units of THAT bedroom count (`bedroom_plan_attach.py {"1":[p13,p14],"2":[p22],...}`; composite same-bedroom
+  models so a unit shows its bedroom's model range). This is the user-approved "generic bedroom-level" plan
+  (the plan is the shared model, not the exact unit). **If a bedroom count has no confidently-identified model
+  plan, LEAVE those units unplanned — never attach a wrong-bedroom plan** (muraba's ~111 3BR units left blank
+  because the 3BR render wasn't locatable in its 33-page brochure). Run 2026-08-03: riv-58 110, loura 37,
+  riv-57 10, nuwar 14, muraba 42 (1&2BR only). Also `propagate_exact_plans.py` fills any unit whose EXACT
+  (beds+area) matches an already-planned unit in the same project (identical layout, zero risk) — 182 units.
+- **[2026-08-03] Plan-work efficiency + exact matches:** (1) **Montage recon** — to find which brochure
+  pages are floor plans without many single-page reads, render all pages as a labeled thumbnail grid (PIL,
+  ~45dpi) and Read the ONE montage; the plan pages are obvious. (2) **Model letter in `block`** — some
+  developers' units carry their model letter in `block` (سدن 51: A1–A24/B1–B42/C1–C4 → models A/B/C) — that's
+  an EXACT per-model match, better than bedroom-level; attach the matching model page by block prefix
+  (`sadn51_attach.py`). (3) **Same-district landmark copy** — a project missing `nearby_landmarks` whose
+  `location.district` EXACTLY equals a sibling's (same developer, same حي) can safely inherit that sibling's
+  landmarks (يمام بارك 14 ← يمام بارك 10, both حي النرجس). Never copy across different districts. (4) **View-only
+  Drive brochures can't be fetched headlessly** (download disabled → plain fetch, usercontent endpoint, AND
+  Browserbase download-capture all fail; the almajdiah units API returns the same Drive link, not a PDF).
+  Those projects (دروازة, أديم الفرسان) need the user to enable download or supply the PDF — report, don't guess.
+- **[2026-08-03] AMENITIES: use the page المميزات, NOT full-brochure keyword scan — the brochure OCR text
+  is too noisy:** keyword-matching amenities over the whole OCR'd brochure produces systematic FALSE
+  positives — `سبا`(spa) ⊂ `السباكة`(plumbing, every brochure's warranty page), `مسجد`/mosque via
+  `جامع` ⊂ `جامعة`(university), and nearby-landmark contamination (`حديقة`(garden) matched
+  `حديقة الملك سلمان` = King Salman *Park*, a landmark not an on-site garden). The clean amenity source is
+  the developer PAGE's المميزات block (curated, on-site). Only apply a brochure-derived amenity when it sits
+  in an explicit "المرافق/Amenities & Facilities" section (e.g. اوتوجراف 21's `بادل (Padel)` + gym/sports —
+  verified, real). When matching Arabic keywords, block a FOLLOWING Arabic letter (`TERM(?![ء-ي])`) so a
+  term can't match as a suffix of a longer word; still not enough for nearby-landmark contamination — hence
+  prefer the page. (`scratchpad/ourprojects/riva_amenities.py` = page-source; `brochure_amenities_all.py` = the noisy full-text one, use sparingly + verify.)
 - **[2026-06-28] Plans:** download each unit plan into the `unit_plan` IMAGE field (real file in
   wassel-files), AND read the plan to extract components + confirm beds/baths. Plan coverage is often
   sparse (developer attaches one plan per layout, not per unit). Propagation policy for the un-planned
@@ -413,6 +460,28 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   Decisions Log. Map: build→`unit_area`, land→`deed_area`, block→`block`, in-block number→`unit_number`,
   `محجوزة`→reserved/`unit_status`, priced→available + `total_price`. SKIP `unit_plan` (per-model only).
   No model column → uniform representative components/beds/baths (see Decisions Log).
+- **[2026-08-03] GALLERY IMAGES + page-amenities enrichment (riva.sa / yamam.sa) — the 2026-07-02 runs set
+  `main_image` but NOT the `project_images` gallery:** an Our-Projects audit found ~24 members with a hero
+  but an empty gallery + no `preferred_amenities`. Gallery image locations (plain `fetch`, server-rendered):
+  **riva.sa** → the project page's `laravel.cloud/project-media/*.jpg` URLs (9-ish; the root `/01K….jpg`
+  are UNIT plans, `/developers/` `/feature/` `/frontend/` are chrome — exclude); **yamam.sa** →
+  `yamam.sa/assets/projects/<slug>/gallery/NN.jpg` (count varies 0-21; `plans/` are unit plans, `featured.jpg`
+  = the hero already used as main_image); **zink.sa** → `zink.sa/storage/projects/media/*.jpg`; **menaco.sa**
+  → `menaco.sa/listings/<listing_id>_*/…jpg` (filter to THIS listing's id). Upload each to `wassel-files`
+  under the migration identity (auth_uid `31621e58-c723-45ad-9e4f-6f8ba1689fe7`, uploaded_by
+  `a3374d65-9cee-4daa-8880-5e8ff23e7db0`) as `<auth_uid>/<uuid>.jpg`, INSERT a `files` row
+  (`model_id`=all_projects, `record_id`=project, `kind='image'`), then set `project_images`=[file-ids]
+  (bare uuids, NOT URLs — the website resolves them to signed URLs). Amenities: extract the page's
+  **المميزات** block text (riva/yamam/zink all render it server-side) and map to `preferred_amenities`
+  option values with the deterministic Arabic word-boundary matcher (`scratchpad/ourprojects/riva_amenities.py`
+  KW dict: منزل ذكي/دخول ذكي/سمارت هوم→نظام-دخول-ذكي, كاميرات مراقبة→نظام-مراقبة-امنية, مصعد→مصاعد,
+  شرفة/بلكونة→بلكونات, جلسة خارجية→جلسات-خارجية, حدائق→garden, مسابح→swimming_pool, متاجر→commercial_showrooms).
+  These Riyadh apartment buildings legitimately have small amenity sets (2-6). ADDITIVE union — never wipe
+  existing. Scripts: `scratchpad/ourprojects/{riva,yamam}_gallery.mjs` + `{riva,yamam}_amenities.py`.
+  **Source-limited (report, don't fabricate):** yamam-16 has no `gallery/` folder (hero+plans only);
+  oceanresidence.com.sa is Cloudflare-gated (Browserbase gets the page but the image bytes 403 on direct
+  download); الرمز ريا-النخيل/ستون-الندى/سديم-تاون aren't on alramzre.com → need the team's Drive links
+  (existing rule). Run 2026-08-03: riva 12/12, yamam 7/8, zink 2/2, menaco 1/1 galleries + amenities filled.
 - Other non-Almajdiah sites: document each site's units source + field shape here as you learn it.
 
 ## Verify & cleanup
