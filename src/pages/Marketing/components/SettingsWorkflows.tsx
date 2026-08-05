@@ -51,7 +51,8 @@ function roleLabel(role: string, isAr: boolean): string {
 
 /** «يومان بعد الفتح» — the collapsed row's due cell, in the mockup's shape. */
 function dueLabel(n: number, isAr: boolean): string {
-  if (!isAr) return `${n} ${n === 1 ? 'day' : 'days'} after opening`;
+  if (!isAr) return n === 0 ? 'same day' : `${n} ${n === 1 ? 'day' : 'days'} after opening`;
+  if (n === 0) return 'نفس اليوم';
   if (n === 1) return 'يوم واحد بعد الفتح';
   if (n === 2) return 'يومان بعد الفتح';
   if (n >= 3 && n <= 10) return `${num(n, true)} أيام`;
@@ -315,7 +316,7 @@ function StepRow({
                   disabled={!canManage}
                   onChange={(e) => {
                     const n = Number(e.target.value);
-                    onChange({ ...step, due_days: Number.isFinite(n) && n > 0 ? Math.floor(n) : 1 });
+                    onChange({ ...step, due_days: Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0 });
                   }}
                 />
               </div>
