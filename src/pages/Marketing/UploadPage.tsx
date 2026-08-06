@@ -17,8 +17,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import {
-  ASSET_SOURCE_LABELS, MosAsset, MosShootRequest, deliverShoot, fetchAssets,
-  fetchShoots, saveAsset,
+  ASSET_ASPECT_RATIOS, ASSET_SOURCE_LABELS, MosAsset, MosShootRequest, deliverShoot,
+  fetchAssets, fetchShoots, saveAsset,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Field, PageHead } from './components/kit';
@@ -47,6 +47,7 @@ interface RowOverride {
   source?: MosAsset['source'];
   shotOn?: string;
   rights?: string;
+  aspectRatio?: string;
   tags?: string[];
 }
 
@@ -104,6 +105,7 @@ export default function UploadPage() {
   const [source, setSource] = useState<MosAsset['source']>('shoot');
   const [shotOn, setShotOn] = useState('');
   const [rights, setRights] = useState('full');
+  const [aspectRatio, setAspectRatio] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState('');
 
@@ -254,6 +256,7 @@ export default function UploadPage() {
       const effSource = o.source ?? source;
       const effShotOn = o.shotOn ?? shotOn;
       const effRights = o.rights ?? rights;
+      const effAspect = o.aspectRatio ?? aspectRatio;
       // Folder names ride in as tags — Photos/Amenities tagged the file
       // before anyone typed anything. A per-file tag override replaces the
       // shared tags; folder tags are always appended on top.
@@ -273,6 +276,7 @@ export default function UploadPage() {
         size_bytes: toSend.size,
         original_name: row.file.name,
         usage_rights: USAGE_RIGHTS.find((r) => r.key === effRights)?.[isAr ? 'ar' : 'en'] ?? effRights,
+        aspect_ratio: effAspect || null,
         shoot_request_id: shootId || null,
       });
       patchRow(row.id, { status: 'done', progress: 1, assetRef: res.asset.ref });
@@ -448,6 +452,14 @@ export default function UploadPage() {
                   ))}
                 </select>
               </Field>
+              <Field label={isAr ? 'المقاس (نسبة الأبعاد)' : 'Size (aspect ratio)'}>
+                <select className="inp" value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)}>
+                  <option value="">{isAr ? 'بدون' : 'None'}</option>
+                  {ASSET_ASPECT_RATIOS.map((r) => (
+                    <option key={r.value} value={r.value}>{isAr ? r.ar : r.en}</option>
+                  ))}
+                </select>
+              </Field>
               <div>
                 <div className="lbl" style={{ marginBottom: 7 }}>{isAr ? 'وسوم للجميع' : 'Tags for all'}</div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -578,7 +590,7 @@ export default function UploadPage() {
                       isAr={isAr}
                       running={running}
                       projects={projects}
-                      shared={{ projectId, source, shotOn, rights, tags }}
+                      shared={{ projectId, source, shotOn, rights, aspectRatio, tags }}
                       editing={editingId === r.id}
                       onToggleEdit={() => setEditingId((cur) => (cur === r.id ? null : r.id))}
                       onPatchOverride={(patch) => patchOverride(r.id, patch)}
@@ -634,7 +646,7 @@ function QueueRow({
   isAr: boolean;
   running: boolean;
   projects: Array<{ id: string; project_name?: string | null }>;
-  shared: { projectId: string; source: MosAsset['source']; shotOn: string; rights: string; tags: string[] };
+  shared: { projectId: string; source: MosAsset['source']; shotOn: string; rights: string; aspectRatio: string; tags: string[] };
   editing: boolean;
   onToggleEdit: () => void;
   onPatchOverride: (patch: RowOverride) => void;
@@ -658,6 +670,7 @@ function QueueRow({
     source: row.overrides.source ?? shared.source,
     shotOn: row.overrides.shotOn ?? shared.shotOn,
     rights: row.overrides.rights ?? shared.rights,
+    aspectRatio: row.overrides.aspectRatio ?? shared.aspectRatio,
     tags: row.overrides.tags ?? shared.tags,
   };
   const effKindLabel = isAr ? KIND_LABEL[eff.kind]?.ar : KIND_LABEL[eff.kind]?.en;
@@ -855,17 +868,31 @@ function QueueRow({
             </Field>
           </div>
 
-          <Field label={isAr ? 'حقوق الاستخدام' : 'Usage rights'}>
-            <select
-              className="inp"
-              value={eff.rights}
-              onChange={(e) => onPatchOverride({ rights: e.target.value })}
-            >
-              {USAGE_RIGHTS.map((r) => (
-                <option key={r.key} value={r.key}>{isAr ? r.ar : r.en}</option>
-              ))}
-            </select>
-          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label={isAr ? 'حقوق الاستخدام' : 'Usage rights'}>
+              <select
+                className="inp"
+                value={eff.rights}
+                onChange={(e) => onPatchOverride({ rights: e.target.value })}
+              >
+                {USAGE_RIGHTS.map((r) => (
+                  <option key={r.key} value={r.key}>{isAr ? r.ar : r.en}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={isAr ? 'المقاس (نسبة الأبعاد)' : 'Size (aspect ratio)'}>
+              <select
+                className="inp"
+                value={eff.aspectRatio}
+                onChange={(e) => onPatchOverride({ aspectRatio: e.target.value })}
+              >
+                <option value="">{isAr ? 'بدون' : 'None'}</option>
+                {ASSET_ASPECT_RATIOS.map((r) => (
+                  <option key={r.value} value={r.value}>{isAr ? r.ar : r.en}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
 
           <div>
             <div className="lbl" style={{ marginBottom: 7 }}>{isAr ? 'وسوم هذا الملف' : 'Tags for this file'}</div>

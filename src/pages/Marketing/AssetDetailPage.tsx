@@ -15,8 +15,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosApiError, MosAsset, MosAssetUsage,
-  archiveAsset, bulkAssets, deleteAsset, fetchAssetDetail, saveAsset,
+  ASSET_ASPECT_RATIOS, ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosApiError, MosAsset,
+  MosAssetUsage, archiveAsset, bulkAssets, deleteAsset, fetchAssetDetail, saveAsset,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, ReadField, Skeleton } from './components/kit';
@@ -44,6 +44,24 @@ function expiryCountdown(iso: string, isAr: boolean): string {
   return isAr ? `بعد ${num(months, true)} ${months <= 10 ? 'أشهر' : 'شهرًا'}` : `in ${months} months`;
 }
 
+/** The aspect-ratio label («9:16 — عمودي») for a stored value; bare value if custom. */
+function aspectLabel(value: string, isAr: boolean): string {
+  const hit = ASSET_ASPECT_RATIOS.find((r) => r.value === value);
+  return hit ? (isAr ? hit.ar : hit.en) : value;
+}
+
+/**
+ * The public storage URL with `?download=<name>` — Supabase serves it as an
+ * attachment (Content-Disposition), so «تنزيل» actually saves the file instead
+ * of opening it inline (the plain `download` attribute is ignored cross-origin).
+ */
+function downloadHref(asset: MosAsset): string | null {
+  if (!asset.url) return null;
+  const name = asset.original_name || asset.title || 'file';
+  const sep = asset.url.includes('?') ? '&' : '?';
+  return `${asset.url}${sep}download=${encodeURIComponent(name)}`;
+}
+
 const LINK_ROLE_LABELS: Record<string, { ar: string; en: string }> = {
   source:    { ar: 'مصدر',  en: 'Source' },
   final:     { ar: 'نهائي', en: 'Final' },
@@ -52,7 +70,7 @@ const LINK_ROLE_LABELS: Record<string, { ar: string; en: string }> = {
 
 export default function AssetDetailPage() {
   const { assetId } = useParams<{ assetId: string }>();
-  const { isAr, can, projectName, contentTypes } = useWorkspace();
+  const { isAr, can, projectName, projects, contentTypes } = useWorkspace();
   const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
 
@@ -67,6 +85,7 @@ export default function AssetDetailPage() {
   const [addingTag, setAddingTag] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(async () => {
     if (!assetId) return;
@@ -101,6 +120,7 @@ export default function AssetDetailPage() {
   const spec = useMemo(() => {
     if (!asset) return '';
     const parts: string[] = [];
+    if (asset.aspect_ratio) parts.push(asset.aspect_ratio);
     if (asset.duration_seconds != null && asset.duration_seconds > 0) parts.push(mmss(asset.duration_seconds, false));
     if (asset.size_bytes != null && asset.size_bytes > 0) parts.push(formatBytes(asset.size_bytes, false));
     return parts.join(' · ');
@@ -215,9 +235,19 @@ export default function AssetDetailPage() {
         )}
       >
         {asset?.url && (
-          <a className="btn btn-d" href={asset.url} target="_blank" rel="noreferrer" download>
+          <a className="btn" href={asset.url} target="_blank" rel="noreferrer">
+            {isAr ? 'فتح الملف' : 'Open file'}
+          </a>
+        )}
+        {asset && downloadHref(asset) && (
+          <a className="btn btn-d" href={downloadHref(asset) ?? undefined}>
             {isAr ? 'تنزيل' : 'Download'}
           </a>
+        )}
+        {can('manage_assets') && asset && (
+          <button type="button" className="btn" onClick={() => setEditing(true)}>
+            {isAr ? 'تعديل' : 'Edit'}
+          </button>
         )}
         {can('manage_assets') && (
           <button type="button" className="btn" onClick={() => navigate('/m/library/upload')}>
@@ -280,7 +310,28 @@ export default function AssetDetailPage() {
                   ) : asset.kind === 'audio' && asset.url ? (
                     <audio src={asset.url} controls preload="metadata" />
                   ) : (asset.kind === 'photo' || asset.kind === 'design') && (asset.url || asset.thumb_url) ? (
-                    <img src={asset.url ?? asset.thumb_url ?? undefined} alt={asset.title} />
+                    // Click the image to open the full file in a new tab.
+                    <a
+                      href={asset.url ?? asset.thumb_url ?? undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={isAr ? 'فتح الملف' : 'Open file'}
+                    >
+                      <img src={asset.url ?? asset.thumb_url ?? undefined} alt={asset.title} style={{ cursor: 'zoom-in' }} />
+                    </a>
+                  ) : asset.url ? (
+                    // Documents (non-PDF) and anything without an inline preview:
+                    // the tile itself opens the actual file.
+                    <a
+                      className="pr-play"
+                      href={asset.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={isAr ? 'فتح الملف' : 'Open file'}
+                      style={{ cursor: 'pointer', textDecoration: 'none' }}
+                    >
+                      <IconLibrary style={{ width: 17, height: 17, stroke: '#fff' }} />
+                    </a>
                   ) : (
                     <div className="pr-play" aria-hidden="true">
                       {asset.kind === 'video'
@@ -414,6 +465,11 @@ export default function AssetDetailPage() {
                       </button>
                     </ReadField>
                   )}
+                  <ReadField label={isAr ? 'المقاس' : 'Aspect ratio'}>
+                    {asset.aspect_ratio
+                      ? <span className="ltr">{aspectLabel(asset.aspect_ratio, isAr)}</span>
+                      : '—'}
+                  </ReadField>
                   <ReadField label={isAr ? 'صوّرها' : 'Shot by'}>{asset.shot_by ?? '—'}</ReadField>
                   {asset.shot_on && (
                     <ReadField label={isAr ? 'صُوِّرت' : 'Shot on'}>{shortDate(asset.shot_on, isAr)}</ReadField>
@@ -531,7 +587,138 @@ export default function AssetDetailPage() {
           onCreated={(contentId) => navigate(`/m/content/${contentId}`)}
         />
       )}
+
+      {editing && asset && (
+        <EditAssetModal
+          isAr={isAr}
+          asset={asset}
+          projects={projects}
+          onClose={() => setEditing(false)}
+          onSaved={(next) => { setAsset(next); setEditing(false); }}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * «تعديل المادة» — edit the asset record itself (screen 22). Kind and the file
+ * bytes are fixed at upload; everything a human curates after — title, project,
+ * source, the chosen aspect ratio, shot-by/on, and usage rights — is editable
+ * here through the same asset_save path the upload screen writes with.
+ */
+function EditAssetModal({
+  isAr, asset, projects, onClose, onSaved,
+}: {
+  isAr: boolean;
+  asset: MosAsset;
+  projects: Array<{ id: string; project_name?: string | null }>;
+  onClose: () => void;
+  onSaved: (asset: MosAsset) => void;
+}) {
+  const addToast = useAppStore((s) => s.addToast);
+  const [title, setTitle] = useState(asset.title);
+  const [projectId, setProjectId] = useState(asset.project_id ?? '');
+  const [source, setSource] = useState<MosAsset['source']>(asset.source);
+  const [aspectRatio, setAspectRatio] = useState(asset.aspect_ratio ?? '');
+  const [shotBy, setShotBy] = useState(asset.shot_by ?? '');
+  const [shotOn, setShotOn] = useState(asset.shot_on ? asset.shot_on.slice(0, 10) : '');
+  const [rightsExpiry, setRightsExpiry] = useState(asset.rights_expiry ? asset.rights_expiry.slice(0, 10) : '');
+  const [usageRights, setUsageRights] = useState(asset.usage_rights ?? '');
+  const [busy, setBusy] = useState(false);
+
+  // A custom stored ratio (not one of the presets) is kept selectable so a save
+  // doesn't silently drop it.
+  const knownRatio = ASSET_ASPECT_RATIOS.some((r) => r.value === aspectRatio);
+
+  const submit = async (): Promise<void> => {
+    if (!title.trim()) {
+      addToast(isAr ? 'العنوان مطلوب.' : 'Title is required.', 'error');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await saveAsset({
+        id: asset.id,
+        title: title.trim(),
+        project_id: projectId || null,
+        source,
+        aspect_ratio: aspectRatio || null,
+        shot_by: shotBy.trim() || null,
+        shot_on: shotOn || null,
+        rights_expiry: rightsExpiry || null,
+        usage_rights: usageRights.trim() || null,
+      });
+      addToast(isAr ? 'حُفظت التعديلات.' : 'Changes saved.', 'success');
+      onSaved(res.asset);
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={isAr ? 'تعديل المادة' : 'Edit asset'}
+      sub={isAr
+        ? 'الملف نفسه ونوعه لا يتغيّران — عدِّل بيانات السجل.'
+        : 'The file and its kind are fixed — edit the record details.'}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
+            {isAr ? 'إلغاء' : 'Cancel'}
+          </button>
+          <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy}>
+            {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'حفظ' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <Field label={isAr ? 'العنوان' : 'Title'}>
+        <input className="inp" value={title} onChange={(e) => setTitle(e.target.value)} />
+      </Field>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label={isAr ? 'المشروع' : 'Project'}>
+          <select className="inp" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <option value="">{isAr ? 'بدون' : 'None'}</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.project_name ?? p.id.slice(0, 8)}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label={isAr ? 'المصدر' : 'Source'}>
+          <select className="inp" value={source} onChange={(e) => setSource(e.target.value as MosAsset['source'])}>
+            {Object.keys(ASSET_SOURCE_LABELS).map((k) => (
+              <option key={k} value={k}>{isAr ? ASSET_SOURCE_LABELS[k]?.ar : ASSET_SOURCE_LABELS[k]?.en}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <Field label={isAr ? 'المقاس (نسبة الأبعاد)' : 'Size (aspect ratio)'}>
+        <select className="inp" value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)}>
+          <option value="">{isAr ? 'بدون' : 'None'}</option>
+          {ASSET_ASPECT_RATIOS.map((r) => (
+            <option key={r.value} value={r.value}>{isAr ? r.ar : r.en}</option>
+          ))}
+          {aspectRatio && !knownRatio && <option value={aspectRatio}>{aspectRatio}</option>}
+        </select>
+      </Field>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label={isAr ? 'صوّرها' : 'Shot by'}>
+          <input className="inp" value={shotBy} onChange={(e) => setShotBy(e.target.value)} />
+        </Field>
+        <Field label={isAr ? 'تاريخ التصوير' : 'Shot on'}>
+          <input type="date" className="inp ltr" value={shotOn} onChange={(e) => setShotOn(e.target.value)} />
+        </Field>
+      </div>
+      <Field label={isAr ? 'حقوق الاستخدام' : 'Usage rights'}>
+        <input className="inp" value={usageRights} onChange={(e) => setUsageRights(e.target.value)} />
+      </Field>
+      <Field label={isAr ? 'انتهاء الحقوق' : 'Rights expiry'}>
+        <input type="date" className="inp ltr" value={rightsExpiry} onChange={(e) => setRightsExpiry(e.target.value)} />
+      </Field>
+    </Modal>
   );
 }
 

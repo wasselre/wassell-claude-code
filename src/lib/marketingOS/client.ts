@@ -814,7 +814,26 @@ export interface MosAsset {
   parent_asset_id?: string | null;
   rights_expiry?: string | null;
   shot_by?: string | null;
+  /** Chosen aspect ratio, e.g. '9:16', '16:9', '1:1' — see ASSET_ASPECT_RATIOS. */
+  aspect_ratio?: string | null;
 }
+
+/**
+ * The aspect-ratio choices offered on upload and on the asset record — the
+ * pixel shape of a photo or video, chosen not measured. The `value` is the bare
+ * ratio ('9:16') so it renders LTR and stays stable; the label carries the
+ * context a marketer thinks in (ريلز/ستوري, منشور, مربّع…).
+ */
+export const ASSET_ASPECT_RATIOS: Array<{ value: string; ar: string; en: string }> = [
+  { value: '9:16', ar: '9:16 — عمودي (ريلز/ستوري)', en: '9:16 — Vertical (Reels/Story)' },
+  { value: '4:5',  ar: '4:5 — عمودي (منشور)',        en: '4:5 — Portrait (Feed)' },
+  { value: '1:1',  ar: '1:1 — مربّع',                en: '1:1 — Square' },
+  { value: '16:9', ar: '16:9 — أفقي',                en: '16:9 — Landscape' },
+  { value: '4:3',  ar: '4:3 — أفقي كلاسيكي',          en: '4:3 — Classic' },
+  { value: '3:4',  ar: '3:4 — عمودي',                en: '3:4 — Tall' },
+  { value: '2:3',  ar: '2:3 — عمودي',                en: '2:3 — Tall' },
+  { value: '21:9', ar: '21:9 — عريض',                en: '21:9 — Ultrawide' },
+];
 
 export interface MosAssetLink {
   asset_id: string;
