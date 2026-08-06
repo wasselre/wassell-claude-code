@@ -570,9 +570,20 @@ export default function MaterialsTab({
   );
 }
 
+/** Per-file overrides of the shared batch fields, keyed by `name:size`. Only
+ *  touched keys are present; the rest inherit the shared source/kind/date/tags. */
+type AssetOverride = {
+  title?: string;
+  kind?: MosAsset['kind'];
+  source?: MosAsset['source'];
+  shotOn?: string;
+  tags?: string[];
+};
+
 /** Screen 23 — upload and intake. Upload one or MORE files directly (browser →
  *  the marketing-assets bucket, the SAME engine as the intake queue). One
- *  material row per file; shared source/date/tags apply to the whole batch. */
+ *  material row per file; shared source/date/tags apply to the whole batch,
+ *  and each file can override any of them via its own «تعديل» editor. */
 export function NewAssetModal({
   isAr, projectId, onClose, onCreated,
 }: {
@@ -595,8 +606,23 @@ export function NewAssetModal({
   const [uploading, setUploading] = useState<{ index: number; frac: number; done: number } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Per-file overrides + which file's editor is open. Keyed by `name:size`. */
+  const [overrides, setOverrides] = useState<Record<string, AssetOverride>>({});
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [tagDraft, setTagDraft] = useState('');
 
   const single = files.length === 1;
+  const keyOf = (f: File): string => `${f.name}:${f.size}`;
+  const sharedTags = tags.split(',').map((t) => t.trim()).filter(Boolean);
+  const patchOverride = (key: string, patch: AssetOverride): void =>
+    setOverrides((cur) => ({ ...cur, [key]: { ...cur[key], ...patch } }));
+  const resetOverride = (key: string): void =>
+    setOverrides((cur) => {
+      if (!(key in cur)) return cur;
+      const next = { ...cur };
+      delete next[key];
+      return next;
+    });
 
   // Add files (click or drop), de-duped by name+size so a double-pick doesn't
   // create twins. Seeds kind (+ name, when it's the only file) from the first
@@ -650,21 +676,25 @@ export function NewAssetModal({
           const result = await uploadToStorage(toSend, path, (frac) =>
             setUploading((u) => (u ? { ...u, frac } : { index: i, frac, done: created.length })),
           );
-          // Name: the single-file name field, else each file's own filename.
-          // Kind: the select for a single file, else auto-detected per file.
-          const fileTitle = single
-            ? (title.trim() || original.name.replace(/\.[^.]+$/, ''))
-            : original.name.replace(/\.[^.]+$/, '');
-          const fileKind = single ? kind : kindFromFile(toSend);
+          // A file's own override wins; otherwise the shared batch values.
+          // Name: override, else the single-file name field, else the filename.
+          // Kind: override, else the select for a single file, else auto-detected.
+          const ov = overrides[keyOf(original)] ?? {};
+          const derived = original.name.replace(/\.[^.]+$/, '');
+          const fileTitle = ov.title?.trim() || (single ? (title.trim() || derived) : derived);
+          const fileKind = ov.kind ?? (single ? kind : kindFromFile(toSend));
+          const fileSource = ov.source ?? source;
+          const fileShotOn = ov.shotOn ?? shotOn;
+          const fileTags = ov.tags ?? sharedTags;
           const res = await saveAsset({
             title: fileTitle,
             kind: fileKind,
-            source,
+            source: fileSource,
             project_id: projectId,
             url: result.publicUrl,
             thumb_url: isBrowserImage(original) ? result.publicUrl : null,
-            shot_on: shotOn || null,
-            tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+            shot_on: fileShotOn || null,
+            tags: fileTags,
             file_path: result.path,
             mime_type: toSend.type || null,
             size_bytes: toSend.size,
@@ -774,42 +804,173 @@ export function NewAssetModal({
             {isAr ? 'اسحب ملفات هنا أو اضغط للاختيار' : 'Drag files here, or click to choose'}
           </div>
 
-          {/* Queued files — one material each, with per-file progress on upload. */}
+          {/* Queued files — one material each, with per-file progress on upload
+              and a «تعديل» editor to override the shared fields for one file. */}
           {files.length > 0 && (
             <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
               {files.map((f, i) => {
                 const active = uploading?.index === i;
                 const done = uploading ? i < uploading.index : false;
                 const rowPct = active ? Math.round((uploading?.frac ?? 0) * 100) : null;
+                const k = keyOf(f);
+                const ov = overrides[k] ?? {};
+                const hasOv = Object.keys(ov).length > 0;
+                const isEditing = editingKey === k;
+                // Per-file editing only makes sense for a batch — a single file
+                // uses the Name/Kind fields at the top of the modal.
+                const canEditFile = files.length > 1 && !busy;
+                const eff = {
+                  title: ov.title ?? f.name.replace(/\.[^.]+$/, ''),
+                  kind: ov.kind ?? kindFromFile(f),
+                  source: ov.source ?? source,
+                  shotOn: ov.shotOn ?? shotOn,
+                  tags: ov.tags ?? sharedTags,
+                };
                 return (
-                  <div
-                    key={`${f.name}:${f.size}:${i}`}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      border: '1px solid var(--line)',
-                      borderRadius: 10,
-                      padding: '8px 12px',
-                    }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {f.name}
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--mute)' }}>
-                        {formatBytes(f.size, isAr)}{done ? (isAr ? ' · تم' : ' · done') : ''}
-                      </div>
-                      {rowPct !== null && (
-                        <div style={{ height: 4, borderRadius: 4, background: 'var(--line)', marginTop: 6, overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${rowPct}%`, background: 'var(--copper)', transition: 'width .15s' }} />
+                  <div key={`${k}:${i}`} style={{ display: 'grid', gap: 0 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        border: `1px solid ${isEditing ? 'var(--copper)' : 'var(--line)'}`,
+                        borderRadius: 10,
+                        borderBottomLeftRadius: isEditing ? 0 : 10,
+                        borderBottomRightRadius: isEditing ? 0 : 10,
+                        padding: '8px 12px',
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {ov.title?.trim() ? ov.title : f.name}
                         </div>
+                        <div style={{ fontSize: 12, color: 'var(--mute)' }}>
+                          {formatBytes(f.size, isAr)}{done ? (isAr ? ' · تم' : ' · done') : ''}
+                          {hasOv && <> · <span style={{ color: 'var(--copper)', fontWeight: 700 }}>{isAr ? 'مخصّص' : 'Custom'}</span></>}
+                        </div>
+                        {rowPct !== null && (
+                          <div style={{ height: 4, borderRadius: 4, background: 'var(--line)', marginTop: 6, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${rowPct}%`, background: 'var(--copper)', transition: 'width .15s' }} />
+                          </div>
+                        )}
+                      </div>
+                      {canEditFile && (
+                        <button
+                          type="button"
+                          className={`btn btn-sm${isEditing ? ' btn-p' : ''}`}
+                          onClick={() => setEditingKey((cur) => (cur === k ? null : k))}
+                          aria-expanded={isEditing}
+                        >
+                          {isEditing ? (isAr ? 'إغلاق' : 'Close') : (isAr ? 'تعديل' : 'Edit')}
+                        </button>
+                      )}
+                      {!busy && (
+                        <button type="button" className="btn btn-d btn-sm" onClick={() => { removeFile(i); resetOverride(k); }}>
+                          {isAr ? 'إزالة' : 'Remove'}
+                        </button>
                       )}
                     </div>
-                    {!busy && (
-                      <button type="button" className="btn btn-d btn-sm" onClick={() => removeFile(i)}>
-                        {isAr ? 'إزالة' : 'Remove'}
-                      </button>
+
+                    {isEditing && canEditFile && (
+                      <div
+                        style={{
+                          border: '1px solid var(--copper)',
+                          borderTop: 'none',
+                          borderBottomLeftRadius: 10,
+                          borderBottomRightRadius: 10,
+                          padding: '12px',
+                          display: 'grid',
+                          gap: 11,
+                          background: 'color-mix(in srgb, var(--copper) 4%, transparent)',
+                        }}
+                      >
+                        <div style={{ fontSize: 11, color: 'var(--mute)', lineHeight: 1.7 }}>
+                          {isAr
+                            ? 'يطبَّق على هذا الملف وحده. اترك الحقل ليأخذ القيمة المشتركة.'
+                            : 'Applies to this file only. Leave a field to inherit the shared value.'}
+                        </div>
+                        <Field label={isAr ? 'الاسم' : 'Name'}>
+                          <input
+                            className="inp"
+                            value={eff.title}
+                            onChange={(e) => patchOverride(k, { title: e.target.value })}
+                          />
+                        </Field>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 11 }}>
+                          <Field label={isAr ? 'النوع' : 'Kind'}>
+                            <select
+                              className="inp"
+                              value={eff.kind}
+                              onChange={(e) => patchOverride(k, { kind: e.target.value as MosAsset['kind'] })}
+                            >
+                              {Object.keys(ASSET_KIND_LABELS).map((kk) => (
+                                <option key={kk} value={kk}>{isAr ? ASSET_KIND_LABELS[kk]?.ar : ASSET_KIND_LABELS[kk]?.en}</option>
+                              ))}
+                            </select>
+                          </Field>
+                          <Field label={isAr ? 'المصدر' : 'Source'}>
+                            <select
+                              className="inp"
+                              value={eff.source}
+                              onChange={(e) => patchOverride(k, { source: e.target.value as MosAsset['source'] })}
+                            >
+                              {Object.keys(ASSET_SOURCE_LABELS).map((kk) => (
+                                <option key={kk} value={kk}>{isAr ? ASSET_SOURCE_LABELS[kk]?.ar : ASSET_SOURCE_LABELS[kk]?.en}</option>
+                              ))}
+                            </select>
+                          </Field>
+                        </div>
+                        <Field label={isAr ? 'تاريخ التصوير' : 'Shot on'}>
+                          <input
+                            type="date"
+                            className="inp"
+                            value={eff.shotOn}
+                            onChange={(e) => patchOverride(k, { shotOn: e.target.value })}
+                          />
+                        </Field>
+                        <div>
+                          <div className="lbl" style={{ marginBottom: 7 }}>{isAr ? 'وسوم هذا الملف' : 'Tags for this file'}</div>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {eff.tags.map((t) => (
+                              <button
+                                key={t}
+                                type="button"
+                                className="fbtn on"
+                                onClick={() => patchOverride(k, { tags: eff.tags.filter((x) => x !== t) })}
+                              >
+                                {t} <span className="x">×</span>
+                              </button>
+                            ))}
+                            <input
+                              className="fbtn"
+                              style={{ borderStyle: 'dashed', minWidth: 74, outline: 'none' }}
+                              placeholder={isAr ? '+ وسم' : '+ tag'}
+                              value={tagDraft}
+                              onChange={(e) => setTagDraft(e.target.value)}
+                              onBlur={() => {
+                                const t = tagDraft.trim();
+                                if (t) patchOverride(k, { tags: Array.from(new Set([...eff.tags, t])) });
+                                setTagDraft('');
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  const t = tagDraft.trim();
+                                  if (t) patchOverride(k, { tags: Array.from(new Set([...eff.tags, t])) });
+                                  setTagDraft('');
+                                }
+                              }}
+                            />
+                          </div>
+                        </div>
+                        {hasOv && (
+                          <div>
+                            <button type="button" className="btn btn-d btn-sm" onClick={() => resetOverride(k)}>
+                              {isAr ? 'إرجاع إلى المشترك' : 'Reset to shared'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 );

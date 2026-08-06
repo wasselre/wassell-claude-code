@@ -33,6 +33,23 @@ import {
 
 type RowStatus = 'waiting' | 'converting' | 'uploading' | 'done' | 'failed' | 'duplicate' | 'skipped';
 
+/**
+ * Per-file overrides of the «ينطبق على الجميع» panel. Only the keys the user
+ * actually touched are present — everything absent falls back to the shared
+ * value at upload time, so «apply to all» and «edit each separately» are the
+ * same code path with different inputs. `tags`, when set, REPLACES the shared
+ * tag list for that file (folder tags are still appended on top).
+ */
+interface RowOverride {
+  title?: string;
+  kind?: MosAsset['kind'];
+  projectId?: string;
+  source?: MosAsset['source'];
+  shotOn?: string;
+  rights?: string;
+  tags?: string[];
+}
+
 interface Row {
   id: string;
   file: File;
@@ -49,7 +66,12 @@ interface Row {
   convertedName: string | null;
   /** Set when conversion failed and the original was uploaded instead. */
   conversionFailed: boolean;
+  /** Fields this file overrides from the shared panel. Empty = fully shared. */
+  overrides: RowOverride;
 }
+
+/** The name a file lands under when nothing overrides it: filename, no extension. */
+const derivedTitle = (file: File): string => file.name.replace(/\.[^.]+$/, '');
 
 const KIND_LABEL: Record<string, { ar: string; en: string }> = {
   photo:    { ar: 'صورة',  en: 'Photo' },
@@ -156,6 +178,7 @@ export default function UploadPage() {
           folderTags,
           convertedName: null,
           conversionFailed: false,
+          overrides: {},
         });
       }
       return next;
@@ -164,6 +187,17 @@ export default function UploadPage() {
 
   const patchRow = (id: string, patch: Partial<Row>): void =>
     setRows((cur) => cur.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  // The row whose per-file editor is open («تعديل هذا الملف»). One at a time.
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  /** Set (or clear, with `undefined`) one override on a single file. */
+  const patchOverride = (id: string, patch: RowOverride): void =>
+    setRows((cur) => cur.map((r) => (r.id === id ? { ...r, overrides: { ...r.overrides, ...patch } } : r)));
+
+  /** Drop every override on a file — it goes back to the shared panel. */
+  const resetOverrides = (id: string): void =>
+    setRows((cur) => cur.map((r) => (r.id === id ? { ...r, overrides: {} } : r)));
 
   const removeRow = (id: string): void =>
     setRows((cur) => {
@@ -211,25 +245,34 @@ export default function UploadPage() {
         (fraction) => patchRow(row.id, { progress: fraction }),
         signal,
       );
-      const kind = kindFromFile(toSend);
-      const title = toSend.name.replace(/\.[^.]+$/, '');
+      // «ينطبق على الجميع ما لم يُخصَّص لملف»: each field is the file's own
+      // override when it set one, otherwise the shared panel value.
+      const o = row.overrides;
+      const kind = o.kind ?? kindFromFile(toSend);
+      const title = o.title?.trim() || toSend.name.replace(/\.[^.]+$/, '');
+      const effProject = o.projectId ?? projectId;
+      const effSource = o.source ?? source;
+      const effShotOn = o.shotOn ?? shotOn;
+      const effRights = o.rights ?? rights;
       // Folder names ride in as tags — Photos/Amenities tagged the file
-      // before anyone typed anything.
-      const allTags = Array.from(new Set([...tags, ...row.folderTags]));
+      // before anyone typed anything. A per-file tag override replaces the
+      // shared tags; folder tags are always appended on top.
+      const baseTags = o.tags ?? tags;
+      const allTags = Array.from(new Set([...baseTags, ...row.folderTags]));
       const res = await saveAsset({
         title,
         kind,
-        source,
-        project_id: projectId || null,
+        source: effSource,
+        project_id: effProject || null,
         url: result.publicUrl,
         thumb_url: isBrowserImage(toSend) ? result.publicUrl : null,
-        shot_on: shotOn || null,
+        shot_on: effShotOn || null,
         tags: allTags,
         file_path: result.path,
         mime_type: toSend.type || null,
         size_bytes: toSend.size,
         original_name: row.file.name,
-        usage_rights: USAGE_RIGHTS.find((r) => r.key === rights)?.[isAr ? 'ar' : 'en'] ?? rights,
+        usage_rights: USAGE_RIGHTS.find((r) => r.key === effRights)?.[isAr ? 'ar' : 'en'] ?? effRights,
         shoot_request_id: shootId || null,
       });
       patchRow(row.id, { status: 'done', progress: 1, assetRef: res.asset.ref });
@@ -330,7 +373,7 @@ export default function UploadPage() {
         sub={rows.length > 0
           ? isAr
             ? `${num(rows.length, true)} ملفًا محددًا · ${formatBytes(totalBytes, true)} · ينطبق على الكل ما لم يُخصَّص لملف`
-            : `${rows.length} files selected · ${formatBytes(totalBytes, false)} · the panel applies to all`
+            : `${rows.length} files selected · ${formatBytes(totalBytes, false)} · applies to all unless a file overrides it`
           : isAr
             ? 'صور، فيديو، صوت، PDF، ملفات تصميم — كل شيء'
             : 'Photos, video, audio, PDFs, design files — everything'}
@@ -534,6 +577,12 @@ export default function UploadPage() {
                       row={r}
                       isAr={isAr}
                       running={running}
+                      projects={projects}
+                      shared={{ projectId, source, shotOn, rights, tags }}
+                      editing={editingId === r.id}
+                      onToggleEdit={() => setEditingId((cur) => (cur === r.id ? null : r.id))}
+                      onPatchOverride={(patch) => patchOverride(r.id, patch)}
+                      onResetOverrides={() => resetOverrides(r.id)}
                       onSkip={() => patchRow(r.id, { status: 'skipped' })}
                       onKeepBoth={() => patchRow(r.id, { status: 'waiting', duplicateOf: null })}
                       onRetry={() => patchRow(r.id, { status: 'waiting', error: null })}
@@ -577,103 +626,287 @@ export default function UploadPage() {
 }
 
 function QueueRow({
-  row, isAr, running, onSkip, onKeepBoth, onRetry, onRemove,
+  row, isAr, running, projects, shared, editing,
+  onToggleEdit, onPatchOverride, onResetOverrides,
+  onSkip, onKeepBoth, onRetry, onRemove,
 }: {
   row: Row;
   isAr: boolean;
   running: boolean;
+  projects: Array<{ id: string; project_name?: string | null }>;
+  shared: { projectId: string; source: MosAsset['source']; shotOn: string; rights: string; tags: string[] };
+  editing: boolean;
+  onToggleEdit: () => void;
+  onPatchOverride: (patch: RowOverride) => void;
+  onResetOverrides: () => void;
   onSkip: () => void;
   onKeepBoth: () => void;
   onRetry: () => void;
   onRemove: () => void;
 }) {
+  const [tagDraft, setTagDraft] = useState('');
   const kind = kindFromFile(row.file);
   const kindLabel = isAr ? KIND_LABEL[kind]?.ar : KIND_LABEL[kind]?.en;
 
+  const hasOverride = Object.keys(row.overrides).length > 0;
+  // The value the file will actually be saved with, field by field: its own
+  // override when set, else the shared «ينطبق على الجميع» value.
+  const eff = {
+    title: row.overrides.title ?? derivedTitle(row.file),
+    kind: row.overrides.kind ?? kind,
+    projectId: row.overrides.projectId ?? shared.projectId,
+    source: row.overrides.source ?? shared.source,
+    shotOn: row.overrides.shotOn ?? shared.shotOn,
+    rights: row.overrides.rights ?? shared.rights,
+    tags: row.overrides.tags ?? shared.tags,
+  };
+  const effKindLabel = isAr ? KIND_LABEL[eff.kind]?.ar : KIND_LABEL[eff.kind]?.en;
+
+  const addTag = (): void => {
+    const t = tagDraft.trim();
+    if (t) onPatchOverride({ tags: Array.from(new Set([...eff.tags, t])) });
+    setTagDraft('');
+  };
+
+  // The per-file editor is offered only before the file is uploaded.
+  const canEditRow = !running
+    && (row.status === 'waiting' || row.status === 'duplicate' || row.status === 'failed' || row.status === 'skipped');
+
   return (
-    <div
-      className="file"
-      style={{
-        opacity: row.status === 'skipped' ? 0.45 : 1,
-        borderColor:
-          row.status === 'duplicate'
-            ? 'color-mix(in srgb, var(--wait) 45%, transparent)'
-            : row.status === 'failed'
-              ? 'color-mix(in srgb, var(--late) 45%, transparent)'
-              : undefined,
-      }}
-    >
-      <div className="th">
-        {row.previewUrl
-          ? <img src={row.previewUrl} alt="" />
-          : kind === 'video'
-            ? <IconVideo />
-            : <IconLibrary />}
-      </div>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div className="nm ltr" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {row.file.name}
-          {row.convertedName && <> → {row.convertedName}</>}
+    <div style={{ marginBottom: 6 }}>
+      <div
+        className="file"
+        style={{
+          marginBottom: editing ? 0 : undefined,
+          borderBottomLeftRadius: editing ? 0 : undefined,
+          borderBottomRightRadius: editing ? 0 : undefined,
+          opacity: row.status === 'skipped' ? 0.45 : 1,
+          borderColor:
+            row.status === 'duplicate'
+              ? 'color-mix(in srgb, var(--wait) 45%, transparent)'
+              : row.status === 'failed'
+                ? 'color-mix(in srgb, var(--late) 45%, transparent)'
+                : editing
+                  ? 'var(--copper)'
+                  : undefined,
+        }}
+      >
+        <div className="th">
+          {row.previewUrl
+            ? <img src={row.previewUrl} alt="" />
+            : eff.kind === 'video'
+              ? <IconVideo />
+              : <IconLibrary />}
         </div>
-        <div
-          className="mt"
-          style={row.status === 'duplicate' ? { color: 'var(--wait)' } : row.status === 'failed' ? { color: 'var(--late)' } : undefined}
-        >
-          {row.status === 'duplicate' && row.duplicateOf
-            ? isAr
-              ? <>تبدو مطابقة لـ <b>{row.duplicateOf}</b> الموجودة في المكتبة</>
-              : <>Looks identical to <b>{row.duplicateOf}</b> already in the library</>
-            : row.status === 'failed'
-              ? row.error
-              : (
-                <>
-                  {kindLabel} · {formatBytes(row.file.size, isAr)}
-                  {row.convertedName && <> · {isAr ? 'حُوِّلت إلى JPEG' : 'converted to JPEG'}</>}
-                  {row.conversionFailed && (
-                    <span style={{ color: 'var(--wait)' }}>
-                      {' · '}{isAr ? 'تعذّر التحويل — رُفع الأصل' : 'conversion failed — original uploaded'}
-                    </span>
-                  )}
-                  {row.folderTags.length > 0 && <> · {row.folderTags.join(' · ')}</>}
-                  {row.status === 'done' && row.assetRef && <> · <span className="ltr">{row.assetRef}</span></>}
-                </>
-              )}
-        </div>
-        {row.status === 'uploading' && (
-          <div className="meter" style={{ height: 4, marginTop: 6 }}>
-            <i style={{ width: `${row.progress * 100}%`, background: 'var(--copper)' }} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="nm ltr" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {/* Show the per-file name when set, with the source filename after it. */}
+            {row.overrides.title?.trim() ? row.overrides.title : row.file.name}
+            {row.convertedName && <> → {row.convertedName}</>}
           </div>
-        )}
-      </div>
-      <div className="rt">
-        {row.status === 'done' && (
-          <span className="pill p-go"><IconCheck style={{ width: 10, height: 10 }} /> {isAr ? 'تم' : 'Done'}</span>
-        )}
-        {row.status === 'uploading' && (
-          <span className="pill p-now">{num(Math.round(row.progress * 100), isAr)}{isAr ? '٪' : '%'}</span>
-        )}
-        {row.status === 'converting' && (
-          <span className="pill p-wait">{isAr ? 'تُحوَّل…' : 'Converting…'}</span>
-        )}
-        {row.status === 'waiting' && <span className="pill p-idle">{isAr ? 'انتظار' : 'Waiting'}</span>}
-        {row.status === 'skipped' && <span className="pill p-idle">{isAr ? 'تُخطّي' : 'Skipped'}</span>}
-        {row.status === 'duplicate' && (
-          <>
-            <button type="button" className="btn btn-sm" onClick={onSkip}>{isAr ? 'تخطٍ' : 'Skip'}</button>
-            <button type="button" className="btn btn-sm" onClick={onKeepBoth}>
-              {isAr ? 'احتفظ بالاثنتين' : 'Keep both'}
+          <div
+            className="mt"
+            style={row.status === 'duplicate' ? { color: 'var(--wait)' } : row.status === 'failed' ? { color: 'var(--late)' } : undefined}
+          >
+            {row.status === 'duplicate' && row.duplicateOf
+              ? isAr
+                ? <>تبدو مطابقة لـ <b>{row.duplicateOf}</b> الموجودة في المكتبة</>
+                : <>Looks identical to <b>{row.duplicateOf}</b> already in the library</>
+              : row.status === 'failed'
+                ? row.error
+                : (
+                  <>
+                    {editing || hasOverride ? effKindLabel : kindLabel} · {formatBytes(row.file.size, isAr)}
+                    {row.convertedName && <> · {isAr ? 'حُوِّلت إلى JPEG' : 'converted to JPEG'}</>}
+                    {row.conversionFailed && (
+                      <span style={{ color: 'var(--wait)' }}>
+                        {' · '}{isAr ? 'تعذّر التحويل — رُفع الأصل' : 'conversion failed — original uploaded'}
+                      </span>
+                    )}
+                    {row.folderTags.length > 0 && <> · {row.folderTags.join(' · ')}</>}
+                    {row.status === 'done' && row.assetRef && <> · <span className="ltr">{row.assetRef}</span></>}
+                  </>
+                )}
+          </div>
+          {row.status === 'uploading' && (
+            <div className="meter" style={{ height: 4, marginTop: 6 }}>
+              <i style={{ width: `${row.progress * 100}%`, background: 'var(--copper)' }} />
+            </div>
+          )}
+        </div>
+        <div className="rt">
+          {hasOverride && row.status !== 'done' && (
+            <span className="pill p-wait">{isAr ? 'مخصّص' : 'Custom'}</span>
+          )}
+          {row.status === 'done' && (
+            <span className="pill p-go"><IconCheck style={{ width: 10, height: 10 }} /> {isAr ? 'تم' : 'Done'}</span>
+          )}
+          {row.status === 'uploading' && (
+            <span className="pill p-now">{num(Math.round(row.progress * 100), isAr)}{isAr ? '٪' : '%'}</span>
+          )}
+          {row.status === 'converting' && (
+            <span className="pill p-wait">{isAr ? 'تُحوَّل…' : 'Converting…'}</span>
+          )}
+          {row.status === 'waiting' && <span className="pill p-idle">{isAr ? 'انتظار' : 'Waiting'}</span>}
+          {row.status === 'skipped' && <span className="pill p-idle">{isAr ? 'تُخطّي' : 'Skipped'}</span>}
+          {row.status === 'duplicate' && (
+            <>
+              <button type="button" className="btn btn-sm" onClick={onSkip}>{isAr ? 'تخطٍ' : 'Skip'}</button>
+              <button type="button" className="btn btn-sm" onClick={onKeepBoth}>
+                {isAr ? 'احتفظ بالاثنتين' : 'Keep both'}
+              </button>
+            </>
+          )}
+          {row.status === 'failed' && (
+            <button type="button" className="btn btn-sm" onClick={onRetry}>{isAr ? 'إعادة المحاولة' : 'Retry'}</button>
+          )}
+          {canEditRow && (
+            <button
+              type="button"
+              className={`btn btn-sm${editing ? ' btn-p' : ''}`}
+              onClick={onToggleEdit}
+              aria-expanded={editing}
+            >
+              {editing ? (isAr ? 'إغلاق' : 'Close') : (isAr ? 'تعديل' : 'Edit')}
             </button>
-          </>
-        )}
-        {row.status === 'failed' && (
-          <button type="button" className="btn btn-sm" onClick={onRetry}>{isAr ? 'إعادة المحاولة' : 'Retry'}</button>
-        )}
-        {(row.status === 'waiting' || row.status === 'skipped' || row.status === 'duplicate') && !running && (
-          <button type="button" className="btn btn-d btn-sm" onClick={onRemove} aria-label={isAr ? 'إزالة' : 'Remove'}>
-            <IconTrash />
-          </button>
-        )}
+          )}
+          {(row.status === 'waiting' || row.status === 'skipped' || row.status === 'duplicate') && !running && (
+            <button type="button" className="btn btn-d btn-sm" onClick={onRemove} aria-label={isAr ? 'إزالة' : 'Remove'}>
+              <IconTrash />
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Per-file editor — overrides the shared panel for THIS file only. */}
+      {editing && canEditRow && (
+        <div
+          style={{
+            border: '1px solid var(--copper)',
+            borderTop: 'none',
+            borderBottomLeftRadius: 10,
+            borderBottomRightRadius: 10,
+            padding: '13px 14px',
+            display: 'grid',
+            gap: 12,
+            background: 'color-mix(in srgb, var(--copper) 4%, transparent)',
+          }}
+        >
+          <div style={{ fontSize: 11, color: 'var(--mute)', lineHeight: 1.7 }}>
+            {isAr
+              ? 'ما تغيّره هنا يطبَّق على هذا الملف وحده. اترك الحقل كما هو ليأخذ قيمة اللوحة المشتركة.'
+              : 'Anything you change here applies to this file only. Leave a field as-is to inherit the shared panel.'}
+          </div>
+
+          <Field label={isAr ? 'الاسم' : 'Name'}>
+            <input
+              className="inp ltr"
+              value={eff.title}
+              onChange={(e) => onPatchOverride({ title: e.target.value })}
+              placeholder={derivedTitle(row.file)}
+            />
+          </Field>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label={isAr ? 'النوع' : 'Kind'}>
+              <select
+                className="inp"
+                value={eff.kind}
+                onChange={(e) => onPatchOverride({ kind: e.target.value as MosAsset['kind'] })}
+              >
+                {Object.keys(KIND_LABEL).map((k) => (
+                  <option key={k} value={k}>{isAr ? KIND_LABEL[k]?.ar : KIND_LABEL[k]?.en}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={isAr ? 'المشروع' : 'Project'}>
+              <select
+                className="inp"
+                value={eff.projectId}
+                onChange={(e) => onPatchOverride({ projectId: e.target.value })}
+              >
+                <option value="">{isAr ? 'بدون' : 'None'}</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.project_name ?? p.id.slice(0, 8)}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label={isAr ? 'المصدر' : 'Source'}>
+              <select
+                className="inp"
+                value={eff.source}
+                onChange={(e) => onPatchOverride({ source: e.target.value as MosAsset['source'] })}
+              >
+                {Object.keys(ASSET_SOURCE_LABELS).map((k) => (
+                  <option key={k} value={k}>{isAr ? ASSET_SOURCE_LABELS[k]?.ar : ASSET_SOURCE_LABELS[k]?.en}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={isAr ? 'تاريخ التصوير' : 'Shot on'}>
+              <input
+                type="date"
+                className="inp ltr"
+                value={eff.shotOn}
+                onChange={(e) => onPatchOverride({ shotOn: e.target.value })}
+              />
+            </Field>
+          </div>
+
+          <Field label={isAr ? 'حقوق الاستخدام' : 'Usage rights'}>
+            <select
+              className="inp"
+              value={eff.rights}
+              onChange={(e) => onPatchOverride({ rights: e.target.value })}
+            >
+              {USAGE_RIGHTS.map((r) => (
+                <option key={r.key} value={r.key}>{isAr ? r.ar : r.en}</option>
+              ))}
+            </select>
+          </Field>
+
+          <div>
+            <div className="lbl" style={{ marginBottom: 7 }}>{isAr ? 'وسوم هذا الملف' : 'Tags for this file'}</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {eff.tags.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className="fbtn on"
+                  onClick={() => onPatchOverride({ tags: eff.tags.filter((x) => x !== t) })}
+                >
+                  {t} <span className="x">×</span>
+                </button>
+              ))}
+              <input
+                className="fbtn"
+                style={{ borderStyle: 'dashed', minWidth: 74, outline: 'none' }}
+                placeholder={isAr ? '+ وسم' : '+ tag'}
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onBlur={addTag}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
+              />
+            </div>
+            {row.folderTags.length > 0 && (
+              <div style={{ fontSize: 10.5, color: 'var(--mute)', marginTop: 6 }}>
+                {isAr ? 'وسوم المجلد تُضاف تلقائيًا: ' : 'Folder tags are added automatically: '}
+                <span className="ltr">{row.folderTags.join(' · ')}</span>
+              </div>
+            )}
+          </div>
+
+          {hasOverride && (
+            <div>
+              <button type="button" className="btn btn-d btn-sm" onClick={onResetOverrides}>
+                {isAr ? 'إرجاع إلى المشترك' : 'Reset to shared'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

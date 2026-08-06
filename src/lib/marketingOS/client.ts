@@ -340,23 +340,61 @@ function activeRoleHeader(): Record<string, string> {
   return role ? { 'x-mos-active-role': role } : {};
 }
 
+/**
+ * Client-side ceiling on one marketing-os call. Vercel kills an edge function
+ * at 25s and returns a bare 504; aborting a touch earlier lets us surface a
+ * friendly, retryable message instead of that raw gateway code (the transient
+ * DB-busy failure mode). The LoadError card's «إعادة المحاولة» does the retry.
+ */
+const CALL_TIMEOUT_MS = 23_000;
+
 async function call<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch('/api/marketing-os', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(await authHeader()),
-      ...activeRoleHeader(),
-    },
-    body: JSON.stringify({ action, ...payload }),
-  });
+  const isAr = (): boolean => useAppStore.getState().language === 'ar';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CALL_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch('/api/marketing-os', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(await authHeader()),
+        ...activeRoleHeader(),
+      },
+      body: JSON.stringify({ action, ...payload }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    // AbortError (our timeout) or a network drop — both read to the user as
+    // "the server is busy, try again", not a stack trace.
+    const aborted = e instanceof DOMException && e.name === 'AbortError';
+    throw new MosApiError(
+      isAr()
+        ? 'الخادم مشغول مؤقتًا. أعد المحاولة بعد لحظات.'
+        : 'The server is busy right now. Give it a moment and try again.',
+      aborted ? 504 : 0,
+      { error: 'unavailable' },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     const b = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
       error?: string; error_ar?: string;
     };
-    const isAr = useAppStore.getState().language === 'ar';
+    // A gateway/DB-busy status (502/503/504) carries no useful body — replace
+    // the raw "failed (504)" with a plain retryable message.
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new MosApiError(
+        isAr()
+          ? 'الخادم مشغول مؤقتًا. أعد المحاولة بعد لحظات.'
+          : 'The server is busy right now. Give it a moment and try again.',
+        res.status,
+        b,
+      );
+    }
     throw new MosApiError(
-      (isAr ? b?.error_ar || b?.error : b?.error) ?? `marketing-os ${action} failed (${res.status})`,
+      (isAr() ? b?.error_ar || b?.error : b?.error) ?? `marketing-os ${action} failed (${res.status})`,
       res.status,
       b,
     );

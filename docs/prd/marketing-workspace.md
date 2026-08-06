@@ -118,6 +118,19 @@ This workspace answers the three questions the old process could not:
   ("الرابط يكفي…") through 2026-08-04 AM, then briefly upload-or-link; it is now
   upload-only (paste-a-link is gone per user request). Pulling an existing library
   row into a piece still works via «سحب من المكتبة».
+- **Bulk upload — shared panel OR per-file overrides (2026-08-06).** The dedicated
+  upload/intake screen (`/m/library/upload`, `src/pages/Marketing/UploadPage.tsx`)
+  drops many files at once with an «ينطبق على الجميع» (Applies to all) panel —
+  Project / Shoot / Source / Shot-on / Usage-rights / Tags applied to the whole
+  batch. **Each queued file now also has a «تعديل» (Edit) toggle** that opens a
+  per-file editor overriding Name / Kind / Project / Source / Shot-on / Usage-rights /
+  Tags for that one file; anything left untouched inherits the shared panel at
+  upload time (both paths run the same `saveAsset` call — overrides are a
+  `RowOverride` patch, absent keys fall back to the shared value). A file with any
+  override wears a «مخصّص» (Custom) pill, and «إرجاع إلى المشترك» (Reset to shared)
+  clears them. Folder-name tags are still appended on top of whichever tag list
+  applies. This makes «apply the same info to all» and «edit each one separately»
+  the same intake, chosen per file.
 - **Cost per lead is computed** from the execution rows, never typed.
 - **A campaign's whole detail screen is organic-vs-paid aware.** `kind` decides
   what every metric surface shows. A PAID campaign is judged on qualified leads
