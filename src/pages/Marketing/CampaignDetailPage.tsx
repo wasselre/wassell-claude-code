@@ -21,7 +21,7 @@ import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosCampaign, MosCampaignEvent,
   MosCampaignOutcomes, MosComment, MosContentRow, MosDailyEntry, MosExecution,
-  MosMeasureSource, MosPublication, MosSuccessMeasure,
+  MosPublication,
   PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS, successMeasureSuffix,
   addCampaignEvent, budgetShift, deleteExecution, fetchCampaignDetail,
   fetchCampaignEvents, fetchCampaignOutcomes, fetchContentDetail, fetchContentList,
@@ -38,6 +38,7 @@ import SuccessMeasuresEditor, {
 import AudiencePicker from './components/AudiencePicker';
 import { IconBack, IconForward } from './components/icons';
 import { money, monthOf, num, shortDate } from './lib/format';
+import { measureActual, pickVolumeMeasure } from './lib/measure';
 import './styles/campaign-detail.css';
 
 type Tab = 'overview' | 'executions' | 'content' | 'results' | 'notes';
@@ -83,50 +84,6 @@ function campaignDays(c: MosCampaign): { total: number; elapsed: number; left: n
 
 /** Sources whose target is a cumulative volume the pace/gap chart can track
  *  (a higher-is-better count). Cost/rate measures are judged on their own line. */
-const VOLUME_SOURCES: ReadonlySet<MosMeasureSource> = new Set([
-  'impressions', 'clicks', 'leads', 'qualified',
-]);
-
-/**
- * The measure that drives the «مقابل الهدف» pace / gap / projection — the
- * campaign's VOLUME goal: a higher-is-better count with a real target. The goal
- * field is a free-text description now; the NUMBER comes from here, never from
- * scraping the goal sentence. Cost/rate measures (CPL, CTR) are lower-is-better
- * and don't accumulate toward a pace, so they're never picked as primary — they
- * show on their own success-criterion line.
- */
-function pickPrimaryMeasure(c: MosCampaign): MosSuccessMeasure | null {
-  const ms = Array.isArray(c.success_measures) ? c.success_measures : [];
-  return ms.find(
-    (m) => m.direction === 'higher' && m.threshold !== null && m.threshold > 0
-      && VOLUME_SOURCES.has(m.source),
-  ) ?? null;
-}
-
-/** The live actual for a measure's source, or null when it can't be computed. */
-function measureActual(
-  source: MosMeasureSource, c: MosCampaign, organicImpressions: number, isOrganic: boolean,
-): number | null {
-  const spend = c.total_spend ?? 0;
-  const leads = c.total_leads ?? 0;
-  const qualified = c.total_qualified ?? 0;
-  // Paid impressions come from the ad campaigns; an organic campaign's reach is
-  // summed from its linked content (the rollup only counts ad impressions).
-  const impressions = isOrganic ? organicImpressions : (c.total_impressions ?? 0);
-  const clicks = c.total_clicks ?? 0;
-  switch (source) {
-    case 'impressions': return impressions;
-    case 'clicks': return clicks;
-    case 'leads': return leads;
-    case 'qualified': return qualified;
-    case 'spend': return spend;
-    case 'cpl': return leads > 0 ? spend / leads : null;
-    case 'cpl_qualified': return qualified > 0 ? spend / qualified : null;
-    case 'ctr': return impressions > 0 ? (clicks / impressions) * 100 : null;
-    default: return null;
-  }
-}
-
 /** «٣٨٪» / "38%". */
 function pctStr(v: number, isAr: boolean): string {
   return isAr ? `${num(Math.round(v), true)}٪` : `${Math.round(v)}%`;
@@ -389,7 +346,7 @@ export default function CampaignDetailPage() {
   }, [tab, angles, content, isAr]);
 
   const days = useMemo(() => (item ? campaignDays(item) : null), [item]);
-  const primaryMeasure = useMemo(() => (item ? pickPrimaryMeasure(item) : null), [item]);
+  const primaryMeasure = useMemo(() => (item ? pickVolumeMeasure(item) : null), [item]);
   const target = primaryMeasure?.threshold ?? null;
 
   const execStats = useMemo<ExecStat[]>(() => {
@@ -1139,10 +1096,10 @@ export default function CampaignDetailPage() {
 
             <div className="cd-oview">
               <div className="cd-main">
-                {/* الهدف */}
+                {/* الموجز */}
                 <div className="card">
                   <div className="card-h">
-                    <h4>{isAr ? 'الهدف' : 'The goal'}</h4>
+                    <h4>{isAr ? 'الموجز' : 'The brief'}</h4>
                     <span className="r">
                       {isAr
                         ? `حُدّد ${shortDate(item.created_at, true)}${events.length === 0 ? ' · دون تغيير' : ''}`
@@ -1160,7 +1117,7 @@ export default function CampaignDetailPage() {
                     )}
                   </div>
                   <div className="card-b cd-goalgrid">
-                    <ReadField label={isAr ? 'الهدف' : 'Goal'}>{item.goal ?? item.name}</ReadField>
+                    <ReadField label={isAr ? 'الوصف' : 'Description'}>{item.goal ?? item.name}</ReadField>
                     <ReadField label={isAr ? 'يُقاس بـ' : 'Measured by'}>{item.measured_by ?? '—'}</ReadField>
                     <ReadField label={isAr ? 'الجمهور' : 'Audience'}>
                       {item.audience ?? '—'}
@@ -2452,7 +2409,7 @@ function BriefModal({
   const submit = async (): Promise<void> => {
     if (!goal.trim()) {
       addToast(
-        isAr ? 'اكتب الهدف كنتيجة — هو ما تُقاس به الحملة.' : 'Write the goal as a result — it is what the campaign is judged by.',
+        isAr ? 'اكتب وصفًا للحملة — هو اسمها في القوائم.' : 'Write a description — it is the campaign’s name in lists.',
         'error',
       );
       return;
@@ -2484,8 +2441,8 @@ function BriefModal({
     <Modal
       title={isAr ? 'موجز الحملة' : 'The campaign brief'}
       sub={isAr
-        ? 'الهدف كنتيجة، ومن تخاطبه، وبأي عرض، وإلى أين يذهب.'
-        : 'The goal as a result, who it speaks to, with what offer, and where it lands.'}
+        ? 'وصف الحملة، ومن تخاطبه، وبأي عرض، وإلى أين يذهب.'
+        : 'The campaign description, who it speaks to, with what offer, and where it lands.'}
       onClose={onClose}
       footer={
         <>
@@ -2498,7 +2455,7 @@ function BriefModal({
         </>
       }
     >
-      <Field label={isAr ? 'الهدف — كنتيجة' : 'The goal — as a result'}>
+      <Field label={isAr ? 'الوصف — بماذا تُعرَّف الحملة' : 'Description — what the campaign is'}>
         <textarea className="inp" rows={2} value={goal} onChange={(e) => setGoal(e.target.value)} />
       </Field>
       <Field

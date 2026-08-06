@@ -15,7 +15,7 @@ import {
   CAMPAIGN_STATUS_LABELS, EXEC_PURPOSE_LABELS, MosCampaign,
   PLATFORM_LABELS, ROLE_LABELS,
   createContent, fetchCampaignDetail, fetchCampaigns, fetchPublications,
-  saveCampaign, savePublication,
+  saveCampaign, savePublication, successMeasureSuffix,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
@@ -25,7 +25,8 @@ import CampaignContentBuilder, { type ContentDraft } from './components/Campaign
 import SuccessMeasuresEditor, {
   MeasureDraft, measuresToDrafts, draftsToMeasures, hasMeasureTarget,
 } from './components/SuccessMeasuresEditor';
-import { num, shortDate } from './lib/format';
+import { money, num, shortDate } from './lib/format';
+import { measureActual, pickMainMeasure } from './lib/measure';
 import './styles/mobile-m4.css';
 
 const AR_MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
@@ -59,22 +60,15 @@ function subPlatform(p: string, isAr: boolean): string {
 type StatusFilter = 'all' | 'active' | 'planning' | 'done';
 type KindFilter = 'all' | 'paid' | 'organic';
 
-const AR_DIGIT_MAP = '٠١٢٣٤٥٦٧٨٩';
-
 /**
- * The goal's numeric target («١٥٠ عميلًا مؤهلًا…» → 150) — same recipe as the
- * detail page's goalTarget: a lead-count success threshold wins; otherwise the
- * first number in the goal sentence (Latin or Arabic-Indic digits).
+ * A measure value formatted for its unit — money for currency, «٪» for percent,
+ * a plain count otherwise. Used for both the actual and the target on the card.
  */
-function goalNumber(c: MosCampaign): number | null {
-  if (c.success_metric === 'leads' && c.success_threshold !== null && c.success_threshold > 0) {
-    return c.success_threshold;
-  }
-  const src = (c.goal ?? c.name ?? '').replace(/[٠-٩]/g, (d) => String(AR_DIGIT_MAP.indexOf(d)));
-  const m = src.match(/\d[\d,]*/);
-  if (!m) return null;
-  const n = Number(m[0].replace(/,/g, ''));
-  return Number.isFinite(n) && n > 0 ? n : null;
+function measureValue(v: number | null, unit: string, isAr: boolean): string {
+  if (v === null || !Number.isFinite(v)) return '—';
+  if (unit === 'currency') return money(v, isAr);
+  if (unit === 'percent') return `${num(Math.round(v * 10) / 10, isAr)}٪`;
+  return num(Math.round(v), isAr);
 }
 
 /** «٧٧٪ من الشهر مضى» — elapsed share of the campaign window, when dated. */
@@ -102,18 +96,22 @@ interface VerdictCard {
  * لا يكفي لاتخاذ موقف» — every card carries a verdict.
  */
 function verdictCardOf(c: MosCampaign, isAr: boolean): VerdictCard {
-  const qualified = c.total_qualified ?? 0;
   const spend = c.total_spend ?? 0;
   const budget = c.budget_total ?? 0;
-  const target = goalNumber(c);
   const timePct = timePctOf(c);
+  // The card headlines the campaign's chosen MAIN success measure — never the
+  // goal text (which is a free-text description now). The main measure is the
+  // first one carrying a target (the editor stores the picked row first).
+  const main = pickMainMeasure(c);
+  const target = main?.threshold ?? null;
+  const label = main ? (isAr ? main.label_ar : main.label_en) : '';
 
   if (c.kind === 'organic') {
     const count = c.content_count ?? 0;
     return {
       big: num(count, isAr),
       sub: target !== null
-        ? isAr ? `من ${num(target, true)} منشورًا` : `of ${num(target, false)} posts`
+        ? isAr ? `من ${num(target, true)} ${label}` : `of ${num(target, false)} ${label}`
         : isAr ? 'عناصر محتوى' : 'content items',
       meterPct: target !== null && target > 0 ? Math.min(100, Math.round((count / target) * 100)) : 0,
       meterColor: 'var(--gold)',
@@ -135,11 +133,14 @@ function verdictCardOf(c: MosCampaign, isAr: boolean): VerdictCard {
     };
   }
 
-  // Paid and launched with money out but nothing measurable — s48's «تحتاج قرارًا».
-  if (qualified === 0 && spend > 0) {
+  // Paid and launched. The live actual for the main measure's tracked source.
+  const actual = main ? measureActual(main.source, c) : null;
+
+  // Money out but the main measure has produced nothing yet — s48's «تحتاج قرارًا».
+  if (main && target !== null && main.source !== 'none' && spend > 0 && (actual === null || actual === 0)) {
     return {
-      big: num(0, isAr),
-      sub: isAr ? `مؤهل على ${num(spend, true)} ريال` : `qualified on ${num(spend, false)} SAR`,
+      big: measureValue(actual, main.unit, isAr),
+      sub: isAr ? `على ${num(spend, true)} ريال` : `on ${num(spend, false)} SAR`,
       meterPct: budget > 0 ? Math.min(100, Math.round((spend / budget) * 100)) : 100,
       meterColor: 'var(--late)',
       verdict: isAr ? 'تحتاج قرارًا' : 'Needs a decision',
@@ -148,37 +149,70 @@ function verdictCardOf(c: MosCampaign, isAr: boolean): VerdictCard {
     };
   }
 
-  if (target !== null && target > 0) {
-    const targetPct = Math.min(100, Math.round((qualified / target) * 100));
-    const behind = timePct !== null && targetPct < timePct - 10;
+  // A trackable main measure with a live actual — pace it toward its target.
+  if (main && target !== null && main.source !== 'none' && actual !== null) {
+    if (main.direction === 'higher') {
+      const pct = target > 0 ? Math.min(100, Math.round((actual / target) * 100)) : 0;
+      const behind = timePct !== null && pct < timePct - 10;
+      return {
+        big: measureValue(actual, main.unit, isAr),
+        sub: isAr
+          ? `من ${measureValue(target, main.unit, true)} ${label} · ${num(pct, true)}٪`
+          : `of ${measureValue(target, main.unit, false)} ${label} · ${pct}%`,
+        meterPct: pct,
+        meterColor: behind ? 'var(--late)' : 'var(--copper)',
+        verdict: timePct === null
+          ? isAr ? 'بلا مدة — لا وتيرة تُحسب' : 'No dates — no pace to compute'
+          : behind
+            ? isAr ? 'متأخرة عن الوتيرة' : 'Behind pace'
+            : isAr ? 'على الوتيرة' : 'On pace',
+        verdictClass: timePct === null ? 'mute' : '',
+        verdictColor: timePct === null ? undefined : behind ? 'var(--late)' : 'var(--go)',
+      };
+    }
+    // Lower-is-better cost/rate measure (CPL, CTR-lower…) — under target is good.
+    const good = actual <= target;
+    const suffix = successMeasureSuffix(main.direction, main.unit, isAr);
     return {
-      big: num(qualified, isAr),
+      big: measureValue(actual, main.unit, isAr),
       sub: isAr
-        ? `من ${num(target, true)} مؤهلًا · ${num(targetPct, true)}٪`
-        : `of ${num(target, false)} qualified · ${targetPct}%`,
-      meterPct: targetPct,
-      meterColor: behind ? 'var(--late)' : 'var(--copper)',
-      verdict: timePct === null
-        ? isAr ? 'بلا مدة — لا وتيرة تُحسب' : 'No dates — no pace to compute'
-        : behind
-          ? isAr ? 'متأخرة عن الوتيرة' : 'Behind pace'
-          : isAr ? 'على الوتيرة' : 'On pace',
-      verdictClass: timePct === null ? 'mute' : '',
-      verdictColor: timePct === null ? undefined : behind ? 'var(--late)' : 'var(--go)',
+        ? `الهدف ${measureValue(target, main.unit, true)} ${suffix}`
+        : `target ${measureValue(target, main.unit, false)} ${suffix}`,
+      meterPct: good ? 100 : Math.max(0, Math.min(100, Math.round((target / actual) * 100))),
+      meterColor: good ? 'var(--go)' : 'var(--late)',
+      verdict: good
+        ? isAr ? 'تحت الهدف' : 'Under target'
+        : isAr ? 'فوق الهدف' : 'Over target',
+      verdictClass: '',
+      verdictColor: good ? 'var(--go)' : 'var(--late)',
     };
   }
 
-  // No numeric target: judge the spend pace instead.
+  // A main measure whose target has no live tracking yet (source 'none', or a
+  // rate with no data yet) — show the target, no pace to judge.
+  if (main && target !== null) {
+    const suffix = successMeasureSuffix(main.direction, main.unit, isAr);
+    return {
+      big: measureValue(target, main.unit, isAr),
+      sub: `${label} · ${suffix}`,
+      meterPct: 0,
+      meterColor: 'var(--sand)',
+      verdict: isAr ? 'الهدف — بانتظار الأرقام' : 'Target — awaiting numbers',
+      verdictClass: 'mute',
+    };
+  }
+
+  // No success measure at all (a legacy row): judge the spend pace instead.
   const spendPct = budget > 0 ? Math.min(100, Math.round((spend / budget) * 100)) : 0;
   const under = timePct !== null && spendPct < timePct - 10;
   const over = timePct !== null && spendPct > timePct + 10;
   return {
-    big: num(qualified, isAr),
-    sub: isAr ? `مؤهلًا · المصروف ${num(spend, true)}` : `qualified · ${num(spend, false)} spent`,
+    big: money(spend, isAr),
+    sub: isAr ? 'المصروف · بلا معيار نجاح' : 'spent · no success measure',
     meterPct: spendPct,
     meterColor: over ? 'var(--late)' : under ? 'var(--wait)' : 'var(--copper)',
     verdict: timePct === null
-      ? isAr ? 'بلا مدة — لا وتيرة تُحسب' : 'No dates — no pace to compute'
+      ? isAr ? 'بلا معيار نجاح' : 'No success measure'
       : over
         ? isAr ? 'إنفاق زائد' : 'Overspending'
         : under
@@ -704,7 +738,7 @@ export function CampaignModal({
   const submit = async (): Promise<void> => {
     if (!goal.trim()) {
       addToast(
-        isAr ? 'اكتب الهدف كنتيجة — هو ما تُقاس به الحملة.' : 'Write the goal as a result — it is what the campaign is judged by.',
+        isAr ? 'اكتب وصفًا للحملة — هو اسمها في القوائم.' : 'Write a description — it is the campaign’s name in lists.',
         'error',
       );
       return;
@@ -856,19 +890,19 @@ export function CampaignModal({
 
       <div>
         <div className="lbl" style={{ marginBottom: 6 }}>
-          {isAr ? 'الهدف — اكتبه كنتيجة' : 'The goal — write it as a result'}
+          {isAr ? 'الوصف — بماذا تُعرَّف الحملة' : 'Description — what the campaign is'}
         </div>
         <input
           className="inp"
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
           autoFocus={isNew}
-          placeholder={isAr ? '١٥٠ عميلًا مؤهلًا لمينا ٥٢ خلال أغسطس' : '150 qualified leads for Mina 52 during August'}
+          placeholder={isAr ? 'حملة مينا ٥٢ لعملاء أغسطس' : 'Mina 52 campaign for August leads'}
         />
         <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 5 }}>
           {isAr
-            ? 'هذا يصبح الهدف الذي تُقاس به الحملة. «زيادة الوعي» ليست هدفًا.'
-            : 'This becomes what the campaign is measured against. “Raise awareness” is not a goal.'}
+            ? 'وصف يقرأه البشر ويميّز الحملة في القوائم. الأرقام والحكم على النجاح يأتيان من معايير النجاح أدناه.'
+            : 'A human-readable label that identifies the campaign in lists. The numbers and the success verdict come from the success measures below.'}
         </div>
       </div>
 
@@ -1065,8 +1099,8 @@ export function CampaignModal({
             </>
           )}
           {isAr
-            ? '، وهدف يُقاس بمعياره أعلاه.'
-            : ', and a goal judged by the criterion above.'}
+            ? '، ويُحكم عليها بمعايير النجاح أعلاه.'
+            : ', judged by the success measures above.'}
           <br />
           {isAr
             ? (drafts.length > 0

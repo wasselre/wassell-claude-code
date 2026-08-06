@@ -158,6 +158,16 @@ export default function SuccessMeasuresEditor({
   const removeRow = (i: number): void =>
     onChange(measures.filter((_, idx) => idx !== i));
 
+  // The MAIN measure is the one the campaign card headlines. It is stored FIRST
+  // (the server derives the back-compat primary from `success_measures[0]`), so
+  // "make main" just moves the picked row to the front.
+  const setMain = (i: number): void => {
+    if (i <= 0) return;
+    const row = measures[i];
+    if (!row) return;
+    onChange([row, ...measures.filter((_, idx) => idx !== i)]);
+  };
+
   const addRow = (): void => {
     // Prefer a type not already chosen; else the first active type.
     const used = new Set(measures.map((m) => m.type_key));
@@ -217,10 +227,30 @@ export default function SuccessMeasuresEditor({
       <div className="lbl" style={{ marginBottom: 6 }}>
         {isAr ? 'معايير النجاح' : 'Success criteria'}
       </div>
+      {measures.length > 1 && (
+        <div style={{ fontSize: 11, color: 'var(--mute)', marginBottom: 8 }}>
+          {isAr
+            ? 'المعيار الرئيسي (★) هو ما يظهر على بطاقة الحملة ويُقاس التقدّم مقابله.'
+            : 'The main measure (★) is what the campaign card shows and pace is measured against.'}
+        </div>
+      )}
       <div style={{ display: 'grid', gap: 9 }}>
         {measures.map((m, i) => (
           <div key={i} style={{ display: 'grid', gap: 9 }}>
             <div style={{ display: 'flex', gap: 11, flexWrap: 'wrap', alignItems: 'center' }}>
+              {measures.length > 1 && (
+                <button
+                  type="button"
+                  className={`btn btn-sm${i === 0 ? ' btn-p' : ''}`}
+                  onClick={() => setMain(i)}
+                  aria-pressed={i === 0}
+                  title={isAr ? 'المعيار الرئيسي — يظهر على البطاقة' : 'Main measure — shown on the card'}
+                >
+                  {i === 0
+                    ? (isAr ? '★ الرئيسي' : '★ Main')
+                    : (isAr ? '☆ اجعله الرئيسي' : '☆ Make main')}
+                </button>
+              )}
               <select
                 className="inp"
                 style={{ flex: 1, minWidth: 180 }}

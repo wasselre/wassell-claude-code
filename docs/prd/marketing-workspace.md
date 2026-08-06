@@ -1,7 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
-**Last updated:** 2026-08-05
+**Last updated:** 2026-08-06
 **Related PRDs:** [access-control.md](access-control.md), [marketing-intelligence.md](marketing-intelligence.md), [posts-content.md](posts-content.md), [projects-units.md](projects-units.md), [navigation-layout.md](navigation-layout.md)
 
 ## What it is (in plain English)
@@ -148,6 +148,26 @@ This workspace answers the three questions the old process could not:
   campaign so a later rename never rewrites history. Defining a measure (inline or
   in Settings → Success measures) **auto-translates the name between Arabic and
   English** as you type, the same live `/api/translate` flow the Builder uses.
+- **The goal field is a pure human description, never parsed for numbers.** It is
+  the campaign's name/handle in lists (there is no separate name field) and is
+  required, but the system reads **zero** numbers out of it. Every target, actual,
+  pace, and verdict comes from the success measures — the campaign card, the
+  detail «مقابل الهدف» pace card, projections, and gaps all read a MEASURE, not the
+  goal sentence. (Previously the card scraped the first number out of the goal
+  text as a fallback target; that path is gone.)
+- **One measure is the «الرئيسي / main» measure — the one the card headlines.**
+  When a campaign has more than one measure, the success-criteria editor shows a
+  **★ Make main** toggle per row; the picked measure is stored first in
+  `success_measures` (the server derives the back-compat scalar pair from `[0]`).
+  The campaign card then shows that measure: a **volume goal** (higher-is-better
+  qualified/leads/impressions/clicks) renders a pace bar (actual of target · %,
+  on/behind pace vs the elapsed window), while a **cost/rate goal**
+  (lower-is-better CPL/CTR/spend) renders actual-vs-target with an **under/over
+  target** verdict. A measure whose source has no live actual yet (`none`, or a
+  rate with no data) shows the target with «الهدف — بانتظار الأرقام». The detail
+  page's pace/projection math still needs an accumulating volume measure, so it
+  honors the main choice when it is a volume goal and otherwise falls back to the
+  first volume measure.
 - **The campaign brief's «الجمهور» (audience) is a saved, reusable record**, not a
   one-off line typed fresh each time. An audience is a title (`name`) plus a large
   `details` field, kept in a managed registry (`mos_audiences`). On the brief you
@@ -264,7 +284,8 @@ This workspace answers the three questions the old process could not:
 | `src/pages/Marketing/components/SettingsWorkflows.tsx` | The workflow path/step editor — each step carries an owning role, a **due-in-days** value (`due_days`, integer ≥ 0; `0` = same day, i.e. the task is due the day the step opens) that the engine turns into the task's `due_at` (`now() + due_days days`), approval + required fields, **and the per-step notification gate + channels** |
 | `supabase/migrations/2026-08-05_mos_step_notify_channels.sql` | Adds the per-step channel mask to `notify_emit` (AND-s step-permitted channels with each role's grid; back-compatible, mask defaults NULL) |
 | `src/pages/Marketing/components/` | Shared primitives (`kit.tsx`), icons, task card, stage rail, writing fields, scenes, publishing, performance, material, thread |
-| `src/pages/Marketing/components/SuccessMeasuresEditor.tsx` / `SettingsMeasures.tsx` | A campaign's multi-measure success criteria + the managed measure-type registry (both auto-translate the name; unit = count/riyal/percent) |
+| `src/pages/Marketing/components/SuccessMeasuresEditor.tsx` / `SettingsMeasures.tsx` | A campaign's multi-measure success criteria (incl. the ★ **main-measure** picker that stores the chosen row first) + the managed measure-type registry (both auto-translate the name; unit = count/riyal/percent) |
+| `src/pages/Marketing/lib/measure.ts` | The ONE place that turns a campaign's success measures into headline numbers — `pickMainMeasure` (card headline = first measure with a target), `pickVolumeMeasure` (detail pace math), `measureActual` (live value per source). The goal text is never read here. |
 | `src/pages/Marketing/components/AudiencePicker.tsx` / `SettingsAudiences.tsx` | The campaign brief's saved-audience picker (pick existing or create inline) + the managed audiences registry (`mos_audiences`: name + details) |
 | `src/hooks/useBilingualLabelAutofill.ts` | Live Arabic⇄English name auto-fill for local-state label pairs (wraps `useDebouncedTranslation`) |
 | `src/pages/Marketing/lib/format.ts` | Arabic-Indic numerals and dates — one place that decides digit shape |
