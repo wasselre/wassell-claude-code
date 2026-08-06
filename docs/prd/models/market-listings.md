@@ -5,7 +5,7 @@
 # Model: Market Listings / إعلانات السوق  `market_listings`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-30
+**Last updated (from DB):** 2026-08-06
 **Model id:** `8f06bc39-4bee-42e9-9fab-77023fb89ede`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **8** (1 base, 7 non-base)
-- Fields: **52**
+- Fields: **70**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -38,7 +38,7 @@
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `external_id` | Listing ID / معرّف الإعلان | Text | yes | half | yes |  |
-| `source` | Source / المصدر | Dropdown | no | half | no | 1 options |
+| `source` | Source / المصدر | Dropdown | no | half | no | 4 options |
 | `source_url` | Listing URL / رابط الإعلان | URL | no | half | no |  |
 | `title` | Title / عنوان الإعلان | Text | no | full | yes |  |
 | `listing_type` | Listing Type / نوع العرض | Dropdown | no | half | yes | 2 options |
@@ -47,11 +47,32 @@
 | `price` | Price / السعر | Currency | no | half | yes |  |
 | `description` | Description / الوصف | Text area | no | full | no |  |
 | `location` | Location / الموقع | location | no | full | yes |  |
+| `title_ar` | Title (AR) / العنوان (عربي) | Text | no | half | no |  |
+| `description_ar` | Description (AR) / الوصف (عربي) | Text area | no | half | no |  |
+| `plot_area` | Plot Area (m²) / مساحة الأرض (م²) | Number | no | half | no |  |
+| `furnished` | Furnishing / التأثيث | Text | no | half | no |  |
+| `completion_status` | Completion Status / حالة الإنجاز | Text | no | half | no |  |
+| `emirate` | Emirate / الإمارة | Text | no | half | no |  |
+| `community` | Community / المجتمع | Text | no | half | no |  |
+| `building` | Building / Tower / المبنى / البرج | Text | no | half | no |  |
+| `permit_number` | Permit / RERA No. / رقم التصريح / ريرا | Text | no | half | no |  |
+| `permit_key` | Permit Key (normalized) / مفتاح التصريح | Text | no | half | no |  |
+| `reference_number` | Reference No. / الرقم المرجعي | Text | no | half | no |  |
+| `agency_name` | Agency / الوكالة | Text | no | half | no |  |
+| `agent_whatsapp` | Agent WhatsApp / واتساب المُعلِن | Text | no | half | no |  |
+| `is_verified` | Verified / موثّق | Checkbox | no | half | no |  |
+| `listed_at` | Listed At / تاريخ النشر | Date & time | no | half | no |  |
+| `dupe_group_id` | Property Cluster ID / معرّف العقار الموحّد | Text | no | half | no |  |
+| `dupe_role` | Duplicate Role / دور التكرار | Text | no | half | no |  |
+| `source_payload` | Raw Source Payload / البيانات الخام | Notes | no | half | no |  |
 
 **Field details:**
 
 - **Source / المصدر** (`source`, type `dropdown`) — options:
   - API value `aqar` → "Aqar" / "عقار"
+  - API value `bayut` → "Bayut" / "بيوت" · color `#B8734F`
+  - API value `dubizzle` → "Dubizzle" / "دوبيزل" · color `#B8734F`
+  - API value `propertyfinder` → "Property Finder" / "بروبرتي فايندر" · color `#B8734F`
 - **Listing Type / نوع العرض** (`listing_type`, type `dropdown`) — options:
   - API value `sale` → "Sale" / "بيع"
   - API value `rent` → "Rent" / "إيجار"

@@ -4,7 +4,7 @@
 
 # Workflows — auto-generated index
 
-**20 workflows.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
+**22 workflows.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
 
 | Workflow | Trigger | On model | Active | Branches | Actions | Updated |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -23,6 +23,8 @@
 | [Ownership Transfer Completed → Closed Won](ownership-transfer-completed-closed-won-7122bc25.md) | update | Ownership Transfer | yes | 1 | 1 | 2026-06-17 |
 | [Reservation Created → Financing Follow-up](reservation-created-financing-follow-up-3f3e4606.md) | create | Reservations | yes | 1 | 2 | 2026-06-17 |
 | [Send Visit Rating](send-visit-rating-b9f2a1c4.md) | create | Visits | yes | 1 | 1 | 2026-06-21 |
+| [Standard post](standard-post-009b968a.md) |  | — | yes | flat | 0 | 2026-08-03 |
+| [Standard video](standard-video-ac9024d5.md) |  | — | yes | flat | 0 | 2026-08-03 |
 | [Targeted Projects](targeted-projects-f9a636dd.md) | update | All Projects | no | 1 | 2 | 2026-07-22 |
 | [Visit → After-Visit](visit-after-visit-3f2b8499.md) | create | Visits | yes | 1 | 3 | 2026-06-21 |
 | [Welcome new contact via WhatsApp](welcome-new-contact-via-whatsapp-a10fd4c9.md) | create | Contacts | no | 1 | 1 | 2026-06-09 |

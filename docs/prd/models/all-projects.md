@@ -44,7 +44,7 @@
 | `project_classification` | Project Classification / تصنيف المشروع | Dropdown | no | half | yes | 4 options |
 | `construction_status` | Construction Status / حالة الإنشاء | Dropdown | no | half | yes | 7 options |
 | `unit_types` | Unit Types / أنواع الوحدات | Multi-select | no | half | yes | 13 options · multi |
-| `preferred_amenities` | Preferred Amenities / المرافق | Multi-select | no | half | no | 38 options · multi |
+| `preferred_amenities` | Preferred Amenities / المرافق | Multi-select | no | half | no | 40 options · multi |
 | `status_checked_at` | Status Last Checked / آخر تحقق من الحالة | Date | no | half | no |  |
 
 **Field details:**
@@ -134,6 +134,8 @@
   - API value `غرفة-بريد` → "Mail room" / "غرفة بريد" · color `#C09B5F`
   - API value `بزنس-سنتر` → "Business Center" / "بزنس سنتر" · color `#B8734F`
   - API value `ممرات-رياضية` → "Jogging Tracks" / "ممرات رياضية" · color `#C09B5F`
+  - API value `padel_court` → "Padel Court" / "ملعب بادل" · color `#B8734F`
+  - API value `children_play_area` → "Children's Play Area" / "منطقة ألعاب أطفال" · color `#B8734F`
 
 ### 2. Location & Geo / الموقع والإحداثيات  _(color #B8734F)_
 

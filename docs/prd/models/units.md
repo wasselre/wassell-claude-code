@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **8** (1 base, 7 non-base)
-- Fields: **46**
+- Fields: **47**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -307,3 +307,4 @@
 | `source_unit_type` | Source Unit Type (raw) / نوع الوحدة كما ورد بالمصدر | Text | no | half | no |  |
 | `source_file` | Source File / ملف المصدر | Text | no | half | no |  |
 | `source_synced_at` | Last Synced From Source / آخر مزامنة من المصدر | Date & time | no | half | no |  |
+| `source_view` | Source View (raw) / الإطلالة كما وردت بالمصدر | Text | no | half | no |  |

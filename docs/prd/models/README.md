@@ -31,7 +31,7 @@
 | [Follow-ups](followups.md) | `followups` | JSONB | New Group | 3 | 44 | no | 2026-07-18 |
 | [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-06-08 |
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
-| [Market Listings](market-listings.md) | `market_listings` | JSONB | — | 8 | 52 | no | 2026-07-30 |
+| [Market Listings](market-listings.md) | `market_listings` | JSONB | — | 8 | 70 | no | 2026-08-06 |
 | [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 16 | yes | 2026-06-28 |
 | [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-07-29 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
@@ -55,5 +55,5 @@
 | [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 2 | 5 | no | 2026-06-11 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 2 | 7 | no | 2026-07-31 |
-| [Units](units.md) | `units` | JSONB | Projects | 8 | 46 | no | 2026-07-31 |
+| [Units](units.md) | `units` | JSONB | Projects | 8 | 47 | no | 2026-07-31 |
 | [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 12 | no | 2026-06-21 |
