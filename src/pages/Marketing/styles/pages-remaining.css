@@ -39,6 +39,10 @@
   object-fit: contain;
   display: block;
 }
+.mos-root .pr-preview audio {
+  width: 88%;
+  max-width: 460px;
+}
 .mos-root .pr-play {
   width: 52px;
   height: 52px;

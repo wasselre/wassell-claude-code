@@ -95,6 +95,11 @@ This workspace answers the three questions the old process could not:
   for a grouped set, mm:ss for videos), toggles between grid and list, and
   leads with a «لم تُستخدم قط» banner that links to the unused-material screen
   (`/m/library/unused`). Cards open the asset page (`/m/library/:assetId`).
+- **The asset page previews the material inline** (`AssetDetailPage.tsx`): a video
+  gets a `<video controls>` player, a photo/design renders as an image, and an
+  **audio track gets an `<audio controls>` player** (added 2026-08-06 — audio
+  previously fell through to a static placeholder icon and could not be played).
+  Anything with no playable/renderable form still shows the kind placeholder.
 - **Material intake — direct multi-file upload (2026-08-04).** The «مادة جديدة»
   (New material) modal on a content piece's Materials tab (`NewAssetModal` in
   `src/pages/Marketing/components/MaterialsTab.tsx`) **uploads files directly** —

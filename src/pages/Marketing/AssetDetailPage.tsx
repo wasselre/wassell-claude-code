@@ -239,6 +239,8 @@ export default function AssetDetailPage() {
               <div className="pr-preview">
                 {asset.kind === 'video' && asset.url ? (
                   <video src={asset.url} controls preload="metadata" />
+                ) : asset.kind === 'audio' && asset.url ? (
+                  <audio src={asset.url} controls preload="metadata" />
                 ) : (asset.kind === 'photo' || asset.kind === 'design') && (asset.url || asset.thumb_url) ? (
                   <img src={asset.url ?? asset.thumb_url ?? undefined} alt={asset.title} />
                 ) : (
