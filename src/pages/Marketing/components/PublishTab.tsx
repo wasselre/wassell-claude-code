@@ -100,15 +100,9 @@ function platformLink(platform: string, handle: string | null): string | null {
   }
 }
 
-/**
- * TODO(client): `mos_publication_v` also returns `file_id` and
- * `published_by_user_id` — add both to MosPublication in
- * src/lib/marketingOS/client.ts. Local read-side extension until then.
- */
-type PubRow = MosPublication & {
-  file_id?: string | null;
-  published_by_user_id?: string | null;
-};
+/** `asset_id`, `file_id` and `published_by_user_id` now live on MosPublication;
+ *  the alias is kept only to avoid churning the many call sites below. */
+type PubRow = MosPublication;
 
 export default function PublishTab({
   contentId, publications, accounts, canEdit, isAr, onChange,
@@ -160,21 +154,20 @@ export default function PublishTab({
       setEditing(null);
       setAdding(false);
       addToast(isAr ? 'حُفظ' : 'Saved', 'success');
-      // The file pick must not fail silently: verify the server actually kept
-      // it. TODO(server): publication_save's whitelist lacks 'file_id' — the
-      // mos_publications.file_id column exists; add the key server-side.
+      // The file pick must not fail silently: verify the server actually kept the
+      // approved-file link (by asset id) rather than assuming the save took it.
       if (pickedAsset) {
         const savedRow = (res.publications as PubRow[]).find(
           (p) => p.id === payload.id || (!payload.id && p.platform === payload.platform),
         );
-        if (!pickedAsset.file_id || savedRow?.file_id !== pickedAsset.file_id) {
+        if (savedRow?.asset_id !== pickedAsset.id) {
           console.error('[marketing] publication file link not persisted', {
-            picked: pickedAsset.id, file_id: pickedAsset.file_id ?? null, saved: savedRow?.file_id ?? null,
+            picked: pickedAsset.id, saved: savedRow?.asset_id ?? null,
           });
           addToast(
             isAr
-              ? 'حُفظ النشر، لكن ربط الملف المعتمد لم يُحفظ بعد — القدرة قيد الإكمال في الخادم.'
-              : 'The publication saved, but the approved-file link did not persist yet — server support pending.',
+              ? 'حُفظ النشر، لكن ربط الملف المعتمد لم يُحفظ — أعِد المحاولة.'
+              : 'The publication saved, but the approved-file link did not — please try again.',
             'error',
           );
         }
@@ -272,6 +265,7 @@ export default function PublishTab({
         scheduled_at: pub.scheduled_at,
         caption: pub.caption,
         external_url: assistUrl.trim() || pub.external_url || null,
+        asset_id: pub.asset_id ?? null,
         file_id: pub.file_id ?? null,
       });
       onChange(res.publications);
@@ -284,10 +278,12 @@ export default function PublishTab({
     }
   };
 
-  /** The approved asset a publication actually carries, resolved by file id. */
+  /** The approved asset a publication carries — by asset id (the durable link),
+   *  falling back to the legacy file_id key for rows saved before the switch. */
   const fileAssetOf = (pub: PubRow): MosAsset | null => {
-    if (!pub.file_id) return null;
-    return allAssets.find((a) => a.file_id === pub.file_id) ?? null;
+    if (pub.asset_id) return allAssets.find((a) => a.id === pub.asset_id) ?? null;
+    if (pub.file_id) return allAssets.find((a) => a.file_id === pub.file_id) ?? null;
+    return null;
   };
 
   const igCaption = publications.find((p) => p.platform === 'instagram' && p.caption)?.caption ?? null;
@@ -812,7 +808,11 @@ function PublicationModal({
   const [caption, setCaption] = useState(publication?.caption ?? '');
   const [url, setUrl] = useState(publication?.external_url ?? '');
   const [assetId, setAssetId] = useState(
-    () => finalAssets.find((a) => a.file_id && a.file_id === pubRow?.file_id)?.id ?? '',
+    // Prefer the durable asset link; fall back to the legacy file_id match for
+    // publications saved before the switch.
+    () => pubRow?.asset_id
+      ?? finalAssets.find((a) => a.file_id && a.file_id === pubRow?.file_id)?.id
+      ?? '',
   );
 
   const platformAccounts = accounts.filter((a) => a.platform === platform);
@@ -849,6 +849,7 @@ function PublicationModal({
               scheduled_at: when ? new Date(when).toISOString() : null,
               caption: caption || null,
               external_url: url || null,
+              asset_id: picked?.id ?? null,
               file_id: picked?.file_id ?? null,
             }, picked)}
           >

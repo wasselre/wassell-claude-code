@@ -704,6 +704,7 @@ export default function ContentDetailPage() {
               canEdit={can('manage_assets') || canEditNow}
               isAr={isAr}
               onCount={setMaterialCount}
+              approvalAssetId={item.approval_asset_id ?? null}
             />
           )}
 

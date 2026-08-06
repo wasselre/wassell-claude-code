@@ -1172,6 +1172,17 @@ export default async function handler(req: Request): Promise<Response> {
           if (rnFail) return rnFail;
         }
 
+        // Approval is the bridge to a publishable file: the material the item's
+        // owner submitted for approval (mos_content.approval_asset_id) becomes an
+        // approved ('final') link, which is what the Publishing tab reads. The RPC
+        // is SECURITY DEFINER (the approver may not hold asset-write RLS) and
+        // promotes the EXPLICIT selection only — a no-op when nothing was marked.
+        if (result === 'approved') {
+          const promo = await sb.rpc('mos_promote_approval_asset', { p_content_id: contentId });
+          const promoFail = dbFail(promo.error);
+          if (promoFail) return promoFail;
+        }
+
         const full = await sb.from('mos_content_v')
           .select(CONTENT_LIST_COLUMNS).eq('id', contentId).maybeSingle();
         const fullFail = dbFail(full.error);
@@ -1519,7 +1530,11 @@ export default async function handler(req: Request): Promise<Response> {
 
         const patch: Record<string, unknown> = {};
         for (const k of ['platform', 'account_id', 'status', 'scheduled_at', 'published_at',
-                         'caption', 'external_url', 'external_id', 'note'] as const) {
+                         'caption', 'external_url', 'external_id', 'note',
+                         // The approved material this publication uses. asset_id is
+                         // the durable link (mos_assets.id, always present); file_id
+                         // is kept for legacy rows that stored an asset's file id.
+                         'asset_id', 'file_id'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
 
@@ -3419,10 +3434,43 @@ export default async function handler(req: Request): Promise<Response> {
           .eq('asset_id', assetId).eq('content_id', contentId);
         const f = dbFail(del.error);
         if (f) return f;
+        // Unlinking the material that was submitted for approval clears the
+        // pointer, so a later approval can't promote an asset that is no longer
+        // attached. The FK is ON DELETE SET NULL only when the ASSET is deleted;
+        // an unlink is a link delete, so we clear it here.
+        const clear = await sb.from('mos_content')
+          .update({ approval_asset_id: null })
+          .eq('id', contentId).eq('approval_asset_id', assetId);
+        const clearFail = dbFail(clear.error);
+        if (clearFail) return clearFail;
         const list = await sb.from('mos_asset_links').select('asset_id, content_id, role').eq('content_id', contentId);
         const lf = dbFail(list.error);
         if (lf) return lf;
         return jsonOk({ links: list.data ?? [] });
+      }
+
+      // Mark (or clear) the ONE material submitted for approval on a content
+      // item. On the next 'approved' task result the API promotes it to a 'final'
+      // link (mos_promote_approval_asset). Governed by mos_content UPDATE RLS,
+      // the same gate as content_update.
+      case 'content_set_approval_asset': {
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        const assetId = str(body.asset_id); // null clears the selection
+        if (assetId) {
+          const linked = await sb.from('mos_asset_links')
+            .select('asset_id').eq('content_id', contentId).eq('asset_id', assetId).maybeSingle();
+          const linkFail = dbFail(linked.error);
+          if (linkFail) return linkFail;
+          if (!linked.data) return jsonError(400, 'asset is not linked to this content');
+        }
+        const upd = await sb.from('mos_content')
+          .update({ approval_asset_id: assetId ?? null })
+          .eq('id', contentId).select('id').maybeSingle();
+        const updFail = dbFail(upd.error);
+        if (updFail) return updFail;
+        if (!upd.data) return jsonError(404, 'content item not found');
+        return jsonOk({ content_id: contentId, approval_asset_id: assetId ?? null });
       }
 
       /* -------------------------------------------------------- */

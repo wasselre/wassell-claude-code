@@ -242,6 +242,9 @@ export interface MosContentRow {
   language?: string | null;
   workflow_id?: string | null;
   archived_at?: string | null;
+  /** The ONE material submitted for approval; promoted to a 'final' link when the
+   *  item is approved. Present on the view for every row. */
+  approval_asset_id?: string | null;
 }
 
 export interface MosTask {
@@ -479,6 +482,11 @@ export interface MosPublication {
   caption: string | null;
   external_url: string | null;
   note: string | null;
+  /** The approved material this publication uses. `asset_id` (mos_assets.id) is
+   *  the durable link; `file_id` is a legacy key kept for older rows. */
+  asset_id: string | null;
+  file_id: string | null;
+  published_by_user_id: string | null;
   account_label_ar: string | null;
   account_label_en: string | null;
   account_handle: string | null;
@@ -1106,6 +1114,14 @@ export const linkAsset = (assetId: string, contentId: string, role = 'source') =
 
 export const unlinkAsset = (assetId: string, contentId: string) =>
   call<{ links: MosAssetLink[] }>('asset_unlink', { asset_id: assetId, content_id: contentId });
+
+/** Mark (assetId) or clear (null) the ONE material submitted for approval. The
+ *  marketing manager's approval promotes it to the approved ('final') band. */
+export const setApprovalAsset = (contentId: string, assetId: string | null) =>
+  call<{ content_id: string; approval_asset_id: string | null }>(
+    'content_set_approval_asset',
+    { content_id: contentId, asset_id: assetId },
+  );
 
 export const fetchShoots = () =>
   call<{

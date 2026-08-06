@@ -27,7 +27,7 @@ import {
   ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosAsset, MosAssetLink, MosContentVersion,
   MosScene, MosShootItem, MosShootRequest, RolePerson,
   fetchAssets, fetchContentDetail, fetchContentVersions, fetchShoots,
-  linkAsset, saveAsset, saveShoot, unlinkAsset,
+  linkAsset, saveAsset, saveShoot, setApprovalAsset, unlinkAsset,
 } from '@/lib/marketingOS/client';
 import {
   formatBytes, heicToJpeg, isBrowserImage, isHeic, kindFromFile, storagePath, uploadToStorage,
@@ -71,6 +71,7 @@ function sceneTagOf(asset: MosAsset): number | null {
 
 export default function MaterialsTab({
   contentId, projectId, canEdit, isAr, onCount, scenes: scenesProp, contentTitle,
+  approvalAssetId: approvalAssetIdProp,
 }: {
   contentId: string;
   projectId: string | null;
@@ -85,9 +86,15 @@ export default function MaterialsTab({
   scenes?: MosScene[];
   /** Names the shoot request raised from a missing row. Optional; ref fallback. */
   contentTitle?: string | null;
+  /** The material currently submitted for approval (mos_content.approval_asset_id). */
+  approvalAssetId?: string | null;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const { people, can } = useWorkspace();
+  /** Which material is submitted for approval — the manager's approval promotes
+   *  it to the approved band. Seeded from the item; updated on toggle. */
+  const [approvalAssetId, setApprovalAssetId] = useState<string | null>(approvalAssetIdProp ?? null);
+  useEffect(() => { setApprovalAssetId(approvalAssetIdProp ?? null); }, [approvalAssetIdProp]);
   const [assets, setAssets] = useState<MosAsset[]>([]);
   const [links, setLinks] = useState<MosAssetLink[]>([]);
   const [versions, setVersions] = useState<MosContentVersion[]>([]);
@@ -183,7 +190,28 @@ export default function MaterialsTab({
       const res = await unlinkAsset(assetId, contentId);
       setLinks((cur) => [...cur.filter((l) => l.content_id !== contentId), ...res.links]);
       onCount(res.links.length);
+      // The server clears approval_asset_id when the submitted file is unlinked;
+      // mirror it locally so the toggle state doesn't lag.
+      if (approvalAssetId === assetId) setApprovalAssetId(null);
     } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Submit (or un-submit) ONE material for approval. Single-select: marking a
+   *  new file replaces the previous one. On the manager's approval the marked
+   *  file becomes the approved ('final') version the Publishing tab reads. */
+  const toggleApproval = async (assetId: string): Promise<void> => {
+    const next = approvalAssetId === assetId ? null : assetId;
+    const prev = approvalAssetId;
+    setApprovalAssetId(next); // optimistic
+    setBusy(true);
+    try {
+      await setApprovalAsset(contentId, next);
+    } catch (e) {
+      setApprovalAssetId(prev); // roll back on failure — never silently
       addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setBusy(false);
@@ -237,14 +265,16 @@ export default function MaterialsTab({
   const workingRows = mine.filter((l) => l.role === 'reference');
   const finalRows = mine.filter((l) => l.role === 'final');
 
-  /** One linked-asset row, band-agnostic. */
-  const assetRow = (l: MosAssetLink) => {
+  /** One linked-asset row. `approvable` rows (source + working files) carry the
+   *  «submit for approval» toggle; the approved band never does. */
+  const assetRow = (l: MosAssetLink, approvable = false) => {
     const a = assetById.get(l.asset_id);
     if (!a) return null;
     const usedElsewhere = links.filter(
       (x) => x.asset_id === a.id && x.content_id !== contentId,
     ).length;
     const scene = sceneTagOf(a);
+    const isForApproval = approvalAssetId === a.id;
     return (
       <div key={l.asset_id} className="file">
         <div className="th">
@@ -272,10 +302,31 @@ export default function MaterialsTab({
           {scene !== null && (
             <span className="tag">{isAr ? `المشهد ${num(scene, true)}` : `Scene ${scene}`}</span>
           )}
+          {isForApproval && (
+            <span className="tag" style={{ background: 'var(--gold)', color: 'var(--ink)' }}>
+              {isAr ? 'محدّدة للاعتماد' : 'Marked for approval'}
+            </span>
+          )}
           {a.url && (
             <a className="btn btn-d btn-sm" href={a.url} target="_blank" rel="noreferrer">
               {isAr ? 'معاينة' : 'Preview'}
             </a>
+          )}
+          {approvable && canEdit && (
+            <button
+              type="button"
+              className={`btn btn-sm${isForApproval ? ' btn-p' : ''}`}
+              disabled={busy}
+              onClick={() => void toggleApproval(a.id)}
+              aria-pressed={isForApproval}
+              title={isAr
+                ? 'يعتمدها المدير فتصبح النسخة المعتمدة للنشر'
+                : 'When the manager approves, this becomes the approved file for publishing'}
+            >
+              {isForApproval
+                ? (isAr ? 'إلغاء التحديد' : 'Unmark')
+                : (isAr ? 'تحديد للاعتماد' : 'Mark for approval')}
+            </button>
           )}
           {canEdit && (
             <button
@@ -318,7 +369,7 @@ export default function MaterialsTab({
             </div>
           ) : (
             <>
-              {sourceRows.map(assetRow)}
+              {sourceRows.map((l) => assetRow(l, true))}
               {/* اللقطة الناقصة صفٌّ، لا غياب. */}
               {missingScenes.map((s) => (
                 <div key={s.id} className="file cd2-missing">
@@ -363,7 +414,7 @@ export default function MaterialsTab({
                 : 'No working files yet — the edit project, voice-over takes and the like get linked here.'}
             </div>
           ) : (
-            workingRows.map(assetRow)
+            workingRows.map((l) => assetRow(l, true))
           )}
         </div>
 
@@ -419,12 +470,16 @@ export default function MaterialsTab({
           </div>
           {finalRows.length === 0 ? (
             <div className="drop">
-              {isAr
-                ? 'لا شيء معتمد بعد — الملفات المعتمدة تظهر هنا، وهي وحدها التي يمكن ربطها بعملية نشر.'
-                : 'Nothing approved yet — approved files appear here, and only they can be attached to a publication.'}
+              {approvalAssetId
+                ? (isAr
+                    ? 'نسخة محدّدة للاعتماد — تصبح معتمدة تلقائيًا عند اعتماد المدير لهذا العنصر، فتظهر هنا ويمكن ربطها بالنشر.'
+                    : 'A file is marked for approval — it becomes approved automatically when the manager approves this item, then appears here and can be attached to a publication.')
+                : (isAr
+                    ? 'لا شيء معتمد بعد. حدّد نسخة من المواد أعلاه بزر «تحديد للاعتماد»؛ يعتمدها المدير فتظهر هنا وتتاح للنشر.'
+                    : 'Nothing approved yet. Mark a file above with “Mark for approval”; once the manager approves, it appears here and becomes available to publish.')}
             </div>
           ) : (
-            finalRows.map(assetRow)
+            finalRows.map((l) => assetRow(l))
           )}
         </div>
 
