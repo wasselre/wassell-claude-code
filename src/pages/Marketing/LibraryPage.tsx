@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosAsset, MosAssetLink, fetchAssets,
 } from '@/lib/marketingOS/client';
+import { signViewUrls } from '@/lib/files/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, LoadError, PageHead, Skeleton } from './components/kit';
 import { IconSearch } from './components/icons';
@@ -56,6 +57,9 @@ export default function LibraryPage() {
 
   const [assets, setAssets] = useState<MosAsset[]>([]);
   const [links, setLinks] = useState<MosAssetLink[]>([]);
+  /** Signed thumbnails for assets that reference a private `files` object (the
+   *  "link, don't copy" project media) — keyed by file_id, resolved in batches. */
+  const [signedByFile, setSignedByFile] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState('');
@@ -80,6 +84,34 @@ export default function LibraryPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Resolve signed thumbnails for file_id-backed assets (project media that
+  // was linked, not copied). Public-URL library uploads already have thumb_url.
+  useEffect(() => {
+    const ids = Array.from(new Set(
+      assets.filter((a) => !a.thumb_url && !a.url && a.file_id).map((a) => a.file_id as string),
+    ));
+    if (ids.length === 0) { setSignedByFile({}); return; }
+    let alive = true;
+    void (async () => {
+      const out: Record<string, string> = {};
+      // signViewUrls caps at 200 per call — chunk so a big library still resolves.
+      for (let i = 0; i < ids.length; i += 200) {
+        try {
+          Object.assign(out, await signViewUrls(ids.slice(i, i + 200)));
+        } catch (e) {
+          // Non-fatal: a card without a thumbnail falls back to the kind tile.
+          console.error('[marketing] batch thumbnail signing failed', e);
+        }
+      }
+      if (alive) setSignedByFile(out);
+    })();
+    return () => { alive = false; };
+  }, [assets]);
+
+  /** The thumbnail src for a card: the public thumb, else a signed private one. */
+  const thumbFor = (a: MosAsset): string | undefined =>
+    a.thumb_url ?? (a.file_id ? signedByFile[a.file_id] : undefined);
 
   /** asset_id → number of content items using it. Unused is a fact, not a counter. */
   const useCount = useMemo(() => {
@@ -339,8 +371,8 @@ export default function LibraryPage() {
                         onClick={() => navigate(`/m/library/${a.id}`)}
                       >
                         <div className="im" style={{ background: KIND_BG[a.kind] ?? 'var(--sand)' }}>
-                          {a.thumb_url
-                            ? <img src={a.thumb_url} alt="" />
+                          {thumbFor(a)
+                            ? <img src={thumbFor(a)} alt="" />
                             : (isAr ? ASSET_KIND_LABELS[a.kind]?.ar : ASSET_KIND_LABELS[a.kind]?.en) ?? a.kind}
                           <span className={`bd badge${badge.bad ? ' b-bad' : ''}`}>{badge.text}</span>
                           {a.kind === 'video' && a.duration_seconds != null && a.duration_seconds > 0 && (
@@ -367,8 +399,8 @@ export default function LibraryPage() {
                         onClick={() => navigate(`/m/library/${a.id}`)}
                       >
                         <span className="ath" style={{ background: KIND_BG[a.kind] ?? 'var(--sand)' }}>
-                          {a.thumb_url
-                            ? <img src={a.thumb_url} alt="" />
+                          {thumbFor(a)
+                            ? <img src={thumbFor(a)} alt="" />
                             : (isAr ? ASSET_KIND_LABELS[a.kind]?.ar : ASSET_KIND_LABELS[a.kind]?.en) ?? a.kind}
                           {a.kind === 'video' && a.duration_seconds != null && a.duration_seconds > 0 && (
                             <span className="dur">{duration(a.duration_seconds, isAr)}</span>

@@ -997,10 +997,24 @@ export interface MosAssetUsage {
   live_ad: boolean;
 }
 
+/**
+ * A project/record this asset is linked to — the "link, don't copy" usage back
+ * from a project's photo/brochure to the shared library asset (2026-08-05).
+ * `model_name` (e.g. 'all_projects') deep-links to `/model/:model_name/:record_id`.
+ */
+export interface MosAssetRecordUsage {
+  model_id: string | null;
+  model_name: string | null;
+  record_id: string;
+  title: string;
+  role: string;
+}
+
 export const fetchAssetDetail = (assetId: string) =>
   call<{
     asset: MosAsset;
     used_in: MosAssetUsage[];
+    used_in_records: MosAssetRecordUsage[];
     versions: Array<{ id: string; title: string; created_at: string }>;
     publications_using: number;
   }>('asset_detail', { asset_id: assetId });
