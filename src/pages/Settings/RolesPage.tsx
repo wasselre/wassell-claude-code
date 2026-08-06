@@ -54,7 +54,14 @@ export default function RolesPage() {
   const { roles, users, language, saveRole } = useAppStore();
   const isAr = language === 'ar';
 
-  const editingRole = roleId ? roles.find((r) => r.id === roleId) : null;
+  // Sales-engine roles only. Marketing (`mos_*`) and Intelligence roles live in
+  // the shared `roles` table but are managed in their own workspaces — showing
+  // them here is what made the two "مدير التسويق" rows collide.
+  const salesRoles = roles.filter((r) => (r.domain ?? 'sales') === 'sales');
+
+  const editingRole = roleId
+    ? salesRoles.find((r) => r.id === roleId) ?? null
+    : null;
 
   if (roleId) {
     return editingRole ? (
@@ -101,7 +108,7 @@ export default function RolesPage() {
       </div>
 
       <div className="grid gap-4">
-        {roles.map((role) => {
+        {salesRoles.map((role) => {
           const memberCount = users.filter((u) => u.role_assignments.some((ra) => ra.role_id === role.id)).length;
           const fieldCount = role.schema.sections.reduce((acc, s) => acc + s.fields.length, 0);
           const sectionCount = role.schema.sections.length;
@@ -131,7 +138,7 @@ export default function RolesPage() {
             </button>
           );
         })}
-        {roles.length === 0 && (
+        {salesRoles.length === 0 && (
           <div className="text-center py-16 text-charcoal/30">
             <Briefcase size={40} className="mx-auto mb-3 opacity-30" />
             <p className="font-bold">{isAr ? 'لا توجد أدوار' : 'No roles yet'}</p>

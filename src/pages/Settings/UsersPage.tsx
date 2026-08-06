@@ -380,7 +380,10 @@ export default function UsersPage() {
           <div>
             <label className="block text-sm font-bold text-charcoal mb-2">{isAr ? 'الأدوار' : 'Roles'}</label>
             <div className="space-y-2">
-              {roles.map((role) => {
+              {/* Sales-engine roles only. A user's marketing (`mos_*`) roles are
+                  assigned in the Marketing workspace and preserved untouched on
+                  save (they stay in roleAssignments even when not shown here). */}
+              {roles.filter((r) => (r.domain ?? 'sales') === 'sales').map((role) => {
                 const assignment = roleAssignments.find((ra) => ra.role_id === role.id);
                 const checked = !!assignment;
                 const fieldCount = role.schema.sections.reduce((acc, s) => acc + s.fields.length, 0);
@@ -408,7 +411,7 @@ export default function UsersPage() {
                   </div>
                 );
               })}
-              {roles.length === 0 && (
+              {roles.filter((r) => (r.domain ?? 'sales') === 'sales').length === 0 && (
                 <p className="text-sm text-charcoal/30">{isAr ? 'لا توجد أدوار بعد' : 'No roles yet'}</p>
               )}
             </div>

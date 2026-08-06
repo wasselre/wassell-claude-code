@@ -2067,6 +2067,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         label_en: r.label_en,
         schema,
         is_system: typeof r.is_system === 'boolean' ? r.is_system : false,
+        // Preserve the engine namespace (sales / marketing / intel); absent
+        // legacy rows read as 'sales' so the Sales pickers keep showing them.
+        domain: r.domain ?? 'sales',
         created_at: r.created_at,
         updated_at: r.updated_at,
       };

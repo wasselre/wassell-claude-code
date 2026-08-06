@@ -2279,6 +2279,15 @@ export interface Profile {
 // Legacy `field_definitions: RoleFieldDefinition[]` is migrated to
 // `schema.sections[0].fields` on first boot (see appStore.initialize).
 
+/**
+ * Which engine a role belongs to. Sales roles carry record-scope field values;
+ * marketing roles (`mos_*`) drive the Marketing OS capability engine; `intel`
+ * is Marketing-Intelligence. Namespacing the shared `roles` table this way is
+ * what keeps the Sales role pickers from listing marketing roles (and the two
+ * "مدير التسويق" rows from colliding). Absent → treated as 'sales'.
+ */
+export type RoleDomain = 'sales' | 'marketing' | 'intel';
+
 export interface Role {
   id: string;
   label_ar: string;
@@ -2286,6 +2295,8 @@ export interface Role {
   schema: ModelSchema;
   // Structural: can't be deleted from UI. Seed Sales Rep / Sales Manager = true.
   is_system: boolean;
+  /** Engine this role belongs to; absent legacy rows read as 'sales'. */
+  domain?: RoleDomain;
   created_at: string;
   updated_at: string;
 }
