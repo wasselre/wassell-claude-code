@@ -686,7 +686,7 @@ export function CampaignModal({
   const [split, setSplit] = useState<Record<string, SplitRow>>(() =>
     Object.fromEntries(SPLIT_PLATFORMS.map((p) => [
       p,
-      { on: p === 'meta', purpose: 'lead_form', budget: '' },
+      { on: p === 'meta', purpose: 'sales', budget: '' },
     ])),
   );
   const [busy, setBusy] = useState(false);
@@ -699,7 +699,7 @@ export function CampaignModal({
   const chosen = SPLIT_PLATFORMS.filter((p) => split[p]?.on);
 
   const patchSplit = (p: string, patch: Partial<SplitRow>): void =>
-    setSplit((cur) => ({ ...cur, [p]: { ...(cur[p] ?? { on: false, purpose: 'lead_form', budget: '' }), ...patch } }));
+    setSplit((cur) => ({ ...cur, [p]: { ...(cur[p] ?? { on: false, purpose: 'sales', budget: '' }), ...patch } }));
 
   const submit = async (): Promise<void> => {
     if (!goal.trim()) {
@@ -926,7 +926,7 @@ export function CampaignModal({
                 <tr>
                   <th style={{ width: 38 }} />
                   <th>{isAr ? 'المنصة' : 'Platform'}</th>
-                  <th style={{ width: 130 }}>{isAr ? 'الغرض' : 'Purpose'}</th>
+                  <th style={{ width: 130 }}>{isAr ? 'الهدف' : 'Objective'}</th>
                   <th className="num" style={{ width: 122 }}>{isAr ? 'حصة الميزانية' : 'Budget share'}</th>
                 </tr>
               </thead>

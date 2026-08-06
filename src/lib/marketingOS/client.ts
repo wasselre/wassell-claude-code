@@ -1549,9 +1549,9 @@ export const SUCCESS_METRIC_LABELS: Record<string, { ar: string; en: string }> =
 
 /** The purposes an ad set can serve, stored on the execution's label. */
 export const EXEC_PURPOSE_LABELS: Record<string, { ar: string; en: string }> = {
-  lead_form: { ar: 'نموذج عملاء', en: 'Lead form' },
-  traffic:   { ar: 'زيارات',      en: 'Traffic' },
-  awareness: { ar: 'وعي',         en: 'Awareness' },
+  awareness:     { ar: 'وعي',    en: 'Awareness' },
+  consideration: { ar: 'مهتمين', en: 'Consideration' },
+  sales:         { ar: 'مبيعات', en: 'Sales' },
 };
 
 /** The platform's own colour, used for the calendar spine and account chips. */
