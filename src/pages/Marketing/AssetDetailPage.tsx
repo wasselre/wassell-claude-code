@@ -106,6 +106,16 @@ export default function AssetDetailPage() {
     return parts.join(' · ');
   }, [asset]);
 
+  /** A PDF (public marketing-assets URL) can be shown inline instead of a
+   *  placeholder icon. Only PDFs — other documents (docx/xlsx) don't render in
+   *  an iframe, so they keep the placeholder + Download. */
+  const isPdf = useMemo(() => {
+    if (!asset || asset.kind !== 'document' || !asset.url) return false;
+    return asset.mime_type === 'application/pdf'
+      || /\.pdf(\?|#|$)/i.test(asset.url)
+      || /\.pdf$/i.test(asset.original_name ?? '');
+  }, [asset]);
+
   const archive = async (): Promise<void> => {
     if (!asset) return;
     setBusy(true);
@@ -236,22 +246,51 @@ export default function AssetDetailPage() {
           <div className="grid" style={{ gridTemplateColumns: '1fr 304px', alignItems: 'start' }}>
             {/* ── main column ─────────────────────────────────────────── */}
             <div style={{ display: 'grid', gap: 16 }}>
-              <div className="pr-preview">
-                {asset.kind === 'video' && asset.url ? (
-                  <video src={asset.url} controls preload="metadata" />
-                ) : asset.kind === 'audio' && asset.url ? (
-                  <audio src={asset.url} controls preload="metadata" />
-                ) : (asset.kind === 'photo' || asset.kind === 'design') && (asset.url || asset.thumb_url) ? (
-                  <img src={asset.url ?? asset.thumb_url ?? undefined} alt={asset.title} />
-                ) : (
-                  <div className="pr-play" aria-hidden="true">
-                    {asset.kind === 'video'
-                      ? <svg viewBox="0 0 24 24"><path d="M18 4L4 12l14 8z" /></svg>
-                      : <IconLibrary style={{ width: 17, height: 17, stroke: '#fff' }} />}
-                  </div>
-                )}
-                {spec && <span className="pr-spec">{spec}</span>}
-              </div>
+              {isPdf && asset.url ? (
+                // A PDF renders inline in its own full-width viewer, not the
+                // dark thumbnail box — the placeholder icon was never the file.
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <iframe
+                    src={`${asset.url}#view=FitH`}
+                    title={asset.title}
+                    style={{
+                      width: '100%',
+                      height: '78vh',
+                      minHeight: 480,
+                      border: '1px solid var(--line)',
+                      borderRadius: 11,
+                      background: '#fff',
+                      display: 'block',
+                    }}
+                  />
+                  <a
+                    className="btn btn-d btn-sm"
+                    href={asset.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ justifySelf: 'start' }}
+                  >
+                    {isAr ? 'فتح في تبويب جديد' : 'Open in a new tab'}
+                  </a>
+                </div>
+              ) : (
+                <div className="pr-preview">
+                  {asset.kind === 'video' && asset.url ? (
+                    <video src={asset.url} controls preload="metadata" />
+                  ) : asset.kind === 'audio' && asset.url ? (
+                    <audio src={asset.url} controls preload="metadata" />
+                  ) : (asset.kind === 'photo' || asset.kind === 'design') && (asset.url || asset.thumb_url) ? (
+                    <img src={asset.url ?? asset.thumb_url ?? undefined} alt={asset.title} />
+                  ) : (
+                    <div className="pr-play" aria-hidden="true">
+                      {asset.kind === 'video'
+                        ? <svg viewBox="0 0 24 24"><path d="M18 4L4 12l14 8z" /></svg>
+                        : <IconLibrary style={{ width: 17, height: 17, stroke: '#fff' }} />}
+                    </div>
+                  )}
+                  {spec && <span className="pr-spec">{spec}</span>}
+                </div>
+              )}
 
               {/* «مستخدم في» — the list that makes delete a non-silent act. */}
               <div className="card">
