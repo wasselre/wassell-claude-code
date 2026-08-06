@@ -68,8 +68,9 @@ interface Chip {
   when: number;
   label: string;
   platform: string | null;
-  /** due and campaign_end share the mockup's dotted warning chip. */
-  kind: 'publication' | 'due' | 'campaign_end';
+  /** due and campaign_end share the mockup's dotted warning chip; a target
+   *  publish aim is a dashed copper chip — planned, not yet scheduled. */
+  kind: 'publication' | 'target' | 'due' | 'campaign_end';
   href: string;
   hint: string;
   /** Split parts for the phone agenda's bold «P-019 · خمسة أسباب» line (s49). */
@@ -155,10 +156,15 @@ export default function CalendarPage() {
 
     if (data) {
       const titles = new Map(data.titles.map((t) => [t.id, t]));
+      // Which content already has a concrete publication in view — the target
+      // aim is charted only for the rest (once scheduled, the publication chip
+      // is the truth, so the aim would just double-chart the same item).
+      const scheduled = new Set<string>();
       for (const p of data.publications) {
         if (p.status === 'cancelled') continue;
         const when = p.published_at ?? p.scheduled_at;
         if (!when) continue;
+        scheduled.add(p.content_id);
         const t = titles.get(p.content_id);
         const platform = isAr
           ? PLATFORM_LABELS[p.platform]?.ar ?? p.platform
@@ -175,17 +181,33 @@ export default function CalendarPage() {
         });
       }
       for (const d of data.due) {
-        if (!d.due_at) continue;
-        push(new Date(d.due_at), {
-          key: `d-${d.id}`,
-          label: `${isAr ? 'استحقاق' : 'Due'} · ${d.title}${d.ref ? ` ${d.ref}` : ''}`,
-          platform: null,
-          kind: 'due',
-          href: `/m/content/${d.id}`,
-          hint: d.title,
-          ref: d.ref ?? null,
-          title: d.title,
-        });
+        if (d.due_at) {
+          push(new Date(d.due_at), {
+            key: `d-${d.id}`,
+            label: `${isAr ? 'استحقاق' : 'Due'} · ${d.title}${d.ref ? ` ${d.ref}` : ''}`,
+            platform: null,
+            kind: 'due',
+            href: `/m/content/${d.id}`,
+            hint: d.title,
+            ref: d.ref ?? null,
+            title: d.title,
+          });
+        }
+        // The target publish date — the aim. Shown as a dashed copper chip
+        // while nothing is scheduled yet: the same gap the Overview names as
+        // «بحاجة لموعد نشر».
+        if (d.target_publish_at && !scheduled.has(d.id)) {
+          push(new Date(d.target_publish_at), {
+            key: `t-${d.id}`,
+            label: `${isAr ? 'مستهدف' : 'Target'} · ${d.ref ?? d.title}`,
+            platform: null,
+            kind: 'target',
+            href: `/m/content/${d.id}`,
+            hint: d.title,
+            ref: d.ref ?? null,
+            title: d.title,
+          });
+        }
       }
     }
     // A campaign's last day is a promise about work, so it wears the same
@@ -209,8 +231,14 @@ export default function CalendarPage() {
   }, [data, campaigns, isAr, range]);
 
   const visibleChip = useCallback(
+    // «النشر» keeps the publish family together — real publications AND the
+    // target aims; «الاستحقاقات» keeps the work deadlines (due + campaign end).
     (c: Chip): boolean =>
-      filter === 'all' ? true : filter === 'pub' ? c.kind === 'publication' : c.kind !== 'publication',
+      filter === 'all'
+        ? true
+        : filter === 'pub'
+          ? c.kind === 'publication' || c.kind === 'target'
+          : c.kind === 'due' || c.kind === 'campaign_end',
     [filter],
   );
 
@@ -257,8 +285,9 @@ export default function CalendarPage() {
     [range, effView],
   );
 
-  // Emptiness is judged on PUBLICATIONS only, and on the unfiltered set —
-  // a week full of due dates but no publishing is still a gap in the rhythm.
+  // Emptiness is judged on PUBLISHING only — real publications and target
+  // aims both count — and on the unfiltered set: a week full of due dates but
+  // nothing aimed to publish is still a gap in the rhythm.
   const emptyWeeks = useMemo(() => {
     if (effView !== 'month') return new Set<number>();
     const set = new Set<number>();
@@ -266,7 +295,8 @@ export default function CalendarPage() {
       const days = gridDays.slice(w * 7, w * 7 + 7);
       const inMonth = days.some((d) => d.getMonth() === cursor.getMonth());
       if (!inMonth) continue;
-      const hasPub = days.some((d) => (chips.get(dayKey(d)) ?? []).some((c) => c.kind === 'publication'));
+      const hasPub = days.some((d) => (chips.get(dayKey(d)) ?? [])
+        .some((c) => c.kind === 'publication' || c.kind === 'target'));
       if (!hasPub) set.add(w);
     }
     return set;
@@ -339,6 +369,7 @@ export default function CalendarPage() {
         : '';
       return `${timeOf(c.when)} · ${p}`;
     }
+    if (c.kind === 'target') return isAr ? 'مستهدف للنشر' : 'Target publish';
     if (c.kind === 'due') return isAr ? 'استحقاق' : 'Due date';
     return isAr ? 'نهاية الحملة' : 'Campaign end';
   };
@@ -400,8 +431,16 @@ export default function CalendarPage() {
   const Next = isAr ? IconBack : IconForward;
   const todayKey = dayKey(new Date());
 
-  const chipClass = (c: Chip): string =>
-    `ev ${c.kind === 'publication' ? (c.platform ? PLATFORM_CLASS[c.platform] ?? '' : '') : 'due'}`;
+  // The colour modifier a chip wears, shared by the desktop chip and the phone
+  // spine dot so the two can never drift: platform tint for publications, a
+  // dashed-copper «target» for aims, the dotted warning for everything else.
+  const chipTone = (c: Chip): string =>
+    c.kind === 'publication'
+      ? (c.platform ? PLATFORM_CLASS[c.platform] ?? '' : '')
+      : c.kind === 'target'
+        ? 'target'
+        : 'due';
+  const chipClass = (c: Chip): string => `ev ${chipTone(c)}`;
 
   // The month grid — shared between the desktop month/week views and the
   // phone's «شهر» chip, so the two can never drift apart.
@@ -552,11 +591,7 @@ export default function CalendarPage() {
                         onClick={() => navigate(c.href)}
                       >
                         <div className="top">
-                          <span
-                            className={`m1-dot ${c.kind === 'publication'
-                              ? (c.platform ? PLATFORM_CLASS[c.platform] ?? '' : '')
-                              : 'due'}`}
-                          />
+                          <span className={`m1-dot ${chipTone(c)}`} />
                           <span>{agendaTopLine(c)}</span>
                         </div>
                         <div className="t2">
@@ -632,6 +667,10 @@ export default function CalendarPage() {
               <span style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
                 <span style={{ width: 9, height: 9, border: '1.5px dotted var(--late)', borderRadius: 2 }} />
                 {isAr ? 'استحقاق' : 'Due date'}
+              </span>
+              <span style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                <span style={{ width: 9, height: 9, border: '1.5px dashed var(--copper)', borderRadius: 2 }} />
+                {isAr ? 'مستهدف للنشر' : 'Target publish'}
               </span>
               {firstEmptyWeek && (
                 <span style={{ marginInlineStart: 'auto' }}>

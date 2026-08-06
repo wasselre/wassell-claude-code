@@ -1362,6 +1362,15 @@
   border-inline-start-style: dotted;
   color: var(--late);
 }
+/* Target publish date — the aim, not a scheduled publish: a dashed copper
+   spine, so it reads as planned-but-not-locked next to the solid platform
+   chips and the dotted red due chips. */
+.mos-root .ev.target {
+  border-inline-start-color: var(--copper);
+  border-inline-start-style: dashed;
+  background: color-mix(in srgb, var(--copper) 7%, transparent);
+  color: var(--copper);
+}
 
 /* ── Asset library ────────────────────────────────────────────────────── */
 .mos-root .agrid {

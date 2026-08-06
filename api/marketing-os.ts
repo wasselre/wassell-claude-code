@@ -2152,10 +2152,13 @@ export default async function handler(req: Request): Promise<Response> {
             .select('id, content_id, platform, status, scheduled_at, published_at, caption')
             .or(`and(scheduled_at.gte.${from},scheduled_at.lte.${to}),and(published_at.gte.${from},published_at.lte.${to})`)
             .limit(500),
+          // Content rows for the dotted chips: a task due date OR a target
+          // publish date landing in the window. Fetched together so one query
+          // feeds both the «استحقاق» and «مستهدف» chips the client derives.
           sb.from('mos_content_v')
             .select('id, ref, title, content_type_key, status_key, due_at, target_publish_at, owner_role')
             .is('archived_at', null)
-            .gte('due_at', from).lte('due_at', to)
+            .or(`and(due_at.gte.${from},due_at.lte.${to}),and(target_publish_at.gte.${from},target_publish_at.lte.${to})`)
             .limit(500),
         ]);
         const f = dbFail(pubs.error) ?? dbFail(due.error);

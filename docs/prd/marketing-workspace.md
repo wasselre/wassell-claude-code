@@ -78,6 +78,16 @@ This workspace answers the three questions the old process could not:
 - **Publishing is manual by decision.** `can_publish` defaults FALSE and nothing
   in the app flips it; Settings → Platforms says so plainly rather than implying
   an automation that does not exist.
+- **The calendar plots three kinds of chip, no register of its own.** A
+  scheduled/published publication is a solid platform-tinted chip (`scheduled_at`
+  / `published_at`); a task due date or campaign-end is a dotted warning chip;
+  and a content item's **target publish date** (`target_publish_at`) is a dashed
+  copper **«مستهدف»** chip — the aim, shown only while nothing is scheduled for
+  that item yet (once a publication exists, its solid chip is the truth and the
+  aim is not double-charted). Target chips ride the «النشر» filter with real
+  publications and count as planned publishing, so a week that has any aim or
+  publication is not flagged «لا شيء مخطط». The `calendar` endpoint fetches
+  content whose `due_at` OR `target_publish_at` lands in the window.
 - **Metrics are append-only dated snapshots.** Nothing overwrites a reading, so
   two items can be compared at the same AGE. An empty box saves as NULL, never 0
   — a CHECK constraint refuses an all-empty reading. Each snapshot carries the

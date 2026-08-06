@@ -218,6 +218,11 @@
     background: transparent;
     border: 1.5px dotted var(--late);
   }
+  /* Target publish aim — dashed copper, matching the desktop .ev.target. */
+  .mos-root .m1-dot.target {
+    background: transparent;
+    border: 1.5px dashed var(--copper);
+  }
   /* «الأسبوع الخالي كليًا يظهر كتحذير» — the dashed late-wash row. */
   .mos-root .m1-emptyweek {
     margin-top: 14px;
