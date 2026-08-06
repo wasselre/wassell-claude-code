@@ -193,25 +193,27 @@ export default function ContentDetailPage() {
   }, [openTask, roles]);
 
   /**
-   * Writing is editable only while the stage sits with MY role — s36: the
-   * writer types on their step, others wait their turn. CEO never.
+   * Writing is editable by anyone whose role holds the `write_content`
+   * capability — the capability IS the gate, independent of which role currently
+   * owns the stage. This mirrors the server, where the `mos_content` /
+   * `mos_content_versions` / `mos_scenes` UPDATE policies gate on
+   * `wassell_mos_can('write_content')`, not on stage ownership. (User decision
+   * 2026-08-06: "capability alone lets you write" — a writer/CEO/anyone granted
+   * write_content can type on a piece at a writing stage without holding the
+   * stage's owning role.)
    *
-   * Exception: administrators and the marketing manager can edit the writing
-   * fields at ANY writing stage regardless of which role owns it — the server
-   * already lets them act on any task (workflow_role_task_act), so the editor
-   * mirrors that override rather than forcing a reassign to type a correction.
+   * Two structural guards remain, and are NOT about role ownership:
+   *  - no open task → the workflow isn't active, there is nothing to edit;
+   *  - an approval stage edits NOTHING — the fields shown are what is being
+   *    approved, so nobody rewrites them mid-approval (you approve or return).
+   * Advancing the task (submit / approve — see `canAct`) still follows stage
+   * ownership; only EDITING the content body is capability-based.
    */
   const canEditNow = useMemo(() => {
     if (!openTask) return false;
-    // An approval stage edits NOTHING — the fields shown are what's being
-    // approved, so it's read-only for everyone (admins/manager included);
-    // they approve or return, they don't rewrite mid-approval.
     if (currentStep?.is_approval) return false;
-    if (roles.includes('administrator') || roles.includes('marketing_manager')) return true;
-    // The `write_content` capability is the gate — an oversight role (e.g. the
-    // default CEO) simply lacks it, so no explicit role-string check is needed.
-    return roles.includes(openTask.role) && can('write_content');
-  }, [openTask, currentStep, roles, can]);
+    return can('write_content');
+  }, [openTask, currentStep, can]);
 
   /**
    * The "oversight" view — sees the item but NOT its body/scripts, activity, or

@@ -560,15 +560,15 @@ export default function SettingsAccess({ canManage, isAr }: { canManage: boolean
               </div>
 
               <div className="card">
-                <div className="card-h"><h4>{isAr ? 'ماذا لو تعارضت؟' : 'What if they conflict?'}</h4></div>
+                <div className="card-h"><h4>{isAr ? 'الصلاحية مقابل مسار العمل' : 'Capability vs workflow'}</h4></div>
                 <div className="card-b" style={{ fontSize: 12, lineHeight: 1.9, color: 'var(--ink-2)' }}>
                   {isAr ? (
                     <>
-                      إذا منح الدور صلاحية ومنعها مسار العمل، <b>يفوز مسار العمل</b>. الكاتب يملك صلاحية الكتابة، لكنه لا يستطيع تعديل نص في مرحلة المونتاج — لأن السجل ليس عنده.
+                      <b>الصلاحية تحدد ما تستطيع فعله؛ ومسار العمل يحدد من ينقل المهمة.</b> من يملك «كتابة المحتوى» يستطيع تعديل النص في أي مرحلة كتابة — لا يشترط أن تكون المرحلة عنده. لكن <b>اعتماد المهمة أو إرسالها للخطوة التالية</b> يبقى لصاحب المرحلة الحالية (أو المدير/المسؤول).
                     </>
                   ) : (
                     <>
-                      When the role grants something and the workflow forbids it, <b>the workflow wins</b>. The writer holds write permission, yet cannot edit a script during the editing stage — because the record is not with them.
+                      <b>The capability decides what you can do; the workflow decides who moves the task.</b> Anyone with &quot;write content&quot; can edit the text at any writing stage — the stage need not be theirs. But <b>submitting or approving the task</b> to the next step stays with whoever&apos;s stage it currently is (or a manager/admin).
                     </>
                   )}
                 </div>
