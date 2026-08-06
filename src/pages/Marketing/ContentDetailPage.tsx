@@ -30,7 +30,7 @@ import {
   fieldSchemaEntries, fieldSchemaKeys, isOverdue, updateContent,
 } from '@/lib/marketingOS/client';
 import { useAppStore } from '@/stores/appStore';
-import { useWorkspace } from './MarketingWorkspace';
+import { useWorkspace, type Capability } from './MarketingWorkspace';
 import {
   KindCell, LoadError, Pill, ReadField, Skeleton, StatusPill, Modal,
 } from './components/kit';
@@ -93,7 +93,7 @@ export default function ContentDetailPage() {
   const { contentId } = useParams<{ contentId: string }>();
   const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
-  const { isAr, role, roles, can, typeLabel, projectName, contentTypes, people, projects, appUserId } = useWorkspace();
+  const { isAr, roles, can, typeLabel, projectName, contentTypes, people, projects, appUserId } = useWorkspace();
   // W6-M: content field VALUES read in the workspace language (English pages
   // translate the Arabic-authored text on demand; Arabic pages pass through).
   const mosText = useMosText();
@@ -202,22 +202,30 @@ export default function ContentDetailPage() {
    * mirrors that override rather than forcing a reassign to type a correction.
    */
   const canEditNow = useMemo(() => {
-    if (role === 'ceo') return false;
     if (!openTask) return false;
     // An approval stage edits NOTHING — the fields shown are what's being
     // approved, so it's read-only for everyone (admins/manager included);
     // they approve or return, they don't rewrite mid-approval.
     if (currentStep?.is_approval) return false;
     if (roles.includes('administrator') || roles.includes('marketing_manager')) return true;
+    // The `write_content` capability is the gate — an oversight role (e.g. the
+    // default CEO) simply lacks it, so no explicit role-string check is needed.
     return roles.includes(openTask.role) && can('write_content');
-  }, [role, openTask, currentStep, roles, can]);
+  }, [openTask, currentStep, roles, can]);
 
-  /** CEO: read-only, and the script/scenes/comments are HIDDEN, not locked. */
-  const ceoView = role === 'ceo';
+  /**
+   * The "oversight" view — sees the item but NOT its body/scripts, activity, or
+   * version history. Formerly hardcoded to `role === 'ceo'`; now each facet is
+   * its own capability (view_content_body / view_activity / compare_versions),
+   * seeded so the default CEO preset reproduces the old behaviour but any role
+   * can be reconfigured from the Roles screen. Kept as a boolean only where a
+   * single "no content body" signal is what the code needs.
+   */
+  const hideContentBody = !can('view_content_body');
 
   /** «قادم إليك» — a LATER step on the pinned path belongs to a role I hold. */
   const upcomingForMe = useMemo(() => {
-    if (!openTask || canAct || ceoView) return null;
+    if (!openTask || canAct || hideContentBody) return null;
     const currentPos = steps.find((s) => s.id === openTask.step_id)?.position ?? -1;
     if (currentPos < 0) return null;
     const mine = steps
@@ -225,7 +233,7 @@ export default function ContentDetailPage() {
       .sort((a, b) => a.position - b.position)[0];
     if (!mine) return null;
     return { step: mine, stepsAway: mine.position - currentPos };
-  }, [openTask, canAct, ceoView, steps, roles]);
+  }, [openTask, canAct, hideContentBody, steps, roles]);
 
   if (loading && !item) {
     return <div className="body"><Skeleton rows={7} /></div>;
@@ -318,16 +326,18 @@ export default function ContentDetailPage() {
       });
   };
 
-  const allTabs: Array<{ key: Tab; ar: string; en: string; badge?: number; ceoHidden?: boolean }> = [
+  const allTabs: Array<{ key: Tab; ar: string; en: string; badge?: number; needs?: Capability }> = [
     { key: 'overview', ar: 'نظرة عامة', en: 'Overview' },
-    // Screen 36: the CEO sees NO script and NO scenes — the tab itself goes.
-    { key: 'content', ar: 'المحتوى', en: 'Content', ceoHidden: true },
+    // The script/scenes tab requires `view_content_body` — the default CEO
+    // preset lacks it, so an oversight role sees no script (screen 36), but
+    // it's now a capability toggle, not a hardcoded role check.
+    { key: 'content', ar: 'المحتوى', en: 'Content', needs: 'view_content_body' },
     { key: 'materials', ar: 'المواد', en: 'Material', badge: materialCount || undefined },
     { key: 'tasks', ar: 'المهام والاعتمادات', en: 'Tasks & approvals', badge: openTasks || undefined },
     { key: 'publishing', ar: 'النشر', en: 'Publishing', badge: openPubs || undefined },
     { key: 'performance', ar: 'الأداء', en: 'Performance' },
   ];
-  const tabs = allTabs.filter((t) => !(ceoView && t.ceoHidden));
+  const tabs = allTabs.filter((t) => !t.needs || can(t.needs));
   const activeTab: Tab = tabs.some((t) => t.key === tab) ? tab : 'overview';
 
   const plural = TYPE_PLURAL[item.content_type_key];
@@ -411,10 +421,10 @@ export default function ContentDetailPage() {
             </div>
           </div>
           <div className="acts">
-            {/* «مقارنة بالنسخة ١» — anyone who may read the SCRIPT may compare.
-                The CEO may not (s36): the panel renders the writing fields, so
-                offering it would leak the very sections the CEO never sees. */}
-            {version > 1 && !ceoView && (
+            {/* «مقارنة بالنسخة ١» — the compare panel renders the writing
+                fields, so it is gated by `compare_versions` (an oversight role
+                that can't see the body can't diff it either). */}
+            {version > 1 && can('compare_versions') && (
               <button type="button" className="btn btn-d" onClick={openCompare}>
                 {isAr ? `مقارنة بالنسخة ${num(version - 1, true)}` : `Compare with version ${version - 1}`}
               </button>
@@ -676,7 +686,7 @@ export default function ContentDetailPage() {
                     projectId={item.project_id}
                     scenes={scenes}
                     canEdit={canEditNow}
-                    canRaiseShoot={role === 'ops_supervisor' || can('assign')}
+                    canRaiseShoot={can('assign')}
                     isAr={isAr}
                     onChange={setScenes}
                   />
@@ -729,9 +739,10 @@ export default function ContentDetailPage() {
           )}
         </div>
 
-        {/* The activity rail — screen 06's persistent side column. The CEO
-            does not see comments at all (screen 36), so the rail itself goes. */}
-        {!ceoView && (
+        {/* The activity rail — screen 06's persistent side column. Gated by
+            `view_activity`; the default CEO preset lacks it, so an oversight
+            role sees no comments (screen 36) — now a toggle, not a role check. */}
+        {can('view_activity') && (
           <div className="wside wide">
             <ActivityRail
               item={item}

@@ -87,31 +87,23 @@ interface WorkspaceCtx {
 }
 
 /**
- * The capability matrix, mirrored from `wassell_mos_can` in the database.
- * It decides what the UI OFFERS. RLS decides what actually happens — this copy
- * exists so a writer isn't shown an approve button that would only 403.
+ * The known marketing capabilities. This is a TYPE only — the actual grant set
+ * per user is DATA (`role_capabilities`), resolved server-side and shipped in
+ * the bootstrap `me.capabilities`. `can()` (below) reads that; there is no
+ * hand-maintained capability→role matrix in the client anymore.
+ *
+ * `wassell_mos_can(capability)` in the DB is the RLS gate; this list is what
+ * the UI checks so a writer isn't shown an approve button that would only 403.
+ * Keep the members in sync with the capabilities seeded in
+ * `role_capabilities` (migration 2026-08-06_01_role_capabilities.sql).
  */
 export type Capability =
   | 'read' | 'comment' | 'write_content' | 'assign' | 'schedule' | 'publish'
   | 'approve_creative' | 'approve_process' | 'approve_budget'
   | 'manage_assets' | 'enter_metrics' | 'review_performance'
-  | 'manage_settings' | 'manage_roles';
-
-const MATRIX: Record<MosRole, Capability[]> = {
-  administrator: ['read', 'comment', 'write_content', 'assign', 'schedule', 'publish',
-    'approve_creative', 'approve_process', 'approve_budget', 'manage_assets',
-    'enter_metrics', 'review_performance', 'manage_settings', 'manage_roles'],
-  marketing_manager: ['read', 'comment', 'write_content', 'assign', 'schedule', 'publish',
-    'approve_creative', 'approve_process', 'approve_budget', 'manage_assets',
-    'enter_metrics', 'review_performance', 'manage_settings', 'manage_roles'],
-  ceo: ['read', 'comment', 'approve_budget', 'review_performance'],
-  ops_supervisor: ['read', 'comment', 'assign', 'schedule', 'publish', 'approve_process',
-    'manage_assets', 'enter_metrics', 'review_performance'],
-  writer: ['read', 'comment', 'write_content', 'schedule', 'publish'],
-  montage: ['read', 'comment', 'write_content', 'manage_assets'],
-  viewer: ['read'],
-  none: [],
-};
+  | 'manage_settings' | 'manage_roles'
+  // Fine-grained view gates (replace the old hardcoded `role === 'ceo'` checks).
+  | 'view_content_body' | 'view_activity' | 'compare_versions';
 
 const Ctx = createContext<WorkspaceCtx | null>(null);
 
@@ -257,6 +249,9 @@ export default function MarketingWorkspace() {
 
   const [role, setRole] = useState<MosRole>('viewer');
   const [roles, setRoles] = useState<MosRole[]>(['viewer']);
+  // The caller's capability set, resolved server-side (role_capabilities) and
+  // shipped by bootstrap — the single source of truth `can()` reads.
+  const [capabilities, setCapabilities] = useState<Set<Capability>>(() => new Set());
   const [surfaces, setSurfaces] = useState<Record<SurfaceKey, SurfaceLevel>>(
     () => ({}) as Record<SurfaceKey, SurfaceLevel>,
   );
@@ -320,6 +315,7 @@ export default function MarketingWorkspace() {
       persistActiveRole(bootstrap.me.active_role);
       setRole(bootstrap.me.active_role);
       setRoles(bootstrap.me.roles);
+      setCapabilities(new Set(bootstrap.me.capabilities as Capability[]));
       setSurfaces(bootstrap.me.surfaces);
       setAppUserId(bootstrap.me.user_id);
       setContentTypes(bootstrap.content_types);
@@ -395,11 +391,12 @@ export default function MarketingWorkspace() {
       return isAr ? t.label_ar : t.label_en;
     },
     setBadge: applyBadge,
-    // Capability truth is the UNION over every held role — a person who is
-    // Writer AND Ops Supervisor gets both sets, exactly like wassell_mos_can.
-    can: (capability) => roles.some((r) => (MATRIX[r] ?? []).includes(capability)),
+    // Capability truth is the UNION over every held role, resolved server-side
+    // from `role_capabilities` (see wassell_mos_capabilities). The client no
+    // longer keeps its own copy of the matrix — this Set IS the server's answer.
+    can: (capability) => capabilities.has(capability),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [role, roles, surfaces, setActiveRole, appUserId, contentTypes, projects, people, reloadGrants, isAr, ready, projectMap, typeMap, applyBadge, translationVersion]);
+  }), [role, roles, capabilities, surfaces, setActiveRole, appUserId, contentTypes, projects, people, reloadGrants, isAr, ready, projectMap, typeMap, applyBadge, translationVersion]);
 
   const roleLabel = ROLE_LABELS[role] ? (isAr ? ROLE_LABELS[role].ar : ROLE_LABELS[role].en) : role;
 

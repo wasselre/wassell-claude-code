@@ -223,6 +223,20 @@ const SURFACES = [
 type SurfaceKey = (typeof SURFACES)[number];
 type SurfaceLevel = 'full' | 'read' | 'hidden';
 
+/**
+ * Every marketing capability, in a stable order for the Roles-screen matrix.
+ * These are what a role can DO (RLS gates on them via wassell_mos_can); they
+ * are stored as data in role_capabilities. Keep in sync with the seed in
+ * migration 2026-08-06_01_role_capabilities.sql and the client `Capability`
+ * type (MarketingWorkspace.tsx).
+ */
+const CAPABILITIES = [
+  'read', 'comment', 'write_content', 'view_content_body', 'compare_versions',
+  'view_activity', 'assign', 'schedule', 'publish', 'approve_creative',
+  'approve_process', 'approve_budget', 'manage_assets', 'enter_metrics',
+  'review_performance', 'manage_settings', 'manage_roles',
+] as const;
+
 /** The notification channels a step may permit; AND-ed with each role's grid. */
 const NOTIFY_CHANNELS = ['inapp', 'push', 'whatsapp'] as const;
 type NotifyChannel = (typeof NOTIFY_CHANNELS)[number];
@@ -785,9 +799,12 @@ export default async function handler(req: Request): Promise<Response> {
       /* one call on page load                                     */
       /* -------------------------------------------------------- */
       case 'bootstrap': {
-        const [rolesRes, accessRes, typesRes, wfRes, verRes, settingsRes, accountsRes, appUserId] =
+        const [rolesRes, capsRes, accessRes, typesRes, wfRes, verRes, settingsRes, accountsRes, appUserId] =
           await Promise.all([
             sb.rpc('wassell_mos_roles'),
+            // Capability truth from the DB (role_capabilities), so the client
+            // stops hand-mirroring the matrix. One source, no drift.
+            sb.rpc('wassell_mos_capabilities'),
             sb.from('surface_access').select('surface_key, level, roles!inner(key)'),
             sb.from('mos_content_types')
               .select('id, key, label_ar, label_en, prefix, workflow_id, field_schema, sort_order')
@@ -804,12 +821,13 @@ export default async function handler(req: Request): Promise<Response> {
               .order('sort_order', { ascending: true }),
             resolveAppUserId(sb, user.userId),
           ]);
-        const fail = dbFail(rolesRes.error) ?? dbFail(accessRes.error) ?? dbFail(typesRes.error)
-          ?? dbFail(wfRes.error) ?? dbFail(verRes.error) ?? dbFail(settingsRes.error)
-          ?? dbFail(accountsRes.error);
+        const fail = dbFail(rolesRes.error) ?? dbFail(capsRes.error) ?? dbFail(accessRes.error)
+          ?? dbFail(typesRes.error) ?? dbFail(wfRes.error) ?? dbFail(verRes.error)
+          ?? dbFail(settingsRes.error) ?? dbFail(accountsRes.error);
         if (fail) return fail;
 
         const held = (rolesRes.data as string[] | null) ?? [];
+        const capabilities = (capsRes.data as string[] | null) ?? [];
         // Display-affecting only (contract convention): the header chooses which
         // of the caller's HELD roles the UI leads with; it never authorizes.
         const requestedRole = (req.headers.get('x-mos-active-role') ?? '').trim();
@@ -824,6 +842,7 @@ export default async function handler(req: Request): Promise<Response> {
           me: {
             user_id: appUserId,
             roles: held,
+            capabilities,
             active_role: activeRole,
             surfaces: computeSurfaces(held, accessRes.data ?? []),
             // Notification prefs arrive with the notifications migration (…_04),
@@ -1833,6 +1852,56 @@ export default async function handler(req: Request): Promise<Response> {
           { onConflict: 'role_id,surface_key' },
         );
         const f = dbFail(up.error);
+        if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Capabilities matrix — what each role can DO (role x cap). */
+      /* Twin of surface_matrix; the Roles screen edits both.      */
+      /* -------------------------------------------------------- */
+      case 'capability_matrix': {
+        const [rolesRes, cellsRes] = await Promise.all([
+          sb.from('roles').select('id, key').like('key', 'mos\\_%').order('key', { ascending: true }),
+          sb.from('role_capabilities').select('role_id, capability'),
+        ]);
+        const f = dbFail(rolesRes.error) ?? dbFail(cellsRes.error);
+        if (f) return f;
+        const roleRows = (rolesRes.data ?? []) as unknown as Array<{ id: string; key: string }>;
+        const keyById = new Map(roleRows.map((r) => [r.id, stripMosPrefix(r.key)]));
+        const cells = ((cellsRes.data ?? []) as unknown as Array<{ role_id: string; capability: string }>)
+          .map((c) => ({ role_key: keyById.get(c.role_id) ?? '', capability: c.capability }))
+          .filter((c) => c.role_key !== '');
+        return jsonOk({
+          capabilities: [...CAPABILITIES],
+          roles: roleRows.map((r) => ({ key: stripMosPrefix(r.key), role_id: r.id })),
+          cells,
+        });
+      }
+
+      case 'capability_set': {
+        const roleKey = str(body.role_key);
+        const capability = str(body.capability);
+        const grant = body.grant === true;
+        if (!roleKey || !(MOS_ROLE_KEYS as readonly string[]).includes(roleKey)) {
+          return jsonError(400, 'unknown role');
+        }
+        if (!capability || !(CAPABILITIES as readonly string[]).includes(capability)) {
+          return jsonError(400, 'unknown capability');
+        }
+        const roleRes = await sb.from('roles').select('id').eq('key', `mos_${roleKey}`).maybeSingle();
+        const roleFail = dbFail(roleRes.error);
+        if (roleFail) return roleFail;
+        if (!roleRes.data) return jsonError(400, 'unknown role');
+        const roleId = (roleRes.data as { id: string }).id;
+        // Presence IS the grant — insert to grant, delete to revoke. RLS
+        // (role_capabilities_ins / _del) enforces 'manage_roles' on the caller.
+        const res = grant
+          ? await sb.from('role_capabilities')
+              .upsert({ role_id: roleId, capability }, { onConflict: 'role_id,capability' })
+          : await sb.from('role_capabilities')
+              .delete().eq('role_id', roleId).eq('capability', capability);
+        const f = dbFail(res.error);
         if (f) return f;
         return jsonOk({ ok: true });
       }

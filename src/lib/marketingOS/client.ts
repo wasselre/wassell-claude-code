@@ -80,6 +80,13 @@ export interface BootstrapMe {
   user_id: string | null;
   /** Every mos role the caller HOLDS (multi-role is the point of the new engine). */
   roles: MosRole[];
+  /**
+   * The caller's capability set — the UNION over every held role, resolved
+   * server-side from the `role_capabilities` table (the same data
+   * `wassell_mos_can` reads). The client no longer keeps its own capability
+   * matrix; this is the single source of truth.
+   */
+  capabilities: string[];
   active_role: MosRole;
   surfaces: Record<SurfaceKey, SurfaceLevel>;
   prefs: Record<string, unknown>;
@@ -531,6 +538,24 @@ export const fetchSurfaceMatrix = () =>
 
 export const setSurface = (roleKey: string, surfaceKey: SurfaceKey, level: SurfaceLevel) =>
   call<{ ok: true }>('surface_set', { role_key: roleKey, surface_key: surfaceKey, level });
+
+/** One granted (role, capability) pair in the capabilities matrix. */
+export interface CapabilityCell {
+  role_key: string;
+  capability: string;
+}
+
+/** The capabilities matrix — what each role can DO (twin of the surface matrix). */
+export const fetchCapabilityMatrix = () =>
+  call<{
+    capabilities: string[];
+    roles: Array<{ key: string; role_id: string }>;
+    cells: CapabilityCell[];
+  }>('capability_matrix');
+
+/** Grant (grant=true) or revoke a capability on a role. Presence IS the grant. */
+export const setCapability = (roleKey: string, capability: string, grant: boolean) =>
+  call<{ ok: true }>('capability_set', { role_key: roleKey, capability, grant });
 
 export const saveScene = (contentId: string, scene: Record<string, unknown>) =>
   call<{ scenes: MosScene[] }>('scene_save', { content_id: contentId, scene });

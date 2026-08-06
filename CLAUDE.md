@@ -528,6 +528,25 @@ One human entry → automatic generation + persistence of BOTH languages → bot
 
 9. **Migration gotchas:** (a) PostGIS/frozen-table RPCs need `SET check_function_bodies = off` so the CI ephemeral DB (no PostGIS, minimal fixture) can create them; (b) guard data-fixes on frozen tables (`districts`, etc.) with `to_regclass` — CI doesn't have them; (c) NEVER call `digest` inside the records capture trigger (search_path); the trigger uses a stub `source_rev`, the worker computes the real sha. CI validates every `2026-09-0*` migration against `postgres:17` via `.github/workflows/ci.yml` `db-migrations` + `supabase/tests/ci/smoke_translation.sql` (smokes 1–13).
 
+## Marketing OS capabilities are DATA (added 2026-08-06)
+
+The Marketing workspace (`/m`) permission model has TWO axes, both editable in **Marketing → Settings → Roles and permissions** (`SettingsAccess.tsx`, a segmented Surfaces/Capabilities matrix):
+
+- **Surfaces** (`surface_access` table) — coarse rail visibility per role: `full` / `read` / `hidden`. Editing surfaces is visibility ONLY.
+- **Capabilities** (`role_capabilities` table — `(role_id, capability)`, presence = granted) — what a role can DO. This is what RLS enforces and what the UI's `can()` checks. **Capabilities used to be hardcoded** in the `wassell_mos_can` SQL `CASE` + a duplicate client `MATRIX` + scattered `role === 'ceo'` component checks; all three were collapsed into this one data table on 2026-08-06.
+
+**How it resolves (keep these in sync):**
+- `wassell_mos_can(capability)` — the RLS gate — reads `role_capabilities` (admin bypass via `wassell_is_admin`; `viewer` read-floor kept hardcoded). Signature unchanged, so all `mos_*` RLS policies are untouched.
+- `wassell_mos_capabilities()` — the caller's capability UNION over held roles — is shipped in the bootstrap `me.capabilities`; the client `can()` reads that Set. **There is no client capability matrix anymore** — do not re-add one.
+- The canonical capability list lives in THREE places that MUST stay in sync: the seed in `supabase/migrations/2026-08-06_01_role_capabilities.sql`, `CAPABILITIES` in `api/marketing-os.ts`, and the `Capability` type in `MarketingWorkspace.tsx`. Adding a capability = seed it + add to both TS lists + reference it in the component/RLS that gates on it.
+
+**Hard rules:**
+1. **Never gate a Marketing UI element on the ACTIVE role string** (`role === 'ceo'`). Use `can('<capability>')` — capabilities are the union of HELD roles, and active-role gating is exactly the bug that hid the CEO's Content tab. Fine-grained view gates exist for this: `view_content_body`, `view_activity`, `compare_versions`.
+2. **Changing what a role can do is a DATA edit** (the Roles screen, or `role_capabilities` rows) — NOT a code change. Roles are fully customizable presets; `ceo`/`writer`/etc. have no baked-in meaning in code.
+3. **Capability writes go through the `capability_set` action** (RLS `role_capabilities_ins`/`_del` gated by `manage_roles`) — same posture as `surface_set`. Don't write `role_capabilities` from the browser store.
+4. **`roles.domain`** (`sales`/`marketing`/`intel`) namespaces the shared `roles` table. Marketing roles are `mos_*` keys / `domain='marketing'`.
+5. Marketing-Intelligence still uses its OWN hardcoded `wassell_mkt_can` CASE + `mkt_role_grants` (NOT yet folded into `role_capabilities` — that's pending Phase 5). Sales permissions are a SEPARATE engine (`profiles.model_permissions` — see `docs/prd/access-control.md`); do not conflate.
+
 ## Offline / Local Fallback
 - All data is mirrored to localStorage
 - If Supabase is not configured, the app works fully offline
