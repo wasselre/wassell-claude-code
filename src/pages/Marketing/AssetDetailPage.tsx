@@ -736,7 +736,7 @@ function EditAssetModal({
       <Field label={isAr ? 'العنوان' : 'Title'}>
         <input className="inp" value={title} onChange={(e) => setTitle(e.target.value)} />
       </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div className="f2">
         <Field label={isAr ? 'المشروع' : 'Project'}>
           <select className="inp" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
             <option value="">{isAr ? 'بدون' : 'None'}</option>
@@ -762,7 +762,7 @@ function EditAssetModal({
           {aspectRatio && !knownRatio && <option value={aspectRatio}>{aspectRatio}</option>}
         </select>
       </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div className="f2">
         <Field label={isAr ? 'صوّرها' : 'Shot by'}>
           <input className="inp" value={shotBy} onChange={(e) => setShotBy(e.target.value)} />
         </Field>

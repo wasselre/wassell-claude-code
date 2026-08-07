@@ -1009,6 +1009,9 @@
   color: var(--ink);
   font-family: inherit;
   width: 100%;
+  /* Let an input/select shrink inside a grid/flex track instead of forcing the
+     track (and the modal) wider than a phone via its intrinsic min-content. */
+  min-width: 0;
   line-height: 1.8;
 }
 .mos-root .inp:focus {
@@ -1492,6 +1495,13 @@
   background: rgba(46, 42, 38, 0.42);
   display: grid;
   place-items: center;
+  /* Constrain the single centering track to the viewport. Without this the
+     implicit track is `auto` and GROWS to the modal's intrinsic width, so the
+     modal's own max-width:100% resolves against that grown track (not the
+     screen) and never shrinks — it overflowed off the side of a phone (iOS
+     edit-asset modal, 2026-08-07). minmax(0,1fr) pins the track to the scrim
+     width so max-width:100% + min-width:0 on .modal can actually cap it. */
+  grid-template-columns: minmax(0, 1fr);
   padding: 20px;
   z-index: 80;
   overflow-y: auto;
@@ -1504,6 +1514,12 @@
   position: relative;
   width: 620px;
   max-width: 100%;
+  /* The scrim centers the modal with `display:grid`, so the modal is a GRID
+     ITEM — and a grid item defaults to `min-width:auto` (its min-content),
+     which OVERRIDES max-width:100%. Without this the modal refuses to shrink
+     below its content and overflows off the side of a phone (iOS edit-asset
+     modal, 2026-08-07). min-width:0 lets max-width:100% actually cap it. */
+  min-width: 0;
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -1566,6 +1582,19 @@
   margin-inline-end: auto;
   max-width: 44ch;
   line-height: 1.6;
+}
+/* A two-field row inside a modal body. Uses minmax(0,1fr) so the fields can
+   shrink, and stacks to one column on a phone. Class-based (not an inline
+   grid-template-columns) so the media query can actually collapse it. */
+.mos-scrim .f2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+@media (max-width: 560px) {
+  .mos-scrim .f2 {
+    grid-template-columns: 1fr;
+  }
 }
 .mos-scrim .pick2 {
   display: flex;
