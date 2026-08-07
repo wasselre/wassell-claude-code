@@ -4,16 +4,21 @@ import type { AppRecord } from '@/types';
  * One property, many broker listings.
  *
  * The same physical property is advertised by several agents at once and each ad
- * is its own row — deed 717823000238 (a 750 m² plot in الخير) is five rows held
- * by five different brokers asking 975,000 to 1,100,002. Showing five listings
- * for one plot inflates every count on the page and buries the fact that the
- * real asking-price anchor is the lowest of the five.
+ * is its own row — one 312 m² plot in Riyadh is four rows held by three brokers
+ * asking 2,800,000 to 3,000,000. Showing four listings for one plot inflates
+ * every count on the page and buries the fact that the real asking-price anchor
+ * is the lowest of them.
  *
- * The grouping KEY is computed in Postgres (`market_listing_property_identity`),
- * not here — see supabase/migrations/2026-08-30_01_market_listings_property_identity.sql
- * for why it is deed+area+coords (tier 2) or coords+area (tier 3) and why
- * property_type is deliberately not part of it. This module only collapses rows
- * that already agree on that key.
+ * The grouping KEY is computed in Postgres and stored on `dupe_group_id`; this
+ * module only collapses rows that already agree on it. Two producers fill it:
+ *
+ *   pk_<permit>            the importer, for the UAE portals (bayut, dubizzle,
+ *                          propertyfinder) — keyed on the RERA permit number, so
+ *                          groups legitimately span sources.
+ *   dn_<deed>_<area>_<lat>_<lng>   Aqar, deed-based (see
+ *   ga_<lat>_<lng>_<area>          market_listing_aqar_dupe_key, and
+ *                          supabase/migrations/2026-08-08_01_market_listings_aqar_dupe_groups.sql
+ *                          for why the key is shaped that way).
  *
  * NOTHING IS DELETED. The collapsed members travel with the representative row
  * so the UI can show the agent count, the price spread, and offer a split.
@@ -21,15 +26,16 @@ import type { AppRecord } from '@/types';
 
 /** A set of listings the database resolved to the same physical property. */
 export interface PropertyGroup {
-  /** The shared `property_key`. */
+  /** The shared `dupe_group_id`. */
   key: string;
   /**
-   * How the key was resolved — drives how confident the UI is allowed to sound.
-   *   1 = same REGA advertisement licence (certain; cross-portal syndication)
-   *   2 = same deed + area + coordinates (high confidence)
-   *   3 = same coordinates + area, no deed (~88% precise — label it, offer a split)
+   * How confident the key is, derived from its prefix — drives how the UI is
+   * allowed to describe the group.
+   *   2 = an official identifier behind it (RERA permit / title deed) — confirmed
+   *   3 = coordinates + area only, no identifier (~88% precise) — probable,
+   *       so the UI labels it and offers a split
    */
-  tier: 1 | 2 | 3;
+  tier: 2 | 3;
   /** Every listing in the group, representative FIRST. */
   members: AppRecord[];
   /** Distinct advertiser names; falls back to member count when names are blank. */
@@ -56,21 +62,29 @@ function toNumber(v: unknown): number | null {
   return null;
 }
 
-function toTier(v: unknown): 1 | 2 | 3 {
-  const n = toNumber(v);
-  return n === 1 || n === 2 ? n : 3;
+/**
+ * Confidence from the key's producer. Only the coordinates+area fallback is a
+ * guess; a permit or a deed number is an official identifier for the property.
+ * Unknown prefixes are treated as confirmed — a future importer keying on some
+ * other registry id shouldn't be labelled "probable" by default.
+ */
+function tierForKey(key: string): 2 | 3 {
+  return key.startsWith('ga_') ? 3 : 2;
 }
 
 /**
- * Collapse listings that share a `property_key` into one representative row.
+ * Collapse listings that share a `dupe_group_id` into one representative row.
  *
  * Order is preserved: the representative is whichever member came FIRST in the
  * incoming (already sorted + filtered) list, so the caller's sort still decides
  * where a property lands on the page. Callers must therefore group AFTER sorting.
+ * `dupe_role` ('canonical'/'duplicate') is deliberately NOT used to pick the
+ * representative — honouring the user's sort matters more than showing the row
+ * the database happened to mark canonical.
  *
- * A listing opts out of grouping when the user has split it (`property_split`)
- * or when the database could not key it (no deed and no usable coordinates —
- * `property_key` is null). Both cases render as ordinary standalone rows.
+ * A listing opts out of grouping when the user has split it (`dupe_split`) or
+ * when the database could not key it (no identifier and no usable coordinates —
+ * `dupe_group_id` is null). Both render as ordinary standalone rows.
  */
 export function groupRecordsByProperty(records: AppRecord[]): GroupedRecords {
   const byKey = new Map<string, AppRecord[]>();
@@ -78,10 +92,11 @@ export function groupRecordsByProperty(records: AppRecord[]): GroupedRecords {
 
   for (const rec of records) {
     const data = rec.data as Record<string, unknown>;
-    const key = typeof data.property_key === 'string' && data.property_key ? data.property_key : null;
-    // `property_split` is the user's explicit "these are not the same property"
+    const key =
+      typeof data.dupe_group_id === 'string' && data.dupe_group_id ? data.dupe_group_id : null;
+    // `dupe_split` is the user's explicit "these are not the same property"
     // decision, persisted per listing by market_listing_set_split().
-    if (!key || data.property_split === true) {
+    if (!key || data.dupe_split === true) {
       rows.push(rec);
       continue;
     }
@@ -110,7 +125,7 @@ export function groupRecordsByProperty(records: AppRecord[]): GroupedRecords {
     );
     groups.set(rep.id, {
       key,
-      tier: toTier((rep.data as Record<string, unknown>).property_tier),
+      tier: tierForKey(key),
       members,
       agentCount: agents.size || members.length,
       priceMin: prices.length ? Math.min(...prices) : null,

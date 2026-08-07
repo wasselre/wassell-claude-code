@@ -127,9 +127,13 @@ export default function PropertyGroupModal({ group, onOpenListing, onClose }: Pr
             <div className="mt-3 flex items-start gap-2 rounded-lg bg-gold/10 border border-gold/30 px-3 py-2">
               <AlertTriangle size={14} className="text-gold-dark mt-0.5 shrink-0" />
               <p className="text-xs text-charcoal/70">
+                {/* Tier 3 = coordinates + area only. Deliberately does NOT say
+                    "no deed": the corpus now spans Saudi (deed) and UAE (RERA
+                    permit) listings, so the honest statement is that no official
+                    identifier backed this match. */}
                 {isAr
-                  ? 'مجمّعة بالموقع والمساحة (بدون رقم صك) — تجميع مُرجَّح وليس مؤكداً. افصلها إن كانت عقارات مختلفة.'
-                  : 'Grouped by location and area (no deed number) — a probable match, not a confirmed one. Split them if these are different properties.'}
+                  ? 'مجمّعة بالموقع والمساحة فقط (بدون معرّف رسمي) — تجميع مُرجَّح وليس مؤكداً. افصلها إن كانت عقارات مختلفة.'
+                  : 'Grouped by location and area alone (no official identifier) — a probable match, not a confirmed one. Split them if these are different properties.'}
               </p>
             </div>
           )}

@@ -3,78 +3,92 @@ import { groupRecordsByProperty } from '../marketListings/propertyGroups';
 import type { AppRecord } from '@/types';
 
 /**
- * Fixtures are REAL rows copied out of wassell-prod market_listings after the
- * 2026-08-30 property-identity backfill — same shapes the summary view projects
- * into the store (price/property_tier arrive as JSON numbers, not strings).
+ * Fixtures are REAL rows copied out of wassell-prod `market_listings` after the
+ * 2026-08-08 Aqar dupe-group backfill — the same shapes the summary view
+ * projects into the store (price arrives as a JSON number).
  */
 const rec = (id: string, data: Record<string, unknown>): AppRecord =>
   ({ id, model_id: 'm', data, created_at: '', updated_at: '' }) as unknown as AppRecord;
 
-/** Deed 717823000238 — a 750 m² plot in الخير, four brokers, 975,000–1,100,002. */
-const KHAIR = [
-  rec('60cecc64', { price: 975000, property_key: 'D:717823000238:750:25.1346:46.4177', property_tier: 2, advertiser_name: 'مكتب عصر الخير للخدمات العقارية' }),
-  rec('34df34a1', { price: 1100002.5, property_key: 'D:717823000238:750:25.1346:46.4177', property_tier: 2, advertiser_name: 'مكتب ابداع الصحافة للخدمات العقارية' }),
-  rec('73a6c2ce', { price: 1099500, property_key: 'D:717823000238:750:25.1346:46.4177', property_tier: 2, advertiser_name: 'شركة دار الروافد لتقنية المعلومات شركة شخص واحد' }),
-  rec('7ffa2a77', { price: 999750, property_key: 'D:717823000238:750:25.1346:46.4177', property_tier: 2, advertiser_name: 'مؤسسة نتائج العقارية' }),
+/** Deed-keyed (`dn_`): one 312 m² plot in Riyadh, three brokers, 2.8M–3.0M. */
+const DEED = [
+  rec('a1', { price: 3000000, dupe_group_id: 'dn_1019292974200000_312_24.8829_46.6230', dupe_role: 'canonical', advertiser_name: 'شركة واحة التعمير العقاري شركة شخص واحد' }),
+  rec('a2', { price: 2800000, dupe_group_id: 'dn_1019292974200000_312_24.8829_46.6230', dupe_role: 'duplicate', advertiser_name: 'مكتب روائع الرياض الجديده للخدمات العقارية' }),
+  rec('a3', { price: 2800000, dupe_group_id: 'dn_1019292974200000_312_24.8829_46.6230', dupe_role: 'duplicate', advertiser_name: 'مكتب روائع الرياض الجديده للخدمات العقارية' }),
+  rec('a4', { price: 2800000, dupe_group_id: 'dn_1019292974200000_312_24.8829_46.6230', dupe_role: 'duplicate', advertiser_name: 'مكتب العولمة للعقارات' }),
 ];
 
-/** A tier-3 (coordinates + area, no deed) trio — 600 m² at 24.4136/46.8421. */
-const TIER3 = [
-  rec('d89c4a40', { price: 300000, property_key: 'G:24.4136:46.8421:600', property_tier: 3, advertiser_name: 'سعد بن حمد بن محمد القحطاني' }),
-  rec('d06b024c', { price: 270000, property_key: 'G:24.4136:46.8421:600', property_tier: 3, advertiser_name: 'حمد القحطاني' }),
-  rec('12ed0680', { price: 400000, property_key: 'G:24.4136:46.8421:600', property_tier: 3, advertiser_name: 'مكتب عبدالله ابراهيم المنيع للعقارات' }),
+/** Coordinates+area only (`ga_`) — no official identifier, so tier 3. */
+const GEO = [
+  rec('g1', { price: 270000, dupe_group_id: 'ga_24.4136_46.8421_600', dupe_role: 'canonical', advertiser_name: 'حمد القحطاني' }),
+  rec('g2', { price: 400000, dupe_group_id: 'ga_24.4136_46.8421_600', dupe_role: 'duplicate', advertiser_name: 'مكتب عبدالله ابراهيم المنيع للعقارات' }),
+  rec('g3', { price: 300000, dupe_group_id: 'ga_24.4136_46.8421_600', dupe_role: 'duplicate', advertiser_name: 'سعد بن حمد بن محمد القحطاني' }),
+];
+
+/** RERA-permit keyed (`pk_`), written by the UAE importer — also confirmed. */
+const PERMIT = [
+  rec('p1', { price: 7400000, dupe_group_id: 'pk_1144589547', dupe_role: 'canonical', advertiser_name: 'Elliot Hughes' }),
+  rec('p2', { price: 3400000, dupe_group_id: 'pk_1144589547', dupe_role: 'duplicate', advertiser_name: 'Elliot Hughes' }),
 ];
 
 describe('groupRecordsByProperty', () => {
   it('collapses a deed-keyed property to one row carrying every broker', () => {
-    const { rows, groups, collapsed } = groupRecordsByProperty(KHAIR);
+    const { rows, groups, collapsed } = groupRecordsByProperty(DEED);
 
     expect(rows).toHaveLength(1);
     expect(collapsed).toBe(3);
 
-    const g = groups.get('60cecc64');
+    const g = groups.get('a1');
     expect(g).toBeDefined();
     expect(g!.tier).toBe(2);
     expect(g!.members).toHaveLength(4);
-    expect(g!.agentCount).toBe(4);
-    // The spread is the point of grouping — the real anchor is the lowest ask.
-    expect(g!.priceMin).toBe(975000);
-    expect(g!.priceMax).toBe(1100002.5);
+    // Three distinct advertisers across four ads — one broker posted twice.
+    expect(g!.agentCount).toBe(3);
+    expect(g!.priceMin).toBe(2800000);
+    expect(g!.priceMax).toBe(3000000);
+  });
+
+  it('treats a coordinates+area key as probable and an identifier key as confirmed', () => {
+    expect(groupRecordsByProperty(GEO).groups.get('g1')!.tier).toBe(3);
+    expect(groupRecordsByProperty(DEED).groups.get('a1')!.tier).toBe(2);
+    // The UAE importer's permit keys must not be labelled "probable".
+    expect(groupRecordsByProperty(PERMIT).groups.get('p1')!.tier).toBe(2);
+  });
+
+  it('groups the UAE portals too, not just Aqar', () => {
+    const { rows, groups, collapsed } = groupRecordsByProperty(PERMIT);
+    expect(rows).toHaveLength(1);
+    expect(collapsed).toBe(1);
+    expect(groups.get('p1')!.members).toHaveLength(2);
   });
 
   it('keeps the first row in the incoming order as the representative', () => {
     // Grouping runs AFTER the sort, so whichever member sorts first must be the
     // row that survives — otherwise the user's sort silently stops applying.
-    const reversed = [...KHAIR].reverse();
+    // `dupe_role` is deliberately NOT consulted for this.
+    const reversed = [...DEED].reverse();
     const { rows, groups } = groupRecordsByProperty(reversed);
-    expect(rows[0]!.id).toBe('7ffa2a77');
-    expect(groups.has('7ffa2a77')).toBe(true);
-    expect(groups.has('60cecc64')).toBe(false);
-  });
-
-  it('tags a coordinates-only match as tier 3 so the UI can call it probable', () => {
-    const { groups } = groupRecordsByProperty(TIER3);
-    expect(groups.get('d89c4a40')!.tier).toBe(3);
+    expect(rows[0]!.id).toBe('a4');
+    expect(groups.has('a4')).toBe(true);
+    expect(groups.has('a1')).toBe(false);
   });
 
   it('leaves a user-split listing out of its group', () => {
-    const split = KHAIR.map((r, i) =>
-      i === 1 ? rec(r.id, { ...r.data, property_split: true }) : r,
-    );
+    const split = DEED.map((r, i) => (i === 1 ? rec(r.id, { ...r.data, dupe_split: true }) : r));
     const { rows, groups, collapsed } = groupRecordsByProperty(split);
 
     expect(rows).toHaveLength(2); // the group's representative + the split-out row
     expect(collapsed).toBe(2);
-    expect(groups.get('60cecc64')!.members.map((m) => m.id)).not.toContain('34df34a1');
+    expect(groups.get('a1')!.members.map((m) => m.id)).not.toContain('a2');
   });
 
   it('never groups unkeyed listings together', () => {
-    // 2,668 live rows have no deed AND no usable coordinates. They must each
-    // stand alone, not collapse into one giant "null key" property.
+    // Rows with no identifier AND no usable coordinates must each stand alone,
+    // not collapse into one giant "null key" property.
     const unkeyed = [
-      rec('a', { price: 1, property_key: null }),
-      rec('b', { price: 2 }),
-      rec('c', { price: 3, property_key: '' }),
+      rec('x', { price: 1, dupe_group_id: null }),
+      rec('y', { price: 2 }),
+      rec('z', { price: 3, dupe_group_id: '' }),
     ];
     const { rows, groups, collapsed } = groupRecordsByProperty(unkeyed);
     expect(rows).toHaveLength(3);
@@ -83,7 +97,7 @@ describe('groupRecordsByProperty', () => {
   });
 
   it('passes non-market models through untouched', () => {
-    const plain = [rec('x', { name: 'a' }), rec('y', { name: 'b' })];
+    const plain = [rec('m1', { name: 'a' }), rec('m2', { name: 'b' })];
     const { rows, groups, collapsed } = groupRecordsByProperty(plain);
     expect(rows).toEqual(plain);
     expect(groups.size).toBe(0);
@@ -91,7 +105,7 @@ describe('groupRecordsByProperty', () => {
   });
 
   it('does not treat a lone keyed listing as a group', () => {
-    const { rows, groups } = groupRecordsByProperty([KHAIR[0]!]);
+    const { rows, groups } = groupRecordsByProperty([DEED[0]!]);
     expect(rows).toHaveLength(1);
     expect(groups.size).toBe(0);
   });

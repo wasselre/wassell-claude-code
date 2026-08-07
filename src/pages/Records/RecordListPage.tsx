@@ -335,7 +335,7 @@ export default function RecordListPage() {
   }, [filteredRecords, model, sortFieldName, sortDir, isAr, records, models, users, translationVersion]);
 
   // One property, many broker listings: collapse rows the database resolved to
-  // the same property_key into a single representative row carrying the agent
+  // the same dupe_group_id into a single representative row carrying the agent
   // count and price spread. Runs AFTER the sort (the representative is whichever
   // member sorts first, so the user's ordering still decides placement) and
   // BEFORE pagination (so a page holds N properties, not N ad rows).

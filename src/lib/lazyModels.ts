@@ -80,13 +80,14 @@ export const SUMMARY_DATA_KEYS: Readonly<Record<string, readonly string[]>> = {
     // show_in_table dropdown → the list renders it as a colored chip, so both
     // must ride the slim store + realtime. Keep in sync with the view.
     'quality_score', 'quality_grade',
-    // Property identity (2026-08-30): the same property is advertised by
-    // several brokers at once, so the list groups rows sharing a property_key
-    // into one card. All three must ride the slim store — the grouping happens
-    // client-side over the in-memory summary set, so a key that isn't in the
-    // projection means no grouping at all. `property_split` is the user's
-    // "show these separately" override. See market_listing_property_identity().
-    'property_key', 'property_tier', 'property_split',
+    // Duplicate grouping: the same property is advertised by several brokers at
+    // once, so the list collapses rows sharing a `dupe_group_id` into one card.
+    // All three must ride the slim store — the grouping happens client-side over
+    // the in-memory summary set, so a key that isn't in the projection means no
+    // grouping at all (that is exactly what silently broke when the model was
+    // frozen on 2026-08-07 and the old `property_key` column went away).
+    // `dupe_split` is the user's "show these separately" override.
+    'dupe_group_id', 'dupe_role', 'dupe_split',
   ],
 };
 
