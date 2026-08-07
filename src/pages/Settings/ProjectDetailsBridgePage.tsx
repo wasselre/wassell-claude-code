@@ -72,27 +72,18 @@ export default function ProjectDetailsBridgePage() {
     setPhase('choose');
   }, [projectId, projectsModel, detailsModel, records, project, navigate, isAr]);
 
-  // Pull every pd_*-prefixed field from the site_settings singleton so we
-  // can seed new project_details records with the template text. Anything
-  // the admin already has in site_settings becomes the project's override
-  // value, so the editor opens with the template visible and tweakable
-  // (vs. blank fields that fall back to the template silently).
-  function templateOverridesFromSiteSettings(): Record<string, unknown> {
-    const siteModel = models.find((m) => m.name === 'site_settings');
-    if (!siteModel) return {};
-    const record = (records[siteModel.id] ?? [])[0];
-    const data = (record?.data ?? {}) as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(data)) {
-      if (k.startsWith('pd_') && typeof v === 'string' && v.trim()) out[k] = v;
-    }
-    return out;
-  }
+  // NOTE (2026-08-07 redesign): we no longer copy the site_settings pd_* page
+  // template text into new sidecars. Doing so created stale per-project
+  // duplicates (e.g. the Riyadh map headline "في قلب الرياض الجديدة") that never
+  // tracked the live site defaults or the project's real geography. The sidecar
+  // is now an OPTIONAL editorial/presentation OVERRIDE only: any pd_* field left
+  // empty falls back to the site-wide default (or dynamic project geography) at
+  // render time. Fill a pd_* field only when you genuinely want to override it
+  // for this one project.
 
   async function createSidecar(extras: Record<string, unknown> = {}) {
     if (!detailsModel || !projectId) return;
     handledRef.current = true;
-    const template = templateOverridesFromSiteSettings();
     // Carry the project's existing images (main_image + project_images on the
     // all_projects record) onto the detail page's hero + gallery slots, so a
     // newly-created page opens with the real photos already in place — whether
@@ -113,10 +104,8 @@ export default function ProjectDetailsBridgePage() {
         show_agent: true,
         // Project images pulled from the all_projects record.
         ...images,
-        // Template text values from site_settings — admin can edit any of
-        // these per-project in the new "نصوص الصفحة" section.
-        ...template,
-        // `extras` (AI-drafted content, etc.) win over the template defaults.
+        // `extras` (AI-drafted content, etc.). NO pd_* template copy — empty
+        // page-text fields intentionally fall back to the site/dynamic defaults.
         ...extras,
       },
       created_at: new Date().toISOString(),
@@ -150,7 +139,9 @@ export default function ProjectDetailsBridgePage() {
       hero_short_description: result.draft.hero_short_description,
       description: result.draft.description,
       features: result.draft.features,
-      landmarks: result.draft.landmarks,
+      // Landmarks are NOT AI-generated (fail-closed): the assistant never
+      // invents landmark names/distances. Curated landmarks live on the
+      // all_projects record and render only with curated/verified provenance.
     });
   }
 
@@ -191,8 +182,8 @@ export default function ProjectDetailsBridgePage() {
         </h2>
         <p className="text-sm text-charcoal/50 leading-relaxed">
           {isAr
-            ? 'يستخدم بيانات المشروع لكتابة الوصف، اقتراح المميزات، واختيار المعالم القريبة. عادة ما يستغرق 10–20 ثانية.'
-            : 'Using the project data to write the description, suggest features, and pick nearby landmarks. Usually takes 10–20 seconds.'}
+            ? 'يستخدم بيانات المشروع لكتابة الوصف واقتراح المميزات. عادة ما يستغرق 10–20 ثانية.'
+            : 'Using the project data to write the description and suggest features. Usually takes 10–20 seconds.'}
         </p>
         <Loader2 size={18} className="animate-spin text-copper/70 mx-auto mt-6" />
       </div>
@@ -256,8 +247,8 @@ export default function ProjectDetailsBridgePage() {
           </h3>
           <p className="text-xs text-charcoal/50 leading-relaxed">
             {isAr
-              ? 'يستخدم الذكاء الاصطناعي بيانات المشروع لاقتراح وصف، مميزات، ومعالم قريبة — يمنح كل صفحة طابعاً مختلفاً عن الأخرى. يمكنك تعديل كل شيء قبل النشر.'
-              : 'Uses the project data to suggest a description, features, and nearby landmarks — every page comes out different. Edit everything before publishing.'}
+              ? 'يستخدم الذكاء الاصطناعي بيانات المشروع لاقتراح وصف ومميزات — يمنح كل صفحة طابعاً مختلفاً عن الأخرى. يمكنك تعديل كل شيء قبل النشر. (المعالم القريبة تُدار يدوياً ولا يخترعها الذكاء الاصطناعي.)'
+              : 'Uses the project data to suggest a description and features — every page comes out different. Edit everything before publishing. (Nearby landmarks are curated manually — never invented by AI.)'}
           </p>
         </button>
       </div>
