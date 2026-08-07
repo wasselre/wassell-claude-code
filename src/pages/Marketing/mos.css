@@ -1706,8 +1706,12 @@
     box-shadow: 0 0 40px rgba(0, 0, 0, 0.35);
   }
   [dir='rtl'] .mos-rail {
-    inset-inline-start: auto;
-    inset-inline-end: 0;
+    /* Anchor to the RIGHT edge (inline-start = right in RTL) and hide by
+       pushing further right. The previous rule anchored inline-END (= the
+       physical LEFT in RTL) then translated +105%, which parked the closed
+       rail mid-screen instead of off-canvas — the "sidebar won't hide" bug. */
+    inset-inline-start: 0;
+    inset-inline-end: auto;
     transform: translateX(105%);
   }
   .mos-rail.open {
