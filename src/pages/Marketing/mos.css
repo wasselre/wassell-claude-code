@@ -1495,6 +1495,9 @@
   padding: 20px;
   z-index: 80;
   overflow-y: auto;
+  /* Stop a scroll gesture that reaches the scrim from chaining to the page
+     behind it (iOS: "the modal is frozen but the background moves"). */
+  overscroll-behavior: contain;
 }
 .mos-root .modal,
 .mos-scrim .modal {
@@ -1509,6 +1512,10 @@
   font-family: var(--sans);
   color: var(--ink);
   max-height: 92vh;
+  /* dvh tracks the *visible* viewport, so the footer/buttons never hide under
+     iOS Safari's dynamic toolbar. Falls back to the vh line above where dvh
+     is unsupported. */
+  max-height: 92dvh;
   display: flex;
   flex-direction: column;
 }
@@ -1534,7 +1541,15 @@
   padding: 20px 22px;
   display: grid;
   gap: 15px;
+  /* The scroll region. flex + min-height:0 is REQUIRED — iOS Safari won't let
+     a flex child shrink below its content (and thus won't scroll it) without
+     an explicit min-height:0, even though overflow-y:auto is set. Chrome does
+     it implicitly, which is why this only broke on iPhone. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 .mos-scrim .modal-f {
   padding: 14px 22px;
