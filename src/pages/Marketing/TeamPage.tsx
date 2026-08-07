@@ -293,7 +293,7 @@ export default function TeamPage() {
               })}
             </div>
 
-            <div className="grid" style={{ gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr)' }}>
+            <div className="grid main-rail-16">
               <div className="card">
                 <div className="card-h">
                   <h4>{isAr ? 'كل المهام المفتوحة' : 'Every open task'}</h4>

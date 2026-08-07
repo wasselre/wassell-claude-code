@@ -1976,11 +1976,18 @@
 .mos-root .up-row:hover{background:var(--sand-2)}
 .mos-root .up-row + .up-row{border-top:1px solid var(--line-soft)}
 .mos-root .up-row-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* s01/s34/s35 — the two-column grids collapse on narrow screens. */
+/* s01 (overview) / s35 (team) — a wider main column beside a narrower side rail.
+   Class-based, NOT an inline grid-template-columns: an inline value outranks any
+   non-!important stylesheet rule, so the old `.grid[style*="1.6fr"]` media query
+   never applied and the columns stayed side-by-side (crushed) on a phone. Same
+   lesson as .rail-end / .rail-start above. */
+.mos-root .main-rail-155{grid-template-columns:minmax(0,1.55fr) minmax(0,1fr)}
+.mos-root .main-rail-16{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}
+.mos-root .main-rail-14{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
 @media (max-width:1100px){
-  .mos-root .body > .grid[style*="1.55fr"],
-  .mos-root .body > .grid[style*="1.6fr"],
-  .mos-root .body > .grid[style*="1.4fr"]{grid-template-columns:1fr}
+  .mos-root .main-rail-155,
+  .mos-root .main-rail-16,
+  .mos-root .main-rail-14{grid-template-columns:1fr}
 }
 
 /* === s06-s08/s38 additions === */

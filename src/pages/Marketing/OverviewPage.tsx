@@ -339,7 +339,7 @@ function ManagerOverview() {
               />
             </div>
 
-            <div className="grid" style={{ gridTemplateColumns: 'minmax(0,1.55fr) minmax(0,1fr)' }}>
+            <div className="grid main-rail-155">
               <div className="card">
                 <div className="card-h">
                   <h4>{isAr ? 'متوقف — لم يتحرك منذ ٤٨ ساعة' : 'Stalled — nothing moved in 48h'}</h4>
@@ -841,7 +841,7 @@ function CeoOverview() {
               </div>
             </div>
 
-            <div className="grid" style={{ gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1fr)' }}>
+            <div className="grid main-rail-14">
               <div className="card">
                 <div className="card-h">
                   <h4>{isAr ? 'حجم الإنتاج' : 'Production volume'}</h4>
