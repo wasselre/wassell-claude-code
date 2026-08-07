@@ -1916,6 +1916,16 @@
 /* The editor grid beside the 304px side column (screen 27). */
 .mos-root .s27-grid{grid-template-columns:1fr 304px;align-items:start}
 @media (max-width:980px){.mos-root .s27-grid{grid-template-columns:1fr}}
+/* A fixed 304px rail beside a fluid main column — asset detail (s22, rail on the
+   end) and the library upload page (rail on the start). Class-based, NOT an
+   inline grid-template-columns, so the media query can actually override it and
+   the columns stack on a phone instead of crushing the main column to a sliver. */
+.mos-root .rail-end{grid-template-columns:minmax(0,1fr) 304px;align-items:start}
+.mos-root .rail-start{grid-template-columns:304px minmax(0,1fr);align-items:start}
+@media (max-width:900px){
+  .mos-root .rail-end,
+  .mos-root .rail-start{grid-template-columns:1fr}
+}
 /* Type head-form: name ar / name en / prefix / workflow on one row. */
 .mos-root .s27-head-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:13px;margin-bottom:16px}
 @media (max-width:980px){.mos-root .s27-head-grid{grid-template-columns:1fr 1fr}}
@@ -1966,12 +1976,11 @@
 .mos-root .up-row:hover{background:var(--sand-2)}
 .mos-root .up-row + .up-row{border-top:1px solid var(--line-soft)}
 .mos-root .up-row-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* s01/s34/s35/s22 — the two-column grids collapse on narrow screens. */
+/* s01/s34/s35 — the two-column grids collapse on narrow screens. */
 @media (max-width:1100px){
   .mos-root .body > .grid[style*="1.55fr"],
   .mos-root .body > .grid[style*="1.6fr"],
-  .mos-root .body > .grid[style*="1.4fr"],
-  .mos-root .body > .grid[style*="304px"]{grid-template-columns:1fr}
+  .mos-root .body > .grid[style*="1.4fr"]{grid-template-columns:1fr}
 }
 
 /* === s06-s08/s38 additions === */

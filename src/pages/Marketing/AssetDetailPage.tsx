@@ -273,7 +273,7 @@ export default function AssetDetailPage() {
         )}
 
         {asset && (
-          <div className="grid" style={{ gridTemplateColumns: '1fr 304px', alignItems: 'start' }}>
+          <div className="grid rail-end">
             {/* ── main column ─────────────────────────────────────────── */}
             <div style={{ display: 'grid', gap: 16 }}>
               {isPdf && asset.url ? (

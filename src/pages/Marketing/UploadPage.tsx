@@ -398,7 +398,7 @@ export default function UploadPage() {
       </PageHead>
 
       <div className="body">
-        <div className="grid" style={{ gridTemplateColumns: '304px minmax(0,1fr)', alignItems: 'start' }}>
+        <div className="grid rail-start">
           {/* ── ينطبق على الجميع ─────────────────────────────────────── */}
           <div className="card">
             <div className="card-h"><h4>{isAr ? 'ينطبق على الجميع' : 'Applies to all'}</h4></div>
