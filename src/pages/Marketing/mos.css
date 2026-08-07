@@ -1666,6 +1666,12 @@
 }
 .mos-rail-scrim {
   display: none;
+  /* Button reset (the scrim is a <button> for iOS tap reliability). */
+  padding: 0;
+  border: 0;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 @media (max-width: 900px) {
@@ -1711,8 +1717,10 @@
     display: block;
     position: fixed;
     inset: 0;
+    width: 100%;
     background: rgba(46, 42, 38, 0.45);
     z-index: 39;
+    cursor: pointer; /* iOS: without this, tap on the scrim never fires. */
   }
   .mos-burger {
     display: inline-flex;

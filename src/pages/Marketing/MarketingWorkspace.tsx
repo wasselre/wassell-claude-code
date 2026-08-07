@@ -413,10 +413,16 @@ export default function MarketingWorkspace() {
   return (
     <Ctx.Provider value={ctx}>
       <div className="mos-root" data-workspace="marketing">
-        <div
+        {/* A real <button>, not a <div>: iOS Safari does not fire click/tap on
+            a plain non-interactive element without `cursor: pointer`, so a
+            <div> scrim leaves the drawer stuck open on iPhone (the same reason
+            the المزيد sheet scrim is a button). */}
+        <button
+          type="button"
           className={`mos-rail-scrim${railOpen ? ' on' : ''}`}
           onClick={() => setRailOpen(false)}
-          aria-hidden="true"
+          aria-label={isAr ? 'إغلاق القائمة' : 'Close menu'}
+          tabIndex={railOpen ? 0 : -1}
         />
         <aside className={`mos-rail${railOpen ? ' open' : ''}`}>
           <div className="brand">
