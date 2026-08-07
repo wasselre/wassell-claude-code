@@ -25,6 +25,19 @@ import { daysFromNow, num, shortDate, toArabicDigits } from './lib/format';
 import { formatBytes } from './lib/upload';
 import './styles/pages-remaining.css';
 
+/**
+ * iOS Safari/WebKit renders a PDF inside an `<iframe>` as a non-scrollable,
+ * first-page-only frame — the file looks cut off and you can't reach the rest
+ * (long-standing WebKit limitation, no CSS fixes it). On iOS we skip the iframe
+ * and hand the file to the native PDF viewer (a new tab), which scrolls the
+ * whole document. iPadOS 13+ masquerades as desktop Safari, so also match a
+ * touch-capable "Mac".
+ */
+const IS_IOS =
+  typeof navigator !== 'undefined' &&
+  (/iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
 /** mm:ss with the screen's digit shape — Arabic-Indic in Arabic («٠٠:٢٢»). */
 function mmss(seconds: number, isAr: boolean): string {
   const s = Math.max(0, Math.round(seconds));
@@ -276,7 +289,52 @@ export default function AssetDetailPage() {
           <div className="grid rail-end">
             {/* ── main column ─────────────────────────────────────────── */}
             <div style={{ display: 'grid', gap: 16 }}>
-              {isPdf && asset.url ? (
+              {isPdf && asset.url && IS_IOS ? (
+                // iOS can't scroll a PDF <iframe> (first page only). Hand the
+                // whole file to the native viewer — a big tappable card so the
+                // user can actually read past page one.
+                <a
+                  href={asset.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: 'grid',
+                    justifyItems: 'center',
+                    alignContent: 'center',
+                    gap: 12,
+                    width: '100%',
+                    minHeight: 320,
+                    padding: 28,
+                    textAlign: 'center',
+                    border: '1px solid var(--line)',
+                    borderRadius: 11,
+                    background: '#fff',
+                    color: 'var(--ink)',
+                    textDecoration: 'none',
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'grid',
+                      placeItems: 'center',
+                      width: 56,
+                      height: 56,
+                      borderRadius: 14,
+                      background: 'var(--copper, #B8734F)',
+                    }}
+                  >
+                    <IconLibrary style={{ width: 24, height: 24, stroke: '#fff' }} />
+                  </span>
+                  <span style={{ fontWeight: 700, fontSize: 16 }}>
+                    {isAr ? 'افتح الملف كاملاً' : 'Open the full file'}
+                  </span>
+                  <span style={{ fontSize: 13, opacity: 0.7, maxWidth: 280 }}>
+                    {isAr
+                      ? 'يفتح ملف PDF كامل في عارض النظام حيث يمكنك التمرير والتنزيل.'
+                      : 'Opens the full PDF in the system viewer, where you can scroll and download.'}
+                  </span>
+                </a>
+              ) : isPdf && asset.url ? (
                 // A PDF renders inline in its own full-width viewer, not the
                 // dark thumbnail box — the placeholder icon was never the file.
                 <div style={{ display: 'grid', gap: 8 }}>
