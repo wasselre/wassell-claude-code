@@ -527,14 +527,7 @@ export default function ContentDetailPage() {
           )}
 
           {activeTab === 'overview' && (
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: steps.length > 0 ? '1fr 216px' : '1fr',
-                gap: 18,
-                alignItems: 'start',
-              }}
-            >
+            <div className={`cd-overview${steps.length > 0 ? ' has-rail' : ''}`}>
               <div style={{ display: 'grid', gap: 16 }}>
                 {openTask ? (
                   <TaskCard

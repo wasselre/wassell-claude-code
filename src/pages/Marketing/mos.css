@@ -1975,6 +1975,15 @@
 }
 
 /* === s06-s08/s38 additions === */
+/* Screen 06 overview — content column beside the stage rail. On the phone the
+   rail (216px fixed) would crush the content into a ~100px column, so the grid
+   collapses to a single column below the 760px phone breakpoint and the rail
+   stacks under the content. Desktop is unchanged. */
+.mos-root .cd-overview{display:grid;grid-template-columns:1fr;gap:18px;align-items:start}
+.mos-root .cd-overview.has-rail{grid-template-columns:1fr 216px}
+@media (max-width:760px){
+  .mos-root .cd-overview.has-rail{grid-template-columns:1fr}
+}
 /* Mention inside a comment body (screens 06/07/08 «@سارة») — copper, bold. */
 .mos-root .mn{color:var(--copper);font-weight:700}
 /* Screen 36's «قادم إليك» banner — a notice, not a task: the role sees work
