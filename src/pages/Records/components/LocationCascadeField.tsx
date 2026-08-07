@@ -80,25 +80,6 @@ export default function LocationCascadeField({ field, value, onChange, maxLevelK
     const i = levels.findIndex((lv) => idsOf(lv.key).length > 0);
     return i < 0 ? levels.length : i;
   })();
-  // Effective ids for a level: the real selection, else the configured default —
-  // but ONLY for levels shallower than the first real selection, and never for the
-  // deepest shown level.
-  //
-  // Two things ride on that "shallower than the first real selection" rule:
-  //   · Once the user picks a region, the الرياض *city* default must stop applying
-  //     (it would force a city that isn't in the chosen region).
-  //   · Values saved before a level existed omit it entirely — 64k records carry
-  //     region/city/district but no `country`. Those must still fall back to the
-  //     default country, or the region step (which filters by country_lookup) would
-  //     render an empty list on every legacy record.
-  const effIds = (idx: number): string[] => {
-    const lv = levels[idx];
-    if (!lv) return [];
-    const real = idsOf(lv.key);
-    if (real.length) return real;
-    if (idx < firstRealIdx && idx < navLastIdx && isStr(def[lv.key])) return [def[lv.key] as string];
-    return [];
-  };
 
   const levelIsMulti = (idx: number) => multi && idx === lastIdx;
 
@@ -134,6 +115,72 @@ export default function LocationCascadeField({ field, value, onChange, maxLevelK
     const m = models.find((mm) => mm.id === lv.model_id);
     const dv = resolveLookupDisplayValue(rec, lv.display_field, { targetModel: m, allModels: models, allRecords: records });
     return dv !== null && dv !== undefined && typeof dv !== 'object' ? String(dv) : id.slice(0, 8);
+  };
+
+  // ── Ancestor derivation ────────────────────────────────────────────────────
+  // Walk the parent-link chain UP from a real selection to fill in an ancestor
+  // level that carries no explicit value. e.g. a record stores region=Dubai but
+  // no country → the country crumb is DERIVED from the Dubai region's
+  // `country_lookup` (= UAE) instead of falling back to the field default. This
+  // is why a UAE project no longer shows/saves the Saudi default country.
+  const recById = (modelId: string, id: string) =>
+    (records[modelId] ?? []).find((r) => r.id === id) ?? null;
+
+  // Nearest DEEPER level (> idx) that carries a real selection, or -1.
+  const nearestRealDeeper = (idx: number): number => {
+    for (let j = idx + 1; j < levels.length; j++) {
+      if (idsOf(levels[j]!.key).length) return j;
+    }
+    return -1;
+  };
+
+  // Follow `parent_link_field` from level `fromIdx` (id `fromId`) up to `targetIdx`.
+  // Returns the derived id at `targetIdx`, or null if any hop is missing.
+  const deriveUp = (targetIdx: number, fromIdx: number, fromId: string): string | null => {
+    let cur = fromId;
+    for (let k = fromIdx; k > targetIdx; k--) {
+      const child = levels[k], parent = levels[k - 1];
+      if (!child || !parent) return null;
+      const plf = parentLinkFor(child, parent);
+      if (!plf) return null;
+      const rec = recById(child.model_id, cur);
+      if (!rec) return null;
+      const pv = rec.data[plf];
+      const pid = Array.isArray(pv) ? pv[0] : pv;
+      if (!isStr(pid)) return null;
+      cur = pid;
+    }
+    return cur;
+  };
+
+  // The id for level `idx` derived from the nearest deeper real selection, or null.
+  const derivedId = (idx: number): string | null => {
+    const j = nearestRealDeeper(idx);
+    if (j < 0) return null;
+    const realId = idsOf(levels[j]!.key)[0];
+    return isStr(realId) ? deriveUp(idx, j, realId) : null;
+  };
+
+  // Effective ids for a level: the real selection, else DERIVED from a deeper real
+  // selection (see above), else the configured default. The default only applies
+  // for levels shallower than the first real selection, and never for the deepest
+  // shown level.
+  //
+  // Two things ride on that "shallower than the first real selection" rule:
+  //   · Once the user picks a region, the الرياض *city* default must stop applying
+  //     (it would force a city that isn't in the chosen region).
+  //   · Values saved before a level existed omit it entirely — 64k records carry
+  //     region/city/district but no `country`. Those derive their country from the
+  //     stored region; only a truly empty field falls back to the default country.
+  const effIds = (idx: number): string[] => {
+    const lv = levels[idx];
+    if (!lv) return [];
+    const real = idsOf(lv.key);
+    if (real.length) return real;
+    const derived = derivedId(idx);
+    if (derived) return [derived];
+    if (idx < firstRealIdx && idx < navLastIdx && isStr(def[lv.key])) return [def[lv.key] as string];
+    return [];
   };
 
   // Candidates for a level, filtered to the effective parent's children + the query.
@@ -218,7 +265,7 @@ export default function LocationCascadeField({ field, value, onChange, maxLevelK
     return <div className="text-sm text-red-400">{isAr ? 'لم يتم إعداد حقل الموقع' : 'Location field not configured'}</div>;
   }
 
-  // ── Collapsed box: the path of chosen (or defaulted) levels ──
+  // ── Collapsed box: the path of chosen (derived, or defaulted) levels ──
   const pathParts: Array<{ idx: number; text: string; isReal: boolean }> = [];
   levels.slice(0, navLastIdx + 1).forEach((lv, idx) => {
     const real = idsOf(lv.key);
@@ -227,6 +274,14 @@ export default function LocationCascadeField({ field, value, onChange, maxLevelK
         ? `${real.length} ${isAr ? 'أحياء' : 'districts'}`
         : nameOf(idx, real[0]!);
       pathParts.push({ idx, text, isReal: true });
+      return;
+    }
+    // No explicit value: prefer the id DERIVED from a deeper real selection (e.g.
+    // the country implied by the chosen region) — that's authoritative, so render
+    // it solid. Only a truly unanchored level falls back to the faded default.
+    const derived = derivedId(idx);
+    if (derived) {
+      pathParts.push({ idx, text: nameOf(idx, derived), isReal: true });
     } else if (idx < navLastIdx && isStr(def[lv.key])) {
       pathParts.push({ idx, text: nameOf(idx, def[lv.key] as string), isReal: false });
     }
