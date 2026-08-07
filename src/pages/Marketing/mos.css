@@ -1966,11 +1966,12 @@
 .mos-root .up-row:hover{background:var(--sand-2)}
 .mos-root .up-row + .up-row{border-top:1px solid var(--line-soft)}
 .mos-root .up-row-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* s01/s34/s35 — the two-column grids collapse on narrow screens. */
+/* s01/s34/s35/s22 — the two-column grids collapse on narrow screens. */
 @media (max-width:1100px){
   .mos-root .body > .grid[style*="1.55fr"],
   .mos-root .body > .grid[style*="1.6fr"],
-  .mos-root .body > .grid[style*="1.4fr"]{grid-template-columns:1fr}
+  .mos-root .body > .grid[style*="1.4fr"],
+  .mos-root .body > .grid[style*="304px"]{grid-template-columns:1fr}
 }
 
 /* === s06-s08/s38 additions === */
