@@ -732,6 +732,14 @@ export interface MosCampaign {
   content_count: number;
   /** The goals this campaign serves (mos_campaign_goals). Every campaign has ≥1. */
   goal_ids: string[];
+  /**
+   * The platform sub-line for the list (design screen 14): a paid campaign's
+   * executions' ad platforms, or — for organic / not-yet-launched paid — the
+   * feeds its attributed content publishes to. Computed server-side by
+   * `campaign_list`; empty means "not launched yet". Absent on the other reads
+   * that return an MosCampaign (detail/search/overview), which don't need it.
+   */
+  platforms?: string[];
 }
 
 /**

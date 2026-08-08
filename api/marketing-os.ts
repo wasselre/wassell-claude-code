@@ -2247,9 +2247,64 @@ export default async function handler(req: Request): Promise<Response> {
           arr.push(l.goal_id);
           byCampaign.set(l.campaign_id, arr);
         }
-        const campaigns = ((rows.data ?? []) as Array<{ id: string }>).map((c) => ({
+        // Platform sub-lines (design screen 14). Paid campaigns name their
+        // executions' ad platforms; organic ones (or paid not launched yet) name
+        // the feeds their attributed content publishes to. Computed HERE in three
+        // bounded, campaign-scoped reads — the list used to resolve these on the
+        // client with one full `campaign_detail` per row plus a `publication_list`,
+        // an N+1 that saturated the browser's connection limit and the DB and
+        // froze the whole workspace on mobile (the "entering Campaigns hangs" bug).
+        const listRows = (rows.data ?? []) as Array<{ id: string; kind?: string }>;
+        const ids = listRows.map((c) => c.id);
+        const platformsByCampaign = new Map<string, Set<string>>();
+        if (ids.length > 0) {
+          const [execRows, contentRows] = await Promise.all([
+            sb.from('mos_campaign_executions').select('campaign_id, platform').in('campaign_id', ids),
+            sb.from('mos_content_v').select('id, campaign_id').in('campaign_id', ids).is('archived_at', null),
+          ]);
+          const ef = dbFail(execRows.error) ?? dbFail(contentRows.error);
+          if (ef) return ef;
+          const execByCampaign = new Map<string, Set<string>>();
+          for (const r of (execRows.data ?? []) as Array<{ campaign_id: string; platform: string | null }>) {
+            if (!r.platform) continue;
+            const s = execByCampaign.get(r.campaign_id) ?? new Set<string>();
+            s.add(r.platform);
+            execByCampaign.set(r.campaign_id, s);
+          }
+          const campaignByContent = new Map<string, string>();
+          const contentIds: string[] = [];
+          for (const r of (contentRows.data ?? []) as Array<{ id: string; campaign_id: string | null }>) {
+            if (!r.campaign_id) continue;
+            campaignByContent.set(r.id, r.campaign_id);
+            contentIds.push(r.id);
+          }
+          const pubByCampaign = new Map<string, Set<string>>();
+          if (contentIds.length > 0) {
+            const pubRows = await sb.from('mos_publications')
+              .select('content_id, platform, status').in('content_id', contentIds);
+            const pf = dbFail(pubRows.error);
+            if (pf) return pf;
+            for (const p of (pubRows.data ?? []) as Array<{ content_id: string; platform: string | null; status: string | null }>) {
+              if (!p.platform || p.status === 'cancelled') continue;
+              const cid = campaignByContent.get(p.content_id);
+              if (!cid) continue;
+              const s = pubByCampaign.get(cid) ?? new Set<string>();
+              s.add(p.platform);
+              pubByCampaign.set(cid, s);
+            }
+          }
+          for (const c of listRows) {
+            // Paid: executions' ad platforms. Empty (organic, or a paid campaign
+            // with no executions yet) falls back to the attributed content's feeds.
+            const execSet = c.kind === 'paid' ? execByCampaign.get(c.id) : undefined;
+            const set = execSet && execSet.size > 0 ? execSet : (pubByCampaign.get(c.id) ?? new Set<string>());
+            platformsByCampaign.set(c.id, set);
+          }
+        }
+        const campaigns = listRows.map((c) => ({
           ...c,
           goal_ids: byCampaign.get(c.id) ?? [],
+          platforms: Array.from(platformsByCampaign.get(c.id) ?? []),
         }));
         return jsonOk({ campaigns });
       }

@@ -14,7 +14,7 @@ import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, EXEC_PURPOSE_LABELS, MosCampaign, MosGoal,
   PLATFORM_LABELS, ROLE_LABELS,
-  createContent, fetchCampaignDetail, fetchCampaigns, fetchGoals, fetchPublications,
+  createContent, fetchCampaigns, fetchGoals,
   saveCampaign, savePublication, successMeasureSuffix,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
@@ -231,7 +231,6 @@ export default function CampaignsPage() {
 
   const [rows, setRows] = useState<MosCampaign[]>([]);
   const [goals, setGoals] = useState<MosGoal[]>([]);
-  const [platforms, setPlatforms] = useState<Map<string, string[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -262,12 +261,8 @@ export default function CampaignsPage() {
       void fetchGoals()
         .then((g) => setGoals(g.goals))
         .catch((e: unknown) => console.error('campaign goals filter list failed', e));
-      // The platform sub-lines need each campaign's executions (paid) or its
-      // content's publications (organic). Resolved in the background so the
-      // table never waits on the N+1 detail calls.
-      void resolvePlatforms(list)
-        .then(setPlatforms)
-        .catch((e: unknown) => console.error('campaign platform lines failed', e));
+      // Platform sub-lines now arrive on each campaign row (campaign.platforms),
+      // computed server-side by campaign_list — no per-row detail fetch.
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -517,12 +512,10 @@ export default function CampaignsPage() {
                         const dimmed = c.status === 'done' || c.status === 'cancelled';
                         const planning = c.status === 'planning';
                         const organic = c.kind === 'organic';
-                        const plats = platforms.get(c.id);
-                        const subLine = plats === undefined
-                          ? ''
-                          : plats.length > 0
-                            ? plats.map((p) => subPlatform(p, isAr)).join(' · ')
-                            : (isAr ? 'لم تُطلق' : 'Not launched yet');
+                        const plats = c.platforms ?? [];
+                        const subLine = plats.length > 0
+                          ? plats.map((p) => subPlatform(p, isAr)).join(' · ')
+                          : (isAr ? 'لم تُطلق' : 'Not launched yet');
                         const leads = c.total_leads ?? 0;
                         const spend = c.total_spend ?? 0;
                         const cpl = !organic && !planning && spend > 0 && leads > 0
@@ -668,37 +661,6 @@ function duration(c: MosCampaign, isAr: boolean): string {
   }
   if (s) return shortDate(c.starts_on, isAr);
   return '—';
-}
-
-/**
- * The platform sub-line under each campaign name. Paid campaigns name their
- * executions' ad platforms; organic ones name the feeds their attributed
- * content publishes to. A campaign with neither reads «لم تُطلق».
- */
-async function resolvePlatforms(list: MosCampaign[]): Promise<Map<string, string[]>> {
-  const map = new Map<string, string[]>();
-  const pubs = (await fetchPublications()).publications;
-  await Promise.all(list.map(async (c) => {
-    try {
-      const d = await fetchCampaignDetail(c.id);
-      const set = new Set<string>();
-      if (c.kind === 'paid') {
-        for (const x of d.executions) if (x.platform) set.add(x.platform);
-      }
-      if (set.size === 0) {
-        const ids = new Set(d.content.map((r) => r.id));
-        for (const p of pubs) {
-          if (ids.has(p.content_id) && p.status !== 'cancelled' && p.platform) set.add(p.platform);
-        }
-      }
-      map.set(c.id, Array.from(set));
-    } catch (e) {
-      // One campaign's detail failing must not blank the whole column — that
-      // row's sub-line falls back to «لم تُطلق», and the failure stays loud.
-      console.error(`campaign platforms failed for ${c.id}`, e);
-    }
-  }));
-  return map;
 }
 
 /**
