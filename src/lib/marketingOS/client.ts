@@ -29,7 +29,7 @@ export type MosPathRole = 'ceo' | 'marketing_manager' | 'ops_supervisor' | 'writ
 /** Every surface the shell can route to. Absence from surface_access = hidden. */
 export type SurfaceKey =
   | 'overview' | 'mywork' | 'team' | 'content' | 'calendar' | 'library'
-  | 'shoots' | 'campaigns' | 'numbers' | 'settings' | 'roles';
+  | 'shoots' | 'goals' | 'campaigns' | 'numbers' | 'settings' | 'roles';
 
 export type SurfaceLevel = 'full' | 'read' | 'hidden';
 
@@ -730,6 +730,26 @@ export interface MosCampaign {
   total_impressions: number | null;
   total_clicks: number | null;
   content_count: number;
+  /** The goals this campaign serves (mos_campaign_goals). Every campaign has ≥1. */
+  goal_ids: string[];
+}
+
+/**
+ * A marketing goal — a SIMPLE, reusable objective (`mos_goals`) that campaigns
+ * are grouped under. A campaign links to one or more; a goal can hold many
+ * campaigns. Single-language name/description, like the brief fields — read-time
+ * translation is the overlay's job.
+ */
+export interface MosGoal {
+  id: string;
+  name: string;
+  description: string | null;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  archived_at: string | null;
+  /** Linked-campaign count, attached by the goals_list / goal_save reads. */
+  campaign_count: number;
 }
 
 export interface MosExecution {
@@ -1019,7 +1039,14 @@ export const fetchCampaignDetail = (id: string) =>
     content: MosContentRow[];
     comments: MosComment[];
     events: MosCampaignEvent[];
+    goals: MosGoal[];
   }>('campaign_detail', { id });
+
+/** The marketing goals registry (with a linked-campaign count per goal). */
+export const fetchGoals = () => call<{ goals: MosGoal[] }>('goals_list');
+
+export const saveGoal = (goal: Record<string, unknown>) =>
+  call<{ goals: MosGoal[] }>('goal_save', { goal });
 
 export const saveCampaign = (
   campaign: Record<string, unknown>,

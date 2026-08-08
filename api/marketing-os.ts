@@ -218,7 +218,7 @@ const MOS_ROLE_KEYS = ['ceo', 'marketing_manager', 'ops_supervisor', 'writer', '
 /** Every surface the shell can route to, in the matrix's stable order. */
 const SURFACES = [
   'overview', 'mywork', 'team', 'content', 'calendar', 'library',
-  'shoots', 'campaigns', 'numbers', 'settings', 'roles',
+  'shoots', 'goals', 'campaigns', 'numbers', 'settings', 'roles',
 ] as const;
 type SurfaceKey = (typeof SURFACES)[number];
 type SurfaceLevel = 'full' | 'read' | 'hidden';
@@ -658,6 +658,40 @@ async function readCampaignMerged(
     }
   }
   return { row, error: null };
+}
+
+/**
+ * Read the goal ids currently linked to a campaign. Returns an error Response
+ * (via dbFail) on failure so callers can bail the same way they do elsewhere.
+ */
+async function readCampaignGoalIds(
+  sb: SupabaseClient,
+  campaignId: string,
+): Promise<{ ids: string[]; error: Response | null }> {
+  const res = await sb.from('mos_campaign_goals').select('goal_id').eq('campaign_id', campaignId);
+  const f = dbFail(res.error);
+  if (f) return { ids: [], error: f };
+  const ids = ((res.data ?? []) as Array<{ goal_id: string }>).map((r) => r.goal_id);
+  return { ids, error: null };
+}
+
+/**
+ * Replace a campaign's goal links with exactly `goalIds` (delete-all then
+ * insert), so a save is idempotent and order-independent. Returns an error
+ * Response on failure, or null on success.
+ */
+async function syncCampaignGoals(
+  sb: SupabaseClient,
+  campaignId: string,
+  goalIds: string[],
+): Promise<Response | null> {
+  const del = await sb.from('mos_campaign_goals').delete().eq('campaign_id', campaignId);
+  const df = dbFail(del.error);
+  if (df) return df;
+  if (goalIds.length === 0) return null;
+  const rows = goalIds.map((goal_id) => ({ campaign_id: campaignId, goal_id }));
+  const ins = await sb.from('mos_campaign_goals').insert(rows);
+  return dbFail(ins.error);
 }
 
 /**
@@ -2201,13 +2235,29 @@ export default async function handler(req: Request): Promise<Response> {
           .limit(cap(body.limit, 200, 500));
         const f = dbFail(rows.error);
         if (f) return f;
-        return jsonOk({ campaigns: rows.data ?? [] });
+        // Attach each campaign's linked goal ids in one extra read (the junction
+        // carries only two ids, so a full scan grouped in JS is cheaper than an
+        // N+1 or a view rebuild). A campaign with no links gets an empty array.
+        const links = await sb.from('mos_campaign_goals').select('campaign_id, goal_id');
+        const lf = dbFail(links.error);
+        if (lf) return lf;
+        const byCampaign = new Map<string, string[]>();
+        for (const l of (links.data ?? []) as Array<{ campaign_id: string; goal_id: string }>) {
+          const arr = byCampaign.get(l.campaign_id) ?? [];
+          arr.push(l.goal_id);
+          byCampaign.set(l.campaign_id, arr);
+        }
+        const campaigns = ((rows.data ?? []) as Array<{ id: string }>).map((c) => ({
+          ...c,
+          goal_ids: byCampaign.get(c.id) ?? [],
+        }));
+        return jsonOk({ campaigns });
       }
 
       case 'campaign_detail': {
         const id = str(body.id);
         if (!id) return jsonError(400, 'id is required');
-        const [item, execs, content, comments, events] = await Promise.all([
+        const [item, execs, content, comments, events, goalLinks] = await Promise.all([
           // Merged read: the view's aggregates + the base row's brief and
           // signature columns (see readCampaignMerged).
           readCampaignMerged(sb, id),
@@ -2219,23 +2269,41 @@ export default async function handler(req: Request): Promise<Response> {
             .order('created_at', { ascending: true }).limit(200),
           sb.from('mos_campaign_events').select('*').eq('campaign_id', id)
             .order('created_at', { ascending: false }).limit(200),
+          // The goals this campaign serves, joined to their record for names.
+          sb.from('mos_campaign_goals').select('goal_id, mos_goals(*)')
+            .eq('campaign_id', id),
         ]);
         const f = dbFail(item.error) ?? dbFail(execs.error)
-          ?? dbFail(content.error) ?? dbFail(comments.error) ?? dbFail(events.error);
+          ?? dbFail(content.error) ?? dbFail(comments.error) ?? dbFail(events.error)
+          ?? dbFail(goalLinks.error);
         if (f) return f;
         if (!item.row) return jsonError(404, 'campaign not found');
+        const goals = ((goalLinks.data ?? []) as Array<{ goal_id: string; mos_goals: unknown }>)
+          .map((l) => l.mos_goals)
+          .filter((g): g is Record<string, unknown> => g !== null && typeof g === 'object');
+        const goalIds = ((goalLinks.data ?? []) as Array<{ goal_id: string }>).map((l) => l.goal_id);
         return jsonOk({
-          item: item.row,
+          item: { ...(item.row as Record<string, unknown>), goal_ids: goalIds },
           executions: execs.data ?? [],
           content: content.data ?? [],
           comments: comments.data ?? [],
           events: events.data ?? [],
+          goals,
         });
       }
 
       case 'campaign_save': {
         const raw = (body.campaign ?? {}) as Record<string, unknown>;
         const id = str(raw.id);
+        // Goals are a MANY-TO-MANY link, not a column — pulled out of the patch
+        // and synced into mos_campaign_goals after the row is written. `undefined`
+        // (key absent) means "leave the links untouched"; an array (even empty on
+        // an existing campaign) replaces them.
+        const goalIdsProvided = Object.prototype.hasOwnProperty.call(raw, 'goal_ids');
+        const goalIds = goalIdsProvided && Array.isArray(raw.goal_ids)
+          ? Array.from(new Set((raw.goal_ids as unknown[])
+              .filter((v): v is string => typeof v === 'string' && v.length > 0)))
+          : [];
         const patch: Record<string, unknown> = {};
         for (const k of ['name', 'project_id', 'project_ids', 'objective', 'status', 'starts_on',
                          'ends_on', 'budget_total', 'note',
@@ -2330,10 +2398,28 @@ export default async function handler(req: Request): Promise<Response> {
             });
           }
 
+          // Sync the campaign↔goal links when the client sent them (an edit that
+          // doesn't touch goals omits the key and leaves the links alone). An
+          // explicit EMPTY array is refused — a campaign must keep ≥1 goal.
+          if (goalIdsProvided) {
+            if (goalIds.length === 0) return jsonError(400, 'at least one goal is required');
+            const sf = await syncCampaignGoals(sb, id, goalIds);
+            if (sf) return sf;
+          }
+          const finalGoals = await readCampaignGoalIds(sb, id);
+          if (finalGoals.error) return finalGoals.error;
+
           const merged = await readCampaignMerged(sb, id);
           const mergedFail = dbFail(merged.error);
           if (mergedFail) return mergedFail;
-          return jsonOk({ item: merged.row });
+          return jsonOk({ item: { ...(merged.row as Record<string, unknown>), goal_ids: finalGoals.ids } });
+        }
+
+        // Every campaign must serve at least one goal (the design rule: a
+        // campaign is created in service of a goal). The UI enforces this too;
+        // this is the server-side guarantee.
+        if (goalIds.length === 0) {
+          return jsonError(400, 'at least one goal is required');
         }
 
         // The design has no name field — the goal sentence IS the identity.
@@ -2348,6 +2434,12 @@ export default async function handler(req: Request): Promise<Response> {
         const f = dbFail(ins.error);
         if (f) return f;
         const created = ins.data as unknown as Row | null;
+
+        // Link the new campaign to its goals (required, validated above).
+        if (created?.id) {
+          const sf = await syncCampaignGoals(sb, created.id, goalIds);
+          if (sf) return sf;
+        }
 
         // "التنفيذات التي ستُنشأ" — the modal's promise, kept server-side in
         // the same request: one DRAFT execution per chosen platform with its
@@ -2389,7 +2481,70 @@ export default async function handler(req: Request): Promise<Response> {
         const merged = await readCampaignMerged(sb, created?.id ?? '');
         const mergedFail = dbFail(merged.error);
         if (mergedFail) return mergedFail;
-        return jsonOk({ item: merged.row });
+        return jsonOk({ item: { ...(merged.row as Record<string, unknown>), goal_ids: goalIds } });
+      }
+
+      case 'goals_list': {
+        const [list, links] = await Promise.all([
+          sb.from('mos_goals').select('*').is('archived_at', null)
+            .order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+          sb.from('mos_campaign_goals').select('goal_id'),
+        ]);
+        const f = dbFail(list.error) ?? dbFail(links.error);
+        if (f) return f;
+        // Attach a linked-campaign count per goal so the Goals list can show
+        // «٣ حملات» without a second round trip.
+        const counts = new Map<string, number>();
+        for (const l of (links.data ?? []) as Array<{ goal_id: string }>) {
+          counts.set(l.goal_id, (counts.get(l.goal_id) ?? 0) + 1);
+        }
+        const goals = ((list.data ?? []) as Array<{ id: string }>).map((g) => ({
+          ...g,
+          campaign_count: counts.get(g.id) ?? 0,
+        }));
+        return jsonOk({ goals });
+      }
+
+      case 'goal_save': {
+        const raw = (body.goal ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const patch: Record<string, unknown> = {};
+        for (const k of ['name', 'description', 'sort_order', 'is_active'] as const) {
+          if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        // `name` is the identity shown everywhere — never let it be blanked.
+        if (Object.prototype.hasOwnProperty.call(patch, 'name') && !str(patch.name)) {
+          return jsonError(400, 'name is required');
+        }
+        if (id) {
+          patch.updated_at = new Date().toISOString();
+          const upd = await sb.from('mos_goals').update(patch).eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'goal not found');
+        } else {
+          if (!str(patch.name)) return jsonError(400, 'name is required');
+          patch.created_by_user_id = await resolveAppUserId(sb, user.userId);
+          const ins = await sb.from('mos_goals').insert(patch).select('id').maybeSingle();
+          const f = dbFail(ins.error);
+          if (f) return f;
+        }
+        const [list, links] = await Promise.all([
+          sb.from('mos_goals').select('*').is('archived_at', null)
+            .order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+          sb.from('mos_campaign_goals').select('goal_id'),
+        ]);
+        const lf = dbFail(list.error) ?? dbFail(links.error);
+        if (lf) return lf;
+        const counts = new Map<string, number>();
+        for (const l of (links.data ?? []) as Array<{ goal_id: string }>) {
+          counts.set(l.goal_id, (counts.get(l.goal_id) ?? 0) + 1);
+        }
+        const goals = ((list.data ?? []) as Array<{ id: string }>).map((g) => ({
+          ...g,
+          campaign_count: counts.get(g.id) ?? 0,
+        }));
+        return jsonOk({ goals });
       }
 
       case 'execution_save': {

@@ -21,7 +21,7 @@ import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosCampaign, MosCampaignEvent,
   MosCampaignOutcomes, MosComment, MosContentRow, MosDailyEntry, MosExecution,
-  MosPublication,
+  MosGoal, MosPublication,
   PLATFORM_LABELS, ROLE_LABELS, SUCCESS_METRIC_LABELS, successMeasureSuffix,
   addCampaignEvent, budgetShift, deleteExecution, fetchCampaignDetail,
   fetchCampaignEvents, fetchCampaignOutcomes, fetchContentDetail, fetchContentList,
@@ -36,6 +36,7 @@ import SuccessMeasuresEditor, {
   MeasureDraft, measuresToDrafts, draftsToMeasures,
 } from './components/SuccessMeasuresEditor';
 import AudiencePicker from './components/AudiencePicker';
+import GoalMultiSelect from './components/GoalMultiSelect';
 import { IconBack, IconForward } from './components/icons';
 import { money, monthOf, num, shortDate } from './lib/format';
 import { measureActual, pickVolumeMeasure } from './lib/measure';
@@ -198,6 +199,7 @@ export default function CampaignDetailPage() {
   const [content, setContent] = useState<MosContentRow[]>([]);
   const [comments, setComments] = useState<MosComment[]>([]);
   const [events, setEvents] = useState<MosCampaignEvent[]>([]);
+  const [goals, setGoals] = useState<MosGoal[]>([]);
   const [outcomes, setOutcomes] = useState<MosCampaignOutcomes | null>(null);
   const [outcomesError, setOutcomesError] = useState<string | null>(null);
   const [adsByExec, setAdsByExec] = useState<Record<string, MosAd[]>>({});
@@ -277,6 +279,7 @@ export default function CampaignDetailPage() {
       setContent(res.content);
       setComments(res.comments);
       setEvents(res.events);
+      setGoals(res.goals);
       setAngles(null);
       setAnglesError(null);
       if (res.item.kind === 'organic') {
@@ -1118,6 +1121,22 @@ export default function CampaignDetailPage() {
                   </div>
                   <div className="card-b cd-goalgrid">
                     <ReadField label={isAr ? 'الوصف' : 'Description'}>{item.goal ?? item.name}</ReadField>
+                    <ReadField label={isAr ? 'الأهداف' : 'Goals'}>
+                      {goals.length === 0 ? '—' : (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {goals.map((g) => (
+                            <span
+                              key={g.id}
+                              className="tag"
+                              title={g.description ?? undefined}
+                              style={{ background: 'color-mix(in srgb, var(--copper) 12%, transparent)' }}
+                            >
+                              {g.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </ReadField>
                     <ReadField label={isAr ? 'يُقاس بـ' : 'Measured by'}>{item.measured_by ?? '—'}</ReadField>
                     <ReadField label={isAr ? 'الجمهور' : 'Audience'}>
                       {item.audience ?? '—'}
@@ -2294,7 +2313,7 @@ export default function CampaignDetailPage() {
           campaign={item}
           isAr={isAr}
           onClose={() => setBriefEditing(false)}
-          onSaved={(c) => { setItem(c); setBriefEditing(false); }}
+          onSaved={(c) => { setItem(c); setBriefEditing(false); void load(); }}
         />
       )}
 
@@ -2399,6 +2418,7 @@ function BriefModal({
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [goal, setGoal] = useState(campaign.goal ?? campaign.name ?? '');
+  const [goalIds, setGoalIds] = useState<string[]>(campaign.goal_ids ?? []);
   const [measuredBy, setMeasuredBy] = useState(campaign.measured_by ?? '');
   const [audienceId, setAudienceId] = useState<string | null>(campaign.audience_id ?? null);
   const [offer, setOffer] = useState(campaign.offer ?? '');
@@ -2414,12 +2434,20 @@ function BriefModal({
       );
       return;
     }
+    if (goalIds.length === 0) {
+      addToast(
+        isAr ? 'اربط الحملة بهدف واحد على الأقل.' : 'Link the campaign to at least one goal.',
+        'error',
+      );
+      return;
+    }
     setBusy(true);
     try {
       const res = await saveCampaign({
         id: campaign.id,
         goal: goal.trim(),
         name: goal.trim(),
+        goal_ids: goalIds,
         measured_by: measuredBy.trim() || null,
         // The saved audience is the source of truth; the server snapshots its name
         // into the `audience` text column. Sending null clears the link.
@@ -2457,6 +2485,12 @@ function BriefModal({
     >
       <Field label={isAr ? 'الوصف — بماذا تُعرَّف الحملة' : 'Description — what the campaign is'}>
         <textarea className="inp" rows={2} value={goal} onChange={(e) => setGoal(e.target.value)} />
+      </Field>
+      <Field
+        label={isAr ? 'الأهداف' : 'Goals'}
+        hint={isAr ? 'هدف واحد على الأقل · متعدد' : 'at least one · multiple'}
+      >
+        <GoalMultiSelect value={goalIds} onChange={setGoalIds} isAr={isAr} />
       </Field>
       <Field
         label={isAr ? 'يُقاس بـ' : 'Measured by'}

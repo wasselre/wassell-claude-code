@@ -61,6 +61,9 @@ const iconLibrary = (
   <svg {...base}><rect x="3" y="4" width="18" height="14" rx="2.5" /><path d="M3 14l4.5-4 4 3.5L15 10l6 5.5" /></svg>
 );
 const iconNumbers = <svg {...base}><path d="M3 17l5-6 4 3 4-6 5 5" /><path d="M3 21h18" /></svg>;
+const iconGoals = (
+  <svg {...base}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.4" /></svg>
+);
 const iconCampaigns = (
   <svg {...base}><path d="M3 11v3l14 5V6L3 11z" /><path d="M17 9a3 3 0 010 6" /></svg>
 );
@@ -131,6 +134,7 @@ const SHEET_GROUPS: SheetGroup[] = [
   {
     ar: 'الإنفاق', en: 'Spend',
     items: [
+      { to: '/m/goals', ar: 'الأهداف', en: 'Goals', surface: 'goals', icon: iconGoals },
       { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', surface: 'campaigns', icon: iconCampaigns },
       { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', surface: 'numbers', icon: iconNumbers },
     ],

@@ -52,6 +52,7 @@ const SURFACE_GROUPS: Array<{ ar: string; en: string; keys: Array<{ key: Surface
   {
     ar: 'الإنفاق', en: 'Spend',
     keys: [
+      { key: 'goals', ar: 'الأهداف', en: 'Goals' },
       { key: 'campaigns', ar: 'الحملات', en: 'Campaigns' },
       { key: 'numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers' },
     ],

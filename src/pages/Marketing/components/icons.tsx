@@ -92,6 +92,14 @@ export const IconMetrics = (p: P) => (
   </svg>
 );
 
+export const IconGoals = (p: P) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="5" />
+    <circle cx="12" cy="12" r="1.4" />
+  </svg>
+);
+
 export const IconRoles = (p: P) => (
   <svg {...base} {...p}>
     <path d="M12 3l7 3v5.5c0 4.2-2.9 7.7-7 8.5-4.1-.8-7-4.3-7-8.5V6l7-3z" />

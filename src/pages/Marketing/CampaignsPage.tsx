@@ -9,18 +9,19 @@
  * "we spent and got nothing".
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  CAMPAIGN_STATUS_LABELS, EXEC_PURPOSE_LABELS, MosCampaign,
+  CAMPAIGN_STATUS_LABELS, EXEC_PURPOSE_LABELS, MosCampaign, MosGoal,
   PLATFORM_LABELS, ROLE_LABELS,
-  createContent, fetchCampaignDetail, fetchCampaigns, fetchPublications,
+  createContent, fetchCampaignDetail, fetchCampaigns, fetchGoals, fetchPublications,
   saveCampaign, savePublication, successMeasureSuffix,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
 import { IconCampaigns, IconCheck, IconMetrics, IconPlus } from './components/icons';
 import ProjectMultiSelect from './components/ProjectMultiSelect';
+import GoalMultiSelect from './components/GoalMultiSelect';
 import CampaignContentBuilder, { type ContentDraft } from './components/CampaignContentBuilder';
 import SuccessMeasuresEditor, {
   MeasureDraft, measuresToDrafts, draftsToMeasures, hasMeasureTarget,
@@ -226,8 +227,10 @@ function verdictCardOf(c: MosCampaign, isAr: boolean): VerdictCard {
 export default function CampaignsPage() {
   const { isAr, can, projects, projectName } = useWorkspace();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [rows, setRows] = useState<MosCampaign[]>([]);
+  const [goals, setGoals] = useState<MosGoal[]>([]);
   const [platforms, setPlatforms] = useState<Map<string, string[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -235,7 +238,18 @@ export default function CampaignsPage() {
   const [statusF, setStatusF] = useState<StatusFilter>('all');
   const [kindF, setKindF] = useState<KindFilter>('all');
   const [projectF, setProjectF] = useState('');
+  const [goalF, setGoalF] = useState(searchParams.get('goal') ?? '');
   const [monthScope, setMonthScope] = useState(true);
+
+  // Keep the goal filter reflected in the URL so it is shareable/back-navigable.
+  const setGoalFilter = useCallback((id: string): void => {
+    setGoalF(id);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set('goal', id); else next.delete('goal');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -243,6 +257,11 @@ export default function CampaignsPage() {
     try {
       const list = (await fetchCampaigns()).campaigns;
       setRows(list);
+      // Goals power the filter dropdown + the active-filter label. Non-fatal:
+      // a failed goals read just leaves the dropdown empty, campaigns still show.
+      void fetchGoals()
+        .then((g) => setGoals(g.goals))
+        .catch((e: unknown) => console.error('campaign goals filter list failed', e));
       // The platform sub-lines need each campaign's executions (paid) or its
       // content's publications (organic). Resolved in the background so the
       // table never waits on the N+1 detail calls.
@@ -263,8 +282,9 @@ export default function CampaignsPage() {
   const filtered = useMemo(() => rows.filter((c) =>
     (statusF === 'all' || c.status === statusF)
     && (kindF === 'all' || c.kind === kindF)
-    && (!projectF || (c.project_ids ?? []).includes(projectF)),
-  ), [rows, statusF, kindF, projectF]);
+    && (!projectF || (c.project_ids ?? []).includes(projectF))
+    && (!goalF || (c.goal_ids ?? []).includes(goalF)),
+  ), [rows, statusF, kindF, projectF, goalF]);
 
   /* ── stats — scoped to this month while the month chip is on ────────── */
 
@@ -453,6 +473,12 @@ export default function CampaignsPage() {
                 <option value="">{isAr ? 'المشروع: أي' : 'Project: any'}</option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>{p.project_name ?? p.id.slice(0, 8)}</option>
+                ))}
+              </select>
+              <select className="fbtn" value={goalF} onChange={(e) => setGoalFilter(e.target.value)}>
+                <option value="">{isAr ? 'الهدف: أي' : 'Goal: any'}</option>
+                {goals.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
                 ))}
               </select>
               <span style={{ marginInlineStart: 'auto', fontSize: 11.5, color: 'var(--mute)' }}>
@@ -708,6 +734,7 @@ export function CampaignModal({
 
   const [kind, setKind] = useState<MosCampaign['kind']>(campaign?.kind ?? 'paid');
   const [goal, setGoal] = useState(campaign?.goal ?? campaign?.name ?? '');
+  const [goalIds, setGoalIds] = useState<string[]>(campaign?.goal_ids ?? []);
   const [projectIds, setProjectIds] = useState<string[]>(campaign?.project_ids ?? []);
   // Bulk content planned alongside a NEW campaign (created on save; empty for edit).
   const [drafts, setDrafts] = useState<ContentDraft[]>([]);
@@ -739,6 +766,14 @@ export function CampaignModal({
     if (!goal.trim()) {
       addToast(
         isAr ? 'اكتب وصفًا للحملة — هو اسمها في القوائم.' : 'Write a description — it is the campaign’s name in lists.',
+        'error',
+      );
+      return;
+    }
+    // Every campaign must serve at least one goal (the server enforces this too).
+    if (goalIds.length === 0) {
+      addToast(
+        isAr ? 'اربط الحملة بهدف واحد على الأقل.' : 'Link the campaign to at least one goal.',
         'error',
       );
       return;
@@ -778,6 +813,8 @@ export function CampaignModal({
           // The goal doubles as the list's short handle — no separate name.
           name: goal.trim(),
           goal: goal.trim(),
+          // The goals this campaign serves (many-to-many; required, ≥1).
+          goal_ids: goalIds,
           kind,
           // Multi-project: the server derives the primary project_id from this.
           project_ids: projectIds,
@@ -903,6 +940,18 @@ export function CampaignModal({
           {isAr
             ? 'وصف يقرأه البشر ويميّز الحملة في القوائم. الأرقام والحكم على النجاح يأتيان من معايير النجاح أدناه.'
             : 'A human-readable label that identifies the campaign in lists. The numbers and the success verdict come from the success measures below.'}
+        </div>
+      </div>
+
+      <div>
+        <div className="lbl" style={{ marginBottom: 6 }}>
+          {isAr ? 'الأهداف — ما الذي تخدمه الحملة' : 'Goals — what the campaign serves'}
+        </div>
+        <GoalMultiSelect value={goalIds} onChange={setGoalIds} isAr={isAr} />
+        <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 5 }}>
+          {isAr
+            ? 'كل حملة تُربط بهدف واحد على الأقل. يمكن أن تخدم عدة أهداف.'
+            : 'Every campaign links to at least one goal. It may serve several.'}
         </div>
       </div>
 

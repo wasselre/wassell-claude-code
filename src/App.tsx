@@ -84,6 +84,7 @@ import MarketingSearchPage from '@/pages/Marketing/SearchPage';
 import MarketingContentDetailPage from '@/pages/Marketing/ContentDetailPage';
 import MarketingCalendarPage from '@/pages/Marketing/CalendarPage';
 import MarketingCampaignsPage from '@/pages/Marketing/CampaignsPage';
+import MarketingGoalsPage from '@/pages/Marketing/GoalsPage';
 import MarketingCampaignDetailPage from '@/pages/Marketing/CampaignDetailPage';
 import MarketingExecutionDetailPage from '@/pages/Marketing/ExecutionDetailPage';
 import MarketingUploadPage from '@/pages/Marketing/UploadPage';
@@ -462,6 +463,7 @@ export default function App() {
           <Route path="/m/shoots" element={<MarketingShootsPage />} />
           <Route path="/m/shoots/:requestId" element={<MarketingShootRequestPage />} />
           <Route path="/m/account" element={<MarketingAccountPage />} />
+          <Route path="/m/goals" element={<MarketingGoalsPage />} />
           <Route path="/m/campaigns" element={<MarketingCampaignsPage />} />
           <Route path="/m/campaigns/:campaignId" element={<MarketingCampaignDetailPage />} />
           {/* The bottom layer — screen 21. Literal "exec" segment keeps it

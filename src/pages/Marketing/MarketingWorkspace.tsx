@@ -37,7 +37,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { initial, num } from './lib/format';
 import {
-  IconCalendar, IconCampaigns, IconContent, IconLibrary, IconMenu,
+  IconCalendar, IconCampaigns, IconContent, IconGoals, IconLibrary, IconMenu,
   IconMetrics, IconMyWork, IconOverview, IconSearch, IconSettings, IconShoot,
   IconTeam,
 } from './components/icons';
@@ -160,6 +160,7 @@ const NAV: NavGroup[] = [
   {
     ar: 'الإنفاق', en: 'Spend',
     items: [
+      { to: '/m/goals', ar: 'الأهداف', en: 'Goals', Icon: IconGoals, surface: 'goals' },
       { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns, badge: 'campaigns', surface: 'campaigns' },
       { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', Icon: IconMetrics, surface: 'numbers' },
     ],
