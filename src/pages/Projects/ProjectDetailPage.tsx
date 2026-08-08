@@ -17,8 +17,9 @@ import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTra
 import { useSignedImage } from '@/lib/projects/useSignedImage';
 import UnitsInventory from './components/UnitsInventory';
 import MatchClientModal from './components/MatchClientModal';
+import PaymentPlansTabPane from '@/pages/Records/components/PaymentPlansTabPane';
 
-type TabKey = 'overview' | 'units' | 'location' | 'media' | 'sales' | 'quality';
+type TabKey = 'overview' | 'units' | 'payments' | 'location' | 'media' | 'sales' | 'quality';
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
@@ -105,9 +106,17 @@ export default function ProjectDetailPage() {
       <button className="text-copper underline" onClick={() => navigate(editHref)}>{isAr ? 'اربط مشروعاً' : 'Link a project'}</button>
     </div>
   );
+  // Payment Plans tab shows only when the project actually has a plan menu
+  // (built from its units) — no empty tab on plan-less projects.
+  const hasPaymentPlans =
+    Array.isArray((record?.data as Record<string, unknown> | undefined)?.payment_plan_schedule) &&
+    ((record!.data as Record<string, unknown>).payment_plan_schedule as unknown[]).length > 0;
   const TABS: { key: TabKey; ar: string; en: string }[] = [
     { key: 'overview', ar: 'نظرة عامة', en: 'Overview' },
     { key: 'units', ar: 'الوحدات', en: 'Units' },
+    ...(hasPaymentPlans
+      ? ([{ key: 'payments', ar: 'خطط السداد', en: 'Payment Plans' }] as { key: TabKey; ar: string; en: string }[])
+      : []),
     { key: 'location', ar: 'الموقع', en: 'Location' },
     { key: 'media', ar: 'الوسائط', en: 'Media' },
     { key: 'sales', ar: 'ملاحظات المبيعات', en: 'Sales Notes' },
@@ -184,6 +193,7 @@ export default function ProjectDetailPage() {
       <div>
         {tab === 'overview' && (view && record ? <OverviewTab view={view} record={record} model={model} isAr={isAr} /> : <NoMaster />)}
         {tab === 'units' && (view ? <UnitsInventory projectId={view.id} projectName={view.name} isAr={isAr} /> : <NoMaster />)}
+        {tab === 'payments' && (view ? <PaymentPlansTabPane projectId={view.id} /> : <NoMaster />)}
         {tab === 'location' && (view && record ? <LocationTab view={view} record={record} isAr={isAr} /> : <NoMaster />)}
         {tab === 'media' && (view && record ? <MediaTab view={view} record={record} model={model} isAr={isAr} /> : <NoMaster />)}
         {tab === 'sales' && (

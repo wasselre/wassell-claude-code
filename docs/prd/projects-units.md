@@ -1,7 +1,9 @@
 # PRD: Projects & Units Experience
 
 **Status:** Live (model layer) · Built, pending deploy (UI + AI)
-**Last updated:** 2026-07-18 (AI actions provider swap: `/api/project-ai` now runs on Qwen3 30B on Cloudflare Workers AI as the primary model, with the original Claude path as automatic fallback on any Qwen failure; `TEXT_LLM_PROVIDER=anthropic` reverts to Claude-only — see `docs/cloudflare-workers-ai.md`)
+**Last updated:** 2026-08-08 (Payment Plans: units carry a per-unit `payment_plans` table field — one row per developer plan card with the 4 stage %s + price in AED & SAR; projects get a **Payment Plans** tab that rolls those up into the distinct payment *structures* offered, with a unit count + price RANGE per structure. See "Payment plans" below.)
+
+**Earlier:** 2026-07-18 (AI actions provider swap: `/api/project-ai` now runs on Qwen3 30B on Cloudflare Workers AI as the primary model, with the original Claude path as automatic fallback on any Qwen failure; `TEXT_LLM_PROVIDER=anthropic` reverts to Claude-only — see `docs/cloudflare-workers-ai.md`)
 **Related PRDs:** [project-matching-assistant.md](project-matching-assistant.md), [marketing-operations.md](marketing-operations.md), [public-website.md](public-website.md), [data-storage.md](data-storage.md)
 
 ## What it is (in plain English)
@@ -18,6 +20,7 @@ The three models were functionally useful but ugly: `all_projects` had fields sc
 - **AI never invents facts.** Every AI action receives pre-resolved facts from the client (`projectFacts`/`unitFacts`); any missing field is `null` and rendered/declared as "غير متوفر". The `/api/project-ai` system prompt forbids inventing prices, locations, availability, amenities, developers, or dates.
 - **Deterministic-first audit.** Data-quality score, missing-field lists, website-publish blockers, and matching blockers are computed in `auditProject` (pure TS). The AI audit action only phrases those deterministic findings.
 - **Price/m²** is the only derived unit value (`total_price ÷ unit_area`); shown only when both exist and area > 0.
+- **Payment plans (per-unit source of truth, project overview is a live rollup).** Each unit stores its full set of developer plan cards in the `payment_plans` table field (columns: `plan`, `down`, `before_handover`, `on_handover`, `after_handover` %, `price` AED, `price_sar`). A unit commonly has 3–7 cards (up to 11) because the developer lists the *same* payment structure at several prices (different offers). The **Payment Plans tab** (project *and* unit) is `PaymentPlansTabPane`: on a unit it groups the cards by structure (same split → one row, prices as a range); on a project it aggregates across all the project's units into the distinct structures offered, each with a unit count + AED/SAR price range. The project view never stores plan prices — it rolls them up live from the units already in the store (same pattern as UnitsTabPane). Deduping is on the %-split only, so the overview shows *structures*, not the priced-offer count; per-unit prices carry the exact figures. Populated for Binghatti (بن غاطي) from the `partners.binghatti.com` broker portal.
 - **`?generic=1` escape hatch** on every custom page falls back to the standard record list/form (table, export, advanced edit).
 - Fully bilingual + RTL. Missing facts always render as "غير متوفر" / "N/A", never a guess.
 
@@ -41,6 +44,7 @@ The three models were functionally useful but ugly: `all_projects` had fields sc
 | `src/pages/Projects/OurProjectsPortfolioPage.tsx` | Our Projects sales portfolio dashboard |
 | `src/pages/Projects/components/UnitsInventory.tsx` | In-project inventory (filter/sort/select/compare/WhatsApp) |
 | `src/pages/Projects/components/UnitDrawer.tsx` | Unit detail slide-over + AI WhatsApp |
+| `src/pages/Records/components/PaymentPlansTabPane.tsx` | Payment Plans tab — project overview (structures + price ranges rolled up from units) or unit detail (cards grouped by structure). Wired into `ProjectDetailPage` (tab) and the generic `RecordFormPage` (tab, for units + `?generic=1`) |
 | `src/pages/Projects/components/UnitCompareModal.tsx` | Deterministic compare + AI recommendation |
 | `src/pages/Projects/components/MatchClientModal.tsx` | Deterministic match via `/api/project-finder` + AI narration |
 | `src/lib/projects/projectView.ts` | Pure resolver for project facts (missing → null) |

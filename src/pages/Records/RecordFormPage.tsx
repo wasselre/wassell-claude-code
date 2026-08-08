@@ -43,7 +43,8 @@ import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
 import ClientDetailsTabPane from './components/ClientDetailsTabPane';
 import UnitsTabPane from './components/UnitsTabPane';
 import MarketingTabPane from './components/MarketingTabPane';
-import { Users, Home, Megaphone } from 'lucide-react';
+import PaymentPlansTabPane from './components/PaymentPlansTabPane';
+import { Users, Home, Megaphone, CreditCard } from 'lucide-react';
 import { useAutoLink } from './hooks/useAutoLink';
 import { useAutoFill } from './hooks/useAutoFill';
 import { useFieldDefaults } from './hooks/useFieldDefaults';
@@ -444,6 +445,19 @@ export default function RecordFormPage() {
     return out;
   }, [model, formData, allProjectsModelId, existingRecord]);
 
+  // ─── Payment Plans tab ───────────────────────────────────────────
+  // Shown on a project (all_projects) — the payment-plan overview rolled up
+  // from its units — and on a unit — that unit's own priced plans. Gated on
+  // real data so the tab doesn't appear on records without plans.
+  const hasPaymentPlans = useMemo<boolean>(() => {
+    if (!model || !existingRecord) return false;
+    const d = existingRecord.data as Record<string, unknown>;
+    if (model.name === 'units') return Array.isArray(d.payment_plans) && d.payment_plans.length > 0;
+    if (model.name === 'all_projects')
+      return Array.isArray(d.payment_plan_schedule) && d.payment_plan_schedule.length > 0;
+    return false;
+  }, [model, existingRecord]);
+
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
   const activeTab =
@@ -453,7 +467,9 @@ export default function RecordFormPage() {
         ? 'units'
         : tabParam === 'marketing' && projectCandidateIds.length > 0
           ? 'marketing'
-          : 'form';
+          : tabParam === 'payments' && hasPaymentPlans
+            ? 'payments'
+            : 'form';
   const activeClientId = (() => {
     const param = searchParams.get('client');
     if (param && clientCandidateIds.includes(param)) return param;
@@ -466,7 +482,8 @@ export default function RecordFormPage() {
   })();
 
   const tabs = useMemo<RecordTab[]>(() => {
-    if (clientCandidateIds.length === 0 && projectCandidateIds.length === 0) return [];
+    if (clientCandidateIds.length === 0 && projectCandidateIds.length === 0 && !hasPaymentPlans)
+      return [];
     const out: RecordTab[] = [{ id: 'form', label_ar: 'النموذج', label_en: 'Form' }];
     if (clientCandidateIds.length > 0) {
       out.push({
@@ -490,8 +507,16 @@ export default function RecordFormPage() {
         icon: <Megaphone size={14} />,
       });
     }
+    if (hasPaymentPlans) {
+      out.push({
+        id: 'payments',
+        label_ar: 'خطط السداد',
+        label_en: 'Payment Plans',
+        icon: <CreditCard size={14} />,
+      });
+    }
     return out;
-  }, [clientCandidateIds, projectCandidateIds]);
+  }, [clientCandidateIds, projectCandidateIds, hasPaymentPlans]);
 
   const handleTabChange = (next: string) => {
     const sp = new URLSearchParams(searchParams);
@@ -1539,6 +1564,8 @@ export default function RecordFormPage() {
         <UnitsTabPane projectId={activeProjectId} />
       ) : activeTab === 'marketing' && activeProjectId ? (
         <MarketingTabPane projectId={activeProjectId} />
+      ) : activeTab === 'payments' && existingRecord && model ? (
+        <PaymentPlansTabPane record={existingRecord} model={model} />
       ) : (
       /* Sections */
       <div className="space-y-6">
