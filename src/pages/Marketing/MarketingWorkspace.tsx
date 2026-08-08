@@ -148,6 +148,14 @@ const NAV: NavGroup[] = [
     ],
   },
   {
+    ar: 'الإنفاق', en: 'Spend',
+    items: [
+      { to: '/m/goals', ar: 'الأهداف', en: 'Goals', Icon: IconGoals, surface: 'goals' },
+      { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns, badge: 'campaigns', surface: 'campaigns' },
+      { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', Icon: IconMetrics, surface: 'numbers' },
+    ],
+  },
+  {
     ar: 'الإنتاج', en: 'Production',
     items: [
       { to: '/m/content', ar: 'المحتوى', en: 'Content', Icon: IconContent, badge: 'content', surface: 'content' },
@@ -155,14 +163,6 @@ const NAV: NavGroup[] = [
       { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', Icon: IconCalendar, surface: 'calendar' },
       { to: '/m/library', ar: 'مكتبة المواد', en: 'Asset library', Icon: IconLibrary, surface: 'library' },
       { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', Icon: IconShoot, surface: 'shoots' },
-    ],
-  },
-  {
-    ar: 'الإنفاق', en: 'Spend',
-    items: [
-      { to: '/m/goals', ar: 'الأهداف', en: 'Goals', Icon: IconGoals, surface: 'goals' },
-      { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns, badge: 'campaigns', surface: 'campaigns' },
-      { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', Icon: IconMetrics, surface: 'numbers' },
     ],
   },
   {

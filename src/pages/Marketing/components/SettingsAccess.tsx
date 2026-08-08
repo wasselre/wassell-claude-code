@@ -41,20 +41,20 @@ const SURFACE_GROUPS: Array<{ ar: string; en: string; keys: Array<{ key: Surface
     ],
   },
   {
+    ar: 'الإنفاق', en: 'Spend',
+    keys: [
+      { key: 'goals', ar: 'الأهداف', en: 'Goals' },
+      { key: 'campaigns', ar: 'الحملات', en: 'Campaigns' },
+      { key: 'numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers' },
+    ],
+  },
+  {
     ar: 'الإنتاج', en: 'Production',
     keys: [
       { key: 'content', ar: 'المحتوى', en: 'Content' },
       { key: 'calendar', ar: 'التقويم', en: 'Calendar' },
       { key: 'library', ar: 'مكتبة المواد', en: 'Asset library' },
       { key: 'shoots', ar: 'طلبات التصوير', en: 'Shoot requests' },
-    ],
-  },
-  {
-    ar: 'الإنفاق', en: 'Spend',
-    keys: [
-      { key: 'goals', ar: 'الأهداف', en: 'Goals' },
-      { key: 'campaigns', ar: 'الحملات', en: 'Campaigns' },
-      { key: 'numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers' },
     ],
   },
   {

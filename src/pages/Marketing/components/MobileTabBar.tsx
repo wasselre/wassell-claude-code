@@ -124,19 +124,19 @@ const SHEET_GROUPS: SheetGroup[] = [
     ],
   },
   {
-    ar: 'الإنتاج', en: 'Production',
-    items: [
-      { to: '/m/search', ar: 'البحث', en: 'Search', surface: 'search', icon: iconSearch },
-      { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', surface: 'calendar', icon: iconCalendar },
-      { to: '/m/library', ar: 'مكتبة المواد', en: 'Asset library', surface: 'library', icon: iconLibrary },
-    ],
-  },
-  {
     ar: 'الإنفاق', en: 'Spend',
     items: [
       { to: '/m/goals', ar: 'الأهداف', en: 'Goals', surface: 'goals', icon: iconGoals },
       { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', surface: 'campaigns', icon: iconCampaigns },
       { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', surface: 'numbers', icon: iconNumbers },
+    ],
+  },
+  {
+    ar: 'الإنتاج', en: 'Production',
+    items: [
+      { to: '/m/search', ar: 'البحث', en: 'Search', surface: 'search', icon: iconSearch },
+      { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', surface: 'calendar', icon: iconCalendar },
+      { to: '/m/library', ar: 'مكتبة المواد', en: 'Asset library', surface: 'library', icon: iconLibrary },
     ],
   },
   {
