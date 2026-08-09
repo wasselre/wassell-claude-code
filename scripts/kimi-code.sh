@@ -75,15 +75,40 @@ json.dump({
 }, open(cfg_path, "w"), indent=2)
 PY
 fi
-export CLAUDE_CONFIG_DIR="$CFG_DIR"
+
+# --- Scrub the inherited CLAUDE_*/ANTHROPIC_* namespace --------------------
+# A CLOUD session (Claude Code on the web) injects ~40 CLAUDE_CODE_* vars that
+# wire the CLI to the HOST's managed provider: CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST,
+# CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR, CLAUDE_SESSION_INGRESS_TOKEN_FILE,
+# CLAUDE_CODE_REMOTE, and friends. A child `claude` inherits them and keeps
+# authenticating as the SESSION even though ANTHROPIC_AUTH_TOKEN is set — so it
+# sends the session's OAuth token to Moonshot and gets a flat 401
+# ("Authentication error · This may be a temporary network issue"), which is a
+# credential problem wearing a network problem's clothes. CLAUDE_CONFIG_DIR
+# alone does NOT cover this: the config dir is login-less, but the env still
+# carries live host credentials.
+#
+# Blocklisting the known offenders is a losing game — the host adds vars over
+# time — so scrub the whole namespace and re-export only what we set below.
+# Deliberate tuning survives via the KIMI_* keys in the key file.
+while IFS='=' read -r _var _; do
+  case "$_var" in CLAUDE*|ANTHROPIC*) unset "$_var" || true ;; esac
+done < <(env)
 
 # --- Point the harness at Kimi K3 ------------------------------------------
-unset ANTHROPIC_API_KEY || true
+# Everything below is re-exported AFTER the scrub above, so order matters.
+export CLAUDE_CONFIG_DIR="$CFG_DIR"
 export ANTHROPIC_BASE_URL="https://api.moonshot.ai/anthropic"
 export ANTHROPIC_AUTH_TOKEN="$KIMI_API_KEY"
 export ANTHROPIC_MODEL="${KIMI_MODEL:-kimi-k3}"
 # Moonshot has no separate small/fast model — route the background model to K3.
 export ANTHROPIC_SMALL_FAST_MODEL="${KIMI_MODEL:-kimi-k3}"
+# Claude Code doesn't know Kimi's context window, so it assumes 200k and warns
+# on every run. Set KIMI_MAX_CONTEXT_TOKENS in the key file to the model's real
+# window to silence the warning and let auto-compact use the full budget.
+if [[ -n "${KIMI_MAX_CONTEXT_TOKENS:-}" ]]; then
+  export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$KIMI_MAX_CONTEXT_TOKENS"
+fi
 
 cd "$REPO_ROOT"
 
