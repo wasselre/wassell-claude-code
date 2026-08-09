@@ -240,9 +240,10 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       }
       if (cleanedByIndex.size === 0) return jsonError(400, 'no cleaned images to apply');
 
-      // Read the listing (full data + model_id).
+      // Read the listing (full data + model_id). market_listings is frozen
+      // (2026-08-07) — its _v view keeps the jsonb `data` shape this code reads.
       const { data: listingRow, error: listingErr } = await svc
-        .from('records')
+        .from('market_listings_v')
         .select('data, model_id')
         .eq('id', listingId)
         .single();
@@ -382,7 +383,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       let redoMirrorMap: Record<string, string> = {};
       if (redoListingId) {
         const { data: lRow, error: lErr } = await svc
-          .from('records')
+          .from('market_listings_v') // frozen 2026-08-07; _v keeps the jsonb data shape
           .select('data')
           .eq('id', redoListingId)
           .maybeSingle();
@@ -447,8 +448,10 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     const marketListingsModelId = mlModel.id as string;
 
     // RLS-gate the source listing under the caller's JWT; read its full data.
+    // unified_records spans records + frozen models (market_listings froze
+    // 2026-08-07) with the same jsonb `data` shape; model_id still guards the id.
     const { data: listingRow, error: listingErr } = await jwtClient
-      .from('records')
+      .from('unified_records')
       .select('data')
       .eq('id', listingId)
       .eq('model_id', marketListingsModelId)

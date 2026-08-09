@@ -80,8 +80,10 @@ export async function runListingMirrorJob({
   const listingId = job.recordId;
 
   // ── Read the listing (service role; full row, not the slim summary view) ──
+  // market_listings froze 2026-08-07 — the _v view keeps the jsonb `data`
+  // shape (incl. custom_data keys like image_mirror_map) this job reads.
   const { data: row, error: readErr } = await supabase
-    .from('records')
+    .from('market_listings_v')
     .select('data')
     .eq('id', listingId)
     .single();

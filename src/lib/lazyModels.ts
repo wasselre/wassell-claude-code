@@ -57,7 +57,8 @@ export function summaryViewName(modelName: string): string {
 /** The exact keys present in the slim `data` of a summary record. The
  *  realtime path slims incoming full rows down to these so the in-memory
  *  store never accumulates heavy fields. MUST stay in sync with the
- *  `<model>_summary` view's `jsonb_build_object(...)` projection. */
+ *  `<model>_summary` view's `jsonb_build_object(...)` projection.
+ *  Synced to the live market_listings_summary view as of 2026-08-09. */
 export const SUMMARY_DATA_KEYS: Readonly<Record<string, readonly string[]>> = {
   market_listings: [
     'external_id', 'source', 'title', 'listing_type', 'category', 'property_type',
@@ -67,14 +68,17 @@ export const SUMMARY_DATA_KEYS: Readonly<Record<string, readonly string[]>> = {
     // district_lookup / city_lookup / region_lookup keys were stripped.
     'location', 'latitude', 'longitude',
     'is_active', 'main_image_url', 'advertiser_name', 'image_count', 'video_count',
-    // Advertiser-contact enrichment (REGA lookup, 2026-07-01): the phone + the
-    // lookup lifecycle must ride in the slim store so the ContactAdvertiserPanel
-    // sees a cached phone on load AND the worker's write via Realtime. Small
-    // (null for ~all rows). Keep in sync with the market_listings_summary view.
-    'advertiser_phone', 'rega_lookup_status', 'rega_lookup_error', 'rega_lookup_at',
+    // Advertiser-contact enrichment (REGA lookup, 2026-07-01): the phone rides
+    // the slim store so the ContactAdvertiserPanel sees a cached phone on load.
+    // The rega_lookup_* lifecycle keys were dropped from the view when the model
+    // froze (they live in custom_data, off the summary projection).
+    'advertiser_phone',
     // Lookup → the advertisers module record (2026-07-01). In the slim store so
     // the list view can show/link the advertiser. Keep in sync with the view.
     'advertiser',
+    // UAE portal geography (2026-08-09): the view projects these for the
+    // bayut/dubizzle/propertyfinder rows, which have no Saudi `location`.
+    'emirate', 'community', 'building', 'permit_number', 'reference_number',
     // Listing quality (2026-07-02): DB-computed score/grade (see
     // market_listing_quality() in the quality-score migration). The grade is a
     // show_in_table dropdown → the list renders it as a colored chip, so both

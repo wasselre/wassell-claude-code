@@ -199,8 +199,10 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     const { data: mlModel, error: mlErr } = await jwtClient
       .from('models').select('id').eq('name', 'market_listings').single();
     if (mlErr || !mlModel) return jsonError(500, `market_listings model not found: ${mlErr?.message ?? ''}`);
+    // unified_records spans records + frozen models (market_listings froze
+    // 2026-08-07) with the same jsonb `data` shape; model_id still guards the id.
     const { data: listingRow, error: listingErr } = await jwtClient
-      .from('records')
+      .from('unified_records')
       .select('data')
       .eq('id', listingId)
       .eq('model_id', mlModel.id as string)

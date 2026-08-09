@@ -153,7 +153,8 @@ async function overview(sb: SupabaseClient): Promise<Response> {
       .eq('snapshot_date', snap).eq('bedrooms_bucket', 'all'),
     sb.from('market_demand_supply_benchmarks').select('district_id, active_client_count, matching_our_project_count, acquisition_priority_score, sales_priority_score')
       .eq('snapshot_date', snap),
-    sb.from('records').select('id', { count: 'exact', head: true }).eq('model_id', MARKET_MODEL_ID),
+    // market_listings is frozen (2026-08-07): the table IS the model, so no model_id filter.
+    sb.from('market_listings').select('id', { count: 'exact', head: true }),
   ]);
   const brows = (bench.data ?? []) as Array<Record<string, unknown>>;
   const asking = brows.filter((r) => r.source_type === 'asking');

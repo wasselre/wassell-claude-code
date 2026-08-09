@@ -14,9 +14,10 @@
  *   3. Parse the label→value list: اسم المعلن (advertiser), الموظف المسؤول عن الإعلان
  *      (agent), رقم جوال مسؤول الإعلان (agent mobile), رخصة فال, رقم الترخيص.
  *   4. Write advertiser_phone (E.164) + advertiser_name + rega_* metadata onto the
- *      listing via record_save (version-unaware — the browser never writes this
- *      record during a job, so no echo-dedup conflict). The SPA reads it via
- *      Realtime and opens an in-app WhatsApp chat.
+ *      listing: schema columns via a column UPDATE, the non-schema rega_* keys
+ *      via market_listing_custom_patch (the model froze 2026-08-07; those keys
+ *      live in custom_data). The SPA reads it via Realtime and opens an in-app
+ *      WhatsApp chat.
  *
  * Outcomes written to record.data.rega_lookup_status:
  *   'done'       — a phone was found (advertiser_phone set).
@@ -107,42 +108,39 @@ export async function runRegaLookupJob({ supabase, env, job }: RunArgs): Promise
     throw new Error('BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID not set on the worker');
   }
 
-  // Resolve the market_listings model id (for record_save dispatch).
-  const { data: modelRow, error: modelErr } = await supabase
-    .from('models')
-    .select('id')
-    .eq('name', 'market_listings')
-    .single();
-  if (modelErr || !modelRow) {
-    throw new Error(`market_listings model not found: ${modelErr?.message ?? 'unknown'}`);
-  }
-  const modelId = modelRow.id as string;
+  // market_listings froze 2026-08-07: schema fields are typed columns on
+  // public.market_listings; non-schema keys (rega_lookup_* lifecycle + the
+  // rega_* parse results) live in the custom_data overflow jsonb. The two
+  // write paths below keep them apart — a custom_data key named like a column
+  // would shadow it in the view merge and diverge.
+  const COLUMN_KEYS = new Set(['advertiser_phone', 'advertiser_name', 'advertiser']);
 
-  /** Merge a patch into the listing's data via record_save (version-unaware —
-   * the browser never writes this record during a job). Re-reads fresh so an
-   * unrelated concurrent edit survives. */
+  /** Apply a patch to the listing: real columns via a column UPDATE, overflow
+   * keys via market_listing_custom_patch (merges into custom_data server-side
+   * under a row lock — no read-modify-write, so a concurrent edit survives). */
   const patchRecord = async (patch: Record<string, unknown>): Promise<void> => {
-    const { data: row, error } = await supabase
-      .from('records')
-      .select('data, created_by_user_id')
-      .eq('id', job.recordId)
-      .single();
-    if (error || !row) throw new Error(`listing not found ${job.recordId}: ${error?.message ?? 'not found'}`);
-    const data = ((row.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
-    const newData = { ...data, ...patch };
-    const { error: saveErr } = await supabase.rpc('record_save', {
-      p_model_id: modelId,
-      p_id: job.recordId,
-      p_data: newData,
-      p_created_by: (row as { created_by_user_id: string | null }).created_by_user_id ?? null,
-      p_expected_version: null,
-    });
-    if (saveErr) throw new Error(`record_save failed: ${saveErr.message}`);
+    const cols: Record<string, unknown> = {};
+    const custom: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(patch)) {
+      (COLUMN_KEYS.has(k) ? cols : custom)[k] = v;
+    }
+    if (Object.keys(cols).length > 0) {
+      const { error } = await supabase.from('market_listings').update(cols).eq('id', job.recordId);
+      if (error) throw new Error(`listing column update failed: ${error.message}`);
+    }
+    if (Object.keys(custom).length > 0) {
+      const { error } = await supabase.rpc('market_listing_custom_patch', {
+        p_id: job.recordId,
+        p_patch: custom,
+      });
+      if (error) throw new Error(`market_listing_custom_patch failed: ${error.message}`);
+    }
   };
 
-  // Read the listing to get the ad id.
+  // Read the listing to get the ad id. The _v view keeps the jsonb `data`
+  // shape (columns + custom_data merged) this job reads.
   const { data: listingRow, error: listingErr } = await supabase
-    .from('records')
+    .from('market_listings_v')
     .select('data')
     .eq('id', job.recordId)
     .single();

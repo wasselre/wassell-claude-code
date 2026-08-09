@@ -20,10 +20,9 @@
  *   ffmpeg is killed as a process GROUP on timeout (house rule — same posture
  *   as soffice/gs in runPreviewJob/runCompressJob).
  *
- * Cache write posture: record_save with p_expected_version + retry
- * (recordSaveWithRetry). The listing row is low-contention (a listing has 1-3
- * videos; the browser rarely writes it), so the optimistic posture is safe —
- * this is NOT the migration-draft situation (see CLAUDE.md rule 3 there).
+ * Cache write posture: market_listing_custom_patch merges the one map entry
+ * into custom_data under a row lock (market_listings froze 2026-08-07 —
+ * video_mp4_map is a non-schema key, so it lives there now).
  */
 
 import { spawn } from 'node:child_process';
@@ -32,12 +31,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
-import { recordSaveWithRetry } from './lib/recordSaveRetry.js';
 
 export interface VideoConvertJob {
   /** generation_jobs.id */
   id: string;
-  /** records.id — the market_listings record this video belongs to. */
+  /** market_listings.id — the listing this video belongs to. */
   recordId: string;
   /** auth.users.id of the enqueuer (storage path scope). */
   userId: string;
@@ -98,8 +96,10 @@ export async function runVideoConvertJob({ supabase, job }: RunArgs): Promise<Re
   console.log(`[run-video] start job=${job.id} listing=${job.recordId} src=${sourceUrl.slice(0, 120)}`);
 
   // ── Cache pre-check: another job may have converted this source already ──
+  // market_listings froze 2026-08-07 — the _v view keeps the jsonb `data`
+  // shape (video_mp4_map now lives in custom_data, merged in by the view).
   const { data: listingRow, error: readErr } = await supabase
-    .from('records')
+    .from('market_listings_v')
     .select('data')
     .eq('id', job.recordId)
     .single();
@@ -160,18 +160,15 @@ export async function runVideoConvertJob({ supabase, job }: RunArgs): Promise<Re
     if (!mp4Url) throw new Error('mp4 uploaded but public URL could not be resolved');
 
     // ── Cache the mapping on the listing record ──────────────────────────
-    await recordSaveWithRetry(supabase, {
-      recordId: job.recordId,
-      build: (data) => ({
-        ...data,
-        video_mp4_map: {
-          ...(typeof data.video_mp4_map === 'object' && data.video_mp4_map !== null
-            ? (data.video_mp4_map as Record<string, unknown>)
-            : {}),
-          [sourceUrl]: mp4Url,
-        },
-      }),
+    // video_mp4_map is a dropped (non-schema) key → custom_data. The RPC
+    // merges one entry under a row lock, so concurrent convert jobs on the
+    // same listing can't clobber each other (the record_save retry would).
+    const { error: cacheErr } = await supabase.rpc('market_listing_custom_patch', {
+      p_id: job.recordId,
+      p_patch: { [sourceUrl]: mp4Url },
+      p_merge_key: 'video_mp4_map',
     });
+    if (cacheErr) throw new Error(`video_mp4_map cache write failed: ${cacheErr.message}`);
     console.log(`[run-video] completed job=${job.id} → ${mp4Url}`);
     return { mp4_url: mp4Url, bytes: mp4Bytes.length };
   } finally {
