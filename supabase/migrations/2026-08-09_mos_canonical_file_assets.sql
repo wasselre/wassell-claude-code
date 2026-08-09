@@ -97,11 +97,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS mos_assets_file_id_uidx
 -- direction and costs nothing today: mos_asset_record_links holds 0 rows, so
 -- this trigger has never actually registered anything in production.
 -- ---------------------------------------------------------------------------
+-- search_path pins pg_temp LAST (matching wassell_can_access_file) rather than
+-- leaving it off. Postgres NEVER resolves function or operator names through
+-- pg_temp, so the "plant a pg_temp.regexp_replace and hijack the definer" idea
+-- does not work — verified empirically, both in a definer function and in the
+-- planting session itself. Relations ARE a real vector though: an UNQUALIFIED
+-- table reference in a definer function resolves to pg_temp first when pg_temp
+-- is not listed (also verified: a planted pg_temp table shadowed the public
+-- one). Every relation in this function is already schema-qualified, so this
+-- line is belt-and-braces against a future edit that forgets to qualify one.
 CREATE OR REPLACE FUNCTION public.mos_register_record_file(p_file_id uuid)
 RETURNS uuid
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path TO 'public', 'pg_temp'
 AS $$
 DECLARE
   f            record;
@@ -165,11 +174,12 @@ BEGIN
 END;
 $$;
 
+-- pg_temp pinned last, same reasoning as the function above.
 CREATE OR REPLACE FUNCTION public.tg_files_autoregister_library()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path TO 'public', 'pg_temp'
 AS $$
 BEGIN
   PERFORM public.mos_register_record_file(NEW.id);
