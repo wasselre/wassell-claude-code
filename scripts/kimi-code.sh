@@ -20,16 +20,30 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-KEY_FILE="$REPO_ROOT/.kimi.env.local"
 CFG_DIR="$REPO_ROOT/.kimi-claude.local"   # matches *.local -> git-ignored
 
-if [[ ! -f "$KEY_FILE" ]]; then
-  echo "kimi-code: missing $KEY_FILE (must define KIMI_API_KEY)" >&2
+# --- Locate the key --------------------------------------------------------
+# Per-worktree file first (lets one worktree pin a different key/model), then
+# the user-level fallback. The fallback is what makes this work in a FRESH
+# worktree: .kimi.env.local is git-ignored, so it never comes across when a new
+# worktree is created, and every new session would otherwise have to be handed
+# the key again. ~/.kimi.env.local lives outside every repo, so it can't be
+# committed by accident and all worktrees share it.
+KEY_FILE=""
+for candidate in "$REPO_ROOT/.kimi.env.local" "$HOME/.kimi.env.local"; do
+  if [[ -f "$candidate" ]]; then KEY_FILE="$candidate"; break; fi
+done
+
+if [[ -z "$KEY_FILE" ]]; then
+  echo "kimi-code: no key file found. Looked for:" >&2
+  echo "  $REPO_ROOT/.kimi.env.local" >&2
+  echo "  $HOME/.kimi.env.local" >&2
+  echo "Create one from .kimi.env.example with KIMI_API_KEY set." >&2
   exit 1
 fi
 # shellcheck disable=SC1090
 source "$KEY_FILE"
-: "${KIMI_API_KEY:?kimi-code: KIMI_API_KEY not set in .kimi.env.local}"
+: "${KIMI_API_KEY:?kimi-code: KIMI_API_KEY not set in $KEY_FILE}"
 
 # --- Isolated, login-less config dir (seed once) ---------------------------
 mkdir -p "$CFG_DIR"
