@@ -38,6 +38,48 @@ It unseals the secrets, installs dependencies, installs the pre-push guard,
 refreshes the generated model/workflow PRDs, and prints a capability report.
 It exits non-zero if any step failed, and says which.
 
+### The environment's Setup script field
+
+Paste this — **not** a bare `bash scripts/bootstrap-session.sh`:
+
+```bash
+#!/bin/bash
+# Never exits non-zero: a failing setup script BLOCKS the session from starting.
+set -u
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$ROOT" ] || [ ! -f "$ROOT/scripts/bootstrap-session.sh" ]; then
+  FOUND="$(find "$HOME" /workspace /repo /app -maxdepth 4 -type f \
+             -path '*/scripts/bootstrap-session.sh' 2>/dev/null | head -1)"
+  [ -n "$FOUND" ] && ROOT="${FOUND%/scripts/bootstrap-session.sh}"
+fi
+
+if [ -n "${ROOT:-}" ] && [ -f "$ROOT/scripts/bootstrap-session.sh" ]; then
+  echo "[setup] repo root: $ROOT"
+  cd "$ROOT" || exit 0
+  bash scripts/bootstrap-session.sh || echo "[setup] bootstrap reported failures (see above) — continuing so the session still starts"
+else
+  echo "[setup] scripts/bootstrap-session.sh not found. cwd=$PWD"
+  echo "[setup] This branch probably predates it (added on main at f165668a)."
+  echo "[setup] In the session run:  git fetch origin main && git rebase origin/main && bash scripts/bootstrap-session.sh"
+  [ -f package.json ] && npm install --no-audit --no-fund
+fi
+
+exit 0
+```
+
+Two failure modes this exists to survive, both hit live on 2026-08-09:
+
+1. **The setup script's working directory is not guaranteed to be the repo
+   root.** A bare relative path gives `exit 127 — No such file or directory`.
+2. **A cloud session started on an older branch has no bootstrap script at
+   all**, because the branch predates it. Hard-failing there means the session
+   never starts — you get an "An API error occurred" card instead of a usable
+   session. The fallback prints the rebase command and installs deps instead.
+
+**Start cloud sessions from `main`** (or rebase inside them) so the bundle and
+scripts are present.
+
 ---
 
 ## Why the bundle is safe in a public repo
