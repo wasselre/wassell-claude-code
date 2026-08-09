@@ -13,11 +13,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
-import { MosGoal, fetchGoals, saveGoal } from '@/lib/marketingOS/client';
+import { MosGoal, fetchGoals, saveGoal, successMeasureSuffix } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton } from './components/kit';
 import { IconGoals, IconPlus } from './components/icons';
 import { num } from './lib/format';
+import SuccessMeasuresEditor, {
+  MeasureDraft, measuresToDrafts, draftsToMeasures,
+} from './components/SuccessMeasuresEditor';
 
 export default function GoalsPage() {
   const { isAr, can } = useWorkspace();
@@ -123,6 +126,24 @@ export default function GoalsPage() {
                       {g.description}
                     </div>
                   )}
+                  {Array.isArray(g.success_measures) && g.success_measures.length > 0 && (
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      {g.success_measures.map((m, i) => (
+                        <div key={`${m.type_key}-${i}`} style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                          <span style={{ color: 'var(--copper)' }}>{i === 0 ? '★' : '·'}</span>
+                          <span style={{ color: 'var(--mute)', flex: 1, minWidth: 0 }}>
+                            {isAr ? m.label_ar : m.label_en}
+                          </span>
+                          <b style={{ whiteSpace: 'nowrap' }}>
+                            {m.threshold !== null ? num(m.threshold, isAr) : '—'}{' '}
+                            <span style={{ fontWeight: 400, color: 'var(--mute)', fontSize: 11 }}>
+                              {successMeasureSuffix(m.direction, m.unit, isAr)}
+                            </span>
+                          </b>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 'auto', paddingTop: 4 }}>
                     <button
                       type="button"
@@ -179,6 +200,7 @@ function GoalModal({
   const isNew = !goal;
   const [name, setName] = useState(goal?.name ?? '');
   const [description, setDescription] = useState(goal?.description ?? '');
+  const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(goal?.success_measures));
   const [isActive, setIsActive] = useState(goal?.is_active ?? true);
   const [busy, setBusy] = useState(false);
 
@@ -193,6 +215,7 @@ function GoalModal({
         id: goal?.id,
         name: name.trim(),
         description: description.trim() || null,
+        success_measures: draftsToMeasures(measures),
         is_active: isActive,
       });
       addToast(
@@ -247,6 +270,7 @@ function GoalModal({
             : 'What this goal means, and how we know it is met.'}
         />
       </Field>
+      <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />
       {!isNew && (
         <Field label={isAr ? 'الحالة' : 'Status'}>
           <div className="seg" style={{ width: '100%' }}>

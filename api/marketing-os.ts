@@ -2571,6 +2571,24 @@ export default async function handler(req: Request): Promise<Response> {
         if (Object.prototype.hasOwnProperty.call(patch, 'name') && !str(patch.name)) {
           return jsonError(400, 'name is required');
         }
+        // Multi-measure success criteria — the SAME sanitize as campaign_save
+        // (goals have no back-compat scalar pair to derive, so it ends here).
+        if (Object.prototype.hasOwnProperty.call(raw, 'success_measures') && Array.isArray(raw.success_measures)) {
+          patch.success_measures = (raw.success_measures as unknown[])
+            .map((e) => {
+              const o = (e ?? {}) as Record<string, unknown>;
+              return {
+                type_key: str(o.type_key) ?? '',
+                label_ar: str(o.label_ar) ?? '',
+                label_en: str(o.label_en) ?? '',
+                direction: o.direction === 'lower' ? 'lower' : 'higher',
+                unit: o.unit === 'currency' ? 'currency' : o.unit === 'percent' ? 'percent' : 'count',
+                source: MEASURE_SOURCES.includes(str(o.source) ?? '') ? (str(o.source) as string) : 'none',
+                threshold: numOrNull(o.threshold),
+              };
+            })
+            .filter((m) => m.type_key !== '');
+        }
         if (id) {
           patch.updated_at = new Date().toISOString();
           const upd = await sb.from('mos_goals').update(patch).eq('id', id).select('id').maybeSingle();

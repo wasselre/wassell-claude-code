@@ -752,6 +752,9 @@ export interface MosGoal {
   id: string;
   name: string;
   description: string | null;
+  /** The goal's success measures — the SAME multi-measure shape as a campaign's
+   *  (snapshotted from the registry; the first row is the MAIN measure). */
+  success_measures: MosSuccessMeasure[];
   sort_order: number;
   is_active: boolean;
   created_at: string;
