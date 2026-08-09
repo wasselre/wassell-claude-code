@@ -70,6 +70,35 @@ else
   skip "no sync:prds script in package.json"
 fi
 
+# ── optional: flyctl ─────────────────────────────────────────────────────
+# OFF by default — installing it costs ~15s on every session, and most
+# sessions never deploy the worker. Turn on with WASSEL_BOOTSTRAP_FLYCTL=1.
+# Your Fly AUTH always travels in the secrets bundle (~/.fly/config.yml);
+# this only fetches the missing binary.
+step "Optional  flyctl"
+if [ "${WASSEL_BOOTSTRAP_FLYCTL:-0}" = "1" ]; then
+  if command -v fly >/dev/null 2>&1 || command -v flyctl >/dev/null 2>&1; then
+    ok "fly already installed"
+  elif command -v curl >/dev/null 2>&1; then
+    # Official Fly.io installer, per https://fly.io/docs/flyctl/install/
+    if curl -fsSL https://fly.io/install.sh 2>/dev/null | sh >/dev/null 2>&1; then
+      export FLYCTL_INSTALL="${FLYCTL_INSTALL:-$HOME/.fly}"
+      export PATH="$FLYCTL_INSTALL/bin:$PATH"
+      if command -v flyctl >/dev/null 2>&1; then
+        ok "flyctl installed to $FLYCTL_INSTALL/bin (add it to PATH in this shell)"
+      else
+        bad "flyctl installer ran but the binary is not on PATH"
+      fi
+    else
+      bad "flyctl install failed (network or installer error)"
+    fi
+  else
+    bad "cannot install flyctl — curl is not available"
+  fi
+else
+  skip "not requested (set WASSEL_BOOTSTRAP_FLYCTL=1 to install)"
+fi
+
 # ── capability report ────────────────────────────────────────────────────
 step "This environment"
 have() { command -v "$1" >/dev/null 2>&1 && ok "$1" || skip "$1 — not available here"; }

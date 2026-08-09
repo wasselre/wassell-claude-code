@@ -56,6 +56,10 @@ missing=0
 declare -a INCLUDED=()
 
 while IFS= read -r line || [ -n "$line" ]; do
+  # Git's core.autocrlf rewrites this file with CRLF on Windows checkouts.
+  # Without stripping the CR, every path gains a trailing \r and matches
+  # nothing — which fails as "missing", not as a parse error.
+  line="${line%$'\r'}"
   case "$line" in ''|\#*) continue ;; esac
   root="${line%%:*}"
   rel="${line#*:}"

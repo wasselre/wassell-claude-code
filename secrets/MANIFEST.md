@@ -13,6 +13,7 @@ Regenerate both with `bash scripts/secrets/seal.sh`. Do not hand-edit.
 | `<repo root>/.env.local` | working tree |
 | `<repo root>/.deploy-secrets.local` | working tree |
 | `$HOME/.fly/config.yml` | home directory |
+| `$HOME/.kimi.env.local` | home directory |
 
 ## Variable names carried
 
@@ -81,4 +82,9 @@ Regenerate both with `bash scripts/secrets/seal.sh`. Do not hand-edit.
 ### `.fly/config.yml`
 
 - (non-dotenv file — structure not enumerated)
+
+### `.kimi.env.local`
+
+- `KIMI_API_KEY`
+- `KIMI_MODEL`
 

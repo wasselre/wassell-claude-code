@@ -131,8 +131,26 @@ nothing. Use this to test a cloud environment's variable before relying on it.
 |---|---|
 | All app source, migrations, PRDs, `CLAUDE.md` | normal git contents |
 | `.env`, `.env.local`, `.deploy-secrets.local`, `~/.fly/config.yml` | via the encrypted bundle |
+| `~/.kimi.env.local` (`KIMI_API_KEY`) | via the bundle; `kimi-code.sh` falls back to `$HOME` |
 | `Wassel Branding/` (16 PNGs, 11 MB) | un-gitignored; deck skills need it |
 | Deck + research skills, `wassel-builder` agent, `/wassel` command | mirrored from `~/.claude` into `.claude/` |
+
+### CLIs a sandbox does not have
+
+A cloud container ships `node`, `npm`, `psql`, `openssl` — but **not** the
+`vercel` or `fly` CLIs (verified in a live session, 2026-08-09).
+
+- **Vercel** — irrelevant. You deploy by pushing to `main`; the Vercel MCP
+  confirms `READY`. The CLI was never in that path.
+- **Fly** — needed for worker deploys. Your Fly *auth* always travels in the
+  bundle; only the binary is absent. Install it on demand:
+
+  ```bash
+  WASSEL_BOOTSTRAP_FLYCTL=1 bash scripts/bootstrap-session.sh
+  ```
+
+  Off by default so the ~15s install does not tax every session. After it runs,
+  add `$HOME/.fly/bin` to `PATH` in that shell.
 
 **Still laptop-only, by nature:**
 

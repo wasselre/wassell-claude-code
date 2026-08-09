@@ -4,3 +4,10 @@
 # Shell scripts must keep LF: a CRLF shebang is "bad interpreter" inside a
 # Linux container (wa-agent/entrypoint.sh ships in the Docker build context).
 *.sh text eol=lf
+
+# Data files READ BY those scripts need LF for the same reason. files.list is
+# parsed line-by-line by scripts/secrets/seal.sh; with CRLF every path gained a
+# trailing \r and silently matched nothing (2026-08-09). seal.sh now strips CR
+# defensively as well — belt and braces, because this fails as "file missing",
+# which reads like a config error rather than a line-ending bug.
+*.list text eol=lf

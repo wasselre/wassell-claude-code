@@ -29,6 +29,9 @@ CFG_DIR="$REPO_ROOT/.kimi-claude.local"   # matches *.local -> git-ignored
 # worktree is created, and every new session would otherwise have to be handed
 # the key again. ~/.kimi.env.local lives outside every repo, so it can't be
 # committed by accident and all worktrees share it.
+#
+# It is also what makes Kimi work in a CLOUD session: the encrypted secrets
+# bundle restores ~/.kimi.env.local on bootstrap (scripts/secrets/files.list).
 KEY_FILE=""
 for candidate in "$REPO_ROOT/.kimi.env.local" "$HOME/.kimi.env.local"; do
   if [[ -f "$candidate" ]]; then KEY_FILE="$candidate"; break; fi
@@ -38,7 +41,8 @@ if [[ -z "$KEY_FILE" ]]; then
   echo "kimi-code: no key file found. Looked for:" >&2
   echo "  $REPO_ROOT/.kimi.env.local" >&2
   echo "  $HOME/.kimi.env.local" >&2
-  echo "Create one from .kimi.env.example with KIMI_API_KEY set." >&2
+  echo "Create one from .kimi.env.example with KIMI_API_KEY set," >&2
+  echo "or in a fresh checkout run: bash scripts/bootstrap-session.sh" >&2
   exit 1
 fi
 # shellcheck disable=SC1090
@@ -48,9 +52,21 @@ source "$KEY_FILE"
 # --- Isolated, login-less config dir (seed once) ---------------------------
 mkdir -p "$CFG_DIR"
 if [[ ! -f "$CFG_DIR/.claude.json" ]]; then
-  # Windows-style backslash path is how Claude Code keys projects on win32.
-  WIN_PATH="$(pwd -W 2>/dev/null || pwd)"; WIN_PATH="${WIN_PATH//\//\\}"
-  python - "$CFG_DIR/.claude.json" "$WIN_PATH" <<'PY'
+  # Claude Code keys projects by native path: backslashes on win32, plain
+  # POSIX path elsewhere. `pwd -W` only succeeds under Git Bash on Windows —
+  # using it unconditionally turned /home/u/repo into \home\u\repo on Linux,
+  # so the trust-dialog pre-accept missed and headless runs stalled.
+  if PROJ_PATH="$(pwd -W 2>/dev/null)"; then
+    PROJ_PATH="${PROJ_PATH//\//\\}"
+  else
+    PROJ_PATH="$(pwd)"
+  fi
+  PY_BIN="$(command -v python3 || command -v python || true)"
+  if [[ -z "$PY_BIN" ]]; then
+    echo "kimi-code: need python3 (or python) to seed $CFG_DIR/.claude.json" >&2
+    exit 1
+  fi
+  "$PY_BIN" - "$CFG_DIR/.claude.json" "$PROJ_PATH" <<'PY'
 import json, sys
 cfg_path, proj = sys.argv[1], sys.argv[2]
 json.dump({
