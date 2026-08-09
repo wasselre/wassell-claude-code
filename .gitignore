@@ -21,6 +21,18 @@ build/
 .env.production.local
 *.local
 
+# The passphrase for the encrypted secrets bundle. Covered by *.local above;
+# listed explicitly because committing it would defeat the entire scheme.
+.secrets-passphrase.local
+
+# Backups written by scripts/secrets/unseal.sh when it would overwrite a
+# locally-modified secret file.
+*.bak
+
+# NOT ignored, deliberately: secrets/wassel-secrets.enc is AES-256 ciphertext
+# and is meant to be committed — that is how cloud sessions get their secrets.
+# See docs/cloud-session-setup.md.
+
 # Logs
 npm-debug.log*
 yarn-debug.log*
@@ -52,9 +64,14 @@ Thumbs.db
 .claude/plans/
 .claude/hooks/*.log
 
-# Heavy brand assets (kept outside the production bundle)
-Wassel Branding/
-Wassel\ Branding/
+# Python bytecode from the deck/research skills under .claude/skills
+__pycache__/
+*.pyc
+
+# Brand assets are COMMITTED (11 MB of logos/palette PNGs). The deck skills
+# need them, and a cloud session has no other way to get them. They are public
+# marketing material, so a public repo is fine. Kept out of the production
+# bundle by not being imported from src/ — not by being gitignored.
 
 # Unrelated side project that happens to live in this folder — NOT part of Wassell.
 # It's a separate Supabase Edge Function (haberchat-webhook / WhatsApp bot). Keep

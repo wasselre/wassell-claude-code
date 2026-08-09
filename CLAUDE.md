@@ -601,6 +601,28 @@ See `.env.example` for the full set including Haberchat + Hatif keys.
 
 The Fly.io deck worker has its own env (set via `fly secrets set`): same `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `ANTHROPIC_WASSEL_SKILL_ID`, and optional `ANTHROPIC_WASSEL_REVIEW_SKILL_ID`. See `worker/README.md`.
 
+## Encrypted secrets bundle — how any fresh checkout gets its env (added 2026-08-09)
+
+**This repo is PUBLIC.** Secrets still travel with it, encrypted. `secrets/wassel-secrets.enc` is an AES-256-CBC (PBKDF2, 600k iterations) tarball of `.env`, `.env.local`, `.deploy-secrets.local`, and `~/.fly/config.yml`. It **is committed**; the passphrase is not.
+
+**If you are a session in a fresh checkout — cloud sandbox, new worktree, new machine — run this first:**
+
+```bash
+bash scripts/bootstrap-session.sh
+```
+
+It unseals secrets, installs deps, installs the pre-push hook, refreshes the generated PRDs, and prints what the environment can and cannot do. It needs `WASSEL_SECRETS_PASSPHRASE` in the env (cloud) or `.secrets-passphrase.local` in the main working tree (laptop). This also fixes the long-standing "a fresh worktree has no `.env`" problem — `unseal.sh` restores into the *current* working tree and finds the passphrase in the main tree.
+
+**Hard rules — never violate:**
+
+1. **Never commit a plaintext secret.** `.gitignore` blocks `.env`, `.env.local`, `*.local`, `.secrets-passphrase.local`. Do not add exceptions, and do not "temporarily" commit a key to debug a cloud session — this repo is public and history is forever.
+2. **Editing a secret does not update the bundle.** Re-run `bash scripts/secrets/seal.sh` and commit `secrets/wassel-secrets.enc` + `secrets/MANIFEST.md`. A cloud session reading a stale bundle fails in confusing ways.
+3. **`secrets/MANIFEST.md` is generated — never hand-edit.** It records variable *names* only, so the bundle's contents stay auditable without the key.
+4. **Adding a new secret file** means adding a line to `scripts/secrets/files.list` before sealing, or it is silently absent in the cloud. `seal.sh` warns loudly about listed-but-missing files; it never drops one quietly.
+5. **If the passphrase leaks, rotating it is not enough** — the old ciphertext stays in git history, so rotate the underlying keys too.
+
+Full runbook, including the one variable to set per cloud environment and what still cannot work in a sandbox: `docs/cloud-session-setup.md`.
+
 ## Deployment Config (CRITICAL — `vercel.json`)
 The app deploys to Vercel. Its config (`vercel.json`) is validated against a **strict JSON schema** (`https://openapi.vercel.sh/vercel.json`) at deploy time — every object inside `headers[]`, `rewrites[]`, `redirects[]`, etc. is `additionalProperties: false`. Any unknown key makes the deploy error out **before the build runs** (duration shows blank in the Vercel dashboard).
 
