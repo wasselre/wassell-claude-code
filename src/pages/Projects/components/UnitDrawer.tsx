@@ -13,7 +13,48 @@ interface UnitDrawerProps {
 }
 
 const SAR = (n: number, isAr: boolean) => `${n.toLocaleString(isAr ? 'ar-SA' : 'en-US')} ${isAr ? 'ر.س' : 'SAR'}`;
+const AED = (n: number, isAr: boolean) => `${n.toLocaleString(isAr ? 'ar-AE' : 'en-US')} ${isAr ? 'د.إ' : 'AED'}`;
 const DASH = '—';
+
+// ── Payment plans (from the unit's `payment_plans` table field) ─────────────
+// A unit lists several developer plan cards; the same %-structure can recur at
+// different prices (different offers). Group by structure so the drawer shows
+// one compact row per structure with its price (range if it has several).
+interface PlanRow {
+  down?: number; before_handover?: number; on_handover?: number; after_handover?: number;
+  price?: number; price_sar?: number;
+}
+const pnum = (v: unknown): number => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+function planStructLabel(p: PlanRow, isAr: boolean): string {
+  if (pnum(p.down) === 100 && pnum(p.before_handover) === 0 && pnum(p.on_handover) === 0)
+    return isAr ? 'دفعة كاملة (كاش)' : 'Full payment (cash)';
+  const parts: string[] = [];
+  if (pnum(p.down) > 0) parts.push(`${pnum(p.down)}% ${isAr ? 'مقدم' : 'down'}`);
+  if (pnum(p.before_handover) > 0) parts.push(`${pnum(p.before_handover)}% ${isAr ? 'إنشاء' : 'constr.'}`);
+  if (pnum(p.on_handover) > 0) parts.push(`${pnum(p.on_handover)}% ${isAr ? 'تسليم' : 'handover'}`);
+  if (pnum(p.after_handover) > 0) parts.push(`${pnum(p.after_handover)}% ${isAr ? 'بعد التسليم' : 'post'}`);
+  return parts.join(' / ');
+}
+function groupUnitPlans(rows: PlanRow[], isAr: boolean) {
+  const map = new Map<string, { sample: PlanRow; aeds: number[]; sars: number[] }>();
+  for (const p of rows) {
+    const key = `${pnum(p.down)}/${pnum(p.before_handover)}/${pnum(p.on_handover)}/${pnum(p.after_handover)}`;
+    const g = map.get(key) ?? { sample: p, aeds: [], sars: [] };
+    if (pnum(p.price) > 0) g.aeds.push(pnum(p.price));
+    if (pnum(p.price_sar) > 0) g.sars.push(pnum(p.price_sar));
+    map.set(key, g);
+  }
+  return [...map.values()]
+    .map((g) => ({
+      label: planStructLabel(g.sample, isAr),
+      down: pnum(g.sample.down),
+      minAed: g.aeds.length ? Math.min(...g.aeds) : 0,
+      maxAed: g.aeds.length ? Math.max(...g.aeds) : 0,
+      minSar: g.sars.length ? Math.min(...g.sars) : 0,
+      maxSar: g.sars.length ? Math.max(...g.sars) : 0,
+    }))
+    .sort((a, b) => a.down - b.down);
+}
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -70,6 +111,34 @@ export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDra
             <Row label={isAr ? 'السعر الإجمالي' : 'Total price'} value={unit.totalPrice !== null ? SAR(unit.totalPrice, isAr) : DASH} />
             <Row label={isAr ? 'سعر المتر' : 'Price / m²'} value={unit.pricePerM2 !== null ? SAR(unit.pricePerM2, isAr) : DASH} />
           </section>
+
+          {/* Payment plans — grouped by structure; price shown per structure
+            * (range when the same structure has several priced offers). */}
+          {(() => {
+            const rawPlans = (unit.raw?.data as Record<string, unknown> | undefined)?.payment_plans;
+            const plans = groupUnitPlans(Array.isArray(rawPlans) ? (rawPlans as PlanRow[]) : [], isAr);
+            if (plans.length === 0) return null;
+            const priceLine = (min: number, max: number, fmt: (n: number, a: boolean) => string) =>
+              min <= 0 && max <= 0 ? DASH : min === max ? fmt(min, isAr) : `${fmt(min, isAr)} — ${fmt(max, isAr)}`;
+            return (
+              <section>
+                <h3 className="text-xs font-bold uppercase tracking-wide text-copper mb-1.5">
+                  {isAr ? 'خطط السداد' : 'Payment Plans'}
+                </h3>
+                <div className="space-y-1.5">
+                  {plans.map((p, i) => (
+                    <div key={i} className="rounded-lg border border-sand/40 bg-cream/20 px-2.5 py-1.5">
+                      <div className="text-[13px] font-medium text-charcoal">{p.label}</div>
+                      <div className="text-xs text-charcoal/70 mt-0.5">{priceLine(p.minAed, p.maxAed, AED)}</div>
+                      {p.minSar > 0 && (
+                        <div className="text-[11px] text-charcoal/45">{priceLine(p.minSar, p.maxSar, SAR)}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            );
+          })()}
 
           {/* Layout */}
           <section>
