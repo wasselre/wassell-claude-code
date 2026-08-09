@@ -42,10 +42,16 @@ if [ -f "$hook" ] && ! grep -q 'safe-push-main' "$hook" 2>/dev/null; then
     echo "Backed up existing hook: $backup"
 fi
 
+# Invoke through `bash` rather than exec'ing the script directly. The scripts in
+# this repo are committed mode 100644 (no exec bit) -- on the Windows laptop that
+# is invisible because Git Bash fakes the mode, but on Linux (cloud session, CI,
+# a WSL checkout) `exec "$script"` dies with "Permission denied" and blocks EVERY
+# push, including to a feature branch. Going through bash makes the hook work
+# regardless of whether the exec bit survived the checkout.
 cat > "$hook" <<EOF
 #!/bin/bash
 # Auto-installed by scripts/install-git-hooks.sh -- delegates to the version-controlled script.
-exec "$script" "\$@"
+exec /bin/bash "$script" "\$@"
 EOF
 chmod +x "$hook"
 
