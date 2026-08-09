@@ -29,6 +29,9 @@ import {
   updateContent,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
+import {
+  PlatformSettings, defaultPlatformSettings, getPlatformSchema, objectiveKeyOf, settingsSummary,
+} from '@/lib/marketingOS/adPlatforms';
 import { Field, LoadError, Modal, Pill, ReadField, Skeleton, StatusPill, Tone } from './components/kit';
 import CommentThread from './components/CommentThread';
 import NewContentModal from './components/NewContentModal';
@@ -1667,6 +1670,14 @@ export default function CampaignDetailPage() {
                         <h4>{pname(x.platform)}{x.label ? ` — ${x.label}` : ''}</h4>
                         <span className="tag">{adsCountLabel(s.adsCount, isAr)}</span>
                         {purposeLabel && <span className="tag">{purposeLabel}</span>}
+                        {(() => {
+                          const sp = settingsSummary(
+                            x.platform,
+                            (x.platform_settings ?? null) as PlatformSettings | null,
+                            isAr,
+                          );
+                          return sp.length > 0 ? <span className="tag">{sp.slice(0, 2).join(' · ')}</span> : null;
+                        })()}
                         {x.platform_campaign_id && (
                           <span className="ltr cd-platform-id" style={{ fontSize: 11, color: 'var(--mute)' }}>
                             {x.platform_campaign_id}
@@ -2538,6 +2549,17 @@ function ExecutionModal({
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [platform, setPlatform] = useState(execution?.platform ?? 'meta');
+  // The one platform-settings field worth asking at creation time — the
+  // platform's real objective enum. The full form lives on the detail page.
+  const [objective, setObjective] = useState<string>(() => {
+    const sch = getPlatformSchema(execution?.platform ?? 'meta');
+    const s = execution?.platform_settings as PlatformSettings | null | undefined;
+    if (sch && s) {
+      const v = s[objectiveKeyOf(sch)];
+      return typeof v === 'string' ? v : '';
+    }
+    return '';
+  });
   const [label, setLabel] = useState(execution?.label ?? '');
   const [contentId, setContentId] = useState(execution?.content_id ?? '');
   const [status, setStatus] = useState<MosExecution['status']>(execution?.status ?? 'draft');
@@ -2557,6 +2579,18 @@ function ExecutionModal({
   const submit = async (): Promise<void> => {
     setBusy(true);
     try {
+      // Merge the objective into the stored settings without clobbering what
+      // the detail-page form already captured; a fresh execution gets the
+      // platform's seed defaults (e.g. Instagram-only placements).
+      const schema = getPlatformSchema(platform);
+      let platformSettings: PlatformSettings | undefined;
+      if (schema) {
+        const keep = execution && execution.platform === platform
+          ? (execution.platform_settings as PlatformSettings | null) ?? null
+          : null;
+        platformSettings = { ...(keep ?? defaultPlatformSettings(platform)) };
+        platformSettings[objectiveKeyOf(schema)] = objective || null;
+      }
       const res = await saveExecution(campaignId, {
         id: execution?.id,
         platform,
@@ -2571,6 +2605,7 @@ function ExecutionModal({
         clicks: n(clicks),
         leads: n(leads),
         qualified: n(qualified),
+        ...(platformSettings ? { platform_settings: platformSettings } : {}),
       });
       addToast(isAr ? 'حُفظت الحملة الإعلانية.' : 'Ad campaign saved.', 'success');
       onSaved(res.executions);
@@ -2624,7 +2659,16 @@ function ExecutionModal({
     >
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 13 }}>
         <Field label={isAr ? 'المنصة' : 'Platform'}>
-          <select className="inp" value={platform} onChange={(e) => setPlatform(e.target.value)}>
+          <select
+            className="inp"
+            value={platform}
+            onChange={(e) => {
+              setPlatform(e.target.value);
+              // The objective enum belongs to the platform — a Meta value is
+              // meaningless on TikTok, so a platform switch clears it.
+              setObjective('');
+            }}
+          >
             {PLATFORMS.map((p) => (
               <option key={p} value={p}>
                 {(isAr ? PLATFORM_LABELS[p]?.ar : PLATFORM_LABELS[p]?.en) ?? p}
@@ -2632,6 +2676,27 @@ function ExecutionModal({
             ))}
           </select>
         </Field>
+        {(() => {
+          const sch = getPlatformSchema(platform);
+          if (!sch) return null;
+          const objField = sch.sections
+            .flatMap((s) => s.fields)
+            .find((f) => f.key === objectiveKeyOf(sch));
+          if (!objField?.options) return null;
+          return (
+            <Field
+              label={isAr ? 'هدف الحملة على المنصة' : 'Platform objective'}
+              hint={isAr ? 'بقية الإعدادات من صفحة الحملة الإعلانية' : 'the rest is set on the ad-campaign page'}
+            >
+              <select className="inp" value={objective} onChange={(e) => setObjective(e.target.value)}>
+                <option value="">{isAr ? 'غير محدد' : 'Not set'}</option>
+                {objField.options.map((o) => (
+                  <option key={o.value} value={o.value}>{isAr ? o.ar : o.en}</option>
+                ))}
+              </select>
+            </Field>
+          );
+        })()}
         <Field label={isAr ? 'اسم المجموعة' : 'Ad set name'}>
           <input className="inp" value={label} onChange={(e) => setLabel(e.target.value)} />
         </Field>

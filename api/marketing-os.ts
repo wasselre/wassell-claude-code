@@ -123,6 +123,80 @@ const DB_MESSAGES: Record<string, { en: string; ar: string }> = {
   },
 };
 
+/* ------------------------------------------------------------------ */
+/* Platform-settings guard                                             */
+/*                                                                     */
+/* The structured ad-platform fields (schemas in                       */
+/* src/lib/marketingOS/adPlatforms/, reference in                      */
+/* docs/reference/ad-platforms/). The server stays permissive on       */
+/* purpose — this is a planning record until the platforms are         */
+/* connected — but rejects garbage shapes and objectives the           */
+/* platform's API does not have. Kept self-contained: api/** does not  */
+/* import the src schema files (server-bundle boundary).               */
+/* ------------------------------------------------------------------ */
+
+const AD_PLATFORM_OBJECTIVES: Record<string, { key: string; values: string[] }> = {
+  meta: {
+    key: 'objective',
+    values: ['OUTCOME_AWARENESS', 'OUTCOME_TRAFFIC', 'OUTCOME_ENGAGEMENT',
+             'OUTCOME_LEADS', 'OUTCOME_APP_PROMOTION', 'OUTCOME_SALES'],
+  },
+  instagram: {
+    key: 'objective',
+    values: ['OUTCOME_AWARENESS', 'OUTCOME_TRAFFIC', 'OUTCOME_ENGAGEMENT',
+             'OUTCOME_LEADS', 'OUTCOME_APP_PROMOTION', 'OUTCOME_SALES'],
+  },
+  snapchat: {
+    key: 'objective_v2_type',
+    values: ['AWARENESS_AND_ENGAGEMENT', 'TRAFFIC', 'LEADS', 'APP_PROMOTION', 'SALES'],
+  },
+  tiktok: {
+    key: 'objective_type',
+    values: ['REACH', 'TRAFFIC', 'VIDEO_VIEWS', 'LEAD_GENERATION', 'ENGAGEMENT',
+             'APP_PROMOTION', 'WEB_CONVERSIONS', 'PRODUCT_SALES'],
+  },
+};
+
+/** Flat jsonb only: scalars, null, or lists of strings — nothing nested. */
+function flatJsonbError(field: string, raw: unknown): { en: string; ar: string } | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return {
+      en: `${field} must be an object.`,
+      ar: `حقل ${field} يجب أن يكون كائنًا.`,
+    };
+  }
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const ok = v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'
+      || (Array.isArray(v) && v.every((x) => typeof x === 'string'));
+    if (!ok) {
+      return {
+        en: `${field}.${k} must be a scalar or a list of strings.`,
+        ar: `قيمة ${k} في ${field} يجب أن تكون نصًا أو رقمًا أو قائمة نصوص.`,
+      };
+    }
+  }
+  return null;
+}
+
+function platformSettingsError(platform: string | null, raw: unknown): { en: string; ar: string } | null {
+  const shape = flatJsonbError('platform_settings', raw);
+  if (shape) return shape;
+  if (raw === null || raw === undefined) return null;
+  const spec = platform ? AD_PLATFORM_OBJECTIVES[platform] : undefined;
+  if (spec) {
+    const objective = (raw as Record<string, unknown>)[spec.key];
+    if (objective !== null && objective !== undefined && objective !== ''
+        && (typeof objective !== 'string' || !spec.values.includes(objective))) {
+      return {
+        en: `Unknown ${platform} objective.`,
+        ar: 'هدف الحملة غير معروف لهذه المنصة.',
+      };
+    }
+  }
+  return null;
+}
+
 function translateDbError(error: PostgrestError): { status: number; en: string; ar: string } {
   console.error('[marketing-os] db error', error.code, error.message, error.details, error.hint);
 
@@ -2632,8 +2706,27 @@ export default async function handler(req: Request): Promise<Response> {
                          'targeting', 'lead_form_fields',
                          // The platform's own campaign id + what the ad set is
                          // FOR (conversion / awareness / retargeting / traffic).
-                         'platform_campaign_id', 'purpose'] as const) {
+                         'platform_campaign_id', 'purpose',
+                         // Structured per-platform campaign settings (real
+                         // Marketing API fields — see adPlatforms schemas).
+                         'platform_settings'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'platform_settings')) {
+          // Platform comes with the patch (create / modal save) or from the row.
+          let settingsPlatform = str(patch.platform);
+          if (!settingsPlatform && id) {
+            const p = await sb.from('mos_campaign_executions')
+              .select('platform').eq('id', id).maybeSingle();
+            settingsPlatform = (p.data as { platform?: string } | null)?.platform ?? null;
+          }
+          const bad = platformSettingsError(settingsPlatform, patch.platform_settings);
+          if (bad) {
+            return new Response(
+              JSON.stringify({ error: bad.en, error_ar: bad.ar }),
+              { status: 400, headers: { 'Content-Type': 'application/json' } },
+            );
+          }
         }
         if (Object.prototype.hasOwnProperty.call(patch, 'purpose') && patch.purpose !== null
             && !['conversion', 'awareness', 'retargeting', 'traffic'].includes(String(patch.purpose))) {
@@ -2769,8 +2862,20 @@ export default async function handler(req: Request): Promise<Response> {
         const id = str(raw.id);
         const patch: Record<string, unknown> = {};
         for (const k of ['content_id', 'label', 'status', 'spend', 'impressions',
-                         'clicks', 'leads', 'qualified', 'note'] as const) {
+                         'clicks', 'leads', 'qualified', 'note',
+                         // Ad-level platform creative (format, copy, CTA,
+                         // destination) — see adPlatforms adSections.
+                         'creative'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'creative')) {
+          const bad = flatJsonbError('creative', patch.creative);
+          if (bad) {
+            return new Response(
+              JSON.stringify({ error: bad.en, error_ar: bad.ar }),
+              { status: 400, headers: { 'Content-Type': 'application/json' } },
+            );
+          }
         }
         if (id) {
           const upd = await sb.from('mos_execution_ads').update(patch).eq('id', id).select('id').maybeSingle();

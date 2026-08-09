@@ -21,6 +21,10 @@ import {
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { PURPOSE_PILL_LABELS } from './CampaignDetailPage';
+import {
+  PlatformSettings, getPlatformSchema, settingsProgress, settingsSummary,
+} from '@/lib/marketingOS/adPlatforms';
+import { PlatformFieldsGrid, PlatformSettingsForm } from './components/PlatformSettingsForm';
 import { Empty, Field, LoadError, Modal, Pill, ReadField, Skeleton } from './components/kit';
 import { IconBack, IconForward, IconPlus } from './components/icons';
 import { isoDate, num, shortDate } from './lib/format';
@@ -155,10 +159,18 @@ export default function ExecutionDetailPage() {
   const targeting: MosTargeting = execution.targeting ?? {};
   const leadFields = Array.isArray(execution.lead_form_fields) ? execution.lead_form_fields : [];
 
+  // Structured platforms (meta/instagram/snapchat/tiktok) get the real
+  // Ads-Manager fields; the rest keep the free-text targeting brief.
+  const platformSchema = getPlatformSchema(execution.platform);
+  const platformSettings = (execution.platform_settings ?? null) as PlatformSettings | null;
+  const summaryParts = settingsSummary(execution.platform, platformSettings, isAr);
+
   // The mockup's tab row carries no counts — just the four names.
   const tabs: Array<{ key: Tab; ar: string; en: string }> = [
     { key: 'ads', ar: 'الإعلانات', en: 'Ads' },
-    { key: 'targeting', ar: 'الاستهداف', en: 'Targeting' },
+    platformSchema
+      ? { key: 'targeting', ar: 'إعدادات المنصة', en: 'Platform settings' }
+      : { key: 'targeting', ar: 'الاستهداف', en: 'Targeting' },
     { key: 'lead_form', ar: 'نموذج العملاء', en: 'Lead form' },
     { key: 'daily', ar: 'يوميًا', en: 'Daily' },
   ];
@@ -197,7 +209,9 @@ export default function ExecutionDetailPage() {
               {purposeLabel
                 ? <span className="tag">{purposeLabel}</span>
                 : execution.label && <span className="tag">{execution.label}</span>}
-              {targeting.location && targeting.age && (
+              {summaryParts.length > 0 ? (
+                <span className="tag">{summaryParts.slice(0, 3).join(' · ')}</span>
+              ) : targeting.location && targeting.age && (
                 <span className="tag">{targeting.location} · {targeting.age}</span>
               )}
               <Pill tone={execution.status === 'running' ? 'now' : execution.status === 'ended' ? 'live' : 'idle'}>
@@ -509,12 +523,25 @@ export default function ExecutionDetailPage() {
             )}
 
             {tab === 'targeting' && (
-              <TargetingEditor
-                execution={execution}
-                canEdit={canEnter}
-                isAr={isAr}
-                onSaved={(t) => setExecution({ ...execution, targeting: t })}
-              />
+              <div style={{ display: 'grid', gap: 14 }}>
+                {platformSchema && (
+                  <PlatformSettingsForm
+                    execution={execution}
+                    schema={platformSchema}
+                    canEdit={canEnter}
+                    isAr={isAr}
+                    onSaved={(s) => setExecution({ ...execution, platform_settings: s })}
+                  />
+                )}
+                {/* The free-text brief survives as notes — and stays the whole
+                    tab on platforms without a structured schema. */}
+                <TargetingEditor
+                  execution={execution}
+                  canEdit={canEnter}
+                  isAr={isAr}
+                  onSaved={(t) => setExecution({ ...execution, targeting: t })}
+                />
+              </div>
             )}
 
             {tab === 'lead_form' && (
@@ -550,14 +577,45 @@ export default function ExecutionDetailPage() {
               })}
             />
             <div className="card">
-              <div className="card-h"><h4>{isAr ? 'الاستهداف' : 'Targeting'}</h4></div>
+              <div className="card-h">
+                <h4>{platformSchema ? (isAr ? 'إعدادات المنصة' : 'Platform settings') : (isAr ? 'الاستهداف' : 'Targeting')}</h4>
+                {platformSchema && platformSettings && (
+                  <span className="r">
+                    {(() => {
+                      const p = settingsProgress(platformSchema, platformSettings);
+                      return isAr ? `${num(p.set, true)} من ${num(p.total, true)}` : `${p.set} of ${p.total}`;
+                    })()}
+                  </span>
+                )}
+              </div>
               <div className="card-b">
-                <ReadField label={isAr ? 'الموقع' : 'Location'}>{targeting.location || '—'}</ReadField>
-                <ReadField label={isAr ? 'العمر' : 'Age'}>{targeting.age || '—'}</ReadField>
-                <ReadField label={isAr ? 'الاهتمامات' : 'Interests'}>{targeting.interests || '—'}</ReadField>
-                <ReadField label={isAr ? 'مواضع الظهور' : 'Placements'}>{targeting.placements || '—'}</ReadField>
-                <ReadField label={isAr ? 'المزايدة' : 'Bidding'}>{targeting.bidding || '—'}</ReadField>
-                <ReadField label={isAr ? 'الميزانية اليومية' : 'Daily budget'}>{targeting.daily_budget || '—'}</ReadField>
+                {platformSchema && summaryParts.length > 0 ? (
+                  <>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                      {summaryParts.map((p, i) => <span key={i} className="tag">{p}</span>)}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.8 }}>
+                      {isAr
+                        ? 'التفاصيل الكاملة في تبويب إعدادات المنصة.'
+                        : 'Full detail lives in the Platform settings tab.'}
+                    </div>
+                  </>
+                ) : platformSchema ? (
+                  <div style={{ fontSize: 12, color: 'var(--mute)', lineHeight: 1.85 }}>
+                    {isAr
+                      ? 'لم تُعبأ الإعدادات بعد — تبويب إعدادات المنصة يعرض نفس حقول مدير إعلانات المنصة.'
+                      : 'Nothing set yet — the Platform settings tab carries the platform’s own Ads Manager fields.'}
+                  </div>
+                ) : (
+                  <>
+                    <ReadField label={isAr ? 'الموقع' : 'Location'}>{targeting.location || '—'}</ReadField>
+                    <ReadField label={isAr ? 'العمر' : 'Age'}>{targeting.age || '—'}</ReadField>
+                    <ReadField label={isAr ? 'الاهتمامات' : 'Interests'}>{targeting.interests || '—'}</ReadField>
+                    <ReadField label={isAr ? 'مواضع الظهور' : 'Placements'}>{targeting.placements || '—'}</ReadField>
+                    <ReadField label={isAr ? 'المزايدة' : 'Bidding'}>{targeting.bidding || '—'}</ReadField>
+                    <ReadField label={isAr ? 'الميزانية اليومية' : 'Daily budget'}>{targeting.daily_budget || '—'}</ReadField>
+                  </>
+                )}
               </div>
             </div>
 
@@ -605,6 +663,7 @@ export default function ExecutionDetailPage() {
           executionId={execution.id}
           ad={editingAd}
           campaignId={execution.campaign_id}
+          platform={execution.platform}
           isAr={isAr}
           onClose={() => { setAddingAd(false); setEditingAd(null); }}
           onSaved={(rows) => { setAds(rows); setAddingAd(false); setEditingAd(null); void load(); }}
@@ -701,11 +760,12 @@ function OnPlatformCard({
 /* ------------------------------------------------------------------ */
 
 function AdModal({
-  executionId, ad, campaignId, isAr, onClose, onSaved,
+  executionId, ad, campaignId, platform, isAr, onClose, onSaved,
 }: {
   executionId: string;
   ad: MosAd | null;
   campaignId: string;
+  platform: string;
   isAr: boolean;
   onClose: () => void;
   onSaved: (ads: MosAd[]) => void;
@@ -719,6 +779,11 @@ function AdModal({
   const [qualified, setQualified] = useState(ad?.qualified?.toString() ?? '');
   const [options, setOptions] = useState<MosContentRow[]>([]);
   const [busy, setBusy] = useState(false);
+  // The platform's ad-level creative fields (format, copy, CTA, destination).
+  const adSchema = getPlatformSchema(platform);
+  const [creative, setCreative] = useState<PlatformSettings>(
+    (ad?.creative as PlatformSettings | null) ?? {},
+  );
 
   useEffect(() => {
     // The pick list favors this campaign's content but offers the whole
@@ -750,6 +815,7 @@ function AdModal({
         clicks: n(clicks),
         leads: n(leads),
         qualified: n(qualified),
+        ...(adSchema ? { creative } : {}),
       });
       addToast(isAr ? 'حُفظ الإعلان.' : 'Ad saved.', 'success');
       onSaved(res.ads);
@@ -781,6 +847,7 @@ function AdModal({
         ? 'الإعلان إشارة إلى سجل محتوى، لا ملف مرفوع. الأرقام تُدخل يدويًا حتى تُربط المنصة.'
         : 'An ad references a content record, never an uploaded file. Numbers are entered by hand until the platform is connected.'}
       onClose={onClose}
+      wide={Boolean(adSchema)}
       footer={
         <>
           {ad && (
@@ -837,6 +904,18 @@ function AdModal({
           <input className="inp" inputMode="numeric" value={qualified} onChange={(e) => setQualified(e.target.value)} />
         </Field>
       </div>
+      {adSchema && (
+        <div style={{ marginTop: 16 }}>
+          <PlatformFieldsGrid
+            schema={adSchema}
+            sections={adSchema.adSections}
+            draft={creative}
+            disabled={busy}
+            isAr={isAr}
+            onChange={setCreative}
+          />
+        </div>
+      )}
     </Modal>
   );
 }

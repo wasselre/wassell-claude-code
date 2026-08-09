@@ -5,7 +5,7 @@
 # Model: Sales Assistant / مساعد المبيعات  `matching_chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-29
+**Last updated (from DB):** 2026-08-08
 **Model id:** `7c0ffee2-5cab-4b0a-9d3e-12ab34cd56ef`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

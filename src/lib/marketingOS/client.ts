@@ -788,6 +788,13 @@ export interface MosExecution {
   /** Screen 21's side panels — descriptive brief data on the execution. */
   targeting?: MosTargeting;
   lead_form_fields?: string[];
+  /**
+   * Structured per-platform campaign settings — REAL Marketing API field
+   * names + enum values (Meta / Snapchat / TikTok). Schemas + renderer:
+   * src/lib/marketingOS/adPlatforms/. Null/absent on platforms we don't
+   * model structurally (google, x, youtube) — those keep `targeting`.
+   */
+  platform_settings?: Record<string, string | string[] | number | boolean | null> | null;
 }
 
 /** The targeting brief. All free text — it describes the platform setup. */
@@ -813,6 +820,8 @@ export interface MosAd {
   qualified: number | null;
   note: string | null;
   created_at: string;
+  /** Ad-level platform creative — format, copy, CTA, destination. */
+  creative?: Record<string, string | string[] | number | boolean | null> | null;
 }
 
 export interface MosDailyEntry {

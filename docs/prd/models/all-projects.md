@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-31
+**Last updated (from DB):** 2026-08-07
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **10** (1 base, 9 non-base)
-- Fields: **65**
+- Fields: **66**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 1
@@ -178,6 +178,7 @@
 | `avg_price_per_m2` | Avg Price per m² / متوسط السعر الإجمالي للمتر | Currency | no | half | yes | rollup: avg_price_per_meter |
 | `available_price_range` | Available Price Range / نطاق سعر الوحدات المتاحة | Range | no | half | no | 30000–1000000 |
 | `available_area_range` | Available Area Range / نطاق مساحة الوحدات المتاحة | Range | no | half | no | 50–10000 |
+| `available_native_price_range` | Available Price Range (Developer Currency) / نطاق سعر الوحدات المتاحة (عملة المطور) | Range | no | half | no | 30000–1000000 |
 
 **Field details:**
 
@@ -213,6 +214,9 @@
 - **Available Area Range / نطاق مساحة الوحدات المتاحة** (`available_area_range`, type `range`):
   - 50 to 10000 step 1 m²
   - stored rollup (`available_area_range`), read-only
+- **Available Price Range (Developer Currency) / نطاق سعر الوحدات المتاحة (عملة المطور)** (`available_native_price_range`, type `range`):
+  - 30000 to 1000000 step 10000 SAR
+  - stored rollup (`available_native_price_range`), read-only
 
 ### 4. Payment & Handover / الدفع والتسليم  _(color #B8734F)_
 
@@ -225,7 +229,7 @@
 | `during_construction_percent` | During Construction % / أثناء الإنشاء % | Number | no | half | yes |  |
 | `on_handover_percent` | On Handover % / عند التسليم % | Number | no | half | yes |  |
 | `post_handover_months` | Post-Handover Months / أشهر ما بعد التسليم | Number | no | half | yes |  |
-| `payment_plan_schedule` | Payment Schedule / جدول الدفعات | Table | no | full | yes | 4 columns |
+| `payment_plan_schedule` | Payment Schedule / جدول الدفعات | Table | no | full | yes | 5 columns |
 
 **Field details:**
 
@@ -233,10 +237,11 @@
   - API value `SAR` → "SAR" / "ريال سعودي"
   - API value `AED` → "AED" / "درهم إماراتي"
 - **Payment Schedule / جدول الدفعات** (`payment_plan_schedule`, type `table`) — columns:
-  - `milestone` "Milestone" (text)
-  - `percent` "Percent %" (number)
-  - `due_at` "Due At" (text)
-  - `notes` "Notes" (text)
+  - `plan` "Plan" (text)
+  - `down` "Down %" (number)
+  - `during_construction` "During Construction %" (number)
+  - `on_handover` "On Handover %" (number)
+  - `post_handover` "Post-Handover %" (number)
 
 ### 5. Sales & Targeting / المبيعات والاستهداف  _(color #8E4E3A)_
 

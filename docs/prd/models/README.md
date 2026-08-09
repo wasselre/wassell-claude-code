@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [Advertisers](advertisers.md) | `advertisers` | JSONB | — | 1 | 10 | no | 2026-07-01 |
 | [AI Agent](ai-chats.md) | `ai_chats` | JSONB | New Group | 1 | 5 | yes | 2026-06-10 |
-| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 65 | no | 2026-07-31 |
+| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 66 | no | 2026-08-07 |
 | [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 10 | no | 2026-06-16 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 13 | yes | 2026-07-03 |
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 12 | yes | 2026-06-10 |
@@ -31,9 +31,9 @@
 | [Follow-ups](followups.md) | `followups` | JSONB | New Group | 3 | 44 | no | 2026-07-18 |
 | [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-06-08 |
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
-| [Market Listings](market-listings.md) | `market_listings` | JSONB | — | 8 | 70 | no | 2026-08-06 |
+| [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 83 | no | 2026-08-07 |
 | [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 16 | yes | 2026-06-28 |
-| [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-07-29 |
+| [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-08-08 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
 | [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 5 | 15 | no | 2026-06-29 |
 | [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | New Group | 1 | 8 | no | 2026-06-17 |
@@ -43,7 +43,7 @@
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-06-08 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-07-31 |
 | [Real Estate Offices](real-estate-offices.md) | `real_estate_offices` | JSONB | Unresponded Requests | 1 | 6 | no | 2026-07-30 |
-| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-07-29 |
+| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-08-08 |
 | [Regions](regions.md) | `regions` | frozen `regions` | Geography | 1 | 8 | no | 2026-07-30 |
 | [Reservations](reservations.md) | `reservations` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
 | [Sales Correction Tasks](sales-correction-tasks.md) | `sales_correction_tasks` | JSONB | Sales Valuation | 1 | 12 | no | 2026-06-23 |
@@ -55,5 +55,5 @@
 | [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 2 | 5 | no | 2026-06-11 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 2 | 7 | no | 2026-07-31 |
-| [Units](units.md) | `units` | JSONB | Projects | 8 | 47 | no | 2026-07-31 |
+| [Units](units.md) | `units` | JSONB | Projects | 8 | 48 | no | 2026-08-07 |
 | [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 12 | no | 2026-06-21 |

@@ -5,16 +5,16 @@
 # Model: Market Listings / إعلانات السوق  `market_listings`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-06
+**Last updated (from DB):** 2026-08-07
 **Model id:** `8f06bc39-4bee-42e9-9fab-77023fb89ede`
-**Storage:** unified records (JSONB)
+**Storage:** frozen table `market_listings`
 **Group:** (ungrouped)
 **System model:** no   ·   **Custom UI:** no
 **Icon:** `building-2`   ·   **Color:** `#B8734F`
 
 ## Overview
 - Sections: **8** (1 base, 7 non-base)
-- Fields: **70**
+- Fields: **83**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -43,7 +43,7 @@
 | `title` | Title / عنوان الإعلان | Text | no | full | yes |  |
 | `listing_type` | Listing Type / نوع العرض | Dropdown | no | half | yes | 2 options |
 | `category` | Category / تصنيف الإعلان | Dropdown | no | half | yes | 6 options |
-| `property_type` | Property Type / نوع العقار | Dropdown | no | half | yes | 6 options |
+| `property_type` | Property Type / نوع العقار | Dropdown | no | half | yes | 17 options |
 | `price` | Price / السعر | Currency | no | half | yes |  |
 | `description` | Description / الوصف | Text area | no | full | no |  |
 | `location` | Location / الموقع | location | no | full | yes |  |
@@ -65,6 +65,19 @@
 | `dupe_group_id` | Property Cluster ID / معرّف العقار الموحّد | Text | no | half | no |  |
 | `dupe_role` | Duplicate Role / دور التكرار | Text | no | half | no |  |
 | `source_payload` | Raw Source Payload / البيانات الخام | Notes | no | half | no |  |
+| `developer` | Developer / المطوّر | Text | no | half | no |  |
+| `brn` | Broker BRN / رقم الوسيط | Text | no | half | no |  |
+| `zone_name` | Zone / Neighbourhood / المنطقة | Text | no | half | no |  |
+| `property_age` | Property Age / عمر العقار | Text | no | half | no |  |
+| `project_name` | Project Name / اسم المشروع | Text | no | half | no |  |
+| `area_sqft` | Area (sqft) / المساحة (قدم²) | Number | no | half | no |  |
+| `tour_url` | 360 Tour URL / رابط الجولة الافتراضية | URL | no | half | no |  |
+| `listed_by` | Listed By / مدرج بواسطة | Text | no | half | no |  |
+| `plot_area_sqft` | Plot Area (sqft) / مساحة الأرض (قدم²) | Number | no | half | no |  |
+| `handover` | Handover / التسليم | Text | no | half | no |  |
+| `whatsapp_number` | WhatsApp Number / رقم الواتساب | Phone | no | half | no |  |
+| `purpose` | Purpose / الغرض | Text | no | half | no |  |
+| `ded_license_number` | DED License No. / رقم رخصة الدائرة | Text | no | half | no |  |
 
 **Field details:**
 
@@ -90,6 +103,17 @@
   - API value `أرض` → "Land" / "أرض"
   - API value `عمارة` → "Building" / "عمارة"
   - API value `استراحة` → "Rest house" / "استراحة"
+  - API value `Duplex` → "Duplex" / "دوبلكس" · color `#B8734F`
+  - API value `Villa` → "Villa" / "فيلا" · color `#B8734F`
+  - API value `Apartment` → "Apartment" / "شقة" · color `#B8734F`
+  - API value `Building` → "Building" / "عمارة" · color `#B8734F`
+  - API value `Townhouse` → "Townhouse" / "تاون هاوس" · color `#B8734F`
+  - API value `Hotel Apartment` → "Hotel Apartment" / "شقة فندقية" · color `#B8734F`
+  - API value `Floor` → "Floor" / "دور" · color `#B8734F`
+  - API value `Apartments` → "Apartments" / "شقة" · color `#B8734F`
+  - API value `Plot` → "Plot" / "أرض" · color `#B8734F`
+  - API value `Penthouse` → "Penthouse" / "بنتهاوس" · color `#B8734F`
+  - API value `Compound` → "Compound" / "مجمع" · color `#B8734F`
 
 ### 2. Property Details / تفاصيل العقار  _(color #8E4E3A)_
 
@@ -167,7 +191,7 @@
 | `street_width` | Street Width (m) / عرض الشارع (م) | Number | no | third | no |  |
 | `quality_score` | Quality Score / درجة الجودة | Number | no | third | no |  |
 | `quality_grade` | Quality Grade / تصنيف الجودة | Dropdown | no | third | yes | 4 options |
-| `quality_breakdown` | Quality Breakdown / تفصيل درجة الجودة | Table | no | full | no | 3 columns |
+| `quality_breakdown` | Quality Breakdown / تفصيل درجة الجودة | Notes | no | full | no |  |
 
 **Field details:**
 
@@ -184,21 +208,9 @@
   - API value `B` → "B — Good" / "جيد (B)" · color `#C09B5F`
   - API value `C` → "C — Fair" / "متوسط (C)" · color `#8E4E3A`
   - API value `D` → "D — Poor" / "ضعيف (D)" · color `#4A4E54`
-- **Quality Breakdown / تفصيل درجة الجودة** (`quality_breakdown`, type `table`) — columns:
-  - `البند` "Dimension" (text)
-  - `النقاط` "Points" (number)
-  - `من` "Out of" (number)
 
 ### 8. Scraped Extras / تفاصيل مستخرجة إضافية  _(color #8E4E3A)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `scraped_extras` | Scraped Elements / عناصر مستخرجة | Table | no | full | no | 4 columns |
-
-**Field details:**
-
-- **Scraped Elements / عناصر مستخرجة** (`scraped_extras`, type `table`) — columns:
-  - `element` "Element" (dropdown) · 10 options
-  - `raw_label` "Raw Label" (text)
-  - `details` "Details" (textarea)
-  - `source_section` "Source Section" (dropdown) · 6 options
+| `scraped_extras` | Scraped Elements / عناصر مستخرجة | Notes | no | full | no |  |

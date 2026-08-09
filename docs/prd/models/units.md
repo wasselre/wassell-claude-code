@@ -5,7 +5,7 @@
 # Model: Units / الوحدات  `units`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-31
+**Last updated (from DB):** 2026-08-07
 **Model id:** `7ca3014d-f658-418e-9c53-2d279c97f009`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **8** (1 base, 7 non-base)
-- Fields: **47**
+- Fields: **48**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -59,6 +59,7 @@
 | `unit_status` | Unit Status / حالة الوحدة | Dropdown | no | half | yes | 4 options |
 | `total_price` | Total Price / إجمالي السعر | Currency | no | half | yes |  |
 | `project_opening_date` | Project Opening Date / موعد افتتاح المشروع | Date | no | half | no |  |
+| `payment_plans` | Payment Plans / خطط السداد | Table | no | full | no | 7 columns |
 
 **Field details:**
 
@@ -67,6 +68,14 @@
   - API value `available` → "Available" / "متاحة" · color `#10B981`
   - API value `reserved` → "Reserved" / "محجوزة" · color `#3B82F6`
   - API value `sold` → "Sold" / "مباعة" · color `#8B5CF6`
+- **Payment Plans / خطط السداد** (`payment_plans`, type `table`) — columns:
+  - `plan` "Plan" (text)
+  - `down` "Down %" (number)
+  - `before_handover` "Before Handover %" (number)
+  - `on_handover` "On Handover %" (number)
+  - `after_handover` "After Handover %" (number)
+  - `price` "Price (AED)" (number)
+  - `price_sar` "Price (SAR)" (number)
 
 ### 3. Layout / التصميم الداخلي  _(color #C09B5F)_
 
