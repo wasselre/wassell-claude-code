@@ -77,16 +77,44 @@ PY
 fi
 export CLAUDE_CONFIG_DIR="$CFG_DIR"
 
-# --- Point the harness at Kimi K3 ------------------------------------------
-unset ANTHROPIC_API_KEY || true
-export ANTHROPIC_BASE_URL="https://api.moonshot.ai/anthropic"
-export ANTHROPIC_AUTH_TOKEN="$KIMI_API_KEY"
-export ANTHROPIC_MODEL="${KIMI_MODEL:-kimi-k3}"
-# Moonshot has no separate small/fast model — route the background model to K3.
-export ANTHROPIC_SMALL_FAST_MODEL="${KIMI_MODEL:-kimi-k3}"
+# --- Strip the HOST-MANAGED provider environment ---------------------------
+# In a Claude Code CLOUD session the harness pins the model provider itself:
+# it exports CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1, hands auth in over
+# CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR, and sets ~80 other CLAUDE_*/
+# ANTHROPIC_* vars. Those are INHERITED by this subprocess and outrank the Kimi
+# credentials below, so the child `claude -p` tried to talk to Moonshot with the
+# host's session and died on "Authentication error" — even though the key is
+# valid (a direct curl to api.moonshot.ai returns 200). CLAUDE_CONFIG_DIR alone
+# does not save you: it isolates the on-disk config, not the environment.
+#
+# Verified live in a cloud session (2026-08-09): unsetting the obvious two vars
+# is NOT enough, and neither is swapping ANTHROPIC_AUTH_TOKEN for
+# ANTHROPIC_API_KEY. Clearing the whole inherited CLAUDE*/ANTHROPIC* surface is
+# what works, and it is also the honest description of what we want — the coder
+# must start from a blank provider environment, not a filtered one.
+#
+# On a laptop this loop finds little or nothing and costs nothing.
+KIMI_ENV_STRIP=()
+while IFS='=' read -r _k _; do
+  case "$_k" in
+    CLAUDE*|ANTHROPIC*) KIMI_ENV_STRIP+=(-u "$_k") ;;
+  esac
+done < <(env)
 
+# --- Point the harness at Kimi K3 ------------------------------------------
 cd "$REPO_ROOT"
 
 # acceptEdits: Kimi may write/modify files autonomously (the planner reviews
 # the diff after). Override by passing your own --permission-mode before the prompt.
-exec claude -p --permission-mode acceptEdits "$@"
+#
+# stdin is redirected from /dev/null: with no terminal attached the CLI waits
+# ~3 s for piped input before giving up. Callers that DO want to pipe context in
+# should use the prompt argument instead.
+exec env "${KIMI_ENV_STRIP[@]}" \
+  CLAUDE_CONFIG_DIR="$CFG_DIR" \
+  ANTHROPIC_BASE_URL="https://api.moonshot.ai/anthropic" \
+  ANTHROPIC_AUTH_TOKEN="$KIMI_API_KEY" \
+  ANTHROPIC_MODEL="${KIMI_MODEL:-kimi-k3}" \
+  ANTHROPIC_SMALL_FAST_MODEL="${KIMI_MODEL:-kimi-k3}" \
+  CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1 \
+  claude -p --permission-mode acceptEdits "$@" < /dev/null
