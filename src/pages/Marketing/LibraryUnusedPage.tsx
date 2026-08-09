@@ -22,6 +22,7 @@ import { Empty, Field, LoadError, Modal, PageHead, Skeleton } from './components
 import { IconPlus } from './components/icons';
 import { num, toArabicDigits } from './lib/format';
 import { formatBytes } from './lib/upload';
+import { useAssetUrls } from './lib/assetUrls';
 import './styles/pages-remaining.css';
 
 /** mm:ss badge on video thumbs — Arabic-Indic in Arabic. */
@@ -117,6 +118,9 @@ export default function LibraryUnusedPage() {
     if (shootOnly && !a.shoot_request_id && a.source !== 'shoot') return false;
     return true;
   }), [scoped, olderThan30, kindFilter, shootOnly, thirtyDaysAgo]);
+
+  // Legacy assets keep their stored URL; file-backed ones sign in one batch.
+  const { thumbFor, error: urlError, retry: retryUrls } = useAssetUrls(filtered);
 
   const totalBytes = useMemo(
     () => scoped.reduce((s, a) => s + (a.size_bytes ?? 0), 0),
@@ -227,6 +231,18 @@ export default function LibraryUnusedPage() {
       <div className="body">
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
         {loading && rows.length === 0 && <Skeleton rows={5} />}
+        {!error && urlError && (
+          <div className="notice bad" role="alert">
+            <div style={{ overflowWrap: 'anywhere' }}>
+              {isAr
+                ? 'تعذّر تحميل بعض المعاينات — قد تظهر مربّعات فارغة.'
+                : 'Some previews could not be loaded — you may see blank tiles.'}
+            </div>
+            <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={retryUrls}>
+              {isAr ? 'إعادة المحاولة' : 'Try again'}
+            </button>
+          </div>
+        )}
 
         {!loading && !error && (
           <div className="filt">
@@ -278,6 +294,7 @@ export default function LibraryUnusedPage() {
           <div className="agrid" style={{ marginBottom: 18 }}>
             {filtered.map((a, i) => {
               const picked = selected.has(a.id);
+              const thumb = thumbFor(a);
               return (
                 <button
                   key={a.id}
@@ -288,14 +305,14 @@ export default function LibraryUnusedPage() {
                 >
                   <div
                     className="im"
-                    style={a.thumb_url ? undefined : { background: THUMB_GRADIENTS[i % THUMB_GRADIENTS.length] }}
+                    style={thumb ? undefined : { background: THUMB_GRADIENTS[i % THUMB_GRADIENTS.length] }}
                   >
-                    {a.thumb_url && <img src={a.thumb_url} alt="" />}
+                    {thumb && <img src={thumb} alt="" />}
                     {picked && <span className="bd badge" style={{ background: 'var(--copper)' }}>{isAr ? 'محددة' : 'Selected'}</span>}
                     {a.kind === 'video' && a.duration_seconds != null && a.duration_seconds > 0 && (
                       <span className="dur">{mmss(a.duration_seconds, isAr)}</span>
                     )}
-                    {!a.thumb_url && a.kind !== 'video' && (
+                    {!thumb && a.kind !== 'video' && (
                       (isAr ? ASSET_KIND_LABELS[a.kind]?.ar : ASSET_KIND_LABELS[a.kind]?.en) ?? ''
                     )}
                   </div>

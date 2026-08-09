@@ -135,6 +135,77 @@ export interface UploadOpts {
   folderId?: string | null;
   modelId?: string | null;
   recordId?: string | null;
+  /**
+   * Report 0..1 upload progress. Supplying this switches the byte transfer from
+   * supabase-js (which exposes no progress) to a direct XHR PUT against the
+   * same Storage object — everything else (path convention, files row,
+   * orphan compensation, activity log) is identical. The marketing library's
+   * intake queue needs a real percentage, not a spinner, for multi-hundred-MB
+   * video.
+   */
+  onProgress?: (fraction: number) => void;
+  /** Abort an in-flight upload (only honoured on the onProgress/XHR path). */
+  signal?: AbortSignal;
+}
+
+/**
+ * PUT the bytes straight to Storage with progress. Mirrors what supabase-js
+ * `.upload()` does (same REST object endpoint, `x-upsert: false`) but exposes
+ * `upload.onprogress`. Rejects with Storage's own message so a 413 size cap or
+ * a 42501 policy denial reaches the user instead of a generic failure.
+ */
+function putObjectWithProgress(
+  bucket: string,
+  path: string,
+  file: File,
+  token: string,
+  onProgress: (fraction: number) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const baseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? '';
+    const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '';
+    if (!baseUrl || !anonKey) {
+      reject(new Error('storage session unavailable'));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${baseUrl}/storage/v1/object/${bucket}/${path}`);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.setRequestHeader('apikey', anonKey);
+    xhr.setRequestHeader('x-upsert', 'false');
+    if (file.type) xhr.setRequestHeader('Content-Type', file.type);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+        return;
+      }
+      let message = `upload failed (${xhr.status})`;
+      try {
+        const body = JSON.parse(xhr.responseText) as { message?: string; error?: string };
+        message = body.message ?? body.error ?? message;
+      } catch {
+        // Non-JSON error body — keep the status-code message. The failure
+        // itself still propagates via reject below.
+      }
+      reject(new Error(message));
+    };
+    xhr.onerror = () => reject(new Error('network error during upload'));
+    xhr.onabort = () => reject(new Error('upload cancelled'));
+
+    if (signal) {
+      if (signal.aborted) {
+        reject(new Error('upload cancelled'));
+        return;
+      }
+      signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    }
+    xhr.send(file);
+  });
 }
 
 /**
@@ -162,11 +233,23 @@ export async function uploadFile(file: File, opts: UploadOpts = {}): Promise<Fil
   const storagePath = `${authUid}/${fileId}.${ext}`;
   const kind = kindFromMime(file.type);
 
-  const { error: upErr } = await supabase.storage.from(FILES_BUCKET).upload(storagePath, file, {
-    contentType: file.type || 'application/octet-stream',
-    upsert: false,
-  });
-  if (upErr) throw surfaceError('upload', upErr);
+  if (opts.onProgress) {
+    const token = session.session?.access_token;
+    if (!token) throw surfaceError('upload', new Error('Not signed in'));
+    try {
+      await putObjectWithProgress(
+        FILES_BUCKET, storagePath, file, token, opts.onProgress, opts.signal,
+      );
+    } catch (e) {
+      throw surfaceError('upload', e);
+    }
+  } else {
+    const { error: upErr } = await supabase.storage.from(FILES_BUCKET).upload(storagePath, file, {
+      contentType: file.type || 'application/octet-stream',
+      upsert: false,
+    });
+    if (upErr) throw surfaceError('upload', upErr);
+  }
 
   const appUserId = useAppStore.getState().currentUserId;
   if (!appUserId) {
