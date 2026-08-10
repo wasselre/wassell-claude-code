@@ -50,9 +50,11 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const chatsModel = useMemo(() => models.find((m) => m.name === 'chats'), [models]);
   const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
   const advertisersModel = useMemo(() => models.find((m) => m.name === 'advertisers') ?? null, [models]);
+  const contactsModel = useMemo(() => models.find((m) => m.name === 'contacts') ?? null, [models]);
   const chatRecords = chatsModel ? (records[chatsModel.id] ?? []) : [];
   const clientRecords = clientsModel ? (records[clientsModel.id] ?? []) : [];
   const advertiserRecords = advertisersModel ? (records[advertisersModel.id] ?? []) : [];
+  const contactRecords = contactsModel ? (records[contactsModel.id] ?? []) : [];
 
   useEffect(() => {
     void (async () => {
@@ -109,6 +111,28 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     [advertiserByChatId],
   );
 
+  // chat id → matched address-book contact, same live phone match as the
+  // advertisers above. A contact does NOT move the chat out of "Other": it is
+  // still neither a client nor an advertiser — the chip just tells the rep the
+  // number is already saved and who it belongs to.
+  const contactByChatId = useMemo(() => {
+    const map = new Map<string, AppRecord>();
+    const slugs = phoneFieldSlugs(contactsModel);
+    if (contactRecords.length === 0 || slugs.length === 0) return map;
+    for (const chat of chatRecords) {
+      const phone = (chat.data as Record<string, unknown>).phone as string | null | undefined;
+      const match = matchRecordByPhone(phone, contactRecords, slugs);
+      if (match) map.set(chat.id, match);
+    }
+    return map;
+  }, [chatRecords, contactRecords, contactsModel]);
+
+  /** The address-book contact whose phone matches this chat's phone (or null). */
+  const contactOf = useCallback(
+    (chat: AppRecord): AppRecord | null => contactByChatId.get(chat.id) ?? null,
+    [contactByChatId],
+  );
+
   // id → display name for districts + cities (location-chip resolution).
   const geoNames = useMemo(() => buildGeoNameMap(models, records), [models, records]);
 
@@ -126,12 +150,15 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
           const clientName = client ? String((client.data as Record<string, unknown>).client_name ?? '') : '';
           const advertiser = advertiserOf(r);
           const advertiserName = advertiser ? String((advertiser.data as Record<string, unknown>).name ?? '') : '';
+          const contact = contactOf(r);
+          const contactName = contact ? String((contact.data as Record<string, unknown>).name ?? '') : '';
           return (
             name.toLowerCase().includes(q) ||
             phone.toLowerCase().includes(q) ||
             preview.toLowerCase().includes(q) ||
             clientName.toLowerCase().includes(q) ||
-            advertiserName.toLowerCase().includes(q)
+            advertiserName.toLowerCase().includes(q) ||
+            contactName.toLowerCase().includes(q)
           );
         })
       : chatRecords;
@@ -143,7 +170,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
       if (!bAt) return -1;
       return bAt.localeCompare(aAt);
     });
-  }, [chatRecords, search, clientOf, advertiserOf]);
+  }, [chatRecords, search, clientOf, advertiserOf, contactOf]);
 
   const clientChats = useMemo(() => searched.filter((r) => clientOf(r) !== null), [searched, clientOf]);
 
@@ -338,6 +365,14 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
                   ? ((advertiser.data as Record<string, unknown>).name as string | null) ?? null
                   : null
               }
+              contactName={
+                (() => {
+                  const contact = contactOf(record);
+                  return contact
+                    ? ((contact.data as Record<string, unknown>).name as string | null) ?? null
+                    : null;
+                })()
+              }
               prefChips={
                 client
                   ? buildClientPrefChips(client.data as Record<string, unknown>, clientsModel, geoNames, isAr)
@@ -372,6 +407,7 @@ function ChatRow({
   selected,
   deviceLabel,
   advertiserName,
+  contactName,
   prefChips,
   onClick,
 }: {
@@ -380,6 +416,7 @@ function ChatRow({
   selected: boolean;
   deviceLabel: string | null;
   advertiserName: string | null;
+  contactName: string | null;
   prefChips: ClientPrefChip[];
   onClick: () => void;
 }) {
@@ -452,8 +489,17 @@ function ChatRow({
             </span>
           )}
         </div>
-        {(status === 'resolved' || status === 'archived' || deviceLabel || advertiserName || prefChips.length > 0) && (
+        {(status === 'resolved' || status === 'archived' || deviceLabel || advertiserName || contactName || prefChips.length > 0) && (
           <div className="flex items-center gap-1 mt-1 flex-wrap">
+            {contactName && (
+              <span
+                className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-charcoal/8 text-charcoal/70 truncate max-w-[180px]"
+                title={contactName}
+              >
+                {isAr ? 'جهة اتصال · ' : 'Contact · '}
+                {contactName}
+              </span>
+            )}
             {advertiserName && (
               <span
                 className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-gold/20 text-chocolate truncate max-w-[180px]"

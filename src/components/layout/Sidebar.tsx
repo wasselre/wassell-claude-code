@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Users,
+  Contact,
   PhoneCall,
   Building2,
   Target,
@@ -56,6 +57,7 @@ import type { LucideProps } from 'lucide-react';
 
 const ICON_MAP: Record<string, ComponentType<LucideProps>> = {
   users: Users,
+  contact: Contact,
   'phone-call': PhoneCall,
   'building-2': Building2,
   target: Target,

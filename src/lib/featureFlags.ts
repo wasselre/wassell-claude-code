@@ -53,7 +53,11 @@ export const ARCHIVED_MODULE_MODELS = [
   // `targeted_projects` still RECEIVES writes from the «المشاريع - المستهدفة»
   // workflow + api/research-project — archiving only hides the UI surface.
   // `tasks` also hides the "Other Tasks" tab in MyTasksPage (gated on this list).
-  'contacts',
+  //
+  // `contacts` was UN-ARCHIVED 2026-08-10 — it is now a first-class top-level
+  // section (a plain address book for people who are neither clients nor
+  // advertisers) and is created from the WhatsApp inbox's "Add new contact"
+  // button. See supabase/migrations/2026-08-10_contacts_section.sql.
   'targeted_projects',
   'tasks',
 ] as const;

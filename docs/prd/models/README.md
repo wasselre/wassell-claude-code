@@ -18,7 +18,7 @@
 | [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-06-30 |
 | [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 38 | no | 2026-07-30 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-06-09 |
-| [Contacts](contacts.md) | `contacts` | JSONB | New Group | 1 | 3 | no | 2026-06-08 |
+| [Contacts](contacts.md) | `contacts` | JSONB | — | 1 | 6 | no | 2026-08-10 |
 | [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | Designs | 1 | 6 | no | 2026-06-11 |
 | [Countries](countries.md) | `countries` | JSONB | Geography | 1 | 5 | no | 2026-06-28 |
 | [Data Migration](data-migration.md) | `data_migration` | JSONB | — | 1 | 5 | yes | 2026-06-08 |
@@ -33,7 +33,7 @@
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
 | [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 83 | no | 2026-08-07 |
 | [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 16 | yes | 2026-06-28 |
-| [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-08-08 |
+| [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-08-10 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
 | [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 5 | 15 | no | 2026-06-29 |
 | [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | New Group | 1 | 8 | no | 2026-06-17 |
@@ -43,7 +43,7 @@
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-06-08 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-07-31 |
 | [Real Estate Offices](real-estate-offices.md) | `real_estate_offices` | JSONB | Unresponded Requests | 1 | 6 | no | 2026-07-30 |
-| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-08-08 |
+| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-08-10 |
 | [Regions](regions.md) | `regions` | frozen `regions` | Geography | 1 | 8 | no | 2026-07-30 |
 | [Reservations](reservations.md) | `reservations` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
 | [Sales Correction Tasks](sales-correction-tasks.md) | `sales_correction_tasks` | JSONB | Sales Valuation | 1 | 12 | no | 2026-06-23 |

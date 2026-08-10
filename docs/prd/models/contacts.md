@@ -2,34 +2,42 @@
      Regenerate with: npm run sync:prds  (reads the live Supabase DB).
      The git diff of this file is the record of what changed in the app. -->
 
-# Model: Contacts / جهات الإتصال  `contacts`
+# Model: Contacts / جهات الاتصال  `contacts`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-08-10
 **Model id:** `f08c674a-0808-4c5e-8421-101d76b30187`
 **Storage:** unified records (JSONB)
-**Group:** New Group
+**Group:** (ungrouped)
 **System model:** no   ·   **Custom UI:** no
-**Icon:** `database`   ·   **Color:** `#B8734F`
+**Icon:** `contact`   ·   **Color:** `#B8734F`
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **3**
+- Fields: **6**
 - Section-selector field: none
-- Duplicate-check field: none
+- Duplicate-check field: Phone Number (`phone`)
 - Custom buttons: 0
+
+## Card view
+- Title: Name (`name`)
+- Subtitle: Phone Number (`phone`)
+- Shown: Company / Organization (`company`), Position (`position`)
 
 ## Sections & fields
 
-### 1. General Information / معلومات عامة  _(base, color #B8734F)_
+### 1. Contact Info / معلومات جهة الاتصال  _(base, color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `name` | Name / الاسم | Text | no | half | yes |  |
-| `phone` | Phone Number / رقم الهاتف | Phone | no | half | yes |  |
+| `name` | Name / الاسم | Text | yes | half | yes |  |
+| `phone` | Phone Number / رقم الجوال | Phone | yes | half | yes |  |
+| `company` | Company / Organization / الجهة / الشركة | Text | no | half | yes |  |
 | `position` | Position / المنصب | Text | no | half | yes |  |
+| `email` | Email / البريد الإلكتروني | Email | no | half | no |  |
+| `notes` | Notes / ملاحظات | Text area | no | full | no |  |
 
 **Field details:**
 
-- **Phone Number / رقم الهاتف** (`phone`, type `phone`):
+- **Phone Number / رقم الجوال** (`phone`, type `phone`):
   - default country code `+966`

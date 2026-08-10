@@ -9,7 +9,7 @@
 **Workflow id:** `a10fd4c9-a360-4caa-9421-c9501409bd68`   ·   **Active:** no
 **Group:** Sales
 **Trigger:** When a record is created
-**Trigger model:** Contacts / جهات الإتصال `contacts`
+**Trigger model:** Contacts / جهات الاتصال `contacts`
 
 ## Logic (branched)
 

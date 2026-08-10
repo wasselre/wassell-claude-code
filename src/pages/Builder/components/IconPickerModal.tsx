@@ -3,7 +3,7 @@ import Modal from '@/components/ui/Modal';
 import { getIconComponent } from '@/components/layout/Sidebar';
 
 const ICON_NAMES = [
-  'users', 'phone-call', 'building-2', 'target', 'star', 'file-search',
+  'users', 'contact', 'phone-call', 'building-2', 'target', 'star', 'file-search',
   'database', 'globe', 'folder', 'briefcase', 'calendar', 'mail',
   'truck', 'home', 'map-pin', 'clipboard', 'tag', 'layers',
   'grid', 'box', 'package', 'activity', 'zap', 'bell',

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, ChevronDown, NotebookPen, Bot } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, ChevronDown, NotebookPen, Bot, Contact } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
@@ -9,6 +9,7 @@ import MessageThread from './MessageThread';
 import Composer from './Composer';
 import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
 import LeadIntakeModal from './LeadIntakeModal';
+import ContactIntakeModal from './ContactIntakeModal';
 import LogInteractionModal from './LogInteractionModal';
 import StudyJobCard from './StudyJobCard';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
@@ -89,6 +90,19 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     ? ((matchedAdvertiser.data as Record<string, unknown>).name as string | null) ?? null
     : null;
 
+  // Address-book contact whose phone matches this chat — computed live exactly
+  // like the advertiser above, so a contact saved from this header links
+  // instantly and a deleted one unlinks on its own. Nothing is stored on the
+  // chat record.
+  const matchedContact = useMemo(() => {
+    const contactsModel = models.find((m) => m.name === 'contacts') ?? null;
+    if (!contactsModel || !phone) return null;
+    return matchRecordByPhone(phone, records[contactsModel.id] ?? [], phoneFieldSlugs(contactsModel));
+  }, [models, records, phone]);
+  const matchedContactName = matchedContact
+    ? ((matchedContact.data as Record<string, unknown>).name as string | null) ?? null
+    : null;
+
   // Client-options popup (options list + embedded Project Finder).
   const [showClientOptions, setShowClientOptions] = useState(false);
   // Mobile-only: preference chips collapse behind a toggle so a long
@@ -99,6 +113,8 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const [showCompleteFollowup, setShowCompleteFollowup] = useState(false);
   // Assisted lead capture (unlinked chat → propose + approve a client).
   const [showLeadIntake, setShowLeadIntake] = useState(false);
+  // Address-book capture (unlinked chat → save just a name + number).
+  const [showContactIntake, setShowContactIntake] = useState(false);
   // "Log an interaction" — record an off-task call/visit result.
   const [showLogInteraction, setShowLogInteraction] = useState(false);
 
@@ -234,10 +250,24 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
             )}
           </div>
           {/* Client link row — either opens the matched client's full record
-              in a new tab or offers to create a new one from this phone. A
-              phone-matched advertiser (REGA lookup) gets its own link
-              alongside. */}
+              in a new tab or offers to file this number: as a CLIENT (starts
+              the sales follow-up) or as a plain address-book CONTACT (name +
+              number, no follow-up). A phone-matched advertiser (REGA lookup)
+              or contact gets its own link alongside. */}
           <div className="flex items-center gap-2 mt-1.5 text-xs flex-wrap">
+            {matchedContact && (
+              <button
+                onClick={() => navigate(`/model/contacts/${matchedContact.id}`)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-charcoal/8 px-2 py-0.5 font-medium text-charcoal transition-colors hover:bg-charcoal/15"
+                title={isAr ? 'فتح بطاقة جهة الاتصال' : 'Open contact record'}
+              >
+                <Contact size={12} />
+                <span className="truncate max-w-[220px]">
+                  {isAr ? 'جهة اتصال: ' : 'Contact: '}
+                  {matchedContactName ?? (isAr ? 'عرض البطاقة' : 'open record')}
+                </span>
+              </button>
+            )}
             {matchedAdvertiser && (
               <button
                 onClick={() => navigate(`/model/advertisers/${matchedAdvertiser.id}`)}
@@ -285,14 +315,33 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
                 <AiHandoverButton chatRecordId={recordId} aiManaged={aiManaged} isAr={isAr} />
               </>
             ) : (
-              <button
-                onClick={() => setShowLeadIntake(true)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-copper/40 bg-copper/10 px-2 py-0.5 font-medium text-copper transition-colors hover:bg-copper/20"
-                title={isAr ? 'إنشاء عميل من هذا الرقم وبدء المتابعة' : 'Create a client from this phone and start the follow-up'}
-              >
-                <UserPlus size={12} />
-                {isAr ? 'عميل محتمل؟ إنشاء وبدء المتابعة' : 'Potential lead? Create & start follow-up'}
-              </button>
+              <>
+                <button
+                  onClick={() => setShowLeadIntake(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-copper/40 bg-copper/10 px-2 py-0.5 font-medium text-copper transition-colors hover:bg-copper/20"
+                  title={isAr ? 'إنشاء عميل من هذا الرقم وبدء المتابعة' : 'Create a client from this phone and start the follow-up'}
+                >
+                  <UserPlus size={12} />
+                  {isAr ? 'إضافة كعميل' : 'Add as a client'}
+                </button>
+                {/* Not a prospect — just save the name and number. Hidden once
+                    a contact with this phone already exists (the chip above
+                    links to it instead). */}
+                {!matchedContact && (
+                  <button
+                    onClick={() => setShowContactIntake(true)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-charcoal/25 bg-charcoal/5 px-2 py-0.5 font-medium text-charcoal transition-colors hover:bg-charcoal/10"
+                    title={
+                      isAr
+                        ? 'حفظ الاسم والرقم فقط — بدون إنشاء عميل أو مهمة متابعة'
+                        : 'Save just the name and number — no client, no follow-up task'
+                    }
+                  >
+                    <Contact size={12} />
+                    {isAr ? 'إضافة جهة اتصال جديدة' : 'Add a new contact'}
+                  </button>
+                )}
+              </>
             )}
           </div>
           {/* Client preference chips — the full preference picture (unit type,
@@ -374,6 +423,15 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           suggestedName={name !== '—' ? name : ''}
           lastInboundAt={(data?.last_message_flow === 'in' ? lastMessageAt : null)}
           onClose={() => setShowLeadIntake(false)}
+        />
+      )}
+
+      {/* Address-book capture — name + number only, no sales machinery. */}
+      {showContactIntake && !clientLinkId && (
+        <ContactIntakeModal
+          phone={phone ?? ''}
+          suggestedName={name !== '—' ? name : ''}
+          onClose={() => setShowContactIntake(false)}
         />
       )}
 
