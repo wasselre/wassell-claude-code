@@ -19,6 +19,18 @@
 #   files — not this terminal scrollback — are the durable record of what
 #   changed. Keep them.
 #
+# OUTCOME CLASSIFICATION — NEVER ASSUME ROLLBACK ON psql FAILURE
+#   A nonzero psql exit does NOT prove the transaction rolled back: if the
+#   connection drops after PostgreSQL executes the migration's COMMIT but
+#   before psql receives the acknowledgement, the change persisted. So
+#   after EVERY apply attempt — whatever the psql exit code — this script
+#   reconnects, captures the AFTER snapshot + diff, and classifies:
+#       APPLIED AND VERIFIED        exit 0  (psql 0, all checks pass)
+#       VERIFICATION FAILED         exit 2  (psql 0, a check failed)
+#       ROLLED BACK (clean)         exit 1  (psql nonzero, after == before)
+#       INDETERMINATE               exit 2  (psql nonzero, after != before)
+#       INDETERMINATE (unreachable) exit 2  (AFTER snapshot uncapturable)
+#
 # DIRECT psql ONLY — DO NOT RUN VIA MCP / TOOLING
 #   This must be run by a human operator over a direct psql connection
 #   (PGURL). It is deliberately NOT routed through an MCP/tooling path:
@@ -140,7 +152,8 @@ UNION ALL
 SELECT 'POLICY|' || p.polname || '|cmd=' || p.polcmd::text
     || '|permissive=' || p.polpermissive::text
     || '|roles=' || p.polroles::regrole[]::text
-    || '|' || md5(coalesce(pg_get_expr(p.polqual, p.polrelid), '(null)'))
+    || '|qual=' || coalesce(md5(pg_get_expr(p.polqual, p.polrelid)), '(null)')
+    || '|withcheck=' || coalesce(md5(pg_get_expr(p.polwithcheck, p.polrelid)), '(null)')
 FROM pg_policy p
 JOIN pg_class c ON c.oid = p.polrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -200,22 +213,40 @@ set +e
 psql "$PGURL" -v ON_ERROR_STOP=1 -f "$MIGRATION" 2>&1 | tee "$OUTDIR/apply.log"
 apply_rc=${PIPESTATUS[0]}
 set -e
-if [ "$apply_rc" -ne 0 ]; then
-  echo "===================================================================" >&2
-  echo "MIGRATION FAILED (psql exit $apply_rc)." >&2
-  echo "The migration is transactional and self-aborting: ON_ERROR_STOP" >&2
-  echo "means the first failing statement aborts the transaction, so the" >&2
-  echo "database should be left in its pre-apply state. Verify against" >&2
-  echo "$OUTDIR/before.txt." >&2
-  echo "If any change is found to have persisted, run the rollback:" >&2
-  echo "  $ROLLBACK_CMD" >&2
-  echo "===================================================================" >&2
-  exit 1
-fi
+
+# WHY NONZERO-EXIT DOES NOT IMPLY ROLLBACK:
+# A nonzero psql exit does NOT prove the transaction rolled back. If the
+# connection drops after PostgreSQL has executed the migration's COMMIT but
+# before psql receives the acknowledgement, psql reports failure while the
+# change actually persisted. Recreating that ambiguity is exactly what this
+# runner exists to prevent — so we NEVER branch to "rolled back" on the exit
+# code alone. Instead, after EVERY apply attempt we reconnect, capture the
+# AFTER snapshot, and let the byte-comparison of before.txt vs after.txt
+# (plus the verification checks when psql exited 0) classify the outcome.
+echo ">>> psql exited $apply_rc — capturing the AFTER snapshot regardless."
+echo ">>> (a nonzero exit does NOT prove rollback; the snapshot decides)"
 
 # --- Step 5: AFTER snapshot --------------------------------------------------
 echo ">>> Step 5: AFTER snapshot -> $OUTDIR/after.txt"
+set +e
 snapshot > "$OUTDIR/after.txt"
+after_rc=$?
+set -e
+
+if [ "$after_rc" -ne 0 ]; then
+  echo "===================================================================" >&2
+  echo "INDETERMINATE (unreachable)" >&2
+  echo "psql exited $apply_rc AND the AFTER snapshot could not be captured" >&2
+  echo "(snapshot exit $after_rc — the database may be unreachable)." >&2
+  echo "The outcome of the apply attempt is UNKNOWN and must be established" >&2
+  echo "manually IMMEDIATELY: reconnect and compare the live state against" >&2
+  echo "$OUTDIR/before.txt." >&2
+  echo "Evidence dir: $OUTDIR" >&2
+  echo "Rollback command (only once a human confirms changes persisted):" >&2
+  echo "  $ROLLBACK_CMD" >&2
+  echo "===================================================================" >&2
+  exit 2
+fi
 
 # --- Step 6: diff ------------------------------------------------------------
 echo ">>> Step 6: diff -> $OUTDIR/diff.txt"
@@ -224,14 +255,62 @@ diff -u "$OUTDIR/before.txt" "$OUTDIR/after.txt" > "$OUTDIR/diff.txt"
 diff_rc=$?
 set -e
 if [ "$diff_rc" -gt 1 ]; then
-  echo "ERROR: diff itself failed (exit $diff_rc)." >&2
-  exit 1
+  echo "===================================================================" >&2
+  echo "INDETERMINATE (unreachable)" >&2
+  echo "diff itself failed (exit $diff_rc), so before/after cannot be" >&2
+  echo "compared. The outcome of the apply attempt is UNKNOWN and must be" >&2
+  echo "established manually IMMEDIATELY." >&2
+  echo "Evidence dir: $OUTDIR" >&2
+  echo "Rollback command (only once a human confirms changes persisted):" >&2
+  echo "  $ROLLBACK_CMD" >&2
+  echo "===================================================================" >&2
+  exit 2
 fi
 echo "-------------------------------------------------------------------"
 cat "$OUTDIR/diff.txt"
 echo "-------------------------------------------------------------------"
 
+# --- Nonzero-psql classification (skip the end-state verification: it checks
+# --- the APPLIED end state, which is only meaningful when psql exited 0) ---
+if [ "$apply_rc" -ne 0 ]; then
+  if cmp -s "$OUTDIR/before.txt" "$OUTDIR/after.txt"; then
+    echo "==================================================================="
+    echo "ROLLED BACK (clean)"
+    echo "psql exited $apply_rc, and after.txt is byte-identical to"
+    echo "before.txt: the migration is transactional and self-aborting"
+    echo "(ON_ERROR_STOP aborts on the first failing statement), so no"
+    echo "change persisted."
+    echo "Evidence dir: $OUTDIR"
+    echo "  before.txt / after.txt / diff.txt / apply.log"
+    echo "Rollback command (not needed — nothing persisted):"
+    echo "  $ROLLBACK_CMD"
+    echo "==================================================================="
+    exit 1
+  fi
+  echo "===================================================================" >&2
+  echo "INDETERMINATE — REVIEW BY A HUMAN IMMEDIATELY" >&2
+  echo "psql exited $apply_rc, but after.txt DIFFERS from before.txt." >&2
+  echo "The database may be PARTIALLY or FULLY changed (e.g. the connection" >&2
+  echo "dropped after PostgreSQL executed COMMIT but before psql received" >&2
+  echo "the acknowledgement). The full diff (also in $OUTDIR/diff.txt):" >&2
+  echo "-------------------------------------------------------------------" >&2
+  cat "$OUTDIR/diff.txt" >&2
+  echo "-------------------------------------------------------------------" >&2
+  echo "Evidence dir: $OUTDIR" >&2
+  echo "Rollback command (run only after a human reviews the diff):" >&2
+  echo "  $ROLLBACK_CMD" >&2
+  echo "===================================================================" >&2
+  exit 2
+fi
+
 # --- Step 7: END-STATE VERIFICATION ------------------------------------------
+# (Only reached when psql exited 0 — nonzero exits are classified above.)
+# Verifies the APPLIED end state: structural SQL checks, view-body md5s, and
+# ALL FOUR frozen_* policies (frozen_view, frozen_insert, frozen_update,
+# frozen_delete) compared byte-identical between before.txt and after.txt on
+# BOTH the USING qual AND the WITH CHECK expression (frozen_insert is a
+# WITH CHECK policy whose polqual is NULL — comparing only polqual would
+# never capture its real expression).
 echo ">>> Step 7: end-state verification -> $OUTDIR/verify.txt"
 VERIFY_FILE="$OUTDIR/verify.txt"
 : > "$VERIFY_FILE"
@@ -333,27 +412,44 @@ for view in market_listings_summary v_market_listings v_market_properties; do
   fi
 done
 
-frozen_before="$(snapshot_md5 "$OUTDIR/before.txt" 'POLICY|frozen_view|')"
-frozen_after="$(snapshot_md5 "$OUTDIR/after.txt" 'POLICY|frozen_view|')"
+# All FOUR frozen_* policies must be byte-identical between before.txt and
+# after.txt, on BOTH the USING qual and the WITH CHECK expression. The SQL
+# check above asserts only that all four names are present; this is the
+# expression-level comparison. (frozen_insert's polqual is NULL — its real
+# expression lives in polwithcheck, which the snapshot now hashes too.)
+frozen_policy_lines() { # file — the POLICY| lines for the four frozen_* policies, sorted
+  grep -E '^POLICY\|frozen_(view|insert|update|delete)\|' "$1" | sort
+}
+frozen_before="$(frozen_policy_lines "$OUTDIR/before.txt")"
+frozen_after="$(frozen_policy_lines "$OUTDIR/after.txt")"
 if [ -n "$frozen_before" ] && [ "$frozen_before" = "$frozen_after" ]; then
-  echo "CHECK|frozen_view predicate md5 unchanged|PASS|md5=$frozen_after" >> "$VERIFY_FILE"
+  echo "CHECK|frozen_* policies (all four, qual + with-check) unchanged|PASS|4 policies byte-identical" >> "$VERIFY_FILE"
 else
-  echo "CHECK|frozen_view predicate md5 unchanged|FAIL|before=$frozen_before after=$frozen_after" >> "$VERIFY_FILE"
+  echo "CHECK|frozen_* policies (all four, qual + with-check) unchanged|FAIL|before/after policy sets differ" >> "$VERIFY_FILE"
+  for pol in frozen_view frozen_insert frozen_update frozen_delete; do
+    b="$(grep -F "POLICY|$pol|" "$OUTDIR/before.txt" | head -n 1)"
+    a="$(grep -F "POLICY|$pol|" "$OUTDIR/after.txt" | head -n 1)"
+    if [ "$b" != "$a" ]; then
+      echo "CHECK|frozen policy differs: $pol|FAIL|before=[$b] after=[$a]" >> "$VERIFY_FILE"
+    fi
+  done
 fi
 
 echo "-------------------------------------------------------------------"
 cat "$VERIFY_FILE"
 echo "-------------------------------------------------------------------"
 
-# --- Step 8: verdict ---------------------------------------------------------
+# --- Step 8: verdict (psql exited 0) -----------------------------------------
 if grep -q '|FAIL|' "$VERIFY_FILE"; then
   echo "===================================================================" >&2
   echo "VERIFICATION FAILED - REVIEW IMMEDIATELY" >&2
-  echo "Evidence dir: $OUTDIR" >&2
+  echo "psql exited 0 (the migration committed), but at least one" >&2
+  echo "verification check failed. Evidence dir: $OUTDIR" >&2
+  echo "  before.txt / after.txt / diff.txt / apply.log / verify.txt" >&2
   echo "Rollback command:" >&2
   echo "  $ROLLBACK_CMD" >&2
   echo "===================================================================" >&2
-  exit 1
+  exit 2
 fi
 
 echo "==================================================================="
