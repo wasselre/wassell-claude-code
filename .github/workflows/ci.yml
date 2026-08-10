@@ -74,6 +74,18 @@ jobs:
       - name: Smoke assertions
         run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_translation.sql
 
+      # The file-link projection (Phase 1) needs its own fixture: the translation
+      # bootstrap has no models/records/files tables. Without this step the
+      # db-migrations badge would be green while never executing this migration
+      # at all — the exact false signal called out in the Phase 1 design.
+      - name: File-link projection — fixture, migration, smoke
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE wassell_file_links;'
+          PGURL_FL="${PGURL%/*}/wassell_file_links"
+          psql "$PGURL_FL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/fixture_file_links.sql
+          psql "$PGURL_FL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-08-10_file_links_projection.sql
+          psql "$PGURL_FL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_file_links.sql
+
   worker-typecheck:
     # worker/ is a standalone package (third tsconfig) — not covered by the
     # root build (see reference: tsc --noEmit skips api/; worker is separate).

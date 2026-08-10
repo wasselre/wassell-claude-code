@@ -13,6 +13,7 @@ import {
 import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindIcon, kindLabel } from '@/lib/files/format';
 import FileLinksPanel from './FileLinksPanel';
+import UsedInPanel from './UsedInPanel';
 
 interface Props {
   file: FileRow | null;
@@ -231,6 +232,9 @@ export default function FilePreviewModal({
           )}
         </div>
         {showLinks && <FileLinksPanel fileId={file.id} canEdit={canEdit} />}
+        {/* Phase 1 projection — read-only, feature-flagged, renders nothing
+            when the flag is off or the file has no visible links. */}
+        {showLinks && <UsedInPanel fileId={file.id} isAr={isAr} />}
       </div>
     </div>,
     document.body,
