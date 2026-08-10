@@ -164,10 +164,12 @@ describe('validateFollowUpCompletion', () => {
     expect(r.hardErrors.some((e) => e.field === 'appointment_id')).toBe(true);
   });
 
-  it('warns when a call outcome has no attached call', () => {
+  // The rep cannot attach a call — CallEvidence links it automatically or not at
+  // all — so completing a call outcome without one is silent, not a warning.
+  it('does NOT warn when a call outcome has no attached call', () => {
     const r = validateFollowUpCompletion({ followupType: T, selectedOutcome: 'no_answer', draft: { actual_datetime: 'x' } });
     expect(r.ok).toBe(true);
-    expect(r.warnings.some((w) => w.field === 'completed_by_call_id')).toBe(true);
+    expect(r.warnings.some((w) => w.field === 'completed_by_call_id')).toBe(false);
   });
 });
 

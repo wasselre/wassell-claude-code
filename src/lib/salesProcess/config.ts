@@ -27,7 +27,6 @@ function noAnswer(nextType: FollowUpTypeKey, delayDays = 1): FollowUpOutcomeConf
   return {
     value: 'no_answer',
     requires: { ...REQ_ACTUAL },
-    warn: ['completed_by_call_id'],
     client_update_preview: { status: 'لا يوجد رد', note_en: 'No answer — schedule retry', note_ar: 'لا يوجد رد — جدولة محاولة' },
     next_action_preview: { kind: 'create_followup', create_followup_type: nextType, delay_days: delayDays },
   };
@@ -216,7 +215,6 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       {
         value: 'no_answer',
         requires: { ...REQ_ACTUAL, appointment_id: true },
-        warn: ['completed_by_call_id'],
         client_update_preview: { status: 'لا يوجد رد' },
         next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_confirmation_call', delay_days: 0, note_en: 'WhatsApp reminder + retry if not same-day', note_ar: 'تذكير واتساب + إعادة محاولة إن لم يكن نفس اليوم' },
       },
@@ -255,7 +253,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     preference_summary_fields: ['preferred_projects'],
     allowed_outcomes: [
       { value: 'attendance_confirmed', requires: { ...REQ_ACTUAL, appointment_id: true }, client_update_preview: { stage: 'موعد زيارة', status: 'تم تأكيد الحضور' }, next_action_preview: { kind: 'none' } },
-      { value: 'no_answer', requires: { ...REQ_ACTUAL, appointment_id: true }, warn: ['completed_by_call_id'], client_update_preview: { status: 'لا يوجد رد' }, next_action_preview: { kind: 'none', note_en: 'Same-day — keep appointment, flag risk', note_ar: 'نفس اليوم — إبقاء الموعد مع الإشارة للخطورة' } },
+      { value: 'no_answer', requires: { ...REQ_ACTUAL, appointment_id: true }, client_update_preview: { status: 'لا يوجد رد' }, next_action_preview: { kind: 'none', note_en: 'Same-day — keep appointment, flag risk', note_ar: 'نفس اليوم — إبقاء الموعد مع الإشارة للخطورة' } },
       { value: 'rescheduled', requires: { ...REQ_ACTUAL, appointment_id: true, new_appointment_datetime: true }, client_update_preview: { status: 'تمت إعادة الجدولة' }, next_action_preview: { kind: 'book_appointment', use_field: 'new_appointment_datetime' } },
       { value: 'appointment_cancelled_lost', requires: { ...REQ_ACTUAL, appointment_id: true, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'تم إلغاء الموعد' }, is_terminal: true },
     ],

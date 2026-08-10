@@ -148,13 +148,14 @@ export function validateFollowUpCompletion(input: ValidateFollowUpCompletionInpu
     }
   }
 
-  // Soft warnings: missing evidence for the channel.
+  // Soft warning: the WhatsApp conversation wasn't linked. There is deliberately
+  // no equivalent for calls — see OutcomeWarn in types.ts.
   for (const warnField of outcome.warn ?? []) {
     if (!hasValue(input.draft[warnField])) {
       warnings.push({
         field: warnField,
-        message_ar: warnField === 'completed_by_chat_id' ? 'لم يتم إرفاق محادثة واتساب' : 'لم يتم إرفاق مكالمة',
-        message_en: warnField === 'completed_by_chat_id' ? 'No WhatsApp conversation attached' : 'No call attached',
+        message_ar: 'لم يتم إرفاق محادثة واتساب',
+        message_en: 'No WhatsApp conversation attached',
       });
     }
   }

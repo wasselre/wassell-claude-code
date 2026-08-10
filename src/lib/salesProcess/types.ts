@@ -70,8 +70,16 @@ export interface OutcomeRequires {
   outcome_notes?: boolean;
 }
 
-/** Soft, overridable warnings (e.g. completed a call without attaching evidence). */
-export type OutcomeWarn = 'completed_by_call_id' | 'completed_by_chat_id';
+/**
+ * Soft, overridable warnings (e.g. completed a WhatsApp task without linking
+ * the conversation).
+ *
+ * `completed_by_call_id` was removed on 2026-08-10. Call evidence links itself
+ * (see `components/CallEvidence.tsx`) and the rep has no way to attach one, so
+ * warning them about a missing call was telling them off for something they
+ * cannot do anything about.
+ */
+export type OutcomeWarn = 'completed_by_chat_id';
 
 /**
  * What the client record will look like after the workflow runs. Shown to the
