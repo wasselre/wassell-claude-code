@@ -33,6 +33,7 @@ import {
   enqueueTick, retryItem, startAutoDrain, subscribe,
 } from './lib/offline';
 import { formatBytes, isBrowserImage, kindFromFile } from './lib/upload';
+import { canonicalAssetFields } from './lib/canonicalUpload';
 import './styles/pages-remaining.css';
 import './styles/mobile-m3.css';
 
@@ -684,13 +685,9 @@ function SiteModeView({ requestId }: { requestId: string }) {
           kind,
           source: 'shoot',
           project_id: await projectOf(meta.shootRequestId),
-          url: meta.publicUrl,
-          thumb_url: /^image\//i.test(meta.mimeType) ? meta.publicUrl : null,
           shot_on: null,
           tags: [],
-          file_path: meta.storagePath,
-          mime_type: meta.mimeType,
-          size_bytes: meta.size,
+          ...canonicalAssetFields(meta.fileRow),
           original_name: meta.fileName,
           usage_rights: rightsLabel,
           shoot_request_id: meta.shootRequestId,

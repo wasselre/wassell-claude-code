@@ -23,6 +23,8 @@ import { Empty, Field, LoadError, Modal, PageHead, Pill, ReadField, Skeleton } f
 import { IconLibrary, IconPlus } from './components/icons';
 import { daysFromNow, num, shortDate, toArabicDigits } from './lib/format';
 import { formatBytes } from './lib/upload';
+import { useAssetUrls, useLatchedUrl } from './lib/assetUrls';
+import { signDownloadUrl } from '@/lib/files/client';
 import './styles/pages-remaining.css';
 
 /**
@@ -64,11 +66,18 @@ function aspectLabel(value: string, isAr: boolean): string {
 }
 
 /**
- * The public storage URL with `?download=<name>` — Supabase serves it as an
- * attachment (Content-Disposition), so «تنزيل» actually saves the file instead
- * of opening it inline (the plain `download` attribute is ignored cross-origin).
+ * LEGACY download: the public storage URL with `?download=<name>` — Supabase
+ * serves it as an attachment (Content-Disposition), so «تنزيل» actually saves
+ * the file instead of opening it inline (the plain `download` attribute is
+ * ignored cross-origin).
+ *
+ * File-backed assets do NOT go through here: appending a download parameter to
+ * a signed VIEW url does not produce an attachment, and re-using a view token
+ * for downloads would skip the 'download' entry in the file audit trail. They
+ * mint a proper attachment URL through `signDownloadUrl` instead — see
+ * `startDownload` in the component.
  */
-function downloadHref(asset: MosAsset): string | null {
+function legacyDownloadHref(asset: MosAsset): string | null {
   if (!asset.url) return null;
   const name = asset.original_name || asset.title || 'file';
   const sep = asset.url.includes('?') ? '&' : '?';
@@ -99,6 +108,54 @@ export default function AssetDetailPage() {
   const [tagDraft, setTagDraft] = useState('');
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
+  /** A failed download attempt, rendered next to the button rather than logged only. */
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  // ONE asset, but the hook takes a list — a stable single-element array keeps
+  // the resolver's id key steady across re-renders.
+  const assetList = useMemo(() => (asset ? [asset] : []), [asset]);
+  const { urlFor, error: urlError, retry: retryUrls } = useAssetUrls(assetList);
+  /** The resolved original: the legacy public URL verbatim, or a signed URL. */
+  const viewUrl = urlFor(asset);
+
+  /**
+   * Streaming media latches its first URL: `useAssetUrls` re-signs every four
+   * minutes, and handing a <video>/<audio> a fresh `src` restarts playback at
+   * 00:00. `resetMedia` lets the element pick up the newest URL after a genuine
+   * expiry error instead of staying stuck on a dead one.
+   */
+  const { url: mediaUrl, reset: resetMedia } = useLatchedUrl(viewUrl, asset?.id ?? null);
+
+  /**
+   * Download the original. Legacy assets keep the public attachment URL;
+   * file-backed assets mint a fresh signed attachment URL (which also records
+   * the 'download' event in the file's audit trail). Failures are shown.
+   */
+  const startDownload = useCallback(async (): Promise<void> => {
+    if (!asset) return;
+    setDownloadError(null);
+    const legacy = legacyDownloadHref(asset);
+    if (legacy) {
+      window.location.href = legacy;
+      return;
+    }
+    if (!asset.file_id) return;
+    setDownloading(true);
+    try {
+      const { url } = await signDownloadUrl(asset.file_id);
+      window.location.href = url;
+    } catch (e) {
+      console.error('[marketing] asset download failed', asset.id, e);
+      setDownloadError(
+        isAr
+          ? 'تعذّر تنزيل الملف. قد لا تملك صلاحية الوصول إليه.'
+          : 'The file could not be downloaded. You may not have access to it.',
+      );
+    } finally {
+      setDownloading(false);
+    }
+  }, [asset, isAr]);
 
   const load = useCallback(async () => {
     if (!assetId) return;
@@ -139,13 +196,15 @@ export default function AssetDetailPage() {
     return parts.join(' · ');
   }, [asset]);
 
-  /** A PDF (public marketing-assets URL) can be shown inline instead of a
-   *  placeholder icon. Only PDFs — other documents (docx/xlsx) don't render in
-   *  an iframe, so they keep the placeholder + Download. */
+  /** A PDF can be shown inline instead of a placeholder icon. Only PDFs —
+   *  other documents (docx/xlsx) don't render in an iframe, so they keep the
+   *  placeholder + Download. Detection is on the asset's own metadata, not on
+   *  the URL, so it works identically for a legacy public URL and a signed one
+   *  (whose path carries no .pdf suffix). */
   const isPdf = useMemo(() => {
-    if (!asset || asset.kind !== 'document' || !asset.url) return false;
+    if (!asset || asset.kind !== 'document') return false;
     return asset.mime_type === 'application/pdf'
-      || /\.pdf(\?|#|$)/i.test(asset.url)
+      || /\.pdf(\?|#|$)/i.test(asset.url ?? '')
       || /\.pdf$/i.test(asset.original_name ?? '');
   }, [asset]);
 
@@ -247,15 +306,15 @@ export default function AssetDetailPage() {
           </span>
         )}
       >
-        {asset?.url && (
-          <a className="btn" href={asset.url} target="_blank" rel="noreferrer">
+        {viewUrl && (
+          <a className="btn" href={viewUrl} target="_blank" rel="noreferrer">
             {isAr ? 'فتح الملف' : 'Open file'}
           </a>
         )}
-        {asset && downloadHref(asset) && (
-          <a className="btn btn-d" href={downloadHref(asset) ?? undefined}>
-            {isAr ? 'تنزيل' : 'Download'}
-          </a>
+        {asset && (asset.url || asset.file_id) && (
+          <button type="button" className="btn btn-d" disabled={downloading} onClick={() => void startDownload()}>
+            {downloading ? (isAr ? 'جارٍ التحضير…' : 'Preparing…') : (isAr ? 'تنزيل' : 'Download')}
+          </button>
         )}
         {can('manage_assets') && asset && (
           <button type="button" className="btn" onClick={() => setEditing(true)}>
@@ -276,6 +335,25 @@ export default function AssetDetailPage() {
 
       <div className="body">
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
+        {/* A preview that could not be signed must say so — a blank frame with
+            a console line is the failure mode this repo bans. */}
+        {!error && urlError && (
+          <div className="notice bad" role="alert">
+            <div style={{ overflowWrap: 'anywhere' }}>
+              {isAr
+                ? 'تعذّر تحضير معاينة هذا الملف. قد لا تملك صلاحية الوصول إليه.'
+                : 'The preview for this file could not be prepared. You may not have access to it.'}
+            </div>
+            <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={retryUrls}>
+              {isAr ? 'إعادة المحاولة' : 'Try again'}
+            </button>
+          </div>
+        )}
+        {downloadError && (
+          <div className="notice bad" role="alert">
+            <div style={{ overflowWrap: 'anywhere' }}>{downloadError}</div>
+          </div>
+        )}
         {loading && !asset && <Skeleton rows={6} />}
 
         {!loading && !asset && !error && (
@@ -289,12 +367,12 @@ export default function AssetDetailPage() {
           <div className="grid rail-end">
             {/* ── main column ─────────────────────────────────────────── */}
             <div style={{ display: 'grid', gap: 16 }}>
-              {isPdf && asset.url && IS_IOS ? (
+              {isPdf && viewUrl && IS_IOS ? (
                 // iOS can't scroll a PDF <iframe> (first page only). Hand the
                 // whole file to the native viewer — a big tappable card so the
                 // user can actually read past page one.
                 <a
-                  href={asset.url}
+                  href={viewUrl}
                   target="_blank"
                   rel="noreferrer"
                   style={{
@@ -334,12 +412,12 @@ export default function AssetDetailPage() {
                       : 'Opens the full PDF in the system viewer, where you can scroll and download.'}
                   </span>
                 </a>
-              ) : isPdf && asset.url ? (
+              ) : isPdf && viewUrl ? (
                 // A PDF renders inline in its own full-width viewer, not the
                 // dark thumbnail box — the placeholder icon was never the file.
                 <div style={{ display: 'grid', gap: 8 }}>
                   <iframe
-                    src={`${asset.url}#view=FitH`}
+                    src={`${viewUrl}#view=FitH`}
                     title={asset.title}
                     style={{
                       width: '100%',
@@ -353,7 +431,7 @@ export default function AssetDetailPage() {
                   />
                   <a
                     className="btn btn-d btn-sm"
-                    href={asset.url}
+                    href={viewUrl}
                     target="_blank"
                     rel="noreferrer"
                     style={{ justifySelf: 'start' }}
@@ -363,26 +441,29 @@ export default function AssetDetailPage() {
                 </div>
               ) : (
                 <div className="pr-preview">
-                  {asset.kind === 'video' && asset.url ? (
-                    <video src={asset.url} controls preload="metadata" />
-                  ) : asset.kind === 'audio' && asset.url ? (
-                    <audio src={asset.url} controls preload="metadata" />
-                  ) : (asset.kind === 'photo' || asset.kind === 'design') && (asset.url || asset.thumb_url) ? (
+                  {asset.kind === 'video' && mediaUrl ? (
+                    // Latched src + onError re-take: a mid-playback re-sign must
+                    // not restart the clip, but a genuinely expired token must
+                    // still be recoverable without a page reload.
+                    <video src={mediaUrl} controls preload="metadata" onError={resetMedia} />
+                  ) : asset.kind === 'audio' && mediaUrl ? (
+                    <audio src={mediaUrl} controls preload="metadata" onError={resetMedia} />
+                  ) : (asset.kind === 'photo' || asset.kind === 'design') && viewUrl ? (
                     // Click the image to open the full file in a new tab.
                     <a
-                      href={asset.url ?? asset.thumb_url ?? undefined}
+                      href={viewUrl ?? undefined}
                       target="_blank"
                       rel="noreferrer"
                       title={isAr ? 'فتح الملف' : 'Open file'}
                     >
-                      <img src={asset.url ?? asset.thumb_url ?? undefined} alt={asset.title} style={{ cursor: 'zoom-in' }} />
+                      <img src={viewUrl} alt={asset.title} style={{ cursor: 'zoom-in' }} />
                     </a>
-                  ) : asset.url ? (
+                  ) : viewUrl ? (
                     // Documents (non-PDF) and anything without an inline preview:
                     // the tile itself opens the actual file.
                     <a
                       className="pr-play"
-                      href={asset.url}
+                      href={viewUrl}
                       target="_blank"
                       rel="noreferrer"
                       title={isAr ? 'فتح الملف' : 'Open file'}

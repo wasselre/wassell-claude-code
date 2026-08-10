@@ -32,6 +32,7 @@ import { useWorkspace } from '../MarketingWorkspace';
 import { Field, Modal, Pill } from './kit';
 import { IconPlus } from './icons';
 import { dateTimeShort, isoDateTimeLocal, num, shortDate, toArabicDigits } from '../lib/format';
+import { useAssetUrls } from '../lib/assetUrls';
 import '../styles/mobile-m3.css';
 
 const PLATFORMS = ['instagram', 'tiktok', 'snapchat', 'x', 'youtube', 'website'] as const;
@@ -121,6 +122,8 @@ export default function PublishTab({
   const [busy, setBusy] = useState(false);
   const [finalAssets, setFinalAssets] = useState<MosAsset[]>([]);
   const [allAssets, setAllAssets] = useState<MosAsset[]>([]);
+  // Legacy assets keep their public URL; file-backed ones resolve to a signed one.
+  const { urlFor, thumbFor } = useAssetUrls(allAssets);
 
   // The approved files — band 4 of the Materials tab: links with role 'final'.
   // Non-fatal on failure: the picker shows the empty-rule copy and the error
@@ -628,7 +631,7 @@ export default function PublishTab({
                     {pub.scheduled_at && <> · {schedLabel(pub)}</>}
                   </div>
                   <div className="m3-thumb">
-                    {fileAsset?.thumb_url && <img src={fileAsset.thumb_url} alt="" />}
+                    {thumbFor(fileAsset) && <img src={thumbFor(fileAsset) ?? undefined} alt="" />}
                     <span className="lb">
                       {fileAsset ? (isAr ? 'معتمد' : 'Approved') : (isAr ? 'لا ملف معتمد' : 'No approved file')}
                     </span>
@@ -642,16 +645,17 @@ export default function PublishTab({
                       <button
                         type="button"
                         className="m3-filebtn"
-                        disabled={!fileAsset?.url}
+                        disabled={!urlFor(fileAsset)}
                         onClick={() => {
-                          if (!fileAsset?.url) return;
-                          window.open(fileAsset.url, '_blank', 'noopener');
+                          const href = urlFor(fileAsset);
+                          if (!href) return;
+                          window.open(href, '_blank', 'noopener');
                           setAssistFileDone(true);
                         }}
                       >
                         <span
                           className="th"
-                          style={fileAsset?.thumb_url ? { backgroundImage: `url(${fileAsset.thumb_url})` } : undefined}
+                          style={thumbFor(fileAsset) ? { backgroundImage: `url(${thumbFor(fileAsset)})` } : undefined}
                           aria-hidden
                         />
                         <span className="t">

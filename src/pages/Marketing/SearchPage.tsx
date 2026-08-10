@@ -29,6 +29,7 @@ import {
 } from './components/kit';
 import { IconSearch } from './components/icons';
 import { money, num } from './lib/format';
+import { useAssetUrls } from './lib/assetUrls';
 import './styles/pages-remaining.css';
 
 type Filter = 'all' | SearchHitType;
@@ -179,6 +180,13 @@ export default function SearchPage() {
 
   const contentHits = groups.get('content') ?? [];
   const assetHits = groups.get('asset') ?? [];
+  // Asset hits may be canonical (private bytes) — resolve through the same
+  // resolver the library uses. A legacy hit still returns its stored url.
+  const { thumbFor: hitThumb } = useAssetUrls(
+    assetHits.map((h) => ({
+      file_id: h.file_id ?? null, url: null, thumb_url: h.thumb_url, kind: 'photo' as const,
+    })),
+  );
   const campaignHits = groups.get('campaign') ?? [];
   const shootHits = groups.get('shoot') ?? [];
 
@@ -294,8 +302,8 @@ export default function SearchPage() {
                 {assetHits.map((h) => (
                   <button key={h.id} type="button" className="ass" onClick={() => navigate(hitPath(h))}>
                     <div className="im" style={{ background: 'linear-gradient(135deg,#8E6A4F,#B8734F)' }}>
-                      {h.thumb_url
-                        ? <img src={h.thumb_url} alt="" />
+                      {hitThumb({ file_id: h.file_id ?? null, url: null, thumb_url: h.thumb_url, kind: 'photo' })
+                        ? <img src={hitThumb({ file_id: h.file_id ?? null, url: null, thumb_url: h.thumb_url, kind: 'photo' }) ?? undefined} alt="" />
                         : (isAr ? 'مادة' : 'Asset')}
                     </div>
                     <div className="mt2">

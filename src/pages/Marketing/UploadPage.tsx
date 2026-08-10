@@ -28,8 +28,9 @@ import {
 import { num } from './lib/format';
 import {
   PickedFile, collectDropped, formatBytes, heicToJpeg, isBrowserImage, isHeic,
-  kindFromFile, storagePath, tagsFromPath, uploadToStorage,
+  kindFromFile, tagsFromPath,
 } from './lib/upload';
+import { assetErrorText, canonicalAssetFields, uploadCanonicalAsset } from './lib/canonicalUpload';
 
 type RowStatus = 'waiting' | 'converting' | 'uploading' | 'done' | 'failed' | 'duplicate' | 'skipped';
 
@@ -213,7 +214,6 @@ export default function UploadPage() {
   const doneCount = rows.filter((r) => r.status === 'done').length;
 
   const uploadOne = async (row: Row, signal: AbortSignal): Promise<void> => {
-    const assetId = uuid();
     patchRow(row.id, { progress: 0, error: null });
     try {
       // HEIC first: iPhones shoot it, browsers can't render it. A failed
@@ -240,13 +240,12 @@ export default function UploadPage() {
       }
 
       patchRow(row.id, { status: 'uploading', conversionFailed });
-      const path = storagePath(assetId, toSend.name);
-      const result = await uploadToStorage(
-        toSend,
-        path,
-        (fraction) => patchRow(row.id, { progress: fraction }),
+      // Canonical intake: ONE object in the private wassel-files bucket + ONE
+      // files row, referenced by the asset. No marketing-assets/mos/ copy.
+      const fileRow = await uploadCanonicalAsset(toSend, {
+        onProgress: (fraction) => patchRow(row.id, { progress: fraction }),
         signal,
-      );
+      });
       // «ينطبق على الجميع ما لم يُخصَّص لملف»: each field is the file's own
       // override when it set one, otherwise the shared panel value.
       const o = row.overrides;
@@ -267,13 +266,9 @@ export default function UploadPage() {
         kind,
         source: effSource,
         project_id: effProject || null,
-        url: result.publicUrl,
-        thumb_url: isBrowserImage(toSend) ? result.publicUrl : null,
         shot_on: effShotOn || null,
         tags: allTags,
-        file_path: result.path,
-        mime_type: toSend.type || null,
-        size_bytes: toSend.size,
+        ...canonicalAssetFields(fileRow),
         original_name: row.file.name,
         usage_rights: USAGE_RIGHTS.find((r) => r.key === effRights)?.[isAr ? 'ar' : 'en'] ?? effRights,
         aspect_ratio: effAspect || null,
@@ -286,9 +281,10 @@ export default function UploadPage() {
         patchRow(row.id, { status: 'waiting', progress: 0 });
         return;
       }
-      const message = e instanceof Error ? e.message : String(e);
+      // An unsupported format or an over-cap file reports the specific reason
+      // and the fix, in the reader's language, on the row itself.
       console.error('[marketing] upload failed', row.file.name, e);
-      patchRow(row.id, { status: 'failed', error: message });
+      patchRow(row.id, { status: 'failed', error: assetErrorText(e, isAr) });
     }
   };
 

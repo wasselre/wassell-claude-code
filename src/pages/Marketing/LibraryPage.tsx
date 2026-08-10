@@ -20,6 +20,7 @@ import { Empty, LoadError, PageHead, Skeleton } from './components/kit';
 import { IconSearch } from './components/icons';
 import { num, shortDate, toArabicDigits } from './lib/format';
 import { formatBytes } from './lib/upload';
+import { useAssetUrls } from './lib/assetUrls';
 
 const KIND_BG: Record<string, string> = {
   photo: 'linear-gradient(135deg,#8E6A4F,#B8734F)',
@@ -122,6 +123,10 @@ export default function LibraryPage() {
     }
     return true;
   });
+
+  // Legacy assets return their stored public URL untouched; file-backed ones
+  // get a batched signed URL. A signing failure is rendered, never swallowed.
+  const { thumbFor, error: urlError, retry: retryUrls } = useAssetUrls(filtered);
 
   const unusedInView = filtered.filter((a) => (useCount.get(a.id) ?? 0) === 0).length;
 
@@ -265,6 +270,20 @@ export default function LibraryPage() {
         </div>
 
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
+        {/* Thumbnails that could not be signed would otherwise be blank tiles
+            with only a console line — say so, and offer the retry. */}
+        {!error && urlError && (
+          <div className="notice bad" role="alert">
+            <div style={{ overflowWrap: 'anywhere' }}>
+              {isAr
+                ? 'تعذّر تحميل بعض المعاينات — قد تظهر مربّعات فارغة.'
+                : 'Some previews could not be loaded — you may see blank tiles.'}
+            </div>
+            <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={retryUrls}>
+              {isAr ? 'إعادة المحاولة' : 'Try again'}
+            </button>
+          </div>
+        )}
         {loading && assets.length === 0 && <Skeleton rows={5} />}
 
         {!loading && unusedInView > 0 && !error && (
@@ -339,8 +358,8 @@ export default function LibraryPage() {
                         onClick={() => navigate(`/m/library/${a.id}`)}
                       >
                         <div className="im" style={{ background: KIND_BG[a.kind] ?? 'var(--sand)' }}>
-                          {a.thumb_url
-                            ? <img src={a.thumb_url} alt="" />
+                          {thumbFor(a)
+                            ? <img src={thumbFor(a) ?? undefined} alt="" />
                             : (isAr ? ASSET_KIND_LABELS[a.kind]?.ar : ASSET_KIND_LABELS[a.kind]?.en) ?? a.kind}
                           <span className={`bd badge${badge.bad ? ' b-bad' : ''}`}>{badge.text}</span>
                           {a.kind === 'video' && a.duration_seconds != null && a.duration_seconds > 0 && (
@@ -367,8 +386,8 @@ export default function LibraryPage() {
                         onClick={() => navigate(`/m/library/${a.id}`)}
                       >
                         <span className="ath" style={{ background: KIND_BG[a.kind] ?? 'var(--sand)' }}>
-                          {a.thumb_url
-                            ? <img src={a.thumb_url} alt="" />
+                          {thumbFor(a)
+                            ? <img src={thumbFor(a) ?? undefined} alt="" />
                             : (isAr ? ASSET_KIND_LABELS[a.kind]?.ar : ASSET_KIND_LABELS[a.kind]?.en) ?? a.kind}
                           {a.kind === 'video' && a.duration_seconds != null && a.duration_seconds > 0 && (
                             <span className="dur">{duration(a.duration_seconds, isAr)}</span>

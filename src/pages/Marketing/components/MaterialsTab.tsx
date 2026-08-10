@@ -21,7 +21,6 @@
  * absence.
  */
 import { useCallback, useEffect, useRef, useState, type SVGProps } from 'react';
-import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import {
   ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosAsset, MosAssetLink, MosContentVersion,
@@ -29,9 +28,9 @@ import {
   fetchAssets, fetchContentDetail, fetchContentVersions, fetchShoots,
   linkAsset, saveAsset, saveShoot, setApprovalAsset, unlinkAsset,
 } from '@/lib/marketingOS/client';
-import {
-  formatBytes, heicToJpeg, isBrowserImage, isHeic, kindFromFile, storagePath, uploadToStorage,
-} from '../lib/upload';
+import { formatBytes, heicToJpeg, isHeic, kindFromFile } from '../lib/upload';
+import { assetErrorText, canonicalAssetFields, uploadCanonicalAsset } from '../lib/canonicalUpload';
+import { useAssetUrls } from '../lib/assetUrls';
 import { useWorkspace } from '../MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, Skeleton } from './kit';
 import { IconLibrary, IconPlus, IconShoot, IconTrash } from './icons';
@@ -148,6 +147,8 @@ export default function MaterialsTab({
 
   const mine = links.filter((l) => l.content_id === contentId);
   const assetById = new Map(assets.map((a) => [a.id, a]));
+  // Legacy assets resolve to their stored public URL; file-backed ones sign.
+  const { urlFor, thumbFor, error: urlError, retry: retryUrls } = useAssetUrls(assets);
   const missingScenes = scenes.filter((s) => s.footage_status === 'missing');
 
   /* Coverage buckets — have/template are covered, to_make is in flight,
@@ -278,7 +279,7 @@ export default function MaterialsTab({
     return (
       <div key={l.asset_id} className="file">
         <div className="th">
-          {a.thumb_url ? <img src={a.thumb_url} alt="" /> : <IconLibrary />}
+          {thumbFor(a) ? <img src={thumbFor(a) ?? undefined} alt="" /> : <IconLibrary />}
         </div>
         <div style={{ minWidth: 0 }}>
           <div className="nm">{a.title}</div>
@@ -307,8 +308,8 @@ export default function MaterialsTab({
               {isAr ? 'محدّدة للاعتماد' : 'Marked for approval'}
             </span>
           )}
-          {a.url && (
-            <a className="btn btn-d btn-sm" href={a.url} target="_blank" rel="noreferrer">
+          {urlFor(a) && (
+            <a className="btn btn-d btn-sm" href={urlFor(a) ?? undefined} target="_blank" rel="noreferrer">
               {isAr ? 'معاينة' : 'Preview'}
             </a>
           )}
@@ -348,6 +349,18 @@ export default function MaterialsTab({
     <div className="cd2-split">
       <div style={{ display: 'grid', gap: 20, minWidth: 0 }}>
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
+        {!error && urlError && (
+          <div className="notice bad" role="alert">
+            <div style={{ overflowWrap: 'anywhere' }}>
+              {isAr
+                ? 'تعذّر تحميل بعض المعاينات — قد تظهر أيقونة بدل الصورة.'
+                : 'Some previews could not be loaded — an icon may show instead of the image.'}
+            </div>
+            <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={retryUrls}>
+              {isAr ? 'إعادة المحاولة' : 'Try again'}
+            </button>
+          </div>
+        )}
 
         {/* ── band 1 — المواد الأصلية + اللقطات الناقصة ─────────────── */}
         <div>
@@ -727,10 +740,12 @@ export function NewAssetModal({
             }
           }
           setUploading({ index: i, frac: 0, done: created.length });
-          const path = storagePath(uuid(), toSend.name);
-          const result = await uploadToStorage(toSend, path, (frac) =>
-            setUploading((u) => (u ? { ...u, frac } : { index: i, frac, done: created.length })),
-          );
+          // Canonical intake: ONE object in the private wassel-files bucket +
+          // ONE files row. Nothing is written to marketing-assets/mos/ any more.
+          const fileRow = await uploadCanonicalAsset(toSend, {
+            onProgress: (frac) =>
+              setUploading((u) => (u ? { ...u, frac } : { index: i, frac, done: created.length })),
+          });
           // A file's own override wins; otherwise the shared batch values.
           // Name: override, else the single-file name field, else the filename.
           // Kind: override, else the select for a single file, else auto-detected.
@@ -746,21 +761,19 @@ export function NewAssetModal({
             kind: fileKind,
             source: fileSource,
             project_id: projectId,
-            url: result.publicUrl,
-            thumb_url: isBrowserImage(original) ? result.publicUrl : null,
             shot_on: fileShotOn || null,
             tags: fileTags,
-            file_path: result.path,
-            mime_type: toSend.type || null,
-            size_bytes: toSend.size,
+            ...canonicalAssetFields(fileRow),
             original_name: original.name,
           });
           created.push(res.asset);
         } catch (e) {
           // One failed file must not sink the whole batch — surface it, keep going.
+          // An unsupported format reports the specific reason and what to do,
+          // in the reader's language, rather than a raw storage message.
           failed += 1;
           console.error('[marketing] material upload failed', original.name, e);
-          addToast(`${original.name}: ${e instanceof Error ? e.message : String(e)}`, 'error');
+          addToast(assetErrorText(e, isAr), 'error');
         }
       }
       // Link + close only if at least one succeeded; otherwise keep the modal

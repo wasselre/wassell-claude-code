@@ -26,7 +26,8 @@
  * shoot silently is worse than no queue at all — the photographer would
  * drive home believing the office has the photos.
  */
-import { uploadToStorage, storagePath } from './upload';
+import type { FileRow } from '@/types/files';
+import { uploadCanonicalAsset } from './canonicalUpload';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -79,8 +80,8 @@ export interface DrainHandlers {
     fileName: string;
     mimeType: string;
     size: number;
-    storagePath: string;
-    publicUrl: string;
+    /** The canonical `files` row the capture now lives in — the asset references it. */
+    fileRow: FileRow;
     note?: string;
   }) => Promise<void>;
 }
@@ -346,20 +347,18 @@ async function drainCapture(
     await putRow(STORE_CAPTURES, { ...bumped, status: 'uploading' });
     notify();
     const file = new File([capture.blob], capture.fileName, { type: capture.mimeType });
-    const path = storagePath(capture.id, capture.fileName);
-    const { publicUrl } = await uploadToStorage(file, path, () => {
-      // Progress fractions could stream to subscribers here; the status flip
-      // to 'uploading' already drives the chip, and per-chunk notifications
-      // would re-read both stores on every XHR progress event.
-    });
+    // Canonical intake — one object in the private bucket, one files row. The
+    // drain deliberately passes no onProgress: the status flip to 'uploading'
+    // already drives the chip, and per-chunk notifications would re-read both
+    // IndexedDB stores on every progress event.
+    const fileRow = await uploadCanonicalAsset(file);
     await handlers.registerAsset({
       assetId: capture.id,
       shootRequestId: capture.shootRequestId,
       fileName: capture.fileName,
       mimeType: capture.mimeType,
       size: capture.size,
-      storagePath: path,
-      publicUrl,
+      fileRow,
       note: capture.note,
     });
     await deleteRow(STORE_CAPTURES, capture.id);

@@ -131,9 +131,47 @@ nothing. Use this to test a cloud environment's variable before relying on it.
 |---|---|
 | All app source, migrations, PRDs, `CLAUDE.md` | normal git contents |
 | `.env`, `.env.local`, `.deploy-secrets.local`, `~/.fly/config.yml` | via the encrypted bundle |
-| `~/.kimi.env.local` (`KIMI_API_KEY`) | via the bundle; `kimi-code.sh` falls back to `$HOME` |
+| `~/.kimi.env.local` (`KIMI_API_KEY`) | via the bundle; `kimi-code.sh` falls back to `$HOME`. Works in the cloud only since the 2026-08-09 env-strip fix — see below |
 | `Wassel Branding/` (16 PNGs, 11 MB) | un-gitignored; deck skills need it |
 | Deck + research skills, `wassel-builder` agent, `/wassel` command | mirrored from `~/.claude` into `.claude/` |
+
+### Kimi in a cloud session (fixed 2026-08-09)
+
+`scripts/kimi-code.sh` works in a cloud container, but only because it now
+clears the inherited provider environment before launching the coder.
+
+A cloud session's harness **pins the model provider itself**: it exports
+`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1`, passes auth over
+`CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, and sets ~80 other
+`CLAUDE_*` / `ANTHROPIC_*` variables. A subprocess INHERITS all of it, and it
+outranks the Kimi credentials — so the child `claude -p` died on
+`Authentication error` even though the key was fine (a direct `curl` to
+`api.moonshot.ai` returned 200). `CLAUDE_CONFIG_DIR` does not save you: it
+isolates the on-disk config, not the environment.
+
+Measured while fixing it — none of the obvious narrow fixes work:
+
+| Attempt | Result |
+|---|---|
+| Swap `ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY` | fails |
+| Unset `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` only | fails |
+| Unset `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` only | fails |
+| Unset both (± `CLAUDE_CODE_USE_CCR_V2`) | fails |
+| **Strip the whole inherited `CLAUDE*`/`ANTHROPIC*` surface** | **works** |
+
+So the script builds an `env -u` list over every inherited `CLAUDE*`/`ANTHROPIC*`
+name and re-sets only the four Kimi variables. On a laptop the loop finds
+nothing and costs nothing. It also redirects stdin from `/dev/null`, because a
+headless run otherwise waits ~3 s for piped input that never arrives.
+
+Two things to expect when driving it from a session:
+
+- **`claude -p` buffers its entire answer until it exits** — a background run
+  shows 0 bytes of output until it finishes. That is normal, not a hang; check
+  the process, not the file.
+- **A multi-file review can exceed 10 minutes.** The Bash tool caps a
+  foreground call at 600 s, so run longer Kimi jobs in the background and give
+  the `timeout` wrapper real headroom.
 
 ### CLIs a sandbox does not have
 

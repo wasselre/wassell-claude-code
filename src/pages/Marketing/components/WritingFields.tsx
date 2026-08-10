@@ -34,6 +34,7 @@ import { useAppStore } from '@/stores/appStore';
 import { updateContent, fetchContentList, type MosContentRow } from '@/lib/marketingOS/client';
 import { Modal } from './kit';
 import { num } from '../lib/format';
+import { useAssetUrls } from '../lib/assetUrls';
 import { useMosText } from '../lib/useMosText';
 
 interface FieldDef {
@@ -70,7 +71,12 @@ const asList = (v: unknown): string[] =>
 
 /** A content-library row as the picker consumes it — content_list decorates the
  *  base row with a preview thumbnail (its final cut's image) + that asset's kind. */
-type PickerRow = MosContentRow & { thumb_url?: string | null; preview_kind?: string | null };
+type PickerRow = MosContentRow & {
+  thumb_url?: string | null;
+  /** Set when the preview asset's bytes are a private `files` row — signed client-side. */
+  preview_file_id?: string | null;
+  preview_kind?: string | null;
+};
 
 /** Fallback tint for a content item's thumbnail box, keyed by content type. */
 const TYPE_BG: Record<string, string> = {
@@ -135,7 +141,11 @@ function NewHeadlineRow({
  */
 /** The thumbnail box for one library row — the item's preview image, or a
  *  type-tinted placeholder when the piece has no linked cut yet. */
-function RefThumb({ row, isAr, size = 46 }: { row: PickerRow; isAr: boolean; size?: number }) {
+function RefThumb({ row, isAr, size = 46, thumbUrl }: {
+  row: PickerRow; isAr: boolean; size?: number;
+  /** Resolved by the picker in ONE batch — never resolved per row. */
+  thumbUrl?: string | null;
+}) {
   const bg = TYPE_BG[row.content_type_key] ?? 'var(--sand)';
   return (
     <span
@@ -145,8 +155,8 @@ function RefThumb({ row, isAr, size = 46 }: { row: PickerRow; isAr: boolean; siz
         color: '#fff', fontSize: 10, fontWeight: 700, textAlign: 'center', lineHeight: 1.2,
       }}
     >
-      {row.thumb_url
-        ? <img src={row.thumb_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      {(thumbUrl ?? row.thumb_url)
+        ? <img src={(thumbUrl ?? row.thumb_url) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         : (isAr ? row.content_type_label_ar : row.content_type_label_en)}
     </span>
   );
@@ -171,6 +181,17 @@ function ReferencePicker({
 
   const selected = contentList.find((c) => c.id === value) ?? null;
   const label = (c: PickerRow): string => `${c.ref ? `${c.ref} — ` : ''}${c.title}`;
+  // One batched resolve for the whole list; legacy rows keep their stored thumb.
+  const { thumbFor: rowThumb } = useAssetUrls(
+    contentList.map((c) => ({
+      file_id: c.preview_file_id ?? null, url: null,
+      thumb_url: c.thumb_url ?? null, kind: 'photo' as const,
+    })),
+  );
+  const thumbOf = (c: PickerRow): string | null => rowThumb({
+    file_id: c.preview_file_id ?? null, url: null,
+    thumb_url: c.thumb_url ?? null, kind: 'photo',
+  });
   // Selected item → its label; legacy non-id text → itself; nothing → empty.
   const display = selected ? label(selected) : value;
 
@@ -202,7 +223,7 @@ function ReferencePicker({
           }}
           onClick={() => setOpen(true)}
         >
-          {selected && <RefThumb row={selected} isAr={isAr} size={22} />}
+          {selected && <RefThumb row={selected} isAr={isAr} size={22} thumbUrl={thumbOf(selected)} />}
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {display || (isAr ? 'اختر من مكتبة المحتوى…' : 'Pick from the content library…')}
           </span>
@@ -286,7 +307,7 @@ function ReferencePicker({
                   style={{ ...rowCentered, gap: 10, width: '100%', cursor: 'pointer', textAlign: isAr ? 'right' : 'left' }}
                   onClick={() => { onChange(c.id); setOpen(false); }}
                 >
-                  <RefThumb row={c} isAr={isAr} />
+                  <RefThumb row={c} isAr={isAr} thumbUrl={thumbOf(c)} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="tx" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {c.title}
