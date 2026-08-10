@@ -101,8 +101,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     if (!contactsModel || !phone) return null;
     return matchRecordByPhone(phone, records[contactsModel.id] ?? [], phoneFieldSlugs(contactsModel));
   }, [models, records, phone]);
-  // Saved contact name wins over the WhatsApp push name — see resolveChatDisplayName.
-  const name = resolveChatDisplayName(data, matchedContact);
+  // Our own name for this number (client, else contact) wins over the WhatsApp
+  // push name — see resolveChatDisplayName.
+  const name = resolveChatDisplayName(data, matchedContact, linkedClient);
 
   // Client-options popup (options list + embedded Project Finder).
   const [showClientOptions, setShowClientOptions] = useState(false);
@@ -291,10 +292,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
                   title={isAr ? 'فتح ملف العميل في تبويب جديد' : 'Open client record in a new tab'}
                 >
                   <User size={12} />
-                  <span className="truncate max-w-[220px]">
-                    {isAr ? 'عميل مرتبط: ' : 'Linked client: '}
-                    {linkedClientName ?? (isAr ? 'عرض البطاقة' : 'open record')}
-                  </span>
+                  {/* The client's name is already the conversation title, so this
+                      link only marks WHAT the number is and opens the record. */}
+                  {isAr ? 'عميل مرتبط' : 'Linked client'}
                 </a>
                 <button
                   onClick={() => setShowClientOptions(true)}

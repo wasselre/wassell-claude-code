@@ -366,7 +366,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
                   ? ((advertiser.data as Record<string, unknown>).name as string | null) ?? null
                   : null
               }
-              displayName={resolveChatDisplayName(record.data as Record<string, unknown>, contactOf(record))}
+              displayName={resolveChatDisplayName(record.data as Record<string, unknown>, contactOf(record), client)}
               isContact={contactOf(record) !== null}
               prefChips={
                 client
