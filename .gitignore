@@ -123,3 +123,7 @@ docs/marketing-reference/tools/node_modules/
 docs/marketing-reference/tools/render-page.html
 .mos-branch.local
 .mos-branch.env
+
+# apply-runner evidence (before/after snapshots, never committed)
+.apply-evidence/
+.apply-evidence
