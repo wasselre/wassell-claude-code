@@ -396,6 +396,41 @@ fi
 echo ">>> Step 7: end-state verification -> $OUTDIR/verify.txt"
 VERIFY_FILE="$OUTDIR/verify.txt"
 : > "$VERIFY_FILE"
+VERIFY_ERROR_FILE="$OUTDIR/verify-error.txt"
+
+# A verification-query failure is NOT a rollback and must never be
+# reported as one: this step only runs after the apply psql exited 0, so
+# the migration is KNOWN to have committed. If a verification psql call
+# fails (connection drop, query error), the runner must not die with a
+# bare exit 1 under set -e — exit 1 is the documented ROLLED BACK (clean)
+# status, so an operator or automation reading the exit code would be
+# actively misled. Every verification psql call below is wrapped in
+# set +e / status capture / set -e (the same posture as the apply and
+# AFTER-snapshot steps); on failure we record the psql error output in
+# $VERIFY_ERROR_FILE, append a CHECK|...|FAIL row (so the Step 8 verdict
+# grep also sees it), and end in an explicit VERIFICATION FAILED
+# (verification query error) verdict with exit 2.
+verification_query_failed() { # description of the query that failed
+  local what="$1"
+  echo "CHECK|verification query error: $what|FAIL|psql exited nonzero; error output in $VERIFY_ERROR_FILE" >> "$VERIFY_FILE"
+  echo "-------------------------------------------------------------------" >&2
+  cat "$VERIFY_FILE" >&2
+  echo "-------------------------------------------------------------------" >&2
+  echo "===================================================================" >&2
+  echo "VERIFICATION FAILED (verification query error) — VERIFY THE END STATE MANUALLY, IMMEDIATELY" >&2
+  echo "The migration COMMITTED (the apply psql exited 0), but $what" >&2
+  echo "failed, so the end state could NOT be verified." >&2
+  echo "This is NOT a rollback — the applied change is live in the database." >&2
+  echo "A human must reconnect and verify the end state against this" >&2
+  echo "runner's checks immediately." >&2
+  echo "psql error output: $VERIFY_ERROR_FILE" >&2
+  echo "Evidence dir: $OUTDIR" >&2
+  echo "  before.txt / after.txt / diff.txt / apply.log / verify.txt / verify-error.txt" >&2
+  echo "Rollback command (only once a human confirms the end state is wrong):" >&2
+  echo "  $ROLLBACK_CMD" >&2
+  echo "===================================================================" >&2
+  exit 2
+}
 
 # Exact expected renderings of the two NEW policy predicates the migration
 # creates, as PostgreSQL 16 renders pg_get_expr(polqual, polrelid) — these
@@ -527,6 +562,29 @@ JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public' AND c.relkind = 'v'
   AND c.relname IN ('market_listings_summary', 'v_market_listings', 'v_market_properties')
 UNION ALL
+-- Owner re-assertion. security_invoker, the view bodies and the ACLs are
+-- all asserted elsewhere in this step, but none of them covers relowner:
+-- a post-COMMIT `ALTER VIEW public.<v> OWNER TO some_role` would be
+-- recorded in after.txt while the diff stays informational after a
+-- successful apply — the run would print APPLIED AND VERIFIED with an
+-- unexpected role owning (and therefore able to redefine) an
+-- authorization-facing view. This pins every target view's owner to
+-- postgres, matching the migration's own preflight; on failure it names
+-- each offending view together with its observed owner.
+SELECT 'CHECK|all three target views are owned by postgres|'
+    || CASE WHEN count(*) = 3
+                 AND bool_and(pg_get_userbyid(c.relowner) = 'postgres')
+            THEN 'PASS' ELSE 'FAIL' END
+    || '|matching_rows=' || count(*)
+    || ' ' || coalesce(string_agg(c.relname || ' owner=' || pg_get_userbyid(c.relowner), ', '
+                                  ORDER BY c.relname)
+                       FILTER (WHERE pg_get_userbyid(c.relowner) <> 'postgres'),
+                       '(no non-postgres owner observed)')
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind = 'v'
+  AND c.relname IN ('market_listings_summary', 'v_market_listings', 'v_market_properties')
+UNION ALL
 -- ACL assertions are built on pg_class.relacl + aclexplode with the SAME
 -- grantability-aware serialization the snapshot uses (privilege_type with
 -- a trailing '*' when is_grantable). information_schema.role_table_grants
@@ -625,7 +683,13 @@ FROM (VALUES ('authenticated'), ('service_role')) AS v(g)
 ORDER BY 1;
 SQL
 
-psql "$PGURL" -v ON_ERROR_STOP=1 -tA -c "$VERIFY_SQL" >> "$VERIFY_FILE"
+set +e
+psql "$PGURL" -v ON_ERROR_STOP=1 -tA -c "$VERIFY_SQL" >> "$VERIFY_FILE" 2>> "$VERIFY_ERROR_FILE"
+verify_rc=$?
+set -e
+if [ "$verify_rc" -ne 0 ]; then
+  verification_query_failed "the Step 7 structural verification query (exit $verify_rc)"
+fi
 
 # 7b. Cross-snapshot checks (bash): md5s that must be UNCHANGED vs BEFORE.
 # PIPEFAIL NOTE: every `grep ... | head/sort` lookup below carries a trailing
@@ -694,14 +758,20 @@ normalize_expr() {
 
 check_policy_predicate() { # policy-name, then the allowlist entries for it
   local pol="$1"; shift
-  local observed observed_norm expected
+  local observed observed_norm expected pred_rc
+  set +e
   observed="$(psql "$PGURL" -v ON_ERROR_STOP=1 -tA -c "
 SELECT pg_get_expr(p.polqual, p.polrelid)
 FROM pg_policy p
 JOIN pg_class c ON c.oid = p.polrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public' AND c.relname = 'market_listings'
-  AND p.polname = '$pol'")"
+  AND p.polname = '$pol'" 2>> "$VERIFY_ERROR_FILE")"
+  pred_rc=$?
+  set -e
+  if [ "$pred_rc" -ne 0 ]; then
+    verification_query_failed "the per-policy predicate query for $pol (exit $pred_rc)"
+  fi
   observed_norm="$(normalize_expr "$observed")"
   for expected in "$@"; do
     if [ "$observed_norm" = "$expected" ]; then
