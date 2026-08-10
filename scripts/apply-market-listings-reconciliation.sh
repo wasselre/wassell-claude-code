@@ -175,14 +175,27 @@ WHERE n.nspname = 'public'
        AND pg_get_function_identity_arguments(p.oid) = 'uuid, uuid, uuid, uuid, jsonb')
   )
 UNION ALL
-SELECT 'ACL|' || table_name || '|' || grantee || '|'
-    || string_agg(privilege_type, ',' ORDER BY privilege_type)
-FROM information_schema.role_table_grants
-WHERE table_schema = 'public'
-  AND grantee IN ('anon', 'authenticated', 'service_role')
-  AND table_name IN ('market_listings_summary', 'v_market_listings',
-                     'v_market_properties', 'market_listings')
-GROUP BY table_name, grantee
+-- PUBLIC is deliberately included here (grantee oid 0): the migration
+-- REVOKEs privileges from PUBLIC on the views, and the outcome
+-- classifier's byte-comparison of before.txt vs after.txt must cover
+-- EVERY class of state the migration mutates. information_schema
+-- .role_table_grants never reports PUBLIC, so a stray PUBLIC grant (or
+-- a concurrent re-grant) would be invisible to the comparison and could
+-- misclassify the outcome. When relacl IS NULL, aclexplode yields no
+-- rows — which correctly means no explicit grants.
+SELECT 'ACL|' || c.relname || '|'
+    || CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
+    || '|' || string_agg(a.privilege_type, ',' ORDER BY a.privilege_type)
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+WHERE n.nspname = 'public'
+  AND c.relname IN ('market_listings_summary', 'v_market_listings',
+                    'v_market_properties', 'market_listings')
+  AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
+      IN ('PUBLIC', 'anon', 'authenticated', 'service_role')
+GROUP BY c.relname,
+    CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
 ORDER BY 1;
 SQL
 
@@ -397,9 +410,16 @@ SQL
 psql "$PGURL" -v ON_ERROR_STOP=1 -tA -c "$VERIFY_SQL" >> "$VERIFY_FILE"
 
 # 7b. Cross-snapshot checks (bash): md5s that must be UNCHANGED vs BEFORE.
+# PIPEFAIL NOTE: every `grep ... | head/sort` lookup below carries a trailing
+# `|| true`. Under `set -o pipefail`, a grep with NO match makes the whole
+# pipeline exit 1 — and inside a `var="$(pipeline)"` command substitution that
+# aborts the entire script under `set -e`. An ABSENT snapshot line (e.g. a
+# frozen policy deleted from after.txt) must yield an EMPTY STRING so the
+# comparison below can emit the policy-specific FAIL line and reach the
+# VERIFICATION FAILED exit-2 verdict — not kill the runner silently.
 last_field() { awk -F'|' '{print $NF}'; }
 snapshot_md5() { # file, line-prefix
-  grep -F "$2" "$1" | head -n 1 | last_field
+  grep -F "$2" "$1" | head -n 1 | last_field || true
 }
 
 for view in market_listings_summary v_market_listings v_market_properties; do
@@ -418,7 +438,9 @@ done
 # expression-level comparison. (frozen_insert's polqual is NULL — its real
 # expression lives in polwithcheck, which the snapshot now hashes too.)
 frozen_policy_lines() { # file — the POLICY| lines for the four frozen_* policies, sorted
-  grep -E '^POLICY\|frozen_(view|insert|update|delete)\|' "$1" | sort
+  # `|| true`: see the pipefail note above — a file with no matching policy
+  # lines must yield an empty result, not abort the script.
+  grep -E '^POLICY\|frozen_(view|insert|update|delete)\|' "$1" | sort || true
 }
 frozen_before="$(frozen_policy_lines "$OUTDIR/before.txt")"
 frozen_after="$(frozen_policy_lines "$OUTDIR/after.txt")"
@@ -427,8 +449,12 @@ if [ -n "$frozen_before" ] && [ "$frozen_before" = "$frozen_after" ]; then
 else
   echo "CHECK|frozen_* policies (all four, qual + with-check) unchanged|FAIL|before/after policy sets differ" >> "$VERIFY_FILE"
   for pol in frozen_view frozen_insert frozen_update frozen_delete; do
-    b="$(grep -F "POLICY|$pol|" "$OUTDIR/before.txt" | head -n 1)"
-    a="$(grep -F "POLICY|$pol|" "$OUTDIR/after.txt" | head -n 1)"
+    # `|| true`: see the pipefail note above — a policy ABSENT from either
+    # snapshot must come back as an empty string so the comparison below
+    # emits 'CHECK|frozen policy differs: <name>|FAIL|before=[...] after=[]'
+    # and the run still ends in VERIFICATION FAILED (exit 2).
+    b="$(grep -F "POLICY|$pol|" "$OUTDIR/before.txt" | head -n 1 || true)"
+    a="$(grep -F "POLICY|$pol|" "$OUTDIR/after.txt" | head -n 1 || true)"
     if [ "$b" != "$a" ]; then
       echo "CHECK|frozen policy differs: $pol|FAIL|before=[$b] after=[$a]" >> "$VERIFY_FILE"
     fi
