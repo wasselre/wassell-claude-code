@@ -27,7 +27,14 @@
 #   reconnects, captures the AFTER snapshot + diff, and classifies:
 #       APPLIED AND VERIFIED        exit 0  (psql 0, all checks pass)
 #       VERIFICATION FAILED         exit 2  (psql 0, a check failed)
-#       ROLLED BACK (clean)         exit 1  (psql nonzero, after == before)
+#       ROLLED BACK (clean)         exit 1  (psql nonzero, after == before,
+#                                            and BEFORE was NOT already at the
+#                                            migration's target state)
+#       INDETERMINATE (converged)   exit 2  (psql nonzero, after == before,
+#                                            but BEFORE already matched the
+#                                            target state — a clean rollback
+#                                            and a commit that changed nothing
+#                                            observable are indistinguishable)
 #       INDETERMINATE               exit 2  (psql nonzero, after != before)
 #       INDETERMINATE (unreachable) exit 2  (AFTER snapshot uncapturable)
 #
@@ -159,6 +166,12 @@ JOIN pg_class c ON c.oid = p.polrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public' AND c.relname = 'market_listings'
 UNION ALL
+-- Match by OID via to_regprocedure, NOT by comparing
+-- pg_get_function_identity_arguments against a types-only string: that
+-- function returns parameter NAMES too ('auth_user_id uuid, the_model_id
+-- uuid'), so a types-only comparison silently matches nothing and the
+-- FUNCTION evidence lines disappear with no error (they were absent from
+-- every snapshot produced before this fix).
 SELECT 'FUNCTION|' || p.proname || '|' || pg_get_userbyid(p.proowner)
     || '|secdef=' || p.prosecdef::text
     || '|volatile=' || p.provolatile::text
@@ -169,10 +182,10 @@ JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public'
   AND (
     (p.proname = 'wassell_view_scope_class'
-       AND pg_get_function_identity_arguments(p.oid) = 'uuid, uuid')
+       AND p.oid = to_regprocedure('public.wassell_view_scope_class(uuid,uuid)'))
     OR
     (p.proname = 'wassell_can_view_jsonb'
-       AND pg_get_function_identity_arguments(p.oid) = 'uuid, uuid, uuid, uuid, jsonb')
+       AND p.oid = to_regprocedure('public.wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb)'))
   )
 UNION ALL
 -- PUBLIC is deliberately included here (grantee oid 0): the migration
@@ -289,16 +302,63 @@ echo "-------------------------------------------------------------------"
 cat "$OUTDIR/diff.txt"
 echo "-------------------------------------------------------------------"
 
+# --- Was the BEFORE snapshot already at the migration's TARGET state? -----
+# The migration is deliberately convergent, so a retry after an earlier
+# ambiguous apply can START with before.txt already equal to the end state.
+# In that case a nonzero psql exit with after == before is AMBIGUOUS: it
+# fits a clean rollback AND a commit that changed nothing observable (e.g.
+# the connection dropped after PostgreSQL executed COMMIT but before psql
+# received the acknowledgement). Identical snapshots prove only that the
+# observable state is unchanged — NOT that a rollback occurred. Convergence
+# is judged from the BEFORE snapshot alone: both new policies already
+# present AND all three views already carrying security_invoker=true.
+before_converged=1
+for pol in market_listings_view_fast market_listings_view_deny_none; do
+  # `|| true`: an absent line must just mark not-converged, never abort the
+  # script under set -e/pipefail (see the pipefail note in Step 7b).
+  if [ -z "$(grep -F "POLICY|$pol|" "$OUTDIR/before.txt" | head -n 1 || true)" ]; then
+    before_converged=0
+  fi
+done
+for view in market_listings_summary v_market_listings v_market_properties; do
+  view_line="$(grep -F "VIEW|$view|" "$OUTDIR/before.txt" | head -n 1 || true)"
+  case "$view_line" in
+    *security_invoker=true*) : ;;
+    *) before_converged=0 ;;
+  esac
+done
+
 # --- Nonzero-psql classification (skip the end-state verification: it checks
 # --- the APPLIED end state, which is only meaningful when psql exited 0) ---
 if [ "$apply_rc" -ne 0 ]; then
   if cmp -s "$OUTDIR/before.txt" "$OUTDIR/after.txt"; then
+    if [ "$before_converged" -eq 1 ]; then
+      echo "===================================================================" >&2
+      echo "INDETERMINATE (converged retry) — REVIEW BY A HUMAN IMMEDIATELY" >&2
+      echo "psql exited $apply_rc, and after.txt is byte-identical to" >&2
+      echo "before.txt — but the BEFORE snapshot was ALREADY at the" >&2
+      echo "migration's target state (both market_listings_view_fast and" >&2
+      echo "market_listings_view_deny_none present, and all three views" >&2
+      echo "already security_invoker=true). With a converged starting" >&2
+      echo "state, identical snapshots CANNOT distinguish a clean rollback" >&2
+      echo "from a COMMIT that changed nothing observable (e.g. the" >&2
+      echo "connection dropped after PostgreSQL executed COMMIT but before" >&2
+      echo "psql received the acknowledgement). A human must establish the" >&2
+      echo "outcome from $OUTDIR/apply.log and the live database." >&2
+      echo "Evidence dir: $OUTDIR" >&2
+      echo "Rollback command (only once a human confirms changes persisted):" >&2
+      echo "  $ROLLBACK_CMD" >&2
+      echo "===================================================================" >&2
+      exit 2
+    fi
     echo "==================================================================="
     echo "ROLLED BACK (clean)"
     echo "psql exited $apply_rc, and after.txt is byte-identical to"
     echo "before.txt: the migration is transactional and self-aborting"
     echo "(ON_ERROR_STOP aborts on the first failing statement), so no"
-    echo "change persisted."
+    echo "change persisted. (The BEFORE snapshot was NOT already at the"
+    echo "target state, so an unchanged snapshot here really does mean"
+    echo "nothing committed.)"
     echo "Evidence dir: $OUTDIR"
     echo "  before.txt / after.txt / diff.txt / apply.log"
     echo "Rollback command (not needed — nothing persisted):"
@@ -324,7 +384,10 @@ fi
 
 # --- Step 7: END-STATE VERIFICATION ------------------------------------------
 # (Only reached when psql exited 0 — nonzero exits are classified above.)
-# Verifies the APPLIED end state: structural SQL checks, view-body md5s, and
+# Verifies the APPLIED end state: structural SQL checks, the RLS flag on the
+# base table, BOTH pinned authorization functions (owner / secdef /
+# volatility / search_path / full-definition md5), the two NEW policy
+# predicates by EXACT normalized-expression comparison, view-body md5s, and
 # ALL FOUR frozen_* policies (frozen_view, frozen_insert, frozen_update,
 # frozen_delete) compared byte-identical between before.txt and after.txt on
 # BOTH the USING qual AND the WITH CHECK expression (frozen_insert is a
@@ -333,6 +396,26 @@ fi
 echo ">>> Step 7: end-state verification -> $OUTDIR/verify.txt"
 VERIFY_FILE="$OUTDIR/verify.txt"
 : > "$VERIFY_FILE"
+
+# Exact expected renderings of the two NEW policy predicates the migration
+# creates, as PostgreSQL 16 renders pg_get_expr(polqual, polrelid) — these
+# strings were measured directly from a real PostgreSQL 16 database
+# (whitespace runs collapsed to single spaces), NOT assumed. Comparison
+# normalizes BOTH sides: all runs of whitespace collapsed to a single space,
+# then trimmed. Each policy has an ARRAY of accepted renderings because a
+# different PostgreSQL major version may pretty-print the same predicate
+# differently — in which case this runner fails closed, and the unmatched
+# rendering must be reviewed BY A HUMAN and added here only if genuinely
+# equivalent, NEVER assumed safe. (Substring/token tests are not sufficient:
+# `USING (true OR wassell_view_scope_class(...) = 'all')` contains every
+# required token, omits wassell_can_view_jsonb, and passes a token check
+# while exposing every row.)
+EXPECTED_QUAL_FAST=(
+  "(( SELECT wassell_view_scope_class(( SELECT auth.uid() AS uid), '8f06bc39-4bee-42e9-9fab-77023fb89ede'::uuid) AS wassell_view_scope_class) = 'all'::text)"
+)
+EXPECTED_QUAL_DENY_NONE=(
+  "(( SELECT wassell_view_scope_class(( SELECT auth.uid() AS uid), '8f06bc39-4bee-42e9-9fab-77023fb89ede'::uuid) AS wassell_view_scope_class) <> 'none'::text)"
+)
 
 # 7a. Structural checks in SQL — each row is CHECK|name|PASS|detail or FAIL.
 read -r -d '' VERIFY_SQL <<'SQL' || true
@@ -362,53 +445,68 @@ FROM (
     AND p.polname = 'market_listings_view_deny_none'
 ) s
 UNION ALL
--- Predicate-level assertions on the two NEW policies. The shape checks
--- above verify only cmd/permissive/roles; a post-COMMIT swap that keeps
--- the name and shape but changes the predicate (e.g. USING (true)) would
--- still pass them. The before snapshot has no baseline line for these
--- policies (the migration creates them), so the diff cannot cover it
--- either — with psql exit 0 the diff is informational only. These checks
--- mirror the migration's own postcondition (sections 4.1 / 4.2b) and put
--- the observed predicate in the detail so a failure is self-explanatory.
--- ('|' in the detail is replaced so the CHECK-row field parsing survives
--- a concatenation operator in the expression.)
-SELECT 'CHECK|policy market_listings_view_fast predicate is the scope-class fast branch|'
+-- RLS re-assertion. With psql exit 0 the diff is informational only, so a
+-- post-COMMIT `ALTER TABLE public.market_listings DISABLE ROW LEVEL
+-- SECURITY` would be recorded in after.txt but never enforced here — every
+-- policy would still be in place while authenticated callers bypass all of
+-- them. This check makes a disabled-RLS end state fail the run.
+SELECT 'CHECK|table market_listings has row level security ENABLED|'
+    || CASE WHEN count(*) = 1 AND bool_and(c.relrowsecurity) THEN 'PASS' ELSE 'FAIL' END
+    || '|matching_rows=' || count(*)
+    || ' relrowsecurity=' || coalesce(bool_and(c.relrowsecurity)::text, '(table missing)')
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relname = 'market_listings'
+UNION ALL
+-- Pinned authorization functions. The FUNCTION snapshot lines feed only the
+-- informational diff, so a post-COMMIT redefinition of either function
+-- (e.g. wassell_view_scope_class redefined to return 'all' for everyone,
+-- which makes the fast-branch policy pass for every authenticated user)
+-- would otherwise go unenforced — the policy-expression checks only see
+-- the function CALL, not its body. These checks pin owner, SECURITY
+-- DEFINER, volatility, search_path config, and the md5 of the full
+-- function definition against the exact pins the migration uses; the
+-- observed md5 is in the detail so a failure is self-explanatory.
+-- The functions are matched by OID via to_regprocedure, NOT by comparing
+-- pg_get_function_identity_arguments against a types-only string: that
+-- function returns parameter NAMES too ('auth_user_id uuid, the_model_id
+-- uuid'), so a types-only comparison silently matched nothing and these
+-- checks always reported matching_rows=0 / '(function missing)' — a
+-- guaranteed FAIL that would block every legitimate apply.
+SELECT 'CHECK|function wassell_view_scope_class(uuid,uuid) matches the pinned definition|'
     || CASE WHEN count(*) = 1 AND bool_and(ok) THEN 'PASS' ELSE 'FAIL' END
-    || '|qual=' || coalesce(string_agg(qual, ' '), '(policy missing)')
+    || '|matching_rows=' || count(*)
+    || ' observed_md5=' || coalesce(string_agg(observed_md5, ','), '(function missing)')
 FROM (
-  SELECT (e.qual LIKE '%wassell_view_scope_class%'
-          AND position('8f06bc39-4bee-42e9-9fab-77023fb89ede' IN e.qual) > 0
-          AND e.qual LIKE '%''all''%'
-          AND e.qual !~* 'wassell_can_view_jsonb') AS ok,
-         e.qual
-  FROM (
-    SELECT replace(pg_get_expr(p.polqual, p.polrelid), '|', '/') AS qual
-    FROM pg_policy p
-    JOIN pg_class c ON c.oid = p.polrelid
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'public' AND c.relname = 'market_listings'
-      AND p.polname = 'market_listings_view_fast'
-  ) e
+  SELECT (pg_get_userbyid(p.proowner) = 'postgres'
+          AND p.prosecdef
+          AND p.provolatile = 's'
+          AND array_to_string(p.proconfig, ',') = 'search_path=public, pg_temp'
+          AND md5(pg_get_functiondef(p.oid)) = '0bcfabe9df9da91ea4d874104fec65d6') AS ok,
+         md5(pg_get_functiondef(p.oid)) AS observed_md5
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname = 'wassell_view_scope_class'
+    AND p.oid = to_regprocedure('public.wassell_view_scope_class(uuid,uuid)')
 ) s
 UNION ALL
-SELECT 'CHECK|policy market_listings_view_deny_none predicate is the scope-class <> ''none'' guard|'
+SELECT 'CHECK|function wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb) matches the pinned definition|'
     || CASE WHEN count(*) = 1 AND bool_and(ok) THEN 'PASS' ELSE 'FAIL' END
-    || '|qual=' || coalesce(string_agg(qual, ' '), '(policy missing)')
+    || '|matching_rows=' || count(*)
+    || ' observed_md5=' || coalesce(string_agg(observed_md5, ','), '(function missing)')
 FROM (
-  SELECT (e.qual LIKE '%wassell_view_scope_class%'
-          AND position('8f06bc39-4bee-42e9-9fab-77023fb89ede' IN e.qual) > 0
-          AND e.qual LIKE '%<>%'
-          AND e.qual LIKE '%''none''%'
-          AND e.qual !~* 'wassell_can_view_jsonb') AS ok,
-         e.qual
-  FROM (
-    SELECT replace(pg_get_expr(p.polqual, p.polrelid), '|', '/') AS qual
-    FROM pg_policy p
-    JOIN pg_class c ON c.oid = p.polrelid
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'public' AND c.relname = 'market_listings'
-      AND p.polname = 'market_listings_view_deny_none'
-  ) e
+  SELECT (pg_get_userbyid(p.proowner) = 'postgres'
+          AND p.prosecdef
+          AND p.provolatile = 's'
+          AND array_to_string(p.proconfig, ',') = 'search_path=public, pg_temp'
+          AND md5(pg_get_functiondef(p.oid)) = 'c9a781616085d3b06eec12d68238b502') AS ok,
+         md5(pg_get_functiondef(p.oid)) AS observed_md5
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname = 'wassell_can_view_jsonb'
+    AND p.oid = to_regprocedure('public.wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb)')
 ) s
 UNION ALL
 SELECT 'CHECK|all four frozen_* policies present|'
@@ -580,6 +678,50 @@ else
     fi
   done
 fi
+
+# 7c. NEW-policy predicate assertions — EXACT normalized-expression
+# comparison against the allowlists declared at the top of Step 7.
+# Substring/token tests are NOT sufficient: `USING (true OR
+# wassell_view_scope_class(...) = 'all')` contains every token such a check
+# looks for, omits wassell_can_view_jsonb, and passes while exposing every
+# row (the deny policy has the same weakness with `true OR ... <> 'none'`).
+# The observed pg_get_expr rendering is normalized (whitespace runs
+# collapsed to one space, trimmed) and must equal one of the allowlisted
+# strings byte-for-byte.
+normalize_expr() {
+  printf '%s' "$1" | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//'
+}
+
+check_policy_predicate() { # policy-name, then the allowlist entries for it
+  local pol="$1"; shift
+  local observed observed_norm expected
+  observed="$(psql "$PGURL" -v ON_ERROR_STOP=1 -tA -c "
+SELECT pg_get_expr(p.polqual, p.polrelid)
+FROM pg_policy p
+JOIN pg_class c ON c.oid = p.polrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relname = 'market_listings'
+  AND p.polname = '$pol'")"
+  observed_norm="$(normalize_expr "$observed")"
+  for expected in "$@"; do
+    if [ "$observed_norm" = "$expected" ]; then
+      echo "CHECK|policy $pol predicate exactly matches an allowed rendering|PASS|qual=$observed_norm" >> "$VERIFY_FILE"
+      return 0
+    fi
+  done
+  {
+    echo "CHECK|policy $pol predicate exactly matches an allowed rendering|FAIL|observed normalized qual=[$observed_norm]"
+    echo "CHECK-DETAIL|$pol: the observed predicate is NOT one of the exact allowed"
+    echo "  renderings. A rendering difference (e.g. another PostgreSQL major version"
+    echo "  pretty-prints the same predicate differently) must be reviewed BY A HUMAN"
+    echo "  and, only if genuinely equivalent, added to the allowlist in this script."
+    echo "  NEVER assume an unmatched predicate is safe — a broadened predicate such"
+    echo "  as (true OR wassell_view_scope_class(...) = 'all') exposes every row."
+  } >> "$VERIFY_FILE"
+}
+
+check_policy_predicate market_listings_view_fast "${EXPECTED_QUAL_FAST[@]}"
+check_policy_predicate market_listings_view_deny_none "${EXPECTED_QUAL_DENY_NONE[@]}"
 
 echo "-------------------------------------------------------------------"
 cat "$VERIFY_FILE"
