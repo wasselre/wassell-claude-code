@@ -156,6 +156,19 @@ COMMIT;
 --   summary view, 1,000-row page      35.2 ms (invoker=false preserved)
 --   listing-mirror jobs spawned       0
 --
+-- FOLLOW-UP FIX (same day, migration `restore_v_market_listings_security_invoker`)
+--   The recreate above omitted v_market_listings' captured
+--   `security_invoker=true`, so it came back as a DEFINER view. Exposure was
+--   nil in practice — the same transaction correctly revoked anon and
+--   authenticated, leaving only postgres and service_role, both of which
+--   bypass RLS anyway — but it was a drift from the captured state and from
+--   the "reloptions is load-bearing" rule. Restored with ALTER VIEW.
+--
+--   All five hand-written views were then re-verified against the values
+--   captured before the swap; reloptions AND grants match on every one. If you
+--   ever repeat this unwind, diff both properties afterwards rather than
+--   trusting the recreate — that is how this was caught.
+--
 -- STILL OPEN: freeze_model's own type map is unchanged, so the NEXT model
 -- frozen with a multi_image / multi_video field repeats this bug. Fixing that
 -- means teaching freeze_model (and freeze_check_coercion) to map both types to
