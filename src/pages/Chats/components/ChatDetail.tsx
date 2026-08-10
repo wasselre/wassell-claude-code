@@ -14,6 +14,7 @@ import LogInteractionModal from './LogInteractionModal';
 import StudyJobCard from './StudyJobCard';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
+import { resolveChatDisplayName } from '../lib/chatDisplayName';
 
 /** First id from a scalar or array id field. */
 function firstId(v: unknown): string | null {
@@ -42,7 +43,8 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
 
   const data = record?.data as Record<string, unknown> | undefined;
   const chatWid = (data?.wid as string | undefined) ?? null;
-  const name = (data?.name as string | null | undefined) ?? (data?.phone as string | null | undefined) ?? '—';
+  // `name` is resolved AFTER matchedContact below — a saved contact's name wins
+  // over the WhatsApp push name. Declared here only for reading convenience.
   const phone = (data?.phone as string | null | undefined) ?? null;
   const kind = (data?.kind as string | null | undefined) ?? 'user';
   const status = (data?.status as string | null | undefined) ?? 'active';
@@ -99,9 +101,8 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     if (!contactsModel || !phone) return null;
     return matchRecordByPhone(phone, records[contactsModel.id] ?? [], phoneFieldSlugs(contactsModel));
   }, [models, records, phone]);
-  const matchedContactName = matchedContact
-    ? ((matchedContact.data as Record<string, unknown>).name as string | null) ?? null
-    : null;
+  // Saved contact name wins over the WhatsApp push name — see resolveChatDisplayName.
+  const name = resolveChatDisplayName(data, matchedContact);
 
   // Client-options popup (options list + embedded Project Finder).
   const [showClientOptions, setShowClientOptions] = useState(false);
@@ -262,10 +263,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
                 title={isAr ? 'فتح بطاقة جهة الاتصال' : 'Open contact record'}
               >
                 <Contact size={12} />
-                <span className="truncate max-w-[220px]">
-                  {isAr ? 'جهة اتصال: ' : 'Contact: '}
-                  {matchedContactName ?? (isAr ? 'عرض البطاقة' : 'open record')}
-                </span>
+                {/* The contact's name is already the conversation title, so this
+                    pill only marks WHAT the number is and links to the card. */}
+                {isAr ? 'جهة اتصال' : 'Contact'}
               </button>
             )}
             {matchedAdvertiser && (

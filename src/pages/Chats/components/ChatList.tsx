@@ -5,6 +5,7 @@ import { useAppStore } from '@/stores/appStore';
 import StartChatModal from './StartChatModal';
 import { buildClientPrefChips, buildGeoNameMap, isClosedChat, type ClientPrefChip } from '../lib/prefChips';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
+import { resolveChatDisplayName } from '../lib/chatDisplayName';
 import type { AppRecord } from '@/types';
 
 /**
@@ -365,14 +366,8 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
                   ? ((advertiser.data as Record<string, unknown>).name as string | null) ?? null
                   : null
               }
-              contactName={
-                (() => {
-                  const contact = contactOf(record);
-                  return contact
-                    ? ((contact.data as Record<string, unknown>).name as string | null) ?? null
-                    : null;
-                })()
-              }
+              displayName={resolveChatDisplayName(record.data as Record<string, unknown>, contactOf(record))}
+              isContact={contactOf(record) !== null}
               prefChips={
                 client
                   ? buildClientPrefChips(client.data as Record<string, unknown>, clientsModel, geoNames, isAr)
@@ -407,7 +402,8 @@ function ChatRow({
   selected,
   deviceLabel,
   advertiserName,
-  contactName,
+  displayName,
+  isContact,
   prefChips,
   onClick,
 }: {
@@ -416,12 +412,14 @@ function ChatRow({
   selected: boolean;
   deviceLabel: string | null;
   advertiserName: string | null;
-  contactName: string | null;
+  displayName: string;
+  isContact: boolean;
   prefChips: ClientPrefChip[];
   onClick: () => void;
 }) {
   const data = record.data as Record<string, unknown>;
-  const name = (data.name as string | null) ?? (data.phone as string | null) ?? '—';
+  // A saved contact's name is the label — the push name is only the fallback.
+  const name = displayName;
   const phone = (data.phone as string | null) ?? null;
   const preview = (data.last_message_preview as string | null) ?? null;
   const lastAt = (data.last_message_at as string | null) ?? null;
@@ -489,15 +487,13 @@ function ChatRow({
             </span>
           )}
         </div>
-        {(status === 'resolved' || status === 'archived' || deviceLabel || advertiserName || contactName || prefChips.length > 0) && (
+        {(status === 'resolved' || status === 'archived' || deviceLabel || advertiserName || isContact || prefChips.length > 0) && (
           <div className="flex items-center gap-1 mt-1 flex-wrap">
-            {contactName && (
-              <span
-                className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-charcoal/8 text-charcoal/70 truncate max-w-[180px]"
-                title={contactName}
-              >
-                {isAr ? 'جهة اتصال · ' : 'Contact · '}
-                {contactName}
+            {isContact && (
+              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-charcoal/8 text-charcoal/70">
+                {/* The contact's name is the row title now — this only says
+                    what kind of number it is. */}
+                {isAr ? 'جهة اتصال' : 'Contact'}
               </span>
             )}
             {advertiserName && (
