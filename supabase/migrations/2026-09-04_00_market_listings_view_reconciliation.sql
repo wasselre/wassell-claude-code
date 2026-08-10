@@ -7,14 +7,25 @@
 -- PR #13 — plus live production state verified read-only on 2026-08-10. It is
 -- NOT a claim that either historical migration was ever applied to production;
 -- it drives the database to the intended end state from the verified live
--- starting state below. It does NOT claim to succeed cleanly on a fresh replay
--- after 2026-09-03_00/_01/_02: the preflight pins the md5 of frozen_view's
--- predicate AND the md5 of all three view bodies to the objects as they exist
--- in live production today, and on a fresh replay those objects are regenerated
--- by the freeze baseline, so their md5s may legitimately differ. In that case —
--- or after any legitimate regenerate_frozen_model_artifacts() run — the pinned
--- md5s must be re-verified and updated by a human first; this migration fails
--- closed rather than guessing.
+-- starting state below.
+--
+-- REPLAY STRATEGY: this file is a ONE-SHOT reconciliation against the verified
+-- live production state below. It is deliberately NOT replay-safe:
+--   * It FAILS LOUDLY (RAISE EXCEPTION) rather than silently recording a no-op
+--     as "applied" against a database that lacks the objects it pins — a
+--     migration runner must never mark this file applied having created no
+--     policy and hardened no view, because it would then never re-run.
+--   * A FRESH database is served by 2026-09-03_00/_01/_02 instead; this file
+--     must not run there (preflight aborts when public.market_listings is
+--     absent — see §2).
+--   * TRACKED FOLLOW-UP: when Gate A 2026-09-03_02 lands it must itself create
+--     BOTH market_listings_view_fast AND market_listings_view_deny_none and
+--     grant the summary SELECT-only to authenticated, so a fresh replay
+--     converges to the same end state without this file.
+--   * After any legitimate regenerate_frozen_model_artifacts() run the pinned
+--     md5s below may legitimately differ — a human must re-verify the live
+--     objects and update the pins first; this migration fails closed rather
+--     than guessing.
 --
 -- WHY ONE ATOMIC TRANSACTION: the fix has two halves that must land together —
 --   (a) the three views flipped to security_invoker=true with grants tightened,
@@ -61,6 +72,16 @@
 --                                       md5(pg_get_viewdef(oid)) = 3675d4c9bab1019312eae01035ab18ba
 --   view v_market_properties            owner postgres, reloptions={security_invoker=true},
 --                                       md5(pg_get_viewdef(oid)) = 416a3eaac713f2eaf27d46f8867c5d4a
+--   fn wassell_view_scope_class(uuid,uuid)
+--                                       owner postgres, SECURITY DEFINER,
+--                                       stable, search_path=public, pg_temp,
+--                                       md5(pg_get_functiondef(oid)) =
+--                                       0bcfabe9df9da91ea4d874104fec65d6
+--   fn wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb)
+--                                       owner postgres, SECURITY DEFINER,
+--                                       stable, search_path=public, pg_temp,
+--                                       md5(pg_get_functiondef(oid)) =
+--                                       c9a781616085d3b06eec12d68238b502
 --   grants on market_listings_summary   authenticated ALL; service_role ALL;
 --                                       no PUBLIC, no anon
 --   grants on the two full-data views   service_role ALL only;
@@ -73,9 +94,13 @@
 -- against public.models; preflight re-verifies because the fast-path policy
 -- hardcodes it in its predicate).
 --
--- ROLLBACK: docs/market-ingest/reconciliation-rollback.sql — restores the exact
--- starting state above. Read its warning first: it reopens the auto-updatable
--- write-path gap on market_listings_summary.
+-- ROLLBACK: docs/market-ingest/reconciliation-rollback.sql is the DEFAULT
+-- OPERATIONAL rollback — it restores availability WITHOUT reopening the
+-- auto-updatable definer-view write path (authenticated keeps SELECT-only on
+-- the summary). docs/market-ingest/reconciliation-breakglass-restore-exact.sql
+-- restores the EXACT pre-migration state including the known write-path
+-- vulnerability — forensic reconstruction only, requires explicit human
+-- authorization, never an operational rollback.
 -- ============================================================================
 
 BEGIN;
@@ -87,13 +112,13 @@ SET LOCAL statement_timeout = '60s';
 -- 2. Preflight (fail closed). Convergent: asserts the identity/shape of the
 --    objects it touches, NOT the starting value of security_invoker or grants.
 DO $preflight$
-DECLARE v_views int;
+DECLARE v_views int; v_fn regprocedure;
 BEGIN
-  -- Fresh replay may reach this before the freeze baseline creates the table;
-  -- the baseline + 2026-09-03_00/_01 own the end state there, so no-op safely.
+  -- ONE-SHOT guard: fail closed when the target table is absent. A migration
+  -- runner would otherwise record this file as APPLIED having created no
+  -- policy and hardened no view — and it would never re-run.
   IF to_regclass('public.market_listings') IS NULL THEN
-    RAISE NOTICE 'market_listings absent (pre-freeze replay) - reconciliation deferred to the freeze baseline + 2026-09-03_00/_01';
-    RETURN;
+    RAISE EXCEPTION 'PREFLIGHT: public.market_listings is absent — this file is a one-shot production reconciliation and must NOT be recorded as applied against a database that lacks the table. Apply the freeze baseline (and 2026-09-03_00/_01/_02) first.';
   END IF;
 
   -- 2.1 Model identity: the fast-path policy hardcodes this UUID.
@@ -108,13 +133,43 @@ BEGIN
     RAISE EXCEPTION 'PREFLIGHT: market_listings.relrowsecurity is false — RLS must be enabled before the views become security_invoker';
   END IF;
 
-  -- 2.3 Helper functions both paths depend on.
-  IF to_regprocedure('public.wassell_view_scope_class(uuid,uuid)') IS NULL THEN
-    RAISE EXCEPTION 'PREFLIGHT: wassell_view_scope_class(uuid,uuid) missing — the fast-path predicate cannot be built';
+  -- 2.3 Pin BOTH SECURITY DEFINER scope functions. Both new policies delegate
+  --     their ENTIRE allow/deny decision to wassell_view_scope_class, and
+  --     frozen_view's scoped per-row path delegates to wassell_can_view_jsonb.
+  --     Both functions are SECURITY DEFINER, so their bodies ARE the trust
+  --     boundary: an existence-only check would let owner / definer state /
+  --     volatility / search_path / body drift while every other pin still
+  --     passes. All six attributes are asserted per function.
+  v_fn := to_regprocedure('public.wassell_view_scope_class(uuid,uuid)');
+  IF v_fn IS NULL THEN
+    RAISE EXCEPTION 'PREFLIGHT: public.wassell_view_scope_class(uuid,uuid) missing — the fast-path predicate cannot be built';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-                  WHERE n.nspname = 'public' AND p.proname = 'wassell_can_view_jsonb') THEN
-    RAISE EXCEPTION 'PREFLIGHT: no wassell_can_view_jsonb procedure in public — frozen_view''s scoped path depends on it';
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+     WHERE p.oid = v_fn
+       AND pg_get_userbyid(p.proowner) = 'postgres'
+       AND p.prosecdef
+       AND p.provolatile = 's'
+       AND array_to_string(p.proconfig, ',') = 'search_path=public, pg_temp'
+       AND md5(pg_get_functiondef(p.oid)) = '0bcfabe9df9da91ea4d874104fec65d6'
+  ) THEN
+    RAISE EXCEPTION 'PREFLIGHT: public.wassell_view_scope_class(uuid,uuid) does not match the pin (owner=postgres, SECURITY DEFINER, volatility=stable, search_path=public, pg_temp, body md5 0bcfabe9df9da91ea4d874104fec65d6). This is a SECURITY DEFINER function that makes the ENTIRE allow/deny decision for both new policies (market_listings_view_fast + market_listings_view_deny_none) — a drifted body could BROADEN the permissive fast path. A human must re-review the function and re-measure before updating the pin.';
+  END IF;
+
+  v_fn := to_regprocedure('public.wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb)');
+  IF v_fn IS NULL THEN
+    RAISE EXCEPTION 'PREFLIGHT: public.wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb) missing — frozen_view''s scoped path depends on it';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+     WHERE p.oid = v_fn
+       AND pg_get_userbyid(p.proowner) = 'postgres'
+       AND p.prosecdef
+       AND p.provolatile = 's'
+       AND array_to_string(p.proconfig, ',') = 'search_path=public, pg_temp'
+       AND md5(pg_get_functiondef(p.oid)) = 'c9a781616085d3b06eec12d68238b502'
+  ) THEN
+    RAISE EXCEPTION 'PREFLIGHT: public.wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb) does not match the pin (owner=postgres, SECURITY DEFINER, volatility=stable, search_path=public, pg_temp, body md5 c9a781616085d3b06eec12d68238b502). This is a SECURITY DEFINER function whose per-row evaluation, together with wassell_view_scope_class, makes the ENTIRE allow/deny decision for both new policies — a drifted body could BROADEN the permissive fast path. A human must re-review the function and re-measure before updating the pin.';
   END IF;
 
   -- 2.4 frozen_view pinned: permissive SELECT, roles exactly {authenticated},
@@ -168,8 +223,6 @@ END $preflight$;
 --    security_invoker flips, then grants.
 DO $mk$
 BEGIN
-  IF to_regclass('public.market_listings') IS NULL THEN RETURN; END IF;
-
   -- 3a. Authorization fast path on the base table (posture of 2026-09-03_01).
   EXECUTE 'DROP POLICY IF EXISTS market_listings_view_fast ON public.market_listings';
   EXECUTE $ddl$
@@ -222,10 +275,8 @@ END $mk$;
 
 -- 4. Postconditions (fail closed -> whole transaction rolls back on any violation).
 DO $post$
-DECLARE v_expr text; v_public int; v_views int;
+DECLARE v_expr text; v_public int; v_views int; v_acl text;
 BEGIN
-  IF to_regclass('public.market_listings') IS NULL THEN RETURN; END IF;
-
   -- 4.1 + 4.2 Fast-path policy: exact role and predicate, not just the name.
   SELECT pg_get_expr(p.polqual, p.polrelid) INTO v_expr
     FROM pg_policy p
@@ -301,40 +352,103 @@ BEGIN
     RAISE EXCEPTION 'POST: a view body changed (pg_get_viewdef md5 mismatch) — only reloptions were meant to change';
   END IF;
 
-  -- 4.8 anon has no SELECT anywhere.
-  IF has_table_privilege('anon','public.market_listings_summary','SELECT')
-     OR has_table_privilege('anon','public.v_market_listings','SELECT')
-     OR has_table_privilege('anon','public.v_market_properties','SELECT') THEN
-    RAISE EXCEPTION 'POST: anon can still SELECT a target view';
+  -- 4.8 Scope-function pins RE-ASSERTED: proves nothing redefined either
+  --     SECURITY DEFINER function mid-transaction. Same six-attribute pin as
+  --     preflight §2.3 — see its comment for why the bodies are the trust
+  --     boundary.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+     WHERE p.oid = to_regprocedure('public.wassell_view_scope_class(uuid,uuid)')
+       AND pg_get_userbyid(p.proowner) = 'postgres'
+       AND p.prosecdef
+       AND p.provolatile = 's'
+       AND array_to_string(p.proconfig, ',') = 'search_path=public, pg_temp'
+       AND md5(pg_get_functiondef(p.oid)) = '0bcfabe9df9da91ea4d874104fec65d6'
+  ) THEN
+    RAISE EXCEPTION 'POST: public.wassell_view_scope_class(uuid,uuid) no longer matches the pin (owner=postgres, SECURITY DEFINER, volatility=stable, search_path=public, pg_temp, body md5 0bcfabe9df9da91ea4d874104fec65d6) — it was redefined mid-transaction. This is a SECURITY DEFINER function that makes the ENTIRE allow/deny decision for both new policies — a drifted body could BROADEN the permissive fast path. A human must re-review the function and re-measure before updating the pin.';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+     WHERE p.oid = to_regprocedure('public.wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb)')
+       AND pg_get_userbyid(p.proowner) = 'postgres'
+       AND p.prosecdef
+       AND p.provolatile = 's'
+       AND array_to_string(p.proconfig, ',') = 'search_path=public, pg_temp'
+       AND md5(pg_get_functiondef(p.oid)) = 'c9a781616085d3b06eec12d68238b502'
+  ) THEN
+    RAISE EXCEPTION 'POST: public.wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb) no longer matches the pin (owner=postgres, SECURITY DEFINER, volatility=stable, search_path=public, pg_temp, body md5 c9a781616085d3b06eec12d68238b502) — it was redefined mid-transaction. This is a SECURITY DEFINER function whose per-row evaluation, together with wassell_view_scope_class, makes the ENTIRE allow/deny decision for both new policies — a drifted body could BROADEN the permissive fast path. A human must re-review the function and re-measure before updating the pin.';
   END IF;
 
-  -- 4.9 authenticated has no SELECT on the full-data views.
-  IF has_table_privilege('authenticated','public.v_market_listings','SELECT')
-     OR has_table_privilege('authenticated','public.v_market_properties','SELECT') THEN
-    RAISE EXCEPTION 'POST: authenticated can still SELECT a full-data view';
+  -- 4.9 ACL EXACT-SET assertions over information_schema.role_table_grants.
+  --     These cover ALL privilege types — including REFERENCES and TRIGGER,
+  --     which the former per-privilege has_table_privilege checks did not
+  --     test — and supersede those checks:
+  --       * 'anon has no SELECT anywhere'                 -> anon = (none) on all three
+  --       * 'authenticated has no SELECT on full-data'    -> authenticated = (none) on both
+  --       * 'authenticated keeps SELECT on the summary'   -> authenticated = exactly SELECT
+  --       * 'authenticated has no write privilege on the summary' -> same exact-SELECT row.
+  --     The write-privilege check existed because the summary is auto-updatable
+  --     (information_schema.views.is_updatable='YES'): while it was
+  --     security_invoker=false with authenticated holding ALL, the write
+  --     grants were a path into the base table that bypassed the
+  --     frozen_insert/frozen_update/frozen_delete policies. Application writes
+  --     go through record_save / record_delete, never this view.
+  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+    INTO v_acl
+    FROM information_schema.role_table_grants
+   WHERE table_schema='public' AND table_name='market_listings_summary' AND grantee='authenticated';
+  IF v_acl <> 'SELECT' THEN
+    RAISE EXCEPTION 'POST: authenticated privileges on market_listings_summary must be exactly SELECT, found: %', v_acl;
   END IF;
 
-  -- 4.10 authenticated keeps SELECT on the summary (the SPA depends on it).
-  IF NOT has_table_privilege('authenticated','public.market_listings_summary','SELECT') THEN
-    RAISE EXCEPTION 'POST: authenticated lost SELECT on market_listings_summary (SPA would break)';
+  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+    INTO v_acl
+    FROM information_schema.role_table_grants
+   WHERE table_schema='public' AND table_name='v_market_listings' AND grantee='authenticated';
+  IF v_acl <> '(none)' THEN
+    RAISE EXCEPTION 'POST: authenticated privileges on v_market_listings must be exactly (none), found: %', v_acl;
   END IF;
 
-  -- 4.11 authenticated has NO write privilege on the summary.
-  IF has_table_privilege('authenticated','public.market_listings_summary','INSERT')
-     OR has_table_privilege('authenticated','public.market_listings_summary','UPDATE')
-     OR has_table_privilege('authenticated','public.market_listings_summary','DELETE')
-     OR has_table_privilege('authenticated','public.market_listings_summary','TRUNCATE') THEN
-    RAISE EXCEPTION 'POST: authenticated retains a write privilege on market_listings_summary — the auto-updatable write path must stay closed';
+  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+    INTO v_acl
+    FROM information_schema.role_table_grants
+   WHERE table_schema='public' AND table_name='v_market_properties' AND grantee='authenticated';
+  IF v_acl <> '(none)' THEN
+    RAISE EXCEPTION 'POST: authenticated privileges on v_market_properties must be exactly (none), found: %', v_acl;
   END IF;
 
-  -- 4.12 service_role keeps SELECT on all three.
+  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+    INTO v_acl
+    FROM information_schema.role_table_grants
+   WHERE table_schema='public' AND table_name='market_listings_summary' AND grantee='anon';
+  IF v_acl <> '(none)' THEN
+    RAISE EXCEPTION 'POST: anon privileges on market_listings_summary must be exactly (none), found: %', v_acl;
+  END IF;
+
+  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+    INTO v_acl
+    FROM information_schema.role_table_grants
+   WHERE table_schema='public' AND table_name='v_market_listings' AND grantee='anon';
+  IF v_acl <> '(none)' THEN
+    RAISE EXCEPTION 'POST: anon privileges on v_market_listings must be exactly (none), found: %', v_acl;
+  END IF;
+
+  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+    INTO v_acl
+    FROM information_schema.role_table_grants
+   WHERE table_schema='public' AND table_name='v_market_properties' AND grantee='anon';
+  IF v_acl <> '(none)' THEN
+    RAISE EXCEPTION 'POST: anon privileges on v_market_properties must be exactly (none), found: %', v_acl;
+  END IF;
+
+  -- 4.10 service_role keeps SELECT on all three.
   IF NOT (has_table_privilege('service_role','public.market_listings_summary','SELECT')
       AND has_table_privilege('service_role','public.v_market_listings','SELECT')
       AND has_table_privilege('service_role','public.v_market_properties','SELECT')) THEN
     RAISE EXCEPTION 'POST: service_role lost SELECT on a target view';
   END IF;
 
-  -- 4.13 No PUBLIC grant remains (grantee 0 = PUBLIC).
+  -- 4.11 No PUBLIC grant remains (grantee 0 = PUBLIC).
   SELECT count(*) INTO v_public FROM (
     SELECT (aclexplode(relacl)).grantee AS g FROM pg_class
      WHERE relname IN ('market_listings_summary','v_market_listings','v_market_properties')
@@ -342,7 +456,7 @@ BEGIN
   ) a WHERE a.g = 0;
   IF v_public <> 0 THEN RAISE EXCEPTION 'POST: a PUBLIC grant remains on a target view'; END IF;
 
-  -- 4.14 Summary still does not expose source_payload.
+  -- 4.12 Summary still does not expose source_payload.
   IF pg_get_viewdef('public.market_listings_summary'::regclass) ~* 'source_payload' THEN
     RAISE EXCEPTION 'POST: market_listings_summary exposes source_payload';
   END IF;
@@ -350,5 +464,7 @@ END $post$;
 
 COMMIT;
 
--- Rollback (manual; restores the exact verified starting state):
+-- Rollback (manual; DEFAULT OPERATIONAL — restores availability, SELECT-only):
 --   docs/market-ingest/reconciliation-rollback.sql
+-- Break-glass EXACT restore (forensic only — REOPENS the write-path gap):
+--   docs/market-ingest/reconciliation-breakglass-restore-exact.sql
