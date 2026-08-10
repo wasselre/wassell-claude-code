@@ -183,9 +183,15 @@ UNION ALL
 -- a concurrent re-grant) would be invisible to the comparison and could
 -- misclassify the outcome. When relacl IS NULL, aclexplode yields no
 -- rows — which correctly means no explicit grants.
+-- Grantability is part of the evidence: a grant-option-only change
+-- (e.g. SELECT gaining or losing WITH GRANT OPTION) is a real ACL
+-- mutation the byte comparison must catch, so each privilege renders
+-- with a trailing '*' when aclexplode.is_grantable is true (SELECT* vs
+-- SELECT serialize to different lines).
 SELECT 'ACL|' || c.relname || '|'
     || CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
-    || '|' || string_agg(a.privilege_type, ',' ORDER BY a.privilege_type)
+    || '|' || string_agg(a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END,
+                         ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END)
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 CROSS JOIN LATERAL aclexplode(c.relacl) AS a
@@ -388,6 +394,26 @@ SELECT 'CHECK|acl anon has NO privileges on the three views|'
 FROM information_schema.role_table_grants
 WHERE table_schema = 'public' AND grantee = 'anon'
   AND table_name IN ('market_listings_summary', 'v_market_listings', 'v_market_properties')
+UNION ALL
+-- PUBLIC end-state check. Built on pg_class.relacl + aclexplode because
+-- information_schema.role_table_grants never surfaces PUBLIC. A PUBLIC
+-- grant landing after the migration's COMMIT but before the AFTER
+-- snapshot is caught by the diff, but with psql exit 0 the diff is
+-- informational only — this assertion makes a publicly-exposed view fail
+-- the run. Scoped to the three VIEWS only: the migration does not manage
+-- base-table grants, so a pre-existing PUBLIC grant on market_listings
+-- must not fail the run (it stays visible in the snapshot diff).
+SELECT 'CHECK|acl PUBLIC holds NO privileges on the three views|'
+    || CASE WHEN count(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+    || '|' || CASE WHEN count(*) = 0 THEN 'none found'
+                   ELSE 'found: ' || string_agg(c.relname || ':' || a.privilege_type, ', '
+                                                ORDER BY c.relname, a.privilege_type) END
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+WHERE n.nspname = 'public' AND c.relkind = 'v'
+  AND c.relname IN ('market_listings_summary', 'v_market_listings', 'v_market_properties')
+  AND a.grantee = 0
 UNION ALL
 SELECT 'CHECK|acl service_role retains SELECT on ' || v.t || '|'
     || CASE WHEN EXISTS (
