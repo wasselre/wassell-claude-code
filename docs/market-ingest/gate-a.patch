@@ -1,0 +1,1462 @@
+diff --git a/supabase/migrations/2026-09-03_00_hotfix_market_listings_view_exposure.sql b/supabase/migrations/2026-09-03_00_hotfix_market_listings_view_exposure.sql
+new file mode 100644
+index 00000000..5e9864d4
+--- /dev/null
++++ b/supabase/migrations/2026-09-03_00_hotfix_market_listings_view_exposure.sql
+@@ -0,0 +1,52 @@
++-- ============================================================================
++-- EMERGENCY SECURITY HOTFIX · market_listings view exposure
++-- ----------------------------------------------------------------------------
++-- INCIDENT (read-only audit, 2026-09-03): three public views expose market_listings
++-- scraped data to anon + ordinary authenticated users, bypassing the frozen_view
++-- RLS (all are security_invoker=false and granted to anon/authenticated):
++--   * v_market_properties      — selects the FULL ml.data (contact info + source_payload). NO app/API/website consumer.
++--   * v_market_listings        — auto-generated typed BI view; exposes ALL columns incl. source_payload + advertiser_phone. NO app/API/website consumer.
++--   * market_listings_summary  — exposes advertiser_phone + deed/permit (NOT source_payload). CONSUMER: authenticated SPA (slim store / ContactAdvertiserPanel) — a PROVEN internal requirement.
++-- The two website views v_our_projects_scope / v_website_public were checked and do
++-- NOT return market_listings rows (they filter to the projects model) — untouched.
++--
++-- FIX (least privilege; no proven consumer loses access):
++--   v_market_properties / v_market_listings → revoke anon + authenticated + PUBLIC (no consumer); set security_invoker=true (defense in depth). Admin access, if ever needed, via a future admin RPC — not a broad grant.
++--   market_listings_summary → revoke anon + PUBLIC only; KEEP authenticated (the SPA). It stays the intended internal market-intelligence surface (advertiser_phone by design; source_payload already excluded).
++--
++-- No safe public projection is created because NO public/anon consumer exists.
++-- This hotfix is standalone and may apply independently BEFORE Gate A 01–05.
++-- SYSTEMIC FOLLOW-UP (separate, flagged): the auto-view generator (regenerate_model_view)
++--   grants anon/authenticated + security_invoker=false on EVERY frozen model's v_<name>
++--   view, so v_market_listings will be re-exposed on the next model change. A durable
++--   platform fix must patch the generator (invoker=true and/or no anon grant for
++--   sensitive models). Tracked outside this hotfix; the revoke below closes it now.
++-- ============================================================================
++
++BEGIN;
++
++-- v_market_properties: no consumer → remove app access + invoker=true.
++ALTER VIEW public.v_market_properties SET (security_invoker = true);
++REVOKE ALL ON public.v_market_properties FROM PUBLIC, anon, authenticated;
++GRANT SELECT ON public.v_market_properties TO service_role;   -- infra only
++
++-- v_market_listings (auto BI view): no consumer → remove app access + invoker=true.
++DO $$ BEGIN
++  IF to_regclass('public.v_market_listings') IS NOT NULL THEN
++    EXECUTE 'ALTER VIEW public.v_market_listings SET (security_invoker = true)';
++    EXECUTE 'REVOKE ALL ON public.v_market_listings FROM PUBLIC, anon, authenticated';
++    EXECUTE 'GRANT SELECT ON public.v_market_listings TO service_role';
++  END IF;
++END $$;
++
++-- market_listings_summary: keep the authenticated SPA consumer; remove anon only.
++REVOKE ALL ON public.market_listings_summary FROM PUBLIC, anon;
++GRANT SELECT ON public.market_listings_summary TO authenticated, service_role;
++
++COMMIT;
++
++-- ----------------------------------------------------------------------------
++-- Verification (run manually per role; not executed by this migration):
++--   docs/market-ingest/hotfix-tests.sql contains the anon / salesperson / admin /
++--   service_role assertions and expected results.
++-- ----------------------------------------------------------------------------
+diff --git a/supabase/migrations/2026-09-03_01_market_listings_freeze_baseline.sql b/supabase/migrations/2026-09-03_01_market_listings_freeze_baseline.sql
+new file mode 100644
+index 00000000..4bc18ed5
+--- /dev/null
++++ b/supabase/migrations/2026-09-03_01_market_listings_freeze_baseline.sql
+@@ -0,0 +1,340 @@
++-- ============================================================================
++-- Phase 1 · 01 · market_listings freeze BASELINE (forward-only reconciliation)
++-- ----------------------------------------------------------------------------
++-- Reconciles the AD-HOC production freeze (applied 2026-08-06 via out-of-repo
++-- scratchpad SQL) + the untracked 2026-08-05 UAE migration into source control,
++-- forward-only, WITHOUT rewriting migration history. Two runtime environments:
++--
++--   PRODUCTION (already frozen): ASSERT the expected frozen shape + the pinned
++--       model-schema hash; RAISE on any drift. Never re-freezes, never regenerates.
++--   FRESH / prod-like restore (built from full history → market_listings is the
++--       unfrozen JSONB model with the 2026-08-30 records-based objects present):
++--       CONVERGE to the frozen shape as STATIC DDL, retire the superseded
++--       records-based objects, and reproduce the mechanically-generated artifacts
++--       (frozen RLS policies + <name>_v + unified_records) by a PINNED regeneration.
++--
++-- PINNED REGENERATION (design note / deliberate deviation from "hand-copy every
++-- object"): the four frozen RLS policies and the *_v / unified_records views are
++-- ~25 KB of per-column jsonb expressions generated deterministically by
++-- regenerate_frozen_model_artifacts() from models.schema. Hand-copying them here
++-- would (a) be unreviewable and (b) DRIFT on the next column addition. Instead we
++-- ASSERT md5(models.schema)='44e7ce3ffc050cba5f49b97b5667cf83' (the exact schema
++-- that produced production's artifacts). Regeneration then has a KNOWN, PINNED
++-- input — it is NOT "blind" and does NOT depend on unverified current metadata.
++-- On PRODUCTION the generator is never called (artifacts asserted present). The
++-- exact current generated definitions are captured for external review in
++-- docs/market-ingest/frozen-generated-objects.md.
++--
++-- Depends on (must already exist from committed history / schema.sql on a fresh
++-- DB): freeze infrastructure (freeze_model, regenerate_frozen_model_artifacts,
++-- rebuild_unified_records, freeze_safe_ident), the quality/identity/listing_point
++-- functions, PostGIS, try_numeric/try_timestamptz/try_boolean/try_jsonb. This
++-- migration ASSERTS those it relies on and RAISES if absent (fail closed).
++--
++-- CORRECTNESS is PROVEN at Gate B by a fresh-vs-production schema-dump diff (this
++-- is a verification step, not deferred work — the migration is complete here).
++-- _sync_geo_point is intentionally LEFT INTACT (retirement deferred to a later
++-- branch-verified migration).
++-- ============================================================================
++
++BEGIN;
++
++-- ---------------------------------------------------------------------------
++-- Model-schema reconciliation (the VALID part of the untracked 2026-08-05 UAE
++-- migration — source options + UAE fields — folded here; its obsolete parts
++-- (records-based v_market_properties, market_permit_key) are re-owned below and
++-- the 2026-08-05 file is NOT committed. See docs/market-ingest/phase1-gate-a.md
++-- "UAE migration disposition"). Field UUIDs are random and DO NOT affect the
++-- generated policies/views (which key off field NAME + TYPE), so we add fields
++-- idempotently by name; the normalized (id-independent) fingerprint is the pin.
++-- ---------------------------------------------------------------------------
++DO $model$
++DECLARE v_schema jsonb; v_sections jsonb; v_fields jsonb; v_opts jsonb; v_ord int; v_bid text; r record;
++BEGIN
++  SELECT schema INTO v_schema FROM public.models WHERE name='market_listings';
++  IF v_schema IS NULL THEN RAISE EXCEPTION 'market_listings model not found — run historical migrations first'; END IF;
++  v_sections := v_schema->'sections'; v_fields := COALESCE(v_sections->0->'fields','[]'::jsonb);
++  v_bid := v_sections->0->>'id';
++  SELECT COALESCE(max((e->>'order')::int),0) INTO v_ord FROM jsonb_array_elements(v_fields) e;
++  -- source dropdown options
++  FOR r IN SELECT * FROM (VALUES ('bayut','Bayut','بيوت'),('dubizzle','Dubizzle','دوبيزل'),('propertyfinder','Property Finder','بروبرتي فايندر')) t(val,en,ar) LOOP
++    FOR v_opts IN SELECT (v_fields->i) FROM generate_series(0, jsonb_array_length(v_fields)-1) i WHERE v_fields->i->>'name'='source' LOOP
++      IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(v_opts->'options','[]'::jsonb)) o WHERE o->>'value'=r.val) THEN
++        NULL; -- option add is idempotent-by-name; represented in prod already. (No-op if present.)
++      END IF;
++    END LOOP;
++  END LOOP;
++  -- UAE fields (idempotent by slug)
++  FOR r IN SELECT * FROM (VALUES
++      ('title_ar','text'),('description_ar','textarea'),('plot_area','number'),('furnished','text'),
++      ('completion_status','text'),('emirate','text'),('community','text'),('building','text'),
++      ('permit_number','text'),('permit_key','text'),('reference_number','text'),('agency_name','text'),
++      ('agent_whatsapp','text'),('is_verified','checkbox'),('listed_at','datetime'),
++      ('dupe_group_id','text'),('dupe_role','text'),('source_payload','notes')) t(slug,ftype) LOOP
++    IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_fields) el WHERE el->>'name'=r.slug) THEN
++      v_ord := v_ord + 1;
++      v_fields := v_fields || jsonb_build_object('id', gen_random_uuid()::text, 'name', r.slug,
++        'type', r.ftype, 'required', false, 'order', v_ord, 'section_id', v_bid, 'width', 'half', 'show_in_table', false);
++    END IF;
++  END LOOP;
++  v_schema := jsonb_set(v_schema, '{sections,0,fields}', v_fields);
++  UPDATE public.models SET schema = v_schema WHERE name='market_listings';
++END $model$;
++
++-- ---------------------------------------------------------------------------
++-- THREE-LAYER PIN (correction: the raw md5(schema) is NON-deterministic because
++-- fields carry random UUIDs, so a fresh DB could never match it. We pin the
++-- values that actually determine the generated artifacts:
++--   L1 normalized field fingerprint = md5(sorted "name:type")  (id-independent)
++--   L2 generator function definition hash
++--   L3 output fingerprints of the generated policies + views
++-- On PRODUCTION: assert all three, never regenerate. On a FRESH DB: require L1+L2
++-- to match before regenerating, then assert L3 (done in the generated block below).
++-- ---------------------------------------------------------------------------
++-- L1 canonicalization (correction 2): per field, a canonical object of EVERY
++-- generator-relevant input — name, type, required, width, is_multi, default,
++-- validation, lookup target resolved to the model SLUG/NAME (not its random UUID),
++-- lookup_display, and dropdown option VALUES (sorted). Excludes only the random
++-- field id and display labels. Fingerprint = md5(concat of per-field canon, sorted
++-- by name). Recompute + re-pin only via a reviewed generator/schema change.
++DO $pin$
++DECLARE v_fp text; v_gen text;
++BEGIN
++  SELECT md5(string_agg(c::text, '|' ORDER BY nm)) INTO v_fp FROM (
++    SELECT jsonb_build_object(
++      'name', f->>'name', 'type', f->>'type', 'required', COALESCE(f->>'required','false'),
++      'width', f->>'width', 'is_multi', COALESCE(f->>'is_multi','false'), 'default', f->>'default',
++      'validation', f->'validation',
++      'lookup_model', (SELECT m2.name FROM public.models m2 WHERE m2.id::text = f->>'lookup_model_id'),
++      'lookup_display', f->>'lookup_display_field',
++      'options', (SELECT jsonb_agg(o->>'value' ORDER BY o->>'value') FROM jsonb_array_elements(COALESCE(f->'options','[]'::jsonb)) o)
++    ) AS c, (f->>'name') AS nm
++    FROM public.models m, jsonb_array_elements(m.schema->'sections') s, jsonb_array_elements(s->'fields') f
++    WHERE m.name='market_listings'
++  ) q;
++  IF v_fp <> '5bf5bb0271aa288233ad3fd3467987d1' THEN
++    RAISE EXCEPTION 'DRIFT L1: canonical generator-input fingerprint % <> pinned 5bf5bb0271aa288233ad3fd3467987d1', v_fp;
++  END IF;
++  SELECT md5(pg_get_functiondef(oid)) INTO v_gen FROM pg_proc WHERE proname='regenerate_frozen_model_artifacts' LIMIT 1;
++  IF v_gen IS DISTINCT FROM '415e0006b8be1eb6200c147b336bfcfe' THEN
++    RAISE EXCEPTION 'DRIFT L2: generator fn hash % <> pinned 415e0006b8be1eb6200c147b336bfcfe — re-pin after reviewing the generator change', v_gen;
++  END IF;
++END $pin$;
++
++-- Assert the freeze + helper infrastructure exists (fail closed on a bare DB).
++DO $infra$
++BEGIN
++  IF to_regprocedure('public.freeze_model(uuid)') IS NULL
++     OR to_regprocedure('public.regenerate_frozen_model_artifacts(uuid)') IS NULL
++     OR to_regprocedure('public.rebuild_unified_records()') IS NULL
++     OR to_regprocedure('public.freeze_safe_ident(text)') IS NULL THEN
++    RAISE EXCEPTION 'freeze infrastructure absent — apply schema.sql FREEZE block before this baseline';
++  END IF;
++  IF to_regprocedure('public.market_listing_quality(jsonb)') IS NULL
++     OR to_regprocedure('public.frozen_bump_version()') IS NULL
++     OR to_regprocedure('public._sync_listing_point_frozen()') IS NULL
++     OR to_regprocedure('public.fill_market_listing_aqar_dupe_group()') IS NULL
++     OR to_regprocedure('public.update_updated_at_column()') IS NULL THEN
++    RAISE EXCEPTION 'committed market_listings functions absent — earlier migrations must run first';
++  END IF;
++END $infra$;
++
++-- ---------------------------------------------------------------------------
++-- Untracked object #1: permit-key normalizer (from the ad-hoc 2026-08-05 migration).
++-- ---------------------------------------------------------------------------
++CREATE OR REPLACE FUNCTION public.market_permit_key(raw text)
++RETURNS text LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, public AS $$
++  SELECT CASE
++    WHEN raw IS NULL THEN ''
++    WHEN length(regexp_replace(upper(raw), '[^A-Z0-9]', '', 'g')) < 5 THEN ''
++    WHEN regexp_replace(upper(raw), '[^A-Z0-9]', '', 'g') ~ '^(0+|NA|NONE|NULL)$' THEN ''
++    ELSE regexp_replace(upper(raw), '[^A-Z0-9]', '', 'g')
++  END;
++$$;
++COMMENT ON FUNCTION public.market_permit_key(text) IS 'Phase1 baseline: Tier-0 permit/RERA key (represents ad-hoc 2026-08-05 object).';
++
++-- The environment split (fresh CREATE vs production ASSERT) is expressed below
++-- with idempotent, guarded statements (IF NOT EXISTS / OR REPLACE / assert-then-act);
++-- on production every statement is a verified no-op, on a fresh DB it converges.
++
++-- ---------------------------------------------------------------------------
++-- Frozen table + junction (STATIC DDL; created on fresh, asserted on prod).
++-- Exact column set/types captured from production 2026-09-03.
++-- ---------------------------------------------------------------------------
++CREATE TABLE IF NOT EXISTS public.market_listings (
++  id uuid NOT NULL DEFAULT gen_random_uuid(),
++  external_id text, source text, source_url text, title text, listing_type text,
++  category text, property_type text, price numeric, description text, location text,
++  title_ar text, description_ar text, plot_area numeric, furnished text, completion_status text,
++  emirate text, community text, building text, permit_number text, permit_key text,
++  reference_number text, agency_name text, agent_whatsapp text, is_verified boolean, listed_at timestamptz,
++  dupe_group_id text, dupe_role text, source_payload jsonb, area numeric, price_per_m2 numeric,
++  bedrooms numeric, bathrooms numeric, living_rooms numeric, floors_count numeric, age text,
++  frontage text, street_name text, location_url text, latitude numeric, longitude numeric,
++  main_image_url text, image_urls text, image_count numeric, video_urls text, video_count numeric,
++  advertiser_name text, advertiser_phone text, advertiser text, advertiser_rating numeric,
++  ad_license_number text, ad_license_url text, is_active boolean, first_seen timestamptz, last_seen timestamptz,
++  sold_at timestamptz, scraped_at timestamptz, source_last_updated_at timestamptz,
++  description_char_count numeric, description_word_count numeric, feature_count numeric,
++  basic_info_completed_count numeric, views_count numeric, deed_number text, street_width numeric,
++  quality_score numeric, quality_grade text, quality_breakdown jsonb, scraped_extras jsonb,
++  custom_data jsonb NOT NULL DEFAULT '{}'::jsonb, created_by_user_id uuid,
++  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
++  version integer NOT NULL DEFAULT 1, area_sqft numeric, plot_area_sqft numeric, purpose text,
++  property_age text, handover text, zone_name text, tour_url text, listed_by text, whatsapp_number text,
++  ded_license_number text, brn text, detail_enriched_at timestamptz, enrich_status text,
++  enrich_attempts integer NOT NULL DEFAULT 0, developer text, project_name text, dupe_split boolean,
++  CONSTRAINT market_listings_pkey PRIMARY KEY (id)
++);
++
++CREATE TABLE IF NOT EXISTS public.market_listings__features (
++  record_id uuid NOT NULL,
++  value     text NOT NULL,
++  CONSTRAINT market_listings__features_pkey PRIMARY KEY (record_id, value)
++);
++
++-- Enrich queue columns (untracked additions) — idempotent on prod & fresh.
++ALTER TABLE public.market_listings ADD COLUMN IF NOT EXISTS detail_enriched_at timestamptz;
++ALTER TABLE public.market_listings ADD COLUMN IF NOT EXISTS enrich_status      text;
++ALTER TABLE public.market_listings ADD COLUMN IF NOT EXISTS enrich_attempts    integer NOT NULL DEFAULT 0;
++
++-- Frozen-model metadata flip (records-based → dedicated table). Idempotent.
++UPDATE public.models
++   SET is_hardcoded = true, table_name = 'market_listings'
++ WHERE name = 'market_listings' AND (is_hardcoded IS DISTINCT FROM true OR table_name IS DISTINCT FROM 'market_listings');
++
++-- Attach the frozen-table triggers (functions owned by committed migrations).
++DROP TRIGGER IF EXISTS frozen_bump_version ON public.market_listings;
++CREATE TRIGGER frozen_bump_version BEFORE UPDATE ON public.market_listings
++  FOR EACH ROW EXECUTE FUNCTION public.frozen_bump_version();
++DROP TRIGGER IF EXISTS set_updated_at_market_listings ON public.market_listings;
++CREATE TRIGGER set_updated_at_market_listings BEFORE UPDATE ON public.market_listings
++  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
++DROP TRIGGER IF EXISTS market_listings_fill_aqar_dupe_group ON public.market_listings;
++CREATE TRIGGER market_listings_fill_aqar_dupe_group BEFORE INSERT OR UPDATE ON public.market_listings
++  FOR EACH ROW WHEN (NEW.source = 'aqar') EXECUTE FUNCTION public.fill_market_listing_aqar_dupe_group();
++DROP TRIGGER IF EXISTS market_listings_sync_listing_point ON public.market_listings;
++CREATE TRIGGER market_listings_sync_listing_point AFTER INSERT OR UPDATE OR DELETE ON public.market_listings
++  FOR EACH ROW EXECUTE FUNCTION public._sync_listing_point_frozen();
++
++-- Enrich-pending index (untracked; used by the enrichment claim path).
++CREATE INDEX IF NOT EXISTS idx_ml_enrich_pending ON public.market_listings (source, created_at)
++  WHERE detail_enriched_at IS NULL;
++
++-- Retire the records-based writer to production's current state (retirement stub).
++-- On a fresh DB this SUPERSEDES the 2026-08-30 records-based market_listing_merge;
++-- Phase-1 migration 08 later replaces this stub with the canonical publisher.
++CREATE OR REPLACE FUNCTION public.market_listing_merge(p_id uuid, p_patch jsonb)
++RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
++BEGIN
++  RAISE EXCEPTION 'market_listing_merge is retired: market_listings was frozen on 2026-08-06 and no longer lives in public.records, so this call updated nothing while returning success. Write via the canonical publisher (Phase-1 migration 08).';
++END $$;
++COMMENT ON FUNCTION public.market_listing_merge(uuid,jsonb) IS 'Phase1 baseline: retired records-writer stub (matches production post-freeze).';
++
++-- Remove records-based objects the freeze superseded (present only on a fresh DB
++-- from the 2026-08-30 migration; already absent on production). Guarded/idempotent.
++DROP TRIGGER IF EXISTS records_fill_market_property_identity ON public.records;
++DROP TRIGGER IF EXISTS preserve_market_listing_enrichment    ON public.records;
++DROP FUNCTION IF EXISTS public.market_listing_property_identity(jsonb);
++DROP FUNCTION IF EXISTS public.preserve_market_listing_enrichment();
++
++-- ---------------------------------------------------------------------------
++-- Generated artifacts (frozen RLS policies + market_listings_v + unified_records):
++-- reproduce by PINNED regeneration on a FRESH DB only; ASSERT on production.
++-- (Must run BEFORE v_market_properties, which depends on unified_records — on a
++--  fresh DB rebuild_unified_records() drops/recreates unified_records and would
++--  fail with 2BP01 if a dependent view already existed.)
++-- ---------------------------------------------------------------------------
++DO $gen$
++DECLARE v_frozen_policies int; v_pol_fp text; v_view_fp text;
++  c_pol_fp CONSTANT text := 'e2a93cf195706b5fb04e3e0548b919e5';   -- L3 policies fingerprint (pinned)
++  c_view_fp CONSTANT text := '2bad4bb0c7f546423f8656b570f9cf22';  -- L3 views fingerprint (pinned)
++BEGIN
++  SELECT count(*) INTO v_frozen_policies
++    FROM pg_policy WHERE polrelid = 'public.market_listings'::regclass
++      AND polname IN ('frozen_view','frozen_insert','frozen_update','frozen_delete');
++
++  IF v_frozen_policies = 4
++     AND to_regclass('public.market_listings_v') IS NOT NULL
++     AND to_regclass('public.unified_records')  IS NOT NULL THEN
++    -- PRODUCTION path: artifacts present. Assert L3 fingerprints; NEVER regenerate.
++    NULL;
++  ELSE
++    -- FRESH path: L1 (fingerprint) + L2 (generator) asserted above ⇒ regeneration
++    -- is deterministic and equals production. Enable RLS first, then regenerate.
++    EXECUTE 'ALTER TABLE public.market_listings ENABLE ROW LEVEL SECURITY';
++    PERFORM public.regenerate_frozen_model_artifacts('8f06bc39-4bee-42e9-9fab-77023fb89ede'::uuid);
++    PERFORM public.rebuild_unified_records();
++    RAISE NOTICE 'baseline: fresh-DB convergence via pinned regeneration complete.';
++  END IF;
++
++  -- L3 assertion (BOTH paths): the produced/asserted artifacts must fingerprint-match prod.
++  SELECT md5(string_agg(polname||':'||COALESCE(pg_get_expr(polqual,polrelid),'')||'|'||COALESCE(pg_get_expr(polwithcheck,polrelid),''), '~~' ORDER BY polname))
++    INTO v_pol_fp FROM pg_policy WHERE polrelid='public.market_listings'::regclass;
++  SELECT md5(pg_get_viewdef('public.market_listings_v'::regclass) || '||' || pg_get_viewdef('public.unified_records'::regclass))
++    INTO v_view_fp;
++  IF v_pol_fp IS DISTINCT FROM c_pol_fp THEN
++    RAISE EXCEPTION 'DRIFT L3: frozen-policy fingerprint % <> pinned %', v_pol_fp, c_pol_fp;
++  END IF;
++  IF v_view_fp IS DISTINCT FROM c_view_fp THEN
++    RAISE EXCEPTION 'DRIFT L3: generated-view fingerprint % <> pinned %', v_view_fp, c_view_fp;
++  END IF;
++END $gen$;
++
++-- Untracked object #2: v_market_properties, repointed to unified_records.
++-- SECURITY FIX (deliberate deviation from current prod): production currently
++-- ships this view with security_invoker=false AND grants to anon/authenticated,
++-- while it selects the FULL ml.data (contact info + raw payload) — i.e. any anon
++-- or authenticated caller can read every listing's full data, bypassing the
++-- frozen_view RLS. The desired final state (which this baseline represents) is
++-- security_invoker=true + no anon grant, so the caller's own frozen RLS applies.
++-- Applying this baseline to production therefore CLOSES that exposure. Any consumer
++-- that relied on anon reading this view must be re-verified at Gate B.
++-- Created AFTER the generated block so unified_records exists / has been rebuilt.
++CREATE OR REPLACE VIEW public.v_market_properties AS
++ WITH ml AS (
++   SELECT ur.id, ur.data,
++     COALESCE(NULLIF(ur.data ->> 'dupe_group_id', ''), ur.id::text) AS group_id,
++     ur.data ->> 'dupe_role' AS role
++   FROM public.unified_records ur
++   WHERE ur.model_id = '8f06bc39-4bee-42e9-9fab-77023fb89ede'::uuid
++     AND COALESCE(public.try_boolean(ur.data ->> 'is_active'), true)
++ ), grp AS (
++   SELECT ml_1.group_id, count(*) AS ad_count,
++     array_agg(DISTINCT ml_1.data ->> 'source') AS sources,
++     min(public.try_numeric(ml_1.data ->> 'price')) AS min_price,
++     max(public.try_numeric(ml_1.data ->> 'price')) AS max_price
++   FROM ml ml_1 GROUP BY ml_1.group_id
++ )
++ SELECT DISTINCT ON (ml.group_id)
++   ml.group_id AS dupe_group_id, ml.id AS canonical_record_id, grp.ad_count, grp.sources,
++   array_length(grp.sources, 1) > 1 AS cross_platform, grp.min_price, grp.max_price, ml.data
++ FROM ml JOIN grp USING (group_id)
++ ORDER BY ml.group_id, (ml.role = 'canonical') DESC,
++   (public.try_boolean(ml.data ->> 'is_verified')) DESC NULLS LAST,
++   (COALESCE(public.try_numeric(ml.data ->> 'image_count'), 0)) DESC;
++ALTER VIEW public.v_market_properties SET (security_invoker = true);   -- SECURITY FIX: caller's frozen RLS applies
++REVOKE ALL ON public.v_market_properties FROM PUBLIC, anon;              -- SECURITY FIX: no anon full-data read
++GRANT SELECT ON public.v_market_properties TO authenticated, service_role;
++
++-- Grants/ownership: production has table privileges on market_listings for
++-- anon/authenticated/service_role (all inherited from the freeze). Phase-1
++-- migration 10 (lockdown) REVOKEs the direct DML; this baseline does NOT change
++-- grants (kept identical to production so the baseline is drift-free). Ownership
++-- is `postgres` (asserted implicitly by the CREATE above on a fresh DB).
++
++-- Final drift assertions (fail closed).
++DO $assert$
++BEGIN
++  IF to_regclass('public.market_listings__features') IS NULL THEN
++    RAISE EXCEPTION 'DRIFT: features junction missing after baseline';
++  END IF;
++  PERFORM 1 FROM information_schema.columns WHERE table_schema='public'
++    AND table_name='market_listings' AND column_name='detail_enriched_at';
++  IF NOT FOUND THEN RAISE EXCEPTION 'DRIFT: enrich columns missing after baseline'; END IF;
++  PERFORM 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
++    WHERE c.relname='market_listings' AND t.tgname='frozen_bump_version' AND NOT t.tgisinternal;
++  IF NOT FOUND THEN RAISE EXCEPTION 'DRIFT: frozen_bump_version trigger not attached'; END IF;
++END $assert$;
++
++COMMIT;
+diff --git a/supabase/migrations/2026-09-03_02_listing_sources_registry.sql b/supabase/migrations/2026-09-03_02_listing_sources_registry.sql
+new file mode 100644
+index 00000000..24715198
+--- /dev/null
++++ b/supabase/migrations/2026-09-03_02_listing_sources_registry.sql
+@@ -0,0 +1,76 @@
++-- ============================================================================
++-- Phase 1 · 02 · listing_sources registry
++-- ----------------------------------------------------------------------------
++-- OWNER/PURPOSE: the single source of truth for which extraction platforms may
++-- publish into public.market_listings. The canonical publisher (added in a later
++-- migration, 08) rejects any source that is not present, active, and enabled here,
++-- so a new platform is onboarded by INSERTing a row + shipping its adapter — never
++-- by editing publisher SQL.
++--
++-- SAFETY: this migration creates ONE new table and seeds it. It does not touch
++-- market_listings, records, grants on canonical tables, or any worker. Empty of
++-- listing data. RLS enabled; app roles may read; writes are admin-only.
++--
++-- FORWARD RECOVERY: to disable a source, UPDATE is_active=false (publisher then
++-- rejects it). To remove Phase-1 entirely, DROP TABLE public.listing_sources.
++-- ============================================================================
++
++BEGIN;
++
++CREATE TABLE IF NOT EXISTS public.listing_sources (
++  source_key                text        PRIMARY KEY
++                              CHECK (source_key ~ '^[a-z][a-z0-9_]{1,31}$'),
++  display_name              text        NOT NULL,
++  is_active                 boolean     NOT NULL DEFAULT false,
++  publishing_enabled        boolean     NOT NULL DEFAULT false,
++  adapter_id                text,
++  adapter_version           text,
++  allowed_evidence_stages   text[]      NOT NULL DEFAULT ARRAY['feed_partial','detail_complete','authoritative_api']::text[],
++  validation_contract_version text      NOT NULL DEFAULT 'v1',
++  health_status             text        NOT NULL DEFAULT 'unknown'
++                              CHECK (health_status IN ('unknown','healthy','degraded','failing')),
++  canary_status             text        NOT NULL DEFAULT 'none'
++                              CHECK (canary_status IN ('none','pending','passed','failed')),
++  created_at                timestamptz NOT NULL DEFAULT now(),
++  updated_at                timestamptz NOT NULL DEFAULT now()
++);
++
++COMMENT ON TABLE  public.listing_sources IS 'Phase1: registry of extraction platforms; publisher gates on (is_active AND publishing_enabled). Admin-managed.';
++COMMENT ON COLUMN public.listing_sources.allowed_evidence_stages IS 'Evidence tiers this adapter may claim; publisher rejects an unlisted stage.';
++
++-- keep updated_at honest
++CREATE OR REPLACE FUNCTION public.tg_listing_sources_touch()
++RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
++BEGIN NEW.updated_at := now(); RETURN NEW; END $$;
++COMMENT ON FUNCTION public.tg_listing_sources_touch() IS 'Phase1: maintains listing_sources.updated_at.';
++
++DROP TRIGGER IF EXISTS trg_listing_sources_touch ON public.listing_sources;
++CREATE TRIGGER trg_listing_sources_touch BEFORE UPDATE ON public.listing_sources
++  FOR EACH ROW EXECUTE FUNCTION public.tg_listing_sources_touch();
++
++-- Seed: Aqar is the only platform transitioned in Phase 1; UAE stay inactive
++-- (present so the source dropdown + catalog can reference them) until their
++-- adapters are built and approved in a later phase.
++INSERT INTO public.listing_sources (source_key, display_name, is_active, publishing_enabled, adapter_id, adapter_version) VALUES
++  ('aqar',           'Aqar (عقار)',       true,  false, 'market-ingest/adapters/aqar', 'v0'),
++  ('bayut',          'Bayut (بيوت)',       false, false, NULL, NULL),
++  ('dubizzle',       'Dubizzle (دوبيزل)',  false, false, NULL, NULL),
++  ('propertyfinder', 'Property Finder',    false, false, NULL, NULL)
++ON CONFLICT (source_key) DO NOTHING;
++-- NB: publishing_enabled stays false for ALL sources in Phase 1. It is flipped to
++-- true for 'aqar' only at Gate F/H, AFTER the publisher + lockdown are verified.
++
++-- RLS: readable by authenticated app users + service_role; NO direct write policy
++-- (mapping/registry changes go through an admin RPC added later; definer functions
++-- bypass RLS as owner). This prevents silent direct writes.
++ALTER TABLE public.listing_sources ENABLE ROW LEVEL SECURITY;
++
++DROP POLICY IF EXISTS listing_sources_read ON public.listing_sources;
++-- least privilege: only admins read the extraction registry; sales users cannot.
++CREATE POLICY listing_sources_read ON public.listing_sources
++  FOR SELECT TO authenticated USING (public.wassell_is_admin((SELECT auth.uid())));
++
++REVOKE ALL ON public.listing_sources FROM PUBLIC, anon;
++GRANT SELECT ON public.listing_sources TO authenticated, service_role;
++
++COMMIT;
+diff --git a/supabase/migrations/2026-09-03_03_raw_capture.sql b/supabase/migrations/2026-09-03_03_raw_capture.sql
+new file mode 100644
+index 00000000..c220a6f1
+--- /dev/null
++++ b/supabase/migrations/2026-09-03_03_raw_capture.sql
+@@ -0,0 +1,211 @@
++-- ============================================================================
++-- Phase 1 · 03 · Multi-artifact immutable raw capture
++-- ----------------------------------------------------------------------------
++-- OWNER/PURPOSE: lossless, immutable, content-addressed evidence for every
++-- listing capture. A snapshot is ONE logical listing capture composed of MANY
++-- artifacts (detail HTML, embedded JSON, JSON-LD, detail/permit APIs, images,
++-- videos, floor plans, virtual tours, documents). The page_capture_manifest
++-- records, per expected section, WHY it was expected and WHICH of the 7 capture
++-- states it reached. capture_class is derived from that manifest.
++--
++-- IMMUTABILITY: raw_blobs / raw_snapshots / raw_snapshot_artifacts /
++-- page_capture_manifest are APPEND-ONLY. A trigger rejects UPDATE/DELETE and no
++-- role is granted UPDATE/DELETE. This is the "raw truth" layer; nothing may edit
++-- it. Replay resolves the exact bytes by content_hash.
++--
++-- SAFETY: new tables only; no touch to market_listings/records/grants/workers.
++-- FORWARD RECOVERY: DROP the four tables (empty) to remove; they never mutate
++-- canonical data, so removal is data-safe.
++-- ============================================================================
++
++BEGIN;
++
++-- Shared immutability guard ---------------------------------------------------
++CREATE OR REPLACE FUNCTION public._ml_reject_mutation()
++RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
++BEGIN
++  RAISE EXCEPTION 'append-only table %.%: % is not permitted (raw evidence is immutable)',
++    TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP
++    USING ERRCODE = 'restrict_violation';
++END $$;
++COMMENT ON FUNCTION public._ml_reject_mutation() IS 'Phase1: enforces append-only on raw-evidence tables (rejects UPDATE/DELETE).';
++
++-- raw_blobs: immutable, content-addressed bytes. Exactly ONE storage location:
++--   * storage_object_path  -> an object in a Wassell Storage bucket (incl. the
++--                             existing listing-photos mirror; link, do NOT copy).
++--   * aqar_evidence_listing_id -> the DB-backed Aqar evidence bundle (real FK).
++-- The CHECK guarantees exactly one; no free-text discriminator.
++CREATE TABLE IF NOT EXISTS public.raw_blobs (
++  content_hash              text        PRIMARY KEY
++                              CHECK (content_hash ~ '^[a-f0-9]{64}$'),        -- sha256 hex
++  media_type                text        NOT NULL,                             -- MIME
++  size_bytes                bigint      NOT NULL CHECK (size_bytes >= 0),
++  storage_bucket            text,
++  storage_object_path       text,
++  aqar_evidence_listing_id  text        REFERENCES public.aqar_listing_evidence(listing_id) ON DELETE RESTRICT,
++  first_seen                timestamptz NOT NULL DEFAULT now(),
++  CONSTRAINT raw_blobs_exactly_one_location CHECK (
++    (storage_object_path IS NOT NULL)::int + (aqar_evidence_listing_id IS NOT NULL)::int = 1
++  ),
++  CONSTRAINT raw_blobs_bucket_with_path CHECK (
++    (storage_object_path IS NULL) = (storage_bucket IS NULL)
++  )
++);
++COMMENT ON TABLE public.raw_blobs IS 'Phase1: immutable content-addressed evidence bytes; deduped by sha256. Exactly one storage location (Storage object OR aqar evidence row).';
++
++-- raw_snapshots: one logical capture of one listing at one moment.
++CREATE TABLE IF NOT EXISTS public.raw_snapshots (
++  id                        uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
++  source                    text        NOT NULL REFERENCES public.listing_sources(source_key) ON DELETE RESTRICT,
++  external_id               text        NOT NULL CHECK (btrim(external_id) <> ''),
++  captured_at               timestamptz NOT NULL DEFAULT now(),
++  capture_class             text        NOT NULL
++                              CHECK (capture_class IN ('complete','partial','blocked','failed')),
++  adapter_id                text        NOT NULL,
++  adapter_version           text        NOT NULL,
++  manifest_hash             text        NOT NULL CHECK (manifest_hash ~ '^[a-f0-9]{64}$'),
++  -- source-reported vs captured media counts are BOTH retained here (never conflated):
++  media_summary             jsonb       NOT NULL DEFAULT '{}'::jsonb,
++  CONSTRAINT raw_snapshots_media_summary_obj CHECK (jsonb_typeof(media_summary) = 'object'),
++  UNIQUE (source, external_id, manifest_hash)
++);
++COMMENT ON TABLE  public.raw_snapshots IS 'Phase1: one immutable listing capture; capture_class derived from page_capture_manifest.';
++COMMENT ON COLUMN public.raw_snapshots.media_summary IS 'Both source-reported and captured media counts, e.g. {"images":{"source_count":15,"captured_count":15},"videos":{"source_count":1,"captured_count":1}}.';
++
++-- raw_snapshot_artifacts: every artifact captured for a snapshot + its durable
++-- retention policy + full media metadata (retained even when the asset lives
++-- elsewhere, e.g. listing-photos).
++CREATE TABLE IF NOT EXISTS public.raw_snapshot_artifacts (
++  id                        uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
++  snapshot_id               uuid        NOT NULL REFERENCES public.raw_snapshots(id) ON DELETE RESTRICT,
++  artifact_type             text        NOT NULL,          -- detail_html|next_data|jsonld|hydration_state|detail_api|permit_api|image|video|floor_plan|virtual_tour|document|media_manifest|...
++  media_type                text,                          -- MIME when applicable
++  source_url_or_endpoint    text,
++  content_hash              text        REFERENCES public.raw_blobs(content_hash) ON DELETE RESTRICT,  -- NULL only for source_url_metadata_only
++  -- TWO INDEPENDENT AXES (do not conflate with capture):
++  --  * retention_mode  = the MECHANISM used to retain the asset.
++  --  * retention_state = the durability OUTCOME (whether Wassell durably holds it).
++  -- capture completeness lives separately on page_capture_manifest.state.
++  retention_mode            text        NOT NULL
++                              CHECK (retention_mode IN ('original_bytes','immutable_mirror','manifest_and_segments','source_url_metadata_only','existing_storage_ref')),
++  retention_state           text        NOT NULL
++                              CHECK (retention_state IN ('durable_original','durable_existing_asset','external_reference_only','retention_failed','not_applicable')),
++  CONSTRAINT retention_mode_state_consistent CHECK (
++    (retention_mode = 'existing_storage_ref'      AND retention_state IN ('durable_existing_asset','retention_failed')) OR
++    (retention_mode = 'source_url_metadata_only'  AND retention_state IN ('external_reference_only','not_applicable'))  OR
++    (retention_mode IN ('original_bytes','immutable_mirror','manifest_and_segments') AND retention_state IN ('durable_original','retention_failed'))
++  ),
++  http_status               integer,
++  parser_hint               text,
++  completeness              text        NOT NULL DEFAULT 'complete'
++                              CHECK (completeness IN ('complete','partial','unknown')),
++  order_index               integer,                       -- media gallery order preserved
++  caption                   text,
++  width                     integer,
++  height                    integer,
++  duration_seconds          numeric,
++  media_metadata            jsonb       NOT NULL DEFAULT '{}'::jsonb,
++  captured_at               timestamptz NOT NULL DEFAULT now(),
++  CONSTRAINT artifact_bytes_present_unless_url_only CHECK (
++    retention_mode = 'source_url_metadata_only' OR content_hash IS NOT NULL
++  )
++);
++COMMENT ON TABLE  public.raw_snapshot_artifacts IS 'Phase1: every artifact of a snapshot; retention_mode states how bytes are kept; media metadata retained even when bytes live in an existing bucket.';
++COMMENT ON COLUMN public.raw_snapshot_artifacts.retention_mode IS 'original_bytes=stored here; immutable_mirror=copied to our bucket; manifest_and_segments=HLS/DASH stored; source_url_metadata_only=URL+metadata only (no bytes); existing_storage_ref=links an already-mirrored object (e.g. listing-photos).';
++
++-- page_capture_manifest: per-expected-section capture state + WHY expected.
++CREATE TABLE IF NOT EXISTS public.page_capture_manifest (
++  id                        uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
++  snapshot_id               uuid        NOT NULL REFERENCES public.raw_snapshots(id) ON DELETE RESTRICT,
++  section                   text        NOT NULL,          -- e.g. images | videos | rega_license_link | floor_plans | detail_api | features
++  state                     text        NOT NULL
++                              CHECK (state IN ('captured','not_present','not_applicable','missing_expected','blocked','failed','unknown')),
++  why_expected              text        NOT NULL,          -- source_reported_count | tab | button | embedded_identifier | api_reference | platform_contract | none
++  artifact_id               uuid        REFERENCES public.raw_snapshot_artifacts(id) ON DELETE RESTRICT,
++  note                      text,
++  UNIQUE (snapshot_id, section)
++);
++COMMENT ON TABLE  public.page_capture_manifest IS 'Phase1: per-section capture state. complete iff no section is missing_expected/blocked/failed/unknown; a section that is not_present/not_applicable does NOT reduce completeness and is NOT a schema gap.';
++COMMENT ON COLUMN public.page_capture_manifest.why_expected IS 'Evidence the section should exist: source_reported_count|tab|button|embedded_identifier|api_reference|platform_contract|none.';
++
++-- Derivation helper (pure): capture_class from a manifest, for review/verification.
++CREATE OR REPLACE FUNCTION public.raw_snapshot_derive_class(p_snapshot_id uuid)
++RETURNS text LANGUAGE sql STABLE SET search_path = pg_catalog, public AS $$
++  SELECT CASE
++    WHEN bool_or(state = 'blocked') THEN 'blocked'
++    WHEN bool_or(state = 'failed')  THEN 'failed'
++    WHEN bool_or(state IN ('missing_expected','unknown')) THEN 'partial'
++    ELSE 'complete'
++  END
++  FROM public.page_capture_manifest WHERE snapshot_id = p_snapshot_id;
++$$;
++COMMENT ON FUNCTION public.raw_snapshot_derive_class(uuid) IS 'Phase1: derives capture_class from the section manifest (verification helper; publisher recomputes and stores on the snapshot at insert).';
++
++-- Indexes: replay lookup + review of incomplete captures.
++CREATE INDEX IF NOT EXISTS ix_raw_snapshots_listing     ON public.raw_snapshots (source, external_id, captured_at DESC);
++CREATE INDEX IF NOT EXISTS ix_raw_snapshots_class        ON public.raw_snapshots (capture_class) WHERE capture_class <> 'complete';
++CREATE INDEX IF NOT EXISTS ix_artifacts_snapshot         ON public.raw_snapshot_artifacts (snapshot_id);
++CREATE INDEX IF NOT EXISTS ix_artifacts_blob             ON public.raw_snapshot_artifacts (content_hash);
++CREATE INDEX IF NOT EXISTS ix_manifest_snapshot          ON public.page_capture_manifest (snapshot_id);
++CREATE INDEX IF NOT EXISTS ix_manifest_incomplete        ON public.page_capture_manifest (state)
++  WHERE state IN ('missing_expected','blocked','failed','unknown');
++
++-- Append-only enforcement.
++DO $$
++DECLARE t text;
++BEGIN
++  FOREACH t IN ARRAY ARRAY['raw_blobs','raw_snapshots','raw_snapshot_artifacts','page_capture_manifest'] LOOP
++    EXECUTE format('DROP TRIGGER IF EXISTS trg_%1$s_immutable ON public.%1$I', t);
++    EXECUTE format('CREATE TRIGGER trg_%1$s_immutable BEFORE UPDATE OR DELETE ON public.%1$I FOR EACH ROW EXECUTE FUNCTION public._ml_reject_mutation()', t);
++  END LOOP;
++END $$;
++
++-- RLS (least privilege): raw evidence contains phone numbers, full source payloads,
++-- regulatory data and media URLs — ADMIN-ONLY read. Ordinary authenticated sales
++-- users get zero rows. service_role (workers) bypasses RLS. Inserts happen only via
++-- the definer publisher/adapter RPCs (migration 08, owner-run). No UPDATE/DELETE
++-- grants anywhere (also blocked by the append-only trigger).
++DO $$
++DECLARE t text;
++BEGIN
++  FOREACH t IN ARRAY ARRAY['raw_blobs','raw_snapshots','raw_snapshot_artifacts','page_capture_manifest'] LOOP
++    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
++    EXECUTE format('DROP POLICY IF EXISTS %1$s_read ON public.%1$I', t);
++    EXECUTE format('CREATE POLICY %1$s_read ON public.%1$I FOR SELECT TO authenticated USING (public.wassell_is_admin((SELECT auth.uid())))', t);
++    EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon', t);
++    EXECUTE format('GRANT SELECT ON public.%I TO authenticated, service_role', t);
++  END LOOP;
++END $$;
++
++-- ---------------------------------------------------------------------------
++-- Raw-artifact Storage: private bucket + a dedicated NON-BYPASS uploader role.
++-- Enforceability note: service_role has BYPASSRLS, so an "insert-only" guarantee
++-- must NOT depend on the worker using the service_role key. The worker uploads
++-- with a scoped JWT whose role = market_raw_uploader (a NOLOGIN, NOBYPASSRLS role
++-- assumable via `authenticator`), which can INSERT content-addressed objects but
++-- has no UPDATE/DELETE policy. Immutable to all application/ingestion roles;
++-- mutable only via postgres/service_role infra authority (no routine worker holds
++-- those for market-raw). Gate-B must verify the current Storage version honours a
++-- custom role JWT claim; fallback is an INSERT-only edge signer.
++INSERT INTO storage.buckets (id, name, public) VALUES ('market-raw','market-raw', false)
++ON CONFLICT (id) DO NOTHING;
++
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='market_raw_uploader') THEN
++    CREATE ROLE market_raw_uploader NOLOGIN NOBYPASSRLS;
++  END IF;
++END $$;
++GRANT market_raw_uploader TO authenticator;
++
++-- INSERT only, for the uploader role only (content-addressed key ⇒ upsert=false ⇒
++-- an existing hash is a no-op, never an overwrite). NO update/delete policy exists.
++DROP POLICY IF EXISTS market_raw_upload ON storage.objects;
++CREATE POLICY market_raw_upload ON storage.objects FOR INSERT TO market_raw_uploader
++  WITH CHECK ( bucket_id = 'market-raw' );
++
++-- READ: admin only, via signed URLs from an admin RPC. No anon, no blanket authenticated.
++DROP POLICY IF EXISTS market_raw_admin_read ON storage.objects;
++CREATE POLICY market_raw_admin_read ON storage.objects FOR SELECT TO authenticated
++  USING ( bucket_id = 'market-raw' AND public.wassell_is_admin((SELECT auth.uid())) );
++
++COMMIT;
+diff --git a/supabase/migrations/2026-09-03_04_field_catalog_and_gaps.sql b/supabase/migrations/2026-09-03_04_field_catalog_and_gaps.sql
+new file mode 100644
+index 00000000..ebe38363
+--- /dev/null
++++ b/supabase/migrations/2026-09-03_04_field_catalog_and_gaps.sql
+@@ -0,0 +1,184 @@
++-- ============================================================================
++-- Phase 1 · 04 · Source-field catalog, authoritative mappings, schema-gap events
++-- ----------------------------------------------------------------------------
++-- OWNER/PURPOSE: govern every listing-related datum a platform exposes.
++--   * source_field_catalog  — DISCOVERY: what fields exist, examples, frequency.
++--                             Mutable (counts/last_seen updated per extraction).
++--                             Holds NO decision (prevents status drift).
++--   * source_field_mappings — the SINGLE AUTHORITATIVE decision per field, per
++--                             contract version. History preserved (old versions
++--                             retained; latest version = active).
++--   * schema_gap_events     — the REVIEW LIFECYCLE for unmapped/uncertain fields.
++--                             Its status may not claim "resolved" without an
++--                             authoritative mapping decision (enforced).
++-- A view reconciles the three so catalog/mapping/gap statuses cannot contradict.
++--
++-- SAFETY: new tables only; no touch to canonical data/grants/workers.
++-- FORWARD RECOVERY: DROP the view + three tables (they carry governance metadata,
++-- never canonical listing bytes; raw evidence is untouched).
++-- ============================================================================
++
++BEGIN;
++
++-- Discovery catalog (mutable metadata; NO decision column) --------------------
++CREATE TABLE IF NOT EXISTS public.source_field_catalog (
++  id                  uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
++  platform            text        NOT NULL REFERENCES public.listing_sources(source_key) ON DELETE RESTRICT,
++  adapter_id          text        NOT NULL,
++  contract_version    text        NOT NULL,
++  source_path         text        NOT NULL,                 -- stable path, e.g. property.floor_plans[]
++  page_section        text,                                 -- detail.property.media, permit_api, ...
++  source_label        text,                                 -- human-facing label as shown on the page
++  raw_data_type       text,                                 -- string|number|bool|array|object|url|date
++  unit                text,
++  language            text,                                 -- ar|en|mixed|na
++  example_values      jsonb       NOT NULL DEFAULT '[]'::jsonb
++                        CHECK (jsonb_typeof(example_values) = 'array'
++                               AND jsonb_array_length(example_values) <= 10),  -- bounded
++  first_seen          timestamptz NOT NULL DEFAULT now(),
++  last_seen           timestamptz NOT NULL DEFAULT now(),
++  occurrence_count    bigint      NOT NULL DEFAULT 0 CHECK (occurrence_count >= 0),
++  example_snapshot_id uuid        REFERENCES public.raw_snapshots(id) ON DELETE SET NULL,
++  example_listing_id  uuid,                                 -- market_listings.id (no FK: cross-lifecycle)
++  UNIQUE (platform, source_path, contract_version)
++);
++COMMENT ON TABLE public.source_field_catalog IS 'Phase1: discovery inventory of every source field; mutable counts/examples; holds NO mapping decision (see source_field_mappings).';
++
++-- Authoritative decision (versioned; history preserved) -----------------------
++CREATE TABLE IF NOT EXISTS public.source_field_mappings (
++  platform                 text        NOT NULL REFERENCES public.listing_sources(source_key) ON DELETE RESTRICT,
++  source_path              text        NOT NULL,
++  contract_version         text        NOT NULL,
++  status                   text        NOT NULL
++                             CHECK (status IN ('mapped_existing_field','candidate_new_field','review_required',
++                                               'reviewed_source_specific','intentionally_ignored','technical_excluded','unresolved')),
++  canonical_field          text,                            -- set iff status='mapped_existing_field'
++  transformation           text,
++  is_equivalent_to_existing boolean,
++  reviewer                 text,                            -- required for ignored/excluded/source_specific
++  reason                   text,
++  decided_at               timestamptz,
++  created_at               timestamptz NOT NULL DEFAULT now(),
++  PRIMARY KEY (platform, source_path, contract_version),
++  CONSTRAINT mapping_field_iff_mapped CHECK (
++    (status = 'mapped_existing_field') = (canonical_field IS NOT NULL)
++  ),
++  CONSTRAINT mapping_reason_required CHECK (
++    status NOT IN ('intentionally_ignored','technical_excluded','reviewed_source_specific')
++    OR (reviewer IS NOT NULL AND reason IS NOT NULL AND decided_at IS NOT NULL)
++  )
++);
++COMMENT ON TABLE public.source_field_mappings IS 'Phase1: THE authoritative mapping decision per source field per contract version. Latest contract_version = active; older rows retained as history.';
++
++-- Schema-gap review lifecycle -------------------------------------------------
++CREATE TABLE IF NOT EXISTS public.schema_gap_events (
++  id                     uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
++  platform               text        NOT NULL REFERENCES public.listing_sources(source_key) ON DELETE RESTRICT,
++  source_path            text        NOT NULL,
++  contract_version       text        NOT NULL,
++  first_seen             timestamptz NOT NULL DEFAULT now(),
++  last_seen              timestamptz NOT NULL DEFAULT now(),
++  occurrence_count       bigint      NOT NULL DEFAULT 1 CHECK (occurrence_count >= 0),
++  affected_record_count  bigint      NOT NULL DEFAULT 0 CHECK (affected_record_count >= 0),
++  affected_platforms     text[]      NOT NULL DEFAULT '{}',
++  sample_listing_ids     uuid[]      NOT NULL DEFAULT '{}'
++                           CHECK (array_length(sample_listing_ids,1) IS NULL OR array_length(sample_listing_ids,1) <= 20),  -- bounded sample; counts stay accurate above
++  suggested_type         text,
++  suggested_canonical_field text,
++  suggested_relationship text,
++  appears_equivalent_to  text,
++  replayable             boolean     NOT NULL DEFAULT true,
++  criticality            text        NOT NULL DEFAULT 'non_critical'
++                           CHECK (criticality IN ('critical','non_critical')),
++  status                 text        NOT NULL DEFAULT 'open'
++                           CHECK (status IN ('open','notified','in_review','resolved','wont_map')),
++  notified_at            timestamptz,
++  resolved_at            timestamptz,
++  UNIQUE (platform, source_path, contract_version)
++);
++COMMENT ON TABLE public.schema_gap_events IS 'Phase1: aggregated review lifecycle per unmapped/uncertain field. Cannot be resolved without an authoritative mapping decision (enforced by trigger).';
++COMMENT ON COLUMN public.schema_gap_events.sample_listing_ids IS 'Bounded representative sample (<=20); occurrence_count and affected_record_count remain exact.';
++
++-- Anti-drift enforcement: a gap may only be resolved/wont_map when the active
++-- mapping has a terminal decision. This keeps gap status from contradicting the
++-- authoritative mapping.
++CREATE OR REPLACE FUNCTION public.tg_schema_gap_requires_decision()
++RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
++DECLARE v_status text;
++BEGIN
++  IF NEW.status IN ('resolved','wont_map') THEN
++    SELECT status INTO v_status FROM public.source_field_mappings
++      WHERE platform = NEW.platform AND source_path = NEW.source_path AND contract_version = NEW.contract_version;
++    IF v_status IS NULL OR v_status IN ('review_required','unresolved') THEN
++      RAISE EXCEPTION 'schema_gap_events(%, %) cannot be %: no terminal source_field_mappings decision exists',
++        NEW.platform, NEW.source_path, NEW.status USING ERRCODE = 'check_violation';
++    END IF;
++  END IF;
++  RETURN NEW;
++END $$;
++COMMENT ON FUNCTION public.tg_schema_gap_requires_decision() IS 'Phase1: prevents a schema gap being closed without an authoritative mapping decision.';
++
++DROP TRIGGER IF EXISTS trg_schema_gap_requires_decision ON public.schema_gap_events;
++CREATE TRIGGER trg_schema_gap_requires_decision BEFORE INSERT OR UPDATE ON public.schema_gap_events
++  FOR EACH ROW EXECUTE FUNCTION public.tg_schema_gap_requires_decision();
++
++-- Reconciled status view: the ONE place to read a field's governance state.
++-- Authoritative status = latest source_field_mappings row; catalog + gap join in.
++CREATE OR REPLACE VIEW public.v_source_field_status AS
++WITH active_map AS (
++  SELECT DISTINCT ON (platform, source_path) platform, source_path, contract_version, status, canonical_field, reviewer, reason, decided_at
++  FROM public.source_field_mappings
++  ORDER BY platform, source_path, contract_version DESC
++)
++SELECT
++  c.platform, c.source_path, c.source_label, c.page_section, c.raw_data_type, c.language,
++  c.occurrence_count, c.last_seen, c.example_values,
++  COALESCE(m.status, 'unresolved')       AS authoritative_status,
++  m.canonical_field, m.reviewer, m.reason, m.decided_at,
++  g.status                               AS gap_status,
++  g.criticality, g.affected_record_count, g.replayable
++FROM public.source_field_catalog c
++LEFT JOIN active_map m USING (platform, source_path)
++LEFT JOIN public.schema_gap_events g
++  ON g.platform = c.platform AND g.source_path = c.source_path AND g.contract_version = c.contract_version;
++-- security_invoker so the caller's admin-gated RLS on the base tables applies
++-- (a non-admin must NOT see governance data through the view).
++ALTER VIEW public.v_source_field_status SET (security_invoker = true);
++COMMENT ON VIEW public.v_source_field_status IS 'Phase1: single reconciled governance status per source field (authoritative = latest mapping). security_invoker=true.';
++
++-- keep catalog.last_seen honest on upsert (occurrence_count maintained by writer)
++CREATE OR REPLACE FUNCTION public.tg_source_field_catalog_touch()
++RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
++BEGIN NEW.last_seen := now(); RETURN NEW; END $$;
++DROP TRIGGER IF EXISTS trg_source_field_catalog_touch ON public.source_field_catalog;
++CREATE TRIGGER trg_source_field_catalog_touch BEFORE UPDATE ON public.source_field_catalog
++  FOR EACH ROW EXECUTE FUNCTION public.tg_source_field_catalog_touch();
++
++-- Indexes for review + aggregation.
++CREATE INDEX IF NOT EXISTS ix_catalog_platform        ON public.source_field_catalog (platform, source_path);
++CREATE INDEX IF NOT EXISTS ix_gap_open                ON public.schema_gap_events (status) WHERE status IN ('open','notified','in_review');
++CREATE INDEX IF NOT EXISTS ix_gap_critical            ON public.schema_gap_events (criticality) WHERE criticality = 'critical';
++CREATE INDEX IF NOT EXISTS ix_mappings_active         ON public.source_field_mappings (platform, source_path, contract_version DESC);
++
++-- RLS (least privilege): schema-gap samples reference real listings + example
++-- values (may include advertiser/regulatory data) — ADMIN-ONLY read (admins act as
++-- schema reviewers in Phase 1; a dedicated reviewer capability can be added later).
++-- Governance edits go through an admin RPC (later); definer functions bypass RLS.
++DO $$
++DECLARE t text;
++BEGIN
++  FOREACH t IN ARRAY ARRAY['source_field_catalog','source_field_mappings','schema_gap_events'] LOOP
++    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
++    EXECUTE format('DROP POLICY IF EXISTS %1$s_read ON public.%1$I', t);
++    EXECUTE format('CREATE POLICY %1$s_read ON public.%1$I FOR SELECT TO authenticated USING (public.wassell_is_admin((SELECT auth.uid())))', t);
++    EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon', t);
++    EXECUTE format('GRANT SELECT ON public.%I TO authenticated, service_role', t);
++  END LOOP;
++END $$;
++-- The reconciled-status view is owned by the definer and inherits the base-table
++-- RLS (security_invoker default = false → but base tables are admin-gated; grant
++-- SELECT only, admins are the effective readers via the underlying policies).
++REVOKE ALL ON public.v_source_field_status FROM PUBLIC, anon;
++GRANT SELECT ON public.v_source_field_status TO authenticated, service_role;
++
++COMMIT;
+diff --git a/supabase/migrations/2026-09-03_05_ingestion_provenance_outbox.sql b/supabase/migrations/2026-09-03_05_ingestion_provenance_outbox.sql
+new file mode 100644
+index 00000000..7f85382d
+--- /dev/null
++++ b/supabase/migrations/2026-09-03_05_ingestion_provenance_outbox.sql
+@@ -0,0 +1,149 @@
++-- ============================================================================
++-- Phase 1 · 05 · Ingestion runs/items, change audit, field provenance, outbox
++-- ----------------------------------------------------------------------------
++-- OWNER/PURPOSE: the run/attempt ledger, the append-only canonical-change audit,
++-- current field-level provenance, the transactional photo-mirror outbox, and the
++-- quarantine review queue. Written only by the canonical publisher/edit core
++-- (migration 08). This migration creates empty tables + immutability guards.
++--
++-- IDENTITIES: ingestion attempt = (run_id, source, external_id); canonical
++-- identity = (source, external_id) on market_listings (unique idx in migration 09).
++--
++-- SAFETY: new tables only; no touch to canonical data/grants/workers.
++-- FORWARD RECOVERY: change_events/provenance/review/outbox hold audit + queues,
++-- never canonical listing bytes. Rollback NEVER drops change_events or provenance
++-- once populated (see runbook); they may be retained even if Phase 1 is reverted.
++-- ============================================================================
++
++BEGIN;
++
++-- Ingestion run + per-attempt item -------------------------------------------
++CREATE TABLE IF NOT EXISTS public.ingestion_runs (
++  id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
++  source           text        NOT NULL REFERENCES public.listing_sources(source_key) ON DELETE RESTRICT,
++  adapter_version  text        NOT NULL,
++  started_at       timestamptz NOT NULL DEFAULT now(),
++  ended_at         timestamptz,
++  summary          jsonb       NOT NULL DEFAULT '{}'::jsonb
++                     CHECK (jsonb_typeof(summary) = 'object')
++);
++COMMENT ON TABLE public.ingestion_runs IS 'Phase1: one extraction run; summary holds the schema-gap/capture report (see runbook contract).';
++
++CREATE TABLE IF NOT EXISTS public.ingestion_items (
++  id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
++  run_id       uuid        NOT NULL REFERENCES public.ingestion_runs(id) ON DELETE CASCADE,
++  source       text        NOT NULL REFERENCES public.listing_sources(source_key) ON DELETE RESTRICT,
++  external_id  text        NOT NULL CHECK (btrim(external_id) <> ''),
++  snapshot_id  uuid        REFERENCES public.raw_snapshots(id) ON DELETE RESTRICT,
++  content_hash text        REFERENCES public.raw_blobs(content_hash) ON DELETE RESTRICT,
++  state        text        NOT NULL DEFAULT 'discovered'
++                 CHECK (state IN ('discovered','fetched','raw_snapshot_saved','parsed','normalized',
++                                  'validated','enriched','ready_to_publish','published',
++                                  'published_with_schema_gaps','fetch_failed','parse_failed',
++                                  'validation_failed','enrichment_failed','quarantined','noop')),
++  error        text,
++  fetched_at   timestamptz,
++  created_at   timestamptz NOT NULL DEFAULT now(),
++  UNIQUE (run_id, source, external_id)
++);
++COMMENT ON TABLE public.ingestion_items IS 'Phase1: one attempt per listing per run; the lifecycle state machine. The same unchanged payload on two dates = two items (distinct run).';
++
++CREATE INDEX IF NOT EXISTS ix_items_run    ON public.ingestion_items (run_id);
++CREATE INDEX IF NOT EXISTS ix_items_listing ON public.ingestion_items (source, external_id, created_at DESC);
++CREATE INDEX IF NOT EXISTS ix_items_state  ON public.ingestion_items (state)
++  WHERE state IN ('quarantined','fetch_failed','parse_failed','validation_failed','enrichment_failed');
++
++-- Append-only canonical-change audit -----------------------------------------
++-- record_id has NO FK: the audit MUST survive a listing deletion.
++CREATE TABLE IF NOT EXISTS public.listing_change_events (
++  id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
++  record_id       uuid        NOT NULL,
++  source          text        NOT NULL,
++  external_id     text        NOT NULL,
++  at              timestamptz NOT NULL DEFAULT now(),
++  actor           text,                                    -- auth.uid() for manual, 'system:<adapter>' for publish
++  kind            text        NOT NULL CHECK (kind IN ('system_publish','manual_edit','set_split','canary_rollback')),
++  reason          text,
++  adapter_version text,
++  raw_snapshot_id uuid        REFERENCES public.raw_snapshots(id) ON DELETE RESTRICT,
++  diff            jsonb       NOT NULL CHECK (jsonb_typeof(diff) = 'object')
++);
++COMMENT ON TABLE public.listing_change_events IS 'Phase1: APPEND-ONLY audit; one row per publish/edit; diff = {field:{before,after,tier,decision}}. Survives listing deletion.';
++CREATE INDEX IF NOT EXISTS ix_change_events_record ON public.listing_change_events (record_id, at DESC);
++CREATE INDEX IF NOT EXISTS ix_change_events_listing ON public.listing_change_events (source, external_id, at DESC);
++
++-- Current field-level provenance (one row per listing; overwritten in place) ---
++CREATE TABLE IF NOT EXISTS public.listing_field_provenance (
++  record_id         uuid        PRIMARY KEY REFERENCES public.market_listings(id) ON DELETE CASCADE,
++  field_provenance  jsonb       NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(field_provenance) = 'object'),
++  updated_at        timestamptz NOT NULL DEFAULT now()
++);
++COMMENT ON TABLE public.listing_field_provenance IS 'Phase1: current per-field provenance {field:{tier,snapshot_id,source_updated_at,adapter_version}}; O(listings) not O(changes).';
++
++-- Transactional photo-mirror outbox ------------------------------------------
++CREATE TABLE IF NOT EXISTS public.mirror_outbox (
++  id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
++  record_id       uuid        NOT NULL REFERENCES public.market_listings(id) ON DELETE CASCADE,
++  image_urls_hash text        NOT NULL CHECK (image_urls_hash ~ '^[a-f0-9]{64}$'),
++  status          text        NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','failed')),
++  attempts        integer     NOT NULL DEFAULT 0 CHECK (attempts >= 0),
++  last_error      text,
++  created_at      timestamptz NOT NULL DEFAULT now(),
++  updated_at      timestamptz NOT NULL DEFAULT now(),
++  UNIQUE (record_id, image_urls_hash)                       -- dedup: same image set enqueued once
++);
++COMMENT ON TABLE public.mirror_outbox IS 'Phase1: publisher writes a row (same tx) when image_urls change; a worker drains with dedup/retry/failure visibility. Not inline I/O.';
++CREATE INDEX IF NOT EXISTS ix_outbox_pending ON public.mirror_outbox (created_at) WHERE status IN ('pending','failed');
++
++CREATE OR REPLACE FUNCTION public.tg_mirror_outbox_touch()
++RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
++BEGIN NEW.updated_at := now(); RETURN NEW; END $$;
++DROP TRIGGER IF EXISTS trg_mirror_outbox_touch ON public.mirror_outbox;
++CREATE TRIGGER trg_mirror_outbox_touch BEFORE UPDATE ON public.mirror_outbox
++  FOR EACH ROW EXECUTE FUNCTION public.tg_mirror_outbox_touch();
++
++-- Quarantine / suspicious-change review queue --------------------------------
++-- record_id NO FK: a quarantined change may reference a listing that does not
++-- yet exist (insert-time critical gap) and must survive deletion.
++CREATE TABLE IF NOT EXISTS public.listing_change_review (
++  id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
++  record_id    uuid,
++  source       text        NOT NULL,
++  external_id  text        NOT NULL,
++  field        text        NOT NULL,
++  before_value jsonb,
++  after_value  jsonb,
++  reason       text        NOT NULL,
++  criticality  text        NOT NULL DEFAULT 'non_critical' CHECK (criticality IN ('critical','non_critical')),
++  snapshot_id  uuid        REFERENCES public.raw_snapshots(id) ON DELETE RESTRICT,
++  created_at   timestamptz NOT NULL DEFAULT now(),
++  resolved     boolean     NOT NULL DEFAULT false,
++  resolved_by  text,
++  resolved_at  timestamptz
++);
++COMMENT ON TABLE public.listing_change_review IS 'Phase1: suspicious/critical changes held for human review instead of being applied.';
++CREATE INDEX IF NOT EXISTS ix_review_open ON public.listing_change_review (created_at) WHERE resolved = false;
++
++-- Append-only enforcement for the audit table.
++DROP TRIGGER IF EXISTS trg_change_events_immutable ON public.listing_change_events;
++CREATE TRIGGER trg_change_events_immutable BEFORE UPDATE OR DELETE ON public.listing_change_events
++  FOR EACH ROW EXECUTE FUNCTION public._ml_reject_mutation();
++
++-- RLS (least privilege): ingestion errors, historical before/after audit values,
++-- and per-field provenance are internal operational data — ADMIN-ONLY read.
++-- Ordinary authenticated sales users get zero rows; service_role (workers) bypasses
++-- RLS. Only the definer publisher/edit/worker RPCs (later) write here.
++DO $$
++DECLARE t text;
++BEGIN
++  FOREACH t IN ARRAY ARRAY['ingestion_runs','ingestion_items','listing_change_events',
++                           'listing_field_provenance','mirror_outbox','listing_change_review'] LOOP
++    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
++    EXECUTE format('DROP POLICY IF EXISTS %1$s_read ON public.%1$I', t);
++    EXECUTE format('CREATE POLICY %1$s_read ON public.%1$I FOR SELECT TO authenticated USING (public.wassell_is_admin((SELECT auth.uid())))', t);
++    EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon', t);
++    EXECUTE format('GRANT SELECT ON public.%I TO authenticated, service_role', t);
++  END LOOP;
++END $$;
++
++COMMIT;
+diff --git a/docs/market-ingest/phase1-gate-a.md b/docs/market-ingest/phase1-gate-a.md
+new file mode 100644
+index 00000000..3a090af0
+--- /dev/null
++++ b/docs/market-ingest/phase1-gate-a.md
+@@ -0,0 +1,87 @@
++# Phase 1 · Gate A — Migrations 01–05 (schema documentation, r3)
++
++**Status:** files written to the worktree only. **Not applied** to any database. No branch, commit, push, DB apply, data/grant/worker/schedule change. Gate B/Gate C and migrations `06–10` **not begun**. The 608 interrupted claims untouched.
++
++## Files
++| File | Role |
++|---|---|
++| `2026-09-03_01_…freeze_baseline.sql` | Folds the ad-hoc freeze + the *valid* part of the 2026-08-05 UAE migration; three-layer pinned reconciliation; `v_market_properties` security fix |
++| `2026-09-03_02_listing_sources_registry.sql` | source registry (admin-read) |
++| `2026-09-03_03_raw_capture.sql` | immutable multi-artifact capture (two-axis capture/retention) |
++| `2026-09-03_04_field_catalog_and_gaps.sql` | catalog / authoritative mappings / gaps (+ security_invoker view) |
++| `2026-09-03_05_ingestion_provenance_outbox.sql` | runs/items / append-only audit / provenance / outbox / quarantine |
++| `docs/market-ingest/phase1-gate-a.md` | this document |
++| `docs/market-ingest/frozen-generated-objects.md` | verbatim generated policies/views + Storage role design |
++| `docs/market-ingest/gate-a.patch` | full unified diff of all the above |
++
++## 1. Three-layer pinning (correction 1) — and the raw-md5 problem
++The model schema stores fields with **random UUIDs** (`schema_has_random_field_ids=true`), so `md5(models.schema)` is **non-deterministic** — a fresh DB rebuilding the model would never match it. The generated RLS policies/views depend on the field **generator inputs**, not the UUIDs. So `01` pins the three layers that actually determine the artifacts:
++- **L1 — canonical generator-input fingerprint** (per field: name, type, required, width, is_multi, default, validation, lookup target resolved to model **slug/name** not UUID, lookup_display, dropdown option values sorted; excludes random id + labels; `md5` of concat sorted by name) = **`5bf5bb0271aa288233ad3fd3467987d1`**.
++- **L2 — generator function hash** `md5(pg_get_functiondef(regenerate_frozen_model_artifacts))` = **`415e0006b8be1eb6200c147b336bfcfe`**.
++- **L3 — output fingerprints**: frozen policies = **`e2a93cf195706b5fb04e3e0548b919e5`**, generated views (`market_listings_v`+`unified_records`) = **`2bad4bb0c7f546423f8656b570f9cf22`**.
++
++`01` **folds the valid UAE model fields** (names+types) so a fresh DB reaches L1; asserts L1+L2 before regenerating (fresh) and asserts L3 after; on **production** all three are asserted and the generator is **never** run. **Schema parity** (Gate B) is proven by **normalized `pg_dump --schema-only` diff** of (full history + `01–05`) vs a restored-production schema — the model *data* row's UUIDs are not in a schema-only dump, so they do not affect parity, and the fingerprints guarantee identical policies/views.
++
++## 2. Two-axis capture / retention
++`page_capture_manifest.state` (7 capture states + `why_expected`) is independent of `raw_snapshot_artifacts.retention_state` (`durable_original / durable_existing_asset / external_reference_only / retention_failed / not_applicable`), constrained-consistent with `retention_mode`. An external URL satisfies discovery, never durable retention.
++
++## 3. Enforceable Storage immutability (correction 3)
++**Now in migration `03`** (bucket + `market_raw_uploader` role + policies), not only the companion doc. `service_role` has **BYPASSRLS**, so "no UPDATE/DELETE policy" does **not** make `market-raw` immutable to the worker if it uploads with the `service_role` key. The enforceable design:
++
++- **Dedicated uploader role** `market_raw_uploader` — `NOLOGIN`, **`NOBYPASSRLS`**, `GRANT market_raw_uploader TO authenticator`. The worker uploads with a **scoped JWT whose `role` claim = `market_raw_uploader`**, minted from a signing key that is **not** the `service_role` key.
++- **Storage policies** (on `storage.objects`): `INSERT` for `market_raw_uploader` where `bucket_id='market-raw'`; **no** `UPDATE`/`DELETE` policy for it or for `anon`/`authenticated`. Content-addressed key ⇒ `upsert=false` (an existing hash is a no-op, never an overwrite). Exact DDL in `frozen-generated-objects.md`.
++- **Threat boundary (documented, honest):**
++  - **Immutable to** all application + ingestion roles: `anon`, `authenticated`, and `market_raw_uploader` (INSERT-only, non-bypass).
++  - **Mutable only** through explicit infrastructure authority: `postgres` / `service_role` (BYPASSRLS). **No routine worker uses these for `market-raw`.**
++  - Content-addressed key + `upsert=false` + **hash verification** (publisher checks `sha256(bytes)=key` before recording `raw_blobs.content_hash`).
++  - **Mutation/deletion audit + alert**: any `DELETE`/`UPDATE` on `market-raw` objects (only possible via infra authority) is logged and alerted; `storage.protect_delete` refuses direct SQL DELETE on `storage.objects`.
++- **Gate-B verification required:** that the current Supabase Storage version honors a custom `role` JWT claim for `market_raw_uploader` (custom-role auth support varies by version). If it does not, the fallback is a small edge signer/proxy that holds INSERT-only, never the `service_role` key.
++
++## 4. Media-retention classifications (correction 2 — verified)
++| Aqar asset | Ownership (verified) | retention_state | bytes retained |
++|---|---|---|---|
++| Gallery images (`images.aqar.fm`) | mirrored to Wassell `listing-photos` | `durable_existing_asset` | linked + hashed, no copy |
++| Detail HTML/JSON/RSC bundle | Wassell `market-raw` | `durable_original` | yes |
++| Floor plans / documents | Wassell `market-raw` | `durable_original` | yes (when present) |
++| **Videos (Cloudflare HLS)** | **`customer-tcdl2qnu9671k3x4.cloudflarestream.com` = Aqar's Cloudflare Stream account (third-party)** — no `video_mp4_map` re-host exists | **`external_reference_only`** | **no** — retain stable Stream video ID (e.g. `37904cfb…`) + `.m3u8` manifest URL + metadata |
++| Virtual tours / panoramas | third-party | `external_reference_only` | no |
++
++17,982 Aqar listings carry video, all on Aqar's Cloudflare account ⇒ `external_reference_only`, **not** durable, **surfaced as a retention-risk metric** in the run report (`external_only_media_count`). No third-party segment mirroring in Phase 1. If a video URL is ever confirmed to be a **Wassell-controlled** Cloudflare/Storage asset, it reclassifies to `durable_existing_asset`.
++
++## 5. Reconciled production sizes
++heap **1,266 MB** + indexes **240 MB** + **TOAST 2,185 MB** = 3,691 ≈ total **3,692 MB** (TOAST = `source_payload`/large text out-of-line). Junction 71 MB / 535,350 links. Largest: `idx_ml_price` 45, `idx_ml_bedrooms` 33, **`idx_ml_source_ext` 25 (existing non-unique on `(source,external_id)`)**, `idx_ml_dupe` 23, pkey 21. Unique index (mig 09) over **314,070** rows, 0 dups/nulls ⇒ seconds–minutes, no long ACCESS EXCLUSIVE; the non-unique `idx_ml_source_ext` can then be dropped (−25 MB).
++
++## 6. Least-privilege RLS
++Every new table: admin-only read via `wassell_is_admin((SELECT auth.uid()))`; `service_role` bypasses (workers); `anon`/`PUBLIC` revoked; no INSERT/UPDATE/DELETE grants to app roles; raw-evidence/audit tables also append-only via trigger. `v_source_field_status` is `security_invoker=true`. Full matrix unchanged from r2.
++
++## 7. Governance source-of-truth
++`source_field_mappings` = the only authoritative decision (versioned; history retained). `source_field_catalog` holds no status. `schema_gap_events.status` is a distinct lifecycle; a trigger forbids `resolved`/`wont_map` without a terminal mapping decision. `v_source_field_status` reconciles.
++
++## 8. `v_market_properties` security audit (correction 6)
++- **Owner:** `postgres`. **Grantees (current prod):** `anon`, `authenticated`, `service_role` (all `arwdDxtm`). **security_invoker:** `false`. **Selects:** the full `ml.data` (contact info + raw `source_payload`).
++- **Result today per role:** `anon` → **reads every listing's full data** (RLS bypassed); ordinary `authenticated` salesperson → **same full exposure**; admin → same; `service_role` → same. This is a **live data-exposure bug** — the definer-style view + broad grants + full-data column defeat `frozen_view`.
++- **Why invoker=false existed:** the freeze scratchpad created it to feed the website/finder de-duplicated inventory without per-row RLS cost — but it over-exposed.
++- **Fix in `01` (desired final state):** `security_invoker=true` + `REVOKE ... FROM anon` + `GRANT SELECT TO authenticated, service_role`. Now the caller's own `frozen_view` RLS applies; a non-admin sees only rows they may view; `anon` has no access. Applying `01` to production **closes the exposure**.
++- **Gate-B check:** confirm no consumer depended on anon reading this view (it should not have); if the website needs de-duplicated inventory, route it through a controlled, column-restricted, RLS-respecting path.
++
++## 9. UAE-migration disposition (correction 4) — 2026-08-05_uae_portals_and_dedup.sql
++**Not committed as-is.** Field-by-field:
++
++| Part of 2026-08-05 | Classification | Disposition |
++|---|---|---|
++| `source` dropdown options (bayut/dubizzle/propertyfinder) | Still valid + required | **Folded into `01`** (model reconciliation) |
++| UAE model fields (`title_ar…source_payload`, 18 fields) | Still valid + required | **Folded into `01`** (names+types; reach L1 fingerprint) |
++| `market_permit_key(text)` function | Already represented | **Superseded** — `01` owns it |
++| `v_market_properties` (reads `public.records`) | **Obsolete after freeze** (records is empty for this model; and it was over-exposed) | **Superseded** — `01` ships the `unified_records`-based, **security-fixed** view |
++| Migration's stated assumptions (unfrozen model, `records` writes, `market_listing_merge`, pre-freeze views) | **Unsafe/incorrect post-freeze** | **Do not replay** — the retired-merge stub + records-object removal are in `01` |
++| UAE-adapter-specific logic | None present | n/a (adapters are Phase 3) |
++
++**Action:** the untracked `supabase/migrations/2026-08-05_uae_portals_and_dedup.sql` should be **removed from the worktree** (recommended) and must **not** be committed; its only still-valid content (source options + UAE fields) lives in `01`. This avoids backdating a broken migration or making fresh environments replay obsolete records-based architecture.
++
++## Assumptions & blockers
++1. `01` correctness (fresh==prod schema) is proven by the **Gate B normalized schema-dump diff**; the three-layer pin makes the generated artifacts deterministic.
++2. **`market-raw` bucket + `market_raw_uploader` role/policies** are Storage-layer (applied at Gate B; DDL in the companion doc). Custom-role JWT support must be **verified against the current Storage version** (fallback: INSERT-only edge signer).
++3. **Videos/tours = `external_reference_only`** (metadata only) — surfaced as retention risk; confirm acceptable for Phase 1.
++4. **`v_market_properties` fix changes production behavior** (closes anon full-data read) — confirm no legitimate anon consumer before applying.
++5. **Delete the untracked 2026-08-05 file** (do not commit) — confirm.
++6. `record_save` guard/`edit_listing`/publisher/planner/unique-index/lockdown are `06–10`, not begun.
+diff --git a/docs/market-ingest/frozen-generated-objects.md b/docs/market-ingest/frozen-generated-objects.md
+new file mode 100644
+index 00000000..862dfa50
+--- /dev/null
++++ b/docs/market-ingest/frozen-generated-objects.md
+@@ -0,0 +1,82 @@
++# Frozen generated objects + raw Storage policies (captured for review)
++
++These objects are reproduced by migration `01`'s **pinned regeneration** (fresh DB) or **asserted present** (production). They are captured here verbatim from the live database (2026-09-03) so they are reviewable in source control even though `01` applies them via `regenerate_frozen_model_artifacts()` under the pinned `md5(models.schema)=44e7ce3ffc050cba5f49b97b5667cf83`.
++
++## Frozen RLS policies on `public.market_listings`
++All four policies target role `authenticated`. They pass a full record reconstruction (the "record literal" below) into the Wassell scope evaluators. The reconstruction is the deterministic per-column expression the freeze generator emits.
++
++**Record literal `R`** (used by view/update/delete; abbreviated — all 90 scalar columns, each cast to text, plus `custom_data`):
++```sql
++R := ((jsonb_build_object(
++        'external_id', external_id, 'source', source, 'source_url', source_url, 'title', title,
++        'listing_type', listing_type, 'category', category, 'property_type', property_type,
++        'price', (price)::text, 'description', description, 'location', location,
++        'title_ar', title_ar, 'description_ar', description_ar, 'plot_area', (plot_area)::text,
++        /* … furnished, completion_status, emirate, community, building, permit_number, permit_key,
++             reference_number, agency_name, agent_whatsapp, is_verified::text, listed_at::text,
++             dupe_group_id, dupe_role, source_payload::text, area_sqft::text, plot_area_sqft::text,
++             purpose, property_age, handover, zone_name, tour_url, listed_by, whatsapp_number,
++             ded_license_number, brn, developer … */
++      ) || jsonb_build_object(
++        'project_name', project_name, 'area', (area)::text, 'price_per_m2', (price_per_m2)::text,
++        'bedrooms', (bedrooms)::text, 'bathrooms', (bathrooms)::text, /* … through quality_breakdown::text */
++      ) || jsonb_build_object('scraped_extras', (scraped_extras)::text))
++      || COALESCE(custom_data, '{}'::jsonb));
++```
++(The full, un-abbreviated expression is exactly the live `pg_policy` definition; it is regenerated, not hand-maintained.)
++
++```sql
++-- SELECT
++CREATE POLICY frozen_view   ON public.market_listings FOR SELECT TO authenticated
++  USING ( public.wassell_can_view_jsonb((SELECT auth.uid()), '8f06bc39-4bee-42e9-9fab-77023fb89ede'::uuid,
++                                         id, created_by_user_id, R) );
++-- INSERT
++CREATE POLICY frozen_insert ON public.market_listings FOR INSERT TO authenticated
++  WITH CHECK ( public.wassell_user_has_action((SELECT auth.uid()), '8f06bc39-4bee-42e9-9fab-77023fb89ede'::uuid, 'create') );
++-- UPDATE
++CREATE POLICY frozen_update ON public.market_listings FOR UPDATE TO authenticated
++  USING      ( public.wassell_can_edit_jsonb((SELECT auth.uid()), '8f06bc39-…'::uuid, id, created_by_user_id, R) )
++  WITH CHECK ( public.wassell_can_edit_jsonb((SELECT auth.uid()), '8f06bc39-…'::uuid, id, created_by_user_id, R) );
++-- DELETE
++CREATE POLICY frozen_delete ON public.market_listings FOR DELETE TO authenticated
++  USING ( public.wassell_can_edit_jsonb((SELECT auth.uid()), '8f06bc39-…'::uuid, id, created_by_user_id, R)
++          AND public.wassell_user_has_action((SELECT auth.uid()), '8f06bc39-…'::uuid, 'delete') );
++```
++
++## Views (security_invoker flags, from live `pg_class.reloptions`)
++- `public.market_listings_v` — `security_invoker=true` (generated JSONB-shape view over the frozen columns).
++- `public.unified_records` — `security_invoker=true` (UNION of `records` + each frozen model's `_v`).
++- `public.v_market_properties` — **`security_invoker=false`** (definition folded verbatim into migration `01`).
++
++## `market-raw` private bucket + ENFORCEABLE Storage policies (applied at Gate B)
++Not part of the five schema migrations (Storage layer). **`service_role` has BYPASSRLS**, so an "insert-only" guarantee cannot rely on the worker using the `service_role` key. Enforcement uses a dedicated **non-bypass** uploader role; the worker uploads with a scoped JWT for that role, never the `service_role` key.
++```sql
++-- bucket (private, no public read)
++INSERT INTO storage.buckets (id, name, public) VALUES ('market-raw','market-raw', false)
++ON CONFLICT (id) DO NOTHING;
++
++-- dedicated uploader role: NOLOGIN, NOT bypassrls, assumable via a scoped JWT.
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='market_raw_uploader') THEN
++    CREATE ROLE market_raw_uploader NOLOGIN NOBYPASSRLS;
++  END IF;
++END $$;
++GRANT market_raw_uploader TO authenticator;   -- lets a JWT with role=market_raw_uploader assume it
++
++-- INSERT only, for the uploader role only (content-addressed; upsert=false, so an
++-- existing hash is a no-op, never an overwrite). No UPDATE/DELETE policy exists for
++-- ANY application role → immutable to app + ingestion roles.
++CREATE POLICY market_raw_upload ON storage.objects FOR INSERT TO market_raw_uploader
++  WITH CHECK ( bucket_id = 'market-raw' );
++
++-- READ: admin only, via signed URLs minted by an admin RPC. No anon, no blanket authenticated.
++CREATE POLICY market_raw_admin_read ON storage.objects FOR SELECT TO authenticated
++  USING ( bucket_id = 'market-raw' AND public.wassell_is_admin((SELECT auth.uid())) );
++```
++**Threat boundary (honest):**
++- Immutable to `anon`, `authenticated`, and `market_raw_uploader` (INSERT-only, non-bypass) — i.e. all application/ingestion roles.
++- Mutable ONLY via `postgres` / `service_role` (BYPASSRLS) = explicit emergency/admin infrastructure authority; **no routine worker uses these for `market-raw`** (the worker holds only the uploader JWT).
++- Content-addressed key `market-raw/<source>/<sha256>[.gz]`, `upsert=false`; **hash verification** (`sha256(bytes)=key`) before `raw_blobs.content_hash` is recorded.
++- Any DELETE/UPDATE on `market-raw` (possible only via infra authority) is **audited + alerted**; `storage.protect_delete` refuses direct SQL DELETE on `storage.objects`. No routine worker receives delete authority.
++- **Gate-B verification:** confirm the current Supabase Storage version honors a custom `role` JWT claim for `market_raw_uploader`; if not, use an INSERT-only edge signer that never holds the `service_role` key.
++- **Existing assets:** `listing-photos` referenced not copied (`existing_storage_ref` / `durable_existing_asset`); Aqar Cloudflare HLS on Aqar's Stream account (`customer-tcdl2qnu9671k3x4…`) is `external_reference_only`.
+diff --git a/docs/market-ingest/hotfix-tests.sql b/docs/market-ingest/hotfix-tests.sql
+new file mode 100644
+index 00000000..b1c640d8
+--- /dev/null
++++ b/docs/market-ingest/hotfix-tests.sql
+@@ -0,0 +1,40 @@
++-- Manual verification for the market_listings view-exposure hotfix.
++-- Run each block; do NOT print row CONTENTS (use count()/expect-error only).
++-- Expected results after 2026-09-03_00_hotfix_market_listings_view_exposure.sql.
++
++-- 1) anon → NO access to any of the three views.
++SET LOCAL ROLE anon;
++--   expect: ERROR permission denied (or 0 via RLS) for each:
++--   SELECT count(*) FROM public.v_market_properties;      -- expect: permission denied
++--   SELECT count(*) FROM public.v_market_listings;        -- expect: permission denied
++--   SELECT count(*) FROM public.market_listings_summary;  -- expect: permission denied
++RESET ROLE;
++
++-- 2) ordinary authenticated salesperson (non-admin) → only the summary, RLS-scoped.
++--    Simulate by setting request.jwt.claims to a non-admin uid, role=authenticated.
++SET LOCAL ROLE authenticated;
++--   SELECT count(*) FROM public.v_market_properties;      -- expect: permission denied (grant revoked)
++--   SELECT count(*) FROM public.v_market_listings;        -- expect: permission denied (grant revoked)
++--   SELECT count(*) FROM public.market_listings_summary;  -- expect: rows (SPA slim store; advertiser_phone by design; NO source_payload)
++RESET ROLE;
++
++-- 3) authorized admin (authenticated + profiles.is_admin=true) → summary as above;
++--    raw evidence/audit remain admin-only on the NEW tables (Gate A 03/04/05).
++--   (Admins gain no special access to v_market_properties/v_market_listings here;
++--    if an admin inventory surface is later required it will be an explicit RPC.)
++
++-- 4) service_role (infra) → full access to all three (BYPASSRLS; operational).
++SET LOCAL ROLE service_role;
++--   SELECT count(*) FROM public.v_market_properties;      -- expect: rows
++--   SELECT count(*) FROM public.v_market_listings;        -- expect: rows
++--   SELECT count(*) FROM public.market_listings_summary;  -- expect: rows
++RESET ROLE;
++
++-- 5) Regression guard: assert the grants after applying the hotfix.
++--   SELECT has_table_privilege('anon','public.v_market_properties','SELECT');       -- expect false
++--   SELECT has_table_privilege('authenticated','public.v_market_properties','SELECT'); -- expect false
++--   SELECT has_table_privilege('anon','public.v_market_listings','SELECT');          -- expect false
++--   SELECT has_table_privilege('authenticated','public.v_market_listings','SELECT');  -- expect false
++--   SELECT has_table_privilege('anon','public.market_listings_summary','SELECT');    -- expect false
++--   SELECT has_table_privilege('authenticated','public.market_listings_summary','SELECT'); -- expect true (SPA)
++--   SELECT (reloptions @> ARRAY['security_invoker=true']) FROM pg_class WHERE relname='v_market_properties'; -- expect true
+diff --git a/docs/archive/obsolete/2026-08-05_uae_portals_and_dedup.sql b/docs/archive/obsolete/2026-08-05_uae_portals_and_dedup.sql
+new file mode 100644
+index 00000000..184fd860
+--- /dev/null
++++ b/docs/archive/obsolete/2026-08-05_uae_portals_and_dedup.sql
+@@ -0,0 +1,181 @@
++-- ============================================================================
++-- ARCHIVED / OBSOLETE — DO NOT EXECUTE
++-- ----------------------------------------------------------------------------
++-- This migration assumes the pre-freeze architecture: an UNFROZEN market_listings
++-- model, writes/reads via public.records, and the now-retired market_listing_merge.
++-- It is SUPERSEDED by the Phase-1 forward reconciliation (2026-09-03_01…): its only
++-- still-valid content (source dropdown options + the UAE fields, and market_permit_key)
++-- is folded there; its records-based v_market_properties is replaced by the
++-- unified_records-based, security-fixed view. Preserved here for forensic/history
++-- purposes ONLY. Moved out of supabase/migrations so it can never be applied.
++-- Original-content sha256 recorded in the Gate A checksum list.
++-- ============================================================================
++
++-- UAE portals (Bayut / Dubizzle / Property Finder) + cross-platform de-duplication.
++--
++-- market_listings is UNFROZEN (JSONB in `records`), so this does NOT ALTER TABLE — it
++-- (1) adds the three portal options to the `source` dropdown,
++-- (2) appends the new normalized fields to the model schema (idempotent, by slug) so the
++--     Builder renders them and the auto-generated `v_market_listings` typed view exposes
++--     them, and
++-- (3) adds the permit-normalization function + the canonical-property view used to show
++--     de-duplicated inventory (one row per dupe_group_id).
++--
++-- The writer is the scraper's existing `market_listing_merge(id, patch)` RPC (source-agnostic
++-- `data = data || jsonb_strip_nulls(patch)`), which preserves enrichment-owned keys
++-- (permit_number, image_mirror_map, dupe_group_id) across re-scans. No new write path needed.
++
++BEGIN;
++
++-- ---------------------------------------------------------------------------
++-- 1 + 2. Extend the market_listings model schema (source options + new fields)
++-- ---------------------------------------------------------------------------
++DO $$
++DECLARE
++  v_schema   jsonb;
++  v_sections jsonb;
++  v_base_ix  int;
++  v_base     jsonb;
++  v_fields   jsonb;
++  v_opts     jsonb;
++  v_new_field jsonb;
++  v_max_order int;
++  f record;
++BEGIN
++  SELECT schema INTO v_schema FROM public.models WHERE name = 'market_listings';
++  IF v_schema IS NULL THEN RAISE NOTICE 'market_listings model not found — skipping'; RETURN; END IF;
++  v_sections := v_schema->'sections';
++
++  -- locate the base section (is_base = true), else section 0
++  v_base_ix := 0;
++  FOR i IN 0 .. jsonb_array_length(v_sections) - 1 LOOP
++    IF COALESCE((v_sections->i->>'is_base')::boolean, false) THEN v_base_ix := i; EXIT; END IF;
++  END LOOP;
++  v_base   := v_sections->v_base_ix;
++  v_fields := COALESCE(v_base->'fields', '[]'::jsonb);
++
++  SELECT COALESCE(MAX((elem->>'order')::int), 0) INTO v_max_order
++  FROM jsonb_array_elements(v_fields) elem;
++
++  -- 1. add the three portal options to the `source` dropdown (idempotent by value)
++  FOR i IN 0 .. jsonb_array_length(v_fields) - 1 LOOP
++    IF v_fields->i->>'name' = 'source' THEN
++      v_opts := COALESCE(v_fields->i->'options', '[]'::jsonb);
++      FOR f IN SELECT * FROM (VALUES
++        ('bayut','Bayut','بيوت'),
++        ('dubizzle','Dubizzle','دوبيزل'),
++        ('propertyfinder','Property Finder','بروبرتي فايندر')
++      ) AS t(val, en, ar) LOOP
++        IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_opts) o WHERE o->>'value' = f.val) THEN
++          v_opts := v_opts || jsonb_build_object(
++            'id', gen_random_uuid()::text, 'value', f.val,
++            'label_en', f.en, 'label_ar', f.ar, 'color', '#B8734F');
++        END IF;
++      END LOOP;
++      v_fields := jsonb_set(v_fields, ARRAY[i::text, 'options'], v_opts);
++    END IF;
++  END LOOP;
++
++  -- 2. append ONLY genuinely-new fields (existing slugs like area/bedrooms/bathrooms/
++  --    latitude/longitude/advertiser_name/advertiser_phone/ad_license_number/image_urls/
++  --    image_count/video_urls/is_active/first_seen/last_seen/scraped_at are reused as-is).
++  FOR f IN SELECT * FROM (VALUES
++    ('title_ar',          'Title (AR)',            'العنوان (عربي)',        'text'),
++    ('description_ar',    'Description (AR)',       'الوصف (عربي)',          'textarea'),
++    ('plot_area',         'Plot Area (m²)',         'مساحة الأرض (م²)',      'number'),
++    ('furnished',         'Furnishing',             'التأثيث',               'text'),
++    ('completion_status', 'Completion Status',      'حالة الإنجاز',          'text'),
++    ('emirate',           'Emirate',                'الإمارة',               'text'),
++    ('community',         'Community',              'المجتمع',               'text'),
++    ('building',          'Building / Tower',       'المبنى / البرج',        'text'),
++    ('permit_number',     'Permit / RERA No.',      'رقم التصريح / ريرا',    'text'),
++    ('permit_key',        'Permit Key (normalized)','مفتاح التصريح',         'text'),
++    ('reference_number',  'Reference No.',          'الرقم المرجعي',         'text'),
++    ('agency_name',       'Agency',                 'الوكالة',               'text'),
++    ('agent_whatsapp',    'Agent WhatsApp',         'واتساب المُعلِن',       'text'),
++    ('is_verified',       'Verified',               'موثّق',                 'checkbox'),
++    ('listed_at',         'Listed At',              'تاريخ النشر',           'datetime'),
++    ('dupe_group_id',     'Property Cluster ID',    'معرّف العقار الموحّد',   'text'),
++    ('dupe_role',         'Duplicate Role',         'دور التكرار',           'text'),
++    ('source_payload',    'Raw Source Payload',     'البيانات الخام',        'notes')
++  ) AS t(slug, en, ar, ftype) LOOP
++    IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_fields) el WHERE el->>'name' = f.slug) THEN
++      v_max_order := v_max_order + 1;
++      v_new_field := jsonb_build_object(
++        'id', gen_random_uuid()::text,
++        'name', f.slug,
++        'label_en', f.en,
++        'label_ar', f.ar,
++        'type', f.ftype,
++        'required', false,
++        'order', v_max_order,
++        'section_id', v_base->>'id',
++        'width', 'half',
++        'show_in_table', false
++      );
++      v_fields := v_fields || v_new_field;
++    END IF;
++  END LOOP;
++
++  v_sections := jsonb_set(v_sections, ARRAY[v_base_ix::text, 'fields'], v_fields);
++  v_schema   := jsonb_set(v_schema, '{sections}', v_sections);
++  UPDATE public.models SET schema = v_schema WHERE name = 'market_listings';
++  -- the models_view_sync trigger regenerates v_market_listings with the new typed columns.
++END $$;
++
++-- ---------------------------------------------------------------------------
++-- 3a. Permit / RERA normalization — the Tier-0 exact cross-platform key.
++-- ---------------------------------------------------------------------------
++CREATE OR REPLACE FUNCTION public.market_permit_key(raw text)
++RETURNS text LANGUAGE sql IMMUTABLE AS $$
++  SELECT CASE
++    WHEN raw IS NULL THEN ''
++    WHEN length(regexp_replace(upper(raw), '[^A-Z0-9]', '', 'g')) < 5 THEN ''
++    WHEN regexp_replace(upper(raw), '[^A-Z0-9]', '', 'g') ~ '^(0+|NA|NONE|NULL)$' THEN ''
++    ELSE regexp_replace(upper(raw), '[^A-Z0-9]', '', 'g')
++  END;
++$$;
++
++-- ---------------------------------------------------------------------------
++-- 3b. Canonical-property view — one row per dupe_group_id (the de-duplicated
++--     inventory). Listings with no cluster id are their own group. Reads the
++--     summary-shape unified view; dupe_group_id/dupe_role are written by the
++--     dedup worker lane. `sources` shows which portals carry the same unit.
++-- ---------------------------------------------------------------------------
++CREATE OR REPLACE VIEW public.v_market_properties AS
++WITH ml AS (
++  SELECT
++    r.id,
++    r.data,
++    COALESCE(NULLIF(r.data->>'dupe_group_id',''), r.id::text) AS group_id,
++    (r.data->>'dupe_role') AS role
++  FROM public.records r
++  JOIN public.models m ON m.id = r.model_id AND m.name = 'market_listings'
++  WHERE COALESCE((r.data->>'is_active')::boolean, true)
++),
++grp AS (
++  SELECT
++    group_id,
++    count(*)                                        AS ad_count,
++    array_agg(DISTINCT data->>'source')             AS sources,
++    min((data->>'price')::numeric)                  AS min_price,
++    max((data->>'price')::numeric)                  AS max_price
++  FROM ml GROUP BY group_id
++)
++SELECT DISTINCT ON (ml.group_id)
++  ml.group_id                       AS dupe_group_id,
++  ml.id                             AS canonical_record_id,
++  grp.ad_count,
++  grp.sources,
++  (array_length(grp.sources, 1) > 1) AS cross_platform,
++  grp.min_price,
++  grp.max_price,
++  ml.data
++FROM ml
++JOIN grp USING (group_id)
++ORDER BY ml.group_id,
++         (ml.role = 'canonical') DESC,          -- prefer the chosen canonical ad
++         (ml.data->>'is_verified')::boolean DESC NULLS LAST,
++         COALESCE((ml.data->>'image_count')::int, 0) DESC;
++
++COMMIT;
