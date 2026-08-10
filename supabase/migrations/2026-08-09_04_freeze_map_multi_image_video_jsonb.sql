@@ -1,0 +1,78 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- Freeze engine: map multi_image / multi_video to jsonb, not text
+--
+-- THE GAP. The field-type -> column-type map had no entry for `multi_image`
+-- or `multi_video`, so both fell through to the `text` default. A frozen
+-- model's multi_image field became a text column holding a JSON array STRING;
+-- the generated <name>_v view then emitted data.<field> as a jsonb *string*
+-- rather than an array, and every consumer that gates on Array.isArray()
+-- silently saw nothing.
+--
+-- That is exactly what broke the listing photo mirror and the photo-cleaning
+-- lane after market_listings was frozen — collectSourceUrls() returned [] and
+-- the failure was invisible. market_listings itself was repaired by
+-- 2026-08-09_03; this migration stops the NEXT frozen model repeating it.
+-- (`multiselect` -> junction and `notes` -> jsonb were always mapped right;
+-- only these two were missed.)
+--
+-- FOUR functions have to agree on the map. Only two needed changing:
+--   • freeze_model                        — the CREATE TABLE column type   [CHANGED]
+--   • freeze_check_coercion               — the pre-flight shape check     [CHANGED]
+--   • freeze_apply_row                    — the UPDATE assignment          [already
+--       corrected in the market_listings swap, 2026-08-09_03]
+--   • freeze_copy_records                 — no change: delegates to freeze_apply_row
+--   • regenerate_frozen_model_artifacts   — no change: its ELSE branch emits the
+--       column UNCAST into the view, so a jsonb column already yields a real array
+--
+-- Applied to wassell-prod 2026-08-09 as migration
+-- `freeze_model_map_multi_image_video_to_jsonb`. Both functions were re-emitted
+-- verbatim from their live definitions with only the changes below; the full
+-- bodies are in that migration and in the live catalog.
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- ── Change 1 of 2 — freeze_model, the column-type map ────────────────────
+--
+--   BEFORE:
+--     ELSIF v_ftype IN ('notes','section_mirror','section_selector','assignee') THEN
+--       v_columns := v_columns || format('%I jsonb', v_fname);
+--     ELSE
+--       v_columns := v_columns || format('%I text', v_fname);   -- multi_image landed here
+--
+--   AFTER:
+--     ELSIF v_ftype IN ('notes','section_mirror','section_selector','assignee',
+--                       'multi_image','multi_video') THEN
+--       v_columns := v_columns || format('%I jsonb', v_fname);
+
+-- ── Change 2 of 2 — freeze_check_coercion, a new pre-flight branch ───────
+--
+-- These two types had NO branch, so a malformed value was only discovered
+-- after the freeze had already run its DDL. They are now validated exactly
+-- like multiselect and table — must be a JSON array (or null) — and
+-- freeze_model aborts before touching the schema if any row fails.
+--
+--     ELSIF v_ftype IN ('multi_image', 'multi_video') THEN
+--       RETURN QUERY
+--         SELECT r.id, v_fname, v_ftype, r.data->>v_fname,
+--                'multi_image/multi_video value must be a JSON array'::text
+--         FROM records r
+--         WHERE r.model_id = p_model_id
+--           AND r.data ? v_fname
+--           AND r.data->v_fname IS NOT NULL
+--           AND jsonb_typeof(r.data->v_fname) NOT IN ('array', 'null');
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- VERIFIED (prod, 2026-08-09)
+--   freeze_model / freeze_apply_row / freeze_check_coercion all carry the
+--   multi_image mapping.
+--
+--   The new check returns 0 failures on every model that has these field
+--   types, so it does not false-positive on real data:
+--     all_projects      (unfrozen) 2 fields — 0 failures   <- likely next freeze
+--     image_presets     (unfrozen) 1 field  — 0 failures
+--     prompt_snippets   (unfrozen) 1 field  — 0 failures
+--     market_listings   (frozen)   2 fields — 0 failures
+--
+-- KEEP IN SYNC: the field-type -> column-type table in CLAUDE.md under
+-- "Frozen models" does not list multi_image / multi_video either. It says
+-- "everything else -> text", which is now wrong for these two.
+-- ─────────────────────────────────────────────────────────────────────────

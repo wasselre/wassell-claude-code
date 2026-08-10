@@ -235,8 +235,32 @@ objects depend on it`. Before writing a frozen-model migration:
    **`reloptions` is load-bearing:** `unified_records` and `<name>_v` are
    `security_invoker=true`, but `v_our_projects_scope` is NOT. Recreating it as an
    invoker view silently changes whose RLS applies to the website's project feed.
-3. Grants do NOT need restoring — Supabase's `ALTER DEFAULT PRIVILEGES` grants
-   anon/authenticated/service_role on any new view in `public`.
+3. **Grants DO need restoring — the opposite of what this file said until
+   2026-08-09.** Supabase's `ALTER DEFAULT PRIVILEGES` grants
+   anon/authenticated/service_role on any new view in `public`, so recreating a
+   view that deliberately LACKED those grants silently WIDENS access. Capture
+   `information_schema.role_table_grants` per dependent and `REVOKE` back to the
+   captured set. Measured: `v_market_listings` and `v_market_properties` had only
+   postgres/service_role, and `market_listings_summary` had no anon grant.
+4. **The generated `frozen_*` RLS policies block column DDL.** Their inline
+   `jsonb_build_object(...)` names every column, so an `ALTER COLUMN … TYPE` or
+   `DROP COLUMN` fails with `0A000 cannot alter type of a column used in a policy
+   definition`. Drop all four first; `regenerate_frozen_model_artifacts` recreates
+   them.
+5. **`regenerate_model_view()` will NOT rebuild the `v_<name>` passthrough for a
+   frozen model** — it returns early on `is_hardcoded`. If you dropped `v_<name>`
+   as part of the unwind you must recreate it by hand, or the transaction fails at
+   the very end.
+6. **Never `ALTER COLUMN … TYPE` in place on a large frozen table.** It rewrites
+   the whole table under `ACCESS EXCLUSIVE` — `market_listings` is 4.5 GB, which is
+   a multi-minute outage and also exceeds the Supabase MCP's request timeout. Use
+   add-shadow-column → batched backfill → catalog-only rename swap; only the swap
+   locks, and it touches no heap pages. Worked example: `2026-08-09_03`.
+
+The live dependency graph as measured on 2026-08-09 (re-derive it, it grows):
+`market_listings` ← `market_listings_v`, `market_listings_summary`, `v_market_listings`;
+`market_listings_v` ← `unified_records`;
+`unified_records` ← `v_market_properties`, `v_our_projects_scope`, `v_website_public`.
 
 Do it all in ONE transaction: the drops take `ACCESS EXCLUSIVE`, so concurrent readers
 block until `COMMIT` instead of meeting a missing view.
@@ -247,7 +271,8 @@ block until `COMMIT` instead of meeting a missing view.
 - `date`, `datetime` → `timestamptz`
 - `checkbox` → `boolean`
 - `range` → expanded into `<name>_min`, `<name>_max` numeric columns
-- `notes`, `section_mirror`, `section_selector`, `assignee` → `jsonb`
+- `notes`, `section_mirror`, `section_selector`, `assignee`, `multi_image`, `multi_video` → `jsonb`
+  - **`multi_image` / `multi_video` were MISSING from this map until 2026-08-09** and fell through to the `text` default below. They store a JSON array of URLs, so a text column held the array as a *string*, and `<name>_v` emitted `data.<field>` as a jsonb string instead of an array — every consumer gating on `Array.isArray()` silently saw nothing. That is what broke the listing photo mirror and the photo-cleaning lane after `market_listings` froze. Fixed in `freeze_model`, `freeze_apply_row` and `freeze_check_coercion` (`2026-08-09_04`); `market_listings`' own columns were converted by `2026-08-09_03`.
 - `multiselect` → junction `<model>__<field>` with `(record_id uuid, value text, PK)`
 - `lookup is_multi=true` → junction `<model>__<field>` with `(record_id uuid, target_record_id uuid, PK)`
 - `table` → subtable `<model>__<field>` with `(id uuid, record_id, row_index, ...row columns)`
