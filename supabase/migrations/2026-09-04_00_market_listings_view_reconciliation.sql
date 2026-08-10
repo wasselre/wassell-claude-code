@@ -448,7 +448,18 @@ BEGIN
     RAISE EXCEPTION 'POST: service_role lost SELECT on a target view';
   END IF;
 
-  -- 4.11 No PUBLIC grant remains (grantee 0 = PUBLIC).
+  -- 4.11 Base-table SELECT is now load-bearing: with market_listings_summary at
+  --     security_invoker=true the view executes with the CALLER's privileges, so
+  --     authenticated's SELECT on public.market_listings is what lets the
+  --     authenticated SPA read the summary. Revoking it would break the SPA
+  --     with 'permission denied for table market_listings'. (anon is not
+  --     asserted here — it is gated by RLS policy role-targeting, not grants.)
+  IF NOT (has_table_privilege('authenticated','public.market_listings','SELECT')
+      AND has_table_privilege('service_role','public.market_listings','SELECT')) THEN
+    RAISE EXCEPTION 'POST: authenticated/service_role lost SELECT on the base table public.market_listings — security_invoker=true on market_listings_summary makes the caller''s base-table SELECT load-bearing, so revoking it would break the authenticated SPA';
+  END IF;
+
+  -- 4.12 No PUBLIC grant remains (grantee 0 = PUBLIC).
   SELECT count(*) INTO v_public FROM (
     SELECT (aclexplode(relacl)).grantee AS g FROM pg_class
      WHERE relname IN ('market_listings_summary','v_market_listings','v_market_properties')
@@ -456,7 +467,7 @@ BEGIN
   ) a WHERE a.g = 0;
   IF v_public <> 0 THEN RAISE EXCEPTION 'POST: a PUBLIC grant remains on a target view'; END IF;
 
-  -- 4.12 Summary still does not expose source_payload.
+  -- 4.13 Summary still does not expose source_payload.
   IF pg_get_viewdef('public.market_listings_summary'::regclass) ~* 'source_payload' THEN
     RAISE EXCEPTION 'POST: market_listings_summary exposes source_payload';
   END IF;
