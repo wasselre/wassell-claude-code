@@ -984,10 +984,121 @@ export const fetchOverview = (period: OverviewPeriod = 'week') =>
   call<MosOverview>('overview', { period });
 
 export const fetchWork = (scope: 'mine' | 'team') =>
-  call<{ role: MosRole; content: MosContentRow[]; tasks: MosTask[]; upcoming: MosUpcoming[] }>(
-    'work_list',
-    { scope },
+  call<{
+    role: MosRole;
+    content: MosContentRow[];
+    tasks: MosTask[];
+    upcoming: MosUpcoming[];
+    manual_tasks: MosManualTask[];
+  }>('work_list', { scope });
+
+/* ------------------------------------------------------------------ */
+/* Manual tasks — hand-assigned work no workflow generates             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A task a person was GIVEN rather than one a workflow produced. It is a
+ * separate row from `MosTask` on purpose: it has no step, no role, no round
+ * and no approval loop, several can be open for the same person at once, and
+ * closing one advances nothing.
+ */
+export interface MosManualTask {
+  id: string;
+  /** Set when this is one occurrence of a repeating task. */
+  series_id: string | null;
+  /** The occurrence's own date (Riyadh-local `YYYY-MM-DD`), when in a series. */
+  occurrence_on: string | null;
+  title: string;
+  details: string | null;
+  assignee_user_id: string;
+  created_by_user_id: string;
+  campaign_id: string | null;
+  content_id: string | null;
+  goal_id: string | null;
+  project_id: string | null;
+  status: 'open' | 'done' | 'cancelled';
+  due_at: string | null;
+  done_note: string | null;
+  closed_at: string | null;
+  closed_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** How a repeating task repeats. Weekday numbers are 0 = Sunday … 6 = Saturday. */
+export interface MosRepeatRule {
+  freq: 'daily' | 'weekly' | 'monthly';
+  interval_n: number;
+  byweekday: number[];
+  bymonthday: number | null;
+  /** `HH:MM`, Asia/Riyadh. */
+  due_time: string;
+  starts_on: string;
+  ends_on: string | null;
+}
+
+export interface MosTaskSeries extends MosRepeatRule {
+  id: string;
+  title: string;
+  details: string | null;
+  assignee_user_id: string;
+  created_by_user_id: string;
+  campaign_id: string | null;
+  content_id: string | null;
+  goal_id: string | null;
+  project_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** What the New/Edit task form sends. `repeat` present ⇒ it is a repeating task. */
+export interface MosManualTaskInput {
+  id?: string;
+  series_id?: string;
+  title: string;
+  details?: string | null;
+  assignee_user_id?: string;
+  due_at?: string | null;
+  campaign_id?: string | null;
+  content_id?: string | null;
+  goal_id?: string | null;
+  project_id?: string | null;
+  repeat?: MosRepeatRule | null;
+}
+
+export const fetchManualTasks = (opts: {
+  scope?: 'mine' | 'team' | 'created';
+  include_done?: boolean;
+  campaign_id?: string;
+  content_id?: string;
+  goal_id?: string;
+  project_id?: string;
+} = {}) => call<{ manual_tasks: MosManualTask[] }>('manual_task_list', { scope: 'mine', ...opts });
+
+export const saveManualTask = (task: MosManualTaskInput) =>
+  call<{ id?: string | null; series_id?: string | null; generated?: number }>(
+    'manual_task_save',
+    { task },
   );
+
+export const completeManualTask = (id: string, note?: string) =>
+  call<{ ok: true }>('manual_task_complete', { id, note: note ?? null });
+
+export const reopenManualTask = (id: string) =>
+  call<{ ok: true }>('manual_task_reopen', { id });
+
+export const cancelManualTask = (id: string) =>
+  call<{ ok: true }>('manual_task_cancel', { id });
+
+export const deleteManualTask = (id: string) =>
+  call<{ ok: true }>('manual_task_delete', { id });
+
+export const fetchTaskSeries = () =>
+  call<{ series: MosTaskSeries[] }>('task_series_list');
+
+export const stopTaskSeries = (id: string, purgeFuture: boolean) =>
+  call<{ ok: true }>('task_series_stop', { id, purge_future: purgeFuture });
 
 /** Screen 35's «تأجيل / تقديم» — move an open task's due date. */
 export const updateTask = (taskId: string, patch: { due_at: string }) =>

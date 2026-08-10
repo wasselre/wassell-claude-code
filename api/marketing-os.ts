@@ -85,6 +85,30 @@ const DB_MESSAGES: Record<string, { en: string; ar: string }> = {
     en: 'That marketing role does not exist.',
     ar: 'دور التسويق غير موجود.',
   },
+  'MOS:TASK_NOT_YOURS': {
+    en: 'This task is assigned to someone else.',
+    ar: 'هذه المهمة مسندة إلى شخص آخر.',
+  },
+  'MOS:TASK_FIELD_LOCKED': {
+    en: 'You can complete this task, but only the person who assigned it can change it.',
+    ar: 'يمكنكِ إنهاء المهمة، لكن تعديلها يعود لمن أسندها.',
+  },
+  'MOS:TASK_CANCEL_DENIED': {
+    en: 'Only the person who assigned this task can cancel it.',
+    ar: 'إلغاء المهمة يعود لمن أسندها.',
+  },
+  mos_task_series_weekly_check: {
+    en: 'A weekly repeat needs at least one weekday.',
+    ar: 'التكرار الأسبوعي يحتاج يومًا واحدًا على الأقل.',
+  },
+  mos_task_series_monthly_check: {
+    en: 'A monthly repeat needs a day of the month between 1 and 31.',
+    ar: 'التكرار الشهري يحتاج يومًا من الشهر بين ١ و٣١.',
+  },
+  mos_manual_tasks_title_check: {
+    en: 'A task needs a title.',
+    ar: 'المهمة تحتاج عنوانًا.',
+  },
   workflow_role_tasks_reject_note_check: {
     en: 'Requesting changes requires a note explaining what to change.',
     ar: 'طلب التعديلات يستلزم ملاحظة توضّح المطلوب.',
@@ -306,7 +330,7 @@ type SurfaceLevel = 'full' | 'read' | 'hidden';
  */
 const CAPABILITIES = [
   'read', 'comment', 'write_content', 'view_content_body', 'compare_versions',
-  'view_activity', 'assign', 'schedule', 'publish', 'approve_creative',
+  'view_activity', 'assign', 'assign_task', 'schedule', 'publish', 'approve_creative',
   'approve_process', 'approve_budget', 'manage_assets', 'enter_metrics',
   'review_performance', 'manage_settings', 'manage_roles',
 ] as const;
@@ -473,6 +497,122 @@ function mapRoleTask(t: Record<string, unknown>): Record<string, unknown> {
     closed_by_user_id: t.closed_by_user_id ?? null,
     revision_targets: Array.isArray(t.revision_targets) ? t.revision_targets : [],
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* manual tasks — hand-assigned work, alongside the workflow queue     */
+/* ------------------------------------------------------------------ */
+
+/** Today in Asia/Riyadh, as `YYYY-MM-DD`. Occurrence dates are Riyadh-local. */
+function riyadhToday(): string {
+  // en-CA formats as YYYY-MM-DD, which is exactly the date literal Postgres wants.
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh' }).format(new Date());
+}
+
+/**
+ * Validate a repeat rule from the browser into the column set `mos_task_series`
+ * expects. Every rejection is explicit: a rule that silently never fires is
+ * worse than a refused save, so an empty weekday list or a missing month day is
+ * an error here rather than a CHECK violation the user cannot read.
+ */
+function validateRepeat(
+  raw: Record<string, unknown>,
+): { value: Record<string, unknown> } | { error: string } {
+  const freq = str(raw.freq);
+  if (freq !== 'daily' && freq !== 'weekly' && freq !== 'monthly') {
+    return { error: 'repeat.freq must be daily, weekly or monthly' };
+  }
+  const interval = numOrNull(raw.interval_n) ?? 1;
+  if (!Number.isInteger(interval) || interval < 1 || interval > 52) {
+    return { error: 'repeat.interval_n must be a whole number between 1 and 52' };
+  }
+
+  // Postgres DOW: 0 = Sunday … 6 = Saturday.
+  let byweekday: number[] = [];
+  if (freq === 'weekly') {
+    byweekday = Array.isArray(raw.byweekday)
+      ? [...new Set((raw.byweekday as unknown[])
+          .map((d) => numOrNull(d))
+          .filter((d): d is number => d !== null && Number.isInteger(d) && d >= 0 && d <= 6))]
+        .sort((a, b) => a - b)
+      : [];
+    if (byweekday.length === 0) return { error: 'a weekly repeat needs at least one weekday' };
+  }
+
+  let bymonthday: number | null = null;
+  if (freq === 'monthly') {
+    bymonthday = numOrNull(raw.bymonthday);
+    if (bymonthday === null || !Number.isInteger(bymonthday) || bymonthday < 1 || bymonthday > 31) {
+      return { error: 'a monthly repeat needs a day of the month between 1 and 31' };
+    }
+  }
+
+  const dueTime = str(raw.due_time) ?? '12:00';
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dueTime)) {
+    return { error: 'repeat.due_time must be HH:MM' };
+  }
+  const startsOn = str(raw.starts_on) ?? riyadhToday();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startsOn)) return { error: 'repeat.starts_on must be YYYY-MM-DD' };
+  const endsOn = str(raw.ends_on);
+  if (endsOn !== null && !/^\d{4}-\d{2}-\d{2}$/.test(endsOn)) {
+    return { error: 'repeat.ends_on must be YYYY-MM-DD' };
+  }
+  if (endsOn !== null && endsOn < startsOn) return { error: 'repeat.ends_on is before starts_on' };
+
+  return {
+    value: {
+      freq,
+      interval_n: interval,
+      byweekday,
+      bymonthday,
+      due_time: dueTime,
+      starts_on: startsOn,
+      ends_on: endsOn,
+      is_active: true,
+    },
+  };
+}
+
+/**
+ * Read the manual-task queue. Generation runs FIRST — `mos_task_series_materialize`
+ * is idempotent and bounded, and pg_cron is not enabled on this project, so the
+ * read is what turns a repeat rule into rows.
+ */
+async function listManualTasks(
+  sb: SupabaseClient,
+  opts: {
+    scope: 'mine' | 'team' | 'created';
+    meUserId: string | null;
+    includeDone?: boolean;
+    campaignId?: string | null;
+    contentId?: string | null;
+    goalId?: string | null;
+    projectId?: string | null;
+  },
+): Promise<{ rows: unknown[] } | { fail: Response }> {
+  const mat = await sb.rpc('mos_task_series_materialize');
+  const mf = dbFail(mat.error);
+  if (mf) return { fail: mf };
+
+  let q = sb.from('mos_manual_tasks').select('*');
+  if (opts.scope === 'mine') {
+    // No profile resolved → an empty queue, not everyone else's work.
+    if (!opts.meUserId) return { rows: [] };
+    q = q.eq('assignee_user_id', opts.meUserId);
+  } else if (opts.scope === 'created') {
+    if (!opts.meUserId) return { rows: [] };
+    q = q.eq('created_by_user_id', opts.meUserId);
+  }
+  if (!opts.includeDone) q = q.eq('status', 'open');
+  if (opts.campaignId) q = q.eq('campaign_id', opts.campaignId);
+  if (opts.contentId) q = q.eq('content_id', opts.contentId);
+  if (opts.goalId) q = q.eq('goal_id', opts.goalId);
+  if (opts.projectId) q = q.eq('project_id', opts.projectId);
+
+  const rows = await q.order('due_at', { ascending: true, nullsFirst: false }).limit(300);
+  const f = dbFail(rows.error);
+  if (f) return { fail: f };
+  return { rows: rows.data ?? [] };
 }
 
 /**
@@ -2271,7 +2411,201 @@ export default async function handler(req: Request): Promise<Response> {
               .sort((a, b) => a.steps_away - b.steps_away).slice(0, 12);
           }
         }
-        return jsonOk({ role: myRole, content: rows.data ?? [], tasks, upcoming });
+        // Hand-assigned work rides the SAME queue. Generation runs first so a
+        // repeating task exists as a real row before we read (see
+        // mos_task_series_materialize: pg_cron is not enabled on this project).
+        const manual = await listManualTasks(sb, {
+          scope: scope === 'team' ? 'team' : 'mine',
+          meUserId: await resolveAppUserId(sb, user.userId),
+        });
+        if ('fail' in manual) return manual.fail;
+
+        return jsonOk({
+          role: myRole,
+          content: rows.data ?? [],
+          tasks,
+          upcoming,
+          manual_tasks: manual.rows,
+        });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Manual tasks — hand-assigned work no workflow generates.   */
+      /* A manager or the CEO gives a person something to do        */
+      /* («اعرضي حملة مينا ٥٢»); anyone may give it to THEMSELVES.  */
+      /* Authorization is RLS + the `assign_task` capability; this  */
+      /* file only shapes and validates.                            */
+      /* -------------------------------------------------------- */
+      case 'manual_task_list': {
+        const rawScope = str(body.scope);
+        const scope = rawScope === 'team' || rawScope === 'created' ? rawScope : 'mine';
+        const res = await listManualTasks(sb, {
+          scope,
+          meUserId: await resolveAppUserId(sb, user.userId),
+          includeDone: body.include_done === true,
+          campaignId: str(body.campaign_id),
+          contentId: str(body.content_id),
+          goalId: str(body.goal_id),
+          projectId: str(body.project_id),
+        });
+        if ('fail' in res) return res.fail;
+        return jsonOk({ manual_tasks: res.rows });
+      }
+
+      case 'manual_task_save': {
+        const raw = (body.task ?? {}) as Record<string, unknown>;
+        const id = str(raw.id);
+        const seriesId = str(raw.series_id);
+        const me = await resolveAppUserId(sb, user.userId);
+        if (!me) return jsonError(403, 'no marketing profile for this account');
+
+        // Editing ONE existing task (including a single occurrence of a series).
+        if (id) {
+          const patch: Record<string, unknown> = {};
+          for (const k of ['title', 'details', 'due_at', 'assignee_user_id',
+            'campaign_id', 'content_id', 'goal_id', 'project_id'] as const) {
+            if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k] ?? null;
+          }
+          if (Object.prototype.hasOwnProperty.call(patch, 'title') && !str(patch.title)) {
+            return jsonError(400, 'title is required');
+          }
+          if (Object.keys(patch).length === 0) return jsonError(400, 'nothing to update');
+          const upd = await sb.from('mos_manual_tasks').update(patch)
+            .eq('id', id).select('id').maybeSingle();
+          const f = dbFail(upd.error);
+          if (f) return f;
+          if (!upd.data) return jsonError(404, 'task not found');
+          return jsonOk({ id });
+        }
+
+        const title = str(raw.title);
+        if (!title) return jsonError(400, 'title is required');
+        const assignee = str(raw.assignee_user_id) ?? me;
+        const repeat = raw.repeat && typeof raw.repeat === 'object'
+          ? (raw.repeat as Record<string, unknown>)
+          : null;
+
+        const links = {
+          campaign_id: str(raw.campaign_id),
+          content_id: str(raw.content_id),
+          goal_id: str(raw.goal_id),
+          project_id: str(raw.project_id),
+        };
+
+        // A repeating task is a RULE, not a row: the rule is stored once and the
+        // materializer turns it into occurrences. Editing the rule replaces the
+        // future open occurrences (done ones are history and stay).
+        if (repeat) {
+          const rule = validateRepeat(repeat);
+          if ('error' in rule) return jsonError(400, rule.error);
+          const payload = {
+            title,
+            details: str(raw.details),
+            assignee_user_id: assignee,
+            ...links,
+            ...rule.value,
+          };
+          let targetSeries = seriesId;
+          if (targetSeries) {
+            const upd = await sb.from('mos_task_series').update(payload)
+              .eq('id', targetSeries).select('id').maybeSingle();
+            const f = dbFail(upd.error);
+            if (f) return f;
+            if (!upd.data) return jsonError(404, 'series not found');
+            // Drop the not-yet-started future occurrences so the new rule can
+            // regenerate them. Anything already done is untouched history.
+            const today = riyadhToday();
+            const del = await sb.from('mos_manual_tasks').delete()
+              .eq('series_id', targetSeries).eq('status', 'open').gte('occurrence_on', today);
+            const df = dbFail(del.error);
+            if (df) return df;
+          } else {
+            const ins = await sb.from('mos_task_series')
+              .insert({ ...payload, created_by_user_id: me })
+              .select('id').maybeSingle();
+            const f = dbFail(ins.error);
+            if (f) return f;
+            targetSeries = (ins.data as { id: string } | null)?.id ?? null;
+          }
+          const mat = await sb.rpc('mos_task_series_materialize');
+          const mf = dbFail(mat.error);
+          if (mf) return mf;
+          return jsonOk({ series_id: targetSeries, generated: mat.data ?? 0 });
+        }
+
+        const ins = await sb.from('mos_manual_tasks').insert({
+          title,
+          details: str(raw.details),
+          assignee_user_id: assignee,
+          created_by_user_id: me,
+          due_at: str(raw.due_at),
+          ...links,
+        }).select('id').maybeSingle();
+        const f = dbFail(ins.error);
+        if (f) return f;
+        return jsonOk({ id: (ins.data as { id: string } | null)?.id ?? null });
+      }
+
+      case 'manual_task_complete':
+      case 'manual_task_reopen':
+      case 'manual_task_cancel': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+        const me = await resolveAppUserId(sb, user.userId);
+        const patch: Record<string, unknown> = action === 'manual_task_reopen'
+          ? { status: 'open', closed_at: null, closed_by_user_id: null, done_note: null }
+          : {
+              status: action === 'manual_task_cancel' ? 'cancelled' : 'done',
+              done_note: str(body.note),
+              closed_at: new Date().toISOString(),
+              closed_by_user_id: me,
+            };
+        const upd = await sb.from('mos_manual_tasks').update(patch)
+          .eq('id', id).select('id').maybeSingle();
+        const f = dbFail(upd.error);
+        if (f) return f;
+        if (!upd.data) return jsonError(404, 'task not found');
+        return jsonOk({ ok: true });
+      }
+
+      case 'manual_task_delete': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+        const del = await sb.from('mos_manual_tasks').delete().eq('id', id).select('id').maybeSingle();
+        const f = dbFail(del.error);
+        if (f) return f;
+        if (!del.data) return jsonError(404, 'task not found');
+        return jsonOk({ ok: true });
+      }
+
+      case 'task_series_list': {
+        const rows = await sb.from('mos_task_series').select('*')
+          .order('created_at', { ascending: false }).limit(cap(body.limit, 100, 300));
+        const f = dbFail(rows.error);
+        if (f) return f;
+        return jsonOk({ series: rows.data ?? [] });
+      }
+
+      /**
+       * Stopping a repeating task. Deactivating (the default) keeps the history
+       * and every occurrence already open; `purge_future` also clears the
+       * not-yet-started ones so the queue does not carry work nobody will do.
+       */
+      case 'task_series_stop': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+        const upd = await sb.from('mos_task_series').update({ is_active: false })
+          .eq('id', id).select('id').maybeSingle();
+        const f = dbFail(upd.error);
+        if (f) return f;
+        if (!upd.data) return jsonError(404, 'series not found');
+        if (body.purge_future === true) {
+          const del = await sb.from('mos_manual_tasks').delete()
+            .eq('series_id', id).eq('status', 'open').gte('occurrence_on', riyadhToday());
+          const df = dbFail(del.error);
+          if (df) return df;
+        }
+        return jsonOk({ ok: true });
       }
 
       /* -------------------------------------------------------- */

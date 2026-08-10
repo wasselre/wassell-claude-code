@@ -98,7 +98,7 @@ interface WorkspaceCtx {
  * `role_capabilities` (migration 2026-08-06_01_role_capabilities.sql).
  */
 export type Capability =
-  | 'read' | 'comment' | 'write_content' | 'assign' | 'schedule' | 'publish'
+  | 'read' | 'comment' | 'write_content' | 'assign' | 'assign_task' | 'schedule' | 'publish'
   | 'approve_creative' | 'approve_process' | 'approve_budget'
   | 'manage_assets' | 'enter_metrics' | 'review_performance'
   | 'manage_settings' | 'manage_roles'

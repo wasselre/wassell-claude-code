@@ -19,12 +19,15 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAppStore } from '@/stores/appStore';
 import {
   MosContentRow,
+  MosManualTask,
   MosRole,
   MosTask,
   MosUpcoming,
   ROLE_LABELS,
+  completeManualTask,
   fetchWork,
   isOverdue,
   statusLabel,
@@ -32,6 +35,7 @@ import {
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, KindCell, LoadError, PageHead, Pill, Skeleton } from './components/kit';
 import { IconSearch } from './components/icons';
+import NewTaskModal from './components/NewTaskModal';
 import { dayName, daysAgo, daysFromNow, num, shortDate } from './lib/format';
 import './styles/mobile-m1.css';
 
@@ -97,18 +101,26 @@ function actionLabel(row: MosContentRow, isAr: boolean): string {
   return isAr ? 'فتح' : 'Open';
 }
 
+/** Is this hand-assigned task past its due moment? */
+const manualOverdue = (t: MosManualTask): boolean =>
+  Boolean(t.due_at) && new Date(t.due_at as string).getTime() < Date.now();
+
 export default function WorkPage() {
   const { isAr, typeLabel, projectName, setBadge, people } = useWorkspace();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
+  const addToast = useAppStore((s) => s.addToast);
 
   const [rows, setRows] = useState<MosContentRow[]>([]);
   const [tasks, setTasks] = useState<MosTask[]>([]);
+  const [manual, setManual] = useState<MosManualTask[]>([]);
   const [upcoming, setUpcoming] = useState<MosUpcoming[]>([]);
   const [myRole, setMyRole] = useState<MosRole>('viewer');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState('');
+  const [newTask, setNewTask] = useState(false);
+  const [closing, setClosing] = useState<string | null>(null);
 
   // s28's chip filters — a thumb bar, no dropdowns and no filter dialog.
   const [chipProject, setChipProject] = useState<string | null>(null);
@@ -122,9 +134,12 @@ export default function WorkPage() {
       const res = await fetchWork('mine');
       setRows(res.content);
       setTasks(res.tasks);
+      setManual(res.manual_tasks ?? []);
       setUpcoming(res.upcoming ?? []);
       setMyRole(res.role);
-      setBadge('mywork', res.content.length);
+      // The rail badge counts EVERYTHING open for me — a hand-assigned task is
+      // as real as a workflow one.
+      setBadge('mywork', res.content.length + (res.manual_tasks?.length ?? 0));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -149,6 +164,127 @@ export default function WorkPage() {
 
   const taskFor = (contentId: string): MosTask | undefined =>
     tasks.find((t) => t.content_id === contentId);
+
+  /* ── hand-assigned tasks ─────────────────────────────────────────────── */
+
+  // Late first, then by due date, then the undated — the same "start here"
+  // ordering the workflow queue uses.
+  const manualSorted = useMemo(() => {
+    const list = term
+      ? manual.filter((t) => t.title.toLowerCase().includes(term)
+          || (t.details ?? '').toLowerCase().includes(term))
+      : manual;
+    return [...list].sort((a, b) => {
+      const la = manualOverdue(a) ? 0 : 1;
+      const lb = manualOverdue(b) ? 0 : 1;
+      if (la !== lb) return la - lb;
+      if (!a.due_at) return 1;
+      if (!b.due_at) return -1;
+      return new Date(a.due_at).getTime() - new Date(b.due_at).getTime();
+    });
+  }, [manual, term]);
+
+  const manualLateCount = manual.filter(manualOverdue).length;
+
+  const closeManual = async (id: string): Promise<void> => {
+    setClosing(id);
+    try {
+      await completeManualTask(id);
+      addToast(isAr ? 'أُنهيت المهمة.' : 'Task completed.', 'success');
+      await load();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setClosing(null);
+    }
+  };
+
+  /** Where a hand-assigned task points, when it points anywhere. */
+  const manualTarget = (t: MosManualTask): string | null =>
+    t.content_id ? `/m/content/${t.content_id}`
+      : t.campaign_id ? `/m/campaigns/${t.campaign_id}`
+        : null;
+
+  const manualMeta = (t: MosManualTask): string => {
+    const bits: string[] = [];
+    if (t.details) bits.push(t.details);
+    if (t.project_id) bits.push(projectName(t.project_id));
+    if (t.series_id) bits.push(isAr ? 'مهمة متكررة' : 'repeating');
+    if (t.created_by_user_id) {
+      const p = people.find((x) => x.user_id === t.created_by_user_id);
+      const n = p ? ((isAr ? p.name_ar ?? p.name_en : p.name_en ?? p.name_ar) ?? p.email) : null;
+      if (n) bits.push(isAr ? `أسندها ${n}` : `from ${n}`);
+    }
+    return bits.join(' · ');
+  };
+
+  const duePill = (t: MosManualTask) => (
+    manualOverdue(t) ? (
+      <Pill tone="late">
+        {isAr
+          ? `استحقاق ${shortDate(t.due_at, true)} · متأخر ${daysAgo(t.due_at, true)}`
+          : `due ${shortDate(t.due_at, false)} · ${daysAgo(t.due_at, false)} late`}
+      </Pill>
+    ) : (
+      <Pill tone="now">
+        {t.due_at
+          ? isAr ? `الاستحقاق ${shortDate(t.due_at, true)}` : `due ${shortDate(t.due_at, false)}`
+          : isAr ? 'بلا موعد' : 'no due date'}
+      </Pill>
+    )
+  );
+
+  /**
+   * Hand-assigned work, in its own block. It is deliberately NOT merged into the
+   * workflow groups: those rows open a stage, these ones just get done, and
+   * blurring the two would make «ابدئي الكتابة» and «تم» look interchangeable.
+   */
+  const ManualBlock = () => {
+    if (manualSorted.length === 0) return null;
+    return (
+      <>
+        <div className="lbl" style={{ marginBottom: 9, color: manualLateCount > 0 ? 'var(--late)' : undefined }}>
+          {isAr ? 'مهام مُسندة إليكِ' : 'Assigned to you'}
+        </div>
+        <div className="card" style={{ marginBottom: 22 }}>
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <tbody>
+                {manualSorted.map((t) => {
+                  const target = manualTarget(t);
+                  return (
+                    <tr
+                      key={t.id}
+                      className={target ? 'click' : undefined}
+                      onClick={target ? () => navigate(target) : undefined}
+                    >
+                      <td>
+                        <div className="ttl">{t.title}</div>
+                        <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
+                          {manualMeta(t)}
+                        </div>
+                      </td>
+                      <td style={{ width: 190 }}>{duePill(t)}</td>
+                      <td style={{ width: 130, textAlign: 'end' }}>
+                        <button
+                          type="button"
+                          className="btn btn-p btn-sm"
+                          disabled={closing === t.id}
+                          onClick={(e) => { e.stopPropagation(); void closeManual(t.id); }}
+                        >
+                          {closing === t.id ? (isAr ? '…' : '…') : isAr ? 'تم' : 'Done'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </>
+    );
+  };
 
   /* ── s28 mobile: chips + card groups ─────────────────────────────────── */
 
@@ -296,9 +432,13 @@ export default function WorkPage() {
         <PageHead
           title={isAr ? 'اليوم' : 'Today'}
           sub={isAr
-            ? `${dayName(todayIso, true)} ${shortDate(todayIso, true)} · ${num(mOpen, true)} مفتوحة، ${num(mLate.length, true)} متأخرة`
-            : `${dayName(todayIso, false)} ${shortDate(todayIso, false)} · ${mOpen} open, ${mLate.length} late`}
-        />
+            ? `${dayName(todayIso, true)} ${shortDate(todayIso, true)} · ${num(mOpen + manualSorted.length, true)} مفتوحة، ${num(mLate.length + manualLateCount, true)} متأخرة`
+            : `${dayName(todayIso, false)} ${shortDate(todayIso, false)} · ${mOpen + manualSorted.length} open, ${mLate.length + manualLateCount} late`}
+        >
+          <button type="button" className="btn btn-p btn-sm" onClick={() => setNewTask(true)}>
+            {isAr ? 'مهمة جديدة' : 'New task'}
+          </button>
+        </PageHead>
 
         <div className="body">
           {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
@@ -336,7 +476,8 @@ export default function WorkPage() {
             </div>
           )}
 
-          {!loading && !error && mobileRows.length === 0 && upcoming.length === 0 && (
+          {!loading && !error && mobileRows.length === 0 && upcoming.length === 0
+            && manualSorted.length === 0 && (
             <Empty
               title={isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'}
               body={isAr
@@ -381,6 +522,45 @@ export default function WorkPage() {
                     {actionLabel(r, isAr)}
                   </button>
                 )}
+              </div>
+            );
+          })}
+
+          {/* Hand-assigned work — one full-width card each, one verb: «تم». */}
+          {manualSorted.length > 0 && (
+            <div className="m1-lbl">{isAr ? 'مهام مُسندة إليكِ' : 'Assigned to you'}</div>
+          )}
+          {manualSorted.map((t) => {
+            const target = manualTarget(t);
+            return (
+              <div key={t.id} className={`m1-card${manualOverdue(t) ? ' late2' : ''}`}>
+                {manualOverdue(t) && (
+                  <span className="m1-pill late">{lateBy(t.due_at, isAr)}</span>
+                )}
+                <div
+                  className="m1-t"
+                  style={{ marginTop: manualOverdue(t) ? 9 : 0 }}
+                  role={target ? 'button' : undefined}
+                  tabIndex={target ? 0 : undefined}
+                  onClick={target ? () => navigate(target) : undefined}
+                  onKeyDown={target ? (e) => { if (e.key === 'Enter') navigate(target); } : undefined}
+                >
+                  {t.title}
+                </div>
+                <div className="m1-m">
+                  {manualMeta(t)}
+                  {t.due_at && !manualOverdue(t) && (
+                    <>{manualMeta(t) ? ' · ' : ''}{isAr ? 'الاستحقاق ' : 'due '}{shortDate(t.due_at, isAr)}</>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="m1-btn p sm"
+                  disabled={closing === t.id}
+                  onClick={() => void closeManual(t.id)}
+                >
+                  {isAr ? 'تم' : 'Done'}
+                </button>
               </div>
             );
           })}
@@ -466,6 +646,10 @@ export default function WorkPage() {
             </div>
           ))}
         </div>
+
+        {newTask && (
+          <NewTaskModal onClose={() => setNewTask(false)} onSaved={() => void load()} />
+        )}
       </>
     );
   }
@@ -475,8 +659,8 @@ export default function WorkPage() {
       <PageHead
         title={isAr ? 'مهامي' : 'My work'}
         sub={isAr
-          ? `${roleLabel} · ${num(mine.length + late.length, true)} مفتوحة، ${num(late.length, true)} متأخرة`
-          : `${roleLabel} · ${mine.length + late.length} open, ${late.length} late`}
+          ? `${roleLabel} · ${num(mine.length + late.length + manualSorted.length, true)} مفتوحة، ${num(late.length + manualLateCount, true)} متأخرة`
+          : `${roleLabel} · ${mine.length + late.length + manualSorted.length} open, ${late.length + manualLateCount} late`}
       >
         <div className="seg">
           <button type="button" className="on">
@@ -486,6 +670,11 @@ export default function WorkPage() {
             {isAr ? 'الجميع' : 'Everyone'}
           </button>
         </div>
+        {/* Everyone can give themselves a task; assigning to someone else is
+            gated inside the modal by the `assign_task` capability. */}
+        <button type="button" className="btn btn-p" onClick={() => setNewTask(true)}>
+          {isAr ? 'مهمة جديدة' : 'New task'}
+        </button>
         <div className="search">
           <IconSearch />
           <input
@@ -500,16 +689,18 @@ export default function WorkPage() {
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
         {loading && rows.length === 0 && <Skeleton rows={5} />}
 
-        {!loading && filtered.length === 0 && upcoming.length === 0 && !error && (
+        {!loading && filtered.length === 0 && upcoming.length === 0
+          && manualSorted.length === 0 && !error && (
           <Empty
             title={isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'}
             body={isAr
-              ? 'حين تصل خطوة إلى دورك ستظهر هنا مباشرة، مرتبة حسب الاستحقاق.'
-              : 'When a stage reaches your role it appears here, ordered by what is due first.'}
+              ? 'حين تصل خطوة إلى دورك ستظهر هنا مباشرة، مرتبة حسب الاستحقاق. ويمكنكِ إضافة مهمة بنفسك.'
+              : 'When a stage reaches your role it appears here, ordered by what is due first. You can also add a task yourself.'}
           />
         )}
 
         <Group label={isAr ? 'متأخر · ابدئي بهذا' : 'Late · start here'} tone="late" items={late} />
+        <ManualBlock />
         <Group label={isAr ? 'مطلوب منكِ اليوم' : 'Yours today'} tone="now" items={mine} />
 
         {/* «القادم إليك» — visible preparation, explicitly NOT tasks. */}
@@ -560,6 +751,10 @@ export default function WorkPage() {
           faded
         />
       </div>
+
+      {newTask && (
+        <NewTaskModal onClose={() => setNewTask(false)} onSaved={() => void load()} />
+      )}
     </>
   );
 }

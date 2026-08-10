@@ -13,9 +13,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   MosContentRow,
+  MosManualTask,
   MosRole,
   MosTask,
   ROLE_LABELS,
+  cancelManualTask,
   fetchWork,
   isOverdue,
   remindContent,
@@ -25,6 +27,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, LoadError, Modal, PageHead, RoleChip, Skeleton, Stat } from './components/kit';
+import NewTaskModal from './components/NewTaskModal';
 import { daysAgo, daysFromNow, num, shortDate } from './lib/format';
 
 /** The tile order, transcribed from the mockup: writer, editor, ops, manager. */
@@ -47,12 +50,15 @@ function dueLabel(r: MosContentRow, isAr: boolean): string {
 }
 
 export default function TeamPage() {
-  const { isAr, role: myRole, projectName, people } = useWorkspace();
+  const { isAr, role: myRole, projectName, people, can } = useWorkspace();
   const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
 
   const [rows, setRows] = useState<MosContentRow[]>([]);
   const [tasks, setTasks] = useState<MosTask[]>([]);
+  const [manual, setManual] = useState<MosManualTask[]>([]);
+  const [assigning, setAssigning] = useState(false);
+  const [editTask, setEditTask] = useState<MosManualTask | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<SortMode>('role');
@@ -66,6 +72,7 @@ export default function TeamPage() {
       const res = await fetchWork('team');
       setRows(res.content);
       setTasks(res.tasks);
+      setManual(res.manual_tasks ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -94,6 +101,37 @@ export default function TeamPage() {
 
   const taskFor = (contentId: string): MosTask | undefined =>
     tasks.find((t) => t.content_id === contentId);
+
+  /* ── hand-assigned tasks across the team ─────────────────────────────── */
+
+  const manualSorted = useMemo(
+    () => [...manual].sort((a, b) => {
+      if (!a.due_at) return 1;
+      if (!b.due_at) return -1;
+      return new Date(a.due_at).getTime() - new Date(b.due_at).getTime();
+    }),
+    [manual],
+  );
+
+  const personName = (userId: string | null): string => {
+    if (!userId) return isAr ? 'غير مسند' : 'unassigned';
+    const p = people.find((x) => x.user_id === userId);
+    if (!p) return isAr ? 'غير معروف' : 'unknown';
+    return (isAr ? p.name_ar ?? p.name_en : p.name_en ?? p.name_ar) ?? p.email ?? userId.slice(0, 8);
+  };
+
+  const cancelManual = async (id: string): Promise<void> => {
+    setBusy(true);
+    try {
+      await cancelManualTask(id);
+      addToast(isAr ? 'أُلغيت المهمة.' : 'Task cancelled.', 'success');
+      await load();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const sorted = useMemo(() => {
     const copy = [...rows];
@@ -236,6 +274,13 @@ export default function TeamPage() {
             {isAr ? 'حسب الاستحقاق' : 'By due date'}
           </button>
         </div>
+        {/* Hand-assigning work needs `assign_task` — the CEO and the marketing
+            manager hold it, the workflow-only roles do not. */}
+        {can('assign_task') && (
+          <button type="button" className="btn" onClick={() => setAssigning(true)}>
+            {isAr ? 'إسناد مهمة' : 'Assign task'}
+          </button>
+        )}
         <button
           type="button"
           className="btn btn-p"
@@ -250,7 +295,7 @@ export default function TeamPage() {
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
         {loading && rows.length === 0 && <Skeleton rows={5} />}
 
-        {!loading && rows.length === 0 && !error && (
+        {!loading && rows.length === 0 && manualSorted.length === 0 && !error && (
           <Empty
             title={isAr ? 'لا عمل مفتوح' : 'No open work'}
             body={isAr
@@ -489,7 +534,87 @@ export default function TeamPage() {
             </div>
           </>
         )}
+
+        {/* Hand-assigned work, team-wide. Outside the `rows.length > 0` board on
+            purpose: a team can have manual tasks open with nothing in
+            production, and that queue must still be visible. */}
+        {manualSorted.length > 0 && (
+          <div className="card" style={{ marginTop: 18 }}>
+            <div className="card-h">
+              <h4>{isAr ? 'مهام مُسندة يدويًا' : 'Hand-assigned tasks'}</h4>
+              <span className="r">
+                {isAr ? 'خارج مسارات العمل' : 'outside the workflows'}
+              </span>
+            </div>
+            <div className="tbl-wrap">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>{isAr ? 'المهمة' : 'Task'}</th>
+                    <th style={{ width: 150 }}>{isAr ? 'المسؤول' : 'Assigned to'}</th>
+                    <th style={{ width: 110 }}>{isAr ? 'الاستحقاق' : 'Due'}</th>
+                    <th style={{ width: 150 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {manualSorted.map((t) => {
+                    const overdue = Boolean(t.due_at)
+                      && new Date(t.due_at as string).getTime() < Date.now();
+                    return (
+                      <tr key={t.id} className={overdue ? 'hl' : undefined}>
+                        <td className="ttl">
+                          {t.title}
+                          {t.series_id && (
+                            <span style={{ color: 'var(--mute)', fontWeight: 400 }}>
+                              {isAr ? ' · متكررة' : ' · repeating'}
+                            </span>
+                          )}
+                        </td>
+                        <td>{personName(t.assignee_user_id)}</td>
+                        <td style={overdue ? { color: 'var(--late)', fontWeight: 700 } : undefined}>
+                          {t.due_at ? shortDate(t.due_at, isAr) : '—'}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                            {can('assign_task') && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  disabled={busy}
+                                  onClick={() => setEditTask(t)}
+                                >
+                                  {isAr ? 'تعديل' : 'Edit'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  disabled={busy}
+                                  onClick={() => void cancelManual(t.id)}
+                                >
+                                  {isAr ? 'إلغاء' : 'Cancel'}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
+
+      {(assigning || editTask) && (
+        <NewTaskModal
+          task={editTask}
+          onClose={() => { setAssigning(false); setEditTask(null); }}
+          onSaved={() => void load()}
+        />
+      )}
 
       {transfer && (
         <Modal
