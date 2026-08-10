@@ -1019,8 +1019,12 @@ export default async function handler(req: Request): Promise<Response> {
 
         const assetIds = Array.from(new Set((links.data ?? []).map((l) => l.asset_id)));
         const assetsRes = assetIds.length > 0
-          ? await sb.from('mos_assets').select('id, thumb_url, kind').in('id', assetIds)
-          : { data: [] as Array<{ id: string; thumb_url: string | null; kind: string | null }>, error: null };
+          // file_id rides along so a CANONICAL asset (private bytes, no public
+          // url) can still produce a preview: the client signs it via
+          // useAssetUrls. Without it the tile would silently fall back to the
+          // typed placeholder for every new upload.
+          ? await sb.from('mos_assets').select('id, thumb_url, kind, url, file_id').in('id', assetIds)
+          : { data: [] as Array<{ id: string; thumb_url: string | null; kind: string | null; url: string | null; file_id: string | null }>, error: null };
         const fail3 = dbFail(assetsRes.error);
         if (fail3) return fail3;
 
@@ -1036,14 +1040,21 @@ export default async function handler(req: Request): Promise<Response> {
         // one without, and among those the final cut wins over source/reference.
         const assetById = new Map((assetsRes.data ?? []).map((a) => [a.id, a]));
         const ROLE_RANK: Record<string, number> = { final: 0, source: 1, reference: 2 };
-        const bestByContent = new Map<string, { thumb: string | null; kind: string | null; score: number }>();
+        const bestByContent = new Map<string, {
+          thumb: string | null; kind: string | null; fileId: string | null; score: number;
+        }>();
         for (const l of links.data ?? []) {
           const a = assetById.get(l.asset_id);
           if (!a) continue;
-          const score = (a.thumb_url ? 0 : 100) + (ROLE_RANK[l.role] ?? 3);
+          // A canonical asset has no stored thumb but IS renderable via its
+          // file_id, so it must not score as "no preview" behind a thumbless one.
+          const renderable = a.thumb_url || a.file_id;
+          const score = (renderable ? 0 : 100) + (ROLE_RANK[l.role] ?? 3);
           const cur = bestByContent.get(l.content_id);
           if (!cur || score < cur.score) {
-            bestByContent.set(l.content_id, { thumb: a.thumb_url ?? null, kind: a.kind ?? null, score });
+            bestByContent.set(l.content_id, {
+              thumb: a.thumb_url ?? null, kind: a.kind ?? null, fileId: a.file_id ?? null, score,
+            });
           }
         }
 
@@ -1055,6 +1066,7 @@ export default async function handler(req: Request): Promise<Response> {
               campaign_name: r.campaign_id ? campName.get(r.campaign_id as string) ?? null : null,
               platforms: plats.get(r.id as string) ?? [],
               thumb_url: best?.thumb ?? null,
+              preview_file_id: best?.fileId ?? null,
               preview_kind: best?.kind ?? null,
             };
           }),
@@ -4595,6 +4607,9 @@ export default async function handler(req: Request): Promise<Response> {
           ref: string | null;
           title: string;
           thumb_url: string | null;
+          /** Asset hits only — set when the bytes are a private `files` row, so
+           *  the client can sign a thumbnail (there is no stored public url). */
+          file_id?: string | null;
           match_reason: string;
           excerpt: string;
         }
@@ -4639,6 +4654,8 @@ export default async function handler(req: Request): Promise<Response> {
             ref: (r.ref as string | null) ?? null,
             title: (r.title as string) ?? '',
             thumb_url: (r.thumb_url as string | null) ?? (r.url as string | null) ?? null,
+            // Canonical assets carry neither; the client signs file_id instead.
+            file_id: (r.file_id as string | null) ?? null,
             ...m,
           });
         }

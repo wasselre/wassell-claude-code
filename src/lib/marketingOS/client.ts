@@ -1323,6 +1323,9 @@ export interface SearchHit {
   ref: string | null;
   title: string;
   thumb_url: string | null;
+  /** Asset hits only: set when the asset's bytes are a private `files` row
+   *  (canonical intake). The page signs it — there is no stored public url. */
+  file_id?: string | null;
   /** The field that matched ('title' | 'ref' | 'goal' | 'note' | 'location'). */
   match_reason: string;
   /** Server-built excerpt with the hit wrapped in <mark> — render as HTML. */
