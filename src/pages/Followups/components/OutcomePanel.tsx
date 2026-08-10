@@ -10,7 +10,7 @@ import {
   revealedFieldSlugs,
   validateFollowUpCompletion,
 } from '@/lib/salesProcess';
-import EvidencePicker from './EvidencePicker';
+import CallEvidence from './CallEvidence';
 
 interface OutcomePanelProps {
   followupModel: AppModel;
@@ -385,7 +385,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
             </label>
           )}
           {revealed.includes('completed_by_call_id') && (
-            <EvidencePicker
+            <CallEvidence
               clientId={clientId}
               phones={phones}
               value={(draft.completed_by_call_id as string) ?? null}

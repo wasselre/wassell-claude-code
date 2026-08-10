@@ -51,7 +51,7 @@
 
 **Implements:** `src/pages/Followups/FollowUpWorkspacePage.tsx` and its panels in
 `src/pages/Followups/components/` (MissionHeader, PrimaryAction, ScriptPanel,
-OutcomePanel, EvidencePicker, ContextPanel, PreferenceSummary, TimelinePanel).
+OutcomePanel, CallEvidence, ContextPanel, PreferenceSummary, TimelinePanel).
 
 **Figma Make prompt:**
 

@@ -27,7 +27,13 @@
 //   could find". A stale auto-attach is worse than an empty field: it shows the
 //   rep a recording from another conversation, and (once the AI suggestion
 //   pipeline lands) it would have the model classify the wrong call entirely.
-//   The rep can always attach a call manually; see `listRecentCalls`.
+//
+//   There is no manual override any more (2026-08-10). `listRecentCalls` used to
+//   offer the client's older calls for a hand-pick when nothing was in-window,
+//   but a rep records an outcome during or just after the call — so every entry
+//   that list could show was by construction the wrong conversation. Out of
+//   window now means the link is left to the server-side half of this rule
+//   (`tg_records_link_call_to_followup`) when the recording lands, or to nobody.
 //
 // Keep CALL_MATCH_WINDOW_MINUTES in sync with the `v_window` constant in
 // supabase/migrations/2026-07-30_tighten_call_followup_link_window.sql — the
@@ -40,9 +46,6 @@ import type { AppRecord } from '@/types';
 export const CALL_MATCH_WINDOW_MINUTES = 15;
 
 const WINDOW_MS = CALL_MATCH_WINDOW_MINUTES * 60_000;
-
-/** How many recent calls to offer for manual attach when nothing auto-matches. */
-const RECENT_LIMIT = 5;
 
 export interface CallMatchInput {
   /** All phone_calls records from the store (already model-scoped). */
@@ -86,15 +89,6 @@ function belongsToClient(call: AppRecord, clientId: string | null, normPhones: R
   return cp ? normPhones.has(cp) : false;
 }
 
-/** This client's outbound calls, newest first. Not window-filtered. */
-export function listRecentCalls({ calls, clientId, phones }: Omit<CallMatchInput, 'anchor'>): AppRecord[] {
-  const normPhones = new Set(phones.map((p) => normalizePhone(p)).filter(Boolean) as string[]);
-  return calls
-    .filter((r) => r.data.direction === 'outbound' && belongsToClient(r, clientId, normPhones))
-    .sort((a, b) => (callTimeMs(b) ?? 0) - (callTimeMs(a) ?? 0))
-    .slice(0, RECENT_LIMIT);
-}
-
 /**
  * The call that completed this follow-up, or null when none is close enough.
  *
@@ -123,11 +117,4 @@ export function resolveCallForFollowup(input: CallMatchInput): AppRecord | null 
     }
   }
   return best;
-}
-
-/** Minutes between a call and the anchor — for surfacing "why not" to the rep. */
-export function minutesFromAnchor(call: AppRecord, anchor: CallMatchInput['anchor']): number | null {
-  const ms = callTimeMs(call);
-  if (ms === null) return null;
-  return Math.round(Math.abs(ms - anchorMs(anchor)) / 60_000);
 }
