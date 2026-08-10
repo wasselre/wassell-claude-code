@@ -362,6 +362,55 @@ FROM (
     AND p.polname = 'market_listings_view_deny_none'
 ) s
 UNION ALL
+-- Predicate-level assertions on the two NEW policies. The shape checks
+-- above verify only cmd/permissive/roles; a post-COMMIT swap that keeps
+-- the name and shape but changes the predicate (e.g. USING (true)) would
+-- still pass them. The before snapshot has no baseline line for these
+-- policies (the migration creates them), so the diff cannot cover it
+-- either — with psql exit 0 the diff is informational only. These checks
+-- mirror the migration's own postcondition (sections 4.1 / 4.2b) and put
+-- the observed predicate in the detail so a failure is self-explanatory.
+-- ('|' in the detail is replaced so the CHECK-row field parsing survives
+-- a concatenation operator in the expression.)
+SELECT 'CHECK|policy market_listings_view_fast predicate is the scope-class fast branch|'
+    || CASE WHEN count(*) = 1 AND bool_and(ok) THEN 'PASS' ELSE 'FAIL' END
+    || '|qual=' || coalesce(string_agg(qual, ' '), '(policy missing)')
+FROM (
+  SELECT (e.qual LIKE '%wassell_view_scope_class%'
+          AND position('8f06bc39-4bee-42e9-9fab-77023fb89ede' IN e.qual) > 0
+          AND e.qual LIKE '%''all''%'
+          AND e.qual !~* 'wassell_can_view_jsonb') AS ok,
+         e.qual
+  FROM (
+    SELECT replace(pg_get_expr(p.polqual, p.polrelid), '|', '/') AS qual
+    FROM pg_policy p
+    JOIN pg_class c ON c.oid = p.polrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'market_listings'
+      AND p.polname = 'market_listings_view_fast'
+  ) e
+) s
+UNION ALL
+SELECT 'CHECK|policy market_listings_view_deny_none predicate is the scope-class <> ''none'' guard|'
+    || CASE WHEN count(*) = 1 AND bool_and(ok) THEN 'PASS' ELSE 'FAIL' END
+    || '|qual=' || coalesce(string_agg(qual, ' '), '(policy missing)')
+FROM (
+  SELECT (e.qual LIKE '%wassell_view_scope_class%'
+          AND position('8f06bc39-4bee-42e9-9fab-77023fb89ede' IN e.qual) > 0
+          AND e.qual LIKE '%<>%'
+          AND e.qual LIKE '%''none''%'
+          AND e.qual !~* 'wassell_can_view_jsonb') AS ok,
+         e.qual
+  FROM (
+    SELECT replace(pg_get_expr(p.polqual, p.polrelid), '|', '/') AS qual
+    FROM pg_policy p
+    JOIN pg_class c ON c.oid = p.polrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'market_listings'
+      AND p.polname = 'market_listings_view_deny_none'
+  ) e
+) s
+UNION ALL
 SELECT 'CHECK|all four frozen_* policies present|'
     || CASE WHEN count(*) = 4 THEN 'PASS' ELSE 'FAIL' END
     || '|count=' || count(*)
@@ -380,20 +429,53 @@ JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public' AND c.relkind = 'v'
   AND c.relname IN ('market_listings_summary', 'v_market_listings', 'v_market_properties')
 UNION ALL
-SELECT 'CHECK|acl authenticated on market_listings_summary is exactly SELECT|'
-    || CASE WHEN coalesce(string_agg(privilege_type, ',' ORDER BY privilege_type), '(none)') = 'SELECT'
+-- ACL assertions are built on pg_class.relacl + aclexplode with the SAME
+-- grantability-aware serialization the snapshot uses (privilege_type with
+-- a trailing '*' when is_grantable). information_schema.role_table_grants
+-- DISCARDS grant options: a post-COMMIT GRANT SELECT ... WITH GRANT OPTION
+-- would still read there as exactly 'SELECT' and pass, while every
+-- authenticated session could re-grant access to the view. The diff cannot
+-- catch it either — with psql exit 0 the diff is informational only, so
+-- this must be enforced here, independently.
+SELECT 'CHECK|acl authenticated on market_listings_summary is exactly SELECT (grant option fails)|'
+    || CASE WHEN coalesce(string_agg(a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END,
+                                     ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END),
+                          '(none)') = 'SELECT'
             THEN 'PASS' ELSE 'FAIL' END
-    || '|privs=' || coalesce(string_agg(privilege_type, ',' ORDER BY privilege_type), '(none)')
-FROM information_schema.role_table_grants
-WHERE table_schema = 'public' AND table_name = 'market_listings_summary'
-  AND grantee = 'authenticated'
+    || '|privs=' || coalesce(string_agg(a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END,
+                                        ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END),
+                             '(none)')
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+WHERE n.nspname = 'public' AND c.relname = 'market_listings_summary'
+  AND a.grantee = 'authenticated'::regrole
 UNION ALL
-SELECT 'CHECK|acl anon has NO privileges on the three views|'
+SELECT 'CHECK|acl authenticated holds NO privileges on v_market_listings / v_market_properties|'
     || CASE WHEN count(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-    || '|grant_rows=' || count(*)
-FROM information_schema.role_table_grants
-WHERE table_schema = 'public' AND grantee = 'anon'
-  AND table_name IN ('market_listings_summary', 'v_market_listings', 'v_market_properties')
+    || '|' || CASE WHEN count(*) = 0 THEN 'none found'
+                   ELSE 'found: ' || string_agg(c.relname || ':' || a.privilege_type
+                                                    || CASE WHEN a.is_grantable THEN '*' ELSE '' END,
+                                                ', ' ORDER BY c.relname, a.privilege_type) END
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+WHERE n.nspname = 'public'
+  AND c.relname IN ('v_market_listings', 'v_market_properties')
+  AND a.grantee = 'authenticated'::regrole
+UNION ALL
+SELECT 'CHECK|acl anon holds NO privileges on the three views|'
+    || CASE WHEN count(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+    || '|' || CASE WHEN count(*) = 0 THEN 'none found'
+                   ELSE 'found: ' || string_agg(c.relname || ':' || a.privilege_type
+                                                    || CASE WHEN a.is_grantable THEN '*' ELSE '' END,
+                                                ', ' ORDER BY c.relname, a.privilege_type) END
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+WHERE n.nspname = 'public' AND c.relkind = 'v'
+  AND c.relname IN ('market_listings_summary', 'v_market_listings', 'v_market_properties')
+  AND a.grantee = 'anon'::regrole
 UNION ALL
 -- PUBLIC end-state check. Built on pg_class.relacl + aclexplode because
 -- information_schema.role_table_grants never surfaces PUBLIC. A PUBLIC
@@ -415,12 +497,24 @@ WHERE n.nspname = 'public' AND c.relkind = 'v'
   AND c.relname IN ('market_listings_summary', 'v_market_listings', 'v_market_properties')
   AND a.grantee = 0
 UNION ALL
-SELECT 'CHECK|acl service_role retains SELECT on ' || v.t || '|'
+SELECT 'CHECK|acl service_role retains SELECT on ' || v.t || ' (grantable or not)|'
     || CASE WHEN EXISTS (
-         SELECT 1 FROM information_schema.role_table_grants g
-         WHERE g.table_schema = 'public' AND g.table_name = v.t
-           AND g.grantee = 'service_role' AND g.privilege_type = 'SELECT')
+         SELECT 1
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+         WHERE n.nspname = 'public' AND c.relname = v.t
+           AND a.grantee = 'service_role'::regrole
+           AND a.privilege_type = 'SELECT')
        THEN 'PASS' ELSE 'FAIL' END
+    || '|privs=' || coalesce((
+         SELECT string_agg(a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END,
+                           ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END)
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+         WHERE n.nspname = 'public' AND c.relname = v.t
+           AND a.grantee = 'service_role'::regrole), '(none)')
 FROM (VALUES ('market_listings_summary'), ('v_market_listings'), ('v_market_properties')) AS v(t)
 UNION ALL
 SELECT 'CHECK|acl ' || v.g || ' retains SELECT on base table market_listings|'
