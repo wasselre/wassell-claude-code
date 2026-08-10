@@ -163,7 +163,6 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       {
         value: 'interested',
         requires: { ...REQ_ACTUAL },
-        warn: ['completed_by_chat_id'],
         client_update_preview: { status: 'مهتم' },
         next_action_preview: { kind: 'create_followup', create_followup_type: 'whatsapp_follow_up', delay_days: 5 },
       },
@@ -171,7 +170,6 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       {
         value: 'request_offer',
         requires: { ...REQ_ACTUAL },
-        warn: ['completed_by_chat_id'],
         client_update_preview: { stage: 'عرض سعر', status: 'تم طلب عرض سعر' },
         next_action_preview: { kind: 'none', note_en: 'Offer follow-up is created in the offer stage', note_ar: 'تُنشأ متابعة العرض في مرحلة العرض' },
       },

@@ -110,8 +110,9 @@ export interface ValidateFollowUpCompletionInput {
 }
 
 /**
- * Hard blocks the save when a required field is missing; returns overridable
- * warnings (no evidence attached, or an active client left with no next action).
+ * Hard blocks the save when a required field is missing; returns the one
+ * overridable warning left — an active client about to be left with no next
+ * action. Missing evidence does not warn.
  */
 export function validateFollowUpCompletion(input: ValidateFollowUpCompletionInput): ValidationResult {
   const config = input.config ?? DEFAULT_SALES_PROCESS;
@@ -148,17 +149,8 @@ export function validateFollowUpCompletion(input: ValidateFollowUpCompletionInpu
     }
   }
 
-  // Soft warning: the WhatsApp conversation wasn't linked. There is deliberately
-  // no equivalent for calls — see OutcomeWarn in types.ts.
-  for (const warnField of outcome.warn ?? []) {
-    if (!hasValue(input.draft[warnField])) {
-      warnings.push({
-        field: warnField,
-        message_ar: 'لم يتم إرفاق محادثة واتساب',
-        message_en: 'No WhatsApp conversation attached',
-      });
-    }
-  }
+  // Missing EVIDENCE (a linked call or WhatsApp conversation) is deliberately
+  // NOT warned about — see the note on FollowUpOutcomeConfig in types.ts.
 
   // "Active client must have a next action" — warn on a dead-end outcome.
   const deadEnd = !outcome.is_terminal && (outcome.next_action_preview?.kind ?? 'none') === 'none';

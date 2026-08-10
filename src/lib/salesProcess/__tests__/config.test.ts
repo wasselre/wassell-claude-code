@@ -164,12 +164,20 @@ describe('validateFollowUpCompletion', () => {
     expect(r.hardErrors.some((e) => e.field === 'appointment_id')).toBe(true);
   });
 
-  // The rep cannot attach a call — CallEvidence links it automatically or not at
-  // all — so completing a call outcome without one is silent, not a warning.
-  it('does NOT warn when a call outcome has no attached call', () => {
-    const r = validateFollowUpCompletion({ followupType: T, selectedOutcome: 'no_answer', draft: { actual_datetime: 'x' } });
-    expect(r.ok).toBe(true);
-    expect(r.warnings.some((w) => w.field === 'completed_by_call_id')).toBe(false);
+  // Missing evidence is silent (2026-08-10): the rep cannot attach a call at all,
+  // and the WhatsApp twin was dropped with it. Completing without either is fine.
+  it('does NOT warn when an outcome has no attached evidence', () => {
+    const call = validateFollowUpCompletion({ followupType: T, selectedOutcome: 'no_answer', draft: { actual_datetime: 'x' } });
+    expect(call.ok).toBe(true);
+    expect(call.warnings).toHaveLength(0);
+
+    const chat = validateFollowUpCompletion({
+      followupType: 'whatsapp_follow_up',
+      selectedOutcome: 'interested',
+      draft: { actual_datetime: 'x' },
+    });
+    expect(chat.ok).toBe(true);
+    expect(chat.warnings).toHaveLength(0);
   });
 });
 

@@ -71,17 +71,6 @@ export interface OutcomeRequires {
 }
 
 /**
- * Soft, overridable warnings (e.g. completed a WhatsApp task without linking
- * the conversation).
- *
- * `completed_by_call_id` was removed on 2026-08-10. Call evidence links itself
- * (see `components/CallEvidence.tsx`) and the rep has no way to attach one, so
- * warning them about a missing call was telling them off for something they
- * cannot do anything about.
- */
-export type OutcomeWarn = 'completed_by_chat_id';
-
-/**
  * What the client record will look like after the workflow runs. Shown to the
  * rep as a preview BEFORE save; the actual write happens in the bound workflow
  * (single source of truth for automation). Omitting both stage and status means
@@ -118,8 +107,11 @@ export interface FollowUpOutcomeConfig {
   value: OutcomeValue;
   /** Fields the rep MUST fill before this outcome can be saved (hard block). */
   requires?: OutcomeRequires;
-  /** Soft warnings the rep can override (e.g. no call evidence attached). */
-  warn?: OutcomeWarn[];
+  // NOTE: there is deliberately no `warn` list any more (2026-08-10). Missing
+  // evidence — a call OR a WhatsApp conversation — no longer warns at
+  // completion. Call evidence links itself and the rep cannot attach one, and
+  // the user asked for the WhatsApp twin to go the same way. An outcome either
+  // hard-requires a field or says nothing about it.
   /** Preview of the client stage/status the bound workflow will set. */
   client_update_preview?: ClientUpdatePreview;
   /** Preview of the next task the bound workflow will create. */
