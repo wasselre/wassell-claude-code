@@ -35,6 +35,7 @@ DECLARE
   v_bayut       bigint;
   v_count       bigint;
   v_acl         text;
+  v_colacl      text;
   v_anon_denied boolean;
 BEGIN
   -- Seeded-row expectations, computed from the fixture (never hardcoded).
@@ -146,6 +147,31 @@ BEGIN
       AND has_table_privilege('service_role', 'public.v_market_listings', 'SELECT')
       AND has_table_privilege('service_role', 'public.v_market_properties', 'SELECT')) THEN
     RAISE EXCEPTION 'ASSERT 5 FAILED: service_role lost SELECT on a target view';
+  END IF;
+
+  -- 5b. No COLUMN-LEVEL grants on any of the three views. Column privileges
+  --     live in pg_attribute.attacl and are invisible to the pg_class.relacl
+  --     exact-set assertions above — a GRANT SELECT (col) would pass every
+  --     check in assert 5 while remaining in force. The migration's
+  --     table-level REVOKE ALL removes same-grantor column grants
+  --     automatically, so a survivor can only come from a foreign grantor; the
+  --     correct end state is the empty set. A surviving
+  --     SELECT (source_payload) on v_market_listings would defeat the
+  --     2026-09-03_00 guarantee that source_payload is not exposed.
+  SELECT coalesce(string_agg(
+           c.relname||'.'||att.attname||' -> '||
+           (CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END)||':'||
+           a.privilege_type||CASE WHEN a.is_grantable THEN '*' ELSE '' END||
+           ' (granted by '||pg_get_userbyid(a.grantor)||')',
+           ', ' ORDER BY c.relname, att.attname), '(none)')
+    INTO v_colacl
+    FROM pg_class c
+         JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0
+         CROSS JOIN LATERAL aclexplode(att.attacl) a
+   WHERE c.relname IN ('market_listings_summary','v_market_listings','v_market_properties')
+     AND c.relnamespace = 'public'::regnamespace;
+  IF v_colacl <> '(none)' THEN
+    RAISE EXCEPTION 'ASSERT 5b FAILED: column-level grants exist on the target views (pg_attribute.attacl — invisible to the relacl assertions): %', v_colacl;
   END IF;
 
   -- 6. authenticated and service_role keep SELECT on the base table — with the

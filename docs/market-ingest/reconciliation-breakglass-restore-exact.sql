@@ -101,7 +101,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN
 
 -- POSTCONDITIONS (fail closed).
 DO $post$
-DECLARE v_acl text;
+DECLARE v_acl text; v_colacl text;
 BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_policy
@@ -139,6 +139,33 @@ BEGIN
      AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'authenticated';
   IF v_acl <> 'DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE' THEN
     RAISE EXCEPTION 'POST: authenticated privileges on market_listings_summary do not match the exact pre-migration ALL set (eight privileges, none grantable; ''*'' marks a surviving WITH GRANT OPTION), found: %', v_acl;
+  END IF;
+
+  -- No COLUMN-LEVEL grants on any of the three views. The relacl exact-set
+  -- assertion above is blind to column privileges — those live in
+  -- pg_attribute.attacl and never appear in pg_class.relacl. The verified
+  -- pre-migration state (2026-08-10) had NO column-level grants on these
+  -- views, so the empty set is part of what 'exact' means here. Detection,
+  -- not repair: this script's table-level REVOKE ALL on the summary DOES
+  -- remove same-grantor column grants automatically, so any survivor was
+  -- issued by a DIFFERENT grantor and cannot be revoked by this script — a
+  -- human must re-issue the REVOKE as that grantor. A surviving
+  -- SELECT (source_payload) on v_market_listings would defeat the
+  -- 2026-09-03_00 guarantee that source_payload is not exposed.
+  SELECT coalesce(string_agg(
+           c.relname||'.'||att.attname||' -> '||
+           (CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END)||':'||
+           a.privilege_type||CASE WHEN a.is_grantable THEN '*' ELSE '' END||
+           ' (granted by '||pg_get_userbyid(a.grantor)||')',
+           ', ' ORDER BY c.relname, att.attname), '(none)')
+    INTO v_colacl
+    FROM pg_class c
+         JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0
+         CROSS JOIN LATERAL aclexplode(att.attacl) a
+   WHERE c.relname IN ('market_listings_summary','v_market_listings','v_market_properties')
+     AND c.relnamespace = 'public'::regnamespace;
+  IF v_colacl <> '(none)' THEN
+    RAISE EXCEPTION 'POST: column-level grants survive on the target views after the restore: %. Column privileges live in pg_attribute.attacl and are invisible to pg_class.relacl, so the relacl exact-set assertion above cannot see them. This script''s table-level REVOKE ALL DOES remove same-grantor column grants, so any survivor was issued by a DIFFERENT grantor and cannot be revoked by this script — REVOKE must be re-issued AS THAT GRANTOR. A surviving SELECT (source_payload) would defeat the 2026-09-03_00 guarantee that the summary never exposes source_payload. Investigate and re-run.', v_colacl;
   END IF;
 END $post$;
 

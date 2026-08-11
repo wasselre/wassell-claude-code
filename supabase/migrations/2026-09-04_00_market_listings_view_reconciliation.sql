@@ -275,7 +275,7 @@ END $mk$;
 
 -- 4. Postconditions (fail closed -> whole transaction rolls back on any violation).
 DO $post$
-DECLARE v_expr text; v_public int; v_views int; v_acl text;
+DECLARE v_expr text; v_public int; v_views int; v_acl text; v_colacl text;
 BEGIN
   -- 4.1 + 4.2 Fast-path policy: exact role and predicate, not just the name.
   SELECT pg_get_expr(p.polqual, p.polrelid) INTO v_expr
@@ -468,6 +468,44 @@ BEGIN
      AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'anon';
   IF v_acl <> '(none)' THEN
     RAISE EXCEPTION 'POST: anon privileges on v_market_properties must be exactly (none), found: %', v_acl;
+  END IF;
+
+  -- 4.9b COLUMN-LEVEL grants (pg_attribute.attacl): the relacl exact-set
+  --      assertions above are BLIND to column privileges — a
+  --      GRANT SELECT (col) ON <view> TO <role> is stored per-column in
+  --      pg_attribute.attacl and never appears in pg_class.relacl, so every
+  --      assertion in §4.9 reports (none) while it is in force. The fix here
+  --      is DETECTION, not repair, for the same reason §4.9 is
+  --      grantability-aware: a table-level REVOKE ALL DOES automatically
+  --      remove same-grantor column grants (documented REVOKE behavior,
+  --      verified empirically on PostgreSQL 16/17), so §3c's REVOKEs already
+  --      clean up anything the view owner granted — per-column REVOKE
+  --      statements would be pure redundancy and are deliberately NOT added.
+  --      Any column grant that SURVIVES to this point was therefore issued by
+  --      a DIFFERENT grantor holding the grant option, and this migration
+  --      cannot remove it; the only correct response is to FAIL CLOSED so a
+  --      human re-issues the REVOKE as that grantor. The stakes are concrete:
+  --      a surviving SELECT (source_payload) on v_market_listings would leave
+  --      the exact column 2026-09-03_00 guarantees is not exposed readable by
+  --      its grantee while the relacl assertions report a clean ACL. The end
+  --      state of this migration is NO column-level grants of any kind on any
+  --      of the three views, so the assertion is against the empty set.
+  --      aclexplode(NULL attacl) yields no rows, so un-granted views
+  --      contribute nothing.
+  SELECT coalesce(string_agg(
+           c.relname||'.'||att.attname||' -> '||
+           (CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END)||':'||
+           a.privilege_type||CASE WHEN a.is_grantable THEN '*' ELSE '' END||
+           ' (granted by '||pg_get_userbyid(a.grantor)||')',
+           ', ' ORDER BY c.relname, att.attname), '(none)')
+    INTO v_colacl
+    FROM pg_class c
+         JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0
+         CROSS JOIN LATERAL aclexplode(att.attacl) a
+   WHERE c.relname IN ('market_listings_summary','v_market_listings','v_market_properties')
+     AND c.relnamespace = 'public'::regnamespace;
+  IF v_colacl <> '(none)' THEN
+    RAISE EXCEPTION 'POST: column-level grants survive on the target views: %. Column privileges live in pg_attribute.attacl and are invisible to pg_class.relacl, so the relacl exact-set assertions above cannot see them. This migration''s table-level REVOKE ALL DOES remove same-grantor column grants, so any survivor was issued by a DIFFERENT grantor and cannot be revoked by this migration — REVOKE must be re-issued AS THAT GRANTOR. A surviving SELECT (source_payload) would defeat the 2026-09-03_00 guarantee that the summary never exposes source_payload. Investigate and re-run.', v_colacl;
   END IF;
 
   -- 4.10 service_role keeps SELECT on all three.

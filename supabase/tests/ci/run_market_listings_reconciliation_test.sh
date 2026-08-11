@@ -61,6 +61,22 @@
 #      grants issued by the revoking grantor), so the pin-substituted
 #      migration MUST FAIL CLOSED on the grantability-aware §4.9 assertion —
 #      and the database must be left byte-for-byte unchanged.
+#   7a (t_colgrant)
+#               — foreign-grantor COLUMN grant: ci_col_grantor (a second role,
+#      reached via SET ROLE exactly as TEST 6) grants anon
+#      SELECT (source_payload) on v_market_listings. Column grants live in
+#      pg_attribute.attacl, so the migration's table-level REVOKE ALL cannot
+#      remove a foreign grantor's column grant and the relacl-based §4.9
+#      assertions cannot see it — the pin-substituted migration MUST FAIL
+#      CLOSED on the §4.9b attacl assertion, atomically.
+#   7b (t_colgrant_owner)
+#               — same-grantor column grant (CONTROL): the OWNER grants anon
+#      SELECT (source_payload) on v_market_listings, then the pin-substituted
+#      migration MUST SUCCEED — the table-level REVOKE ALL cascades to
+#      same-grantor column grants (documented REVOKE behavior). Afterwards the
+#      three views must have zero attacl rows and anon must no longer hold
+#      SELECT on source_payload. This control is what stops a future
+#      contributor from "fixing" 7a with redundant per-column REVOKEs.
 # =============================================================================
 set -euo pipefail
 
@@ -105,10 +121,13 @@ cleanup() {
   dropdb_quiet t_pins
   dropdb_quiet t_happy
   dropdb_quiet t_grantor
-  # The role's ACL entries live inside t_grantor, so the database must be
-  # dropped first or DROP ROLE fails. The || true keeps cleanup from ever
-  # masking a real test failure's exit code.
+  dropdb_quiet t_colgrant
+  dropdb_quiet t_colgrant_owner
+  # The roles' ACL entries live inside the test databases, so the databases
+  # must be dropped first or DROP ROLE fails. The || true keeps cleanup from
+  # ever masking a real test failure's exit code.
   psql -w "$PGURL" -q -c "DROP ROLE IF EXISTS ci_other_grantor" >/dev/null 2>&1 || true
+  psql -w "$PGURL" -q -c "DROP ROLE IF EXISTS ci_col_grantor" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -384,5 +403,129 @@ echo '   This proves a foreign-grantor delegation (SELECT WITH GRANT OPTION issu
 echo '   by ci_other_grantor) cannot slip through: the migration''s REVOKE cannot'
 echo '   remove it, the grantability-aware §4.9 assertion sees SELECT,SELECT* instead'
 echo '   of SELECT, and the whole transaction aborts for a human to investigate.'
+
+# =============================================================================
+echo '== TEST 7a: foreign-grantor COLUMN grant — the migration must FAIL CLOSED'
+# =============================================================================
+# Column-level grants (GRANT SELECT (col) ...) are stored in
+# pg_attribute.attacl, NOT pg_class.relacl — so every relacl-based assertion
+# in the migration (all of §4.9) is blind to them. The real hole is the
+# intersection with the TEST 6 finding: a column grant issued by a FOREIGN
+# grantor survives the migration's table-level REVOKE ALL (REVOKE only removes
+# grants — table or column — issued by the revoking grantor), leaving e.g.
+# anon able to SELECT source_payload from v_market_listings while every
+# relacl assertion reports a clean ACL. The migration's §4.9b attacl assertion
+# must see it and FAIL CLOSED — detection, not repair, exactly as TEST 6.
+createdb_fresh t_colgrant
+psql -w "$(DBURL t_colgrant)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+
+# a. A second grantor holds the grant option on v_market_listings and
+#    delegates SELECT on the source_payload COLUMN to anon — the delegation
+#    the migration's owner-issued REVOKE cannot remove. Same SET ROLE
+#    mechanism as TEST 6: no second connection, independent of the server's
+#    auth method.
+psql -w "$(DBURL t_colgrant)" -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP ROLE IF EXISTS ci_col_grantor;
+CREATE ROLE ci_col_grantor;              -- NOLOGIN: never connected to
+GRANT SELECT ON public.v_market_listings TO ci_col_grantor WITH GRANT OPTION;
+SET ROLE ci_col_grantor;                 -- GRANT records grantor = current_user
+GRANT SELECT (source_payload) ON public.v_market_listings TO anon;
+RESET ROLE;
+SQL
+
+# b. Show the bad pre-state: the attacl row on v_market_listings must mention
+#    source_payload — proving the column grant exists where the relacl
+#    assertions cannot see it.
+OBSERVED_COLACL=$(q t_colgrant "SELECT coalesce(string_agg(c.relname||'.'||att.attname||' -> '||(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END)||':'||a.privilege_type||CASE WHEN a.is_grantable THEN '*' ELSE '' END||' (granted by '||pg_get_userbyid(a.grantor)||')', ', ' ORDER BY c.relname, att.attname), '(none)') FROM pg_class c JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0 CROSS JOIN LATERAL aclexplode(att.attacl) a WHERE c.relname IN ('market_listings_summary','v_market_listings','v_market_properties') AND c.relnamespace = 'public'::regnamespace")
+echo "pre-state column-level grants on the target views (attacl): $OBSERVED_COLACL"
+case "$OBSERVED_COLACL" in
+  *source_payload*) ;;
+  *) echo "FAIL: pre-state does not show a column grant on source_payload: $OBSERVED_COLACL" >&2; exit 1 ;;
+esac
+
+# c. Run the pin-substituted migration exactly as TEST 6 does. It MUST fail on
+#    the §4.9b assertion: after the owner-side REVOKE ALL the foreign-grantor
+#    column grant survives in attacl, so the observed set is not '(none)'.
+MIG_TMP=$(mktemp)
+cp "$MIG" "$MIG_TMP"
+sub_md5 "$LIT_SUMMARY"     "$NEW_SUMMARY"     "$MIG_TMP"
+sub_md5 "$LIT_VML"         "$NEW_VML"         "$MIG_TMP"
+sub_md5 "$LIT_VMP"         "$NEW_VMP"         "$MIG_TMP"
+sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
+sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
+sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
+LOG7A=$(mktemp)
+if psql -w "$(DBURL t_colgrant)" -v ON_ERROR_STOP=1 -f "$MIG_TMP" >"$LOG7A" 2>&1; then
+  echo "FAIL: migration unexpectedly COMMITTED with a foreign-grantor column grant (SELECT (source_payload) to anon) in place — the §4.9b attacl assertion did not fire" >&2
+  exit 1
+fi
+grep -q 'POST: column-level grants survive on the target views' "$LOG7A" \
+  || { echo "FAIL: expected the column-level-grants assertion failure in:" >&2; cat "$LOG7A" >&2; exit 1; }
+rm -f "$MIG_TMP" "$LOG7A"
+
+# d. Fail-closed means ATOMIC: the aborted transaction left no trace.
+assert_t t_colgrant "$SQL_NO_NEW_POLICIES" \
+  "a reconciliation policy (market_listings_view_fast / market_listings_view_deny_none) exists after the fail-closed run"
+assert_t t_colgrant "$SQL_SUMMARY_DEFINER" \
+  "market_listings_summary lost security_invoker=false after the fail-closed run"
+
+# e. What this proves.
+echo '   This proves a foreign-grantor COLUMN grant (SELECT (source_payload)'
+echo '   issued by ci_col_grantor) cannot slip through: the migration''s REVOKE ALL'
+echo '   cannot remove it, the relacl assertions cannot see it, but the §4.9b attacl'
+echo '   assertion fails closed and aborts the whole transaction for a human.'
+
+# =============================================================================
+echo '== TEST 7b: same-grantor column grant — the migration must SUCCEED (control)'
+# =============================================================================
+# The control half: a column grant issued by the OWNER (the same grantor as
+# the migration's REVOKE) MUST NOT block the migration. PostgreSQL's REVOKE
+# reference: "When revoking privileges on a table, the corresponding column
+# privileges (if any) are automatically revoked on each column of the table,
+# as well." So the migration's table-level REVOKE ALL already removes this
+# grant, §4.9b sees the empty set, and the migration commits. This test is
+# what stops a future contributor from "fixing" TEST 7a by adding redundant
+# per-column REVOKE statements — they would change nothing here (the cascade
+# already handles the same-grantor case) and cannot help there (a foreign
+# grantor's grant is unrevocable by the owner).
+createdb_fresh t_colgrant_owner
+psql -w "$(DBURL t_colgrant_owner)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+
+# a. The owner (this superuser session owns the fixture objects) grants anon
+#    SELECT on the source_payload column — a same-grantor column grant.
+q t_colgrant_owner "GRANT SELECT (source_payload) ON public.v_market_listings TO anon" >/dev/null
+OBSERVED_COLACL=$(q t_colgrant_owner "SELECT coalesce(string_agg(c.relname||'.'||att.attname||' -> '||(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END)||':'||a.privilege_type||CASE WHEN a.is_grantable THEN '*' ELSE '' END||' (granted by '||pg_get_userbyid(a.grantor)||')', ', ' ORDER BY c.relname, att.attname), '(none)') FROM pg_class c JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0 CROSS JOIN LATERAL aclexplode(att.attacl) a WHERE c.relname IN ('market_listings_summary','v_market_listings','v_market_properties') AND c.relnamespace = 'public'::regnamespace")
+echo "pre-state column-level grants on the target views (attacl): $OBSERVED_COLACL"
+case "$OBSERVED_COLACL" in
+  *source_payload*) ;;
+  *) echo "FAIL: pre-state does not show a column grant on source_payload: $OBSERVED_COLACL" >&2; exit 1 ;;
+esac
+
+# b. Run the pin-substituted migration — it MUST succeed: the table-level
+#    REVOKE ALL on v_market_listings cascades to the owner's own column grant.
+MIG_TMP=$(mktemp)
+cp "$MIG" "$MIG_TMP"
+sub_md5 "$LIT_SUMMARY"     "$NEW_SUMMARY"     "$MIG_TMP"
+sub_md5 "$LIT_VML"         "$NEW_VML"         "$MIG_TMP"
+sub_md5 "$LIT_VMP"         "$NEW_VMP"         "$MIG_TMP"
+sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
+sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
+sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
+psql -w "$(DBURL t_colgrant_owner)" -v ON_ERROR_STOP=1 -q -f "$MIG_TMP"
+rm -f "$MIG_TMP"
+
+# c. The cascade actually happened: zero attacl rows remain on the three
+#    views, and anon no longer holds SELECT on source_payload.
+assert_t t_colgrant_owner \
+  "SELECT NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0 CROSS JOIN LATERAL aclexplode(att.attacl) a WHERE c.relname IN ('market_listings_summary','v_market_listings','v_market_properties') AND c.relnamespace = 'public'::regnamespace)" \
+  "column-level grants (attacl rows) remain on the target views after the migration — the table-level REVOKE ALL did not cascade to the same-grantor column grant"
+assert_t t_colgrant_owner \
+  "SELECT NOT has_column_privilege('anon','public.v_market_listings','source_payload','SELECT')" \
+  "anon can still SELECT source_payload from v_market_listings after the migration"
+
+# d. What this proves.
+echo '   This proves the table-level REVOKE ALL already cascades to SAME-grantor'
+echo '   column grants, so per-column REVOKE statements would be pure redundancy —'
+echo '   and that §4.9b only ever blocks the FOREIGN-grantor case TEST 7a exercises.'
 
 echo 'ALL TESTS PASSED'
