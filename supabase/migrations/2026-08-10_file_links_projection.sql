@@ -175,7 +175,16 @@ CREATE POLICY file_link_sources_select ON public.file_link_sources
   FOR SELECT TO authenticated
   USING (EXISTS (SELECT 1 FROM public.file_links l WHERE l.id = file_link_sources.link_id));
 
-REVOKE ALL ON public.file_links, public.file_link_sources FROM PUBLIC;
+-- REVOKE FROM PUBLIC IS NOT ENOUGH ON SUPABASE.
+-- `ALTER DEFAULT PRIVILEGES` grants ALL on every new table in `public` to
+-- anon, authenticated and service_role. A revoke aimed at PUBLIC does not
+-- touch those role-specific grants, so the first production apply landed with
+-- anon AND authenticated holding full INSERT/UPDATE/DELETE on both tables.
+-- RLS still denied every path (no write policy exists, and the read policy is
+-- TO authenticated), so nothing was reachable — but the grant layer flatly
+-- contradicted this migration's stated guarantee and removed the second line
+-- of defence. Name the roles explicitly.
+REVOKE ALL ON public.file_links, public.file_link_sources FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.file_links, public.file_link_sources TO authenticated;
 GRANT ALL    ON public.file_links, public.file_link_sources TO service_role;
 
@@ -700,6 +709,15 @@ GRANT EXECUTE ON FUNCTION public.file_links_reconcile()        TO service_role;
 -- stays readable. It still cannot write anything.
 REVOKE ALL ON FUNCTION public.file_link_role_for(text,text,text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.file_link_role_for(text,text,text) TO authenticated, service_role;
+
+-- The reconciliation sweeps every record's jsonb keys to find canonical file
+-- references sitting in fields we do not treat as file-bearing (the `unscanned`
+-- category — it found 170 real ones on its first production run). That scan is
+-- O(records x keys) and exceeded PostgREST's default statement timeout, so the
+-- operator script could not call it at all. Scope a longer timeout to the
+-- FUNCTION rather than to the role: it is a service_role-only, read-only
+-- operator tool, and every other request keeps its normal timeout.
+ALTER FUNCTION public.file_links_reconcile() SET statement_timeout = '300s';
 
 COMMIT;
 

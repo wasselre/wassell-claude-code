@@ -316,6 +316,25 @@ BEGIN
   IF has_table_privilege('authenticated','public.file_links','DELETE')  THEN RAISE EXCEPTION '3.8: authenticated can DELETE file_links'; END IF;
   IF has_table_privilege('authenticated','public.file_link_sources','INSERT') THEN RAISE EXCEPTION '3.9: authenticated can INSERT file_link_sources'; END IF;
 
+  -- anon must hold NOTHING at all — not even SELECT. Supabase's default
+  -- privileges grant it ALL on new public tables, and `REVOKE ... FROM PUBLIC`
+  -- does not remove a role-specific grant. This is the assertion that catches
+  -- that, and it only means anything because the fixture reproduces those
+  -- defaults above.
+  FOREACH v IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE'] LOOP
+    IF has_table_privilege('anon','public.file_links', v) THEN
+      RAISE EXCEPTION '3.9a: anon holds % on file_links', v; END IF;
+    IF has_table_privilege('anon','public.file_link_sources', v) THEN
+      RAISE EXCEPTION '3.9b: anon holds % on file_link_sources', v; END IF;
+  END LOOP;
+  -- authenticated keeps SELECT and nothing else
+  FOREACH v IN ARRAY ARRAY['UPDATE','DELETE','TRUNCATE'] LOOP
+    IF has_table_privilege('authenticated','public.file_links', v) THEN
+      RAISE EXCEPTION '3.9c: authenticated holds % on file_links', v; END IF;
+  END LOOP;
+  IF NOT has_table_privilege('authenticated','public.file_links','SELECT') THEN
+    RAISE EXCEPTION '3.9d: authenticated lost SELECT on file_links'; END IF;
+
   -- functions: PUBLIC default EXECUTE must be closed, not merely revoked from
   -- `authenticated` (the Phase 0b lesson).
   FOREACH v IN ARRAY ARRAY['public.file_links_backfill()','public.file_links_reconcile()',
@@ -333,7 +352,7 @@ BEGIN
              OR 'search_path="public", "pg_temp"' = ANY(coalesce(p.proconfig,ARRAY[]::text[])))
   ) THEN RAISE EXCEPTION '3.13: a file_link* function does not pin search_path'; END IF;
 
-  RAISE NOTICE 'part 3 (constraints + grants): 13 assertions passed';
+  RAISE NOTICE 'part 3 (constraints + grants): 17 assertions passed';
 END $$;
 
 -- ═══ PART 4 — staleness detection (MUTATES the fixture) ════════════════════
@@ -499,5 +518,5 @@ BEGIN
   IF n <> 1 THEN RAISE EXCEPTION '5.8: reordering a MIXED array did not report positional drift (got %)', n; END IF;
 
   RAISE NOTICE 'part 5 (retargeting): 8 assertions passed';
-  RAISE NOTICE 'file-link projection smoke: all 75 assertions passed';
+  RAISE NOTICE 'file-link projection smoke: all 79 assertions passed';
 END $$;

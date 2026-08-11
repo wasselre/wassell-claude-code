@@ -17,6 +17,15 @@
 DO $r$ BEGIN CREATE ROLE anon;          EXCEPTION WHEN duplicate_object THEN NULL; END $r$;
 DO $r$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $r$;
 DO $r$ BEGIN CREATE ROLE service_role;  EXCEPTION WHEN duplicate_object THEN NULL; END $r$;
+-- REPRODUCE SUPABASE'S DEFAULT PRIVILEGES.
+-- A hosted Supabase project carries ALTER DEFAULT PRIVILEGES granting ALL on
+-- every new table in `public` to anon/authenticated/service_role. A bare
+-- Postgres has none, so a migration that only does `REVOKE ... FROM PUBLIC`
+-- looks perfectly locked down in CI and lands wide open in production — which
+-- is exactly what happened on the first production apply. Grant the same
+-- defaults here so the smoke's grant assertions test the real thing.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+
 CREATE SCHEMA IF NOT EXISTS auth;
 CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE
   AS $$ SELECT nullif(current_setting('test.uid', true),'')::uuid $$;
