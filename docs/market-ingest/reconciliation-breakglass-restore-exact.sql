@@ -89,6 +89,13 @@ ALTER VIEW public.v_market_listings       RESET (security_invoker);
 --    The privileges are ENUMERATED EXPLICITLY rather than written as
 --    GRANT ALL, so the restore is version-explicit and does not depend on
 --    what GRANT ALL happens to expand to on a given PostgreSQL major version.
+--    The REVOKE first is load-bearing: a plain GRANT does NOT strip a
+--    pre-existing WITH GRANT OPTION — if authenticated already held e.g.
+--    SELECT WITH GRANT OPTION, the GRANT below would leave that delegation
+--    power intact and the "exact" restore would silently retain the ability
+--    to re-grant access to others. Revoking ALL first starts the grant from
+--    a clean slate so no grant option can survive.
+REVOKE ALL ON public.market_listings_summary FROM authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN
   ON public.market_listings_summary TO authenticated;
 
@@ -110,21 +117,28 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'POST: market_listings_summary is not security_invoker=false';
   END IF;
-  -- Exact pre-migration grant set: all EIGHT privileges, nothing missing.
-  -- Asserted over pg_class.relacl + aclexplode (grantee resolved via
+  -- Exact pre-migration grant set: all EIGHT privileges, nothing missing —
+  -- and NONE of them WITH GRANT OPTION. Grantability is part of what 'exact'
+  -- means here: a plain GRANT does not strip a pre-existing WITH GRANT
+  -- OPTION, so without the REVOKE above (and this grantability-aware check)
+  -- a surviving grant option would pass a privilege-name-only assertion
+  -- while leaving authenticated able to re-grant access to others. Each
+  -- privilege is rendered as privilege_type || '*' when is_grantable, so any
+  -- surviving grant option shows up as a starred name and fails the exact
+  -- match. Asserted over pg_class.relacl + aclexplode (grantee resolved via
   -- pg_get_userbyid, grantee oid 0 = PUBLIC), NOT
   -- information_schema.role_table_grants: role_table_grants does NOT surface
   -- MAINTAIN (PostgreSQL 17 added it and folded it into GRANT ALL), so an
   -- exact-set assertion written against role_table_grants is blind to one
   -- privilege class and would give false assurance here.
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
    WHERE c.oid = 'public.market_listings_summary'::regclass
      AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'authenticated';
   IF v_acl <> 'DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE' THEN
-    RAISE EXCEPTION 'POST: authenticated privileges on market_listings_summary do not match the exact pre-migration ALL set, found: %', v_acl;
+    RAISE EXCEPTION 'POST: authenticated privileges on market_listings_summary do not match the exact pre-migration ALL set (eight privileges, none grantable; ''*'' marks a surviving WITH GRANT OPTION), found: %', v_acl;
   END IF;
 END $post$;
 

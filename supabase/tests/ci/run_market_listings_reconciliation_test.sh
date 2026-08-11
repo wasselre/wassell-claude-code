@@ -130,9 +130,12 @@ SQL_SUMMARY_MORE_THAN_SELECT="SELECT bool_or(a.privilege_type = 'SELECT') AND bo
 SQL_SUMMARY_EXACTLY_SELECT="SELECT bool_or(a.privilege_type = 'SELECT') AND NOT bool_or(a.privilege_type <> 'SELECT') FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole"
 SQL_FOUR_FROZEN_REMAIN="SELECT (SELECT count(*) FROM pg_policy WHERE polrelid = 'public.market_listings'::regclass AND polname IN ('frozen_view','frozen_insert','frozen_update','frozen_delete')) = 4"
 # authenticated holds EXACTLY the eight pre-migration privileges on the summary
-# (incl. MAINTAIN, PostgreSQL 17+): asserted via pg_class.relacl + aclexplode,
-# NOT information_schema.role_table_grants, which is blind to MAINTAIN.
-SQL_SUMMARY_EXACT_ALL8="SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)') = 'DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE' FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole"
+# (incl. MAINTAIN, PostgreSQL 17+) and NONE of them WITH GRANT OPTION: each
+# privilege is rendered as privilege_type || '*' when is_grantable, so a
+# surviving grant option appears as a starred name and fails the exact match.
+# Asserted via pg_class.relacl + aclexplode, NOT
+# information_schema.role_table_grants, which is blind to MAINTAIN.
+SQL_SUMMARY_EXACT_ALL8="SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)') = 'DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE' FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole"
 
 # =============================================================================
 echo '== TEST 1: absent table — unmodified migration must refuse'
@@ -245,6 +248,16 @@ else
   psql "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$MIG_TMP"
   rm -f "$MIG_TMP"
 
+  # Deliberately create the problematic pre-state the break-glass must
+  # survive: authenticated holds SELECT WITH GRANT OPTION on the summary.
+  # A plain GRANT (what the break-glass used to do) does NOT strip an
+  # existing grant option, so without the break-glass's REVOKE-then-GRANT
+  # this delegation power would silently survive the "exact" restore — and a
+  # privilege-name-only assertion would still pass. This pre-state proves
+  # the REVOKE is load-bearing.
+  echo 'TEST 5 pre-state: granting SELECT ... WITH GRANT OPTION to authenticated deliberately, to prove the break-glass revoke-then-grant strips it'
+  q t_happy "GRANT SELECT ON public.market_listings_summary TO authenticated WITH GRANT OPTION" >/dev/null
+
   # The break-glass pins the PRE-migration summary viewdef (it restores the
   # definer view and its grants, but refuses a changed body) — same value as
   # the rollback's pin, patched exactly the way TEST 4 patches it.
@@ -255,12 +268,14 @@ else
   rm -f "$BG_TMP"
 
   # The observed ACL set is printed BEFORE the assertions so a failure shows
-  # the actual grants, not just the expectation.
-  OBSERVED_ACL=$(q t_happy "SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)') FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole")
+  # the actual grants, not just the expectation. Grantability-aware: each
+  # privilege is rendered with a trailing '*' when held WITH GRANT OPTION,
+  # so the expected value is the eight names with NO '*' anywhere.
+  OBSERVED_ACL=$(q t_happy "SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)') FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole")
   echo "authenticated privileges on market_listings_summary after break-glass: $OBSERVED_ACL"
 
   assert_t t_happy "$SQL_SUMMARY_EXACT_ALL8" \
-    "authenticated privileges on the summary are not exactly DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE after the break-glass (observed: $OBSERVED_ACL)"
+    "authenticated privileges on the summary are not exactly DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE with none grantable after the break-glass (observed: $OBSERVED_ACL)"
   assert_t t_happy "$SQL_NO_NEW_POLICIES" \
     "a reconciliation policy survived the break-glass restore"
   assert_t t_happy "$SQL_FOUR_FROZEN_REMAIN" \
