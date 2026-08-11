@@ -54,7 +54,10 @@
 #      real incident would be its first run.
 #   6 (t_grantor)— foreign-grantor delegation: a second role grants
 #      authenticated SELECT ... WITH GRANT OPTION on the summary. The
-#      migration's REVOKE cannot remove that grant (REVOKE only removes
+#      delegation is created with SET ROLE inside the ONE superuser session
+#      (GRANT records the grantor as current_user), so no second connection
+#      is needed and the test is independent of the server's auth method.
+#      The migration's REVOKE cannot remove that grant (REVOKE only removes
 #      grants issued by the revoking grantor), so the pin-substituted
 #      migration MUST FAIL CLOSED on the grantability-aware §4.9 assertion —
 #      and the database must be left byte-for-byte unchanged.
@@ -84,18 +87,17 @@ done
 
 DBURL() { echo "${PGURL%/*}/$1"; }
 
-# DBURL variant connecting AS a different role: replaces any userinfo in the
-# URL (or inserts it when absent). The fixture CI server uses trust auth, so
-# ci_other_grantor needs no password.
-DBURL_AS() { echo "$(DBURL "$1")" | sed -E "s#^(postgres(ql)?://)([^@/]*@)?#\1$2@#"; }
-
+# -w (never prompt for a password) on every psql invocation in this file:
+# a future connection/auth mistake must become an immediate error, not an
+# indefinite password prompt. Without -w, psql attached to a terminal hangs
+# forever on an auth failure (CI only failed fast because it has no TTY).
 createdb_fresh() {
-  psql "$PGURL" -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS $1"
-  psql "$PGURL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE $1"
+  psql -w "$PGURL" -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS $1"
+  psql -w "$PGURL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE $1"
 }
 
 dropdb_quiet() {
-  psql "$PGURL" -q -c "DROP DATABASE IF EXISTS $1" >/dev/null 2>&1 || true
+  psql -w "$PGURL" -q -c "DROP DATABASE IF EXISTS $1" >/dev/null 2>&1 || true
 }
 
 cleanup() {
@@ -103,6 +105,10 @@ cleanup() {
   dropdb_quiet t_pins
   dropdb_quiet t_happy
   dropdb_quiet t_grantor
+  # The role's ACL entries live inside t_grantor, so the database must be
+  # dropped first or DROP ROLE fails. The || true keeps cleanup from ever
+  # masking a real test failure's exit code.
+  psql -w "$PGURL" -q -c "DROP ROLE IF EXISTS ci_other_grantor" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -120,7 +126,7 @@ sub_md5() {
 }
 
 # Run a query on a test database, single unaligned tuple out.
-q() { psql "$(DBURL "$1")" -v ON_ERROR_STOP=1 -qAt -c "$2"; }
+q() { psql -w "$(DBURL "$1")" -v ON_ERROR_STOP=1 -qAt -c "$2"; }
 
 # Assert a boolean query on a test database returns 't'.
 assert_t() {
@@ -154,7 +160,7 @@ echo '== TEST 1: absent table — unmodified migration must refuse'
 # =============================================================================
 createdb_fresh t_absent
 LOG1=$(mktemp)
-if psql "$(DBURL t_absent)" -v ON_ERROR_STOP=1 -f "$MIG" >"$LOG1" 2>&1; then
+if psql -w "$(DBURL t_absent)" -v ON_ERROR_STOP=1 -f "$MIG" >"$LOG1" 2>&1; then
   echo "FAIL: migration unexpectedly succeeded on an empty database" >&2
   exit 1
 fi
@@ -166,9 +172,9 @@ rm -f "$LOG1"
 echo '== TEST 2: pins — fixture shapes with production pins must refuse atomically'
 # =============================================================================
 createdb_fresh t_pins
-psql "$(DBURL t_pins)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+psql -w "$(DBURL t_pins)" -v ON_ERROR_STOP=1 -q -f "$FIX"
 LOG2=$(mktemp)
-if psql "$(DBURL t_pins)" -v ON_ERROR_STOP=1 -f "$MIG" >"$LOG2" 2>&1; then
+if psql -w "$(DBURL t_pins)" -v ON_ERROR_STOP=1 -f "$MIG" >"$LOG2" 2>&1; then
   echo "FAIL: migration unexpectedly succeeded against un-pinned fixture shapes" >&2
   exit 1
 fi
@@ -189,7 +195,7 @@ assert_t t_pins "$SQL_SUMMARY_MORE_THAN_SELECT" \
 echo '== TEST 3: happy path — fixture-measured pins, full migration + asserts'
 # =============================================================================
 createdb_fresh t_happy
-psql "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$FIX"
 
 NEW_SUMMARY=$(q t_happy "SELECT md5(pg_get_viewdef('public.market_listings_summary'::regclass))")
 NEW_VML=$(q t_happy "SELECT md5(pg_get_viewdef('public.v_market_listings'::regclass))")
@@ -207,9 +213,9 @@ sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
 sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
 sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
 
-psql "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$MIG_TMP"
+psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$MIG_TMP"
 rm -f "$MIG_TMP"
-psql "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$ASSERTS"
+psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$ASSERTS"
 
 # =============================================================================
 echo '== TEST 4: rollback — undoes the reconciliation exactly'
@@ -219,7 +225,7 @@ cp "$RB" "$RB_TMP"
 # The rollback pins the POST-migration summary viewdef; security_invoker is a
 # reloption (not part of pg_get_viewdef), so the TEST 3 value is the right pin.
 sub_md5 "$LIT_SUMMARY" "$NEW_SUMMARY" "$RB_TMP"
-psql "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$RB_TMP"
+psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$RB_TMP"
 rm -f "$RB_TMP"
 
 assert_t t_happy "$SQL_NO_NEW_POLICIES" \
@@ -240,7 +246,7 @@ assert_t t_happy "$SQL_SUMMARY_EXACTLY_SELECT" \
 # during a real incident — the worst possible moment. CI runs postgres:17,
 # so this is the one place it is proven to work.
 # =============================================================================
-SERVER_VERSION_NUM=$(psql "$PGURL" -v ON_ERROR_STOP=1 -qAt -c 'SHOW server_version_num')
+SERVER_VERSION_NUM=$(psql -w "$PGURL" -v ON_ERROR_STOP=1 -qAt -c 'SHOW server_version_num')
 if [ "$SERVER_VERSION_NUM" -lt 170000 ]; then
   echo "== TEST 5: SKIPPED — break-glass grants MAINTAIN, which requires PostgreSQL 17+ (server is $SERVER_VERSION_NUM)"
 else
@@ -257,7 +263,7 @@ else
   sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
   sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
   sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
-  psql "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$MIG_TMP"
+  psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$MIG_TMP"
   rm -f "$MIG_TMP"
 
   # Deliberately create the problematic pre-state the break-glass must
@@ -276,7 +282,7 @@ else
   BG_TMP=$(mktemp)
   cp "$BG" "$BG_TMP"
   sub_md5 "$LIT_SUMMARY" "$NEW_SUMMARY" "$BG_TMP"
-  psql "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$BG_TMP"
+  psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$BG_TMP"
   rm -f "$BG_TMP"
 
   # The observed ACL set is printed BEFORE the assertions so a failure shows
@@ -313,15 +319,28 @@ echo '== TEST 6: foreign-grantor delegation — the migration must FAIL CLOSED'
 # §4.9 assertions render each grant as privilege_type || '*' when grantable,
 # so this pre-state MUST make the migration fail closed — atomically.
 createdb_fresh t_grantor
-psql "$(DBURL t_grantor)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+psql -w "$(DBURL t_grantor)" -v ON_ERROR_STOP=1 -q -f "$FIX"
 
 # a. A second grantor holds the grant option and delegates SELECT to
 #    authenticated WITH GRANT OPTION — the delegation the migration's
 #    owner-issued REVOKE cannot remove.
-q t_grantor "CREATE ROLE ci_other_grantor LOGIN" >/dev/null
-q t_grantor "GRANT SELECT ON public.market_listings_summary TO ci_other_grantor WITH GRANT OPTION" >/dev/null
-psql "$(DBURL_AS t_grantor ci_other_grantor)" -v ON_ERROR_STOP=1 -q \
-  -c "GRANT SELECT ON public.market_listings_summary TO authenticated WITH GRANT OPTION"
+#
+#    There is deliberately NO second connection here. The grantor of a GRANT
+#    is recorded as current_user, and a superuser can SET ROLE to any role —
+#    so SET ROLE inside the existing superuser session produces a genuine
+#    foreign-grantor ACL entry, and the test stays independent of the
+#    server's authentication method. The previous form opened a second
+#    connection as ci_other_grantor, which silently required trust auth: the
+#    CI postgres:17 container uses scram-sha-256 for TCP, so that connection
+#    always failed with fe_sendauth and TEST 6 never actually ran under CI.
+psql -w "$(DBURL t_grantor)" -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP ROLE IF EXISTS ci_other_grantor;
+CREATE ROLE ci_other_grantor;            -- NOLOGIN: never connected to
+GRANT SELECT ON public.market_listings_summary TO ci_other_grantor WITH GRANT OPTION;
+SET ROLE ci_other_grantor;               -- GRANT records grantor = current_user
+GRANT SELECT ON public.market_listings_summary TO authenticated WITH GRANT OPTION;
+RESET ROLE;
+SQL
 
 # b. Show the bad pre-state: authenticated's grantability-aware ACL includes
 #    the foreign-grantor SELECT* alongside the fixture's owner-issued grants.
@@ -346,7 +365,7 @@ sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
 sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
 sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
 LOG6=$(mktemp)
-if psql "$(DBURL t_grantor)" -v ON_ERROR_STOP=1 -f "$MIG_TMP" >"$LOG6" 2>&1; then
+if psql -w "$(DBURL t_grantor)" -v ON_ERROR_STOP=1 -f "$MIG_TMP" >"$LOG6" 2>&1; then
   echo "FAIL: migration unexpectedly COMMITTED with a foreign-grantor grantable SELECT (SELECT*) in place — the grantability-aware ACL assertion did not fire" >&2
   exit 1
 fi
