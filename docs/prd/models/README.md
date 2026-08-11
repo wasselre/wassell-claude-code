@@ -33,7 +33,7 @@
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
 | [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 83 | no | 2026-08-07 |
 | [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 16 | yes | 2026-06-28 |
-| [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-08-10 |
+| [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-08-11 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
 | [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 5 | 15 | no | 2026-06-29 |
 | [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | New Group | 1 | 8 | no | 2026-06-17 |
@@ -43,7 +43,7 @@
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-06-08 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-07-31 |
 | [Real Estate Offices](real-estate-offices.md) | `real_estate_offices` | JSONB | Unresponded Requests | 1 | 6 | no | 2026-07-30 |
-| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-08-10 |
+| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-08-11 |
 | [Regions](regions.md) | `regions` | frozen `regions` | Geography | 1 | 8 | no | 2026-07-30 |
 | [Reservations](reservations.md) | `reservations` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
 | [Sales Correction Tasks](sales-correction-tasks.md) | `sales_correction_tasks` | JSONB | Sales Valuation | 1 | 12 | no | 2026-06-23 |
@@ -56,4 +56,4 @@
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 2 | 7 | no | 2026-07-31 |
 | [Units](units.md) | `units` | JSONB | Projects | 8 | 48 | no | 2026-08-07 |
-| [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 12 | no | 2026-06-21 |
+| [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 13 | no | 2026-08-11 |

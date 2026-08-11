@@ -5,7 +5,7 @@
 # Model: Reels / الريلز  `reel_scripts`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-10
+**Last updated (from DB):** 2026-08-11
 **Model id:** `7c0ffee1-5cab-4b0a-9d3e-12ab34cd56ef`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -30,13 +30,13 @@
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `title` | Title / العنوان | Text | yes | half | yes |  |
-| `project` | Project / المشروع | Lookup | no | half | yes | → `5c41da1d-a75e-46b9-aed3-107d2ca5d3d6` (unknown model) |
+| `project` | Project / المشروع | Lookup | no | half | yes | → `2686551f-9f5b-448c-a592-24aba6c09b4e` (unknown model) |
 | `status` | Status / الحالة | Dropdown | no | half | yes | 6 options |
 
 **Field details:**
 
 - **Project / المشروع** (`project`, type `lookup`):
-  - target model: `5c41da1d-a75e-46b9-aed3-107d2ca5d3d6` (unknown model)
+  - target model: `2686551f-9f5b-448c-a592-24aba6c09b4e` (unknown model)
   - shows field: `project_name`
   - multiple: no
 - **Status / الحالة** (`status`, type `dropdown`) — options:
