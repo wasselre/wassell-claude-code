@@ -1,0 +1,531 @@
+#!/usr/bin/env bash
+# =============================================================================
+# CI runner: market_listings view reconciliation migration.
+#
+# Requires PGURL — a libpq connection string to a Postgres SUPERUSER
+# maintenance database (e.g. postgres://postgres:pw@localhost:5432/postgres).
+# Each test gets a fresh database created via that connection; the per-test
+# URL is PGURL with the database name replaced (DBURL helper below).
+#
+# WHY THE SHAPE OF THIS TEST:
+#   The migration is a one-shot PRODUCTION reconciliation whose preflight pins
+#   six production objects by the md5 of their pg_get_viewdef / pg_get_expr /
+#   pg_get_functiondef bytes. A CI fixture cannot reproduce those exact bytes —
+#   whitespace, OIDs baked into expressions, and function bodies differ — so
+#   the fixture-computed md5s will never equal the hardcoded production pins.
+#   That is not a weakness; it is the point, and it drives the test design:
+#
+#     TEST 2 (t_pins) runs the migration UNMODIFIED against the fixture. It
+#     MUST fail with an md5 mismatch — proving the pins are LOAD-BEARING (a
+#     drifted body/view/policy is refused) and that the failure is ATOMIC
+#     (nothing in the database changed).
+#
+#     TEST 3 (t_happy) computes the six md5s FROM the fixture database,
+#     substitutes them into a TEMP COPY of the migration, and applies that —
+#     exercising the full migration logic (policies, security_invoker flips,
+#     grant tightening, post-checks) and the assertion suite. The production
+#     literals in the committed migration file itself are never touched.
+#
+#   Substituted literals can legitimately appear MORE THAN ONCE in a file
+#   (preflight message + post-check + comment). We verify AT LEAST ONE
+#   occurrence exists before substituting (never exactly one) and print
+#   'old -> new (N)' for audit.
+#
+# Tests:
+#   1 (t_absent) — empty DB, unmodified migration: must fail with
+#      'PREFLIGHT: public.market_listings is absent'.
+#   2 (t_pins)   — fixture + unmodified migration: must fail with 'PREFLIGHT:'
+#      AND 'md5'; database must be byte-for-byte unchanged (no new policies,
+#      summary still security_invoker=false, authenticated still has MORE than
+#      SELECT on the summary).
+#   3 (t_happy)  — fixture + md5-substituted migration: must succeed, then the
+#      assertion file must succeed.
+#   4 (t_happy)  — rollback (with the summary viewdef pin substituted): both
+#      reconciliation policies gone, the four frozen_* policies remain, summary
+#      back to security_invoker=false, authenticated back to exactly SELECT.
+#   5 (t_happy)  — break-glass forensic restore: the migration is re-applied,
+#      then docs/market-ingest/reconciliation-breakglass-restore-exact.sql
+#      (summary viewdef pin substituted) runs against that post-migration state
+#      and MUST succeed, restoring the exact vulnerable pre-migration grants
+#      (eight privileges incl. MAINTAIN — PostgreSQL 17+ only; skipped cleanly
+#      on older servers). Asserts the restored state via pg_class.relacl +
+#      aclexplode. This is the only place the break-glass script is ever
+#      executed, inside a disposable CI database — proving it works BEFORE a
+#      real incident would be its first run.
+#   6 (t_grantor)— foreign-grantor delegation: a second role grants
+#      authenticated SELECT ... WITH GRANT OPTION on the summary. The
+#      delegation is created with SET ROLE inside the ONE superuser session
+#      (GRANT records the grantor as current_user), so no second connection
+#      is needed and the test is independent of the server's auth method.
+#      The migration's REVOKE cannot remove that grant (REVOKE only removes
+#      grants issued by the revoking grantor), so the pin-substituted
+#      migration MUST FAIL CLOSED on the grantability-aware §4.9 assertion —
+#      and the database must be left byte-for-byte unchanged.
+#   7a (t_colgrant)
+#               — foreign-grantor COLUMN grant: ci_col_grantor (a second role,
+#      reached via SET ROLE exactly as TEST 6) grants anon
+#      SELECT (source_payload) on v_market_listings. Column grants live in
+#      pg_attribute.attacl, so the migration's table-level REVOKE ALL cannot
+#      remove a foreign grantor's column grant and the relacl-based §4.9
+#      assertions cannot see it — the pin-substituted migration MUST FAIL
+#      CLOSED on the §4.9b attacl assertion, atomically.
+#   7b (t_colgrant_owner)
+#               — same-grantor column grant (CONTROL): the OWNER grants anon
+#      SELECT (source_payload) on v_market_listings, then the pin-substituted
+#      migration MUST SUCCEED — the table-level REVOKE ALL cascades to
+#      same-grantor column grants (documented REVOKE behavior). Afterwards the
+#      three views must have zero attacl rows and anon must no longer hold
+#      SELECT on source_payload. This control is what stops a future
+#      contributor from "fixing" 7a with redundant per-column REVOKEs.
+# =============================================================================
+set -euo pipefail
+
+MIG=supabase/migrations/2026-09-04_00_market_listings_view_reconciliation.sql
+FIX=supabase/tests/ci/fixture_market_listings.sql
+ASSERTS=supabase/tests/ci/assert_market_listings_reconciliation.sql
+RB=docs/market-ingest/reconciliation-rollback.sql
+BG=docs/market-ingest/reconciliation-breakglass-restore-exact.sql
+
+# The six production md5 literals pinned inside the migration (summary viewdef
+# also pinned inside the rollback).
+LIT_SUMMARY=0ddd7ab480fcf167ca9d684d9c1f2db6
+LIT_VML=3675d4c9bab1019312eae01035ab18ba
+LIT_VMP=416a3eaac713f2eaf27d46f8867c5d4a
+LIT_FROZEN_VIEW=6087e8fdcfcb9f3df3da7898c1163c18
+LIT_SCOPE_CLASS=0bcfabe9df9da91ea4d874104fec65d6
+LIT_CAN_VIEW=c9a781616085d3b06eec12d68238b502
+
+: "${PGURL:?PGURL must point at a Postgres superuser maintenance database}"
+
+for f in "$MIG" "$FIX" "$ASSERTS" "$RB" "$BG"; do
+  [ -f "$f" ] || { echo "ERROR: missing $f" >&2; exit 1; }
+done
+
+DBURL() { echo "${PGURL%/*}/$1"; }
+
+# -w (never prompt for a password) on every psql invocation in this file:
+# a future connection/auth mistake must become an immediate error, not an
+# indefinite password prompt. Without -w, psql attached to a terminal hangs
+# forever on an auth failure (CI only failed fast because it has no TTY).
+createdb_fresh() {
+  psql -w "$PGURL" -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS $1"
+  psql -w "$PGURL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE $1"
+}
+
+dropdb_quiet() {
+  psql -w "$PGURL" -q -c "DROP DATABASE IF EXISTS $1" >/dev/null 2>&1 || true
+}
+
+cleanup() {
+  dropdb_quiet t_absent
+  dropdb_quiet t_pins
+  dropdb_quiet t_happy
+  dropdb_quiet t_grantor
+  dropdb_quiet t_colgrant
+  dropdb_quiet t_colgrant_owner
+  # The roles' ACL entries live inside the test databases, so the databases
+  # must be dropped first or DROP ROLE fails. The || true keeps cleanup from
+  # ever masking a real test failure's exit code.
+  psql -w "$PGURL" -q -c "DROP ROLE IF EXISTS ci_other_grantor" >/dev/null 2>&1 || true
+  psql -w "$PGURL" -q -c "DROP ROLE IF EXISTS ci_col_grantor" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# Replace every occurrence of literal $1 with value $2 in file $3, requiring
+# at least one occurrence (never exactly one — duplicates are legitimate).
+sub_md5() {
+  local old="$1" new="$2" file="$3" n
+  n=$(grep -c "$old" "$file")
+  if [ "$n" -lt 1 ]; then
+    echo "ERROR: literal $old not found in $file" >&2
+    exit 1
+  fi
+  sed -i "s|$old|$new|g" "$file"
+  echo "$old -> $new ($n)"
+}
+
+# Run a query on a test database, single unaligned tuple out.
+q() { psql -w "$(DBURL "$1")" -v ON_ERROR_STOP=1 -qAt -c "$2"; }
+
+# Assert a boolean query on a test database returns 't'.
+assert_t() {
+  local db="$1" sql="$2" msg="$3" got
+  got=$(q "$db" "$sql")
+  if [ "$got" != "t" ]; then
+    echo "ASSERT FAILED [$db]: $msg" >&2
+    exit 1
+  fi
+}
+
+SQL_NO_NEW_POLICIES="SELECT NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'public.market_listings'::regclass AND polname IN ('market_listings_view_fast','market_listings_view_deny_none'))"
+SQL_SUMMARY_DEFINER="SELECT reloptions @> ARRAY['security_invoker=false'] FROM pg_class WHERE oid = 'public.market_listings_summary'::regclass"
+# authenticated holds MORE THAN just SELECT on the summary (fixture GRANT ALL):
+# at least one SELECT grant AND at least one non-SELECT privilege.
+SQL_SUMMARY_MORE_THAN_SELECT="SELECT bool_or(a.privilege_type = 'SELECT') AND bool_or(a.privilege_type <> 'SELECT') FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole"
+# authenticated holds EXACTLY SELECT on the summary: at least one grant and
+# every grant is SELECT.
+SQL_SUMMARY_EXACTLY_SELECT="SELECT bool_or(a.privilege_type = 'SELECT') AND NOT bool_or(a.privilege_type <> 'SELECT') FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole"
+SQL_FOUR_FROZEN_REMAIN="SELECT (SELECT count(*) FROM pg_policy WHERE polrelid = 'public.market_listings'::regclass AND polname IN ('frozen_view','frozen_insert','frozen_update','frozen_delete')) = 4"
+# authenticated holds EXACTLY the eight pre-migration privileges on the summary
+# (incl. MAINTAIN, PostgreSQL 17+) and NONE of them WITH GRANT OPTION: each
+# privilege is rendered as privilege_type || '*' when is_grantable, so a
+# surviving grant option appears as a starred name and fails the exact match.
+# Asserted via pg_class.relacl + aclexplode, NOT
+# information_schema.role_table_grants, which is blind to MAINTAIN.
+SQL_SUMMARY_EXACT_ALL8="SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)') = 'DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE' FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole"
+
+# =============================================================================
+echo '== TEST 1: absent table — unmodified migration must refuse'
+# =============================================================================
+createdb_fresh t_absent
+LOG1=$(mktemp)
+if psql -w "$(DBURL t_absent)" -v ON_ERROR_STOP=1 -f "$MIG" >"$LOG1" 2>&1; then
+  echo "FAIL: migration unexpectedly succeeded on an empty database" >&2
+  exit 1
+fi
+grep -q 'PREFLIGHT: public\.market_listings is absent' "$LOG1" \
+  || { echo "FAIL: expected 'PREFLIGHT: public.market_listings is absent' in:" >&2; cat "$LOG1" >&2; exit 1; }
+rm -f "$LOG1"
+
+# =============================================================================
+echo '== TEST 2: pins — fixture shapes with production pins must refuse atomically'
+# =============================================================================
+createdb_fresh t_pins
+psql -w "$(DBURL t_pins)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+LOG2=$(mktemp)
+if psql -w "$(DBURL t_pins)" -v ON_ERROR_STOP=1 -f "$MIG" >"$LOG2" 2>&1; then
+  echo "FAIL: migration unexpectedly succeeded against un-pinned fixture shapes" >&2
+  exit 1
+fi
+grep -q 'PREFLIGHT:' "$LOG2" \
+  || { echo "FAIL: expected a PREFLIGHT failure in:" >&2; cat "$LOG2" >&2; exit 1; }
+grep -q 'md5' "$LOG2" \
+  || { echo "FAIL: expected an md5 pin failure in:" >&2; cat "$LOG2" >&2; exit 1; }
+rm -f "$LOG2"
+# Atomicity: the refused migration left the database byte-for-byte unchanged.
+assert_t t_pins "$SQL_NO_NEW_POLICIES" \
+  "a reconciliation policy (market_listings_view_fast / market_listings_view_deny_none) exists after the refused run"
+assert_t t_pins "$SQL_SUMMARY_DEFINER" \
+  "market_listings_summary lost security_invoker=false after the refused run"
+assert_t t_pins "$SQL_SUMMARY_MORE_THAN_SELECT" \
+  "authenticated no longer holds MORE than SELECT on the summary after the refused run"
+
+# =============================================================================
+echo '== TEST 3: happy path — fixture-measured pins, full migration + asserts'
+# =============================================================================
+createdb_fresh t_happy
+psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+
+NEW_SUMMARY=$(q t_happy "SELECT md5(pg_get_viewdef('public.market_listings_summary'::regclass))")
+NEW_VML=$(q t_happy "SELECT md5(pg_get_viewdef('public.v_market_listings'::regclass))")
+NEW_VMP=$(q t_happy "SELECT md5(pg_get_viewdef('public.v_market_properties'::regclass))")
+NEW_FROZEN_VIEW=$(q t_happy "SELECT md5(pg_get_expr(polqual, polrelid)) FROM pg_policy WHERE polrelid = 'public.market_listings'::regclass AND polname = 'frozen_view'")
+NEW_SCOPE_CLASS=$(q t_happy "SELECT md5(pg_get_functiondef(to_regprocedure('public.wassell_view_scope_class(uuid,uuid)')))")
+NEW_CAN_VIEW=$(q t_happy "SELECT md5(pg_get_functiondef(to_regprocedure('public.wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb)')))")
+
+MIG_TMP=$(mktemp)
+cp "$MIG" "$MIG_TMP"
+sub_md5 "$LIT_SUMMARY"     "$NEW_SUMMARY"     "$MIG_TMP"
+sub_md5 "$LIT_VML"         "$NEW_VML"         "$MIG_TMP"
+sub_md5 "$LIT_VMP"         "$NEW_VMP"         "$MIG_TMP"
+sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
+sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
+sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
+
+psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$MIG_TMP"
+rm -f "$MIG_TMP"
+psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$ASSERTS"
+
+# =============================================================================
+echo '== TEST 4: rollback — undoes the reconciliation exactly'
+# =============================================================================
+RB_TMP=$(mktemp)
+cp "$RB" "$RB_TMP"
+# The rollback pins the POST-migration summary viewdef; security_invoker is a
+# reloption (not part of pg_get_viewdef), so the TEST 3 value is the right pin.
+sub_md5 "$LIT_SUMMARY" "$NEW_SUMMARY" "$RB_TMP"
+psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$RB_TMP"
+rm -f "$RB_TMP"
+
+assert_t t_happy "$SQL_NO_NEW_POLICIES" \
+  "a reconciliation policy survived the rollback"
+assert_t t_happy "$SQL_FOUR_FROZEN_REMAIN" \
+  "fewer than the four frozen_* policies remain after the rollback"
+assert_t t_happy "$SQL_SUMMARY_DEFINER" \
+  "market_listings_summary is not security_invoker=false after the rollback"
+assert_t t_happy "$SQL_SUMMARY_EXACTLY_SELECT" \
+  "authenticated privileges on the summary are not exactly SELECT after the rollback"
+
+# =============================================================================
+# TEST 5: break-glass — the forensic exact-restore actually works.
+#
+# docs/market-ingest/reconciliation-breakglass-restore-exact.sql grants
+# MAINTAIN, which only exists on PostgreSQL 17+. Nothing ever executes that
+# script in production, so a syntax or logic error would otherwise surface
+# during a real incident — the worst possible moment. CI runs postgres:17,
+# so this is the one place it is proven to work.
+# =============================================================================
+SERVER_VERSION_NUM=$(psql -w "$PGURL" -v ON_ERROR_STOP=1 -qAt -c 'SHOW server_version_num')
+if [ "$SERVER_VERSION_NUM" -lt 170000 ]; then
+  echo "== TEST 5: SKIPPED — break-glass grants MAINTAIN, which requires PostgreSQL 17+ (server is $SERVER_VERSION_NUM)"
+else
+  echo '== TEST 5: break-glass — forensic exact-restore of the vulnerable pre-migration state'
+
+  # TEST 4 rolled t_happy back; the break-glass is designed to run against a
+  # POST-migration state, so re-apply the migration first (same mechanism as
+  # TEST 3 — fixture-measured pins substituted into a temp copy).
+  MIG_TMP=$(mktemp)
+  cp "$MIG" "$MIG_TMP"
+  sub_md5 "$LIT_SUMMARY"     "$NEW_SUMMARY"     "$MIG_TMP"
+  sub_md5 "$LIT_VML"         "$NEW_VML"         "$MIG_TMP"
+  sub_md5 "$LIT_VMP"         "$NEW_VMP"         "$MIG_TMP"
+  sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
+  sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
+  sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
+  psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$MIG_TMP"
+  rm -f "$MIG_TMP"
+
+  # Deliberately create the problematic pre-state the break-glass must
+  # survive: authenticated holds SELECT WITH GRANT OPTION on the summary.
+  # A plain GRANT (what the break-glass used to do) does NOT strip an
+  # existing grant option, so without the break-glass's REVOKE-then-GRANT
+  # this delegation power would silently survive the "exact" restore — and a
+  # privilege-name-only assertion would still pass. This pre-state proves
+  # the REVOKE is load-bearing.
+  echo 'TEST 5 pre-state: granting SELECT ... WITH GRANT OPTION to authenticated deliberately, to prove the break-glass revoke-then-grant strips it'
+  q t_happy "GRANT SELECT ON public.market_listings_summary TO authenticated WITH GRANT OPTION" >/dev/null
+
+  # The break-glass pins the PRE-migration summary viewdef (it restores the
+  # definer view and its grants, but refuses a changed body) — same value as
+  # the rollback's pin, patched exactly the way TEST 4 patches it.
+  BG_TMP=$(mktemp)
+  cp "$BG" "$BG_TMP"
+  sub_md5 "$LIT_SUMMARY" "$NEW_SUMMARY" "$BG_TMP"
+  psql -w "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$BG_TMP"
+  rm -f "$BG_TMP"
+
+  # The observed ACL set is printed BEFORE the assertions so a failure shows
+  # the actual grants, not just the expectation. Grantability-aware: each
+  # privilege is rendered with a trailing '*' when held WITH GRANT OPTION,
+  # so the expected value is the eight names with NO '*' anywhere.
+  OBSERVED_ACL=$(q t_happy "SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)') FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole")
+  echo "authenticated privileges on market_listings_summary after break-glass: $OBSERVED_ACL"
+
+  assert_t t_happy "$SQL_SUMMARY_EXACT_ALL8" \
+    "authenticated privileges on the summary are not exactly DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE with none grantable after the break-glass (observed: $OBSERVED_ACL)"
+  assert_t t_happy "$SQL_NO_NEW_POLICIES" \
+    "a reconciliation policy survived the break-glass restore"
+  assert_t t_happy "$SQL_FOUR_FROZEN_REMAIN" \
+    "fewer than the four frozen_* policies remain after the break-glass restore"
+  assert_t t_happy "$SQL_SUMMARY_DEFINER" \
+    "market_listings_summary is not security_invoker=false after the break-glass restore"
+
+  echo '== TEST 5: NOTE — this test deliberately restored a KNOWN-VULNERABLE state'
+  echo '   (authenticated write path bypassing frozen_* RLS) inside a disposable CI'
+  echo '   database. That is exactly why the break-glass script is FORENSIC-ONLY and'
+  echo '   must never be used as an operational rollback.'
+fi
+
+# =============================================================================
+echo '== TEST 6: foreign-grantor delegation — the migration must FAIL CLOSED'
+# =============================================================================
+# REVOKE only removes grants issued by the REVOKING grantor (verified
+# empirically on PostgreSQL 17): a GRANT SELECT ... WITH GRANT OPTION issued
+# to authenticated by ANY OTHER role survives the migration's
+# REVOKE ALL ... FROM authenticated. A privilege-name-only exact-set
+# assertion would aggregate that surviving grant to plain 'SELECT' and PASS
+# while authenticated retains the power to RE-GRANT access. The migration's
+# §4.9 assertions render each grant as privilege_type || '*' when grantable,
+# so this pre-state MUST make the migration fail closed — atomically.
+createdb_fresh t_grantor
+psql -w "$(DBURL t_grantor)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+
+# a. A second grantor holds the grant option and delegates SELECT to
+#    authenticated WITH GRANT OPTION — the delegation the migration's
+#    owner-issued REVOKE cannot remove.
+#
+#    There is deliberately NO second connection here. The grantor of a GRANT
+#    is recorded as current_user, and a superuser can SET ROLE to any role —
+#    so SET ROLE inside the existing superuser session produces a genuine
+#    foreign-grantor ACL entry, and the test stays independent of the
+#    server's authentication method. The previous form opened a second
+#    connection as ci_other_grantor, which silently required trust auth: the
+#    CI postgres:17 container uses scram-sha-256 for TCP, so that connection
+#    always failed with fe_sendauth and TEST 6 never actually ran under CI.
+psql -w "$(DBURL t_grantor)" -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP ROLE IF EXISTS ci_other_grantor;
+CREATE ROLE ci_other_grantor;            -- NOLOGIN: never connected to
+GRANT SELECT ON public.market_listings_summary TO ci_other_grantor WITH GRANT OPTION;
+SET ROLE ci_other_grantor;               -- GRANT records grantor = current_user
+GRANT SELECT ON public.market_listings_summary TO authenticated WITH GRANT OPTION;
+RESET ROLE;
+SQL
+
+# b. Show the bad pre-state: authenticated's grantability-aware ACL includes
+#    the foreign-grantor SELECT* alongside the fixture's owner-issued grants.
+OBSERVED_PRE=$(q t_grantor "SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)') FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole")
+echo "pre-state authenticated ACL on market_listings_summary (grantability-aware): $OBSERVED_PRE"
+case "$OBSERVED_PRE" in
+  *'SELECT*'*) ;;
+  *) echo "FAIL: pre-state does not show a grantable SELECT (SELECT*) for authenticated: $OBSERVED_PRE" >&2; exit 1 ;;
+esac
+
+# c. Run the pin-substituted migration exactly as TEST 3 does (the fixture is
+#    deterministic, so the md5s measured on t_happy's fresh fixture apply to
+#    this identical fresh fixture). It MUST fail on the §4.9 authenticated
+#    ACL assertion: after the owner-side REVOKE the foreign-grantor SELECT*
+#    survives, so the observed set is 'SELECT,SELECT*', not 'SELECT'.
+MIG_TMP=$(mktemp)
+cp "$MIG" "$MIG_TMP"
+sub_md5 "$LIT_SUMMARY"     "$NEW_SUMMARY"     "$MIG_TMP"
+sub_md5 "$LIT_VML"         "$NEW_VML"         "$MIG_TMP"
+sub_md5 "$LIT_VMP"         "$NEW_VMP"         "$MIG_TMP"
+sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
+sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
+sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
+LOG6=$(mktemp)
+if psql -w "$(DBURL t_grantor)" -v ON_ERROR_STOP=1 -f "$MIG_TMP" >"$LOG6" 2>&1; then
+  echo "FAIL: migration unexpectedly COMMITTED with a foreign-grantor grantable SELECT (SELECT*) in place — the grantability-aware ACL assertion did not fire" >&2
+  exit 1
+fi
+grep -q 'authenticated privileges on market_listings_summary must be exactly SELECT' "$LOG6" \
+  || { echo "FAIL: expected the authenticated-ACL assertion failure in:" >&2; cat "$LOG6" >&2; exit 1; }
+rm -f "$MIG_TMP" "$LOG6"
+
+# d. Fail-closed means ATOMIC: the aborted transaction left no trace.
+assert_t t_grantor "$SQL_NO_NEW_POLICIES" \
+  "a reconciliation policy (market_listings_view_fast / market_listings_view_deny_none) exists after the fail-closed run"
+assert_t t_grantor "$SQL_SUMMARY_DEFINER" \
+  "market_listings_summary lost security_invoker=false after the fail-closed run"
+
+# e. What this proves.
+echo '   This proves a foreign-grantor delegation (SELECT WITH GRANT OPTION issued'
+echo '   by ci_other_grantor) cannot slip through: the migration''s REVOKE cannot'
+echo '   remove it, the grantability-aware §4.9 assertion sees SELECT,SELECT* instead'
+echo '   of SELECT, and the whole transaction aborts for a human to investigate.'
+
+# =============================================================================
+echo '== TEST 7a: foreign-grantor COLUMN grant — the migration must FAIL CLOSED'
+# =============================================================================
+# Column-level grants (GRANT SELECT (col) ...) are stored in
+# pg_attribute.attacl, NOT pg_class.relacl — so every relacl-based assertion
+# in the migration (all of §4.9) is blind to them. The real hole is the
+# intersection with the TEST 6 finding: a column grant issued by a FOREIGN
+# grantor survives the migration's table-level REVOKE ALL (REVOKE only removes
+# grants — table or column — issued by the revoking grantor), leaving e.g.
+# anon able to SELECT source_payload from v_market_listings while every
+# relacl assertion reports a clean ACL. The migration's §4.9b attacl assertion
+# must see it and FAIL CLOSED — detection, not repair, exactly as TEST 6.
+createdb_fresh t_colgrant
+psql -w "$(DBURL t_colgrant)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+
+# a. A second grantor holds the grant option on v_market_listings and
+#    delegates SELECT on the source_payload COLUMN to anon — the delegation
+#    the migration's owner-issued REVOKE cannot remove. Same SET ROLE
+#    mechanism as TEST 6: no second connection, independent of the server's
+#    auth method.
+psql -w "$(DBURL t_colgrant)" -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP ROLE IF EXISTS ci_col_grantor;
+CREATE ROLE ci_col_grantor;              -- NOLOGIN: never connected to
+GRANT SELECT ON public.v_market_listings TO ci_col_grantor WITH GRANT OPTION;
+SET ROLE ci_col_grantor;                 -- GRANT records grantor = current_user
+GRANT SELECT (source_payload) ON public.v_market_listings TO anon;
+RESET ROLE;
+SQL
+
+# b. Show the bad pre-state: the attacl row on v_market_listings must mention
+#    source_payload — proving the column grant exists where the relacl
+#    assertions cannot see it.
+OBSERVED_COLACL=$(q t_colgrant "SELECT coalesce(string_agg(c.relname||'.'||att.attname||' -> '||(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END)||':'||a.privilege_type||CASE WHEN a.is_grantable THEN '*' ELSE '' END||' (granted by '||pg_get_userbyid(a.grantor)||')', ', ' ORDER BY c.relname, att.attname), '(none)') FROM pg_class c JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0 CROSS JOIN LATERAL aclexplode(att.attacl) a WHERE c.relname IN ('market_listings_summary','v_market_listings','v_market_properties') AND c.relnamespace = 'public'::regnamespace")
+echo "pre-state column-level grants on the target views (attacl): $OBSERVED_COLACL"
+case "$OBSERVED_COLACL" in
+  *source_payload*) ;;
+  *) echo "FAIL: pre-state does not show a column grant on source_payload: $OBSERVED_COLACL" >&2; exit 1 ;;
+esac
+
+# c. Run the pin-substituted migration exactly as TEST 6 does. It MUST fail on
+#    the §4.9b assertion: after the owner-side REVOKE ALL the foreign-grantor
+#    column grant survives in attacl, so the observed set is not '(none)'.
+MIG_TMP=$(mktemp)
+cp "$MIG" "$MIG_TMP"
+sub_md5 "$LIT_SUMMARY"     "$NEW_SUMMARY"     "$MIG_TMP"
+sub_md5 "$LIT_VML"         "$NEW_VML"         "$MIG_TMP"
+sub_md5 "$LIT_VMP"         "$NEW_VMP"         "$MIG_TMP"
+sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
+sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
+sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
+LOG7A=$(mktemp)
+if psql -w "$(DBURL t_colgrant)" -v ON_ERROR_STOP=1 -f "$MIG_TMP" >"$LOG7A" 2>&1; then
+  echo "FAIL: migration unexpectedly COMMITTED with a foreign-grantor column grant (SELECT (source_payload) to anon) in place — the §4.9b attacl assertion did not fire" >&2
+  exit 1
+fi
+grep -q 'POST: column-level grants survive on the target views' "$LOG7A" \
+  || { echo "FAIL: expected the column-level-grants assertion failure in:" >&2; cat "$LOG7A" >&2; exit 1; }
+rm -f "$MIG_TMP" "$LOG7A"
+
+# d. Fail-closed means ATOMIC: the aborted transaction left no trace.
+assert_t t_colgrant "$SQL_NO_NEW_POLICIES" \
+  "a reconciliation policy (market_listings_view_fast / market_listings_view_deny_none) exists after the fail-closed run"
+assert_t t_colgrant "$SQL_SUMMARY_DEFINER" \
+  "market_listings_summary lost security_invoker=false after the fail-closed run"
+
+# e. What this proves.
+echo '   This proves a foreign-grantor COLUMN grant (SELECT (source_payload)'
+echo '   issued by ci_col_grantor) cannot slip through: the migration''s REVOKE ALL'
+echo '   cannot remove it, the relacl assertions cannot see it, but the §4.9b attacl'
+echo '   assertion fails closed and aborts the whole transaction for a human.'
+
+# =============================================================================
+echo '== TEST 7b: same-grantor column grant — the migration must SUCCEED (control)'
+# =============================================================================
+# The control half: a column grant issued by the OWNER (the same grantor as
+# the migration's REVOKE) MUST NOT block the migration. PostgreSQL's REVOKE
+# reference: "When revoking privileges on a table, the corresponding column
+# privileges (if any) are automatically revoked on each column of the table,
+# as well." So the migration's table-level REVOKE ALL already removes this
+# grant, §4.9b sees the empty set, and the migration commits. This test is
+# what stops a future contributor from "fixing" TEST 7a by adding redundant
+# per-column REVOKE statements — they would change nothing here (the cascade
+# already handles the same-grantor case) and cannot help there (a foreign
+# grantor's grant is unrevocable by the owner).
+createdb_fresh t_colgrant_owner
+psql -w "$(DBURL t_colgrant_owner)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+
+# a. The owner (this superuser session owns the fixture objects) grants anon
+#    SELECT on the source_payload column — a same-grantor column grant.
+q t_colgrant_owner "GRANT SELECT (source_payload) ON public.v_market_listings TO anon" >/dev/null
+OBSERVED_COLACL=$(q t_colgrant_owner "SELECT coalesce(string_agg(c.relname||'.'||att.attname||' -> '||(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END)||':'||a.privilege_type||CASE WHEN a.is_grantable THEN '*' ELSE '' END||' (granted by '||pg_get_userbyid(a.grantor)||')', ', ' ORDER BY c.relname, att.attname), '(none)') FROM pg_class c JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0 CROSS JOIN LATERAL aclexplode(att.attacl) a WHERE c.relname IN ('market_listings_summary','v_market_listings','v_market_properties') AND c.relnamespace = 'public'::regnamespace")
+echo "pre-state column-level grants on the target views (attacl): $OBSERVED_COLACL"
+case "$OBSERVED_COLACL" in
+  *source_payload*) ;;
+  *) echo "FAIL: pre-state does not show a column grant on source_payload: $OBSERVED_COLACL" >&2; exit 1 ;;
+esac
+
+# b. Run the pin-substituted migration — it MUST succeed: the table-level
+#    REVOKE ALL on v_market_listings cascades to the owner's own column grant.
+MIG_TMP=$(mktemp)
+cp "$MIG" "$MIG_TMP"
+sub_md5 "$LIT_SUMMARY"     "$NEW_SUMMARY"     "$MIG_TMP"
+sub_md5 "$LIT_VML"         "$NEW_VML"         "$MIG_TMP"
+sub_md5 "$LIT_VMP"         "$NEW_VMP"         "$MIG_TMP"
+sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
+sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
+sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
+psql -w "$(DBURL t_colgrant_owner)" -v ON_ERROR_STOP=1 -q -f "$MIG_TMP"
+rm -f "$MIG_TMP"
+
+# c. The cascade actually happened: zero attacl rows remain on the three
+#    views, and anon no longer holds SELECT on source_payload.
+assert_t t_colgrant_owner \
+  "SELECT NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0 CROSS JOIN LATERAL aclexplode(att.attacl) a WHERE c.relname IN ('market_listings_summary','v_market_listings','v_market_properties') AND c.relnamespace = 'public'::regnamespace)" \
+  "column-level grants (attacl rows) remain on the target views after the migration — the table-level REVOKE ALL did not cascade to the same-grantor column grant"
+assert_t t_colgrant_owner \
+  "SELECT NOT has_column_privilege('anon','public.v_market_listings','source_payload','SELECT')" \
+  "anon can still SELECT source_payload from v_market_listings after the migration"
+
+# d. What this proves.
+echo '   This proves the table-level REVOKE ALL already cascades to SAME-grantor'
+echo '   column grants, so per-column REVOKE statements would be pure redundancy —'
+echo '   and that §4.9b only ever blocks the FOREIGN-grantor case TEST 7a exercises.'
+
+echo 'ALL TESTS PASSED'
