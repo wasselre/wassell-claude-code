@@ -574,6 +574,70 @@ function validateRepeat(
 }
 
 /**
+ * Tell someone a task was put in their queue by a person.
+ *
+ * Its own event key (`manual_task_assigned`), NOT the workflow's `task_assigned`:
+ * the two differ in what muting them should mean. Silencing "a previous stage
+ * approved and your turn began" is a reasonable thing for a busy role to want;
+ * silencing "your manager just handed you something" is not the same decision,
+ * and the workflow event's own subtitle would become a lie if it carried both.
+ *
+ * Self-assignment is silent — you do not need to be told what you just wrote
+ * down. Channels are left to the role grid (in-app always lands; push/WhatsApp
+ * per the matrix), the same posture as every non-step caller here.
+ */
+async function notifyTaskAssigned(
+  sb: SupabaseClient,
+  t: {
+    assignee: string;
+    actor: string | null;
+    title: string;
+    dueAt: string | null;
+    repeating: boolean;
+  },
+): Promise<void> {
+  if (!t.assignee || t.assignee === t.actor) return;
+
+  // The assigner's name makes the notification answerable — «من أسندها؟» is the
+  // first thing anyone asks. A failed lookup degrades to no name, never to no
+  // notification.
+  let byAr = '';
+  let byEn = '';
+  if (t.actor) {
+    const who = await sb.from('users').select('name_ar, name_en, email')
+      .eq('id', t.actor).maybeSingle();
+    if (who.error) {
+      console.error('[marketing-os] assigner name lookup failed', who.error.code, who.error.message);
+    } else if (who.data) {
+      const u = who.data as { name_ar: string | null; name_en: string | null; email: string | null };
+      byAr = u.name_ar ?? u.name_en ?? u.email ?? '';
+      byEn = u.name_en ?? u.name_ar ?? u.email ?? '';
+    }
+  }
+
+  const whenAr = t.repeating
+    ? ' — مهمة متكررة'
+    : t.dueAt
+      ? ` — الاستحقاق ${new Date(t.dueAt).toLocaleDateString('ar-SA-u-ca-gregory', { timeZone: 'Asia/Riyadh', day: 'numeric', month: 'long' })}`
+      : '';
+  const whenEn = t.repeating
+    ? ' — a repeating task'
+    : t.dueAt
+      ? ` — due ${new Date(t.dueAt).toLocaleDateString('en-GB', { timeZone: 'Asia/Riyadh', day: 'numeric', month: 'long' })}`
+      : '';
+
+  await emitNotify(sb, {
+    event: 'manual_task_assigned',
+    users: [t.assignee],
+    titleAr: byAr ? `أسند إليك ${byAr} مهمة` : 'أُسندت إليك مهمة',
+    titleEn: byEn ? `${byEn} assigned you a task` : 'A task was assigned to you',
+    bodyAr: `«${t.title}»${whenAr}`,
+    bodyEn: `“${t.title}”${whenEn}`,
+    url: '/m/my-work',
+  });
+}
+
+/**
  * Read the manual-task queue. Generation runs FIRST — `mos_task_series_materialize`
  * is idempotent and bounded, and pg_cron is not enabled on this project, so the
  * read is what turns a repeat rule into rows.
@@ -2470,11 +2534,29 @@ export default async function handler(req: Request): Promise<Response> {
             return jsonError(400, 'title is required');
           }
           if (Object.keys(patch).length === 0) return jsonError(400, 'nothing to update');
+          // Who holds it BEFORE the edit — a handover notifies the new person,
+          // and only a handover does. Re-wording a task someone already has is
+          // not an assignment and must not re-interrupt them.
+          const before = await sb.from('mos_manual_tasks')
+            .select('assignee_user_id').eq('id', id).maybeSingle();
+          const bf = dbFail(before.error);
+          if (bf) return bf;
           const upd = await sb.from('mos_manual_tasks').update(patch)
-            .eq('id', id).select('id').maybeSingle();
+            .eq('id', id).select('id, title, due_at, assignee_user_id').maybeSingle();
           const f = dbFail(upd.error);
           if (f) return f;
           if (!upd.data) return jsonError(404, 'task not found');
+          const after = upd.data as { title: string; due_at: string | null; assignee_user_id: string };
+          const priorAssignee = (before.data as { assignee_user_id?: string } | null)?.assignee_user_id;
+          if (priorAssignee && priorAssignee !== after.assignee_user_id) {
+            await notifyTaskAssigned(sb, {
+              assignee: after.assignee_user_id,
+              actor: me,
+              title: after.title,
+              dueAt: after.due_at,
+              repeating: false,
+            });
+          }
           return jsonOk({ id });
         }
 
@@ -2530,6 +2612,19 @@ export default async function handler(req: Request): Promise<Response> {
           const mat = await sb.rpc('mos_task_series_materialize');
           const mf = dbFail(mat.error);
           if (mf) return mf;
+          // ONE notification for the rule, not one per generated occurrence:
+          // the materializer opens rows up to a fortnight ahead, so per-occurrence
+          // emission would deliver a fortnight of interruptions at once. Editing
+          // an existing rule is not a new assignment and stays silent.
+          if (!seriesId) {
+            await notifyTaskAssigned(sb, {
+              assignee,
+              actor: me,
+              title,
+              dueAt: null,
+              repeating: true,
+            });
+          }
           return jsonOk({ series_id: targetSeries, generated: mat.data ?? 0 });
         }
 
@@ -2543,6 +2638,13 @@ export default async function handler(req: Request): Promise<Response> {
         }).select('id').maybeSingle();
         const f = dbFail(ins.error);
         if (f) return f;
+        await notifyTaskAssigned(sb, {
+          assignee,
+          actor: me,
+          title,
+          dueAt: str(raw.due_at),
+          repeating: false,
+        });
         return jsonOk({ id: (ins.data as { id: string } | null)?.id ?? null });
       }
 
