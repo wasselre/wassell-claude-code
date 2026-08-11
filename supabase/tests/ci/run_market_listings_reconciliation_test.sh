@@ -52,6 +52,12 @@
 #      aclexplode. This is the only place the break-glass script is ever
 #      executed, inside a disposable CI database — proving it works BEFORE a
 #      real incident would be its first run.
+#   6 (t_grantor)— foreign-grantor delegation: a second role grants
+#      authenticated SELECT ... WITH GRANT OPTION on the summary. The
+#      migration's REVOKE cannot remove that grant (REVOKE only removes
+#      grants issued by the revoking grantor), so the pin-substituted
+#      migration MUST FAIL CLOSED on the grantability-aware §4.9 assertion —
+#      and the database must be left byte-for-byte unchanged.
 # =============================================================================
 set -euo pipefail
 
@@ -78,6 +84,11 @@ done
 
 DBURL() { echo "${PGURL%/*}/$1"; }
 
+# DBURL variant connecting AS a different role: replaces any userinfo in the
+# URL (or inserts it when absent). The fixture CI server uses trust auth, so
+# ci_other_grantor needs no password.
+DBURL_AS() { echo "$(DBURL "$1")" | sed -E "s#^(postgres(ql)?://)([^@/]*@)?#\1$2@#"; }
+
 createdb_fresh() {
   psql "$PGURL" -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS $1"
   psql "$PGURL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE $1"
@@ -91,6 +102,7 @@ cleanup() {
   dropdb_quiet t_absent
   dropdb_quiet t_pins
   dropdb_quiet t_happy
+  dropdb_quiet t_grantor
 }
 trap cleanup EXIT
 
@@ -288,5 +300,70 @@ else
   echo '   database. That is exactly why the break-glass script is FORENSIC-ONLY and'
   echo '   must never be used as an operational rollback.'
 fi
+
+# =============================================================================
+echo '== TEST 6: foreign-grantor delegation — the migration must FAIL CLOSED'
+# =============================================================================
+# REVOKE only removes grants issued by the REVOKING grantor (verified
+# empirically on PostgreSQL 17): a GRANT SELECT ... WITH GRANT OPTION issued
+# to authenticated by ANY OTHER role survives the migration's
+# REVOKE ALL ... FROM authenticated. A privilege-name-only exact-set
+# assertion would aggregate that surviving grant to plain 'SELECT' and PASS
+# while authenticated retains the power to RE-GRANT access. The migration's
+# §4.9 assertions render each grant as privilege_type || '*' when grantable,
+# so this pre-state MUST make the migration fail closed — atomically.
+createdb_fresh t_grantor
+psql "$(DBURL t_grantor)" -v ON_ERROR_STOP=1 -q -f "$FIX"
+
+# a. A second grantor holds the grant option and delegates SELECT to
+#    authenticated WITH GRANT OPTION — the delegation the migration's
+#    owner-issued REVOKE cannot remove.
+q t_grantor "CREATE ROLE ci_other_grantor LOGIN" >/dev/null
+q t_grantor "GRANT SELECT ON public.market_listings_summary TO ci_other_grantor WITH GRANT OPTION" >/dev/null
+psql "$(DBURL_AS t_grantor ci_other_grantor)" -v ON_ERROR_STOP=1 -q \
+  -c "GRANT SELECT ON public.market_listings_summary TO authenticated WITH GRANT OPTION"
+
+# b. Show the bad pre-state: authenticated's grantability-aware ACL includes
+#    the foreign-grantor SELECT* alongside the fixture's owner-issued grants.
+OBSERVED_PRE=$(q t_grantor "SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)') FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole")
+echo "pre-state authenticated ACL on market_listings_summary (grantability-aware): $OBSERVED_PRE"
+case "$OBSERVED_PRE" in
+  *'SELECT*'*) ;;
+  *) echo "FAIL: pre-state does not show a grantable SELECT (SELECT*) for authenticated: $OBSERVED_PRE" >&2; exit 1 ;;
+esac
+
+# c. Run the pin-substituted migration exactly as TEST 3 does (the fixture is
+#    deterministic, so the md5s measured on t_happy's fresh fixture apply to
+#    this identical fresh fixture). It MUST fail on the §4.9 authenticated
+#    ACL assertion: after the owner-side REVOKE the foreign-grantor SELECT*
+#    survives, so the observed set is 'SELECT,SELECT*', not 'SELECT'.
+MIG_TMP=$(mktemp)
+cp "$MIG" "$MIG_TMP"
+sub_md5 "$LIT_SUMMARY"     "$NEW_SUMMARY"     "$MIG_TMP"
+sub_md5 "$LIT_VML"         "$NEW_VML"         "$MIG_TMP"
+sub_md5 "$LIT_VMP"         "$NEW_VMP"         "$MIG_TMP"
+sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
+sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
+sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
+LOG6=$(mktemp)
+if psql "$(DBURL t_grantor)" -v ON_ERROR_STOP=1 -f "$MIG_TMP" >"$LOG6" 2>&1; then
+  echo "FAIL: migration unexpectedly COMMITTED with a foreign-grantor grantable SELECT (SELECT*) in place — the grantability-aware ACL assertion did not fire" >&2
+  exit 1
+fi
+grep -q 'authenticated privileges on market_listings_summary must be exactly SELECT' "$LOG6" \
+  || { echo "FAIL: expected the authenticated-ACL assertion failure in:" >&2; cat "$LOG6" >&2; exit 1; }
+rm -f "$MIG_TMP" "$LOG6"
+
+# d. Fail-closed means ATOMIC: the aborted transaction left no trace.
+assert_t t_grantor "$SQL_NO_NEW_POLICIES" \
+  "a reconciliation policy (market_listings_view_fast / market_listings_view_deny_none) exists after the fail-closed run"
+assert_t t_grantor "$SQL_SUMMARY_DEFINER" \
+  "market_listings_summary lost security_invoker=false after the fail-closed run"
+
+# e. What this proves.
+echo '   This proves a foreign-grantor delegation (SELECT WITH GRANT OPTION issued'
+echo '   by ci_other_grantor) cannot slip through: the migration''s REVOKE cannot'
+echo '   remove it, the grantability-aware §4.9 assertion sees SELECT,SELECT* instead'
+echo '   of SELECT, and the whole transaction aborts for a human to investigate.'
 
 echo 'ALL TESTS PASSED'

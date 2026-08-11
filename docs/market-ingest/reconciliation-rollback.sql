@@ -127,8 +127,18 @@ BEGIN
   --      surface MAINTAIN (PostgreSQL 17 added it and folded it into
   --      GRANT ALL), so an exact-set assertion written against
   --      role_table_grants cannot see one privilege class and would give
-  --      false assurance.
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  --      false assurance. GRANTABILITY-AWARE: each privilege is rendered as
+  --      privilege_type || '*' when held WITH GRANT OPTION. REVOKE only
+  --      removes grants issued by the REVOKING grantor, so a delegation
+  --      granted to authenticated by ANY OTHER role holding the grant option
+  --      survives this rollback's REVOKEs (verified empirically: a second
+  --      grantor's GRANT SELECT ... WITH GRANT OPTION survives the owner's
+  --      REVOKE ALL). A privilege-name-only aggregate would see just
+  --      'SELECT' and PASS while authenticated retains the power to RE-GRANT
+  --      access; the grantability-aware rendering sees 'SELECT,SELECT*' (or
+  --      'SELECT*') and FAILS CLOSED, aborting the whole transaction so a
+  --      human investigates.
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
@@ -139,8 +149,10 @@ BEGIN
   END IF;
 
   -- POST.5 anon still has no privileges on any of the three views (same
-  --      aclexplode form as POST.4 — role_table_grants is blind to MAINTAIN).
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  --      aclexplode form as POST.4 — role_table_grants is blind to MAINTAIN;
+  --      same grantability-aware rendering, so a surviving foreign-grantor
+  --      WITH GRANT OPTION delegation fails closed here too).
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a

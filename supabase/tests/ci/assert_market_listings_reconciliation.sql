@@ -90,8 +90,14 @@ BEGIN
   --    information_schema.role_table_grants: role_table_grants does NOT
   --    surface MAINTAIN (PostgreSQL 17 added it and folded it into GRANT ALL),
   --    so an exact-set assertion written against role_table_grants cannot see
-  --    one privilege class and would give false assurance.
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  --    one privilege class and would give false assurance. GRANTABILITY-AWARE:
+  --    each privilege is rendered as privilege_type || '*' when held WITH
+  --    GRANT OPTION — REVOKE only removes grants issued by the revoking
+  --    grantor, so a delegation granted by a different grantor survives; a
+  --    privilege-name-only aggregate would see just 'SELECT' and PASS while
+  --    authenticated retains the power to RE-GRANT access. The rendered form
+  --    ('SELECT,SELECT*' or 'SELECT*') fails the exact-set match instead.
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
@@ -101,7 +107,7 @@ BEGIN
     RAISE EXCEPTION 'ASSERT 5 FAILED: authenticated on market_listings_summary must be exactly SELECT, found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
@@ -111,7 +117,7 @@ BEGIN
     RAISE EXCEPTION 'ASSERT 5 FAILED: authenticated on v_market_listings must be (none), found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
@@ -123,7 +129,7 @@ BEGIN
 
   FOR v_acl IN
     SELECT coalesce((
-             SELECT string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type)
+             SELECT string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END)
                FROM pg_class c
                     CROSS JOIN LATERAL aclexplode(c.relacl) AS a
               WHERE c.oid = format('public.%I', t.name)::regclass

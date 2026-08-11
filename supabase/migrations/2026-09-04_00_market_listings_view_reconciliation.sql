@@ -398,7 +398,19 @@ BEGIN
   --     grants were a path into the base table that bypassed the
   --     frozen_insert/frozen_update/frozen_delete policies. Application writes
   --     go through record_save / record_delete, never this view.
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  --     GRANTABILITY-AWARE: every privilege is rendered as
+  --     privilege_type || '*' when held WITH GRANT OPTION, and both the
+  --     DISTINCT aggregate and its ORDER BY use that rendered form. REVOKE
+  --     only removes grants issued by the REVOKING grantor, so a delegation
+  --     granted to authenticated/anon by ANY OTHER role holding the grant
+  --     option survives this migration's REVOKEs (verified empirically:
+  --     GRANT SELECT ... WITH GRANT OPTION from a second grantor survives
+  --     REVOKE ALL issued by the owner). A privilege-name-only aggregate
+  --     would see just 'SELECT' and PASS while authenticated retains the
+  --     power to RE-GRANT access; the grantability-aware rendering sees
+  --     'SELECT,SELECT*' (or 'SELECT*') and FAILS CLOSED, aborting the whole
+  --     transaction so a human investigates.
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
@@ -408,7 +420,7 @@ BEGIN
     RAISE EXCEPTION 'POST: authenticated privileges on market_listings_summary must be exactly SELECT, found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
@@ -418,7 +430,7 @@ BEGIN
     RAISE EXCEPTION 'POST: authenticated privileges on v_market_listings must be exactly (none), found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
@@ -428,7 +440,7 @@ BEGIN
     RAISE EXCEPTION 'POST: authenticated privileges on v_market_properties must be exactly (none), found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
@@ -438,7 +450,7 @@ BEGIN
     RAISE EXCEPTION 'POST: anon privileges on market_listings_summary must be exactly (none), found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
@@ -448,7 +460,7 @@ BEGIN
     RAISE EXCEPTION 'POST: anon privileges on v_market_listings must be exactly (none), found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
     INTO v_acl
     FROM pg_class c
          CROSS JOIN LATERAL aclexplode(c.relacl) AS a
