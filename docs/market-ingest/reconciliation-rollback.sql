@@ -120,21 +120,33 @@ BEGIN
   END IF;
 
   -- POST.4 authenticated privileges on the summary are EXACTLY SELECT (covers
-  --      all privilege types, incl. REFERENCES and TRIGGER).
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  --      all privilege types, incl. REFERENCES, TRIGGER, and MAINTAIN).
+  --      Asserted over pg_class.relacl + aclexplode (grantee resolved via
+  --      pg_get_userbyid, grantee oid 0 = PUBLIC), NOT
+  --      information_schema.role_table_grants: role_table_grants does NOT
+  --      surface MAINTAIN (PostgreSQL 17 added it and folded it into
+  --      GRANT ALL), so an exact-set assertion written against
+  --      role_table_grants cannot see one privilege class and would give
+  --      false assurance.
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema='public' AND table_name='market_listings_summary' AND grantee='authenticated';
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.market_listings_summary'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'authenticated';
   IF v_acl <> 'SELECT' THEN
     RAISE EXCEPTION 'POST: authenticated privileges on market_listings_summary must be exactly SELECT after the rollback, found: %', v_acl;
   END IF;
 
-  -- POST.5 anon still has no privileges on any of the three views.
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  -- POST.5 anon still has no privileges on any of the three views (same
+  --      aclexplode form as POST.4 — role_table_grants is blind to MAINTAIN).
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema='public' AND grantee='anon'
-     AND table_name IN ('market_listings_summary','v_market_listings','v_market_properties');
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.relname IN ('market_listings_summary','v_market_listings','v_market_properties')
+     AND c.relnamespace = 'public'::regnamespace
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'anon';
   IF v_acl <> '(none)' THEN
     RAISE EXCEPTION 'POST: anon privileges on the target views must be exactly (none) after the rollback, found: %', v_acl;
   END IF;

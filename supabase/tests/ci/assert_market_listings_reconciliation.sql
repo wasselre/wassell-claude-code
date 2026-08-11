@@ -85,36 +85,49 @@ BEGIN
     RAISE EXCEPTION 'ASSERT 4 FAILED: not all three views have reloptions security_invoker=true';
   END IF;
 
-  -- 5. Exact ACLs via information_schema.role_table_grants.
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  -- 5. Exact ACLs over pg_class.relacl + aclexplode (grantee resolved via
+  --    pg_get_userbyid, grantee oid 0 = PUBLIC), NOT
+  --    information_schema.role_table_grants: role_table_grants does NOT
+  --    surface MAINTAIN (PostgreSQL 17 added it and folded it into GRANT ALL),
+  --    so an exact-set assertion written against role_table_grants cannot see
+  --    one privilege class and would give false assurance.
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema = 'public' AND table_name = 'market_listings_summary' AND grantee = 'authenticated';
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.market_listings_summary'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'authenticated';
   IF v_acl <> 'SELECT' THEN
     RAISE EXCEPTION 'ASSERT 5 FAILED: authenticated on market_listings_summary must be exactly SELECT, found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema = 'public' AND table_name = 'v_market_listings' AND grantee = 'authenticated';
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.v_market_listings'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'authenticated';
   IF v_acl <> '(none)' THEN
     RAISE EXCEPTION 'ASSERT 5 FAILED: authenticated on v_market_listings must be (none), found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema = 'public' AND table_name = 'v_market_properties' AND grantee = 'authenticated';
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.v_market_properties'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'authenticated';
   IF v_acl <> '(none)' THEN
     RAISE EXCEPTION 'ASSERT 5 FAILED: authenticated on v_market_properties must be (none), found: %', v_acl;
   END IF;
 
   FOR v_acl IN
     SELECT coalesce((
-             SELECT string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type)
-               FROM information_schema.role_table_grants
-              WHERE table_schema = 'public' AND grantee = 'anon' AND table_name = t.name
+             SELECT string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type)
+               FROM pg_class c
+                    CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+              WHERE c.oid = format('public.%I', t.name)::regclass
+                AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'anon'
            ), '(none)')
       FROM (VALUES ('market_listings_summary'), ('v_market_listings'), ('v_market_properties')) AS t(name)
   LOOP

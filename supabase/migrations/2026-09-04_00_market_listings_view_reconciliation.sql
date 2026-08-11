@@ -379,10 +379,15 @@ BEGIN
     RAISE EXCEPTION 'POST: public.wassell_can_view_jsonb(uuid,uuid,uuid,uuid,jsonb) no longer matches the pin (owner=postgres, SECURITY DEFINER, volatility=stable, search_path=public, pg_temp, body md5 c9a781616085d3b06eec12d68238b502) — it was redefined mid-transaction. This is a SECURITY DEFINER function whose per-row evaluation, together with wassell_view_scope_class, makes the ENTIRE allow/deny decision for both new policies — a drifted body could BROADEN the permissive fast path. A human must re-review the function and re-measure before updating the pin.';
   END IF;
 
-  -- 4.9 ACL EXACT-SET assertions over information_schema.role_table_grants.
-  --     These cover ALL privilege types — including REFERENCES and TRIGGER,
-  --     which the former per-privilege has_table_privilege checks did not
-  --     test — and supersede those checks:
+  -- 4.9 ACL EXACT-SET assertions over pg_class.relacl + aclexplode (grantee
+  --     resolved via pg_get_userbyid, grantee oid 0 = PUBLIC). aclexplode is
+  --     used INSTEAD of information_schema.role_table_grants because
+  --     role_table_grants does NOT surface MAINTAIN (PostgreSQL 17 added the
+  --     MAINTAIN privilege and folded it into GRANT ALL): an exact-set
+  --     assertion written against role_table_grants cannot see one privilege
+  --     class and would give false assurance. These assertions cover ALL
+  --     privilege types — including REFERENCES, TRIGGER, and MAINTAIN — and
+  --     supersede the former per-privilege has_table_privilege checks:
   --       * 'anon has no SELECT anywhere'                 -> anon = (none) on all three
   --       * 'authenticated has no SELECT on full-data'    -> authenticated = (none) on both
   --       * 'authenticated keeps SELECT on the summary'   -> authenticated = exactly SELECT
@@ -393,50 +398,62 @@ BEGIN
   --     grants were a path into the base table that bypassed the
   --     frozen_insert/frozen_update/frozen_delete policies. Application writes
   --     go through record_save / record_delete, never this view.
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema='public' AND table_name='market_listings_summary' AND grantee='authenticated';
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.market_listings_summary'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'authenticated';
   IF v_acl <> 'SELECT' THEN
     RAISE EXCEPTION 'POST: authenticated privileges on market_listings_summary must be exactly SELECT, found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema='public' AND table_name='v_market_listings' AND grantee='authenticated';
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.v_market_listings'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'authenticated';
   IF v_acl <> '(none)' THEN
     RAISE EXCEPTION 'POST: authenticated privileges on v_market_listings must be exactly (none), found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema='public' AND table_name='v_market_properties' AND grantee='authenticated';
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.v_market_properties'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'authenticated';
   IF v_acl <> '(none)' THEN
     RAISE EXCEPTION 'POST: authenticated privileges on v_market_properties must be exactly (none), found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema='public' AND table_name='market_listings_summary' AND grantee='anon';
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.market_listings_summary'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'anon';
   IF v_acl <> '(none)' THEN
     RAISE EXCEPTION 'POST: anon privileges on market_listings_summary must be exactly (none), found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema='public' AND table_name='v_market_listings' AND grantee='anon';
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.v_market_listings'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'anon';
   IF v_acl <> '(none)' THEN
     RAISE EXCEPTION 'POST: anon privileges on v_market_listings must be exactly (none), found: %', v_acl;
   END IF;
 
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema='public' AND table_name='v_market_properties' AND grantee='anon';
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.v_market_properties'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'anon';
   IF v_acl <> '(none)' THEN
     RAISE EXCEPTION 'POST: anon privileges on v_market_properties must be exactly (none), found: %', v_acl;
   END IF;

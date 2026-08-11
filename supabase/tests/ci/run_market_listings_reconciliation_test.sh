@@ -43,6 +43,15 @@
 #   4 (t_happy)  — rollback (with the summary viewdef pin substituted): both
 #      reconciliation policies gone, the four frozen_* policies remain, summary
 #      back to security_invoker=false, authenticated back to exactly SELECT.
+#   5 (t_happy)  — break-glass forensic restore: the migration is re-applied,
+#      then docs/market-ingest/reconciliation-breakglass-restore-exact.sql
+#      (summary viewdef pin substituted) runs against that post-migration state
+#      and MUST succeed, restoring the exact vulnerable pre-migration grants
+#      (eight privileges incl. MAINTAIN — PostgreSQL 17+ only; skipped cleanly
+#      on older servers). Asserts the restored state via pg_class.relacl +
+#      aclexplode. This is the only place the break-glass script is ever
+#      executed, inside a disposable CI database — proving it works BEFORE a
+#      real incident would be its first run.
 # =============================================================================
 set -euo pipefail
 
@@ -50,6 +59,7 @@ MIG=supabase/migrations/2026-09-04_00_market_listings_view_reconciliation.sql
 FIX=supabase/tests/ci/fixture_market_listings.sql
 ASSERTS=supabase/tests/ci/assert_market_listings_reconciliation.sql
 RB=docs/market-ingest/reconciliation-rollback.sql
+BG=docs/market-ingest/reconciliation-breakglass-restore-exact.sql
 
 # The six production md5 literals pinned inside the migration (summary viewdef
 # also pinned inside the rollback).
@@ -62,7 +72,7 @@ LIT_CAN_VIEW=c9a781616085d3b06eec12d68238b502
 
 : "${PGURL:?PGURL must point at a Postgres superuser maintenance database}"
 
-for f in "$MIG" "$FIX" "$ASSERTS" "$RB"; do
+for f in "$MIG" "$FIX" "$ASSERTS" "$RB" "$BG"; do
   [ -f "$f" ] || { echo "ERROR: missing $f" >&2; exit 1; }
 done
 
@@ -119,6 +129,10 @@ SQL_SUMMARY_MORE_THAN_SELECT="SELECT bool_or(a.privilege_type = 'SELECT') AND bo
 # every grant is SELECT.
 SQL_SUMMARY_EXACTLY_SELECT="SELECT bool_or(a.privilege_type = 'SELECT') AND NOT bool_or(a.privilege_type <> 'SELECT') FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole"
 SQL_FOUR_FROZEN_REMAIN="SELECT (SELECT count(*) FROM pg_policy WHERE polrelid = 'public.market_listings'::regclass AND polname IN ('frozen_view','frozen_insert','frozen_update','frozen_delete')) = 4"
+# authenticated holds EXACTLY the eight pre-migration privileges on the summary
+# (incl. MAINTAIN, PostgreSQL 17+): asserted via pg_class.relacl + aclexplode,
+# NOT information_schema.role_table_grants, which is blind to MAINTAIN.
+SQL_SUMMARY_EXACT_ALL8="SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)') = 'DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE' FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole"
 
 # =============================================================================
 echo '== TEST 1: absent table — unmodified migration must refuse'
@@ -201,5 +215,63 @@ assert_t t_happy "$SQL_SUMMARY_DEFINER" \
   "market_listings_summary is not security_invoker=false after the rollback"
 assert_t t_happy "$SQL_SUMMARY_EXACTLY_SELECT" \
   "authenticated privileges on the summary are not exactly SELECT after the rollback"
+
+# =============================================================================
+# TEST 5: break-glass — the forensic exact-restore actually works.
+#
+# docs/market-ingest/reconciliation-breakglass-restore-exact.sql grants
+# MAINTAIN, which only exists on PostgreSQL 17+. Nothing ever executes that
+# script in production, so a syntax or logic error would otherwise surface
+# during a real incident — the worst possible moment. CI runs postgres:17,
+# so this is the one place it is proven to work.
+# =============================================================================
+SERVER_VERSION_NUM=$(psql "$PGURL" -v ON_ERROR_STOP=1 -qAt -c 'SHOW server_version_num')
+if [ "$SERVER_VERSION_NUM" -lt 170000 ]; then
+  echo "== TEST 5: SKIPPED — break-glass grants MAINTAIN, which requires PostgreSQL 17+ (server is $SERVER_VERSION_NUM)"
+else
+  echo '== TEST 5: break-glass — forensic exact-restore of the vulnerable pre-migration state'
+
+  # TEST 4 rolled t_happy back; the break-glass is designed to run against a
+  # POST-migration state, so re-apply the migration first (same mechanism as
+  # TEST 3 — fixture-measured pins substituted into a temp copy).
+  MIG_TMP=$(mktemp)
+  cp "$MIG" "$MIG_TMP"
+  sub_md5 "$LIT_SUMMARY"     "$NEW_SUMMARY"     "$MIG_TMP"
+  sub_md5 "$LIT_VML"         "$NEW_VML"         "$MIG_TMP"
+  sub_md5 "$LIT_VMP"         "$NEW_VMP"         "$MIG_TMP"
+  sub_md5 "$LIT_FROZEN_VIEW" "$NEW_FROZEN_VIEW" "$MIG_TMP"
+  sub_md5 "$LIT_SCOPE_CLASS" "$NEW_SCOPE_CLASS" "$MIG_TMP"
+  sub_md5 "$LIT_CAN_VIEW"    "$NEW_CAN_VIEW"    "$MIG_TMP"
+  psql "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$MIG_TMP"
+  rm -f "$MIG_TMP"
+
+  # The break-glass pins the PRE-migration summary viewdef (it restores the
+  # definer view and its grants, but refuses a changed body) — same value as
+  # the rollback's pin, patched exactly the way TEST 4 patches it.
+  BG_TMP=$(mktemp)
+  cp "$BG" "$BG_TMP"
+  sub_md5 "$LIT_SUMMARY" "$NEW_SUMMARY" "$BG_TMP"
+  psql "$(DBURL t_happy)" -v ON_ERROR_STOP=1 -q -f "$BG_TMP"
+  rm -f "$BG_TMP"
+
+  # The observed ACL set is printed BEFORE the assertions so a failure shows
+  # the actual grants, not just the expectation.
+  OBSERVED_ACL=$(q t_happy "SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)') FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'public.market_listings_summary'::regclass AND a.grantee = 'authenticated'::regrole")
+  echo "authenticated privileges on market_listings_summary after break-glass: $OBSERVED_ACL"
+
+  assert_t t_happy "$SQL_SUMMARY_EXACT_ALL8" \
+    "authenticated privileges on the summary are not exactly DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE after the break-glass (observed: $OBSERVED_ACL)"
+  assert_t t_happy "$SQL_NO_NEW_POLICIES" \
+    "a reconciliation policy survived the break-glass restore"
+  assert_t t_happy "$SQL_FOUR_FROZEN_REMAIN" \
+    "fewer than the four frozen_* policies remain after the break-glass restore"
+  assert_t t_happy "$SQL_SUMMARY_DEFINER" \
+    "market_listings_summary is not security_invoker=false after the break-glass restore"
+
+  echo '== TEST 5: NOTE — this test deliberately restored a KNOWN-VULNERABLE state'
+  echo '   (authenticated write path bypassing frozen_* RLS) inside a disposable CI'
+  echo '   database. That is exactly why the break-glass script is FORENSIC-ONLY and'
+  echo '   must never be used as an operational rollback.'
+fi
 
 echo 'ALL TESTS PASSED'

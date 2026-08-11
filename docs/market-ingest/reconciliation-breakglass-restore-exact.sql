@@ -7,8 +7,9 @@
 --
 -- THIS SCRIPT DELIBERATELY RESTORES A KNOWN WRITE-PATH VULNERABILITY.
 --
--- The GRANT ALL below hands authenticated INSERT/UPDATE/DELETE/TRUNCATE/
--- REFERENCES/TRIGGER on market_listings_summary — an AUTO-UPDATABLE view
+-- The explicit eight-privilege GRANT below hands authenticated SELECT/INSERT/
+-- UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER/MAINTAIN on market_listings_summary
+-- — an AUTO-UPDATABLE view
 -- (information_schema.views.is_updatable='YES') — while flipping it back to
 -- security_invoker = false. That combination is a write path into the
 -- market_listings base table that BYPASSES the frozen_insert / frozen_update /
@@ -78,10 +79,18 @@ ALTER VIEW public.market_listings_summary SET (security_invoker = false);
 ALTER VIEW public.v_market_listings       RESET (security_invoker);
 
 -- 4. ⚠ VULNERABILITY RESTORED HERE ⚠ — the exact pre-migration grants on the
---    summary (authenticated held ALL: SELECT, INSERT, UPDATE, DELETE, TRUNCATE,
---    REFERENCES, TRIGGER). This is the write path that bypasses
+--    summary. Measured live on PostgreSQL 17.6 (2026-08-10, read-only, via
+--    pg_class.relacl + aclexplode): authenticated held EIGHT privileges —
+--    SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN.
+--    (PostgreSQL 17 added MAINTAIN and folded it into GRANT ALL;
+--    information_schema.role_table_grants does NOT surface MAINTAIN and
+--    reports only seven.) This is the write path that bypasses
 --    frozen_insert / frozen_update / frozen_delete. Forensic use only.
-GRANT ALL ON public.market_listings_summary TO authenticated;
+--    The privileges are ENUMERATED EXPLICITLY rather than written as
+--    GRANT ALL, so the restore is version-explicit and does not depend on
+--    what GRANT ALL happens to expand to on a given PostgreSQL major version.
+GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN
+  ON public.market_listings_summary TO authenticated;
 
 -- POSTCONDITIONS (fail closed).
 DO $post$
@@ -101,12 +110,20 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'POST: market_listings_summary is not security_invoker=false';
   END IF;
-  -- Exact pre-migration grant set: all seven privileges, nothing missing.
-  SELECT coalesce(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+  -- Exact pre-migration grant set: all EIGHT privileges, nothing missing.
+  -- Asserted over pg_class.relacl + aclexplode (grantee resolved via
+  -- pg_get_userbyid, grantee oid 0 = PUBLIC), NOT
+  -- information_schema.role_table_grants: role_table_grants does NOT surface
+  -- MAINTAIN (PostgreSQL 17 added it and folded it into GRANT ALL), so an
+  -- exact-set assertion written against role_table_grants is blind to one
+  -- privilege class and would give false assurance here.
+  SELECT coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), '(none)')
     INTO v_acl
-    FROM information_schema.role_table_grants
-   WHERE table_schema='public' AND table_name='market_listings_summary' AND grantee='authenticated';
-  IF v_acl <> 'DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE' THEN
+    FROM pg_class c
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+   WHERE c.oid = 'public.market_listings_summary'::regclass
+     AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = 'authenticated';
+  IF v_acl <> 'DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE' THEN
     RAISE EXCEPTION 'POST: authenticated privileges on market_listings_summary do not match the exact pre-migration ALL set, found: %', v_acl;
   END IF;
 END $post$;
