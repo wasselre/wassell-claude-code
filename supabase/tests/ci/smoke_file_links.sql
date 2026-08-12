@@ -107,10 +107,15 @@ BEGIN
     RAISE EXCEPTION '1.15: backfill not idempotent in-transaction (edges=% sources=%)', v_edges, v_sources;
   END IF;
 
-  -- the projection must NOT have added a trigger to the record-save path
+  -- The PROJECTION must add nothing to the record-save path. Phase 2
+  -- (2026-08-12_file_link_sync.sql) deliberately adds exactly ONE
+  -- synchronisation trigger there, so that one name is exempted; any OTHER
+  -- trigger still fails this assertion, and when Phase 2 is absent — which is
+  -- how CI runs this file — the expected count is still zero.
   SELECT count(*) INTO v_trg FROM pg_trigger
-   WHERE tgrelid='public.records'::regclass AND NOT tgisinternal;
-  IF v_trg <> 0 THEN RAISE EXCEPTION '1.16: a trigger was added to records (%)', v_trg; END IF;
+   WHERE tgrelid='public.records'::regclass AND NOT tgisinternal
+     AND tgname <> 'records_sync_file_links';
+  IF v_trg <> 0 THEN RAISE EXCEPTION '1.16: an unexpected trigger was added to records (%)', v_trg; END IF;
 
   RAISE NOTICE 'part 1 (structure): 16 assertions passed';
 END $$;
