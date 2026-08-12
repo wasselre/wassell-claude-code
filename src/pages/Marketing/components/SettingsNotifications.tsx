@@ -54,6 +54,16 @@ const EVENTS: EventRow[] = [
     sub_en: 'A previous step was approved and your turn began',
   },
   {
+    // Separate from `task_assigned` on purpose: that one is the workflow
+    // reaching your stage, this one is a person handing you something. Muting
+    // the first is a reasonable thing for a busy role to want; muting the
+    // second is a different decision, so they are tuned independently.
+    key: 'manual_task_assigned',
+    ar: 'أسند إليك شخص مهمة', en: 'Someone assigned you a task',
+    sub_ar: 'مهمة يدوية خارج مسارات العمل',
+    sub_en: 'A hand-assigned task, outside the workflows',
+  },
+  {
     key: 'changes_requested',
     ar: 'أُعيد عملك بتعديلات', en: 'Your work came back with changes',
     sub_ar: 'مع الملاحظة كاملة في نص الإشعار',

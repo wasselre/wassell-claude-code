@@ -86,6 +86,32 @@ jobs:
           psql "$PGURL_FL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-08-10_file_links_projection.sql
           psql "$PGURL_FL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_file_links.sql
 
+  market-listings-reconciliation:
+    # Designated validator for
+    # supabase/migrations/2026-09-04_00_market_listings_view_reconciliation.sql.
+    # The db-migrations job above globs only 2026-09-01_0* and 2026-09-02_0*,
+    # so it never executes that migration — this job exists to run it (via the
+    # fixture + assertions in supabase/tests/ci/run_market_listings_reconciliation_test.sh)
+    # against an ephemeral Postgres 17 before any production apply.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run reconciliation migration tests
+        run: bash supabase/tests/ci/run_market_listings_reconciliation_test.sh
+
   worker-typecheck:
     # worker/ is a standalone package (third tsconfig) — not covered by the
     # root build (see reference: tsc --noEmit skips api/; worker is separate).
