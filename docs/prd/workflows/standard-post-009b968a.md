@@ -5,7 +5,7 @@
 # Workflow: Standard post / مسار المنشور القياسي
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-03
+**Last updated (from DB):** 2026-08-13
 **Workflow id:** `009b968a-84ee-4d7d-bd03-3d2399fe6360`   ·   **Active:** yes
 **Group:** (ungrouped)
 **Trigger:** null

@@ -5,7 +5,7 @@
 # Model: Visits / الزيارات  `visits`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-21
+**Last updated (from DB):** 2026-08-11
 **Model id:** `372ed642-3753-40b4-9dd7-e8390f91b1f8`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **12**
+- Fields: **13**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -41,6 +41,7 @@
 | `rating_token` | Rating Token / رمز التقييم | Text | no | full | no |  |
 | `visit_rating` | Visit Rating / تقييم الزيارة | Number | no | half | yes |  |
 | `rated_at` | Rated At / تاريخ التقييم | Date & time | no | half | no |  |
+| `visit_result` | Visit Result / نتيجة الزيارة | Dropdown | no | half | yes | 4 options |
 
 **Field details:**
 
@@ -64,3 +65,8 @@
   - target model: Follow-ups
   - shows field: `scheduled_datetime`
   - multiple: no · max in dropdown: 20
+- **Visit Result / نتيجة الزيارة** (`visit_result`, type `dropdown`) — options:
+  - API value `interested` → "Interested" / "مهتم" · color `#10B981`
+  - API value `considering` → "Considering" / "يفكّر" · color `#C09B5F`
+  - API value `not_interested` → "Not interested" / "غير مهتم" · color `#8E4E3A`
+  - API value `reserved` → "Reserved" / "حجز" · color `#3B82F6`
