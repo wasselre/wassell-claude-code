@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { LayoutGrid, List, Map as MapIcon, Search, Plus, MapPin, Building2, Target, Globe, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -37,7 +37,7 @@ function Kpi({ icon, label, value, tone }: { icon: React.ReactNode; label: strin
 export default function ProjectsListPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { models, records, language } = useAppStore();
+  const { models, records, language, setRecordNavContext } = useAppStore();
   const isAr = language === 'ar';
 
   const model = modelByName(models, 'all_projects');
@@ -111,6 +111,13 @@ export default function ProjectsListPage() {
   }, [filtered]);
 
   const filteredRecords = useMemo(() => filtered.map((v) => v.raw), [filtered]);
+
+  // Publish the currently-visible, sorted project ids so the detail page's
+  // prev/next steps through the same order shown here.
+  useEffect(() => {
+    if (!model) return;
+    setRecordNavContext(model.id, filtered.map((v) => v.id));
+  }, [model, filtered, setRecordNavContext]);
 
   if (!model) {
     return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;

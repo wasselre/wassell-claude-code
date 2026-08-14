@@ -1,7 +1,9 @@
 # PRD: Projects & Units Experience
 
 **Status:** Live (model layer) · Built, pending deploy (UI + AI)
-**Last updated:** 2026-08-08 (Payment Plans: units carry a per-unit `payment_plans` table field — one row per developer plan card with the 4 stage %s + price in AED & SAR; projects get a **Payment Plans** tab that rolls those up into the distinct payment *structures* offered, with a unit count + price RANGE per structure. See "Payment plans" below.)
+**Last updated:** 2026-08-14 (Project detail toolbar: **Exit** + **Previous/Next** with an `n / total` position counter, stepping through the SAME filtered+sorted order shown on the Our Projects portfolio / All Projects list. See "Key behaviors".)
+
+**Earlier:** 2026-08-08 (Payment Plans: units carry a per-unit `payment_plans` table field — one row per developer plan card with the 4 stage %s + price in AED & SAR; projects get a **Payment Plans** tab that rolls those up into the distinct payment *structures* offered, with a unit count + price RANGE per structure. See "Payment plans" below.)
 
 **Earlier:** 2026-07-18 (AI actions provider swap: `/api/project-ai` now runs on Qwen3 30B on Cloudflare Workers AI as the primary model, with the original Claude path as automatic fallback on any Qwen failure; `TEXT_LLM_PROVIDER=anthropic` reverts to Claude-only — see `docs/cloudflare-workers-ai.md`)
 **Related PRDs:** [project-matching-assistant.md](project-matching-assistant.md), [marketing-operations.md](marketing-operations.md), [public-website.md](public-website.md), [data-storage.md](data-storage.md)
@@ -21,6 +23,7 @@ The three models were functionally useful but ugly: `all_projects` had fields sc
 - **Deterministic-first audit.** Data-quality score, missing-field lists, website-publish blockers, and matching blockers are computed in `auditProject` (pure TS). The AI audit action only phrases those deterministic findings.
 - **Price/m²** is the only derived unit value (`total_price ÷ unit_area`); shown only when both exist and area > 0.
 - **Payment plans (per-unit source of truth, project overview is a live rollup).** Each unit stores its full set of developer plan cards in the `payment_plans` table field (columns: `plan`, `down`, `before_handover`, `on_handover`, `after_handover` %, `price` AED, `price_sar`). A unit commonly has 3–7 cards (up to 11) because the developer lists the *same* payment structure at several prices (different offers). The **Payment Plans tab** (project *and* unit) is `PaymentPlansTabPane`: on a unit it groups the cards by structure (same split → one row, prices as a range); on a project it aggregates across all the project's units into the distinct structures offered, each with a unit count + AED/SAR price range. The project view never stores plan prices — it rolls them up live from the units already in the store (same pattern as UnitsTabPane). Deduping is on the %-split only, so the overview shows *structures*, not the priced-offer count; per-unit prices carry the exact figures. Populated for Binghatti (بن غاطي) from the `partners.binghatti.com` broker portal.
+- **Browse without going back to the list.** The project detail page carries a toolbar above the hero: **Exit** (returns to the originating list — Our Projects or All Projects) and **Previous / Next** with an `n / total` position counter. Prev/next walk the exact filtered + sorted order the user was browsing (both list pages publish their visible ids into `recordNavContext`, the same channel the generic record form uses), so a search or filter narrows the walk too. Deep links have no published order and fall back to the model's insertion order; the arrows disable at the ends.
 - **`?generic=1` escape hatch** on every custom page falls back to the standard record list/form (table, export, advanced edit).
 - Fully bilingual + RTL. Missing facts always render as "غير متوفر" / "N/A", never a guess.
 
@@ -29,6 +32,7 @@ The three models were functionally useful but ugly: `all_projects` had fields sc
 2. **Work a project:** detail page hero + KPI cards → tabs: **Overview** (identity, unit types, amenities, links), **Units** (inventory), **Location** (geo + map + landmarks), **Media** (images/videos/brochures), **Sales Notes** (inline-editable priority/exclusivity/targeting/notes, saved via `record_save`), **AI Review** (clean / brief / WhatsApp / audit / match), **Data Quality** (score + blocker checklists).
 3. **Inventory + sell units:** Units tab → filter (status/type/bedrooms/price/area/floor) + sort (cheapest/largest/best per m²/newest) → select units → Compare (deterministic best-in-class highlights + AI recommendation) or generate a WhatsApp message → click a row → unit drawer (identity, price, layout, areas, plan, components, location, documents, notes, AI WhatsApp).
 4. **Run the portfolio:** Our Projects → active-first cards ordered by display order → visibility indicator → open linked project, or generate an AI sales pitch grounded in the linked project's facts.
+4b. **Review several projects in a row:** open any card → read the detail → **Next** / **Previous** to step through the list in the order shown (filters and search apply), watching the `n / total` counter → **Exit** back to the list.
 5. **Empty/missing state:** any absent fact shows "غير متوفر"; the detail page renders with no crash when a project is sparse (resolvers return null throughout).
 
 ## Data touched
@@ -40,7 +44,7 @@ The three models were functionally useful but ugly: `all_projects` had fields sc
 | File | What it does |
 |---|---|
 | `src/pages/Projects/ProjectsListPage.tsx` | Custom All Projects list (KPIs, filters, grid/list/map) |
-| `src/pages/Projects/ProjectDetailPage.tsx` | Project detail page (hero + KPI cards + 7 tabs) |
+| `src/pages/Projects/ProjectDetailPage.tsx` | Project detail page (record toolbar: Exit + prev/next + position counter; hero + KPI cards + 7 tabs) |
 | `src/pages/Projects/OurProjectsPortfolioPage.tsx` | Our Projects sales portfolio dashboard |
 | `src/pages/Projects/components/UnitsInventory.tsx` | In-project inventory (filter/sort/select/compare/WhatsApp) |
 | `src/pages/Projects/components/UnitDrawer.tsx` | Unit detail slide-over + AI WhatsApp |

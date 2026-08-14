@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Building2, MapPin, Pencil, Search, ExternalLink, FileText, AlertTriangle,
-  CheckCircle2, Target, Eye, EyeOff,
+  CheckCircle2, Target, Eye, EyeOff, ArrowRight, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -34,7 +34,7 @@ export default function ProjectDetailPage() {
   const { modelName, recordId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { models, records, language, saveRecord, addToast } = useAppStore();
+  const { models, records, language, saveRecord, addToast, recordNavContext } = useAppStore();
   const isAr = language === 'ar';
 
   // Two surfaces share this page: the All Projects master detail and the Our
@@ -74,6 +74,21 @@ export default function ProjectDetailPage() {
   const heroRef = (isPortfolio ? asString(portfolioRecord?.data?.hero_image_override) : null) ?? view?.imageRef ?? null;
   const heroImage = useSignedImage(heroRef);
 
+  // Prev/next walks the list the user was browsing: the portfolio page (or the
+  // All Projects page) publishes its filtered+sorted ids into recordNavContext.
+  // Deep links have no context, so fall back to the model's insertion order —
+  // same contract as the generic RecordFormPage. Hooks stay ABOVE the
+  // conditional returns below (React #310).
+  const navModel = isPortfolio ? ourModel : apModel;
+  const orderedIds = useMemo(() => {
+    if (!navModel) return [];
+    if (recordNavContext && recordNavContext.modelId === navModel.id) return recordNavContext.orderedIds;
+    return (records[navModel.id] ?? []).map((r) => r.id);
+  }, [navModel, recordNavContext, records]);
+  const currentIndex = recordId ? orderedIds.indexOf(recordId) : -1;
+  const prevId = currentIndex > 0 ? orderedIds[currentIndex - 1] ?? null : null;
+  const nextId = currentIndex >= 0 && currentIndex < orderedIds.length - 1 ? orderedIds[currentIndex + 1] ?? null : null;
+
   if (searchParams.get('generic') === '1') return <RecordFormPage />;
   if (!apModel || (isPortfolio && !ourModel)) return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
   // Portfolio mode: the our_projects record must exist (its master may be unlinked).
@@ -97,7 +112,9 @@ export default function ProjectDetailPage() {
 
   const model = apModel; // narrowed to AppModel after the guard above
   const dash = isAr ? 'غير متوفر' : 'N/A';
-  const editHref = `/model/${isPortfolio ? 'our_projects' : 'all_projects'}/${recordId}?generic=1`;
+  const listHref = `/model/${isPortfolio ? 'our_projects' : 'all_projects'}`;
+  const editHref = `${listHref}/${recordId}?generic=1`;
+  const navBtn = 'p-2 rounded-lg hover:bg-sand/30 text-charcoal/40 hover:text-charcoal transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-charcoal/40';
   const heroName = view?.name ?? asString(portfolioRecord?.data?.project_name) ?? `#${recordId?.slice(0, 8) ?? ''}`;
   const portfolioStatus = isPortfolio ? optionFor(fieldByCandidates(ourModel, ['portfolio_status']), portfolioRecord?.data?.portfolio_status) : null;
   const NoMaster = () => (
@@ -125,6 +142,44 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
+      {/* Record toolbar — exit back to the list, and step through it in order. */}
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => navigate(listHref)}
+          title={isAr ? 'إغلاق والعودة إلى القائمة' : 'Close and return to the list'}
+          className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm text-charcoal/50 hover:text-charcoal hover:bg-sand/30 transition-colors"
+        >
+          <ArrowRight size={18} className="rtl:rotate-0 ltr:rotate-180" />
+          {isAr ? 'خروج' : 'Exit'}
+        </button>
+        <div className="flex items-center gap-1">
+          {currentIndex >= 0 && (
+            <span className="text-xs text-charcoal/40 tabular-nums px-1">{currentIndex + 1} / {orderedIds.length}</span>
+          )}
+          <button
+            type="button"
+            onClick={() => prevId && navigate(`${listHref}/${prevId}`)}
+            disabled={!prevId}
+            title={isAr ? 'السجل السابق' : 'Previous record'}
+            aria-label={isAr ? 'السجل السابق' : 'Previous record'}
+            className={navBtn}
+          >
+            <ChevronLeft size={20} className="rtl:rotate-180" />
+          </button>
+          <button
+            type="button"
+            onClick={() => nextId && navigate(`${listHref}/${nextId}`)}
+            disabled={!nextId}
+            title={isAr ? 'السجل التالي' : 'Next record'}
+            aria-label={isAr ? 'السجل التالي' : 'Next record'}
+            className={navBtn}
+          >
+            <ChevronRight size={20} className="rtl:rotate-180" />
+          </button>
+        </div>
+      </div>
+
       {/* Hero */}
       <div className="card overflow-hidden">
         <div className="h-40 bg-gradient-to-br from-copper/25 to-terracotta/20 relative flex items-center justify-center">

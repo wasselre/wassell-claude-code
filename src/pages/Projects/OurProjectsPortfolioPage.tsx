@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText, Search } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -31,7 +31,7 @@ const STATUS_RANK: Record<string, number> = { active: 0, paused: 1, sold_out: 2,
 export default function OurProjectsPortfolioPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { models, records, language } = useAppStore();
+  const { models, records, language, setRecordNavContext } = useAppStore();
   const isAr = language === 'ar';
 
   const ourModel = modelByName(models, 'our_projects');
@@ -104,6 +104,13 @@ export default function OurProjectsPortfolioPage() {
       return true;
     });
   }, [items, search, city, developer, pstatus, gap]);
+
+  // Publish the currently-visible, sorted portfolio ids so the detail page can
+  // offer prev/next in the same order the user was browsing here.
+  useEffect(() => {
+    if (!ourModel) return;
+    setRecordNavContext(ourModel.id, filtered.map((i) => i.ourId));
+  }, [ourModel, filtered, setRecordNavContext]);
 
   if (searchParams.get('generic') === '1') return <RecordListPage />;
   if (!ourModel) return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
