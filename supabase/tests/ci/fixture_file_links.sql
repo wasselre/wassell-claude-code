@@ -114,6 +114,15 @@ INSERT INTO public.files (id, original_name, model_id, record_id) VALUES
 ('f0000000-0000-0000-0000-000000000013','task-attach.pdf', NULL, NULL),               -- multi_file
 ('f0000000-0000-0000-0000-000000000014','task-attach2.pdf', NULL, NULL);              -- multi_file, array
 
+-- REPRODUCE PRODUCTION'S INDEXES on the source tables. Same lesson as the
+-- default-privileges block above: without these, CI plans every convergence
+-- against unindexed tables and would report a cost the real database does not
+-- have — or, worse, hide one it does. Copied from 2026-05-23_files_system.sql
+-- and 2026-06-11_document_links.sql; the mos_assets one arrives with Phase 2.
+CREATE INDEX IF NOT EXISTS idx_files_record ON public.files(model_id, record_id) WHERE record_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_document_links_record ON public.document_links(model_id, record_id);
+CREATE INDEX IF NOT EXISTS idx_records_model ON public.records(model_id);
+
 -- a real FOLDER: developer_content mixes {type:'file'} and {type:'folder'}
 INSERT INTO public.folders (id, name) VALUES
 ('d0000000-0000-0000-0000-000000000001','Developer pack');
