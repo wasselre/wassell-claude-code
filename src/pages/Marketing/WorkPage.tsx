@@ -34,6 +34,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, KindCell, LoadError, PageHead, Pill, Skeleton } from './components/kit';
+import ProjectLink from './components/ProjectLink';
 import { IconSearch } from './components/icons';
 import NewTaskModal from './components/NewTaskModal';
 import { dayName, daysAgo, daysFromNow, num, shortDate } from './lib/format';
@@ -205,10 +206,16 @@ export default function WorkPage() {
       : t.campaign_id ? `/m/campaigns/${t.campaign_id}`
         : null;
 
+  /** The project a hand-assigned task points at — its own, else its content's. */
+  const manualProjectId = (t: MosManualTask): string | null =>
+    t.project_id
+    ?? (t.content_id ? rows.find((r) => r.id === t.content_id)?.project_id ?? null : null);
+
+  // The project is rendered as its own clickable chip (manualProjectId), so it's
+  // deliberately kept OUT of this plain-text meta line to avoid showing twice.
   const manualMeta = (t: MosManualTask): string => {
     const bits: string[] = [];
     if (t.details) bits.push(t.details);
-    if (t.project_id) bits.push(projectName(t.project_id));
     if (t.series_id) bits.push(isAr ? 'مهمة متكررة' : 'repeating');
     if (t.created_by_user_id) {
       const p = people.find((x) => x.user_id === t.created_by_user_id);
@@ -252,6 +259,7 @@ export default function WorkPage() {
               <tbody>
                 {manualSorted.map((t) => {
                   const target = manualTarget(t);
+                  const projectId = manualProjectId(t);
                   return (
                     <tr
                       key={t.id}
@@ -263,6 +271,11 @@ export default function WorkPage() {
                         <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
                           {manualMeta(t)}
                         </div>
+                        {projectId && (
+                          <div style={{ marginTop: 6 }}>
+                            <ProjectLink projectIds={[projectId]} />
+                          </div>
+                        )}
                       </td>
                       <td style={{ width: 190 }}>{duePill(t)}</td>
                       <td style={{ width: 130, textAlign: 'end' }}>
@@ -377,7 +390,7 @@ export default function WorkPage() {
                         <div className="ttl">{statusLabel(r, isAr)} — {r.title}</div>
                         <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
                           <span className="ltr">{r.ref}</span> · {typeLabel(r.content_type_key)}
-                          {r.project_id && <> · {projectName(r.project_id)}</>}
+                          {r.project_id && <> · <ProjectLink projectIds={[r.project_id]} variant="link" /></>}
                           {task && task.round > 1 && (
                             <> · {isAr ? `الجولة ${num(task.round, true)}` : `round ${task.round}`}</>
                           )}
@@ -505,7 +518,7 @@ export default function WorkPage() {
                 <div className="m1-t" style={{ marginTop: 9 }}>{statusLabel(r, isAr)}</div>
                 <div className="m1-m">
                   <span className="ltr">{r.ref}</span> · {r.title}
-                  {r.project_id && <> · {projectName(r.project_id)}</>}
+                  {r.project_id && <> · <ProjectLink projectIds={[r.project_id]} variant="link" /></>}
                   {task && task.round > 1 && (
                     <>
                       <br />
@@ -532,6 +545,7 @@ export default function WorkPage() {
           )}
           {manualSorted.map((t) => {
             const target = manualTarget(t);
+            const projectId = manualProjectId(t);
             return (
               <div key={t.id} className={`m1-card${manualOverdue(t) ? ' late2' : ''}`}>
                 {manualOverdue(t) && (
@@ -553,6 +567,11 @@ export default function WorkPage() {
                     <>{manualMeta(t) ? ' · ' : ''}{isAr ? 'الاستحقاق ' : 'due '}{shortDate(t.due_at, isAr)}</>
                   )}
                 </div>
+                {projectId && (
+                  <div style={{ marginTop: 6 }}>
+                    <ProjectLink projectIds={[projectId]} />
+                  </div>
+                )}
                 <button
                   type="button"
                   className="m1-btn p sm"

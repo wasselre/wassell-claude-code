@@ -40,6 +40,7 @@ import SuccessMeasuresEditor, {
 } from './components/SuccessMeasuresEditor';
 import AudiencePicker from './components/AudiencePicker';
 import GoalMultiSelect from './components/GoalMultiSelect';
+import ProjectLink from './components/ProjectLink';
 import { IconBack, IconForward } from './components/icons';
 import { money, monthOf, num, shortDate } from './lib/format';
 import { measureActual, pickVolumeMeasure } from './lib/measure';
@@ -193,7 +194,7 @@ interface ContentStat {
 export default function CampaignDetailPage() {
   const { campaignId } = useParams<{ campaignId: string }>();
   const navigate = useNavigate();
-  const { isAr, can, projectName, people, typeLabel, contentTypes } = useWorkspace();
+  const { isAr, can, people, typeLabel, contentTypes } = useWorkspace();
   const users = people.map((p) => ({ id: p.user_id, name_ar: p.name_ar, name_en: p.name_en }));
   const addToast = useAppStore((s) => s.addToast);
 
@@ -983,9 +984,7 @@ export default function CampaignDetailPage() {
                   <span className="tag">
                     {item.kind === 'organic' ? (isAr ? 'عضوية' : 'Organic') : (isAr ? 'مدفوعة' : 'Paid')}
                   </span>
-                  {(item.project_ids ?? []).map((pid) => (
-                    <span key={pid} className="tag">{projectName(pid)}</span>
-                  ))}
+                  <ProjectLink projectIds={item.project_ids ?? []} />
                   <Pill tone={statusPill.tone}>{statusPill.text}</Pill>
                   <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
                     {isAr ? 'المسؤول ' : 'Owner '}

@@ -20,6 +20,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, ReadField, Skeleton } from './components/kit';
+import ProjectLink from './components/ProjectLink';
 import { IconLibrary, IconPlus } from './components/icons';
 import { daysFromNow, num, shortDate, toArabicDigits } from './lib/format';
 import { formatBytes } from './lib/upload';
@@ -297,7 +298,7 @@ export default function AssetDetailPage() {
           <span className="chips">
             <span className="tag">{kindLabel} · {sourceLabel}</span>
             {spec && <span className="tag ltr">{spec}</span>}
-            {asset.project_id && <span className="tag">{projectName(asset.project_id)}</span>}
+            <ProjectLink projectIds={[asset.project_id]} />
             {inUse ? (
               <Pill tone="go">{isAr ? `مستخدم في ${num(usedIn.length, true)}` : `Used in ${usedIn.length}`}</Pill>
             ) : (

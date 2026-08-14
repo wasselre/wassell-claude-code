@@ -35,6 +35,7 @@ import {
   KindCell, LoadError, Pill, ReadField, Skeleton, StatusPill, Modal,
 } from './components/kit';
 import StageRail from './components/StageRail';
+import ProjectLink from './components/ProjectLink';
 import TaskCard, { TasksApprovalsTab } from './components/TaskCard';
 import WritingFields from './components/WritingFields';
 import SceneTable from './components/SceneTable';
@@ -110,6 +111,9 @@ export default function ContentDetailPage() {
   const [comments, setComments] = useState<MosComment[]>([]);
   const [materialCount, setMaterialCount] = useState(0);
   const [campaignName, setCampaignName] = useState<string | null>(null);
+  // The campaign's own projects — used as the INDIRECT project link when the
+  // item carries no project of its own («المحتوى مرتبط بحملة مرتبطة بمشروع»).
+  const [campaignProjectIds, setCampaignProjectIds] = useState<string[]>([]);
   const [tab, setTab] = useState<Tab>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -153,16 +157,22 @@ export default function ContentDetailPage() {
   // swallowed.
   const campaignId = item?.campaign_id ?? null;
   useEffect(() => {
-    if (!campaignId) { setCampaignName(null); return; }
+    if (!campaignId) { setCampaignName(null); setCampaignProjectIds([]); return; }
     let alive = true;
     fetchCampaigns()
       .then((res) => {
         if (!alive) return;
-        setCampaignName(res.campaigns.find((c) => c.id === campaignId)?.name ?? null);
+        const c = res.campaigns.find((x) => x.id === campaignId);
+        setCampaignName(c?.name ?? null);
+        setCampaignProjectIds(c?.project_ids ?? []);
       })
       .catch((e: unknown) => { console.error('[marketing] campaign name unavailable', e); });
     return () => { alive = false; };
   }, [campaignId]);
+
+  // Direct project(s) win; when the item has none, fall back to the campaign's —
+  // the "related indirectly, through a campaign connected to a project" case.
+  const linkedProjectIds = (item?.project_ids?.length ? item.project_ids : campaignProjectIds);
 
   // The «المواد» tab badge — screen 06 shows the count from page open, before
   // the tab is ever visited. Non-fatal: a failure hides the badge and is
@@ -372,9 +382,7 @@ export default function ContentDetailPage() {
               {version > 1 && (
                 <span className="tag">{isAr ? `النسخة ${num(version, true)}` : `Version ${version}`}</span>
               )}
-              {(item.project_ids ?? []).map((pid) => (
-                <span key={pid} className="tag">{projectName(pid)}</span>
-              ))}
+              <ProjectLink projectIds={linkedProjectIds} />
               {campaignName && campaignId && (
                 <span
                   className="tag"
