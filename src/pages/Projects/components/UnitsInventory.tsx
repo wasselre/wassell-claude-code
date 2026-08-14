@@ -44,7 +44,12 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
   const [areaMax, setAreaMax] = useState('');
   const [sortKey, setSortKey] = useState<UnitSortKey>('cheapest');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [drawerUnit, setDrawerUnit] = useState<UnitView | null>(null);
+  // Hold the OPEN UNIT'S ID, not its resolved view: editing the unit's status
+  // from the drawer rewrites the record, and a captured UnitView object would
+  // keep showing the pre-edit status. Re-deriving from `allUnits` (unfiltered,
+  // so a status change that no longer matches the active filter doesn't yank
+  // the drawer shut) keeps the drawer live.
+  const [drawerUnitId, setDrawerUnitId] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
 
   const filtered = useMemo(() => {
@@ -68,6 +73,10 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
   }, [allUnits, status, type, floor, bedrooms, priceMin, priceMax, areaMin, areaMax, sortKey]);
 
   const selectedUnits = useMemo(() => filtered.filter((u) => selected.has(u.id)), [filtered, selected]);
+  const drawerUnit = useMemo(
+    () => (drawerUnitId ? allUnits.find((u) => u.id === drawerUnitId) ?? null : null),
+    [allUnits, drawerUnitId],
+  );
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -143,7 +152,7 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
             </thead>
             <tbody>
               {filtered.map((u) => (
-                <tr key={u.id} className="border-b border-sand/30 hover:bg-cream/50 cursor-pointer" onClick={() => setDrawerUnit(u)}>
+                <tr key={u.id} className="border-b border-sand/30 hover:bg-cream/50 cursor-pointer" onClick={() => setDrawerUnitId(u.id)}>
                   <td className="p-2" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} className="rounded border-sand text-copper focus:ring-copper/30" />
                   </td>
@@ -164,7 +173,7 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
       )}
       <div className="text-xs text-charcoal/40">{isAr ? `${filtered.length} من ${allUnits.length} وحدة` : `${filtered.length} of ${allUnits.length} units`}</div>
 
-      <UnitDrawer unit={drawerUnit} projectName={projectName} isAr={isAr} onClose={() => setDrawerUnit(null)} />
+      <UnitDrawer unit={drawerUnit} projectName={projectName} isAr={isAr} onClose={() => setDrawerUnitId(null)} />
       <UnitCompareModal open={compareOpen} onClose={() => setCompareOpen(false)} units={selectedUnits} projectName={projectName} isAr={isAr} />
     </div>
   );

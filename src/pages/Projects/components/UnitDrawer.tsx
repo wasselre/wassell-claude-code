@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import { X, ExternalLink, FileText } from 'lucide-react';
+import { X, ExternalLink, FileText, Loader2, Check } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
+import { useAppStore } from '@/stores/appStore';
+import { canEditRecord, getFieldPermission } from '@/lib/permissions';
 import { signViewUrls } from '@/lib/files/client';
 import { isFileIdValue } from '@/pages/Records/components/useFileRowMap';
+import { modelByName, fieldByCandidates } from '@/lib/projects/projectView';
 import type { UnitView } from '@/lib/projects/unitView';
 
 interface UnitDrawerProps {
@@ -56,6 +59,104 @@ function groupUnitPlans(rows: PlanRow[], isAr: boolean) {
     .sort((a, b) => a.down - b.down);
 }
 
+/**
+ * The unit's status (available / reserved / sold / under construction) as a
+ * one-click editor. This is the fast path sales asks for — mark a unit sold
+ * from the project page without opening its record form. Each click writes the
+ * unit through `saveRecord` (optimistic-concurrency aware); the DB triggers
+ * then recompute the project's unit rollups and Realtime pushes the new
+ * counts back, so the KPI cards above follow on their own.
+ *
+ * Falls back to a plain badge when the model/field is missing, or when the
+ * user may not edit this record or this field.
+ */
+function UnitStatusEditor({ unit, isAr }: { unit: UnitView; isAr: boolean }) {
+  const { models, users, profiles, roles, currentUserId, previewProfileId, saveRecord, addToast } = useAppStore();
+  const [savingValue, setSavingValue] = useState<string | null>(null);
+
+  const unitsModel = modelByName(models, 'units');
+  const statusField = fieldByCandidates(unitsModel, ['unit_status']);
+  const options = statusField?.options ?? [];
+
+  const currentBadge = unit.status
+    ? <Badge label={isAr ? unit.status.label_ar : unit.status.label_en} color={unit.status.color ?? undefined} />
+    : <span className="text-sm text-charcoal/40">{DASH}</span>;
+
+  if (!unitsModel || !statusField || options.length === 0) return currentBadge;
+  const editable =
+    canEditRecord(currentUserId, users, profiles, roles, unitsModel, unit.raw, previewProfileId) &&
+    getFieldPermission(currentUserId, users, profiles, unitsModel.id, statusField, previewProfileId) === 'editable';
+  if (!editable) return currentBadge;
+
+  const current = typeof unit.raw.data[statusField.name] === 'string'
+    ? (unit.raw.data[statusField.name] as string)
+    : '';
+
+  const apply = async (value: string) => {
+    if (value === current || savingValue) return;
+    setSavingValue(value);
+    try {
+      const res = await saveRecord(
+        {
+          ...unit.raw,
+          data: { ...unit.raw.data, [statusField.name]: value },
+          updated_at: new Date().toISOString(),
+        },
+        // Pass the version we loaded with so a concurrent edit surfaces as a
+        // conflict instead of silently overwriting the other writer.
+        { expectedVersion: unit.raw.version ?? null },
+      );
+      if (res.status === 'conflict') {
+        addToast(
+          isAr ? 'تم تعديل هذه الوحدة في مكان آخر — أعد التحميل' : 'This unit was edited elsewhere — reload',
+          'error',
+        );
+        return;
+      }
+      const label = options.find((o) => o.value === value);
+      addToast(
+        isAr
+          ? `تم تحديث حالة الوحدة إلى «${label ? label.label_ar : value}»`
+          : `Unit status set to “${label ? label.label_en : value}”`,
+        'success',
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(isAr ? `تعذّر حفظ الحالة: ${msg}` : `Could not save status: ${msg}`, 'error');
+    } finally {
+      setSavingValue(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((o) => {
+        const active = o.value === current;
+        const busy = savingValue === o.value;
+        const color = o.color ?? '#B8734F';
+        return (
+          <button
+            key={o.id}
+            type="button"
+            onClick={() => void apply(o.value)}
+            disabled={savingValue !== null}
+            aria-pressed={active}
+            className="text-xs px-2 py-1 rounded-full border inline-flex items-center gap-1 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            style={
+              active
+                ? { backgroundColor: `${color}22`, borderColor: color, color }
+                : { backgroundColor: 'transparent', borderColor: '#D4B89680', color: '#4A4E54' }
+            }
+          >
+            {busy ? <Loader2 size={12} className="animate-spin" /> : active ? <Check size={12} /> : null}
+            {isAr ? o.label_ar : o.label_en}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex justify-between gap-3 py-1.5 text-sm border-b border-sand/30 last:border-0">
@@ -97,7 +198,6 @@ export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDra
             <div className="text-lg font-bold text-charcoal">{unit.code ?? `#${unit.id.slice(0, 8)}`}</div>
             <div className="text-sm text-charcoal/50">{projectName ?? ''}</div>
             <div className="mt-1 flex gap-1.5">
-              {unit.status && <Badge label={lab(unit.status)} color={unit.status.color ?? undefined} />}
               {unit.type && <Badge label={lab(unit.type)} color={unit.type.color ?? '#C09B5F'} />}
             </div>
           </div>
@@ -105,7 +205,13 @@ export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDra
         </div>
 
         <div className="p-4 space-y-5 flex-1">
-          {/* Status & price */}
+          {/* Status — editable in place (one click to mark sold/reserved). */}
+          <section>
+            <h3 className="text-xs font-bold uppercase tracking-wide text-copper mb-1.5">{isAr ? 'حالة الوحدة' : 'Unit status'}</h3>
+            <UnitStatusEditor unit={unit} isAr={isAr} />
+          </section>
+
+          {/* Price */}
           <section>
             <h3 className="text-xs font-bold uppercase tracking-wide text-copper mb-1">{isAr ? 'السعر' : 'Price'}</h3>
             <Row label={isAr ? 'السعر الإجمالي' : 'Total price'} value={unit.totalPrice !== null ? SAR(unit.totalPrice, isAr) : DASH} />
