@@ -90,6 +90,70 @@
 -- `file_links_drain_dirty()` first. `file_links_reconcile()` is unaffected: it
 -- runs in its own transaction.
 --
+-- ── OPERATIONAL CONSTRAINTS — READ BEFORE ANY BULK OR ADMIN WRITE ──────────
+-- The drain is LINEAR in the number of distinct targets one transaction dirties.
+-- Measured on PostgreSQL 17 at 9,209 targets / 15,219 edges, one statement per
+-- transaction, the same database with and without these four triggers:
+--
+--   rewriting identical `data`                    0.170 ms -> 0.203 ms
+--   changing a non-file field                     0.181 ms -> 0.225 ms
+--   repointing a scalar file field                0.261 ms -> 8.46  ms
+--   editing a 5-element image array               0.259 ms -> 9.11  ms
+--   UPDATE 2,000 rows in ONE transaction            12.1 ms -> 27.0  s
+--   DELETE 2,000 rows in ONE transaction             3.1 ms -> 11.6  s
+--   DELETE 2,000 rows, model with NO file field      5.5 ms ->  6.2  s
+--
+-- Interactive saves are fine: every application path writes ONE record per
+-- transaction, and an irrelevant change costs nothing. The four constraints
+-- below are where that stops being true.
+--
+-- 1. LARGE FREEZE / MASS-DELETE MUST RUN WITH THE TRIGGERS DISABLED.
+--    `freeze_model()` runs `DELETE FROM records WHERE model_id = …` in ONE
+--    transaction, and `records_model_id_fkey` is ON DELETE CASCADE so deleting a
+--    model does the same. Above `file_link_bulk_target_threshold()` targets the
+--    drain takes the global key EXCLUSIVELY, so for its whole run every OTHER
+--    committing transaction that dirties a target blocks. On production volumes
+--    that is roughly a minute for a 19k-row model. Procedure:
+--
+--      ALTER TABLE public.records        DISABLE TRIGGER records_sync_file_links;
+--      ALTER TABLE public.files          DISABLE TRIGGER files_sync_file_links;
+--      ALTER TABLE public.document_links DISABLE TRIGGER document_links_sync_file_links;
+--      ALTER TABLE public.mos_assets     DISABLE TRIGGER mos_assets_sync_file_links;
+--      -- perform the freeze / model delete / bulk migration
+--      ALTER TABLE public.records        ENABLE TRIGGER records_sync_file_links;
+--      ALTER TABLE public.files          ENABLE TRIGGER files_sync_file_links;
+--      ALTER TABLE public.document_links ENABLE TRIGGER document_links_sync_file_links;
+--      ALTER TABLE public.mos_assets     ENABLE TRIGGER mos_assets_sync_file_links;
+--      SELECT * FROM public.file_links_resync_all();
+--      SELECT category, detail, value FROM public.file_links_reconcile()
+--       WHERE category IN ('missing_edge','orphan_edge','drift');   -- must all be 0
+--
+--    Disable all FOUR source triggers, never only the drain trigger — see the
+--    ROLLBACK block. The same applies to any future `INSERT … SELECT` or
+--    set-based UPDATE over these tables: it needs this procedure, or its own
+--    set-based strategy. It is NOT covered by the current design.
+--
+-- 2. `statement_timeout` DOES NOT BOUND THE DRAIN. Measured: with
+--    `statement_timeout = 3s`, a 2,000-row UPDATE ran 22.9 s and committed. The
+--    timer is disarmed before commit-time triggers run, so the role-level
+--    timeout (`authenticated` = 8 s) is NOT a backstop against a runaway bulk
+--    write. Size bulk work with constraint 1, not with a timeout.
+--
+-- 3. `SET CONSTRAINTS ALL IMMEDIATE` IS UNSUPPORTED for any transaction that
+--    writes these four tables. It makes the drain fire per row, so the
+--    transaction acquires its target locks incrementally in data-dependent
+--    order — precisely the shape that deadlocked 11 runs in 12 and the reason
+--    this design defers. Nothing in the application issues it; do not add it.
+--
+-- 4. DO NOT MIX `file_links_sync_target()` WITH OTHER DIRTY TARGETS IN ONE
+--    TRANSACTION. It takes a per-target lock OUTSIDE the drain's single
+--    ascending batch, so a transaction that calls it and then dirties other
+--    targets holds one lock while waiting for the batch — hold-and-wait outside
+--    the canonical order, which can deadlock against a transaction doing the
+--    same in the opposite order. It is a service-role tool for converging ONE
+--    target in a transaction that does nothing else; the trigger path uses
+--    mark_dirty + drain and is unaffected.
+--
 -- ROLLBACK: at the foot of this file. It drops only Phase 2 objects; the
 -- Phase 1 tables, backfill and reconciliation survive untouched.
 -- ============================================================================
@@ -471,6 +535,13 @@ $$;
 
 -- Converge one target on its own, taking the locks in canonical order. For
 -- operators and tests; the trigger path uses mark_dirty + drain instead.
+--
+-- USE IT ALONE. It takes a per-target lock OUTSIDE the drain's single ascending
+-- batch, so a transaction that calls it and ALSO dirties other targets ends up
+-- holding one target lock while waiting for the batch — hold-and-wait outside
+-- the canonical order, which two such transactions can deadlock on. Constraint 4
+-- in the header. Correct use is one target in a transaction that does nothing
+-- else; if you want several, write the sources and let the drain do it.
 CREATE OR REPLACE FUNCTION public.file_links_sync_target(p_model_id uuid, p_record_id uuid)
 RETURNS void
 LANGUAGE plpgsql
@@ -798,10 +869,15 @@ COMMIT;
 -- DROP FUNCTION IF EXISTS public.file_link_bulk_target_threshold();
 -- DROP FUNCTION IF EXISTS public.file_link_global_lock_key();
 -- DROP FUNCTION IF EXISTS public.file_link_target_lock_key(uuid,uuid);
--- -- restore the Phase 1 zero-arg functions to their standalone bodies BEFORE
--- -- dropping the scoped ones, or the wrappers are left dangling:
--- --   \i supabase/migrations/2026-08-10_file_links_projection.sql   (idempotent)
+-- -- The scoped functions have no dependants: Phase 1's zero-arg functions were
+-- -- never rewritten as wrappers over them (section A explains why they are left
+-- -- byte-identical), and nothing else calls them once the objects above are gone.
+-- -- So they drop last, and no Phase 1 file has to be re-run.
 -- DROP FUNCTION IF EXISTS public.file_link_live_sources_scoped(uuid,uuid);
 -- DROP FUNCTION IF EXISTS public.file_link_field_occurrences_scoped(uuid,uuid);
 -- COMMIT;
+--
+-- After EITHER rollback, Phase 1 is the whole system again: `file_links_backfill()`
+-- refreshes the snapshot, `file_links_reconcile()` measures its drift, and both
+-- are untouched by this migration.
 -- ============================================================================
