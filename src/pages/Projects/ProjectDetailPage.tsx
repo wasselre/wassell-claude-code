@@ -8,6 +8,7 @@ import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import RecordFormPage from '@/pages/Records/RecordFormPage';
+import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import {
   resolveProjectView, modelByName, fieldByCandidates, optionsFor, optionFor,
   formatPriceRange, formatRange, asString, asFiniteNumber, type ProjectView,
@@ -69,6 +70,8 @@ export default function ProjectDetailPage() {
 
   const [tab, setTab] = useState<TabKey>('overview');
   const [matchOpen, setMatchOpen] = useState(false);
+  // Edit the all_projects master in a popup instead of navigating to its form.
+  const [editMasterOpen, setEditMasterOpen] = useState(false);
   // Hook must run before any early return: resolve the hero image (main_image,
   // or the portfolio's hero_image_override) from a files.id to a signed URL.
   const heroRef = (isPortfolio ? asString(portfolioRecord?.data?.hero_image_override) : null) ?? view?.imageRef ?? null;
@@ -208,9 +211,21 @@ export default function ProjectDetailPage() {
                 <Building2 size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'المشروع الرئيسي' : 'Master project'}
               </Button>
             )}
-            <Button variant="ghost" onClick={() => navigate(editHref)}>
-              <Pencil size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'تحرير' : 'Edit'}
-            </Button>
+            {/* Portfolio mode keeps a second Edit for the portfolio-only fields
+                (status, display order, pitch…) which live on the our_projects
+                record, so the two Edits are labelled apart. */}
+            {isPortfolio && (
+              <Button variant="ghost" onClick={() => navigate(editHref)}>
+                <Pencil size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'تحرير المحفظة' : 'Edit portfolio'}
+              </Button>
+            )}
+            {/* Edits the all_projects record in a popup — the project facts are
+                one click away from wherever you are, with no page jump. */}
+            {view && (
+              <Button variant="ghost" onClick={() => setEditMasterOpen(true)}>
+                <Pencil size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'تحرير المشروع' : 'Edit project'}
+              </Button>
+            )}
             <Button variant="secondary" onClick={() => setMatchOpen(true)}>
               <Search size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'مطابقة عميل' : 'Match client'}
             </Button>
@@ -274,6 +289,15 @@ export default function ProjectDetailPage() {
       </div>
 
       <MatchClientModal open={matchOpen} onClose={() => setMatchOpen(false)} isAr={isAr} />
+
+      {editMasterOpen && view && (
+        <RecordFormModal
+          modelId={model.id}
+          recordId={view.id}
+          onClose={() => setEditMasterOpen(false)}
+          openInPageHref={`/model/all_projects/${view.id}?generic=1`}
+        />
+      )}
     </div>
   );
 }

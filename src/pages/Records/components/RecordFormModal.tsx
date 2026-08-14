@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { Save, Loader2, ExternalLink } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { useFieldPermissionResolver } from '@/hooks/usePermission';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import SectionBlock from './SectionBlock';
@@ -81,6 +82,13 @@ export default function RecordFormModal({
   // when the model can't be found.
   useAutoLink({ model, formData, setFormData });
   useAutoFill({ model, formData, setFormData });
+
+  // Same per-field permission resolution the full RecordFormPage applies, so
+  // computed values (formulas, auto_id, mirrors) and trigger-maintained
+  // rollups (`is_rollup` / `read_only` — e.g. the 13 all_projects unit
+  // rollups) render disabled here too instead of inviting an edit the DB
+  // would immediately overwrite.
+  const resolveFieldPermission = useFieldPermissionResolver(modelId);
 
   const visibleSections = useMemo(() => {
     if (!model) return [];
@@ -219,6 +227,7 @@ export default function RecordFormModal({
             formData={formData}
             onChange={handleFieldChange}
             currentModel={model}
+            getFieldPermission={resolveFieldPermission}
             mirrorEdits={{}}
             onMirrorFieldChange={() => {
               /* noop — modal doesn't support mirrored-section sync-back in v1 */

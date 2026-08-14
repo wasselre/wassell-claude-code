@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText, Search } from 'lucide-react';
+import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText, Search, Pencil } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import RecordListPage from '@/pages/Records/RecordListPage';
+import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import {
   resolveProjectView, modelByName, fieldByCandidates, optionFor, formatPriceRange,
   asString, asFiniteNumber, type ProjectView, type OptionView,
@@ -84,6 +85,10 @@ export default function OurProjectsPortfolioPage() {
   const [developer, setDeveloper] = useState('');
   const [pstatus, setPstatus] = useState('');
   const [gap, setGap] = useState<'all' | 'our_brochure' | 'dev_brochure' | 'location'>('all');
+  // all_projects record id currently open in the edit popup (null = closed).
+  // Editing the MASTER project from here keeps the user on the portfolio grid
+  // instead of bouncing them through the project page to a form.
+  const [editMasterId, setEditMasterId] = useState<string | null>(null);
 
   const cities = useMemo(() => [...new Set(items.map((i) => i.linked?.city).filter((x): x is string => !!x))].sort(), [items]);
   const developers = useMemo(() => [...new Set(items.map((i) => i.linked?.developer).filter((x): x is string => !!x))].sort(), [items]);
@@ -182,8 +187,29 @@ export default function OurProjectsPortfolioPage() {
         <div className="card p-16 text-center text-charcoal/40">{isAr ? 'لا توجد مشاريع مطابقة.' : 'No matching projects.'}</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((item) => <PortfolioCard key={item.ourId} item={item} isAr={isAr} onOpenDetail={() => navigate(`/model/our_projects/${item.ourId}`)} onEdit={() => navigate(`/model/our_projects/${item.ourId}?generic=1`)} />)}
+          {filtered.map((item) => (
+            <PortfolioCard
+              key={item.ourId}
+              item={item}
+              isAr={isAr}
+              onOpenDetail={() => navigate(`/model/our_projects/${item.ourId}`)}
+              onEdit={() => navigate(`/model/our_projects/${item.ourId}?generic=1`)}
+              onEditMaster={item.linkedId ? () => setEditMasterId(item.linkedId!) : undefined}
+            />
+          ))}
         </div>
+      )}
+
+      {/* Edit the linked all_projects master in place. `openInPageHref` keeps
+          the full-page form one click away for anything the modal can't do
+          (mirrored sections, delete, custom buttons). */}
+      {editMasterId && allModel && (
+        <RecordFormModal
+          modelId={allModel.id}
+          recordId={editMasterId}
+          onClose={() => setEditMasterId(null)}
+          openInPageHref={`/model/all_projects/${editMasterId}?generic=1`}
+        />
       )}
     </div>
   );
@@ -203,7 +229,7 @@ function PortfolioKpi({ icon, label, value, tone }: { icon: React.ReactNode; lab
   );
 }
 
-function PortfolioCard({ item, isAr, onOpenDetail, onEdit }: { item: PortfolioItem; isAr: boolean; onOpenDetail: () => void; onEdit: () => void }) {
+function PortfolioCard({ item, isAr, onOpenDetail, onEdit, onEditMaster }: { item: PortfolioItem; isAr: boolean; onOpenDetail: () => void; onEdit: () => void; onEditMaster?: () => void }) {
   const linked = item.linked;
   const heroUrl = useSignedImage(item.heroOverride ?? linked?.imageRef ?? null);
   const name = linked?.name ?? asString(item.ourData.project_name) ?? `#${item.ourId.slice(0, 8)}`;
@@ -237,10 +263,21 @@ function PortfolioCard({ item, isAr, onOpenDetail, onEdit }: { item: PortfolioIt
           <span className="font-semibold text-charcoal">{formatPriceRange(linked?.priceRange ?? null, isAr) ?? dash}</span>
         </div>
 
-        <div className="mt-3 pt-2 border-t border-sand/40">
-          <Button variant="primary" className="w-full !py-1.5 text-sm" onClick={onOpenDetail}>
+        <div className="mt-3 pt-2 border-t border-sand/40 flex items-center gap-2">
+          <Button variant="primary" className="flex-1 !py-1.5 text-sm" onClick={onOpenDetail}>
             <ExternalLink size={13} className="inline -mt-0.5 me-1" /> {isAr ? 'التفاصيل' : 'Details'}
           </Button>
+          {/* Edits the linked all_projects master in a popup — no page jump. */}
+          {onEditMaster && (
+            <Button
+              variant="secondary"
+              className="!py-1.5 text-sm"
+              onClick={onEditMaster}
+              title={isAr ? 'تحرير بيانات المشروع (المشروع الرئيسي)' : 'Edit project data (master project)'}
+            >
+              <Pencil size={13} className="inline -mt-0.5 me-1" /> {isAr ? 'تحرير' : 'Edit'}
+            </Button>
+          )}
         </div>
         <button onClick={onEdit} className="mt-1 text-[11px] text-charcoal/40 hover:text-copper">{isAr ? 'تحرير إعدادات المحفظة' : 'Edit portfolio settings'}</button>
       </div>
