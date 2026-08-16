@@ -48,13 +48,15 @@ const timeLabel = (s: MosScene, isAr: boolean): string => {
 };
 
 export default function SceneTable({
-  contentId, contentTitle, projectId, scenes, canEdit, canRaiseShoot = false, isAr, onChange,
+  contentId, contentTitle, projectId, scenes, canEdit, canDelete = false, canRaiseShoot = false, isAr, onChange,
 }: {
   contentId: string;
   contentTitle: string;
   projectId: string | null;
   scenes: MosScene[];
   canEdit: boolean;
+  /** Deleting a scene is its own gate (`delete_records`), split from canEdit. */
+  canDelete?: boolean;
   /**
    * Screen 36's ops rule: the operations supervisor may raise the shoot
    * request EARLY — before the creative approval — so filming doesn't wait
@@ -191,7 +193,7 @@ export default function SceneTable({
                     <th>{isAr ? 'التعليق الصوتي' : 'Voice-over'}</th>
                     <th style={{ width: 150 }}>{isAr ? 'نص على الشاشة' : 'On-screen text'}</th>
                     <th style={{ width: canEdit ? 168 : 104 }}>{isAr ? 'التصوير' : 'Footage'}</th>
-                    {canEdit && <th style={{ width: 36 }} />}
+                    {canDelete && <th style={{ width: 36 }} />}
                   </tr>
                 </thead>
                 <tbody>
@@ -282,7 +284,7 @@ export default function SceneTable({
                           </span>
                         )}
                       </td>
-                      {canEdit && (
+                      {canDelete && (
                         <td style={{ padding: 6 }}>
                           <button
                             type="button"

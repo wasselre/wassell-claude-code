@@ -2547,6 +2547,7 @@ function ExecutionModal({
   onSaved: (rows: MosExecution[]) => void;
 }) {
   const addToast = useAppStore((s) => s.addToast);
+  const { can } = useWorkspace();
   const [platform, setPlatform] = useState(execution?.platform ?? 'meta');
   // The one platform-settings field worth asking at creation time — the
   // platform's real objective enum. The full form lives on the detail page.
@@ -2639,7 +2640,7 @@ function ExecutionModal({
       wide
       footer={
         <>
-          {execution && (
+          {execution && can('delete_records') && (
             <button type="button" className="btn btn-d" onClick={() => void remove()} disabled={busy}>
               {isAr ? 'حذف' : 'Delete'}
             </button>

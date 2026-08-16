@@ -332,7 +332,7 @@ const CAPABILITIES = [
   'read', 'comment', 'write_content', 'view_content_body', 'compare_versions',
   'view_activity', 'assign', 'assign_task', 'schedule', 'publish', 'approve_creative',
   'approve_process', 'approve_budget', 'manage_assets', 'enter_metrics',
-  'review_performance', 'manage_settings', 'manage_roles',
+  'review_performance', 'delete_records', 'manage_settings', 'manage_roles',
 ] as const;
 
 /** The notification channels a step may permit; AND-ed with each role's grid. */

@@ -689,6 +689,7 @@ export default function ContentDetailPage() {
                     projectId={item.project_id}
                     scenes={scenes}
                     canEdit={canEditNow}
+                    canDelete={can('delete_records')}
                     canRaiseShoot={can('assign')}
                     isAr={isAr}
                     onChange={setScenes}
