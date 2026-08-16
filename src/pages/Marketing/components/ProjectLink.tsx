@@ -40,10 +40,12 @@ interface Props {
 }
 
 export default function ProjectLink({ projectIds, variant = 'chip' }: Props) {
-  const { isAr, projectName } = useWorkspace();
-  // The Our-Projects membership lives in the generic records store (loaded by
-  // appStore.initialize() at the app root, so it's present in the /m workspace
-  // too). We read it to map an all_projects master id → its our_projects record.
+  const { isAr, projectName, projects } = useWorkspace();
+  // Secondary source for the all_projects → our_projects mapping: the generic
+  // records store. It's only reliably populated once appStore.initialize() has
+  // loaded records, which is NOT guaranteed by the time the /m workspace paints
+  // — so the PRIMARY source is the marketing `projects` list (always loaded
+  // before render, carries `our_project_id` from the server).
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
 
@@ -52,6 +54,10 @@ export default function ProjectLink({ projectIds, variant = 'chip' }: Props) {
 
   /** all_projects master id → the single-project route, preferring Our Projects. */
   const hrefFor = (allProjectsId: string): string => {
+    // 1) Reliable: the marketing projects list carries the server-resolved id.
+    const fromCtx = projects.find((p) => p.id === allProjectsId)?.our_project_id;
+    if (fromCtx) return `/model/our_projects/${fromCtx}`;
+    // 2) Fallback: the generic records store, IF it happens to be loaded.
     const ourModel = modelByName(models, 'our_projects');
     const projectField = fieldByCandidates(ourModel, ['project']);
     if (ourModel && projectField) {
@@ -65,7 +71,7 @@ export default function ProjectLink({ projectIds, variant = 'chip' }: Props) {
       });
       if (match) return `/model/our_projects/${match.id}`;
     }
-    // Same ProjectDetailPage, always readable for a public project.
+    // 3) Same ProjectDetailPage, always readable for a public project.
     return `/model/all_projects/${allProjectsId}`;
   };
 

@@ -48,10 +48,14 @@ This workspace answers the three questions the old process could not:
   that ONE project's record in the **Our Projects** module
   (`/model/our_projects/:ourId`, the shared `ProjectDetailPage`) **in a new tab**
   (a real `<a target="_blank">` — keeps the marketer's place in the workspace,
-  and middle-/⌘-click work), not the projects list. Marketing stores the `all_projects` master id, so the button
-  maps it to the `our_projects` record via that record's `project` lookup field
-  (falling back to `/model/all_projects/:id` — the same page — if it can't be
-  resolved). Resolution of WHICH project is direct first (`project_id`/
+  and middle-/⌘-click work), not the projects list. Marketing stores the
+  `all_projects` master id; the mapping to the `our_projects` record is served
+  on each project by **`projects_list.our_project_id`** (resolved server-side
+  from `v_our_projects.project`, so it's present the moment the workspace paints
+  — a generic-records-store lookup is only a fallback, since that store isn't
+  reliably loaded in `/m` yet). Falls back to `/model/all_projects/:id` (the
+  same page) only when neither resolves. Resolution of WHICH project is direct
+  first (`project_id`/
   `project_ids`), then indirect: a content item with no project of its own uses
   its **campaign's** project(s); a manual task with none uses its linked
   **content item's** project. One button per linked project. Present on content

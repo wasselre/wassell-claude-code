@@ -4943,7 +4943,19 @@ export default async function handler(req: Request): Promise<Response> {
           .order('project_name', { ascending: true }).limit(1000);
         const f = dbFail(rows.error);
         if (f) return f;
-        return jsonOk({ projects: rows.data ?? [] });
+        // Map each public master → its Our-Projects record id, so the marketing
+        // UI can deep-link into the our_projects module (not all_projects).
+        // Best-effort: if v_our_projects is unreadable for this caller, the id
+        // stays null and the button falls back to the all_projects page (the
+        // same ProjectDetailPage).
+        const our = await sb.from('v_our_projects').select('id, project').limit(2000);
+        const ourByMaster = new Map<string, string>();
+        for (const r of (our.data ?? []) as Array<{ id: string; project: string | null }>) {
+          if (r.project) ourByMaster.set(r.project, r.id);
+        }
+        const projects = ((rows.data ?? []) as Array<{ id: string; project_name: string | null }>)
+          .map((p) => ({ id: p.id, project_name: p.project_name, our_project_id: ourByMaster.get(p.id) ?? null }));
+        return jsonOk({ projects });
       }
 
       /* -------------------------------------------------------- */

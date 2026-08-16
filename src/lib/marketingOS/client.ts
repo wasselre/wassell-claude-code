@@ -924,6 +924,10 @@ export interface MosComment {
 export interface MosProject {
   id: string;
   project_name: string | null;
+  /** The Our-Projects record id for this master (from `projects_list`), so the
+   *  UI can open `/model/our_projects/:ourId`. Null when the caller can't see
+   *  the Our-Projects record (button falls back to the all_projects page). */
+  our_project_id?: string | null;
 }
 
 export interface MosOverview {
