@@ -179,16 +179,19 @@ P_USER=$(sed  -n 's/.*p95=\([0-9.]*\).*/\1/p' <<<"$A_USER")
 echo "== write latency must not regress"
 # B2A touches only SELECT-path predicates, but the files table carries the
 # Phase 2 sync trigger and B1's fill trigger, so writes are timed explicitly.
-WRITE_MS=$(psql "$DBURL" -v ON_ERROR_STOP=1 -tAqc "
-  SELECT round(EXTRACT(epoch FROM (
-    SELECT clock_timestamp() - t FROM (
-      SELECT clock_timestamp() AS t,
-             (SELECT count(*) FROM (
-                UPDATE public.files SET description = 'b2a-write-probe'
-                 WHERE storage_path LIKE 'scale/%'
-                   AND right(id::text,12)::bigint <= 200
-                RETURNING 1) u) AS n
-    ) s)) * 1000, 1)")
+WRITE_MS=$(psql "$DBURL" -v ON_ERROR_STOP=1 -tAq <<'SQL' | grep -E '^WRITE ' | sed 's/^WRITE //'
+CREATE TEMP TABLE _w(ms numeric);
+DO $$
+DECLARE t0 timestamptz := clock_timestamp();
+BEGIN
+  UPDATE public.files SET description = 'b2a-write-probe'
+   WHERE storage_path LIKE 'scale/%' AND right(id::text,12)::bigint <= 200;
+  INSERT INTO _w VALUES (EXTRACT(epoch FROM clock_timestamp() - t0) * 1000);
+END $$;
+SELECT 'WRITE ' || round(ms,1) FROM _w;
+DROP TABLE _w;
+SQL
+)
 echo "   200 metadata UPDATEs in ${WRITE_MS} ms"
 [ "$(q "SELECT count(*) FROM public.file_link_dirty_targets")" = "0" ] \
   || { echo "FAIL: writes left dirty targets"; exit 1; }
