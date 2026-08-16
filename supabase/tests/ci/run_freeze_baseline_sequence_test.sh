@@ -29,10 +29,11 @@ M2=supabase/migrations/2026-09-05_02_raw_capture.sql
 M3=supabase/migrations/2026-09-05_03_field_catalog_and_gaps.sql
 M4=supabase/migrations/2026-09-05_04_ingestion_audit.sql
 M6=supabase/migrations/2026-09-05_06_listing_provenance_outbox.sql
+M7=supabase/migrations/2026-09-05_07_gate_a_acl_hardening.sql
 ASSERTS=supabase/tests/ci/assert_market_ingest_gate_a.sql
 
 : "${PGURL:?PGURL must point at a Postgres superuser maintenance database}"
-for f in "$FIX" "$BASE" "$RECON" "$M1" "$M2" "$M3" "$M4" "$M6" "$ASSERTS"; do
+for f in "$FIX" "$BASE" "$RECON" "$M1" "$M2" "$M3" "$M4" "$M6" "$M7" "$ASSERTS"; do
   [ -f "$f" ] || { echo "ERROR: missing $f" >&2; exit 1; }
 done
 
@@ -99,6 +100,61 @@ echo '   -- _06 provenance/outbox applied'
 
 assert_t t_seq "SELECT count(*)=2 FROM pg_constraint c JOIN pg_class f ON f.oid=c.confrelid WHERE c.contype='f' AND f.relname='market_listings' AND c.conrelid IN ('public.listing_field_provenance'::regclass,'public.mirror_outbox'::regclass)" \
   "_06 must keep BOTH required foreign keys to market_listings"
+
+# --- ACL hardening: prove the defect exists, then prove _07 removes it -------
+# The fixture reproduces Supabase's ALTER DEFAULT PRIVILEGES, so at this point
+# authenticated and service_role have inherited ALL on every Gate A table.
+BROAD=$(q t_seq "SELECT count(*) FROM (
+  SELECT c.relname FROM pg_class c, aclexplode(c.relacl) a
+   WHERE c.relnamespace='public'::regnamespace
+     AND c.relname IN ('listing_sources','raw_blobs','raw_snapshots','raw_snapshot_artifacts','page_capture_manifest',
+       'source_field_catalog','source_field_mappings','schema_gap_events','ingestion_runs','ingestion_items',
+       'listing_change_events','listing_change_review','listing_field_provenance','mirror_outbox','v_source_field_status')
+     AND pg_get_userbyid(a.grantee) IN ('authenticated','service_role')
+     AND a.privilege_type <> 'SELECT'
+   GROUP BY 1) x")
+[ "$BROAD" -gt 0 ] || { echo "FAIL: fixture did not reproduce the broad default ACLs — _07 would prove nothing" >&2; exit 1; }
+echo "   -- pre-_07: $BROAD Gate A objects carry non-SELECT grants (defect reproduced)"
+
+# service_role has BYPASSRLS, so its write grants are DIRECTLY reachable. Prove it.
+assert_t t_seq "SELECT has_table_privilege('service_role','public.raw_blobs','TRUNCATE')"   "pre-_07 service_role should still hold TRUNCATE (this is the exposure _07 closes)"
+
+run t_seq "$M7"
+echo '   -- 2026-09-05_07 ACL hardening applied'
+
+# Exact final matrix over all fifteen objects.
+assert_t t_seq "SELECT count(*)=0 FROM (
+  SELECT c.relname FROM pg_class c, aclexplode(c.relacl) a
+   WHERE c.relnamespace='public'::regnamespace
+     AND c.relname IN ('listing_sources','raw_blobs','raw_snapshots','raw_snapshot_artifacts','page_capture_manifest',
+       'source_field_catalog','source_field_mappings','schema_gap_events','ingestion_runs','ingestion_items',
+       'listing_change_events','listing_change_review','listing_field_provenance','mirror_outbox','v_source_field_status')
+     AND ( (pg_get_userbyid(a.grantee) IN ('anon') )
+        OR (a.grantee = 0)
+        OR (pg_get_userbyid(a.grantee) IN ('authenticated','service_role') AND a.privilege_type <> 'SELECT')
+        OR a.is_grantable )
+   GROUP BY 1) x"   "post-_07 ACL matrix must be exactly: PUBLIC none, anon none, authenticated SELECT, service_role SELECT, no grant options"
+
+# Neither role may write, by privilege, on any Gate A table.
+for R in authenticated service_role; do
+  for P in INSERT UPDATE DELETE TRUNCATE; do
+    assert_t t_seq "SELECT NOT has_table_privilege('$R','public.raw_blobs','$P')"       "$R must not hold $P on raw_blobs after _07"
+    assert_t t_seq "SELECT NOT has_table_privilege('$R','public.schema_gap_events','$P')"       "$R must not hold $P on schema_gap_events after _07"
+  done
+  assert_t t_seq "SELECT has_table_privilege('$R','public.raw_blobs','SELECT')"     "$R must retain SELECT on raw_blobs after _07"
+done
+
+# service_role SELECT must still work end-to-end despite BYPASSRLS.
+assert_t t_seq "SELECT (SELECT count(*) FROM public.listing_sources)=4"   "listing_sources must still be readable after hardening"
+
+# Idempotent.
+run t_seq "$M7"
+assert_t t_seq "SELECT count(*)=0 FROM (
+  SELECT c.relname FROM pg_class c, aclexplode(c.relacl) a
+   WHERE c.relnamespace='public'::regnamespace AND c.relname='raw_blobs'
+     AND pg_get_userbyid(a.grantee) IN ('authenticated','service_role') AND a.privilege_type <> 'SELECT'
+   GROUP BY 1) x" "re-applying _07 must change nothing"
+echo '   -- _07 idempotent'
 
 psql -w "$(DBURL t_seq)" -v ON_ERROR_STOP=1 -q -f "$ASSERTS"
 echo '   -- Gate A assertion suite passed on the full sequence'

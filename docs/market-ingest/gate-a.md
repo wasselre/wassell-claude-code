@@ -384,6 +384,44 @@ metric, not hidden.
 
 ---
 
+## 12b. Supabase default privileges — the ACL trap (added 2026-08-16)
+
+Supabase ships `ALTER DEFAULT PRIVILEGES` on schema `public` granting **ALL** on every new
+table to `anon`, `authenticated` **and** `service_role`, from two grantors (`postgres` and
+`supabase_admin`).
+
+Gate A `_01…_04` and `_06` each did `REVOKE ALL … FROM PUBLIC, anon` then
+`GRANT SELECT … TO authenticated, service_role`. That stripped `anon` correctly, but nothing
+revoked the inherited default from `authenticated` or `service_role`, so on production all
+fourteen tables and the view landed holding all eight privileges instead of SELECT.
+
+**This was a live exposure, not a cosmetic one.** For `authenticated` the excess was
+unreachable — RLS with a SELECT-only admin policy refuses INSERT (SQLSTATE 42501). For
+`service_role` it was **directly exercisable**, because `service_role` holds `BYPASSRLS`, so
+RLS never evaluates for it. Append-only triggers still blocked UPDATE/DELETE on the evidence
+tables, but `TRUNCATE` bypasses triggers entirely and the governance tables had no trigger
+guard at all.
+
+Closed by `2026-09-05_07_gate_a_acl_hardening.sql`, which revokes every non-SELECT relation
+privilege from both roles on exactly the fourteen tables and `v_source_field_status`.
+
+> **RULE for every future Gate A object: `REVOKE ALL FROM PUBLIC, anon` is NOT sufficient on
+> this platform.** You must also
+> `REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN … FROM
+> authenticated, service_role` and then grant back only `SELECT`, or the object silently
+> inherits the broad default.
+
+`_07` deliberately does **not** touch `pg_default_acl`. Changing the global default would
+alter the grant posture of every future object in `public` across the whole application and
+needs its own repository-wide impact assessment.
+
+**CI could not originally catch this** — a bare Postgres has no default ACLs, so every Gate A
+table landed SELECT-only by accident. Both fixtures now reproduce the broad defaults
+explicitly, and the `freeze-baseline-sequence` job asserts the defect exists before `_07`
+and is gone after it. Do not remove that reproduction to make a test pass.
+
+---
+
 ## 13. Access matrix and RLS posture
 
 Posture: RLS enabled everywhere; exactly one SELECT policy per table
