@@ -105,11 +105,15 @@ BEGIN
   SELECT count(*) INTO n FROM public.file_links WHERE role='floor_plan';
   IF n = 0 THEN RAISE EXCEPTION 'B1.5 vacuous: no floor_plan edge to test priority against'; END IF;
 
-  SELECT count(*) INTO n FROM public.files f
-   WHERE EXISTS (SELECT 1 FROM public.file_links l WHERE l.file_id=f.id)
-     AND f.document_type NOT IN ('gallery_image','video','other');
+  -- Unambiguous: 'floor_plan' is reachable ONLY from the role mapping, never
+  -- from the `kind` fallback. If no file carries it while floor_plan edges
+  -- exist, the role-derived branch of the backfill did not run at all — which
+  -- is precisely what happened when the fill-in trigger was created before the
+  -- backfill instead of after it, and every floor plan silently became a
+  -- gallery_image.
+  SELECT count(*) INTO n FROM public.files WHERE document_type='floor_plan';
   IF n = 0 THEN
-    RAISE EXCEPTION 'B1.5 vacuous: no file received a role-derived document_type';
+    RAISE EXCEPTION 'B1.5 role inference did not run: floor_plan edges exist but no file is typed floor_plan';
   END IF;
 
   -- Rule, asserted over whatever the projection actually produced: any file

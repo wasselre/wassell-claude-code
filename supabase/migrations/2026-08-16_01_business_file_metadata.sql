@@ -110,7 +110,7 @@ ON CONFLICT (value) DO NOTHING;
 -- default in the catalogue instead of rewriting the heap — this is O(1) on the
 -- 7,133-row production table, not a table rewrite.
 --
--- title / document_type / owner_user_id are added NULLABLE, backfilled in §4,
+-- title / document_type / owner_user_id are added NULLABLE, backfilled in §3,
 -- and promoted to NOT NULL in §5, because their values derive from the row.
 --
 -- Deliberately NOT here: supersedes_file_id (spec §12 assigns versioning
@@ -141,7 +141,118 @@ COMMENT ON COLUMN public.files.confidentiality IS 'Constrains reach, never grant
 COMMENT ON COLUMN public.files.checksum_sha256 IS 'Populated at upload from B7 onward. Intentionally NULL for pre-B7 rows: back-computing it would mean downloading 6.3 GB of production objects.';
 
 -- ---------------------------------------------------------------------------
--- 3. Fill-in trigger, so new rows are complete without touching any writer.
+-- 3. Backfill. Each statement is guarded so a re-run updates zero rows.
+--
+--    ORDER MATTERS: this runs BEFORE the fill-in trigger in §4 is created, and
+--    that is not cosmetic. The trigger derives document_type from `kind`, which
+--    is the only honest inference for a brand-new row but the WEAKEST one for an
+--    existing row that already carries relationship evidence. With the trigger
+--    installed first, the title UPDATE in 3a would fire it, every row would get
+--    a kind-derived type on the way past, and the role-derived statement in 3c
+--    (`WHERE document_type IS NULL`) would match nothing — silently downgrading
+--    every floor plan in the corpus to `gallery_image`. Caught by the
+--    non-vacuity assertion in smoke_b1_file_metadata.sql §5.
+-- ---------------------------------------------------------------------------
+
+-- 3a. title
+UPDATE public.files f
+   SET title = COALESCE(
+         NULLIF(btrim(regexp_replace(f.original_name, '\.[A-Za-z0-9]{1,8}$', '')), ''),
+         NULLIF(btrim(f.original_name), ''),
+         'file-' || left(f.id::text, 8))
+ WHERE f.title IS NULL OR btrim(f.title) = '';
+
+-- 3b. owner = uploader (uploaded_by_user_id is NOT NULL in production)
+UPDATE public.files f
+   SET owner_user_id = f.uploaded_by_user_id
+ WHERE f.owner_user_id IS NULL;
+
+-- 3c. document_type, inferred from the strongest relationship role the file
+--     already carries; otherwise from `kind`. Priority is most-specific-first
+--     so a file that is both a floor plan and a gallery image reads as a floor
+--     plan. `attachment` is a mechanism, not a type, so it maps to the generic
+--     supporting_document rather than inventing task_attachment for a file
+--     hanging off a client.
+WITH role_priority(role, doc_type, prio) AS (
+  VALUES ('floor_plan','floor_plan',1),
+         ('main_image','main_image',2),
+         ('hero_image','hero_image',3),
+         ('marketing_asset','marketing_asset',4),
+         ('developer_content','developer_content',5),
+         ('video','video',6),
+         ('gallery_image','gallery_image',7),
+         ('reference','reference',8),
+         ('supporting_document','supporting_document',9),
+         ('attachment','supporting_document',10)
+), best AS (
+  SELECT DISTINCT ON (l.file_id) l.file_id, rp.doc_type
+    FROM public.file_links l
+    JOIN role_priority rp ON rp.role = l.role
+   ORDER BY l.file_id, rp.prio
+)
+UPDATE public.files f
+   SET document_type = COALESCE(
+         (SELECT b.doc_type FROM best b WHERE b.file_id = f.id),
+         CASE f.kind WHEN 'image' THEN 'gallery_image'
+                     WHEN 'video' THEN 'video'
+                     ELSE 'other' END)
+ WHERE f.document_type IS NULL;
+
+-- 3d. file_class + origin.
+--     Ordered most-specific first. Each is guarded, and each source table is
+--     probed with to_regclass so this file also applies to the CI fixture.
+DO $b$
+BEGIN
+  -- Renditions: the ONLY system-class rows today. pdf_compress_jobs.result_file_id
+  -- is authoritative — it is written by the worker that creates the copy.
+  IF to_regclass('public.pdf_compress_jobs') IS NOT NULL THEN
+    UPDATE public.files f
+       SET file_class = 'system', origin = 'derived_rendition'
+     WHERE EXISTS (SELECT 1 FROM public.pdf_compress_jobs j WHERE j.result_file_id = f.id)
+       AND (f.file_class <> 'system' OR f.origin <> 'derived_rendition');
+  END IF;
+
+  -- Generated documents. document_jobs.result_file_id is authoritative; the
+  -- name pattern is the documented secondary rule for rows generated before
+  -- that column was populated. buildPdfName() in worker/src/runDocumentJob.ts
+  -- emits "<label> — <record title> · <8 hex>.pdf"; the " · <8 hex>.pdf" suffix
+  -- is machine-produced and no human upload in production matches it.
+  IF to_regclass('public.document_jobs') IS NOT NULL THEN
+    UPDATE public.files f
+       SET origin = 'generated_document'
+     WHERE f.origin = 'user_upload'
+       AND EXISTS (SELECT 1 FROM public.document_jobs j WHERE j.result_file_id = f.id);
+  END IF;
+
+  UPDATE public.files f
+     SET origin = 'generated_document'
+   WHERE f.origin = 'user_upload'
+     AND f.kind = 'pdf'
+     AND f.original_name ~ ' · [0-9a-f]{8}\.pdf$';
+
+  -- Marketing intake: the canonical library uploads.
+  IF to_regclass('public.mos_assets') IS NOT NULL THEN
+    UPDATE public.files f
+       SET origin = 'marketing_intake'
+     WHERE f.origin = 'user_upload'
+       AND EXISTS (SELECT 1 FROM public.mos_assets a WHERE a.file_id = f.id);
+  END IF;
+END $b$;
+
+-- 3e. confidentiality — apply the D3 defaults from the vocabulary.
+--     Re-asserts the DEFAULT for a type that demands one; a file explicitly
+--     moved off 'internal' by a human is never touched, because the guard only
+--     matches rows still sitting on the column default.
+UPDATE public.files f
+   SET confidentiality = t.default_confidentiality
+  FROM public.file_document_types t
+ WHERE t.value = f.document_type
+   AND t.default_confidentiality <> 'internal'
+   AND f.confidentiality = 'internal';
+
+-- ---------------------------------------------------------------------------
+-- 4. Fill-in trigger, so new rows are complete without touching any writer.
+--    Created AFTER the backfill — see the note on §3.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.tg_files_fill_business_metadata()
 RETURNS trigger
@@ -199,106 +310,6 @@ DROP TRIGGER IF EXISTS files_fill_business_metadata ON public.files;
 CREATE TRIGGER files_fill_business_metadata
   BEFORE INSERT OR UPDATE ON public.files
   FOR EACH ROW EXECUTE FUNCTION public.tg_files_fill_business_metadata();
-
--- ---------------------------------------------------------------------------
--- 4. Backfill. Each statement is guarded so a re-run updates zero rows.
--- ---------------------------------------------------------------------------
-
--- 4a. title
-UPDATE public.files f
-   SET title = COALESCE(
-         NULLIF(btrim(regexp_replace(f.original_name, '\.[A-Za-z0-9]{1,8}$', '')), ''),
-         NULLIF(btrim(f.original_name), ''),
-         'file-' || left(f.id::text, 8))
- WHERE f.title IS NULL OR btrim(f.title) = '';
-
--- 4b. owner = uploader (uploaded_by_user_id is NOT NULL in production)
-UPDATE public.files f
-   SET owner_user_id = f.uploaded_by_user_id
- WHERE f.owner_user_id IS NULL;
-
--- 4c. document_type, inferred from the strongest relationship role the file
---     already carries; otherwise from `kind`. Priority is most-specific-first
---     so a file that is both a floor plan and a gallery image reads as a floor
---     plan. `attachment` is a mechanism, not a type, so it maps to the generic
---     supporting_document rather than inventing task_attachment for a file
---     hanging off a client.
-WITH role_priority(role, doc_type, prio) AS (
-  VALUES ('floor_plan','floor_plan',1),
-         ('main_image','main_image',2),
-         ('hero_image','hero_image',3),
-         ('marketing_asset','marketing_asset',4),
-         ('developer_content','developer_content',5),
-         ('video','video',6),
-         ('gallery_image','gallery_image',7),
-         ('reference','reference',8),
-         ('supporting_document','supporting_document',9),
-         ('attachment','supporting_document',10)
-), best AS (
-  SELECT DISTINCT ON (l.file_id) l.file_id, rp.doc_type
-    FROM public.file_links l
-    JOIN role_priority rp ON rp.role = l.role
-   ORDER BY l.file_id, rp.prio
-)
-UPDATE public.files f
-   SET document_type = COALESCE(
-         (SELECT b.doc_type FROM best b WHERE b.file_id = f.id),
-         CASE f.kind WHEN 'image' THEN 'gallery_image'
-                     WHEN 'video' THEN 'video'
-                     ELSE 'other' END)
- WHERE f.document_type IS NULL;
-
--- 4d. file_class + origin.
---     Ordered most-specific first. Each is guarded, and each source table is
---     probed with to_regclass so this file also applies to the CI fixture.
-DO $b$
-BEGIN
-  -- Renditions: the ONLY system-class rows today. pdf_compress_jobs.result_file_id
-  -- is authoritative — it is written by the worker that creates the copy.
-  IF to_regclass('public.pdf_compress_jobs') IS NOT NULL THEN
-    UPDATE public.files f
-       SET file_class = 'system', origin = 'derived_rendition'
-     WHERE EXISTS (SELECT 1 FROM public.pdf_compress_jobs j WHERE j.result_file_id = f.id)
-       AND (f.file_class <> 'system' OR f.origin <> 'derived_rendition');
-  END IF;
-
-  -- Generated documents. document_jobs.result_file_id is authoritative; the
-  -- name pattern is the documented secondary rule for rows generated before
-  -- that column was populated. buildPdfName() in worker/src/runDocumentJob.ts
-  -- emits "<label> — <record title> · <8 hex>.pdf"; the " · <8 hex>.pdf" suffix
-  -- is machine-produced and no human upload in production matches it.
-  IF to_regclass('public.document_jobs') IS NOT NULL THEN
-    UPDATE public.files f
-       SET origin = 'generated_document'
-     WHERE f.origin = 'user_upload'
-       AND EXISTS (SELECT 1 FROM public.document_jobs j WHERE j.result_file_id = f.id);
-  END IF;
-
-  UPDATE public.files f
-     SET origin = 'generated_document'
-   WHERE f.origin = 'user_upload'
-     AND f.kind = 'pdf'
-     AND f.original_name ~ ' · [0-9a-f]{8}\.pdf$';
-
-  -- Marketing intake: the canonical library uploads.
-  IF to_regclass('public.mos_assets') IS NOT NULL THEN
-    UPDATE public.files f
-       SET origin = 'marketing_intake'
-     WHERE f.origin = 'user_upload'
-       AND EXISTS (SELECT 1 FROM public.mos_assets a WHERE a.file_id = f.id);
-  END IF;
-END $b$;
-
--- 4e. confidentiality — apply the D3 defaults from the vocabulary.
---     Re-asserts the DEFAULT for a type that demands one; a file explicitly
---     moved off 'internal' by a human is never touched, because the guard only
---     matches rows still sitting on the column default.
-UPDATE public.files f
-   SET confidentiality = t.default_confidentiality
-  FROM public.file_document_types t
- WHERE t.value = f.document_type
-   AND t.default_confidentiality <> 'internal'
-   AND f.confidentiality = 'internal';
 
 -- ---------------------------------------------------------------------------
 -- 5. Constraints. Applied AFTER the backfill so they can be strict.
