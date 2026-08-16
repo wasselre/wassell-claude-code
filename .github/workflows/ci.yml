@@ -48,7 +48,12 @@ jobs:
     # validator for the 2026-09-01_* migration set — production apply is
     # gated on this job being green.
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Raised from 10 for Phase 3 B2A: proving that an authorization change moves
+    # nobody's reach means sweeping sorted file-ID fingerprints for 7 personas x
+    # 3 kinds over an 8,000-row corpus, three times (before, after, after
+    # rollback). That is ~7 minutes on a shared runner and it is the point of
+    # the job, not overhead to trim.
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:17-alpine
