@@ -6,7 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film, Bot,
+  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film, Bot, ShieldCheck,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -152,6 +152,17 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/settings/whatsapp-ai',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'صلاحيات واتساب',
+    titleEn: 'WhatsApp Permissions',
+    descAr: 'من يرى أي محادثات — الكل أو العملاء فقط أو عملاء الموظف فقط',
+    descEn: 'Who sees which conversations — all, client-only, or own clients',
+    icon: ShieldCheck,
+    color: '#25D366',
+    bg: '#25D36614',
+    route: '/settings/whatsapp-permissions',
     adminOnly: true,
   },
   {

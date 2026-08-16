@@ -2909,6 +2909,26 @@ const chatsModel: AppModel = {
             lookup_display_field: 'name',
           },
           {
+            // Read-only mirror of the linked client's owner (clients.client_owner,
+            // a public.users.id). Populated by DB triggers, NOT the user. Exists so
+            // the per-profile view-scope engine — which can't traverse the
+            // client_link lookup — can gate chats by "client_owner equals current
+            // user" (managed from Settings → WhatsApp Permissions). See migration
+            // 2026-08-14_chat_client_owner_mirror.sql.
+            id: uuid(),
+            name: 'client_owner',
+            label_ar: 'مستشار المبيعات',
+            label_en: 'Sales Consultant',
+            type: 'assignee',
+            required: false,
+            read_only: true,
+            order: 12,
+            section_id: chatsBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+            assignee_role_ids: [],
+          },
+          {
             // Direction of the newest message ('in' = customer spoke last).
             // Stamped by the Haberchat webhook + the Realtime bump; drives
             // the chat list's "needs reply" filter.
