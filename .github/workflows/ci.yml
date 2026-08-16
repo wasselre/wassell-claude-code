@@ -114,6 +114,14 @@ jobs:
       - name: File metadata (B1) — fixtures, migration, smoke, rollback
         run: bash supabase/tests/ci/run_b1_metadata_test.sh
 
+      # Phase 3 · B2 (business_files_search). Own database again, and its own
+      # 8,000-row corpus: the 19-row Phase 1 fixture can prove projection shapes
+      # but says nothing about whether search is fast or whether facet counts
+      # stay correct once a bucket has thousands of members. Also asserts the
+      # p95 < 300 ms budget as a NON-ADMIN, which is the expensive RLS path.
+      - name: File search (B2) — migration, 8k corpus, smoke, RLS, p95, rollback
+        run: bash supabase/tests/ci/run_b2_search_test.sh
+
   market-listings-reconciliation:
     # Designated validator for
     # supabase/migrations/2026-09-04_00_market_listings_view_reconciliation.sql.
