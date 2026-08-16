@@ -3,7 +3,7 @@ import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
 import { Ban, Check, Loader2, Map as MapIcon, MapPin, Minus, PenLine, Plus, RotateCcw, Route, Search, TriangleAlert, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, buildPillIcon } from '@/lib/locationUtils';
+import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, GEO_LABEL_SUPPRESSION, buildPillIcon } from '@/lib/locationUtils';
 import { pickVisibleLabels } from '@/lib/geo/labelDeclutter';
 import {
   DIRECTION_DEFAULT_M, describeLocationItem, isDirectionRule, newDistrictItem, newDrawnAreaItem,
@@ -148,29 +148,13 @@ interface LandmarkRow {
  *  district name. Only the picker hides these; other maps draw no labels of their
  *  own so they keep Google's.
  *
- *  WHY hide at labels.text + labels.icon, not the broad `labels` (2026-08-16):
- *  a single `elementType:'labels', visibility:'off'` used to suppress these, but
- *  the unpinned Google Maps JS weekly channel (now v3.65) changed how overlapping
- *  stylers resolve. WASSEL_MAP_STYLE colours these labels via the MORE-SPECIFIC
- *  `labels.text.fill`, and that specific colour rule started winning over the
- *  broad `labels` off — so Google's district + POI labels reappeared and doubled
- *  the ones we draw, while the map read as "uncoloured" default again (live report
- *  2026-08-16). Suppressing at `labels.text` and `labels.icon` — the same branch
- *  as the colour rule — hides them regardless of Google's resolution order. The
- *  redundant broad `labels` off is kept as a belt-and-suspenders. */
-const PICKER_HIDDEN_LABEL_FEATURES = [
-  'administrative.neighborhood', 'administrative.locality',
-  'poi', 'poi.business', 'poi.park', 'poi.attraction', 'poi.place_of_worship',
-  'poi.medical', 'poi.school', 'poi.sports_complex', 'poi.government', 'transit',
-];
-const hideAllLabels = (featureType: string): google.maps.MapTypeStyle[] => [
-  { featureType, elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType, elementType: 'labels.text', stylers: [{ visibility: 'off' }] },
-  { featureType, elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-];
+ *  The label suppression is the SHARED `GEO_LABEL_SUPPRESSION` (locationUtils) —
+ *  the same rules every geo map uses, hidden at labels.text + labels.icon so the
+ *  more-specific `labels.text.fill` colour rules in WASSEL_MAP_STYLE can't keep them
+ *  visible under Google's updated styler resolution (see that export's comment). */
 const PICKER_MAP_STYLE: google.maps.MapTypeStyle[] = [
   ...WASSEL_MAP_STYLE,
-  ...PICKER_HIDDEN_LABEL_FEATURES.flatMap(hideAllLabels),
+  ...GEO_LABEL_SUPPRESSION,
 ];
 
 /** GeoJSON Polygon/MultiPolygon → google.maps paths (outer + hole rings). */
