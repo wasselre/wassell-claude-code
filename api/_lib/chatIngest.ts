@@ -103,6 +103,39 @@ async function findRowByHash(id: string, flow: 'in' | 'out'): Promise<string | n
 }
 
 /**
+ * Resolve a normalized Click-to-WhatsApp ad referral to our Paid Ads chain
+ * (mos_resolve_ad) and return it with a `resolved` field for storage on the
+ * OPENING message's `chat_messages.meta.ad`.
+ *
+ * `resolved` is null when the ad isn't in our Paid Ads yet — the raw referral is
+ * still preserved, and `mos_reresolve_first_touch()` back-fills `resolved` onto
+ * chat_messages.meta once the ad record is created. We store this on the message
+ * (immutable — the browser never rewrites chat_messages) rather than the chats
+ * record, whose `data` blob the SPA store rewrites and would clobber.
+ */
+export async function attachAdResolution(
+  ad: Record<string, unknown> | null,
+): Promise<Record<string, unknown> | null> {
+  if (!ad) return null;
+  const adId = ad.ad_id;
+  if (typeof adId !== 'string' || !adId) return { ...ad, resolved: null };
+  const supa = getServiceSupabase();
+  let resolved: Record<string, unknown> | null = null;
+  try {
+    const { data: res, error } = await supa.rpc('mos_resolve_ad', { p_platform_ad_id: adId });
+    if (error) console.error('[chatIngest] mos_resolve_ad failed:', error.message);
+    else if (Array.isArray(res) && res.length > 0) {
+      const row = { ...(res[0] as Record<string, unknown>) };
+      delete row.project_ids; // drop the bulky array; project_id (scalar) is kept
+      resolved = { ...row, resolved_at: new Date().toISOString() };
+    }
+  } catch (err) {
+    console.error('[chatIngest] mos_resolve_ad threw:', err instanceof Error ? err.message : String(err));
+  }
+  return { ...ad, resolved };
+}
+
+/**
  * Upsert a chat_messages row. onConflict:id so a retried/duplicated webhook
  * never creates a second row. Returns `{ isNew }` so the caller can make the
  * unread bump idempotent (only a genuinely new inbound message bumps unread).
@@ -203,10 +236,6 @@ export async function bumpConversationRecord(args: {
   lastFlow: 'in' | 'out';
   incrementUnread: boolean;
   reopenPushBack?: (deviceId: string, chatWid: string) => Promise<void>;
-  // Normalized Click-to-WhatsApp ad referral from the OPENING inbound message
-  // (WAHA externalAdReply). When present on a conversation that has no
-  // first_touch yet, we resolve it to our Paid Ad chain and stamp it write-once.
-  firstTouchAd?: Record<string, unknown> | null;
 }): Promise<void> {
   if (!isValidChatWid(args.chatWid)) {
     // Loud, not silent: a wid we cannot parse means an upstream shape changed,
@@ -227,35 +256,6 @@ export async function bumpConversationRecord(args: {
   const prevStatus = typeof prevData.status === 'string' ? prevData.status : 'active';
   const reopen = args.lastFlow === 'in' && (prevStatus === 'resolved' || prevStatus === 'archived');
 
-  // First-touch ad attribution (WAHA Click-to-WhatsApp). WRITE-ONCE: once a
-  // conversation carries first_touch we never rewrite it, so a later ad click by
-  // the same person can't overwrite where the lead originally came from. The raw
-  // referral is ALWAYS preserved — even when the ad isn't in our Paid Ads yet
-  // (resolved:null); mos_reresolve_first_touch() self-heals it once the ad
-  // record is created. The RPC is the same one the app uses, so the resolved
-  // chain here matches the UI's.
-  let firstTouch: Record<string, unknown> | undefined =
-    prevData.first_touch && typeof prevData.first_touch === 'object'
-      ? (prevData.first_touch as Record<string, unknown>)
-      : undefined;
-  const ftAdId = args.firstTouchAd?.ad_id;
-  if (!firstTouch && typeof ftAdId === 'string' && ftAdId) {
-    let resolved: Record<string, unknown> | null = null;
-    try {
-      const { data: res, error: resErr } = await supa.rpc('mos_resolve_ad', { p_platform_ad_id: ftAdId });
-      if (resErr) {
-        console.error('[chatIngest] mos_resolve_ad failed:', resErr.message);
-      } else if (Array.isArray(res) && res.length > 0) {
-        const row = { ...(res[0] as Record<string, unknown>) };
-        delete row.project_ids; // drop the bulky array; project_id (scalar) is kept
-        resolved = { ...row, resolved_at: new Date().toISOString() };
-      }
-    } catch (err) {
-      console.error('[chatIngest] mos_resolve_ad threw:', err instanceof Error ? err.message : String(err));
-    }
-    firstTouch = { ...args.firstTouchAd, resolved };
-  }
-
   const nextData = {
     ...prevData,
     wid: prevData.wid ?? args.chatWid,
@@ -265,7 +265,6 @@ export async function bumpConversationRecord(args: {
     last_message_flow: args.lastFlow,
     unread_count: args.incrementUnread ? prevUnread + 1 : prevUnread,
     ...(reopen ? { status: 'active' } : {}),
-    ...(firstTouch ? { first_touch: firstTouch } : {}),
   };
 
   const { error } = await supa.from('records').upsert(
