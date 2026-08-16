@@ -229,7 +229,11 @@ SQL
 )
   echo "   $B2P"
   P_B2=$(sed -n 's/.*p95=\([0-9.]*\).*/\1/p' <<<"$B2P")
-  run "$ROOT/supabase/rollback/2026-08-16_02_business_files_search_down.sql"
+  # B2 is left applied on purpose. Its rollback script lives on B2's own branch,
+  # not in this tree, and undoing it here would buy nothing: B2 adds a generated
+  # column, a function and indexes, none of which participate in the
+  # authorization predicate, so the B2A rollback fingerprints below are
+  # unaffected by its presence.
 else
   echo "   (B2 migration not on this branch — skipped)"; P_B2=""
 fi
