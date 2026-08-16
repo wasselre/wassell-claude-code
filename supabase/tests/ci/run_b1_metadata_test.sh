@@ -160,16 +160,20 @@ UPD1=$(stamps); NUPD1=$(nstamps); TS1=$(ts_state)
 echo "   OK: all $NUPD0 distinct updated_at values preserved; trigger restored to '$TS1'"
 
 # ── and it must still WORK: an ordinary metadata edit still advances it ─────
+#
+# Compared per row, before against after — NOT against an absolute date. Some
+# fixture rows are legitimately stamped at now() already (fixture_b1_authz.sql
+# assigns folders after the timestamp trigger exists), so a "must be older than
+# <date>" assertion tests the fixture's construction rather than B1's behaviour.
+A1_T0=$(q "SELECT updated_at FROM public.files WHERE id='b1000000-0000-0000-0000-0000000000a1'")
+A2_T0=$(q "SELECT updated_at FROM public.files WHERE id='b1000000-0000-0000-0000-0000000000a2'")
 q "UPDATE public.files SET title = title || ' (edited)'
     WHERE id='b1000000-0000-0000-0000-0000000000a1'" >/dev/null
-MOVED=$(q "SELECT (updated_at > timestamptz '2026-08-01')::text FROM public.files
-            WHERE id='b1000000-0000-0000-0000-0000000000a1'")
-[ "$MOVED" = "true" ] || { echo "FAIL: post-migration edit did not advance updated_at"; exit 1; }
-# ...and only for the row that was edited.
-UNMOVED=$(q "SELECT (updated_at < timestamptz '2026-08-01')::text FROM public.files
-              WHERE id='b1000000-0000-0000-0000-0000000000a2'")
-[ "$UNMOVED" = "true" ] || { echo "FAIL: an unedited row's updated_at moved"; exit 1; }
-echo "   OK: post-migration edits advance updated_at normally, and only for the edited row"
+A1_T1=$(q "SELECT updated_at FROM public.files WHERE id='b1000000-0000-0000-0000-0000000000a1'")
+A2_T1=$(q "SELECT updated_at FROM public.files WHERE id='b1000000-0000-0000-0000-0000000000a2'")
+[ "$A1_T1" != "$A1_T0" ] || { echo "FAIL: post-migration edit did not advance updated_at ($A1_T0)"; exit 1; }
+[ "$A2_T1"  = "$A2_T0" ] || { echo "FAIL: an unedited row's updated_at moved ($A2_T0 -> $A2_T1)"; exit 1; }
+echo "   OK: post-migration edits advance updated_at, and only for the edited row"
 
 reach > "$WORK/reach.after"
 if ! diff -u "$WORK/reach.before" "$WORK/reach.after" > "$WORK/reach.diff"; then
