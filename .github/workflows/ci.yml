@@ -235,6 +235,32 @@ jobs:
       - name: Run freeze-baseline sequence tests
         run: bash supabase/tests/ci/run_freeze_baseline_sequence_test.sh
 
+  market-raw-storage:
+    # Designated validator for 2026-09-05_08_market_raw_storage.sql.
+    # CI cannot reach the Storage HTTP API, so this proves the half that lives in
+    # Postgres: the policy predicates evaluated as the dedicated uploader, a
+    # normal authenticated user, and an admin. The HTTP half (upsert, move/copy,
+    # signed URLs, anon) is proven once against production by
+    # scripts/market-raw-canary.mjs after apply.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run market-raw storage policy tests
+        run: bash supabase/tests/ci/run_market_raw_storage_test.sh
+
   worker-typecheck:
     # worker/ is a standalone package (third tsconfig) — not covered by the
     # root build (see reference: tsc --noEmit skips api/; worker is separate).
