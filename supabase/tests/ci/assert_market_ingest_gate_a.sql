@@ -577,60 +577,74 @@ BEGIN
 END
 $assert$;
 
--- == SECTION 11: market_listings independence (the split is real) ============
+-- == SECTION 11: market_listings INDEPENDENCE (the split is real) ============
+-- This suite runs in two contexts and must hold in both:
+--   (a) the standalone Gate A job — market_listings absent, _06 not applied;
+--   (b) the full replay sequence — the freeze baseline has legitimately created
+--       market_listings and _06 has added its two FK-bearing tables.
+-- So the invariant is NOT "market_listings must not exist". It is: no Gate A
+-- object may DEPEND on it. Absence is asserted only in context (a).
 DO $assert$
 DECLARE
-  v_tables text[] := ARRAY[
+  v_rels text[] := ARRAY[
     'listing_sources',
     'raw_blobs', 'raw_snapshots', 'raw_snapshot_artifacts', 'page_capture_manifest',
     'source_field_catalog', 'source_field_mappings', 'schema_gap_events',
     'ingestion_runs', 'ingestion_items', 'listing_change_events', 'listing_change_review'];
+  v_fns text[] := ARRAY[
+    'public._ml_reject_mutation()',
+    'public.raw_snapshot_derive_class(uuid)',
+    'public.tg_listing_sources_touch()',
+    'public.tg_schema_gap_requires_decision()',
+    'public.tg_source_field_catalog_touch()'];
+  v_f text;
+  v_ml boolean := to_regclass('public.market_listings') IS NOT NULL;
 BEGIN
-  -- It must STILL not exist after all four migrations.
-  IF to_regclass('public.market_listings') IS NOT NULL THEN
-    RAISE EXCEPTION 'ASSERT 11 FAILED: public.market_listings exists after the Gate A migrations; the Gate A set must not create it and must not depend on it';
+  -- None of the TWELVE Gate A tables may carry a foreign key to market_listings.
+  -- listing_field_provenance and mirror_outbox are deliberately NOT in v_rels:
+  -- they belong to _06 and their FKs are required.
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint c
+      JOIN pg_class f ON f.oid = c.confrelid
+      JOIN pg_class r ON r.oid = c.conrelid
+     WHERE c.contype = 'f'
+       AND f.relname = 'market_listings'
+       AND r.relnamespace = 'public'::regnamespace
+       AND r.relname = ANY (v_rels)
+  ) THEN
+    RAISE EXCEPTION 'ASSERT 11 FAILED: a Gate A _01.._04 table carries a foreign key to market_listings; that content belongs to the deferred _06';
   END IF;
 
-  -- No FK on any of the twelve tables references a relation named
-  -- market_listings.
-  IF EXISTS (SELECT 1 FROM pg_constraint co
-               JOIN pg_class c  ON c.oid  = co.conrelid
-               JOIN pg_class fc ON fc.oid = co.confrelid
-              WHERE co.contype = 'f'
-                AND c.relnamespace = 'public'::regnamespace
-                AND c.relname = ANY (v_tables)
-                AND fc.relname = 'market_listings') THEN
-    RAISE EXCEPTION 'ASSERT 11 FAILED: a Gate A table carries a foreign key to market_listings; the Gate A set must not depend on it';
-  END IF;
+  -- No Gate A function body may reference it.
+  FOREACH v_f IN ARRAY v_fns LOOP
+    IF to_regprocedure(v_f) IS NOT NULL
+       AND pg_get_functiondef(to_regprocedure(v_f)) ILIKE '%market_listings%' THEN
+      RAISE EXCEPTION 'ASSERT 11 FAILED: Gate A function % references market_listings', v_f;
+    END IF;
+  END LOOP;
 
-  -- No Gate A function body mentions market_listings (case-insensitive).
-  IF EXISTS (SELECT 1 FROM pg_proc p
-               JOIN pg_namespace n ON n.oid = p.pronamespace
-              WHERE n.nspname = 'public'
-                AND p.proname IN ('_ml_reject_mutation', 'raw_snapshot_derive_class',
-                                  'tg_listing_sources_touch', 'tg_schema_gap_requires_decision',
-                                  'tg_source_field_catalog_touch')
-                AND pg_get_functiondef(p.oid) ~* 'market_listings') THEN
-    RAISE EXCEPTION 'ASSERT 11 FAILED: a Gate A function body references market_listings; the Gate A set must not depend on it';
-  END IF;
-
-  -- No trigger or rule anywhere in public targets a relation named
-  -- market_listings.
-  IF EXISTS (SELECT 1 FROM pg_trigger t
-               JOIN pg_class c ON c.oid = t.tgrelid
-              WHERE c.relnamespace = 'public'::regnamespace
-                AND c.relname = 'market_listings')
-     OR EXISTS (SELECT 1 FROM pg_rewrite r
-                  JOIN pg_class c ON c.oid = r.ev_class
-                 WHERE c.relnamespace = 'public'::regnamespace
-                   AND c.relname = 'market_listings') THEN
-    RAISE EXCEPTION 'ASSERT 11 FAILED: a trigger or rule in public targets market_listings; the Gate A set must not depend on it';
-  END IF;
-
-  -- The deferred tables belong to 2026-09-05_06, after the freeze baseline.
-  IF to_regclass('public.listing_field_provenance') IS NOT NULL
-     OR to_regclass('public.mirror_outbox') IS NOT NULL THEN
-    RAISE EXCEPTION 'ASSERT 11 FAILED: listing_field_provenance / mirror_outbox must NOT exist; they belong to the deferred 2026-09-05_06 and must arrive only after the freeze baseline';
+  IF NOT v_ml THEN
+    -- Context (a): standalone Gate A. Nothing may have conjured the table or
+    -- the deferred _06 tables into existence.
+    IF to_regclass('public.listing_field_provenance') IS NOT NULL
+       OR to_regclass('public.mirror_outbox') IS NOT NULL THEN
+      RAISE EXCEPTION 'ASSERT 11 FAILED: listing_field_provenance / mirror_outbox exist without market_listings; they belong to _06, after the freeze baseline';
+    END IF;
+  ELSE
+    -- Context (b): full sequence. If the _06 tables are present they MUST carry
+    -- their required foreign keys — the whole reason _06 is a separate file.
+    IF to_regclass('public.listing_field_provenance') IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class f ON f.oid = c.confrelid
+                        WHERE c.conrelid = 'public.listing_field_provenance'::regclass
+                          AND c.contype = 'f' AND f.relname = 'market_listings') THEN
+      RAISE EXCEPTION 'ASSERT 11 FAILED: listing_field_provenance lost its required foreign key to market_listings';
+    END IF;
+    IF to_regclass('public.mirror_outbox') IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class f ON f.oid = c.confrelid
+                        WHERE c.conrelid = 'public.mirror_outbox'::regclass
+                          AND c.contype = 'f' AND f.relname = 'market_listings') THEN
+      RAISE EXCEPTION 'ASSERT 11 FAILED: mirror_outbox lost its required foreign key to market_listings';
+    END IF;
   END IF;
 END
 $assert$;
