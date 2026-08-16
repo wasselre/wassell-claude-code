@@ -81,6 +81,31 @@ describe('resolveModelDataDependencies', () => {
     expect(resolveModelDataDependencies('our_projects', models)).toEqual(['all_projects']);
   });
 
+  it('pulls in geography models from a location field (region/city/district)', () => {
+    // A `location` field references its geo models via location_levels[].model_id,
+    // NOT via lookup_model_id — the name resolves against those models' records.
+    const models = [
+      model('our_projects', [lookup('all_projects')]),
+      model('all_projects', [
+        lookup('developers'),
+        {
+          type: 'location',
+          location_levels: [
+            { key: 'region', model_id: 'regions', display_field: 'name' },
+            { key: 'city', model_id: 'cities', display_field: 'name' },
+            { key: 'district', model_id: 'districts', display_field: 'name' },
+          ],
+        },
+      ]),
+      model('developers', []),
+      model('regions', []),
+      model('cities', []),
+      model('districts', []),
+    ];
+    const deps = resolveModelDataDependencies('our_projects', models).sort();
+    expect(deps).toEqual(['all_projects', 'cities', 'developers', 'districts', 'regions']);
+  });
+
   it('skips dangling lookup targets that reference a deleted model', () => {
     const models = [model('our_projects', [lookup('deleted_model')])];
     expect(resolveModelDataDependencies('our_projects', models)).toEqual([]);
