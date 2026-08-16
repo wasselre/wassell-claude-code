@@ -111,14 +111,22 @@ run "$ROOT/supabase/tests/ci/fixture_b2a_authz.sql"
 run "$ROOT/supabase/migrations/2026-08-16_01_business_file_metadata.sql"
 run "$ROOT/supabase/tests/ci/fixture_b2a_reference_authz.sql"
 
-# The pre-B2A policy, so BEFORE really is the shipped predicate.
+# Establish the genuine pre-B2A predicate.
+#
+# fixture_file_links.sql installs a one-line STUB for wassell_can_access_file
+# (it returns whether the id is listed in a `test.visible_files` GUC), which is
+# all the Phase 1 projection smoke needs. If BEFORE were measured against that
+# stub, every persona would see nothing, all 21 fingerprints would be identical
+# and the equivalence proof would be vacuous — which is exactly what the
+# non-vacuity guard below caught on the first run.
+#
+# The B2A ROLLBACK script is, by definition, the pre-B2A state: it installs the
+# original plpgsql function and the original files_select policy verbatim. Using
+# it here means BEFORE is the real shipped predicate and cannot drift from what
+# rollback restores.
 psql "$DBURL" -v ON_ERROR_STOP=1 -q <<'SQL'
 ALTER TABLE public.files ENABLE ROW LEVEL SECURITY;
 GRANT SELECT ON public.files TO authenticated;
-DROP POLICY IF EXISTS files_select ON public.files;
-CREATE POLICY files_select ON public.files FOR SELECT TO authenticated
-USING ((uploaded_by_user_id = wassell_app_user_id((SELECT auth.uid())))
-       OR wassell_can_access_file(id, 'view'::text));
 DROP POLICY IF EXISTS files_update ON public.files;
 CREATE POLICY files_update ON public.files FOR UPDATE TO authenticated
 USING (wassell_can_access_file(id, 'edit'::text));
@@ -126,6 +134,7 @@ DROP POLICY IF EXISTS files_delete ON public.files;
 CREATE POLICY files_delete ON public.files FOR DELETE TO authenticated
 USING (wassell_can_access_file(id, 'delete'::text));
 SQL
+run "$ROOT/supabase/rollback/2026-08-16_03_file_authz_performance_down.sql"
 echo "   corpus: $(q "SELECT count(*) FROM public.files") files, \
 $(q "SELECT count(*) FROM public.file_permissions") grants, \
 $(q "SELECT count(*) FROM public.folder_permissions") folder grants, \
