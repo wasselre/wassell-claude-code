@@ -448,6 +448,17 @@ function LocationTab({ view, record, isAr }: { view: ProjectView; record: import
   );
 }
 
+/** A direct video FILE (our storage or any URL ending in a video extension) —
+ *  playable inline, unlike a YouTube/page link. */
+const isDirectVideoUrl = (u: string): boolean => /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(u);
+/** A direct image FILE — renderable inline. */
+const isDirectImageUrl = (u: string): boolean => /\.(png|jpe?g|gif|webp|avif|svg)(\?.*)?$/i.test(u);
+/** The 11-char video id from any YouTube URL shape, or null when it isn't one. */
+const youTubeId = (u: string): string | null => {
+  const m = u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/)|youtu\.be\/)([\w-]{11})/i);
+  return m?.[1] ?? null;
+};
+
 function MediaTab({ view, record, model, isAr }: { view: ProjectView; record: import('@/types').AppRecord; model: import('@/types').AppModel; isAr: boolean }) {
   const dash = isAr ? 'لا توجد وسائط قابلة للعرض' : 'No directly-viewable media';
   const gallery = Array.isArray(record.data.project_images)
@@ -468,8 +479,34 @@ function MediaTab({ view, record, model, isAr }: { view: ProjectView; record: im
         </div>
       )}
       {videos.length > 0 && (
-        <div className="space-y-1">
-          {videos.map((u, i) => <a key={i} href={u} target="_blank" rel="noreferrer" className="text-copper hover:underline text-sm block">🎬 {u}</a>)}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {videos.map((u, i) => {
+            // A file we host (or any direct video URL) plays inline; a YouTube
+            // link becomes an embedded player; a stored image renders as a
+            // picture; anything else stays a plain link (it genuinely IS one).
+            if (isDirectVideoUrl(u)) {
+              return <video key={i} src={u} controls preload="metadata" className="rounded-lg border border-sand/50 w-full max-h-96 bg-black" />;
+            }
+            const yt = youTubeId(u);
+            if (yt) {
+              return (
+                <div key={i} className="relative w-full rounded-lg overflow-hidden border border-sand/50" style={{ aspectRatio: '16 / 9' }}>
+                  <iframe
+                    src={`https://www.youtube.com/embed/${yt}`}
+                    title={`${isAr ? 'فيديو' : 'video'} ${i + 1}`}
+                    className="absolute inset-0 h-full w-full"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                    loading="lazy"
+                  />
+                </div>
+              );
+            }
+            if (isDirectImageUrl(u)) {
+              return <img key={i} src={u} alt="" className="rounded-lg border border-sand/50 w-full object-cover" loading="lazy" />;
+            }
+            return <a key={i} href={u} target="_blank" rel="noreferrer" className="text-copper hover:underline text-sm self-center break-all">🎬 {u}</a>;
+          })}
         </div>
       )}
       <div className="flex flex-wrap gap-3 text-sm">

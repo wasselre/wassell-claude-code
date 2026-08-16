@@ -399,6 +399,47 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   13 (الماجدية 183, فلل رفان, اوتوجراف 21, ريفييرا 51/52/57/59, نوار, مينا 52, يمام 15/16/بارك11/فلورز12)
   are the TikTok pass's job. Video files land in the PUBLIC `marketing-assets/project-videos/` bucket.
 
+- **[2026-08-15] A TEXT LAYER IS NOT A READ — render EVERY page and LOOK at it (user rule, restated after a miss):**
+  the 2026-08-03 OCR rule was under-applied on the الرمز تل الربوة/ستون الملقا run: `get_text()` returned 700–1,045
+  chars/page so the pages were treated as "read", but the covers (`textlen==1`) and every floor-plan page carry
+  content that exists ONLY as pixels. **Mandatory recipe for any brochure, regardless of text-layer size:** render
+  ALL pages to PNG (`dpi≈100` for a contact pass) and Read each one; then re-render any page carrying a drawing/table
+  at `dpi 600–1100` (optionally clipped) and Read again. Do NOT route floor plans through GPU OCR — the 2026-08-03
+  garbling rule still holds; direct visual reading of a high-dpi render is both more accurate AND cheaper here.
+  What the visual pass recovered that the text layer had NOT: per-model areas + model letters + room labels
+  (`MASTER BEDROOM / BEDROOM / OPEN KITCHEN / DINING / LIVING AREA / W.C / DRESSER / AIRWELL / BALCONY / MAIDS ROOM /
+  LAUN. / LIFT`), the `<building>-<unit>` numbering scheme, and the building-number markers — i.e. the entire basis
+  for `bedrooms`/`bathrooms`/`unit_components`. `PYTHONUTF8=1` on every python heredoc or the Arabic dump dies on cp1252.
+- **[2026-08-15] ATTACH THE FLOOR-PLATE PLAN when per-model plans are paywalled/behind a share link (user rule):**
+  "skip `unit_plan`" (the 2026-06-28 rule) applies only when the unit→plan mapping is INFERENCE. It does NOT apply when
+  the brochure publishes the actual floor master plans: those are correct for every unit on that floor, and the unit's
+  own model letter + area are printed on them. Recipe: render each floor plate from the brochure at 600 dpi
+  (`page.get_pixmap(dpi=600, clip=<plan rect>)`), downscale to ~4500 px wide JPEG q88 (≈0.7–1.2 MB, model letters and
+  areas stay legible), upload ONE file per floor to `wassel-files`, register a `files` row against the PROJECT record
+  (`model_id`=all_projects, `record_id`=project — shared asset), then set `unit_plan`=that file-id on every unit of
+  that floor and say so in the unit `notes` ("مخطط الدور الكامل — النموذج X موسوم عليه"). ستون الملقا 2026-08-15:
+  4 plates → 20/20 units planned. Only fall back to empty `unit_plan` when the plans carry NO areas and NO model
+  letters at all (تل الربوة's plans — they label rooms and unit numbers but nothing dimensional).
+- **[2026-08-15] "أسعار الطرح الأولي" = a RELEASE BATCH, not the project (الرمز pattern):** الرمز ships an initial-offering
+  price sheet covering a fraction of the project (ستون الملقا: 20 priced units of 146 built). Migrate exactly the priced
+  rows, and put the gap in BOTH `source_notes` and `project_analysis` ("نطاق هذا السجل") so nobody reads `unit_count`
+  as the project size. Never pad to the announced total. Sheet shape: `الشقة | العمارة | الدور | النموذج | المساحة | السعر`
+  — no status column, every listed row is available. `الدور`: الأرضي→`ارضي`, الأول→`اول`, الثاني→`ثاني`, **الملحق→`الروف`**.
+  Google Drive's `read_file_content` returns this table correctly (reversed Arabic, clean numbers) — but VERIFY the page
+  count in the Drive preview first: page 1 is a branded cover, the table is page 2.
+- **[2026-08-15] A project with NO price file gets the record and ZERO units — never invent inventory:** تل الربوة was
+  published (6 مبانٍ / 166 شقة / 92–136 م² / من 674,497 ر.س / تسليم أغسطس 2028) with no price or فرز file anywhere on the
+  developer site or in Drive. Create the project fully enriched (links, amenities, features, guarantees, landmarks,
+  BOTH content fields, gallery) and leave units empty; the rollups legitimately stay 0. State the announced figures in
+  `project_analysis` under an explicit "⚠ نطاق هذا السجل" heading marked as developer-declared, not computed.
+- **[2026-08-15] Google Drive downloads: the MCP is the only reliable path; the browser is signed into another account.**
+  `drive.google.com/uc?export=download` and `drive.usercontent.google.com/download` both 403 in Claude-in-Chrome because
+  the profile resolves `authuser=2`, not the file owner (`r.abanumay@wassel.re`). `read_file_content` works for PDFs,
+  Docs and images (it OCRs images and returns `Image labels:`); `download_file_content` returns base64 and will blow up
+  context for anything above ~1 MB — do not call it on a 14/37/149 MB file. For a big Drive PDF, ask the user to
+  download it (they land in `C:\Users\rayan\Downloads`, and the names carry an invisible LRM — glob by substring,
+  never by literal filename).
+
 ## Per-developer API/source adapters (document each site as you learn it)
 - **ريفا العقارية (riva.sa)** → **Laravel + Livewire v3, fully SERVER-RENDERED — plain `fetch` + regex,
   no Browserbase needed.** Listing `/projects` renders 18 cards; page 2 (6 more) is Livewire pagination —
@@ -450,7 +491,22 @@ Run them from a scratch dir; they load the keys from `.env.local`.
     Map `goo.gl` link resolved to a precise pin (24.7157, 46.7574) — better than district centroid. nuwar:
     16 units listed (15 available / 1 sold) though the brochure states 84 floors + 28 villas total (live
     table = current released inventory only). Plans = generic Model A only → **SKIP `unit_plan`** (logged rule).
-- **الرمز (Al Ramz, alramzre.com)** → **files-only adapter (no API scraped this run).** Source = the
+- **الرمز (Al Ramz, alramzre.com) — UPDATED 2026-08-15: the site now publishes real project pages.** WordPress,
+  fully SERVER-RENDERED → plain `curl`/`fetch` + regex, no Browserbase. `/projects/<url-encoded-arabic-name>/` returns
+  ~620 KB of HTML; strip tags and you get ~2.4 KB of clean text carrying EVERYTHING: name, tagline, `متاح للبيع`,
+  the نظرة عامة paragraph (unit count + area range + district), the المميزات chip list (= `preferred_amenities` source,
+  per the 2026-08-03 page-not-brochure rule), أوقات الوصول (landmark + minutes pairs → `nearby_landmarks`), and the
+  brochure PDF at `wp-content/uploads/YYYY/MM/بروشور-<name>.pdf` (public, downloadable — no Drive needed).
+  `og:image` = hero → `main_image`; gallery renders are `wp-content/uploads/<recent YYYY/MM>/<project>-NN.jpg`
+  (filter out `-WxH` thumbnails and the shared icon/logo PNGs: `Vector-*`, `as@2x*`, `BuildingTower`, `SmartHome`,
+  `cctv_*`, `Fav.png` …). **Coordinates: the page has NO map link — the brochure does.** Pull it from the PDF's link
+  ANNOTATIONS (`page.get_links()`, page 6 = `maps.app.goo.gl/...`), then `curl -L -o /dev/null -w '%{url_effective}'`
+  to resolve `!3d<lat>!4d<lng>`. Page 9 annotations also carry the SharePoint "كامل المخططات" folder and sometimes a
+  project video (`:v:/p/...`) → `project_videos`. Brochure structure is a fixed template across projects:
+  p2 brand, p3 developer stats, p4 overview, p5 amenities, p6 location+roads, p7 unit features, p9/p10 floor plans,
+  p12 الضمانات (the standard 11-item warranty table — reuse verbatim), p13 اتحاد الملاك (when offered).
+  Run 2026-08-15: تل الربوة `م ش2862` (0 units — no price file) + ستون الملقا `م ش2863` (20 units `U-49144`–`U-49163`).
+- **الرمز — legacy files-only adapter (2026-06-28, still valid for projects with no page).** Source = the
   developer's two PDFs: a **villa brochure** (`get_text` gave clean-ish Arabic for amenities/landmarks/
   developer stats/model floor breakdowns) and a **sales price PDF** (`ملف أسعار`). Sales PDF shape: a
   `NNN بلك` header page precedes each block's data pages; each data page is a 6-row table, RTL columns by

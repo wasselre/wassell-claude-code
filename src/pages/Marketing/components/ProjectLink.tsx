@@ -18,12 +18,15 @@
  * record — we fall back to `/model/all_projects/:id`, which renders the exact
  * same `ProjectDetailPage` and is always readable for a public project.
  *
- * Rendered as a copper chip (default) that mirrors the clickable «الحملة …» tag,
- * or as an inline text link (`variant="link"`) for dense list-row meta lines.
- * Both stop propagation so the link works inside a clickable row.
+ * It opens in a NEW TAB (real `<a target="_blank">`) so the marketer keeps their
+ * place in the workspace — the marketing record and the project sit side by side.
+ * Being a real anchor, middle-click / ⌘-click / right-click "open in new tab" all
+ * work too. Rendered as a copper chip (default) that mirrors the clickable
+ * «الحملة …» tag, or as an inline text link (`variant="link"`) for dense
+ * list-row meta lines. The click stops propagation so a clickable parent row
+ * doesn't ALSO navigate the current tab.
  */
-import type { KeyboardEvent, MouseEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import type { MouseEvent } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { modelByName, fieldByCandidates } from '@/lib/projects/projectView';
 import { useWorkspace } from '../MarketingWorkspace';
@@ -38,7 +41,6 @@ interface Props {
 
 export default function ProjectLink({ projectIds, variant = 'chip' }: Props) {
   const { isAr, projectName } = useWorkspace();
-  const navigate = useNavigate();
   // The Our-Projects membership lives in the generic records store (loaded by
   // appStore.initialize() at the app root, so it's present in the /m workspace
   // too). We read it to map an all_projects master id → its our_projects record.
@@ -67,29 +69,21 @@ export default function ProjectLink({ projectIds, variant = 'chip' }: Props) {
     return `/model/all_projects/${allProjectsId}`;
   };
 
-  const title = isAr ? 'افتح المشروع في «مشاريعنا»' : 'Open the project in Our Projects';
-  const open = (id: string) => (e: MouseEvent | KeyboardEvent) => {
-    // A row above us may itself be clickable — this link wins.
-    e.stopPropagation();
-    navigate(hrefFor(id));
-  };
-  const onKey = (id: string) => (e: KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      open(id)(e);
-    }
-  };
+  const title = isAr ? 'افتح المشروع في «مشاريعنا» (تبويب جديد)' : 'Open the project in Our Projects (new tab)';
+  // A clickable parent row must not ALSO navigate the current tab — the anchor's
+  // own target="_blank" handles the new tab, so only stop propagation here.
+  const stop = (e: MouseEvent) => e.stopPropagation();
 
   return (
     <>
       {ids.map((id) => variant === 'link' ? (
         <a
           key={id}
-          role="button"
-          tabIndex={0}
+          href={hrefFor(id)}
+          target="_blank"
+          rel="noopener noreferrer"
           title={title}
-          onClick={open(id)}
-          onKeyDown={onKey(id)}
+          onClick={stop}
           style={{
             cursor: 'pointer',
             color: 'var(--copper)',
@@ -101,18 +95,19 @@ export default function ProjectLink({ projectIds, variant = 'chip' }: Props) {
           {projectName(id)}
         </a>
       ) : (
-        <span
+        <a
           key={id}
+          href={hrefFor(id)}
+          target="_blank"
+          rel="noopener noreferrer"
           className="tag"
-          role="button"
-          tabIndex={0}
           title={title}
-          onClick={open(id)}
-          onKeyDown={onKey(id)}
+          onClick={stop}
           style={{
             cursor: 'pointer',
             borderColor: 'var(--copper)',
             color: 'var(--copper)',
+            textDecoration: 'none',
             display: 'inline-flex',
             alignItems: 'center',
             gap: 4,
@@ -120,7 +115,7 @@ export default function ProjectLink({ projectIds, variant = 'chip' }: Props) {
         >
           {projectName(id)}
           <IconForward style={{ width: 11, height: 11 }} />
-        </span>
+        </a>
       ))}
     </>
   );
