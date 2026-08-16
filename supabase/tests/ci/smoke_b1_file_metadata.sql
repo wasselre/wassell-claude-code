@@ -284,4 +284,30 @@ BEGIN
   RAISE NOTICE 'B1.11 checksum deferral OK';
 END $$;
 
+-- ── 12. The timestamp trigger is back on and still works ───────────────────
+-- The backfill disables files_set_updated_at by name so it cannot flatten the
+-- historical updated_at spread. That bypass is only safe if the trigger is
+-- restored, so assert both halves: it is enabled, and it still fires.
+DO $$
+DECLARE v_state "char"; t0 timestamptz; t1 timestamptz;
+BEGIN
+  SELECT tgenabled INTO v_state FROM pg_trigger
+   WHERE tgrelid='public.files'::regclass AND tgname='files_set_updated_at' AND NOT tgisinternal;
+  IF v_state IS NULL THEN
+    RAISE EXCEPTION 'B1.12 vacuous: files_set_updated_at does not exist — the bypass was never exercised';
+  END IF;
+  IF v_state <> 'O' THEN
+    RAISE EXCEPTION 'B1.12 timestamp trigger left in state %, expected O', v_state;
+  END IF;
+
+  SELECT updated_at INTO t0 FROM public.files WHERE id='b1000000-0000-0000-0000-0000000000a4';
+  UPDATE public.files SET description = 'touched by B1.12'
+   WHERE id='b1000000-0000-0000-0000-0000000000a4';
+  SELECT updated_at INTO t1 FROM public.files WHERE id='b1000000-0000-0000-0000-0000000000a4';
+  IF NOT (t1 > t0) THEN
+    RAISE EXCEPTION 'B1.12 post-migration edit did not advance updated_at (% -> %)', t0, t1;
+  END IF;
+  RAISE NOTICE 'B1.12 timestamp trigger restored and working OK';
+END $$;
+
 SELECT 'B1 smoke: all assertions passed' AS result;

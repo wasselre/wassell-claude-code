@@ -97,6 +97,20 @@ SQL
   done | grep -E '^[0-9a-f]{8}-' | sort
 }
 
+# ── updated_at fidelity.
+#
+# `stamps` is a fingerprint of the COMPLETE (id, updated_at) set, not a count or
+# a max: a backfill that stamped now() on every row, on one row, or on a random
+# subset all move this hash. `files_set_updated_at` is an unconditional
+# `NEW.updated_at = now()`, so the backfill has to bypass it by name, and this is
+# the evidence that it did.
+stamps()   { q "SELECT md5(string_agg(id::text||'|'||updated_at::text, ',' ORDER BY id)) FROM public.files"; }
+nstamps()  { q "SELECT count(DISTINCT updated_at) FROM public.files"; }
+ts_state() { q "SELECT coalesce((SELECT tgenabled::text FROM pg_trigger
+                                  WHERE tgrelid='public.files'::regclass
+                                    AND tgname='files_set_updated_at'
+                                    AND NOT tgisinternal), 'absent')"; }
+
 edges()   { q "SELECT count(*) FROM public.file_links"; }
 sources() { q "SELECT count(*) FROM public.file_link_sources"; }
 drift()   { q "SELECT coalesce(sum(value),0) FROM public.file_links_reconcile() WHERE category='drift'"; }
@@ -118,6 +132,13 @@ echo "   baseline: edges=$E0 sources=$S0 drift=$D0 distinct_roles=$ROLES0 floor_
 [ "$ROLES0" -ge 2 ]  || { echo "FAIL: baseline has $ROLES0 distinct role(s); type-priority is untested"; exit 1; }
 [ "$FP0" -gt 0 ]     || { echo "FAIL: no floor_plan edge in the baseline; B1.5 priority rule is vacuous"; exit 1; }
 
+UPD0=$(stamps); NUPD0=$(nstamps); TS0=$(ts_state)
+echo "   baseline: updated_at fingerprint=${UPD0:0:12}… distinct=$NUPD0 timestamp_trigger=$TS0"
+# Non-vacuity again: with no trigger, or with every row sharing one timestamp,
+# "the fingerprint did not change" would prove nothing about the bypass.
+[ "$TS0" = "O" ]     || { echo "FAIL: files_set_updated_at is '$TS0', expected 'O' — the bypass is untested"; exit 1; }
+[ "$NUPD0" -ge 2 ]   || { echo "FAIL: only $NUPD0 distinct updated_at value(s); fidelity test is vacuous"; exit 1; }
+
 echo "== applying B1"
 run "$ROOT/supabase/migrations/2026-08-16_01_business_file_metadata.sql"
 
@@ -128,6 +149,27 @@ echo "   after B1: edges=$E1 sources=$S1 drift=$D1 dirty=$DT1"
 [ "$D1" = "0" ]    || { echo "FAIL: drift after B1 is $D1"; exit 1; }
 [ "$DT1" = "0" ]   || { echo "FAIL: $DT1 dirty target(s) left by the backfill"; exit 1; }
 echo "   OK: projection untouched, Phase 2 never engaged"
+
+# ── updated_at must have survived the backfill untouched ────────────────────
+UPD1=$(stamps); NUPD1=$(nstamps); TS1=$(ts_state)
+[ "$UPD1" = "$UPD0" ] || {
+  echo "FAIL: updated_at changed — fingerprint $UPD0 -> $UPD1"
+  q "SELECT id, updated_at FROM public.files ORDER BY updated_at DESC LIMIT 5"; exit 1; }
+[ "$NUPD1" = "$NUPD0" ] || { echo "FAIL: distinct updated_at $NUPD0 -> $NUPD1"; exit 1; }
+[ "$TS1" = "$TS0" ] || { echo "FAIL: timestamp trigger left in state '$TS1', expected '$TS0'"; exit 1; }
+echo "   OK: all $NUPD0 distinct updated_at values preserved; trigger restored to '$TS1'"
+
+# ── and it must still WORK: an ordinary metadata edit still advances it ─────
+q "UPDATE public.files SET title = title || ' (edited)'
+    WHERE id='b1000000-0000-0000-0000-0000000000a1'" >/dev/null
+MOVED=$(q "SELECT (updated_at > timestamptz '2026-08-01')::text FROM public.files
+            WHERE id='b1000000-0000-0000-0000-0000000000a1'")
+[ "$MOVED" = "true" ] || { echo "FAIL: post-migration edit did not advance updated_at"; exit 1; }
+# ...and only for the row that was edited.
+UNMOVED=$(q "SELECT (updated_at < timestamptz '2026-08-01')::text FROM public.files
+              WHERE id='b1000000-0000-0000-0000-0000000000a2'")
+[ "$UNMOVED" = "true" ] || { echo "FAIL: an unedited row's updated_at moved"; exit 1; }
+echo "   OK: post-migration edits advance updated_at normally, and only for the edited row"
 
 reach > "$WORK/reach.after"
 if ! diff -u "$WORK/reach.before" "$WORK/reach.after" > "$WORK/reach.diff"; then
@@ -142,18 +184,22 @@ psql "$DBURL" -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/ci/smoke_b1_file_metad
 echo "== idempotency: re-applying B1"
 CNT_BEFORE=$(q "SELECT count(*)||'/'||count(*) FILTER (WHERE file_class='system')||'/'||
                        count(*) FILTER (WHERE origin='marketing_intake') FROM public.files")
+UPD2=$(stamps)
 run "$ROOT/supabase/migrations/2026-08-16_01_business_file_metadata.sql"
 CNT_AFTER=$(q "SELECT count(*)||'/'||count(*) FILTER (WHERE file_class='system')||'/'||
                       count(*) FILTER (WHERE origin='marketing_intake') FROM public.files")
 [ "$CNT_BEFORE" = "$CNT_AFTER" ] || { echo "FAIL: re-apply changed classification $CNT_BEFORE -> $CNT_AFTER"; exit 1; }
 [ "$(edges)" = "$E0" ] || { echo "FAIL: re-apply changed edges"; exit 1; }
 [ "$(drift)" = "0" ]   || { echo "FAIL: re-apply introduced drift"; exit 1; }
-echo "   OK: second apply is a no-op"
+[ "$(stamps)" = "$UPD2" ]   || { echo "FAIL: re-apply moved updated_at"; exit 1; }
+[ "$(ts_state)" = "$TS0" ]  || { echo "FAIL: re-apply left the timestamp trigger disabled"; exit 1; }
+echo "   OK: second apply is a no-op, updated_at and trigger state intact"
 
 echo "== rollback"
 # The smoke inserted rows carrying B1-only values; drop them so the comparison
 # is structural, which is what the rollback contract covers.
 q "DELETE FROM public.files WHERE id::text LIKE 'b1000000-0000-0000-0000-0000000000c%'" >/dev/null
+UPD3=$(stamps)
 run "$ROOT/supabase/rollback/2026-08-16_01_business_file_metadata_down.sql"
 fingerprint > "$WORK/fp.rollback"
 if ! diff -u "$WORK/fp.before" "$WORK/fp.rollback" > "$WORK/fp.diff"; then
@@ -162,11 +208,17 @@ fi
 echo "   OK: structure identical to pre-B1"
 [ "$(edges)" = "$E0" ] || { echo "FAIL: rollback changed edges"; exit 1; }
 [ "$(drift)" = "0" ]   || { echo "FAIL: rollback introduced drift"; exit 1; }
+[ "$(stamps)" = "$UPD3" ]  || { echo "FAIL: rollback moved updated_at"; exit 1; }
+[ "$(ts_state)" = "$TS0" ] || { echo "FAIL: rollback left the timestamp trigger in '$(ts_state)'"; exit 1; }
+echo "   OK: rollback preserved updated_at and the timestamp trigger"
 
 echo "== re-apply after rollback"
+UPD4=$(stamps)
 run "$ROOT/supabase/migrations/2026-08-16_01_business_file_metadata.sql"
 [ "$(drift)" = "0" ] || { echo "FAIL: drift after re-apply"; exit 1; }
-echo "   OK"
+[ "$(stamps)" = "$UPD4" ]  || { echo "FAIL: re-apply after rollback moved updated_at"; exit 1; }
+[ "$(ts_state)" = "$TS0" ] || { echo "FAIL: re-apply after rollback left the trigger in '$(ts_state)'"; exit 1; }
+echo "   OK: clean re-application, updated_at and trigger state intact"
 
 echo
 echo "B1 metadata: ALL CHECKS PASSED"

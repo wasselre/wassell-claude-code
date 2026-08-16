@@ -152,7 +152,48 @@ COMMENT ON COLUMN public.files.checksum_sha256 IS 'Populated at upload from B7 o
 --    (`WHERE document_type IS NULL`) would match nothing — silently downgrading
 --    every floor plan in the corpus to `gallery_image`. Caught by the
 --    non-vacuity assertion in smoke_b1_file_metadata.sql §5.
+--
+--    UPDATED_AT IS HISTORY AND MUST SURVIVE. `files` carries a BEFORE UPDATE
+--    trigger, files_set_updated_at, whose function is unconditionally
+--    `NEW.updated_at = now()`. Because it ignores whatever the statement sets,
+--    writing `SET updated_at = f.updated_at` in the backfill does NOT work —
+--    the trigger overwrites it afterwards. Left alone, this backfill would
+--    stamp today's timestamp onto all 7,133 rows and destroy a real 2026-05-23
+--    → 2026-08-15 spread of 7,132 distinct values.
+--
+--    So the trigger is bypassed for the duration of the backfill, and ONLY that
+--    trigger, BY NAME. Note what is deliberately NOT used here:
+--    `session_replication_role = replica` would silence EVERY trigger on the
+--    table, including Phase 2's files_sync_file_links and the constraint trigger
+--    that drains the projection — turning a metadata backfill into a silent
+--    projection-divergence bug.
+--
+--    Its prior state is captured and restored exactly (a trigger may legitimately
+--    be sitting in replica or always mode), not blindly forced to ENABLE. The
+--    whole migration is one transaction, so any failure between the disable and
+--    the restore rolls back the backfill AND the trigger state together — DDL is
+--    transactional in PostgreSQL. §3f then asserts the trigger is not left
+--    disabled, so even a future edit that broke the restore logic would abort the
+--    migration rather than commit a silently disabled timestamp trigger.
 -- ---------------------------------------------------------------------------
+
+-- 3z-pre. Capture the timestamp trigger's exact state, then disable it.
+DO $ts$
+DECLARE v_state "char";
+BEGIN
+  SELECT t.tgenabled INTO v_state
+    FROM pg_trigger t
+   WHERE t.tgrelid = 'public.files'::regclass
+     AND t.tgname  = 'files_set_updated_at'
+     AND NOT t.tgisinternal;
+
+  IF v_state IS NULL THEN
+    PERFORM set_config('wassell.b1_updated_at_tg', 'absent', true);
+  ELSE
+    PERFORM set_config('wassell.b1_updated_at_tg', v_state::text, true);
+    ALTER TABLE public.files DISABLE TRIGGER files_set_updated_at;
+  END IF;
+END $ts$;
 
 -- 3a. title
 UPDATE public.files f
@@ -249,6 +290,43 @@ UPDATE public.files f
  WHERE t.value = f.document_type
    AND t.default_confidentiality <> 'internal'
    AND f.confidentiality = 'internal';
+
+-- 3z-post. Restore the timestamp trigger to EXACTLY the state it was in.
+DO $ts$
+DECLARE v_state text := current_setting('wassell.b1_updated_at_tg', true);
+BEGIN
+  IF v_state IS NULL OR v_state = 'absent' THEN
+    RETURN;                                    -- nothing was disabled
+  ELSIF v_state = 'O' THEN
+    ALTER TABLE public.files ENABLE TRIGGER files_set_updated_at;
+  ELSIF v_state = 'R' THEN
+    ALTER TABLE public.files ENABLE REPLICA TRIGGER files_set_updated_at;
+  ELSIF v_state = 'A' THEN
+    ALTER TABLE public.files ENABLE ALWAYS TRIGGER files_set_updated_at;
+  ELSIF v_state = 'D' THEN
+    NULL;                                      -- it was already disabled; leave it
+  ELSE
+    RAISE EXCEPTION 'B1: unknown prior tgenabled state % for files_set_updated_at', v_state;
+  END IF;
+END $ts$;
+
+-- 3f. Self-enforcing guard. If the restore above ever regresses, this aborts
+--     the migration instead of committing a database whose timestamp trigger is
+--     silently off — which would be a far worse and much quieter bug than the
+--     one this section exists to prevent.
+DO $ts$
+DECLARE v_state "char"; v_expected text := current_setting('wassell.b1_updated_at_tg', true);
+BEGIN
+  IF v_expected IS NULL OR v_expected = 'absent' THEN RETURN; END IF;
+  SELECT t.tgenabled INTO v_state
+    FROM pg_trigger t
+   WHERE t.tgrelid='public.files'::regclass AND t.tgname='files_set_updated_at'
+     AND NOT t.tgisinternal;
+  IF v_state IS DISTINCT FROM v_expected::"char" THEN
+    RAISE EXCEPTION 'B1: files_set_updated_at is % after the backfill, expected %',
+      coalesce(v_state::text,'<missing>'), v_expected;
+  END IF;
+END $ts$;
 
 -- ---------------------------------------------------------------------------
 -- 4. Fill-in trigger, so new rows are complete without touching any writer.

@@ -87,3 +87,37 @@ INSERT INTO public.document_jobs (result_file_id)
 INSERT INTO public.mos_assets (id, title, file_id)
   VALUES ('b1000000-0000-0000-0000-0000000000b8','brand mark','b1000000-0000-0000-0000-0000000000a8')
 ON CONFLICT (id) DO NOTHING;
+
+-- ── updated_at history + the timestamp trigger ──────────────────────────────
+-- Production `files` holds 7,132 DISTINCT updated_at values spanning
+-- 2026-05-23 to 2026-08-15. That is real history and the B1 backfill must not
+-- flatten it. Give every fixture row its own deterministic historical stamp so
+-- "the fingerprint is byte-identical" is a real claim: if the backfill stamped
+-- now() on everything, every one of these would move, and if it stamped a
+-- single shared value the distinct-count assertion would catch that too.
+--
+-- Assigned BEFORE the trigger is created, because the trigger would otherwise
+-- overwrite these very UPDATEs.
+WITH ordered AS (
+  SELECT id, row_number() OVER (ORDER BY id) AS rn FROM public.files
+)
+UPDATE public.files f
+   SET created_at = timestamptz '2026-05-23 02:04:52.181964+00' + (o.rn * interval '7 hours'),
+       updated_at = timestamptz '2026-05-23 02:04:52.181964+00' + (o.rn * interval '13 hours')
+  FROM ordered o WHERE o.id = f.id;
+
+-- Mirrors production exactly: BEFORE UPDATE only (tgtype 19 = ROW|BEFORE|UPDATE),
+-- function body `NEW.updated_at = now()` with no guard — which is why the B1
+-- backfill cannot simply assign the old value and must bypass the trigger.
+-- INSERTs are not covered; they rely on the column DEFAULT.
+CREATE OR REPLACE FUNCTION public.set_updated_at() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS files_set_updated_at ON public.files;
+CREATE TRIGGER files_set_updated_at
+  BEFORE UPDATE ON public.files
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
