@@ -2,10 +2,28 @@
 
 Last updated: 2026-08-16
 
-> **Status: Gate A partially landed.** Four additive governance/evidence migrations are in
-> this branch, unapplied to any database. The freeze baseline (`_05`) is DEFERRED and blocks
-> the provenance/outbox migration (`_06`). Storage enforcement is DEFERRED to Gate B. No
-> canonical `market_listings` writer exists yet.
+> **Status: Gate A complete.** Six migrations — the freeze baseline
+> (`2026-09-03_02`), the four additive governance/evidence migrations
+> (`2026-09-05_01…04`) and the provenance/outbox migration (`2026-09-05_06`) —
+> are merged and **applied to no database**. CI executes the entire replay chain,
+> including the **unmodified** `2026-09-04_00`, and proves it converges to the
+> six-policy secure state and to the five-way `unified_records` fingerprint
+> `74602527636617c3549508a67fcc220d`. Storage enforcement remains DEFERRED to
+> Gate B. No canonical `market_listings` writer exists yet.
+
+### Ordering — why the baseline sorts at `2026-09-03_02`
+
+`2026-09-04_00` is applied, immutable, and its preflight aborts when
+`public.market_listings` is absent. Migrations replay lexically, so a baseline numbered
+after it could never create the table in time and every fresh path would stop dead.
+Numbering the baseline **below** it is the only resolution that does not edit an applied,
+ledger-recorded migration. The proven replay order is:
+
+`2026-09-03_02` → **`2026-09-04_00` (unmodified)** → `2026-09-05_01…04` → `2026-09-05_06`
+
+CI job `freeze-baseline-sequence` executes exactly that chain against Postgres 17, from the
+supported pre-freeze predecessor fixture, and additionally proves the production-shaped
+assert-only path, idempotency, and fail-closed drift refusal.
 
 This is the single authoritative Gate A document. Someone landing cold should be able to
 understand from this file alone what is done, what is deliberately not done, and why.
