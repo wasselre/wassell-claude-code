@@ -83,12 +83,25 @@ try_fail "uploader cannot insert into another bucket" \
   "BEGIN; $CL='{\"sub\":\"$UID_UP\"}'; SET LOCAL ROLE authenticated; INSERT INTO storage.buckets(id,name) VALUES('other','other') ON CONFLICT DO NOTHING; INSERT INTO storage.objects(bucket_id,name,owner_id) VALUES('other','canary/$(printf 'b%.0s' {1..64})','$UID_UP'); COMMIT;"
 try_fail "a NORMAL authenticated user cannot insert" \
   "BEGIN; $CL='{\"sub\":\"$UID_OTHER\"}'; SET LOCAL ROLE authenticated; INSERT INTO storage.objects(bucket_id,name,owner_id) VALUES('market-raw','canary/$(printf 'c%.0s' {1..64})','$UID_OTHER'); COMMIT;"
-try_fail "uploader cannot UPDATE its own object" \
-  "BEGIN; $CL='{\"sub\":\"$UID_UP\"}'; SET LOCAL ROLE authenticated; UPDATE storage.objects SET name='x' WHERE bucket_id='market-raw'; COMMIT;"
-try_fail "uploader cannot DELETE its own object" \
-  "BEGIN; $CL='{\"sub\":\"$UID_UP\"}'; SET LOCAL ROLE authenticated; DELETE FROM storage.objects WHERE bucket_id='market-raw'; COMMIT;"
-try_fail "admin cannot DELETE either" \
-  "BEGIN; $CL='{\"sub\":\"$UID_ADMIN\"}'; SET LOCAL ROLE authenticated; DELETE FROM storage.objects WHERE bucket_id='market-raw'; COMMIT;"
+# UPDATE/DELETE under RLS with NO matching policy do not ERROR — they affect
+# ZERO ROWS and return success. Asserting "the statement failed" would be a
+# false signal. The correct proof is that the object is still there, unmodified.
+# (The Storage HTTP API turns a zero-row result into an error; that half is
+# proven by scripts/market-raw-canary.mjs against production.)
+OBJNAME="canary/$(printf 'a%.0s' {1..64})"
+mutate() { psql -w "$U" -qAt -c "BEGIN; $CL='{\"sub\":\"$1\"}'; SET LOCAL ROLE authenticated; $2; COMMIT;" 2>&1 | tail -1; }
+survives() { psql -w "$U" -qAt -c "SELECT count(*) FROM storage.objects WHERE bucket_id='market-raw' AND name='$OBJNAME'" | tail -1; }
+
+for spec in "$UID_UP|UPDATE storage.objects SET name='TAMPERED' WHERE bucket_id='market-raw'|uploader UPDATE"             "$UID_UP|DELETE FROM storage.objects WHERE bucket_id='market-raw'|uploader DELETE"             "$UID_ADMIN|DELETE FROM storage.objects WHERE bucket_id='market-raw'|admin DELETE"             "$UID_OTHER|UPDATE storage.objects SET name='TAMPERED' WHERE bucket_id='market-raw'|normal-user UPDATE"; do
+  IFS='|' read -r uid sql label <<<"$spec"
+  res=$(mutate "$uid" "$sql")
+  n=$(survives)
+  if [ "$n" = "1" ]; then echo "  PASS  $label affected 0 rows; object intact ($res)";
+  else echo "  FAIL  $label changed the object (survivors=$n)"; fails=$((fails+1)); fi
+done
+
+# And the row is byte-identical to what was inserted.
+[ "$(psql -w "$U" -qAt -c "SELECT owner_id::text FROM storage.objects WHERE name='$OBJNAME'")" = "$UID_UP" ]   && echo "  PASS  owner_id equals the dedicated uploader uid"   || { echo "  FAIL  owner_id mismatch"; fails=$((fails+1)); }
 
 row_count() { psql -w "$U" -qAt -c "BEGIN; SET LOCAL request.jwt.claims='{\"sub\":\"$1\"}'; SET LOCAL ROLE authenticated; SELECT count(*) FROM storage.objects WHERE bucket_id='market-raw'; COMMIT;" | tail -1; }
 [ "$(row_count $UID_ADMIN)" = "1" ] && echo "  PASS  admin can read the object" || { echo "  FAIL  admin cannot read"; fails=$((fails+1)); }
