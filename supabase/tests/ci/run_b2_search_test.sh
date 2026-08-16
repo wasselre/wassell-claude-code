@@ -51,8 +51,17 @@ run "$ROOT/supabase/migrations/2026-08-12_file_link_sync.sql"
 run "$ROOT/supabase/tests/ci/fixture_b1_authz.sql"
 run "$ROOT/supabase/migrations/2026-08-16_01_business_file_metadata.sql"
 
-UPD_B1=$(q "SELECT md5(string_agg(id::text||'|'||updated_at::text, ',' ORDER BY id)) FROM public.files")
+# The pre-B2 population is "every row whose storage_path is not a scale/ row".
+# coalesce() is load-bearing: the Phase 1 fixture inserts files with a NULL
+# storage_path, and `NULL NOT LIKE 'scale/%'` is NULL, not true — so a bare
+# NOT LIKE silently drops 11 of the 19 rows and compares two different
+# populations either side of the apply.
+PRE_PRED="coalesce(storage_path,'') NOT LIKE 'scale/%'"
+UPD_B1=$(q "SELECT md5(string_agg(id::text||'|'||updated_at::text, ',' ORDER BY id))
+              FROM public.files WHERE $PRE_PRED")
+PRE_N=$(q "SELECT count(*) FROM public.files WHERE $PRE_PRED")
 E0=$(q "SELECT count(*) FROM public.file_links")
+echo "   pre-B2 baseline: $PRE_N rows, $E0 edges"
 
 echo "== applying B2"
 run "$ROOT/supabase/migrations/2026-08-16_02_business_files_search.sql"
@@ -72,9 +81,10 @@ echo "   corpus: $N files, $(q "SELECT count(*) FROM public.file_links") edges"
 # ADD COLUMN rewrites the table but fires no row trigger, so the 19 pre-existing
 # rows must keep their exact updated_at.
 UPD_NOW=$(q "SELECT md5(string_agg(id::text||'|'||updated_at::text, ',' ORDER BY id))
-               FROM public.files WHERE storage_path NOT LIKE 'scale/%'")
-PRE=$(q "SELECT count(*) FROM public.files WHERE storage_path NOT LIKE 'scale/%'")
-echo "   pre-B2 rows still present: $PRE"
+               FROM public.files WHERE $PRE_PRED")
+PRE=$(q "SELECT count(*) FROM public.files WHERE $PRE_PRED")
+echo "   pre-B2 rows still present: $PRE (baseline was $PRE_N)"
+[ "$PRE" = "$PRE_N" ] || { echo "FAIL: pre-B2 row count changed $PRE_N -> $PRE"; exit 1; }
 # B2 adds a STORED generated column, which rewrites the table. A rewrite fires
 # no row trigger, so B1's preserved updated_at history must come through
 # untouched — assert it rather than assume it.
