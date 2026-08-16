@@ -167,7 +167,9 @@ echo "   OK: all $NUPD0 distinct updated_at values preserved; trigger restored t
 # <date>" assertion tests the fixture's construction rather than B1's behaviour.
 A1_T0=$(q "SELECT updated_at FROM public.files WHERE id='b1000000-0000-0000-0000-0000000000a1'")
 A2_T0=$(q "SELECT updated_at FROM public.files WHERE id='b1000000-0000-0000-0000-0000000000a2'")
-q "UPDATE public.files SET title = title || ' (edited)'
+# Edits `description`, not `title`: smoke B1.2 asserts a1's exact derived title,
+# so mutating it here would break a later assertion from outside its own test.
+q "UPDATE public.files SET description = 'touched by the updated_at fidelity check'
     WHERE id='b1000000-0000-0000-0000-0000000000a1'" >/dev/null
 A1_T1=$(q "SELECT updated_at FROM public.files WHERE id='b1000000-0000-0000-0000-0000000000a1'")
 A2_T1=$(q "SELECT updated_at FROM public.files WHERE id='b1000000-0000-0000-0000-0000000000a2'")
