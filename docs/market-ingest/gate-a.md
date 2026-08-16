@@ -157,6 +157,75 @@ when a dependency is missing.
 
 ---
 
+## 6b. Production remeasurement — 2026-08-16 (read-only)
+
+Measured directly against `wassell-prod` inside `BEGIN READ ONLY` (verified
+`transaction_read_only = on`). No mutation. This section exists so the freeze baseline can
+be authored without repeating the measurement.
+
+**Identity and fingerprints**
+
+| Fact | Measured 2026-08-16 | vs. PR #13 |
+|---|---|---|
+| `models.id` | `8f06bc39-4bee-42e9-9fab-77023fb89ede` | unchanged |
+| `is_hardcoded` / `table_name` | `true` / `market_listings` | unchanged |
+| **Raw** `md5(models.schema)` — *production identity evidence only, NOT a fresh-DB pin* | `44e7ce3ffc050cba5f49b97b5667cf83` | **still matches** |
+| **L2** generator `md5(pg_get_functiondef(regenerate_frozen_model_artifacts))` | `415e0006b8be1eb6200c147b336bfcfe` | **still matches** |
+| Rows / columns | 314,070 / 91 | `image_urls`,`video_urls` now `jsonb` |
+| RLS / owner | enabled / `postgres` | — |
+
+The raw schema md5 is **not** usable as the fresh-database L1 pin: `models.schema` carries
+random per-field UUIDs and display labels, so a rebuilt model never reproduces it. A
+canonical normalized generator-input fingerprint (field name, type, required, width,
+is_multi, lookup target by slug, dropdown option values sorted; UUIDs and labels excluded)
+is still **not yet measured** and must be computed before the baseline pins L1.
+
+**L3 output fingerprints — current six-policy state** (these are the live values, not a
+statement that the historical ones changed):
+
+| Object | `md5` | Shape |
+|---|---|---|
+| `frozen_view` qual | `6087e8fdcfcb9f3df3da7898c1163c18` | permissive SELECT, `{authenticated}`, 2,829 ch |
+| `frozen_update` qual = withcheck | `9f0255206b5395282618aa80bd147719` | permissive UPDATE, 2,829 ch |
+| `frozen_delete` qual | `5c85c440b19c5541a150f8b6f57922a5` | permissive DELETE, 2,950 ch |
+| `frozen_insert` withcheck | `4928c9574ded1309015b08236950b256` | permissive INSERT, 114 ch |
+| `market_listings_view_fast` qual | `b80e72543ad3b57e163b283456f62418` | **permissive** SELECT, 153 ch |
+| `market_listings_view_deny_none` qual | `4f400ee19d9149b0554841e4e1086075` | **restrictive** SELECT, 155 ch |
+| `market_listings_v` viewdef | `09af7a872c06f8d3acc81b7ebe5c82ec` | 3,194 ch |
+| `unified_records` viewdef | `74602527636617c3549508a67fcc220d` | 1,056 ch |
+
+**The six preconditions the unmodified `2026-09-04_00` pins — all verified live 2026-08-16:**
+`market_listings_summary` `0ddd7ab480fcf167ca9d684d9c1f2db6`; `v_market_listings`
+`3675d4c9bab1019312eae01035ab18ba`; `v_market_properties` `416a3eaac713f2eaf27d46f8867c5d4a`;
+`frozen_view` qual `6087e8fdcfcb9f3df3da7898c1163c18`; `wassell_view_scope_class`
+`0bcfabe9df9da91ea4d874104fec65d6`; `wassell_can_view_jsonb` `c9a781616085d3b06eec12d68238b502`.
+All three views are plain views owned by `postgres`.
+
+**Physical shape:** 91 columns; constraints `market_listings_pkey` and
+`market_listings_created_by_user_id_fkey → users(id) ON DELETE SET NULL`; 13 indexes;
+junction tables `market_listings__basic_info_missing_keys` and `market_listings__features`.
+
+**Dependency graph:** `market_listings` ← `market_listings_summary`, `market_listings_v`,
+`v_market_listings`. `unified_records` ← `v_market_properties`, `v_our_projects_scope`,
+`v_website_public`.
+
+### 6b.1 Production has FOUR frozen models, not one
+
+`unified_records` is a `UNION ALL` over `records`, `cities_v`, `districts_v`,
+`market_listings_v` and `regions_v` — `models` reports `is_hardcoded` for **cities,
+districts, market_listings, regions**.
+
+This constrains the freeze baseline. `2026-09-04_00` requires `v_market_properties`, which
+reads `FROM unified_records`. On a fresh path the baseline must therefore also produce
+`unified_records` — but it can only honestly reconstruct the *market_listings* frozen model.
+The baseline must consequently build a **reduced** `unified_records` (`records UNION ALL
+market_listings_v`) and document the deviation. This is sufficient for convergence, because
+`v_market_properties`'s own viewdef references `unified_records` by name only, so its pinned
+md5 is unaffected by what `unified_records` unions. It is **not** sufficient for
+fresh-vs-production schema parity, which remains out of scope and blocked.
+
+---
+
 ## 7. The freeze baseline is DEFERRED and BLOCKED
 
 Four blockers:
