@@ -33,6 +33,10 @@ CREATE TABLE storage.objects (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id text REFERENCES storage.buckets(id),
   name text, owner_id uuid, created_at timestamptz DEFAULT now(), UNIQUE (bucket_id, name));
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- Schema USAGE is REQUIRED or every negative test below would pass for the
+-- wrong reason: 'permission denied for schema storage' instead of an RLS
+-- refusal. Granting it makes the policy the only thing that can refuse.
+GRANT USAGE ON SCHEMA storage TO anon, authenticated;
 GRANT ALL ON storage.objects, storage.buckets TO anon, authenticated;
 CREATE TABLE public.test_admin (user_id uuid PRIMARY KEY);
 INSERT INTO public.test_admin VALUES ('$UID_ADMIN');
