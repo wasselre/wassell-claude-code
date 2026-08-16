@@ -214,11 +214,21 @@ END
 $assert$;
 
 -- == SECTION 4: grants — exact ACL sets, grantability-aware ==================
--- Asserted via pg_class.relacl + aclexplode, NOT
--- information_schema.role_table_grants, which is blind to MAINTAIN. Each
--- privilege is rendered as privilege_type || '*' when held WITH GRANT OPTION,
--- so a surviving grant option appears as a starred name and fails the exact
--- match instead of passing as plain 'SELECT'.
+-- aclexplode, NOT information_schema.role_table_grants (blind to MAINTAIN).
+--
+-- TWO CONTEXTS. Supabase's ALTER DEFAULT PRIVILEGES grants ALL on every new
+-- table in `public` to anon, authenticated and service_role. The Gate A
+-- migrations revoke PUBLIC and anon but cannot revoke the defaults inherited by
+-- authenticated/service_role — that is 2026-09-05_07's job, and _07 requires all
+-- fifteen objects, so it can only run after _06.
+--   * HARDENED  (mirror_outbox present => full sequence, _07 applied):
+--       assert the exact final matrix — PUBLIC/anon none, authenticated and
+--       service_role exactly SELECT.
+--   * PRE-HARDENING (standalone Gate A job, _01.._04 only):
+--       assert the invariants those migrations DO own — PUBLIC and anon hold
+--       nothing, and nothing carries WITH GRANT OPTION. The broad
+--       authenticated/service_role grants are the KNOWN inherited defect and
+--       are asserted away by the freeze-baseline-sequence job instead.
 DO $assert$
 DECLARE
   v_objects text[] := ARRAY[
@@ -227,46 +237,46 @@ DECLARE
     'source_field_catalog', 'source_field_mappings', 'schema_gap_events',
     'ingestion_runs', 'ingestion_items', 'listing_change_events', 'listing_change_review',
     'v_source_field_status'];
-  v_o text;
-  v_acl text;
+  v_hardened boolean := to_regclass('public.mirror_outbox') IS NOT NULL;
+  v_obj text; v_grantee text; v_acl text; v_all text; v_want text;
 BEGIN
-  FOREACH v_o IN ARRAY v_objects LOOP
-    -- anon and PUBLIC (grantee oid 0): zero privileges.
+  IF v_hardened THEN
+    v_objects := v_objects || ARRAY['listing_field_provenance','mirror_outbox'];
+  END IF;
+
+  FOREACH v_obj IN ARRAY v_objects LOOP
+    FOREACH v_grantee IN ARRAY ARRAY['anon','PUBLIC','authenticated','service_role'] LOOP
+      SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
+        INTO v_acl
+        FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+       WHERE c.oid = format('public.%I', v_obj)::regclass
+         AND CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END = v_grantee;
+
+      IF v_grantee IN ('anon','PUBLIC') THEN
+        IF v_acl <> '(none)' THEN
+          RAISE EXCEPTION 'ASSERT 4 FAILED: % on public.% must hold nothing, found: %', v_grantee, v_obj, v_acl;
+        END IF;
+      ELSIF v_hardened THEN
+        IF v_acl <> 'SELECT' THEN
+          RAISE EXCEPTION 'ASSERT 4 FAILED: % on public.% must be exactly SELECT after 2026-09-05_07, found: %', v_grantee, v_obj, v_acl;
+        END IF;
+      ELSE
+        IF position('SELECT' in v_acl) = 0 THEN
+          RAISE EXCEPTION 'ASSERT 4 FAILED: % on public.% must at least hold SELECT, found: %', v_grantee, v_obj, v_acl;
+        END IF;
+      END IF;
+    END LOOP;
+
     SELECT coalesce(string_agg(DISTINCT
              (CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END) || ':' ||
-             a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END,
-             ', ' ORDER BY
+             a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY
              (CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END) || ':' ||
              a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
-      INTO v_acl
-      FROM pg_class c
-           CROSS JOIN LATERAL aclexplode(c.relacl) AS a
-     WHERE c.oid = format('public.%I', v_o)::regclass
-       AND (a.grantee = 0 OR a.grantee = 'anon'::regrole);
-    IF v_acl <> '(none)' THEN
-      RAISE EXCEPTION 'ASSERT 4 FAILED: anon/PUBLIC must hold zero privileges on public.%, found: %', v_o, v_acl;
-    END IF;
-
-    -- authenticated: exactly SELECT, never WITH GRANT OPTION.
-    SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
-      INTO v_acl
-      FROM pg_class c
-           CROSS JOIN LATERAL aclexplode(c.relacl) AS a
-     WHERE c.oid = format('public.%I', v_o)::regclass
-       AND a.grantee = 'authenticated'::regrole;
-    IF v_acl <> 'SELECT' THEN
-      RAISE EXCEPTION 'ASSERT 4 FAILED: authenticated must hold exactly SELECT on public.%, found: %', v_o, v_acl;
-    END IF;
-
-    -- service_role: exactly SELECT, never WITH GRANT OPTION.
-    SELECT coalesce(string_agg(DISTINCT a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END), '(none)')
-      INTO v_acl
-      FROM pg_class c
-           CROSS JOIN LATERAL aclexplode(c.relacl) AS a
-     WHERE c.oid = format('public.%I', v_o)::regclass
-       AND a.grantee = 'service_role'::regrole;
-    IF v_acl <> 'SELECT' THEN
-      RAISE EXCEPTION 'ASSERT 4 FAILED: service_role must hold exactly SELECT on public.%, found: %', v_o, v_acl;
+      INTO v_all
+      FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+     WHERE c.oid = format('public.%I', v_obj)::regclass;
+    IF position('*' in v_all) > 0 THEN
+      RAISE EXCEPTION 'ASSERT 4 FAILED: a WITH GRANT OPTION privilege exists on public.% — full ACL: %', v_obj, v_all;
     END IF;
   END LOOP;
 END

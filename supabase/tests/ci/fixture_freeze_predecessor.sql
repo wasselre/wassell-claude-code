@@ -30,6 +30,23 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; ELSE ALTER ROLE service_role BYPASSRLS; END IF;
 END $$;
 
+
+-- ---------------------------------------------------------------------------
+-- SUPABASE DEFAULT PRIVILEGES — reproduced deliberately.
+--
+-- Production ships ALTER DEFAULT PRIVILEGES on `public` granting ALL on every
+-- NEW table to anon, authenticated AND service_role, from two grantors. That is
+-- why the Gate A tables came out holding all eight privileges instead of SELECT
+-- despite each migration's `REVOKE ALL FROM PUBLIC, anon`.
+--
+-- Without this block CI cannot see the defect: a bare Postgres has no default
+-- ACLs, every Gate A table lands SELECT-only by accident, and the hardening
+-- migration (2026-09-05_07) would be proving nothing. Do NOT remove it to make
+-- a test pass.
+-- ---------------------------------------------------------------------------
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT ALL ON TABLES TO anon, authenticated, service_role;
+
 CREATE SCHEMA IF NOT EXISTS auth;
 CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
   SELECT nullif(current_setting('request.jwt.claims', true)::json ->> 'sub', '')::uuid
