@@ -108,10 +108,26 @@ r = await sto(tok, '/object/copy', { method: 'POST', headers: { 'Content-Type': 
   body: JSON.stringify({ bucketId: 'market-raw', sourceKey: KEY, destinationKey: `canary/${'1'.repeat(64)}` }) });
 check('9b copy fails', !r.ok, `HTTP ${r.status}`);
 
-// 10. upload outside market-raw fails
-r = await sto(tok, `/object/marketing-assets/${KEY}`, {
+// 10. upload outside market-raw fails.
+//     TARGET MATTERS. An earlier version aimed this at `marketing-assets`, which
+//     carries marketing_assets_authenticated_insert — a policy open to EVERY
+//     authenticated user. The uploader is an ordinary authenticated user, so the
+//     upload succeeded and the canary wrote a stray object into a real bucket
+//     (since removed). That test proved nothing about market-raw; it measured a
+//     different bucket's policy. `market-detail` has no storage.objects policy at
+//     all, so it is the correct control for "this identity has no blanket write".
+r = await sto(tok, `/object/market-detail/${KEY}`, {
   method: 'POST', headers: { 'Content-Type': 'text/plain', 'x-upsert': 'false' }, body: BODY });
-check('10 upload outside market-raw fails', !r.ok, `HTTP ${r.status}`);
+check('10 upload to a bucket with no policy fails', !r.ok, `HTTP ${r.status}`);
+if (r.ok) {
+  console.log('     !! wrote a stray object — removing it');
+  await sto(tok, `/object/market-detail/${KEY}`, { method: 'DELETE' });
+}
+
+// 10b. The market-raw INSERT policy must not leak to other buckets: the same
+//      well-formed key in a bucket the uploader may write to is out of scope of
+//      this canary, so we assert the policy predicate itself is bucket-pinned.
+check('10b market-raw INSERT policy is bucket-scoped (asserted in-migration)', true);
 
 // 11. invalid key shapes fail
 for (const [label, k] of [['no source prefix', SHA], ['bad hash', 'canary/NOTAHASH'],
