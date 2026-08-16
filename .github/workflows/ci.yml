@@ -105,6 +105,15 @@ jobs:
       - name: File-link sync — concurrency (two live sessions)
         run: bash supabase/tests/ci/concurrency_file_link_sync.sh
 
+      # Phase 3 · B1 (business-file metadata). Its own database again, because
+      # it adds RLS + an authorization surface to `files` that the Phase 1/2
+      # smokes deliberately run without. The runner also owns the checks that
+      # need state either side of the apply: projection untouched, reach
+      # unchanged, idempotent re-apply, and a rollback that restores the exact
+      # pre-B1 structure.
+      - name: File metadata (B1) — fixtures, migration, smoke, rollback
+        run: bash supabase/tests/ci/run_b1_metadata_test.sh
+
   market-listings-reconciliation:
     # Designated validator for
     # supabase/migrations/2026-09-04_00_market_listings_view_reconciliation.sql.
