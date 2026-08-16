@@ -36,6 +36,14 @@ psql "$PGURL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE $DB;"
 
 echo "== Phase 1 + Phase 2 + B1"
 run "$ROOT/supabase/tests/ci/fixture_file_links.sql"
+# wassell_search_norm is defined by the translation migration set, which the
+# db-migrations job applies to a DIFFERENT database. B2's folding MUST use the
+# real function rather than a copy pasted into a fixture — a copy is exactly how
+# the client/SQL folding pair drifts apart, which CLAUDE.md calls out as a
+# correctness rule. 2026-09-02_02 is the CURRENT definition (the alef-madda fix)
+# and is self-contained: its only other statement is a REINDEX loop guarded by
+# IF EXISTS, so it applies cleanly to a database with no translation tables.
+run "$ROOT/supabase/migrations/2026-09-02_02_search_norm_alef_madda_fix.sql"
 run "$ROOT/supabase/tests/ci/fixture_b1_metadata.sql"
 run "$ROOT/supabase/migrations/2026-08-10_file_links_projection.sql"
 q   "SELECT * FROM public.file_links_backfill()" >/dev/null
