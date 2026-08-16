@@ -134,40 +134,43 @@ interface LandmarkRow {
   longitude: number | null;
 }
 
-/** Picker map style = the brand style MINUS Google's own district-name labels —
+/** THE DISTRICT NAME IS THE ONLY TEXT THIS MAP OWES YOU.
+ *
+ *  Picker map style = the brand style MINUS Google's own district-name labels —
  *  we render every district's name ourselves at its centroid, so the basemap
  *  copy showed each name TWICE (live report 2026-07-13). Google tags Saudi
- *  district names under TWO feature classes: most are
- *  administrative.neighborhood, but several major ones (الوادي، غرناطة،
- *  النزهة…) are administrative.locality — hiding only the first left those
- *  still duplicated (live report 2026-07-19), so both are off here. The picker
- *  is city-scoped, so losing Google's locality (city-name) labels inside it
- *  costs nothing. Only the picker hides them; other maps keep Google's labels
- *  (they draw no labels of their own). */
+ *  district names under TWO feature classes: most are administrative.neighborhood,
+ *  but several major ones (الوادي، غرناطة، النزهة…) are administrative.locality —
+ *  so BOTH are hidden. The base style also COLOURS every poi label but never
+ *  hides them, which buries the district mesh under a wall of shop/clinic names at
+ *  district zoom (live report 2026-07-31), so POI + transit labels go silent too.
+ *  Roads keep their labels — a road name orients you without competing with the
+ *  district name. Only the picker hides these; other maps draw no labels of their
+ *  own so they keep Google's.
+ *
+ *  WHY hide at labels.text + labels.icon, not the broad `labels` (2026-08-16):
+ *  a single `elementType:'labels', visibility:'off'` used to suppress these, but
+ *  the unpinned Google Maps JS weekly channel (now v3.65) changed how overlapping
+ *  stylers resolve. WASSEL_MAP_STYLE colours these labels via the MORE-SPECIFIC
+ *  `labels.text.fill`, and that specific colour rule started winning over the
+ *  broad `labels` off — so Google's district + POI labels reappeared and doubled
+ *  the ones we draw, while the map read as "uncoloured" default again (live report
+ *  2026-08-16). Suppressing at `labels.text` and `labels.icon` — the same branch
+ *  as the colour rule — hides them regardless of Google's resolution order. The
+ *  redundant broad `labels` off is kept as a belt-and-suspenders. */
+const PICKER_HIDDEN_LABEL_FEATURES = [
+  'administrative.neighborhood', 'administrative.locality',
+  'poi', 'poi.business', 'poi.park', 'poi.attraction', 'poi.place_of_worship',
+  'poi.medical', 'poi.school', 'poi.sports_complex', 'poi.government', 'transit',
+];
+const hideAllLabels = (featureType: string): google.maps.MapTypeStyle[] => [
+  { featureType, elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType, elementType: 'labels.text', stylers: [{ visibility: 'off' }] },
+  { featureType, elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+];
 const PICKER_MAP_STYLE: google.maps.MapTypeStyle[] = [
   ...WASSEL_MAP_STYLE,
-  { featureType: 'administrative.neighborhood', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'administrative.locality', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  // THE DISTRICT NAME IS THE ONLY TEXT THIS MAP OWES YOU.
-  //
-  // The base style COLOURS poi labels but never hides them, which was survivable
-  // over Riyadh and is not over Dubai: at district zoom Google draws a label for
-  // every shop, clinic and business in view, and they pile into an unreadable black
-  // mass that buries the district mesh underneath (live report 2026-07-31).
-  //
-  // Roads keep their labels — a road name orients you, it doesn't compete with the
-  // district name. Everything else that is a POI, a park name, a transit stop or a
-  // business goes silent.
-  { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.business', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.park', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.attraction', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.place_of_worship', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.medical', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.school', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.sports_complex', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.government', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  ...PICKER_HIDDEN_LABEL_FEATURES.flatMap(hideAllLabels),
 ];
 
 /** GeoJSON Polygon/MultiPolygon → google.maps paths (outer + hole rings). */
