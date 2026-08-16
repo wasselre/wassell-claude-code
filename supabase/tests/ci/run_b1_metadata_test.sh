@@ -41,6 +41,12 @@ echo "== fixtures + Phase 1 + Phase 2"
 run "$ROOT/supabase/tests/ci/fixture_file_links.sql"
 run "$ROOT/supabase/tests/ci/fixture_b1_metadata.sql"
 run "$ROOT/supabase/migrations/2026-08-10_file_links_projection.sql"
+# Phase 1 shipped a migration AND a backfill; the migration alone leaves the
+# projection empty. Without this call every edge count below is 0 and the
+# role-derived half of B1's document_type inference is never exercised — the
+# assertions would all pass vacuously. Mirrors the production sequence, where
+# the backfill ran before Phase 2's triggers existed.
+q "SELECT * FROM public.file_links_backfill()" >/dev/null
 run "$ROOT/supabase/migrations/2026-08-12_file_link_sync.sql"
 run "$ROOT/supabase/tests/ci/fixture_b1_authz.sql"
 
@@ -99,8 +105,18 @@ dirty()   { q "SELECT count(*) FROM public.file_link_dirty_targets"; }
 fingerprint > "$WORK/fp.before"
 reach       > "$WORK/reach.before"
 E0=$(edges); S0=$(sources); D0=$(drift)
-echo "   baseline: edges=$E0 sources=$S0 drift=$D0"
+ROLES0=$(q "SELECT count(DISTINCT role) FROM public.file_links")
+FP0=$(q "SELECT count(*) FROM public.file_links WHERE role='floor_plan'")
+echo "   baseline: edges=$E0 sources=$S0 drift=$D0 distinct_roles=$ROLES0 floor_plan_edges=$FP0"
 [ "$D0" = "0" ] || { echo "FAIL: baseline drift is $D0, fixture is not clean"; exit 1; }
+
+# NON-VACUITY. An empty projection would let every "unchanged" and every
+# role-derived assertion pass without testing anything — which is exactly what
+# happened on the first run of this script, before the backfill call above was
+# added. Refuse to report success on a corpus that cannot exercise the rules.
+[ "$E0" -gt 0 ]      || { echo "FAIL: baseline projection is empty — assertions would be vacuous"; exit 1; }
+[ "$ROLES0" -ge 2 ]  || { echo "FAIL: baseline has $ROLES0 distinct role(s); type-priority is untested"; exit 1; }
+[ "$FP0" -gt 0 ]     || { echo "FAIL: no floor_plan edge in the baseline; B1.5 priority rule is vacuous"; exit 1; }
 
 echo "== applying B1"
 run "$ROOT/supabase/migrations/2026-08-16_01_business_file_metadata.sql"

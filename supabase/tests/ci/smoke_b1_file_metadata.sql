@@ -98,6 +98,20 @@ END $$;
 DO $$
 DECLARE n bigint; v text;
 BEGIN
+  -- NON-VACUITY FIRST. If the projection is empty, every rule below is
+  -- trivially true and this smoke would certify nothing. The runner calls
+  -- file_links_backfill() to prevent that; assert it here too so the SQL is
+  -- honest on its own.
+  SELECT count(*) INTO n FROM public.file_links WHERE role='floor_plan';
+  IF n = 0 THEN RAISE EXCEPTION 'B1.5 vacuous: no floor_plan edge to test priority against'; END IF;
+
+  SELECT count(*) INTO n FROM public.files f
+   WHERE EXISTS (SELECT 1 FROM public.file_links l WHERE l.file_id=f.id)
+     AND f.document_type NOT IN ('gallery_image','video','other');
+  IF n = 0 THEN
+    RAISE EXCEPTION 'B1.5 vacuous: no file received a role-derived document_type';
+  END IF;
+
   -- Rule, asserted over whatever the projection actually produced: any file
   -- with a floor_plan edge is a floor_plan, regardless of its other roles.
   SELECT count(*) INTO n FROM public.files f
