@@ -170,6 +170,35 @@ jobs:
       - name: Run Gate A ingest migration tests
         run: bash supabase/tests/ci/run_market_ingest_gate_a_test.sh
 
+  freeze-baseline-sequence:
+    # Designated validator for the FULL market-ingest replay chain:
+    #   pre-freeze predecessor fixture
+    #   -> 2026-09-03_02_market_listings_freeze_baseline.sql
+    #   -> UNMODIFIED 2026-09-04_00_market_listings_view_reconciliation.sql
+    #   -> 2026-09-05_01..04 -> 2026-09-05_06
+    # It exists because the baseline's whole purpose is to establish the exact
+    # predecessor state 2026-09-04_00 pins by md5 — that convergence is executed
+    # here, never assumed. Also proves the five-way unified_records fingerprint,
+    # the production-shaped assert-only path, idempotency, and fail-closed drift.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run freeze-baseline sequence tests
+        run: bash supabase/tests/ci/run_freeze_baseline_sequence_test.sh
+
   worker-typecheck:
     # worker/ is a standalone package (third tsconfig) — not covered by the
     # root build (see reference: tsc --noEmit skips api/; worker is separate).

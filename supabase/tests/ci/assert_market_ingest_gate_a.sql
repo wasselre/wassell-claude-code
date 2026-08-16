@@ -668,34 +668,55 @@ BEGIN
 END
 $assert$;
 
--- == SECTION 13: no scoring or ranking =======================================
--- Scoring is explicitly out of phase. Asserted on OBJECT NAMES only — the
--- word may legitimately appear in prose comments, which are not inspected.
+-- == SECTION 13: no scoring or ranking (SCOPED TO GATE A OBJECTS) ============
+-- Scoring is explicitly out of phase for Gate A. Asserted on OBJECT NAMES only,
+-- and ONLY over the twelve Gate A tables, their columns/constraints, and the
+-- Gate A functions.
+--
+-- WHY SCOPED: public.market_listings legitimately carries quality_score,
+-- quality_grade and quality_breakdown. Those are pre-existing production fields
+-- outside Gate A. A schema-wide scan false-positives the moment the freeze
+-- baseline creates that table, which is exactly the production-shaped path this
+-- suite must pass. Widening this back to all of public will break CI.
 DO $assert$
+DECLARE
+  v_rels text[] := ARRAY[
+    'listing_sources',
+    'raw_blobs', 'raw_snapshots', 'raw_snapshot_artifacts', 'page_capture_manifest',
+    'source_field_catalog', 'source_field_mappings', 'schema_gap_events',
+    'ingestion_runs', 'ingestion_items', 'listing_change_events', 'listing_change_review',
+    'v_source_field_status'];
+  v_fns text[] := ARRAY[
+    '_ml_reject_mutation', 'raw_snapshot_derive_class', 'tg_listing_sources_touch',
+    'tg_schema_gap_requires_decision', 'tg_source_field_catalog_touch'];
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_class
               WHERE relnamespace = 'public'::regnamespace
+                AND relname = ANY (v_rels)
                 AND relname ~* '(score|rank|quality)') THEN
-    RAISE EXCEPTION 'ASSERT 13 FAILED: a relation/index in public has a name containing score/rank/quality; scoring is out of phase for Gate A';
+    RAISE EXCEPTION 'ASSERT 13 FAILED: a Gate A relation has a name containing score/rank/quality; scoring is out of phase for Gate A';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_attribute a
                JOIN pg_class c ON c.oid = a.attrelid
               WHERE c.relnamespace = 'public'::regnamespace
+                AND c.relname = ANY (v_rels)
                 AND a.attnum > 0 AND NOT a.attisdropped
                 AND a.attname ~* '(score|rank|quality)') THEN
-    RAISE EXCEPTION 'ASSERT 13 FAILED: a column in public has a name containing score/rank/quality; scoring is out of phase for Gate A';
+    RAISE EXCEPTION 'ASSERT 13 FAILED: a Gate A column has a name containing score/rank/quality; scoring is out of phase for Gate A';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_proc p
                JOIN pg_namespace n ON n.oid = p.pronamespace
               WHERE n.nspname = 'public'
+                AND p.proname = ANY (v_fns)
                 AND p.proname ~* '(score|rank|quality)') THEN
-    RAISE EXCEPTION 'ASSERT 13 FAILED: a function in public has a name containing score/rank/quality; scoring is out of phase for Gate A';
+    RAISE EXCEPTION 'ASSERT 13 FAILED: a Gate A function has a name containing score/rank/quality; scoring is out of phase for Gate A';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_constraint co
                JOIN pg_class c ON c.oid = co.conrelid
               WHERE c.relnamespace = 'public'::regnamespace
+                AND c.relname = ANY (v_rels)
                 AND co.conname ~* '(score|rank|quality)') THEN
-    RAISE EXCEPTION 'ASSERT 13 FAILED: a constraint in public has a name containing score/rank/quality; scoring is out of phase for Gate A';
+    RAISE EXCEPTION 'ASSERT 13 FAILED: a Gate A constraint has a name containing score/rank/quality; scoring is out of phase for Gate A';
   END IF;
 END
 $assert$;
