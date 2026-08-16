@@ -532,6 +532,18 @@ export interface ModelSchema {
   // and trigger workflows on click. Optional for back-compat — older models
   // simply have none.
   custom_buttons?: CustomButton[];
+  /**
+   * Model NAMES (slugs) of CHILD modules this model's record pages embed as an
+   * inline list — e.g. `all_projects` shows a units inventory on its detail
+   * page. Declared here as DATA because the link is a REVERSE reference: it
+   * lives on the child (`units.project → all_projects`), so it can't be found by
+   * scanning this model's own fields. The reference-dependency resolver
+   * (`resolveModelDataDependencies`) reads this so that granting a parent module
+   * auto-includes the child modules its pages display — otherwise the embedded
+   * list loads nothing for a non-admin. Slugs, not ids, so the declaration is
+   * portable across installs. Optional; most models embed no children.
+   */
+  displayed_child_models?: string[];
 }
 
 // ── Custom buttons ────────────────────────────────────────────────────

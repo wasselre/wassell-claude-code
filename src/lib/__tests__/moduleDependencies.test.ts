@@ -2,9 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { resolveModelDataDependencies } from '../moduleDependencies';
 import type { AppModel, ModelField } from '@/types';
 
-/** Minimal AppModel factory — the resolver only reads id + field type +
- *  lookup_model_id, so we build just enough shape and cast. */
-function model(id: string, fields: Partial<ModelField>[]): AppModel {
+/** Minimal AppModel factory — the resolver harvests model ids from field
+ *  definitions + reads schema.displayed_child_models, so we build just enough
+ *  shape (name === slug === id here) and cast. */
+function model(
+  id: string,
+  fields: Partial<ModelField>[],
+  displayedChildModels?: string[],
+): AppModel {
   return {
     id,
     name: id,
@@ -29,6 +34,7 @@ function model(id: string, fields: Partial<ModelField>[]): AppModel {
           })),
         },
       ],
+      ...(displayedChildModels ? { displayed_child_models: displayedChildModels } : {}),
     },
   } as unknown as AppModel;
 }
@@ -104,6 +110,35 @@ describe('resolveModelDataDependencies', () => {
     ];
     const deps = resolveModelDataDependencies('our_projects', models).sort();
     expect(deps).toEqual(['all_projects', 'cities', 'developers', 'districts', 'regions']);
+  });
+
+  it('includes declared displayed child modules (reverse link, e.g. units on a project)', () => {
+    // The units→project link lives on the CHILD, so a forward scan of
+    // all_projects can't find it; all_projects declares it via
+    // displayed_child_models. Granting our_projects should still reach units.
+    const models = [
+      model('our_projects', [lookup('all_projects')]),
+      model('all_projects', [lookup('developers')], ['units']),
+      model('developers', []),
+      model('units', [lookup('all_projects')]), // reverse link back to parent
+    ];
+    const deps = resolveModelDataDependencies('our_projects', models).sort();
+    expect(deps).toEqual(['all_projects', 'developers', 'units']);
+  });
+
+  it('is type-agnostic: harvests any *_model_id, not a fixed field-type list', () => {
+    // A hypothetical future field type that stores its target under a
+    // `*_model_id` key is picked up with no resolver change.
+    const models = [
+      model('x', [{ type: 'some_future_type', frobnicate_model_id: 'y' } as never]),
+      model('y', []),
+    ];
+    expect(resolveModelDataDependencies('x', models)).toEqual(['y']);
+  });
+
+  it('resolves an unknown displayed_child_models slug to nothing (no crash)', () => {
+    const models = [model('a', [], ['does_not_exist'])];
+    expect(resolveModelDataDependencies('a', models)).toEqual([]);
   });
 
   it('skips dangling lookup targets that reference a deleted model', () => {
