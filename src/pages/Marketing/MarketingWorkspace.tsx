@@ -105,6 +105,8 @@ export type Capability =
   // assets, manual tasks) — its own gate, separate from the edit capabilities.
   | 'delete_records'
   | 'manage_settings' | 'manage_roles'
+  // Sync + create/manage OUR Meta campaigns via the Marketing API (live spend).
+  | 'manage_paid_ads'
   // Fine-grained view gates (replace the old hardcoded `role === 'ceo'` checks).
   | 'view_content_body' | 'view_activity' | 'compare_versions';
 

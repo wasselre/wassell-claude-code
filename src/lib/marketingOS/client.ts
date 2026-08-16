@@ -1919,3 +1919,64 @@ export function isOverdue(row: MosContentRow): boolean {
   if (row.status_key === 'done') return false;
   return new Date(due).getTime() < Date.now();
 }
+
+/* ------------------------------------------------------------------ */
+/* Meta Marketing API — OUR ad account (sync + create/manage)         */
+/* ------------------------------------------------------------------ */
+
+export interface MetaSyncState {
+  is_enabled: boolean;
+  currency: string | null;
+  last_synced_at: string | null;
+  last_result: Record<string, unknown> | null;
+  last_error: string | null;
+  holder_campaign_id: string | null;
+}
+export interface MetaAccountInfo {
+  configured: boolean;
+  ad_account_id?: string;
+  state?: MetaSyncState | null;
+}
+export interface MetaSyncResult {
+  ok: boolean;
+  skipped?: 'not_configured' | 'disabled';
+  account?: { id: string; name: string; currency: string };
+  applied?: Record<string, unknown>;
+  error?: string;
+}
+
+/** Read-only status panel: is Meta wired + the last sync outcome. */
+export const mosMetaAccount = (): Promise<MetaAccountInfo> => call<MetaAccountInfo>('meta_account');
+
+/** Run a full sync now (manage_paid_ads). */
+export const mosMetaSync = (): Promise<MetaSyncResult> => call<MetaSyncResult>('meta_sync');
+
+/** Flip the sync kill switch (manage_paid_ads). */
+export const mosMetaToggle = (enabled: boolean): Promise<{ ok: boolean; is_enabled: boolean }> =>
+  call('meta_toggle', { enabled });
+
+/** Link a synced Meta execution to a real project campaign + force re-resolve. */
+export const mosMetaLinkExecution = (
+  executionId: string, campaignId: string,
+): Promise<{ ok: boolean; reresolved: number | null }> =>
+  call('meta_link_execution', { execution_id: executionId, campaign_id: campaignId });
+
+/** Pause / resume a Meta campaign / ad set / ad by its Meta node id. */
+export const mosMetaSetStatus = (
+  nodeId: string, status: 'ACTIVE' | 'PAUSED',
+): Promise<{ ok: boolean; node_id: string; status: string }> =>
+  call('meta_set_status', { node_id: nodeId, status });
+
+/** Create a Meta object from a Graph-shaped payload; validateOnly = dry-run. */
+export const mosMetaCreate = (
+  level: 'campaign' | 'adset' | 'creative' | 'ad',
+  payload: Record<string, unknown>,
+  validateOnly = false,
+): Promise<{ ok: boolean; level: string; validate_only: boolean; result: { id: string } }> =>
+  call('meta_create', { level, payload, validate_only: validateOnly });
+
+/** Update a Meta node's mutable fields from a Graph-shaped payload. */
+export const mosMetaUpdate = (
+  nodeId: string, payload: Record<string, unknown>,
+): Promise<{ ok: boolean; node_id: string }> =>
+  call('meta_update', { node_id: nodeId, payload });

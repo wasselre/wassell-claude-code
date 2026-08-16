@@ -18,6 +18,7 @@ import {
   MosAccount, PLATFORM_LABELS, fetchPublications, saveAccount,
 } from '@/lib/marketingOS/client';
 import { Field, Modal, PageHead, Pill, type Tone } from './kit';
+import { MetaSyncCard } from './MetaSyncCard';
 import { IconBack, IconForward, IconPlus } from './icons';
 import { num, shortDate } from '../lib/format';
 
@@ -314,6 +315,7 @@ export default function SettingsPlatforms({
       </PageHead>
 
       <div className="body">
+        <MetaSyncCard />
         <div style={{ display: 'grid', gap: 12 }}>
           {accounts.map((a) => {
             const def = PLATFORM_CARDS[a.platform] ?? fallbackCard(a.platform);
