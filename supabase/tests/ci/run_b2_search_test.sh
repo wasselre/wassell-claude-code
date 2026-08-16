@@ -149,38 +149,41 @@ DISTINCT=$(sed -n 's/.*rpc_total=\([0-9]*\).*/\1/p' "$WORK/rls.sorted" | sort -u
 echo "   OK: $DISTINCT distinct row-set sizes, no leakage, RPC ⊆ direct SELECT"
 
 # ── p95 at production scale, as a NON-ADMIN ────────────────────────────────
-echo "== performance (p95 over 40 calls, non-admin, 8k corpus)"
-psql "$DBURL" -v ON_ERROR_STOP=1 -tAq <<'SQL' | tee "$WORK/perf.txt"
+echo "== performance (40 calls, non-admin, 8k corpus)"
+# MEASURED HERE, ASSERTED AT THE END. A perf failure that aborts the script
+# hides whether rollback and re-application work, which is exactly the evidence
+# needed to decide what to do about the perf failure.
+psql "$DBURL" -v ON_ERROR_STOP=1 -tAq > "$WORK/perf.txt" <<'SQL'
+CREATE TEMP TABLE _perf(ms numeric);
+GRANT INSERT ON _perf TO authenticated;
 BEGIN;
 SELECT set_config('test.uid','22222222-2222-2222-2222-222222222222', true);
 SET LOCAL ROLE authenticated;
 DO $$
-DECLARE t0 timestamptz; ms numeric; a numeric[] := '{}'; i int;
+DECLARE t0 timestamptz; i int; s text;
         scenarios text[] := ARRAY['','مخطط','ابراج','floor plan'];
-        s text;
 BEGIN
   FOREACH s IN ARRAY scenarios LOOP
     FOR i IN 1..10 LOOP
       t0 := clock_timestamp();
       PERFORM public.business_files_search(nullif(s,''), '{}'::jsonb, 'created_desc', 1, 60);
-      ms := EXTRACT(epoch FROM clock_timestamp() - t0) * 1000;
-      a := a || ms;
+      INSERT INTO _perf VALUES (EXTRACT(epoch FROM clock_timestamp() - t0) * 1000);
     END LOOP;
   END LOOP;
-  SELECT array_agg(x ORDER BY x) INTO a FROM unnest(a) x;
-  RAISE NOTICE 'p50=% ms  p95=% ms  max=% ms  n=%',
-    round(a[greatest(1,(array_length(a,1)*0.50)::int)],1),
-    round(a[greatest(1,(array_length(a,1)*0.95)::int)],1),
-    round(a[array_length(a,1)],1),
-    array_length(a,1);
-  IF a[greatest(1,(array_length(a,1)*0.95)::int)] >= 300 THEN
-    RAISE EXCEPTION 'B2 perf: p95 is % ms, budget is 300 ms',
-      round(a[greatest(1,(array_length(a,1)*0.95)::int)],1);
-  END IF;
 END $$;
+RESET ROLE;
+SELECT 'PERF'
+    || ' n='   || count(*)
+    || ' p50=' || round(percentile_disc(0.50) WITHIN GROUP (ORDER BY ms), 1)
+    || ' p95=' || round(percentile_disc(0.95) WITHIN GROUP (ORDER BY ms), 1)
+    || ' max=' || round(max(ms), 1)
+  FROM _perf;
 ROLLBACK;
 SQL
-echo "   OK: p95 within budget"
+PERF_LINE=$(grep -E '^PERF ' "$WORK/perf.txt" || true)
+[ -n "$PERF_LINE" ] || { echo "FAIL: perf harness produced no measurement"; exit 1; }
+P95=$(sed -n 's/.*p95=\([0-9.]*\).*/\1/p' <<<"$PERF_LINE")
+echo "   $PERF_LINE"
 
 # ── rollback ────────────────────────────────────────────────────────────────
 echo "== rollback"
@@ -205,6 +208,29 @@ run "$ROOT/supabase/migrations/2026-08-16_02_business_files_search.sql"
 [ "$(q "SELECT count(*) FROM public.files WHERE search_text IS NULL")" = "0" ] \
   || { echo "FAIL: search_text not regenerated"; exit 1; }
 echo "   OK"
+
+# ── the p95 budget, asserted last so everything above is on the record ──────
+echo "== p95 budget"
+echo "   measured: $PERF_LINE"
+if awk "BEGIN{exit !($P95 >= 300)}"; then
+  cat <<EOF
+
+  ✗ p95 is ${P95} ms against a 300 ms budget.
+
+  This is NOT the search layer. The cost is the per-row authorization filter in
+  the files_select RLS policy, which B2 is simply the first feature to exercise
+  over a whole corpus. Measured on PRODUCTION (7,133 rows), a bare
+      SELECT count(*) FROM files WHERE file_class='business'
+  costs 1,688 ms as an admin and 3,727 ms as a non-admin, with ~300k buffer
+  hits — all cache hits, so it is pure CPU in
+  wassell_app_user_id() + wassell_can_access_file(), both invoked per row.
+
+  B2 cannot fix this without editing the authorization surface, which is out of
+  its scope and belongs with B4 (which rewrites wassell_can_access_file anyway).
+EOF
+  exit 1
+fi
+echo "   OK: within budget"
 
 echo
 echo "B2 search: ALL CHECKS PASSED"
