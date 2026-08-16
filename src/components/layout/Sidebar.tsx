@@ -48,7 +48,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { hasPermission, canAccessPage, resolveEffectiveProfile } from '@/lib/permissions';
+import { hasPermission, canAccessPage, isModelSidebarHidden, resolveEffectiveProfile } from '@/lib/permissions';
 import { CUSTOM_PAGES } from '@/lib/customPages';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { isRetiredModel } from '@/lib/featureFlags';
@@ -138,6 +138,10 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   // Filter nav by `view` permission. hasPermission returns true when
   // currentUserId is null (pre-init fallback) so nothing flickers.
   const canView = (modelId: string) => hasPermission(currentUserId, users, profiles, modelId, 'view', previewProfileId);
+  // Reference (data-only) access: a model the profile can view but has flagged
+  // `hidden_from_sidebar` (e.g. auto-granted so another module's mirrored data
+  // resolves) gets no nav link. Data still loads — this only drops the button.
+  const sidebarHidden = (modelId: string) => isModelSidebarHidden(currentUserId, users, profiles, modelId, previewProfileId);
   // Per-profile gate for the custom Sales Operations pages (not models).
   const canPage = (pageId: string) => canAccessPage(currentUserId, users, profiles, pageId, previewProfileId);
 
@@ -168,7 +172,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
     SETTINGS_ONLY_MODEL_NAMES.has(m.name) || isRetiredModel(m.name);
 
   const ungroupedModels = models
-    .filter((m) => !m.group_id && canView(m.id) && !navHidden(m))
+    .filter((m) => !m.group_id && canView(m.id) && !navHidden(m) && !sidebarHidden(m.id))
     .slice()
     .sort(byModelOrder);
   const groupedModels = groups
@@ -177,7 +181,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
     .map((g) => ({
       group: g,
       models: models
-        .filter((m) => m.group_id === g.id && canView(m.id) && !navHidden(m))
+        .filter((m) => m.group_id === g.id && canView(m.id) && !navHidden(m) && !sidebarHidden(m.id))
         .slice()
         .sort(byModelOrder),
     }))

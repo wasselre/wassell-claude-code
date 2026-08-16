@@ -133,6 +133,35 @@ export function hasPermission(
 }
 
 /**
+ * Whether a model should be SUPPRESSED from the current profile's sidebar even
+ * though it may be viewable. This is the nav side of "reference (data-only)
+ * access": a profile granted `view` on a module purely so another module's
+ * mirrored/looked-up data resolves shouldn't get a sidebar button for it.
+ *
+ * Nav-only — never gates data. Callers still check `hasPermission(...,'view')`
+ * to decide reachability; this only decides whether to draw the link.
+ *
+ *   1. No user system active (pre-init) → false (show, mirrors hasPermission's
+ *      permissive bootstrap so nothing flickers).
+ *   2. No resolved (active) profile → false (nothing to hide against).
+ *   3. Admin profile → false (admins always see every model in the nav).
+ *   4. Otherwise → the model entry's `hidden_from_sidebar` flag.
+ */
+export function isModelSidebarHidden(
+  currentUserId: string | null,
+  users: User[],
+  profiles: Profile[],
+  modelId: string,
+  previewProfileId?: string | null,
+): boolean {
+  if (currentUserId === null) return false;
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
+  if (!resolved) return false;
+  if (resolved.profile.is_admin) return false;
+  return modelEntryFor(resolved.profile, modelId)?.hidden_from_sidebar === true;
+}
+
+/**
  * Check whether the current user is an admin. Admin-gated routes use this.
  * Returns true when no user system is active (pre-init fallback) to mirror
  * hasPermission's backward-compat behavior.
