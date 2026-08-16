@@ -125,7 +125,12 @@ SELECT '$uid'
 ROLLBACK;
 SQL
 done
-grep -E '^[0-9a-f]{8}-' "$WORK/rls.txt" | sort > "$WORK/rls.sorted"
+# Filter on the payload marker, NOT on "looks like a uuid": `SELECT set_config()`
+# echoes the uid as its own result row, so a uuid-shaped filter also picks up
+# four bare uid lines that carry no measurement and fail the leaked=0 check.
+grep -E 'rpc_total=' "$WORK/rls.txt" | sort > "$WORK/rls.sorted"
+[ "$(wc -l < "$WORK/rls.sorted")" -eq 4 ] \
+  || { echo "FAIL: expected 4 per-user measurements, got $(wc -l < "$WORK/rls.sorted")"; exit 1; }
 sed 's/^/     /' "$WORK/rls.sorted"
 
 # Every row the RPC returned must be directly SELECTable by that same user.
