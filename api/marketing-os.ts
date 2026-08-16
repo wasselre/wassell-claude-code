@@ -3311,6 +3311,10 @@ export default async function handler(req: Request): Promise<Response> {
         const patch: Record<string, unknown> = {};
         for (const k of ['content_id', 'label', 'status', 'spend', 'impressions',
                          'clicks', 'leads', 'qualified', 'note',
+                         // Identity: external Meta/TikTok/… Ad ID (the key an
+                         // inbound Click-to-WhatsApp lead resolves against) and
+                         // the ad-set this ad belongs to.
+                         'platform_ad_id', 'ad_set_id',
                          // Ad-level platform creative (format, copy, CTA,
                          // destination) — see adPlatforms adSections.
                          'creative'] as const) {
@@ -3336,6 +3340,14 @@ export default async function handler(req: Request): Promise<Response> {
           const inf = dbFail(ins.error);
           if (inf) return inf;
         }
+        // If this ad now carries an external Meta Ad ID, back-fill any WhatsApp
+        // conversation that captured that id before the ad record existed
+        // (preserve-then-resolve — see mos_reresolve_first_touch).
+        const savedAdId = str(raw.platform_ad_id);
+        if (savedAdId) {
+          const rr = await sb.rpc('mos_reresolve_first_touch', { p_platform_ad_id: savedAdId });
+          if (rr.error) console.error('[marketing-os] mos_reresolve_first_touch failed:', rr.error.message);
+        }
         const list = await sb.from('mos_execution_ads').select('*')
           .eq('execution_id', executionId).order('created_at', { ascending: true });
         const lf = dbFail(list.error);
@@ -3355,6 +3367,130 @@ export default async function handler(req: Request): Promise<Response> {
         const lf = dbFail(list.error);
         if (lf) return lf;
         return jsonOk({ ads: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Nested Campaign→Ad Set→Ad identity tree (one-page entry)  */
+      /* -------------------------------------------------------- */
+      case 'campaign_tree_get': {
+        const executionId = str(body.execution_id);
+        if (!executionId) return jsonError(400, 'execution_id is required');
+        const exec = await sb.from('mos_campaign_executions')
+          .select('id, campaign_id, platform, label, platform_campaign_id')
+          .eq('id', executionId).maybeSingle();
+        const ef = dbFail(exec.error); if (ef) return ef;
+        if (!exec.data) return jsonError(404, 'execution not found');
+        const [sets, ads] = await Promise.all([
+          sb.from('mos_ad_sets').select('id, name, platform_adset_id, status, sort_order')
+            .eq('execution_id', executionId).is('archived_at', null)
+            .order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+          sb.from('mos_execution_ads').select('id, label, platform_ad_id, ad_set_id, content_id, status')
+            .eq('execution_id', executionId).is('archived_at', null)
+            .order('created_at', { ascending: true }),
+        ]);
+        const sf = dbFail(sets.error); if (sf) return sf;
+        const af = dbFail(ads.error); if (af) return af;
+        return jsonOk({ execution: exec.data, ad_sets: sets.data ?? [], ads: ads.data ?? [] });
+      }
+
+      case 'campaign_tree_save': {
+        const executionId = str(body.execution_id);
+        if (!executionId) return jsonError(400, 'execution_id is required');
+        const exec = await sb.from('mos_campaign_executions').select('id').eq('id', executionId).maybeSingle();
+        const ef = dbFail(exec.error); if (ef) return ef;
+        if (!exec.data) return jsonError(404, 'execution not found');
+        const orNull = (v: unknown): string | null => { const s = str(v); return s ? s : null; };
+
+        // Campaign external id lives on the execution — set it only when sent.
+        if (Object.prototype.hasOwnProperty.call(body, 'platform_campaign_id')) {
+          const u = await sb.from('mos_campaign_executions')
+            .update({ platform_campaign_id: orNull(body.platform_campaign_id) }).eq('id', executionId);
+          const uf = dbFail(u.error); if (uf) return uf;
+        }
+
+        const inSets = Array.isArray(body.ad_sets) ? (body.ad_sets as Array<Record<string, unknown>>) : [];
+        const keptSetIds: string[] = [];
+        const keptAdIds: string[] = [];
+        const reresolve = new Set<string>();
+
+        for (let si = 0; si < inSets.length; si++) {
+          const s = inSets[si] ?? {};
+          const name = str(s.name);
+          if (!name) return jsonError(400, 'each ad set needs a name');
+          const setPatch = {
+            execution_id: executionId,
+            name,
+            platform_adset_id: orNull(s.platform_adset_id),
+            sort_order: si,
+            status: str(s.status) || 'active',
+          };
+          let setId = str(s.id);
+          if (setId) {
+            const u = await sb.from('mos_ad_sets').update(setPatch).eq('id', setId).select('id').maybeSingle();
+            const uf = dbFail(u.error); if (uf) return uf;
+            if (!u.data) return jsonError(404, `ad set ${setId} not found`);
+          } else {
+            const ins = await sb.from('mos_ad_sets').insert(setPatch).select('id').maybeSingle();
+            const inf = dbFail(ins.error); if (inf) return inf;
+            setId = str((ins.data as { id?: string } | null)?.id);
+          }
+          if (setId) keptSetIds.push(setId);
+
+          const inAds = Array.isArray(s.ads) ? (s.ads as Array<Record<string, unknown>>) : [];
+          for (const a of inAds) {
+            const label = str(a.label);
+            if (!label) return jsonError(400, 'each ad needs a name');
+            const adPatch: Record<string, unknown> = {
+              execution_id: executionId,
+              ad_set_id: setId || null,
+              label,
+              platform_ad_id: orNull(a.platform_ad_id),
+              content_id: orNull(a.content_id),
+              status: str(a.status) || 'running',
+            };
+            let adId = str(a.id);
+            if (adId) {
+              const u = await sb.from('mos_execution_ads').update(adPatch).eq('id', adId).select('id').maybeSingle();
+              const uf = dbFail(u.error); if (uf) return uf;
+              if (!u.data) return jsonError(404, `ad ${adId} not found`);
+            } else {
+              const ins = await sb.from('mos_execution_ads').insert(adPatch).select('id').maybeSingle();
+              const inf = dbFail(ins.error); if (inf) return inf;
+              adId = str((ins.data as { id?: string } | null)?.id);
+            }
+            if (adId) keptAdIds.push(adId);
+            const pid = orNull(a.platform_ad_id);
+            if (pid) reresolve.add(pid);
+          }
+        }
+
+        // Soft-archive rows dropped from the tree (never hard-delete — a past
+        // lead's first_touch resolves through these rows).
+        const nowIso = new Date().toISOString();
+        {
+          let q = sb.from('mos_execution_ads').update({ archived_at: nowIso })
+            .eq('execution_id', executionId).is('archived_at', null);
+          if (keptAdIds.length) q = q.not('id', 'in', `(${keptAdIds.join(',')})`);
+          const arch = await q; const af = dbFail(arch.error); if (af) return af;
+        }
+        {
+          let q = sb.from('mos_ad_sets').update({ archived_at: nowIso })
+            .eq('execution_id', executionId).is('archived_at', null);
+          if (keptSetIds.length) q = q.not('id', 'in', `(${keptSetIds.join(',')})`);
+          const arch = await q; const af = dbFail(arch.error); if (af) return af;
+        }
+
+        for (const pid of reresolve) {
+          const rr = await sb.rpc('mos_reresolve_first_touch', { p_platform_ad_id: pid });
+          if (rr.error) console.error('[marketing-os] mos_reresolve_first_touch failed:', rr.error.message);
+        }
+
+        const [execRow, setsRow, adsRow] = await Promise.all([
+          sb.from('mos_campaign_executions').select('id, campaign_id, platform, label, platform_campaign_id').eq('id', executionId).maybeSingle(),
+          sb.from('mos_ad_sets').select('id, name, platform_adset_id, status, sort_order').eq('execution_id', executionId).is('archived_at', null).order('sort_order', { ascending: true }),
+          sb.from('mos_execution_ads').select('id, label, platform_ad_id, ad_set_id, content_id, status').eq('execution_id', executionId).is('archived_at', null).order('created_at', { ascending: true }),
+        ]);
+        return jsonOk({ execution: execRow.data, ad_sets: setsRow.data ?? [], ads: adsRow.data ?? [] });
       }
 
       case 'daily_save': {

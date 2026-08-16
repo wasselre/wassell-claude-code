@@ -278,8 +278,78 @@ export interface WahaMessageRaw {
       Type?: string | null;
       MediaType?: string | null;
     } | null;
+    // GOWS nests the decoded WhatsApp protobuf here. Click-to-WhatsApp ad
+    // attribution lives at `Message.<messageType>.contextInfo.externalAdReply`
+    // (NOT flattened to the top level the way WAHA's WEBJS/NOWEB engines do).
+    // RawMessage is a duplicate of Message. Shapes are open — see extractAdReferral.
+    Message?: Record<string, unknown> | null;
+    RawMessage?: Record<string, unknown> | null;
   } | null;
   [k: string]: unknown;
+}
+
+/**
+ * Normalized Click-to-WhatsApp ad attribution — the small, durable subset of
+ * WhatsApp's `externalAdReply` we keep on the opening inbound message. We
+ * DELIBERATELY drop the base64 `thumbnail` and image URLs: they bloat the row
+ * (a real payload is ~24 KB, mostly thumbnail) and add nothing to attribution.
+ */
+// A `type` alias (not an `interface`) on purpose: an interface has no implicit
+// index signature, so it is NOT assignable to `Record<string, unknown>` — which
+// is what bumpConversationRecord's `firstTouchAd` param and chat_messages.meta
+// expect. A type alias of an object literal IS. (Same gotcha as saveWorkflow.)
+export type WahaAdReferral = {
+  ad_id: string | null;            // externalAdReply.sourceID — the Meta Ad ID (resolution key)
+  ctwa_clid: string | null;        // Meta click id — useful later for CAPI closed-loop reporting
+  source_app: string | null;       // 'instagram' | 'facebook' | ...
+  source_url: string | null;       // externalAdReply.sourceURL (the post/reel URL)
+  source_type: string | null;      // usually 'ad'
+  conversion_source: string | null;// contextInfo.conversionSource, e.g. 'FB_Ads'
+  ad_title: string | null;         // externalAdReply.title
+  captured_at: string;             // ISO timestamp we saw it
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+function nonEmptyStr(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+/**
+ * Pull Click-to-WhatsApp ad attribution out of a raw WAHA (GOWS) inbound
+ * message. Returns null when the message did not originate from an ad.
+ *
+ * On our engine the block is at `_data.Message.<messageType>.contextInfo.
+ * externalAdReply` with CAPITALIZED keys (`sourceID`/`sourceURL`). The message
+ * type varies (extendedTextMessage for a text lead, imageMessage/videoMessage
+ * for a media lead), so we scan each child node for a `contextInfo.
+ * externalAdReply` rather than hard-coding one type. Falls back to lowercase
+ * keys so a future engine swap (WEBJS/NOWEB flatten differently) still works.
+ */
+export function extractAdReferral(msg: WahaMessageRaw): WahaAdReferral | null {
+  const message = asRecord(msg._data?.Message) ?? asRecord(msg._data?.RawMessage);
+  if (!message) return null;
+  for (const node of Object.values(message)) {
+    const ctx = asRecord(asRecord(node)?.contextInfo);
+    if (!ctx) continue;
+    const ext = asRecord(ctx.externalAdReply);
+    if (!ext) continue;
+    const adId = nonEmptyStr(ext.sourceID) ?? nonEmptyStr(ext.sourceId);
+    const clid = nonEmptyStr(ext.ctwaClid);
+    if (!adId && !clid) continue; // externalAdReply with no usable identity — skip
+    return {
+      ad_id: adId,
+      ctwa_clid: clid,
+      source_app: nonEmptyStr(ext.sourceApp),
+      source_url: nonEmptyStr(ext.sourceURL) ?? nonEmptyStr(ext.sourceUrl),
+      source_type: nonEmptyStr(ext.sourceType),
+      conversion_source: nonEmptyStr(ctx.conversionSource),
+      ad_title: nonEmptyStr(ext.title),
+      captured_at: new Date().toISOString(),
+    };
+  }
+  return null;
 }
 
 // ─── Sessions (devices) ──────────────────────────────────────────────

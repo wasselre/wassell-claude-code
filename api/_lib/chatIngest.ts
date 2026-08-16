@@ -49,6 +49,12 @@ export interface ChatMessageRow {
   media_caption: string | null;
   reference: string | null;
   quoted: Record<string, unknown> | null;
+  // Structured per-message payload (buttons / list responses / ad attribution).
+  // Set ONCE at insert time — the WAHA path stores Click-to-WhatsApp ad
+  // attribution here as `{ ad: {...} }` on the opening inbound message. Left
+  // undefined for ordinary messages (DB default is `'{}'::jsonb`). Deliberately
+  // NOT overwritten by later echo/ack/edit upserts (see upsertChatMessage).
+  meta?: Record<string, unknown> | null;
 }
 
 /**
@@ -131,6 +137,11 @@ export async function upsertChatMessage(row: ChatMessageRow): Promise<{ isNew: b
     // send path owns.
     const patch: Record<string, unknown> = { ...row };
     if (row.reference == null) delete patch.reference;
+    // `meta` is write-once (set at insert on the opening message — e.g. ad
+    // attribution). An echo/ack/edit re-upsert must never blank or overwrite it,
+    // exactly like the `reference` protection above. So the merge never touches
+    // meta; only the original insert writes it.
+    delete patch.meta;
     const prevAck = (existing as { ack?: string | null }).ack ?? null;
     const prevRank = prevAck ? (ACK_ORDER[prevAck as keyof typeof ACK_ORDER] ?? -1) : -1;
     const nextRank = row.ack ? (ACK_ORDER[row.ack as keyof typeof ACK_ORDER] ?? -1) : -1;
@@ -192,6 +203,10 @@ export async function bumpConversationRecord(args: {
   lastFlow: 'in' | 'out';
   incrementUnread: boolean;
   reopenPushBack?: (deviceId: string, chatWid: string) => Promise<void>;
+  // Normalized Click-to-WhatsApp ad referral from the OPENING inbound message
+  // (WAHA externalAdReply). When present on a conversation that has no
+  // first_touch yet, we resolve it to our Paid Ad chain and stamp it write-once.
+  firstTouchAd?: Record<string, unknown> | null;
 }): Promise<void> {
   if (!isValidChatWid(args.chatWid)) {
     // Loud, not silent: a wid we cannot parse means an upstream shape changed,
@@ -212,6 +227,35 @@ export async function bumpConversationRecord(args: {
   const prevStatus = typeof prevData.status === 'string' ? prevData.status : 'active';
   const reopen = args.lastFlow === 'in' && (prevStatus === 'resolved' || prevStatus === 'archived');
 
+  // First-touch ad attribution (WAHA Click-to-WhatsApp). WRITE-ONCE: once a
+  // conversation carries first_touch we never rewrite it, so a later ad click by
+  // the same person can't overwrite where the lead originally came from. The raw
+  // referral is ALWAYS preserved — even when the ad isn't in our Paid Ads yet
+  // (resolved:null); mos_reresolve_first_touch() self-heals it once the ad
+  // record is created. The RPC is the same one the app uses, so the resolved
+  // chain here matches the UI's.
+  let firstTouch: Record<string, unknown> | undefined =
+    prevData.first_touch && typeof prevData.first_touch === 'object'
+      ? (prevData.first_touch as Record<string, unknown>)
+      : undefined;
+  const ftAdId = args.firstTouchAd?.ad_id;
+  if (!firstTouch && typeof ftAdId === 'string' && ftAdId) {
+    let resolved: Record<string, unknown> | null = null;
+    try {
+      const { data: res, error: resErr } = await supa.rpc('mos_resolve_ad', { p_platform_ad_id: ftAdId });
+      if (resErr) {
+        console.error('[chatIngest] mos_resolve_ad failed:', resErr.message);
+      } else if (Array.isArray(res) && res.length > 0) {
+        const row = { ...(res[0] as Record<string, unknown>) };
+        delete row.project_ids; // drop the bulky array; project_id (scalar) is kept
+        resolved = { ...row, resolved_at: new Date().toISOString() };
+      }
+    } catch (err) {
+      console.error('[chatIngest] mos_resolve_ad threw:', err instanceof Error ? err.message : String(err));
+    }
+    firstTouch = { ...args.firstTouchAd, resolved };
+  }
+
   const nextData = {
     ...prevData,
     wid: prevData.wid ?? args.chatWid,
@@ -221,6 +265,7 @@ export async function bumpConversationRecord(args: {
     last_message_flow: args.lastFlow,
     unread_count: args.incrementUnread ? prevUnread + 1 : prevUnread,
     ...(reopen ? { status: 'active' } : {}),
+    ...(firstTouch ? { first_touch: firstTouch } : {}),
   };
 
   const { error } = await supa.from('records').upsert(

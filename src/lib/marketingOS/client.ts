@@ -1212,6 +1212,93 @@ export const saveAd = (executionId: string, ad: Record<string, unknown>) =>
 export const deleteAd = (executionId: string, id: string) =>
   call<{ ads: MosAd[] }>('ad_delete', { execution_id: executionId, id });
 
+/* ------------------------------------------------------------------ */
+/* Nested campaign tree (execution → ad sets → ads) — fast bulk entry  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * An ad set as returned by `campaign_tree_get` — the middle level between an
+ * execution ("platform campaign") and its ads. Meta calls it an "Ad Set";
+ * other platforms an "Ad Group" — the execution's platform decides the label.
+ */
+export interface CampaignTreeAdSet {
+  id: string;
+  name: string;
+  /** The ad set's own id on the platform (Meta ad set / TikTok ad group id). */
+  platform_adset_id: string | null;
+  status: string;
+  sort_order: number;
+}
+
+/**
+ * An ad as returned by `campaign_tree_get`. `ad_set_id === null` means the ad
+ * sits directly under the execution (a "loose"/unassigned ad). `platform_ad_id`
+ * is the external Meta Ad ID that inbound WhatsApp attribution resolves against.
+ */
+export interface CampaignTreeAd {
+  id: string;
+  label: string;
+  platform_ad_id: string | null;
+  ad_set_id: string | null;
+  content_id: string | null;
+  status: string;
+}
+
+/** The whole nested tree for one execution — the shape both tree RPCs return. */
+export interface CampaignTree {
+  execution: {
+    id: string;
+    campaign_id: string;
+    platform: string;
+    label: string | null;
+    platform_campaign_id: string | null;
+  };
+  ad_sets: CampaignTreeAdSet[];
+  ads: CampaignTreeAd[];
+}
+
+/**
+ * One ad inside a save payload. `id` present ⇒ update that row; absent ⇒ the
+ * server assigns a real id. External ids are optional.
+ */
+export interface AdDraft {
+  id?: string;
+  label: string;
+  platform_ad_id?: string | null;
+  content_id?: string | null;
+  status?: string;
+}
+
+/** One ad set inside a save payload, carrying its ads. */
+export interface AdSetDraft {
+  id?: string;
+  name: string;
+  platform_adset_id?: string | null;
+  sort_order?: number;
+  ads: AdDraft[];
+}
+
+/**
+ * The full-replace save payload. The WHOLE tree is sent on every save — rows
+ * present in the DB but absent here are soft-archived server-side.
+ *
+ * Written as a `type` (not an `interface`) so it satisfies the `call<T>`
+ * transport's `Record<string, unknown>` param — a named interface lacks the
+ * implicit index signature that assignability needs (same reason `saveWorkflow`
+ * uses an inline object type for its payload).
+ */
+export type CampaignTreeSavePayload = {
+  execution_id: string;
+  platform_campaign_id?: string | null;
+  ad_sets: AdSetDraft[];
+};
+
+export const fetchCampaignTree = (executionId: string) =>
+  call<CampaignTree>('campaign_tree_get', { execution_id: executionId });
+
+export const saveCampaignTree = (payload: CampaignTreeSavePayload) =>
+  call<CampaignTree>('campaign_tree_save', payload);
+
 export const saveDaily = (
   executionId: string,
   entry: { day: string; spend?: number | null; leads?: number | null; qualified?: number | null },

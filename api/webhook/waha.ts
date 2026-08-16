@@ -31,7 +31,7 @@ import {
   uuidV5FromWidSync,
   type ChatMessageRow,
 } from '../_lib/chatIngest.js';
-import { resolveWahaCounterpartyPhone, resolveLidToPhone, type WahaMessageRaw } from '../_lib/waha.js';
+import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, type WahaMessageRaw } from '../_lib/waha.js';
 
 export const config = {
   runtime: 'edge',
@@ -202,6 +202,12 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   const ts = typeof p.timestamp === 'number' ? p.timestamp : (typeof event.timestamp === 'number' ? Math.floor(event.timestamp / 1000) : null);
   const date = ts ? new Date(ts * 1000).toISOString() : new Date().toISOString();
 
+  // Click-to-WhatsApp ad attribution rides ONLY the opening inbound message.
+  // Capture it unconditionally (even if the ad isn't in our Paid Ads yet) —
+  // this is the durable copy; the 16 KB activity-log receipt is not a store and
+  // already truncated real leads. Stored on chat_messages.meta (write-once).
+  const adReferral = flow === 'in' ? extractAdReferral(p) : null;
+
   const row: ChatMessageRow = {
     id: p.id,
     chat_wid: chatWid,
@@ -224,6 +230,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     media_caption: null,
     reference: null, // WAHA has no send-time reference; optimistic swap uses the send-response wid
     quoted: p.replyTo?.id ? { wid: p.replyTo.id, body: p.replyTo.body ?? null, kind: 'text' } : null,
+    meta: adReferral ? { ad: adReferral } : undefined,
   };
 
   const { isNew } = await upsertChatMessage(row);
@@ -237,6 +244,9 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     // Only a genuinely new inbound message bumps unread (retry-safe).
     incrementUnread: flow === 'in' && isNew,
     // No reopen push-back for WAHA — chat status is fully CRM-owned.
+    // First-touch ad attribution: resolved + stamped write-once on the chat
+    // record inside the bump. Only a genuinely new inbound carries it.
+    firstTouchAd: (flow === 'in' && isNew) ? adReferral : null,
   });
 
   // AI auto-reply (outside working hours only). The RPC is the single gate —

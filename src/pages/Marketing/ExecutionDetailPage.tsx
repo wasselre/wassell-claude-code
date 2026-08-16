@@ -25,6 +25,7 @@ import {
   PlatformSettings, getPlatformSchema, settingsProgress, settingsSummary,
 } from '@/lib/marketingOS/adPlatforms';
 import { PlatformFieldsGrid, PlatformSettingsForm } from './components/PlatformSettingsForm';
+import CampaignTreeModal from './components/CampaignTreeModal';
 import { Empty, Field, LoadError, Modal, Pill, ReadField, Skeleton } from './components/kit';
 import { IconBack, IconForward, IconPlus } from './components/icons';
 import { isoDate, num, shortDate } from './lib/format';
@@ -65,6 +66,7 @@ export default function ExecutionDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [addingAd, setAddingAd] = useState(false);
   const [editingAd, setEditingAd] = useState<MosAd | null>(null);
+  const [treeOpen, setTreeOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -234,6 +236,12 @@ export default function ExecutionDetailPage() {
                 {execution.status === 'running'
                   ? isAr ? 'إيقاف الحملة الإعلانية' : 'Pause ad campaign'
                   : isAr ? 'تشغيل الحملة الإعلانية' : 'Resume ad campaign'}
+              </button>
+            )}
+            {canEnter && (
+              <button type="button" className="btn" onClick={() => setTreeOpen(true)}>
+                <IconPlus />
+                {isAr ? 'إعداد الإعلانات' : 'Set up ads (nested)'}
               </button>
             )}
             {canEnter && (
@@ -669,6 +677,15 @@ export default function ExecutionDetailPage() {
           isAr={isAr}
           onClose={() => { setAddingAd(false); setEditingAd(null); }}
           onSaved={(rows) => { setAds(rows); setAddingAd(false); setEditingAd(null); void load(); }}
+        />
+      )}
+
+      {treeOpen && (
+        <CampaignTreeModal
+          executionId={execution.id}
+          platform={execution.platform}
+          onClose={() => setTreeOpen(false)}
+          onSaved={() => void load()}
         />
       )}
     </>
