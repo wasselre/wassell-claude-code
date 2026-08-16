@@ -48,7 +48,12 @@ jobs:
     # validator for the 2026-09-01_* migration set — production apply is
     # gated on this job being green.
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Raised from 10 for Phase 3 B2A: proving that an authorization change moves
+    # nobody's reach means sweeping sorted file-ID fingerprints for 7 personas x
+    # 3 kinds over an 8,000-row corpus, three times (before, after, after
+    # rollback). That is ~7 minutes on a shared runner and it is the point of
+    # the job, not overhead to trim.
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:17-alpine
@@ -113,6 +118,23 @@ jobs:
       # pre-B1 structure.
       - name: File metadata (B1) — fixtures, migration, smoke, rollback
         run: bash supabase/tests/ci/run_b1_metadata_test.sh
+
+      # Phase 3 · B2A (file authorization performance). This one changes an
+      # AUTHORIZATION path, so the gate is not "it got faster": the runner
+      # captures per-persona, per-kind sorted file-ID fingerprints BEFORE the
+      # migration and requires them byte-identical AFTER. It also pulls B2 from
+      # its own branch (PR #21) to answer whether business_files_search reaches
+      # its 300 ms budget once the authorization cost is removed — without
+      # mixing the two batches' trees.
+      - name: File authorization performance (B2A) — equivalence, perf, rollback
+        run: |
+          B2=""
+          if git fetch --depth=1 origin claude/phase3-b2-search 2>/dev/null; then
+            mkdir -p /tmp/b2
+            if git show FETCH_HEAD:supabase/migrations/2026-08-16_02_business_files_search.sql \
+                 > /tmp/b2/b2.sql 2>/dev/null; then B2=/tmp/b2/b2.sql; fi
+          fi
+          B2_MIGRATION="$B2" bash supabase/tests/ci/run_b2a_authz_perf_test.sh
 
   market-listings-reconciliation:
     # Designated validator for
