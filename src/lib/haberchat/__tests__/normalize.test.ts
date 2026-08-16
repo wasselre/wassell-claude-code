@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { chatRecordId, deviceIdString, mergeChatIntoRecord } from '../normalize';
+import {
+  chatRecordId,
+  deviceIdString,
+  mergeChatIntoRecord,
+  matchRecordByPhone,
+  ksaCanonicalPhone,
+} from '../normalize';
 import type { AppRecord, HaberchatChat } from '@/types';
 
 const DEVICE = '6a324d9052c72dfccc5446cc';
@@ -105,5 +111,46 @@ describe('mergeChatIntoRecord — preview + unread ownership', () => {
     const data = next.data as Record<string, unknown>;
     expect(data.last_message_at).toBe('2026-07-17T12:00:00.000Z');
     expect(data.last_message_preview).toBe('newest');
+  });
+});
+
+describe('ksaCanonicalPhone', () => {
+  it('reconciles every stored KSA format onto one E.164 string', () => {
+    expect(ksaCanonicalPhone('966599090218')).toBe('966599090218'); // +966…
+    expect(ksaCanonicalPhone('599090218')).toBe('966599090218');    // bare subscriber
+    expect(ksaCanonicalPhone('0599090218')).toBe('966599090218');   // local trunk 0
+    expect(ksaCanonicalPhone('00966599090218')).toBe('966599090218'); // international 00
+  });
+});
+
+describe('matchRecordByPhone', () => {
+  const CLIENT_SLUGS = ['phone_number'];
+  function client(id: string, phone: string): AppRecord {
+    return {
+      id,
+      model_id: 'clients-model',
+      data: { phone_number: phone },
+      created_at: '2026-07-01T00:00:00.000Z',
+      updated_at: '2026-07-01T00:00:00.000Z',
+    };
+  }
+
+  it('matches a client stored in local 05… form to a 966… chat wid (the bug fix)', () => {
+    const c = client('c-05', '0599090218');
+    expect(matchRecordByPhone('+966599090218', [c], CLIENT_SLUGS)?.id).toBe('c-05');
+  });
+
+  it('still matches the bare-9-digit and full-966 forms', () => {
+    expect(matchRecordByPhone('+966599090218', [client('bare', '599090218')], CLIENT_SLUGS)?.id).toBe('bare');
+    expect(matchRecordByPhone('+966599090218', [client('full', '+966599090218')], CLIENT_SLUGS)?.id).toBe('full');
+  });
+
+  it('does not match a different number', () => {
+    expect(matchRecordByPhone('+966599090218', [client('other', '0500000000')], CLIENT_SLUGS)).toBeNull();
+  });
+
+  it('returns null when there are no phone slugs or the number is too short', () => {
+    expect(matchRecordByPhone('+966599090218', [client('c', '0599090218')], [])).toBeNull();
+    expect(matchRecordByPhone('123', [client('c', '0599090218')], CLIENT_SLUGS)).toBeNull();
   });
 });

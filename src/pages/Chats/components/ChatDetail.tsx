@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, ChevronDown, NotebookPen, Bot, Contact } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
+import type { AppRecord } from '@/types';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
 import MessageThread from './MessageThread';
@@ -49,19 +50,32 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const kind = (data?.kind as string | null | undefined) ?? 'user';
   const status = (data?.status as string | null | undefined) ?? 'active';
   const lastMessageAt = (data?.last_message_at as string | null | undefined) ?? null;
-  const clientLinkId = (data?.client_link as string | null | undefined) ?? null;
+  const storedClientLinkId = (data?.client_link as string | null | undefined) ?? null;
   // AI takeover for THIS conversation (set from the header toggle). While on,
   // the agent answers every inbound message regardless of global policy.
   const aiManaged = (data?.ai_managed as boolean | undefined) === true;
 
-  // Look up the linked client (if any) so we can render its name without
-  // a round-trip. `records.clients` is already in the store.
-  const linkedClient = useAppStore((s) => {
-    if (!clientLinkId) return null;
-    const clientsModel = s.models.find((m) => m.name === 'clients');
+  // Look up the linked client. Prefer an explicit stored `client_link` (an
+  // admin may have linked to someone other than the phone owner), but FALL
+  // BACK to a live phone match — the same digits match used for contacts /
+  // advertisers below — so an existing client always resolves even when
+  // `client_link` was never persisted or got reverted by a record refetch
+  // (the "existing client shows as new, flickers in then out" bug). Everything
+  // downstream keys off the resolved id, so the linked-client header, the
+  // client URL, and the active WhatsApp follow-up all light up from the live
+  // match too. `records.clients` is already in the store — no round-trip.
+  const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
+  const linkedClient = useMemo<AppRecord | null>(() => {
     if (!clientsModel) return null;
-    return (s.records[clientsModel.id] ?? []).find((r) => r.id === clientLinkId) ?? null;
-  });
+    const clientRecords = records[clientsModel.id] ?? [];
+    if (storedClientLinkId) {
+      const stored = clientRecords.find((r) => r.id === storedClientLinkId);
+      if (stored) return stored;
+    }
+    if (!phone) return null;
+    return matchRecordByPhone(phone, clientRecords, phoneFieldSlugs(clientsModel));
+  }, [clientsModel, records, storedClientLinkId, phone]);
+  const clientLinkId = linkedClient?.id ?? null;
   const linkedClientData = linkedClient ? (linkedClient.data as Record<string, unknown>) : null;
   const linkedClientName =
     (linkedClientData?.client_name as string | null | undefined) ??
@@ -71,7 +85,6 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   // Detailed preference chips for the linked client (unit type, budget,
   // bedrooms, area, location, direction, amenities, …). Same source data as
   // the list-pane chips, just the full set.
-  const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
   const geoNames = useMemo(() => buildGeoNameMap(models, records), [models, records]);
   const prefChips = useMemo<ClientPrefDetailChip[]>(
     () => (linkedClientData ? buildDetailedClientPrefChips(linkedClientData, clientsModel, geoNames, isAr) : []),
