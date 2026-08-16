@@ -43,6 +43,22 @@ BEGIN;
 --    ADD COLUMN fires no row trigger, so files.updated_at is untouched (B1's
 --    preserved history stays preserved).
 -- ---------------------------------------------------------------------------
+-- `array_to_string(anyarray, text)` is only STABLE, because it is generic over
+-- every array type and an arbitrary element type's output function need not be
+-- immutable. A generated column requires IMMUTABLE, so it cannot be used here.
+--
+-- Narrowing the signature to text[] removes that generality and with it the
+-- reason for the STABLE marking: joining text elements with a constant
+-- separator is genuinely deterministic, since text's output function is itself
+-- immutable. This wrapper is therefore honestly labelled, not a lie told to the
+-- planner to get past the check.
+CREATE OR REPLACE FUNCTION public.wassell_tags_text(t text[])
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT coalesce(array_to_string(t, ' '), '')
+$$;
+COMMENT ON FUNCTION public.wassell_tags_text(text[]) IS
+  'Immutable text[] -> text join, so tags can participate in the files.search_text generated column.';
+
 ALTER TABLE public.files
   ADD COLUMN IF NOT EXISTS search_text text
   GENERATED ALWAYS AS (
@@ -50,7 +66,7 @@ ALTER TABLE public.files
       coalesce(title,'')         || ' ' ||
       coalesce(description,'')   || ' ' ||
       coalesce(original_name,'') || ' ' ||
-      coalesce(array_to_string(tags,' '),'')
+      public.wassell_tags_text(tags)
     )
   ) STORED;
 

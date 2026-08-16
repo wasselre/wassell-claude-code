@@ -20,4 +20,7 @@ DROP INDEX IF EXISTS public.idx_file_links_role;
 
 ALTER TABLE public.files DROP COLUMN IF EXISTS search_text;
 
+-- Dropped only after the column that depends on it.
+DROP FUNCTION IF EXISTS public.wassell_tags_text(text[]);
+
 COMMIT;
