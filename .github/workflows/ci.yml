@@ -48,7 +48,12 @@ jobs:
     # validator for the 2026-09-01_* migration set — production apply is
     # gated on this job being green.
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Raised from 10 for Phase 3 B2A: proving that an authorization change moves
+    # nobody's reach means sweeping sorted file-ID fingerprints for 7 personas x
+    # 3 kinds over an 8,000-row corpus, three times (before, after, after
+    # rollback). That is ~7 minutes on a shared runner and it is the point of
+    # the job, not overhead to trim.
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:17-alpine
@@ -114,6 +119,38 @@ jobs:
       - name: File metadata (B1) — fixtures, migration, smoke, rollback
         run: bash supabase/tests/ci/run_b1_metadata_test.sh
 
+      # Phase 3 · B2A (file authorization performance). This one changes an
+      # AUTHORIZATION path, so the gate is not "it got faster": the runner
+      # captures per-persona, per-kind sorted file-ID fingerprints BEFORE the
+      # migration and requires them byte-identical AFTER. It also pulls B2 from
+      # its own branch (PR #21) to answer whether business_files_search reaches
+      # its 300 ms budget once the authorization cost is removed — without
+      # mixing the two batches' trees.
+      - name: File authorization performance (B2A) — equivalence, perf, rollback
+        run: |
+          B2=""
+          if git fetch --depth=1 origin claude/phase3-b2-search 2>/dev/null; then
+            mkdir -p /tmp/b2
+            if git show FETCH_HEAD:supabase/migrations/2026-08-16_02_business_files_search.sql \
+                 > /tmp/b2/b2.sql 2>/dev/null; then B2=/tmp/b2/b2.sql; fi
+          fi
+          B2_MIGRATION="$B2" bash supabase/tests/ci/run_b2a_authz_perf_test.sh
+
+      # Phase 3 · B2A.2 (set-based grant/folder resolution, identity-guarded).
+      # Same equivalence
+      # bar as B2A, plus synthetic high-cardinality personas (3,000 direct
+      # grants, a 12-deep folder chain) that exist to make a wrong design fail:
+      # an InitPlan-array membership test is a linear scan per row and would
+      # visibly lose here, while a hash semi-join holds.
+      - name: File authz grant sets (B2A.2) — equivalence, high-cardinality, perf
+        run: |
+          B2=""
+          if git fetch --depth=1 origin claude/phase3-b2-search 2>/dev/null; then
+            mkdir -p /tmp/b2
+            if git show FETCH_HEAD:supabase/migrations/2026-08-16_02_business_files_search.sql                  > /tmp/b2/b2.sql 2>/dev/null; then B2=/tmp/b2/b2.sql; fi
+          fi
+          B2_MIGRATION="$B2" bash supabase/tests/ci/run_b2a2_grant_sets_test.sh
+
       # Phase 3 · B2 (business_files_search). Own database again, and its own
       # 8,000-row corpus: the 19-row Phase 1 fixture can prove projection shapes
       # but says nothing about whether search is fast or whether facet counts
@@ -147,6 +184,91 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run reconciliation migration tests
         run: bash supabase/tests/ci/run_market_listings_reconciliation_test.sh
+
+  market-ingest-gate-a:
+    # Designated validator for the four additive Gate A migrations
+    # supabase/migrations/2026-09-05_0{1,2,3,4}_*.sql. The db-migrations job
+    # above globs only 2026-09-01_0* and 2026-09-02_0*, so it never executes
+    # the 2026-09-05_0* Gate A set — this job exists to run them (via the
+    # fixture + assertions driven by
+    # supabase/tests/ci/run_market_ingest_gate_a_test.sh) against an ephemeral
+    # Postgres 17 before any production apply. It proves the four migrations
+    # against the SUPPORTED PREDECESSOR FIXTURE — NOT fresh-database parity,
+    # which stays blocked until the deferred market_listings freeze baseline
+    # (2026-09-05_05) lands.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Gate A ingest migration tests
+        run: bash supabase/tests/ci/run_market_ingest_gate_a_test.sh
+
+  freeze-baseline-sequence:
+    # Designated validator for the FULL market-ingest replay chain:
+    #   pre-freeze predecessor fixture
+    #   -> 2026-09-03_02_market_listings_freeze_baseline.sql
+    #   -> UNMODIFIED 2026-09-04_00_market_listings_view_reconciliation.sql
+    #   -> 2026-09-05_01..04 -> 2026-09-05_06
+    # It exists because the baseline's whole purpose is to establish the exact
+    # predecessor state 2026-09-04_00 pins by md5 — that convergence is executed
+    # here, never assumed. Also proves the five-way unified_records fingerprint,
+    # the production-shaped assert-only path, idempotency, and fail-closed drift.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run freeze-baseline sequence tests
+        run: bash supabase/tests/ci/run_freeze_baseline_sequence_test.sh
+
+  market-raw-storage:
+    # Designated validator for 2026-09-05_08_market_raw_storage.sql.
+    # CI cannot reach the Storage HTTP API, so this proves the half that lives in
+    # Postgres: the policy predicates evaluated as the dedicated uploader, a
+    # normal authenticated user, and an admin. The HTTP half (upsert, move/copy,
+    # signed URLs, anon) is proven once against production by
+    # scripts/market-raw-canary.mjs after apply.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run market-raw storage policy tests
+        run: bash supabase/tests/ci/run_market_raw_storage_test.sh
 
   worker-typecheck:
     # worker/ is a standalone package (third tsconfig) — not covered by the

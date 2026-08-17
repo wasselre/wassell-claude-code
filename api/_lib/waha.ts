@@ -278,8 +278,78 @@ export interface WahaMessageRaw {
       Type?: string | null;
       MediaType?: string | null;
     } | null;
+    // GOWS nests the decoded WhatsApp protobuf here. Click-to-WhatsApp ad
+    // attribution lives at `Message.<messageType>.contextInfo.externalAdReply`
+    // (NOT flattened to the top level the way WAHA's WEBJS/NOWEB engines do).
+    // RawMessage is a duplicate of Message. Shapes are open — see extractAdReferral.
+    Message?: Record<string, unknown> | null;
+    RawMessage?: Record<string, unknown> | null;
   } | null;
   [k: string]: unknown;
+}
+
+/**
+ * Normalized Click-to-WhatsApp ad attribution — the small, durable subset of
+ * WhatsApp's `externalAdReply` we keep on the opening inbound message. We
+ * DELIBERATELY drop the base64 `thumbnail` and image URLs: they bloat the row
+ * (a real payload is ~24 KB, mostly thumbnail) and add nothing to attribution.
+ */
+// A `type` alias (not an `interface`) on purpose: an interface has no implicit
+// index signature, so it is NOT assignable to `Record<string, unknown>` — which
+// is what bumpConversationRecord's `firstTouchAd` param and chat_messages.meta
+// expect. A type alias of an object literal IS. (Same gotcha as saveWorkflow.)
+export type WahaAdReferral = {
+  ad_id: string | null;            // externalAdReply.sourceID — the Meta Ad ID (resolution key)
+  ctwa_clid: string | null;        // Meta click id — useful later for CAPI closed-loop reporting
+  source_app: string | null;       // 'instagram' | 'facebook' | ...
+  source_url: string | null;       // externalAdReply.sourceURL (the post/reel URL)
+  source_type: string | null;      // usually 'ad'
+  conversion_source: string | null;// contextInfo.conversionSource, e.g. 'FB_Ads'
+  ad_title: string | null;         // externalAdReply.title
+  captured_at: string;             // ISO timestamp we saw it
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+function nonEmptyStr(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+/**
+ * Pull Click-to-WhatsApp ad attribution out of a raw WAHA (GOWS) inbound
+ * message. Returns null when the message did not originate from an ad.
+ *
+ * On our engine the block is at `_data.Message.<messageType>.contextInfo.
+ * externalAdReply` with CAPITALIZED keys (`sourceID`/`sourceURL`). The message
+ * type varies (extendedTextMessage for a text lead, imageMessage/videoMessage
+ * for a media lead), so we scan each child node for a `contextInfo.
+ * externalAdReply` rather than hard-coding one type. Falls back to lowercase
+ * keys so a future engine swap (WEBJS/NOWEB flatten differently) still works.
+ */
+export function extractAdReferral(msg: WahaMessageRaw): WahaAdReferral | null {
+  const message = asRecord(msg._data?.Message) ?? asRecord(msg._data?.RawMessage);
+  if (!message) return null;
+  for (const node of Object.values(message)) {
+    const ctx = asRecord(asRecord(node)?.contextInfo);
+    if (!ctx) continue;
+    const ext = asRecord(ctx.externalAdReply);
+    if (!ext) continue;
+    const adId = nonEmptyStr(ext.sourceID) ?? nonEmptyStr(ext.sourceId);
+    const clid = nonEmptyStr(ext.ctwaClid);
+    if (!adId && !clid) continue; // externalAdReply with no usable identity — skip
+    return {
+      ad_id: adId,
+      ctwa_clid: clid,
+      source_app: nonEmptyStr(ext.sourceApp),
+      source_url: nonEmptyStr(ext.sourceURL) ?? nonEmptyStr(ext.sourceUrl),
+      source_type: nonEmptyStr(ext.sourceType),
+      conversion_source: nonEmptyStr(ctx.conversionSource),
+      ad_title: nonEmptyStr(ext.title),
+      captured_at: new Date().toISOString(),
+    };
+  }
+  return null;
 }
 
 // ─── Sessions (devices) ──────────────────────────────────────────────
@@ -529,9 +599,14 @@ export async function sendMessage(input: {
 
   let path: string;
   let payload: Record<string, unknown>;
+  // Captured for the proactive outbound mirror below — WAHA fetched these bytes
+  // to send them, but its own /api/files copy is written async and evicted fast
+  // (see mirrorOutboundMedia), so we keep our own copy from the source we hold.
+  let resolvedMedia: { url: string; mimetype?: string; filename?: string } | null = null;
 
   if (input.mediaFileId) {
     const file = await resolveMediaFile(input.mediaFileId);
+    resolvedMedia = file;
     const caption = input.mediaCaption ?? input.body ?? undefined;
     // 'sticker' (image/webp) is sent as an IMAGE — there is no separate sticker
     // send here, and routing it to sendFile would deliver a webp attachment.
@@ -558,7 +633,62 @@ export async function sendMessage(input: {
   if (!wid) {
     console.error(`[waha] ${path} accepted the message but returned no recognisable id:`, JSON.stringify(raw).slice(0, 300));
   }
+
+  // Proactively mirror outbound media from the SOURCE we sent (never fatal to the
+  // send). WAHA names its echoed copy `<wid-hash>.<ext>` under /api/files, but
+  // that copy is written asynchronously and evicted within minutes — so a thread
+  // that renders an outbound image outside that window used to 404 the gateway
+  // with no fallback copy and show a red "تعذّر تحميل الملف" bubble, permanently
+  // for any image WAHA evicted before its first view (live 2026-08-16). We hold
+  // the source bytes here, so keep our own copy at the exact path downloadFile's
+  // mirror fallback looks for. Awaited so serverless doesn't kill it mid-upload.
+  if (wid && resolvedMedia) {
+    await mirrorOutboundMedia(session, wid, resolvedMedia);
+  }
+
   return { wid, status: 'sent', reference: input.reference ?? null };
+}
+
+/** WAHA's echoed-media extension convention, by mime. Only needs to be right
+ *  often enough to hit downloadFile's fast path — mirrorResponse falls back to a
+ *  stem match if WAHA named the file with a different extension. */
+const MIME_EXT: Record<string, string> = {
+  'image/jpeg': 'jpeg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+  'video/mp4': 'mp4', 'video/quicktime': 'mp4', 'video/webm': 'webm',
+  'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/wav': 'wav',
+  'application/pdf': 'pdf',
+};
+
+/** Copy the just-sent media into our own mirror namespace, keyed by the message
+ *  wid's hash (the same stem WAHA uses), so downloadFile can serve it even after
+ *  WAHA drops its transient /api/files copy. Best-effort: any failure only logs. */
+async function mirrorOutboundMedia(
+  session: string,
+  wid: string,
+  file: { url: string; mimetype?: string; filename?: string },
+): Promise<void> {
+  try {
+    const hash = wid.split('_').pop() ?? '';
+    if (!hash) return;
+    const fromName = (file.filename ?? file.url).split(/[?#]/)[0] ?? '';
+    const urlExt = fromName.includes('.') ? fromName.slice(fromName.lastIndexOf('.') + 1).toLowerCase() : '';
+    const ext = (file.mimetype ? MIME_EXT[file.mimetype] : undefined) ?? (urlExt || 'bin');
+    const target = `${MIRROR_PREFIX}/${session}/${hash}.${ext}`;
+
+    const res = await fetch(file.url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) {
+      console.error(`[waha.mirrorOutboundMedia] source fetch ${res.status} for ${session}/${hash}`);
+      return;
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const contentType = file.mimetype || res.headers.get('content-type') || 'application/octet-stream';
+    // upsert:true — a re-send of the same media (same wid never repeats, but the
+    // lazy cache-through may also land here) is harmless to overwrite.
+    const { error } = await svc().storage.from(OUTBOUND_BUCKET).upload(target, bytes, { contentType, upsert: true });
+    if (error) console.error(`[waha.mirrorOutboundMedia] mirror upload failed for ${target}:`, error.message);
+  } catch (err) {
+    console.error('[waha.mirrorOutboundMedia] unexpected error:', err instanceof Error ? err.message : String(err));
+  }
 }
 
 /**
@@ -746,10 +876,38 @@ export async function downloadFile(fileId: string, _deviceId?: string): Promise<
 /** Stream mirrored bytes for `<session>/<filename>`; throws if we hold no copy. */
 async function mirrorResponse(path: string): Promise<Response> {
   const { data, error } = await svc().storage.from(OUTBOUND_BUCKET).download(`${MIRROR_PREFIX}/${path}`);
-  if (error || !data) throw new WahaError(404, `mirrored media not found: ${error?.message ?? path}`);
-  return new Response(data, {
-    headers: { 'Content-Type': data.type || mimeFromRef(path) || 'application/octet-stream' },
-  });
+  if (!error && data) {
+    return new Response(data, {
+      headers: { 'Content-Type': data.type || mimeFromRef(path) || 'application/octet-stream' },
+    });
+  }
+
+  // Stem fallback: the proactive outbound mirror (mirrorOutboundMedia) predicts
+  // WAHA's file extension from the mime and can differ from the extension WAHA
+  // actually used in the stored `wf_` ref (e.g. jpg vs jpeg). Match by the wid
+  // hash instead so the copy is still found regardless of extension.
+  const slash = path.lastIndexOf('/');
+  const folder = slash >= 0 ? path.slice(0, slash) : '';
+  const filename = slash >= 0 ? path.slice(slash + 1) : path;
+  const stem = filename.includes('.') ? filename.slice(0, filename.lastIndexOf('.')) : filename;
+  if (stem) {
+    const { data: list } = await svc().storage
+      .from(OUTBOUND_BUCKET)
+      .list(`${MIRROR_PREFIX}/${folder}`, { search: stem, limit: 10 });
+    const hit = (list ?? []).find((o) => o.name === filename || o.name.startsWith(`${stem}.`));
+    if (hit) {
+      const { data: alt } = await svc().storage
+        .from(OUTBOUND_BUCKET)
+        .download(`${MIRROR_PREFIX}/${folder}/${hit.name}`);
+      if (alt) {
+        return new Response(alt, {
+          headers: { 'Content-Type': alt.type || mimeFromRef(hit.name) || 'application/octet-stream' },
+        });
+      }
+    }
+  }
+
+  throw new WahaError(404, `mirrored media not found: ${error?.message ?? path}`);
 }
 
 // ─── Chat status / labels ────────────────────────────────────────────

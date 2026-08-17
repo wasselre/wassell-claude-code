@@ -55,6 +55,30 @@ SELECT
 FROM generate_series(1, 8000) i
 ON CONFLICT (id) DO NOTHING;
 
+-- Search-specific attributes, applied as UPDATEs rather than relying on the
+-- INSERT above.
+--
+-- Since the B2A integration this fixture runs AFTER fixture_b2a_authz.sql,
+-- which already created the same 8,000 ids — so the INSERT above is a no-op via
+-- ON CONFLICT and every column it carried inline would be silently dropped.
+-- Setting them here means the fixture works whether the corpus already exists
+-- or not, and the facet/filter assertions that depend on them keep their teeth:
+-- B2.3 requires duplicates to exist, B2.4 requires tagged rows.
+UPDATE public.files SET
+  tags = CASE WHEN right(id::text,12)::bigint % 13 = 0 THEN ARRAY['تسويق']
+              WHEN right(id::text,12)::bigint % 17 = 0 THEN ARRAY['أرشيف']
+              ELSE '{}'::text[] END,
+  -- 160 expired rows (every 50th)
+  valid_until = CASE WHEN right(id::text,12)::bigint % 50 = 0
+                     THEN timestamptz '2026-02-01 00:00:00+00' END,
+  -- 80 rows share 40 checksums => 80 duplicates (every 100th and its +1)
+  checksum_sha256 = CASE
+      WHEN right(id::text,12)::bigint % 100 = 0
+        THEN 'dup' || (right(id::text,12)::bigint / 100)::text
+      WHEN right(id::text,12)::bigint % 100 = 1 AND right(id::text,12)::bigint > 1
+        THEN 'dup' || (right(id::text,12)::bigint / 100)::text END
+WHERE storage_path LIKE 'scale/%';
+
 -- Give the corpus real document_type variety for the facet assertions. The B1
 -- trigger typed everything from `kind`; a Library corpus is not that uniform.
 --

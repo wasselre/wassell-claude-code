@@ -85,6 +85,18 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
 
   const missingCoords = matches.length - plotted.length;
 
+  // Stable CONTENT signature of the plotted set. The parent passes `matches` as a
+  // fresh array literal every render (`[...ourProjects, ...tierItems]`), so `plotted`
+  // changes identity on every parent re-render even when the pins are identical.
+  // Keying the marker/cluster/fitBounds effect on this string instead of the array
+  // means an unchanged pin set does NOT tear down and rebuild every marker (pins
+  // flickering in/out) nor refit the viewport (the user's zoom snapping back) —
+  // it only reacts when the pins actually change (a tab switch / new search).
+  const plottedSig = useMemo(
+    () => plotted.map((p) => `${p.match.source}:${p.match.project_id}:${p.lat.toFixed(5)}:${p.lng.toFixed(5)}`).join('|'),
+    [plotted],
+  );
+
   // The currently-open card's match (kept in sync with the plotted set — a match
   // that scrolled out of the active tab/search closes its card).
   const selectedMatch = useMemo(
@@ -93,7 +105,9 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
   );
 
   // Dismiss the open card when the plotted set changes (tab switch / new search).
-  useEffect(() => { setSelectedId(null); }, [plotted]);
+  // Keyed on the content signature, not the array identity, so an identical
+  // re-render doesn't close the card the user just opened.
+  useEffect(() => { setSelectedId(null); }, [plottedSig]);
 
   // Clicking empty map space closes the open card.
   useEffect(() => {
@@ -191,7 +205,13 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
       oursMarkersRef.current.forEach((m) => m.setMap(null));
       oursMarkersRef.current = [];
     };
-  }, [map, isLoaded, plotted]);
+    // Keyed on plottedSig (content), NOT plotted (identity): the parent rebuilds the
+    // matches array every render, so depending on `plotted` re-ran this whole effect —
+    // rebuilding markers and calling fitBounds — on every parent render, which is what
+    // made the map lag, flicker its pins, and yank the zoom back. plotted is read from
+    // the same render as plottedSig, so the closure is always in sync with the signature.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, isLoaded, plottedSig]);
 
   if (keyMissing) {
     return (

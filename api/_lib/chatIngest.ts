@@ -49,6 +49,12 @@ export interface ChatMessageRow {
   media_caption: string | null;
   reference: string | null;
   quoted: Record<string, unknown> | null;
+  // Structured per-message payload (buttons / list responses / ad attribution).
+  // Set ONCE at insert time — the WAHA path stores Click-to-WhatsApp ad
+  // attribution here as `{ ad: {...} }` on the opening inbound message. Left
+  // undefined for ordinary messages (DB default is `'{}'::jsonb`). Deliberately
+  // NOT overwritten by later echo/ack/edit upserts (see upsertChatMessage).
+  meta?: Record<string, unknown> | null;
 }
 
 /**
@@ -97,6 +103,39 @@ async function findRowByHash(id: string, flow: 'in' | 'out'): Promise<string | n
 }
 
 /**
+ * Resolve a normalized Click-to-WhatsApp ad referral to our Paid Ads chain
+ * (mos_resolve_ad) and return it with a `resolved` field for storage on the
+ * OPENING message's `chat_messages.meta.ad`.
+ *
+ * `resolved` is null when the ad isn't in our Paid Ads yet — the raw referral is
+ * still preserved, and `mos_reresolve_first_touch()` back-fills `resolved` onto
+ * chat_messages.meta once the ad record is created. We store this on the message
+ * (immutable — the browser never rewrites chat_messages) rather than the chats
+ * record, whose `data` blob the SPA store rewrites and would clobber.
+ */
+export async function attachAdResolution(
+  ad: Record<string, unknown> | null,
+): Promise<Record<string, unknown> | null> {
+  if (!ad) return null;
+  const adId = ad.ad_id;
+  if (typeof adId !== 'string' || !adId) return { ...ad, resolved: null };
+  const supa = getServiceSupabase();
+  let resolved: Record<string, unknown> | null = null;
+  try {
+    const { data: res, error } = await supa.rpc('mos_resolve_ad', { p_platform_ad_id: adId });
+    if (error) console.error('[chatIngest] mos_resolve_ad failed:', error.message);
+    else if (Array.isArray(res) && res.length > 0) {
+      const row = { ...(res[0] as Record<string, unknown>) };
+      delete row.project_ids; // drop the bulky array; project_id (scalar) is kept
+      resolved = { ...row, resolved_at: new Date().toISOString() };
+    }
+  } catch (err) {
+    console.error('[chatIngest] mos_resolve_ad threw:', err instanceof Error ? err.message : String(err));
+  }
+  return { ...ad, resolved };
+}
+
+/**
  * Upsert a chat_messages row. onConflict:id so a retried/duplicated webhook
  * never creates a second row. Returns `{ isNew }` so the caller can make the
  * unread bump idempotent (only a genuinely new inbound message bumps unread).
@@ -131,6 +170,11 @@ export async function upsertChatMessage(row: ChatMessageRow): Promise<{ isNew: b
     // send path owns.
     const patch: Record<string, unknown> = { ...row };
     if (row.reference == null) delete patch.reference;
+    // `meta` is write-once (set at insert on the opening message — e.g. ad
+    // attribution). An echo/ack/edit re-upsert must never blank or overwrite it,
+    // exactly like the `reference` protection above. So the merge never touches
+    // meta; only the original insert writes it.
+    delete patch.meta;
     const prevAck = (existing as { ack?: string | null }).ack ?? null;
     const prevRank = prevAck ? (ACK_ORDER[prevAck as keyof typeof ACK_ORDER] ?? -1) : -1;
     const nextRank = row.ack ? (ACK_ORDER[row.ack as keyof typeof ACK_ORDER] ?? -1) : -1;

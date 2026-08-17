@@ -15,8 +15,9 @@
 import { useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
-import { ChevronDown, Eye, EyeOff, Lock, Pencil, MousePointerClick, Layers } from 'lucide-react';
+import { ChevronDown, Eye, EyeOff, Lock, Pencil, MousePointerClick, Layers, Link2, PanelLeft, X } from 'lucide-react';
 import ScopeConditionEditor from './ScopeConditionEditor';
+import { resolveModelDataDependencies } from '@/lib/moduleDependencies';
 import type {
   AppModel,
   FieldPermission,
@@ -103,6 +104,21 @@ function upsertEntry(
   return [...list, next];
 }
 
+/**
+ * True when an entry carries no state worth keeping beyond its `permissions`
+ * array — i.e. removing the last permission should drop the whole entry. The
+ * `hidden_from_sidebar` / `auto_reference` flags are deliberately NOT counted:
+ * a zero-permission entry is "no access", where those nav/marker flags are
+ * meaningless.
+ */
+function entryIsScopeless(e: ProfileModelPermissions): boolean {
+  return (
+    (!e.view_scope || e.view_scope.mode === 'all') &&
+    (!e.edit_scope || e.edit_scope.mode === 'all') &&
+    (!e.field_permissions || Object.keys(e.field_permissions).length === 0)
+  );
+}
+
 export default function PermissionMatrix({
   modelPermissions,
   onChange,
@@ -117,6 +133,80 @@ export default function PermissionMatrix({
 
   const hiddenViewSet = new Set(hiddenViewIds ?? []);
   const hiddenButtonSet = new Set(hiddenButtonIds ?? []);
+
+  const modelById = new Map(models.map((m) => [m.id, m]));
+
+  // ── Reference (data-only) dependency wiring ─────────────────────────────
+  // Granting `view` on a module auto-adds read-only, sidebar-hidden "reference"
+  // grants for every OTHER module whose data it displays (lookup / mirror /
+  // section_mirror chain) — so mirrored fields never render blank. These fire
+  // ONLY on an explicit view toggle, never continuously, so once added an admin
+  // can freely remove or customize them without them silently re-appearing.
+
+  /** Add missing reference deps for a module whose view was just turned ON. */
+  const addReferenceDeps = (
+    list: ProfileModelPermissions[],
+    modelId: string,
+  ): ProfileModelPermissions[] => {
+    const deps = resolveModelDataDependencies(modelId, models);
+    const present = new Set(list.map((e) => e.model_id));
+    let next = list;
+    for (const depId of deps) {
+      if (present.has(depId)) continue; // never clobber an existing grant
+      next = [
+        ...next,
+        { model_id: depId, permissions: ['view'], hidden_from_sidebar: true, auto_reference: true },
+      ];
+    }
+    return next;
+  };
+
+  /** Drop auto-reference grants no longer needed by any intentional (non-auto)
+   *  viewable module — runs when a module's view is turned OFF. Prune-only:
+   *  it never adds, so a manually-removed reference stays removed. */
+  const pruneOrphanReferenceDeps = (
+    list: ProfileModelPermissions[],
+  ): ProfileModelPermissions[] => {
+    const primaries = list.filter((e) => e.permissions.includes('view') && !e.auto_reference);
+    const needed = new Set<string>();
+    for (const p of primaries) {
+      for (const dep of resolveModelDataDependencies(p.model_id, models)) needed.add(dep);
+    }
+    return list.filter((e) => !e.auto_reference || needed.has(e.model_id));
+  };
+
+  const toggleView = (modelId: string) => {
+    const existing = findEntry(modelPermissions, modelId);
+    const turningOn = !existing?.permissions.includes('view');
+    let next = upsertEntry(modelPermissions, modelId, (current) => {
+      const nextPerms = turningOn
+        ? [...current.permissions, 'view' as ModelPermission]
+        : current.permissions.filter((p) => p !== 'view');
+      // Toggling view is an intentional act on THIS model → no longer an
+      // auto-reference; a promoted grant is never auto-pruned.
+      if (nextPerms.length === 0 && entryIsScopeless(current)) return null;
+      return { ...current, permissions: nextPerms, auto_reference: false };
+    });
+    next = turningOn ? addReferenceDeps(next, modelId) : pruneOrphanReferenceDeps(next);
+    onChange(next);
+  };
+
+  const setSidebarHidden = (modelId: string, hidden: boolean) => {
+    onChange(
+      upsertEntry(modelPermissions, modelId, (current) => ({
+        ...current,
+        hidden_from_sidebar: hidden ? true : undefined,
+      })),
+    );
+  };
+
+  const removeEntry = (modelId: string) => {
+    onChange(modelPermissions.filter((e) => e.model_id !== modelId));
+  };
+
+  const referenceEntries = modelPermissions
+    .filter((e) => e.auto_reference && modelById.has(e.model_id))
+    .map((e) => ({ entry: e, model: modelById.get(e.model_id) as AppModel }));
 
   const toggleHiddenView = (viewId: string) => {
     if (!onHiddenViewIdsChange) return;
@@ -144,6 +234,58 @@ export default function PermissionMatrix({
 
   return (
     <div className="space-y-2">
+      {/* Reference (data-only) modules — auto-granted so mirrored/looked-up
+          data resolves in the modules this profile actually navigates. Read-only
+          and hidden from this profile's sidebar; removable here. */}
+      {referenceEntries.length > 0 && (
+        <div className="rounded-xl border border-copper/25 bg-copper/[0.04] p-3">
+          <h4 className="text-[11px] font-bold uppercase tracking-wider text-copper/80 mb-1 inline-flex items-center gap-1.5">
+            <Link2 size={12} />
+            {isAr ? 'وحدات مرجعية (بيانات فقط)' : 'Reference modules (data-only)'}
+          </h4>
+          <p className="text-[11px] text-charcoal/50 mb-2.5">
+            {isAr
+              ? 'مُنِح الوصول للقراءة تلقائياً كي تظهر البيانات المرتبطة داخل الوحدات الممنوحة. مخفية من القائمة الجانبية. أزل ما لا تريده.'
+              : 'Read access auto-granted so linked data resolves inside the modules you granted. Hidden from this profile’s sidebar. Remove any you don’t want.'}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {referenceEntries.map(({ entry, model }) => {
+              const Icon = getIconComponent(model.icon);
+              const shown = !entry.hidden_from_sidebar;
+              return (
+                <span
+                  key={model.id}
+                  className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-lg bg-white/70 border border-sand/40 text-xs"
+                >
+                  <Icon size={12} style={{ color: model.color }} />
+                  <span className="text-charcoal">{isAr ? model.label_ar : model.label_en}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarHidden(model.id, shown)}
+                    className="p-0.5 rounded hover:bg-sand/30 text-charcoal/40 hover:text-charcoal transition-colors"
+                    title={
+                      shown
+                        ? isAr ? 'مخفي من القائمة الجانبية — اضغط للإظهار' : 'Hidden from sidebar — click to show'
+                        : isAr ? 'ظاهر في القائمة الجانبية — اضغط للإخفاء' : 'Shown in sidebar — click to hide'
+                    }
+                  >
+                    {shown ? <PanelLeft size={12} /> : <EyeOff size={12} />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeEntry(model.id)}
+                    className="p-0.5 rounded hover:bg-terracotta/15 text-charcoal/40 hover:text-terracotta transition-colors"
+                    title={isAr ? 'إزالة الوصول المرجعي' : 'Remove reference access'}
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {models.map((model) => {
         const entry = findEntry(modelPermissions, model.id);
         const isExpanded = expanded.has(model.id);
@@ -163,6 +305,8 @@ export default function PermissionMatrix({
             hiddenButtonSet={hiddenButtonSet}
             onToggleHiddenButton={toggleHiddenButton}
             onToggleExpand={() => toggleExpanded(model.id)}
+            onToggleView={() => toggleView(model.id)}
+            onSetSidebarHidden={(hidden) => setSidebarHidden(model.id, hidden)}
             onChange={(updater) =>
               onChange(upsertEntry(modelPermissions, model.id, updater))
             }
@@ -190,6 +334,11 @@ interface CardProps {
   hiddenButtonSet: Set<string>;
   onToggleHiddenButton: (buttonId: string) => void;
   onToggleExpand: () => void;
+  /** Toggle the `view` action — routed to the parent so it can add/prune the
+   *  reference-dependency grants that riding on view requires. */
+  onToggleView: () => void;
+  /** Flip this model's `hidden_from_sidebar` flag for the profile. */
+  onSetSidebarHidden: (hidden: boolean) => void;
   onChange: (
     updater: (current: ProfileModelPermissions) => ProfileModelPermissions | null,
   ) => void;
@@ -207,29 +356,36 @@ function ModelCard({
   hiddenButtonSet,
   onToggleHiddenButton,
   onToggleExpand,
+  onToggleView,
+  onSetSidebarHidden,
   onChange,
 }: CardProps) {
   const Icon = getIconComponent(model.icon);
   const perms = entry?.permissions ?? [];
   const labels = isAr ? PERM_LABELS_AR : PERM_LABELS_EN;
   const hasAnyAccess = perms.length > 0;
+  const canView = perms.includes('view');
+  const isReference = entry?.auto_reference === true;
+  const sidebarHidden = entry?.hidden_from_sidebar === true;
 
   const togglePerm = (perm: ModelPermission) => {
+    // `view` carries reference-dependency side-effects — the parent owns it.
+    if (perm === 'view') {
+      onToggleView();
+      return;
+    }
     onChange((current) => {
       const has = current.permissions.includes(perm);
       const nextPerms = has
         ? current.permissions.filter((p) => p !== perm)
         : [...current.permissions, perm];
       // Clean up empty entries so the stored shape stays minimal.
-      if (
-        nextPerms.length === 0 &&
-        (!current.view_scope || current.view_scope.mode === 'all') &&
-        (!current.edit_scope || current.edit_scope.mode === 'all') &&
-        (!current.field_permissions || Object.keys(current.field_permissions).length === 0)
-      ) {
+      if (nextPerms.length === 0 && entryIsScopeless(current)) {
         return null;
       }
-      return { ...current, permissions: nextPerms };
+      // Customizing actions promotes an auto-reference grant to an intentional
+      // one so it's never auto-pruned when the module that pulled it in changes.
+      return { ...current, permissions: nextPerms, auto_reference: false };
     });
   };
 
@@ -237,6 +393,7 @@ function ModelCard({
     onChange((current) => ({
       ...current,
       [which]: rule.mode === 'all' ? undefined : rule,
+      auto_reference: false,
     }));
   };
 
@@ -248,6 +405,7 @@ function ModelCard({
       return {
         ...current,
         field_permissions: Object.keys(next).length === 0 ? undefined : next,
+        auto_reference: false,
       };
     });
   };
@@ -283,6 +441,20 @@ function ModelCard({
         <span className="font-bold text-charcoal text-sm flex-1 truncate">
           {isAr ? model.label_ar : model.label_en}
         </span>
+        {isReference && (
+          <span className="inline-flex items-center gap-1 text-[9px] font-bold text-copper bg-copper/10 px-1.5 py-0.5 rounded uppercase tracking-wide">
+            <Link2 size={9} />
+            {isAr ? 'مرجعي' : 'reference'}
+          </span>
+        )}
+        {!isReference && canView && sidebarHidden && (
+          <span
+            className="inline-flex items-center gap-1 text-[9px] text-charcoal/45"
+            title={isAr ? 'مخفي من القائمة الجانبية' : 'Hidden from sidebar'}
+          >
+            <EyeOff size={9} />
+          </span>
+        )}
         {hasAnyAccess ? (
           <div className="flex items-center gap-1.5 text-[10px]">
             <span className="font-bold text-copper bg-copper/10 px-1.5 py-0.5 rounded">
@@ -333,6 +505,46 @@ function ModelCard({
                 </label>
               ))}
             </div>
+          </section>
+
+          {/* Sidebar visibility — decouples "can read this model's data" from
+              "this is a place I navigate to". Only meaningful once `view` is
+              granted; a model with no view never appears in the sidebar anyway. */}
+          <section>
+            <h4 className="text-[11px] font-bold uppercase tracking-wider text-charcoal/60 mb-1 inline-flex items-center gap-1.5">
+              <PanelLeft size={11} />
+              {isAr ? 'القائمة الجانبية' : 'Sidebar'}
+            </h4>
+            {isReference && (
+              <p className="text-[11px] text-copper/70 mb-2 inline-flex items-start gap-1.5">
+                <Link2 size={12} className="mt-0.5 shrink-0" />
+                {isAr
+                  ? 'وصول مرجعي تلقائي — مُنِح للقراءة كي تظهر بياناته داخل وحدة أخرى ممنوحة. أضف إجراءً أو نطاقاً لتثبيته كوصول مقصود.'
+                  : 'Auto reference access — read-only so its data resolves inside another granted module. Add an action or scope to keep it as an intentional grant.'}
+              </p>
+            )}
+            <label
+              className={`inline-flex items-center gap-2 text-xs cursor-pointer ${
+                canView ? 'text-charcoal' : 'text-charcoal/35 cursor-not-allowed'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={canView && !sidebarHidden}
+                disabled={!canView}
+                onChange={(e) => onSetSidebarHidden(!e.target.checked)}
+                className="w-4 h-4 rounded border-sand text-copper focus:ring-copper/30"
+              />
+              {isAr ? 'إظهار في القائمة الجانبية لهذا الملف' : "Show in this profile's sidebar"}
+            </label>
+            {canView && sidebarHidden && (
+              <p className="text-[11px] text-charcoal/45 mt-1 inline-flex items-center gap-1">
+                <EyeOff size={11} />
+                {isAr
+                  ? 'يمكن قراءة البيانات، لكن لا يظهر زر في القائمة الجانبية.'
+                  : 'Data is readable, but no button appears in the sidebar.'}
+              </p>
+            )}
           </section>
 
           {/* View scope */}

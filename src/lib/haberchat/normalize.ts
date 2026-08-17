@@ -15,6 +15,23 @@ export function normalizePhoneDigits(phone: string | null | undefined): string {
 }
 
 /**
+ * Canonicalize a digit string to KSA E.164 (no `+`), mirroring the SQL
+ * `ksa_phone_canon` (supabase/migrations/2026-06-10_phone_canon_rpc.sql) so the
+ * browser matcher and the server webhook agree. Reconciles the formats Wassell
+ * clients are stored in — `+966…`, bare 9-digit subscriber (`599090218`), local
+ * trunk `05…`, and `00966…` — onto one string. A plain digit-suffix compare
+ * MISSES the `05…` form (the leading `0` breaks the suffix against `966…`),
+ * which is exactly how an existing client rendered as a brand-new contact.
+ */
+export function ksaCanonicalPhone(digits: string): string {
+  let d = digits;
+  if (d.startsWith('00')) d = d.slice(2); // international 00-prefix
+  if (d.startsWith('966')) return d;
+  if (d.startsWith('0')) return '966' + d.slice(1); // local trunk 0
+  return '966' + d; // bare subscriber number
+}
+
+/**
  * Walk a model's schema and return every field slug whose type is 'phone'.
  * Used so the chat-to-client link resolver doesn't hardcode `data.phone`
  * — the Wassell clients model ships with `phone_number`, and admins may
@@ -60,15 +77,23 @@ export function matchRecordByPhone(
   const target = normalizePhoneDigits(phone);
   if (target.length < 6) return null;
   if (phoneSlugs.length === 0) return null;
+  const targetCanon = ksaCanonicalPhone(target);
   for (const c of candidates) {
     const d = c.data as Record<string, unknown>;
     for (const slug of phoneSlugs) {
       const p = normalizePhoneDigits(d[slug] as string | null | undefined);
       if (!p || p.length < 6) continue;
-      // Match on exact digit-string OR either side being a suffix of
-      // the other — covers the case where one side has a country code
-      // and the other doesn't ("966555…" vs local "0555…").
-      if (p === target || p.endsWith(target) || target.endsWith(p)) {
+      // Match on: exact digit-string; equal KSA-canonical form (reconciles
+      // "+966…" / bare "599…" / local "05…" / "00966…" — the local-trunk form
+      // is invisible to a raw suffix compare because its leading 0 breaks the
+      // suffix); OR either side being a suffix of the other (kept so a non-KSA
+      // country-code pair like "971…" still matches as before).
+      if (
+        p === target ||
+        ksaCanonicalPhone(p) === targetCanon ||
+        p.endsWith(target) ||
+        target.endsWith(p)
+      ) {
         return c;
       }
     }

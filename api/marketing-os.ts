@@ -25,6 +25,9 @@
  */
 import { createClient, type SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
+import { makeServiceClient } from './_lib/serviceClient.js';
+import { runMetaSync } from './_lib/marketing/metaSync.js';
+import { loadMetaConfig, MetaMarketingClient, MetaApiError } from './_lib/marketing/metaMarketingApi.js';
 
 export const config = { runtime: 'edge' };
 
@@ -50,6 +53,31 @@ async function resolveAppUserId(sb: SupabaseClient, authUid: string): Promise<st
     return null;
   }
   return (data as string | null) ?? null;
+}
+
+/**
+ * Gate an action on a marketing capability, evaluated as the CALLER (union of
+ * their held roles) via wassell_mos_capabilities. Returns a 403 Response when
+ * the capability is absent, or null to proceed. Used for the Meta write paths,
+ * whose side effects live on Meta (outside RLS's reach), so the DB can't gate
+ * them for us.
+ */
+async function requireCap(sb: SupabaseClient, capability: string): Promise<Response | null> {
+  // wassell_mos_can carries the admin bypass + viewer read-floor, so an admin
+  // with no explicit marketing role still passes (wassell_mos_capabilities,
+  // being a plain union of held roles, would wrongly 403 them).
+  const res = await sb.rpc('wassell_mos_can', { p_capability: capability });
+  if (res.error) return jsonError(500, res.error.message);
+  if (res.data !== true) return jsonError(403, `${capability} capability required`);
+  return null;
+}
+
+/** Human-readable one-liner from a Meta Graph error (or any thrown value). */
+function metaErr(e: unknown): string {
+  if (e instanceof MetaApiError) {
+    return `${e.message}${e.code != null ? ` (code ${e.code}${e.subcode != null ? `/${e.subcode}` : ''})` : ''}`;
+  }
+  return e instanceof Error ? e.message : String(e);
 }
 
 /* ------------------------------------------------------------------ */
@@ -332,7 +360,11 @@ const CAPABILITIES = [
   'read', 'comment', 'write_content', 'view_content_body', 'compare_versions',
   'view_activity', 'assign', 'assign_task', 'schedule', 'publish', 'approve_creative',
   'approve_process', 'approve_budget', 'manage_assets', 'enter_metrics',
-  'review_performance', 'manage_settings', 'manage_roles',
+  'review_performance', 'delete_records', 'manage_settings', 'manage_roles',
+  // manage_paid_ads: sync + create/manage OUR Meta campaigns via the Marketing
+  // API (can affect live ad spend). Gated separately from manage_settings so a
+  // role can run reports/sync without the power to launch or edit live ads.
+  'manage_paid_ads',
 ] as const;
 
 /** The notification channels a step may permit; AND-ed with each role's grid. */
@@ -3311,6 +3343,10 @@ export default async function handler(req: Request): Promise<Response> {
         const patch: Record<string, unknown> = {};
         for (const k of ['content_id', 'label', 'status', 'spend', 'impressions',
                          'clicks', 'leads', 'qualified', 'note',
+                         // Identity: external Meta/TikTok/… Ad ID (the key an
+                         // inbound Click-to-WhatsApp lead resolves against) and
+                         // the ad-set this ad belongs to.
+                         'platform_ad_id', 'ad_set_id',
                          // Ad-level platform creative (format, copy, CTA,
                          // destination) — see adPlatforms adSections.
                          'creative'] as const) {
@@ -3336,6 +3372,14 @@ export default async function handler(req: Request): Promise<Response> {
           const inf = dbFail(ins.error);
           if (inf) return inf;
         }
+        // If this ad now carries an external Meta Ad ID, back-fill any WhatsApp
+        // conversation that captured that id before the ad record existed
+        // (preserve-then-resolve — see mos_reresolve_first_touch).
+        const savedAdId = str(raw.platform_ad_id);
+        if (savedAdId) {
+          const rr = await sb.rpc('mos_reresolve_first_touch', { p_platform_ad_id: savedAdId });
+          if (rr.error) console.error('[marketing-os] mos_reresolve_first_touch failed:', rr.error.message);
+        }
         const list = await sb.from('mos_execution_ads').select('*')
           .eq('execution_id', executionId).order('created_at', { ascending: true });
         const lf = dbFail(list.error);
@@ -3355,6 +3399,243 @@ export default async function handler(req: Request): Promise<Response> {
         const lf = dbFail(list.error);
         if (lf) return lf;
         return jsonOk({ ads: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Nested Campaign→Ad Set→Ad identity tree (one-page entry)  */
+      /* -------------------------------------------------------- */
+      case 'campaign_tree_get': {
+        const executionId = str(body.execution_id);
+        if (!executionId) return jsonError(400, 'execution_id is required');
+        const exec = await sb.from('mos_campaign_executions')
+          .select('id, campaign_id, platform, label, platform_campaign_id')
+          .eq('id', executionId).maybeSingle();
+        const ef = dbFail(exec.error); if (ef) return ef;
+        if (!exec.data) return jsonError(404, 'execution not found');
+        const [sets, ads] = await Promise.all([
+          sb.from('mos_ad_sets').select('id, name, platform_adset_id, status, sort_order')
+            .eq('execution_id', executionId).is('archived_at', null)
+            .order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+          sb.from('mos_execution_ads').select('id, label, platform_ad_id, ad_set_id, content_id, status')
+            .eq('execution_id', executionId).is('archived_at', null)
+            .order('created_at', { ascending: true }),
+        ]);
+        const sf = dbFail(sets.error); if (sf) return sf;
+        const af = dbFail(ads.error); if (af) return af;
+        return jsonOk({ execution: exec.data, ad_sets: sets.data ?? [], ads: ads.data ?? [] });
+      }
+
+      case 'campaign_tree_save': {
+        const executionId = str(body.execution_id);
+        if (!executionId) return jsonError(400, 'execution_id is required');
+        const exec = await sb.from('mos_campaign_executions').select('id').eq('id', executionId).maybeSingle();
+        const ef = dbFail(exec.error); if (ef) return ef;
+        if (!exec.data) return jsonError(404, 'execution not found');
+        const orNull = (v: unknown): string | null => { const s = str(v); return s ? s : null; };
+
+        // Campaign external id lives on the execution — set it only when sent.
+        if (Object.prototype.hasOwnProperty.call(body, 'platform_campaign_id')) {
+          const u = await sb.from('mos_campaign_executions')
+            .update({ platform_campaign_id: orNull(body.platform_campaign_id) }).eq('id', executionId);
+          const uf = dbFail(u.error); if (uf) return uf;
+        }
+
+        const inSets = Array.isArray(body.ad_sets) ? (body.ad_sets as Array<Record<string, unknown>>) : [];
+        const keptSetIds: string[] = [];
+        const keptAdIds: string[] = [];
+        const reresolve = new Set<string>();
+
+        for (let si = 0; si < inSets.length; si++) {
+          const s = inSets[si] ?? {};
+          const name = str(s.name);
+          if (!name) return jsonError(400, 'each ad set needs a name');
+          const setPatch = {
+            execution_id: executionId,
+            name,
+            platform_adset_id: orNull(s.platform_adset_id),
+            sort_order: si,
+            status: str(s.status) || 'active',
+          };
+          let setId = str(s.id);
+          if (setId) {
+            const u = await sb.from('mos_ad_sets').update(setPatch).eq('id', setId).select('id').maybeSingle();
+            const uf = dbFail(u.error); if (uf) return uf;
+            if (!u.data) return jsonError(404, `ad set ${setId} not found`);
+          } else {
+            const ins = await sb.from('mos_ad_sets').insert(setPatch).select('id').maybeSingle();
+            const inf = dbFail(ins.error); if (inf) return inf;
+            setId = str((ins.data as { id?: string } | null)?.id);
+          }
+          if (setId) keptSetIds.push(setId);
+
+          const inAds = Array.isArray(s.ads) ? (s.ads as Array<Record<string, unknown>>) : [];
+          for (const a of inAds) {
+            const label = str(a.label);
+            if (!label) return jsonError(400, 'each ad needs a name');
+            const adPatch: Record<string, unknown> = {
+              execution_id: executionId,
+              ad_set_id: setId || null,
+              label,
+              platform_ad_id: orNull(a.platform_ad_id),
+              content_id: orNull(a.content_id),
+              status: str(a.status) || 'running',
+            };
+            let adId = str(a.id);
+            if (adId) {
+              const u = await sb.from('mos_execution_ads').update(adPatch).eq('id', adId).select('id').maybeSingle();
+              const uf = dbFail(u.error); if (uf) return uf;
+              if (!u.data) return jsonError(404, `ad ${adId} not found`);
+            } else {
+              const ins = await sb.from('mos_execution_ads').insert(adPatch).select('id').maybeSingle();
+              const inf = dbFail(ins.error); if (inf) return inf;
+              adId = str((ins.data as { id?: string } | null)?.id);
+            }
+            if (adId) keptAdIds.push(adId);
+            const pid = orNull(a.platform_ad_id);
+            if (pid) reresolve.add(pid);
+          }
+        }
+
+        // Soft-archive rows dropped from the tree (never hard-delete — a past
+        // lead's first_touch resolves through these rows).
+        const nowIso = new Date().toISOString();
+        {
+          let q = sb.from('mos_execution_ads').update({ archived_at: nowIso })
+            .eq('execution_id', executionId).is('archived_at', null);
+          if (keptAdIds.length) q = q.not('id', 'in', `(${keptAdIds.join(',')})`);
+          const arch = await q; const af = dbFail(arch.error); if (af) return af;
+        }
+        {
+          let q = sb.from('mos_ad_sets').update({ archived_at: nowIso })
+            .eq('execution_id', executionId).is('archived_at', null);
+          if (keptSetIds.length) q = q.not('id', 'in', `(${keptSetIds.join(',')})`);
+          const arch = await q; const af = dbFail(arch.error); if (af) return af;
+        }
+
+        for (const pid of reresolve) {
+          const rr = await sb.rpc('mos_reresolve_first_touch', { p_platform_ad_id: pid });
+          if (rr.error) console.error('[marketing-os] mos_reresolve_first_touch failed:', rr.error.message);
+        }
+
+        const [execRow, setsRow, adsRow] = await Promise.all([
+          sb.from('mos_campaign_executions').select('id, campaign_id, platform, label, platform_campaign_id').eq('id', executionId).maybeSingle(),
+          sb.from('mos_ad_sets').select('id, name, platform_adset_id, status, sort_order').eq('execution_id', executionId).is('archived_at', null).order('sort_order', { ascending: true }),
+          sb.from('mos_execution_ads').select('id, label, platform_ad_id, ad_set_id, content_id, status').eq('execution_id', executionId).is('archived_at', null).order('created_at', { ascending: true }),
+        ]);
+        return jsonOk({ execution: execRow.data, ad_sets: setsRow.data ?? [], ads: adsRow.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Meta Marketing API — sync OUR ad account + manage ads.    */
+      /* Reads are open to any 'read' role; every WRITE (sync,      */
+      /* toggle, link, status, create, update) is gated on          */
+      /* manage_paid_ads because its effect lands on live Meta.     */
+      /* -------------------------------------------------------- */
+      case 'meta_account': {
+        // Read-only status panel: is Meta wired, and the last sync state.
+        const cfg = loadMetaConfig();
+        if (!cfg) return jsonOk({ configured: false });
+        const state = await sb.from('mos_meta_sync_state')
+          .select('is_enabled, currency, last_synced_at, last_result, last_error, holder_campaign_id')
+          .eq('ad_account_id', cfg.adAccountId).maybeSingle();
+        const sf = dbFail(state.error); if (sf) return sf;
+        return jsonOk({ configured: true, ad_account_id: cfg.adAccountId, state: state.data ?? null });
+      }
+
+      case 'meta_sync': {
+        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
+        const svc = makeServiceClient('api:meta-sync');
+        if (!svc) return jsonError(500, 'service client unavailable');
+        const result = await runMetaSync(svc);
+        if (!result.ok && result.error) return jsonError(502, `Meta sync failed: ${result.error}`);
+        return jsonOk(result);
+      }
+
+      case 'meta_toggle': {
+        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
+        const cfg = loadMetaConfig(); if (!cfg) return jsonError(400, 'Meta not configured');
+        const enabled = body.enabled === true;
+        const svc = makeServiceClient('api:meta-sync'); if (!svc) return jsonError(500, 'service client unavailable');
+        const up = await svc.from('mos_meta_sync_state')
+          .upsert({ ad_account_id: cfg.adAccountId, is_enabled: enabled }, { onConflict: 'ad_account_id' });
+        const f = dbFail(up.error); if (f) return f;
+        return jsonOk({ ok: true, is_enabled: enabled });
+      }
+
+      case 'meta_link_execution': {
+        // Link a synced Meta execution to a real project campaign, then force
+        // re-resolve every chat_messages row for that execution's ads so their
+        // attribution snapshot points at the newly-linked project.
+        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
+        const executionId = str(body.execution_id);
+        const campaignId = str(body.campaign_id);
+        if (!executionId || !campaignId) return jsonError(400, 'execution_id and campaign_id are required');
+        const mv = await sb.from('mos_campaign_executions')
+          .update({ campaign_id: campaignId, updated_at: new Date().toISOString() })
+          .eq('id', executionId).eq('platform', 'meta').select('id').maybeSingle();
+        const mf = dbFail(mv.error); if (mf) return mf;
+        if (!mv.data) return jsonError(404, 'meta execution not found');
+        const svc = makeServiceClient('api:meta-sync'); if (!svc) return jsonError(500, 'service client unavailable');
+        const rr = await svc.rpc('mos_meta_force_reresolve_execution', { p_execution_id: executionId });
+        if (rr.error) console.error('[marketing-os] force reresolve failed:', rr.error.message);
+        return jsonOk({ ok: true, reresolved: rr.data ?? null });
+      }
+
+      case 'meta_set_status': {
+        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
+        const nodeId = str(body.node_id);      // Meta campaign / ad set / ad id
+        const status = str(body.status);       // 'ACTIVE' | 'PAUSED'
+        if (!nodeId || (status !== 'ACTIVE' && status !== 'PAUSED')) {
+          return jsonError(400, 'node_id and status (ACTIVE|PAUSED) are required');
+        }
+        const cfg = loadMetaConfig(); if (!cfg) return jsonError(400, 'Meta not configured');
+        try {
+          await new MetaMarketingClient(cfg).setStatus(nodeId, status);
+          return jsonOk({ ok: true, node_id: nodeId, status });
+        } catch (e) {
+          return jsonError(502, `Meta set status failed: ${metaErr(e)}`);
+        }
+      }
+
+      // Passthrough create/update — the caller (UI form built from the meta.ts
+      // schema, or Claude) supplies a Graph-shaped payload; we never hardcode an
+      // incomplete field mapping. validate_only runs Meta's dry-run (no spend,
+      // nothing created) — the form's "check" button.
+      case 'meta_create': {
+        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
+        const level = str(body.level);
+        const payload = (body.payload && typeof body.payload === 'object')
+          ? body.payload as Record<string, unknown> : null;
+        const validateOnly = body.validate_only === true;
+        if (!payload) return jsonError(400, 'payload is required');
+        const cfg = loadMetaConfig(); if (!cfg) return jsonError(400, 'Meta not configured');
+        const client = new MetaMarketingClient(cfg);
+        try {
+          let result: { id: string };
+          if (level === 'campaign') result = await client.createCampaign(payload, validateOnly);
+          else if (level === 'adset') result = await client.createAdSet(payload, validateOnly);
+          else if (level === 'creative') result = await client.createAdCreative(payload);
+          else if (level === 'ad') result = await client.createAd(payload, validateOnly);
+          else return jsonError(400, 'level must be campaign|adset|creative|ad');
+          return jsonOk({ ok: true, level, validate_only: validateOnly, result });
+        } catch (e) {
+          return jsonError(502, `Meta create ${level} failed: ${metaErr(e)}`);
+        }
+      }
+
+      case 'meta_update': {
+        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
+        const nodeId = str(body.node_id);
+        const payload = (body.payload && typeof body.payload === 'object')
+          ? body.payload as Record<string, unknown> : null;
+        if (!nodeId || !payload) return jsonError(400, 'node_id and payload are required');
+        const cfg = loadMetaConfig(); if (!cfg) return jsonError(400, 'Meta not configured');
+        try {
+          const out = await new MetaMarketingClient(cfg).updateNode(nodeId, payload);
+          return jsonOk({ ok: true, node_id: nodeId, result: out });
+        } catch (e) {
+          return jsonError(502, `Meta update failed: ${metaErr(e)}`);
+        }
       }
 
       case 'daily_save': {

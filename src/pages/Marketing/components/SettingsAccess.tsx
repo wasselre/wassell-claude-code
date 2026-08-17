@@ -113,6 +113,12 @@ const CAPABILITY_GROUPS: Array<{ ar: string; en: string; keys: Array<{ key: stri
     ],
   },
   {
+    ar: 'الحذف', en: 'Deletion',
+    keys: [
+      { key: 'delete_records', ar: 'حذف السجلات', en: 'Delete records' },
+    ],
+  },
+  {
     ar: 'الإدارة', en: 'Administration',
     keys: [
       { key: 'manage_settings', ar: 'إدارة الإعدادات', en: 'Manage settings' },

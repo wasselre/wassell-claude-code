@@ -13,6 +13,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const OUTBOUND_BUCKET = 'wassel-files';
+const MIRROR_PREFIX = 'whatsapp-media';
 const TEMP_REF = 'wt_';
 const SIGNED_URL_TTL_S = 600;
 
@@ -29,7 +30,28 @@ export interface ScheduledMediaItem {
   caption?: string | null;
 }
 
-async function post(cfg: WahaSendConfig, path: string, payload: unknown): Promise<{ id: string }> {
+interface WahaSendResponse {
+  id?: string | { _serialized?: string; id?: string };
+  key?: { id?: string; remoteJid?: string; fromMe?: boolean };
+}
+
+/**
+ * The serialized message id (`<fromMe>_<chatId>_<HASH>`), across engines. GOWS
+ * answers with a top-level serialized `id`; NOWEB (the Doha gateway) answers with
+ * a bare hash under `key.id`. Reading only `json.id` returned '' on every NOWEB
+ * send. Mirrors sentMessageWid in api/_lib/waha.ts — keep both in step.
+ */
+function sentWid(raw: WahaSendResponse, chatId: string): string {
+  if (typeof raw.id === 'string' && raw.id) return raw.id;
+  if (raw.id && typeof raw.id === 'object' && raw.id._serialized) return raw.id._serialized;
+  const hash = raw.key?.id ?? (raw.id && typeof raw.id === 'object' ? raw.id.id : undefined);
+  if (!hash) return '';
+  const remote = (raw.key?.remoteJid ?? chatId).replace('@s.whatsapp.net', '@c.us');
+  const fromMe = raw.key?.fromMe !== false;
+  return `${fromMe}_${remote}_${hash}`;
+}
+
+async function post(cfg: WahaSendConfig, path: string, payload: unknown, chatId: string): Promise<{ id: string }> {
   const res = await fetch(`${cfg.url.replace(/\/+$/, '')}${path}`, {
     method: 'POST',
     headers: { 'X-Api-Key': cfg.apiKey, 'Content-Type': 'application/json' },
@@ -39,12 +61,12 @@ async function post(cfg: WahaSendConfig, path: string, payload: unknown): Promis
     const body = await res.text().catch(() => '');
     throw new Error(`WAHA ${path} failed: ${res.status} ${body.slice(0, 160)}`);
   }
-  const json = (await res.json().catch(() => ({}))) as { id?: string };
-  return { id: json.id ?? '' };
+  const json = (await res.json().catch(() => ({}))) as WahaSendResponse;
+  return { id: sentWid(json, chatId) };
 }
 
 export async function sendText(cfg: WahaSendConfig, session: string, chatId: string, text: string): Promise<string> {
-  const { id } = await post(cfg, '/api/sendText', { session, chatId, text });
+  const { id } = await post(cfg, '/api/sendText', { session, chatId, text }, chatId);
   return id;
 }
 
@@ -137,6 +159,41 @@ export async function sendMedia(cfg: WahaSendConfig, session: string, chatId: st
   const payload: Record<string, unknown> = { session, chatId, file };
   if (kind !== 'audio' && item.caption) payload.caption = item.caption;
   if (kind === 'audio' || kind === 'video') payload.convert = true;
-  const { id } = await post(cfg, path, payload);
+  const { id } = await post(cfg, path, payload, chatId);
+  await mirrorOutboundMedia(cfg, session, id, url, filename);
   return id;
+}
+
+/**
+ * Mirror the just-sent media into our own namespace so the chat thread can render
+ * it after WAHA drops its transient /api/files copy. Same purpose and target path
+ * as mirrorOutboundMedia in api/_lib/waha.ts — keep both in step. Best-effort:
+ * any failure only logs and never fails the (already-delivered) send.
+ */
+async function mirrorOutboundMedia(
+  cfg: WahaSendConfig,
+  session: string,
+  wid: string,
+  url: string,
+  filename?: string,
+): Promise<void> {
+  try {
+    const hash = wid.split('_').pop() ?? '';
+    if (!hash) return;
+    const fromName = (filename ?? url).split(/[?#]/)[0] ?? '';
+    const ext = fromName.includes('.') ? fromName.slice(fromName.lastIndexOf('.') + 1).toLowerCase() : 'bin';
+    const target = `${MIRROR_PREFIX}/${session}/${hash}.${ext}`;
+
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) {
+      console.error(`[waha.mirrorOutboundMedia] source fetch ${res.status} for ${session}/${hash}`);
+      return;
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const contentType = res.headers.get('content-type') || 'application/octet-stream';
+    const { error } = await cfg.supabase.storage.from(OUTBOUND_BUCKET).upload(target, bytes, { contentType, upsert: true });
+    if (error) console.error(`[waha.mirrorOutboundMedia] mirror upload failed for ${target}:`, error.message);
+  } catch (err) {
+    console.error('[waha.mirrorOutboundMedia] unexpected error:', err instanceof Error ? err.message : String(err));
+  }
 }

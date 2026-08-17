@@ -604,6 +604,32 @@ export function healMapsConfigForModels(models: AppModel[]): { models: AppModel[
   return { models: next, changed };
 }
 
+/**
+ * Always-run, idempotent heal that propagates `displayed_child_models` from the
+ * seed onto same-named SYSTEM models that predate the declaration. Needed
+ * because `refreshSystemModels` only INSERTS new system models — it never
+ * updates an existing one's schema — so a seed schema addition (e.g.
+ * all_projects → units) would otherwise never reach an existing live install.
+ * Only backfills when the live model has none, so it never clobbers a future
+ * Builder edit. See src/lib/moduleDependencies.ts for why this matters.
+ */
+export function healDisplayedChildModels(models: AppModel[]): { models: AppModel[]; changed: boolean } {
+  const seedByName = new Map(SEED_MODELS.map((s) => [s.name, s]));
+  let changed = false;
+  const next = models.map((m) => {
+    const seedChildren = seedByName.get(m.name)?.schema?.displayed_child_models;
+    if (!seedChildren || seedChildren.length === 0) return m;
+    const current = m.schema?.displayed_child_models;
+    if (current && current.length > 0) return m; // already set — don't clobber
+    changed = true;
+    return { ...m, schema: { ...m.schema, displayed_child_models: [...seedChildren] } };
+  });
+  if (changed) {
+    console.warn('[healDisplayedChildModels] Backfilled displayed_child_models on one or more system models.');
+  }
+  return { models: next, changed };
+}
+
 const MIGRATIONS: Record<number, Migration> = {
   2: migration_1_to_2,
   3: migration_2_to_3,

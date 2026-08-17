@@ -1785,6 +1785,12 @@ const allProjectsModel: AppModel = {
     popup_badge_field_id: apStatusFieldId,
   },
   schema: {
+    // The project detail page embeds a units inventory (UnitsInventory), whose
+    // link lives on the child (units.project → all_projects). Declared here so
+    // the reference-dependency resolver includes `units` when a profile is
+    // granted this module — otherwise the inventory loads nothing for a
+    // non-admin. See src/lib/moduleDependencies.ts.
+    displayed_child_models: ['units'],
     sections: [
       {
         id: apBaseSectionId,

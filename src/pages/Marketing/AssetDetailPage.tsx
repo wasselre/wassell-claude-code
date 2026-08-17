@@ -698,17 +698,20 @@ export default function AssetDetailPage() {
                       <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void archive()}>
                         {isAr ? 'أرشفة' : 'Archive'}
                       </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        style={inUse ? { color: 'var(--mute)', borderStyle: 'dashed' } : undefined}
-                        disabled={busy}
-                        onClick={() => void remove()}
-                      >
-                        {inUse
-                          ? isAr ? 'حذف · ممنوع' : 'Delete · blocked'
-                          : isAr ? 'حذف' : 'Delete'}
-                      </button>
+                      {/* Real delete is its own capability, split from manage_assets. */}
+                      {can('delete_records') && (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={inUse ? { color: 'var(--mute)', borderStyle: 'dashed' } : undefined}
+                          disabled={busy}
+                          onClick={() => void remove()}
+                        >
+                          {inUse
+                            ? isAr ? 'حذف · ممنوع' : 'Delete · blocked'
+                            : isAr ? 'حذف' : 'Delete'}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

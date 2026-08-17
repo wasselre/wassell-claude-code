@@ -25,6 +25,7 @@ import {
   PlatformSettings, getPlatformSchema, settingsProgress, settingsSummary,
 } from '@/lib/marketingOS/adPlatforms';
 import { PlatformFieldsGrid, PlatformSettingsForm } from './components/PlatformSettingsForm';
+import CampaignTreeModal from './components/CampaignTreeModal';
 import { Empty, Field, LoadError, Modal, Pill, ReadField, Skeleton } from './components/kit';
 import { IconBack, IconForward, IconPlus } from './components/icons';
 import { isoDate, num, shortDate } from './lib/format';
@@ -65,6 +66,7 @@ export default function ExecutionDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [addingAd, setAddingAd] = useState(false);
   const [editingAd, setEditingAd] = useState<MosAd | null>(null);
+  const [treeOpen, setTreeOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -156,6 +158,8 @@ export default function ExecutionDetailPage() {
   const adSpend = ads.reduce((a, x) => a + (x.spend ?? 0), 0);
   const spent = ads.some((a) => a.spend !== null) ? adSpend : execution.spend;
   const canEnter = can('enter_metrics');
+  // Removing an ad is a delete — its own gate, split from enter_metrics.
+  const canDelete = can('delete_records');
   const targeting: MosTargeting = execution.targeting ?? {};
   const leadFields = Array.isArray(execution.lead_form_fields) ? execution.lead_form_fields : [];
 
@@ -232,6 +236,12 @@ export default function ExecutionDetailPage() {
                 {execution.status === 'running'
                   ? isAr ? 'إيقاف الحملة الإعلانية' : 'Pause ad campaign'
                   : isAr ? 'تشغيل الحملة الإعلانية' : 'Resume ad campaign'}
+              </button>
+            )}
+            {canEnter && (
+              <button type="button" className="btn" onClick={() => setTreeOpen(true)}>
+                <IconPlus />
+                {isAr ? 'إعداد الإعلانات' : 'Set up ads (nested)'}
               </button>
             )}
             {canEnter && (
@@ -366,7 +376,7 @@ export default function ExecutionDetailPage() {
                                 <td onClick={wrongProject ? (e) => e.stopPropagation() : undefined}>
                                   {/* A wrong-project row's one honest action is
                                       removal — the mockup puts it right here. */}
-                                  {wrongProject && canEnter ? (
+                                  {wrongProject && canEnter && canDelete ? (
                                     <button
                                       type="button"
                                       className="btn btn-sm"
@@ -463,7 +473,7 @@ export default function ExecutionDetailPage() {
                                 <span>{isAr ? `${num(ad.leads, true)} عميلًا` : `${num(ad.leads, false)} leads`}</span>
                                 <span>{isAr ? `${num(ad.qualified, true)} مؤهلًا` : `${num(ad.qualified, false)} qualified`}</span>
                               </div>
-                              {wrongProject && canEnter && (
+                              {wrongProject && canEnter && canDelete && (
                                 <span
                                   role="button"
                                   tabIndex={0}
@@ -669,6 +679,15 @@ export default function ExecutionDetailPage() {
           onSaved={(rows) => { setAds(rows); setAddingAd(false); setEditingAd(null); void load(); }}
         />
       )}
+
+      {treeOpen && (
+        <CampaignTreeModal
+          executionId={execution.id}
+          platform={execution.platform}
+          onClose={() => setTreeOpen(false)}
+          onSaved={() => void load()}
+        />
+      )}
     </>
   );
 }
@@ -771,6 +790,7 @@ function AdModal({
   onSaved: (ads: MosAd[]) => void;
 }) {
   const addToast = useAppStore((s) => s.addToast);
+  const { can } = useWorkspace();
   const [contentId, setContentId] = useState(ad?.content_id ?? '');
   const [status, setStatus] = useState<MosAd['status']>(ad?.status ?? 'waiting');
   const [spend, setSpend] = useState(ad?.spend?.toString() ?? '');
@@ -850,7 +870,7 @@ function AdModal({
       wide={Boolean(adSchema)}
       footer={
         <>
-          {ad && (
+          {ad && can('delete_records') && (
             <button type="button" className="btn btn-d" onClick={() => void remove()} disabled={busy}>
               {isAr ? 'حذف' : 'Delete'}
             </button>

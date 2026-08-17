@@ -532,6 +532,18 @@ export interface ModelSchema {
   // and trigger workflows on click. Optional for back-compat — older models
   // simply have none.
   custom_buttons?: CustomButton[];
+  /**
+   * Model NAMES (slugs) of CHILD modules this model's record pages embed as an
+   * inline list — e.g. `all_projects` shows a units inventory on its detail
+   * page. Declared here as DATA because the link is a REVERSE reference: it
+   * lives on the child (`units.project → all_projects`), so it can't be found by
+   * scanning this model's own fields. The reference-dependency resolver
+   * (`resolveModelDataDependencies`) reads this so that granting a parent module
+   * auto-includes the child modules its pages display — otherwise the embedded
+   * list loads nothing for a non-admin. Slugs, not ids, so the declaration is
+   * portable across installs. Optional; most models embed no children.
+   */
+  displayed_child_models?: string[];
 }
 
 // ── Custom buttons ────────────────────────────────────────────────────
@@ -2219,6 +2231,30 @@ export interface ProfileModelPermissions {
    * to `readonly` regardless of the configured value.
    */
   field_permissions?: Record<string, FieldPermission>;
+  /**
+   * Nav-only: hide this model from THIS profile's sidebar even though `view`
+   * is granted. Decouples "can read this model's data" from "this is a place
+   * I navigate to". Used for **reference (data-only) access**: a profile that
+   * only cares about Our Projects still needs `view` on the geography / units /
+   * developers modules Our Projects mirrors data from — but should not see
+   * those as separate sidebar buttons. Default/absent = shown in the sidebar
+   * whenever `view` is granted. Has NO effect on RLS or data resolution — the
+   * data still loads; only the nav link is suppressed. Admin profiles ignore
+   * this flag (admins always see every model in the nav).
+   */
+  hidden_from_sidebar?: boolean;
+  /**
+   * Marks a grant that was auto-added by the profile editor's dependency
+   * resolver because another granted module displays this model's data through
+   * a lookup / mirror / section_mirror chain (see
+   * `resolveModelDataDependencies`). Purely informational: the editor renders
+   * these as removable "reference module" chips and prunes them when the module
+   * that pulled them in loses `view`. No enforcement path reads this flag — a
+   * reference grant is an ordinary `view` grant to RLS. Cleared the moment an
+   * admin customizes the entry (adds an action, sets a scope), promoting it to
+   * an intentional grant that won't be auto-pruned.
+   */
+  auto_reference?: boolean;
 }
 
 export interface Profile {

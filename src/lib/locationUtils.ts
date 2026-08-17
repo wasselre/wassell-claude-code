@@ -293,21 +293,28 @@ export function parseMapStyleJson(raw: string | null | undefined): google.maps.M
  * with the place name.
  *
  * Append to a style array — it must come AFTER the base style to win.
+ *
+ * WHY three elementTypes per feature (2026-08-16): a single broad
+ * `elementType:'labels', visibility:'off'` used to hide these. The unpinned Google
+ * Maps JS weekly channel (now v3.65 — the same channel that removed DrawingManager)
+ * changed how overlapping stylers resolve: WASSEL_MAP_STYLE COLOURS these labels via
+ * the more-specific `labels.text.fill`, and that specific colour rule started winning
+ * over the broad `labels` off — so Google's district + POI labels reappeared and
+ * doubled the names every geo map draws itself (live report 2026-08-16, finder + picker).
+ * Suppressing at `labels.text` and `labels.icon` — the same branch as the colour rule —
+ * hides them regardless of Google's resolution order; the broad `labels` off stays as
+ * belt-and-suspenders.
  */
-export const GEO_LABEL_SUPPRESSION: google.maps.MapTypeStyle[] = [
-  { featureType: 'administrative.neighborhood', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'administrative.locality', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.business', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.park', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.attraction', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.place_of_worship', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.medical', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.school', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.sports_complex', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.government', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+const hideMapLabels = (featureType: string): google.maps.MapTypeStyle[] => [
+  { featureType, elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType, elementType: 'labels.text', stylers: [{ visibility: 'off' }] },
+  { featureType, elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
 ];
+export const GEO_LABEL_SUPPRESSION: google.maps.MapTypeStyle[] = [
+  'administrative.neighborhood', 'administrative.locality',
+  'poi', 'poi.business', 'poi.park', 'poi.attraction', 'poi.place_of_worship',
+  'poi.medical', 'poi.school', 'poi.sports_complex', 'poi.government', 'transit',
+].flatMap(hideMapLabels);
 
 /** The standard map style for any surface that draws the geography layer. */
 export const GEO_MAP_STYLE: google.maps.MapTypeStyle[] = [...WASSEL_MAP_STYLE, ...GEO_LABEL_SUPPRESSION];

@@ -14,6 +14,7 @@ Regenerate both with `bash scripts/secrets/seal.sh`. Do not hand-edit.
 | `<repo root>/.deploy-secrets.local` | working tree |
 | `$HOME/.fly/config.yml` | home directory |
 | `$HOME/.kimi.env.local` | home directory |
+| `$HOME/.market-raw-uploader.env.local` | home directory |
 
 ## Variable names carried
 
@@ -87,4 +88,10 @@ Regenerate both with `bash scripts/secrets/seal.sh`. Do not hand-edit.
 
 - `KIMI_API_KEY`
 - `KIMI_MODEL`
+
+### `.market-raw-uploader.env.local`
+
+- `MARKET_RAW_UPLOADER_EMAIL`
+- `MARKET_RAW_UPLOADER_PASSWORD`
+- `MARKET_RAW_UPLOADER_UID`
 

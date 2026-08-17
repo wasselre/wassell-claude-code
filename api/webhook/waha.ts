@@ -28,10 +28,11 @@ import {
   upsertChatMessage,
   bumpConversationRecord,
   applyAck,
+  attachAdResolution,
   uuidV5FromWidSync,
   type ChatMessageRow,
 } from '../_lib/chatIngest.js';
-import { resolveWahaCounterpartyPhone, resolveLidToPhone, type WahaMessageRaw } from '../_lib/waha.js';
+import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, type WahaMessageRaw } from '../_lib/waha.js';
 
 export const config = {
   runtime: 'edge',
@@ -202,6 +203,17 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   const ts = typeof p.timestamp === 'number' ? p.timestamp : (typeof event.timestamp === 'number' ? Math.floor(event.timestamp / 1000) : null);
   const date = ts ? new Date(ts * 1000).toISOString() : new Date().toISOString();
 
+  // Click-to-WhatsApp ad attribution rides ONLY the opening inbound message.
+  // Capture it unconditionally (even if the ad isn't in our Paid Ads yet) —
+  // this is the durable copy; the 16 KB activity-log receipt is not a store and
+  // already truncated real leads. Stored write-once on chat_messages.meta, which
+  // the SPA store never rewrites (the chats record's data blob does get rewritten,
+  // so it is NOT a safe home for attribution). We resolve the Paid Ads chain here
+  // too; resolved stays null until the ad exists, then mos_reresolve_first_touch
+  // back-fills it onto this same meta.
+  const adReferral = flow === 'in' ? extractAdReferral(p) : null;
+  const adMeta = adReferral ? await attachAdResolution(adReferral) : null;
+
   const row: ChatMessageRow = {
     id: p.id,
     chat_wid: chatWid,
@@ -224,6 +236,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     media_caption: null,
     reference: null, // WAHA has no send-time reference; optimistic swap uses the send-response wid
     quoted: p.replyTo?.id ? { wid: p.replyTo.id, body: p.replyTo.body ?? null, kind: 'text' } : null,
+    meta: adMeta ? { ad: adMeta } : undefined,
   };
 
   const { isNew } = await upsertChatMessage(row);

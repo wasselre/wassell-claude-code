@@ -48,8 +48,33 @@ run "$ROOT/supabase/tests/ci/fixture_b1_metadata.sql"
 run "$ROOT/supabase/migrations/2026-08-10_file_links_projection.sql"
 q   "SELECT * FROM public.file_links_backfill()" >/dev/null
 run "$ROOT/supabase/migrations/2026-08-12_file_link_sync.sql"
-run "$ROOT/supabase/tests/ci/fixture_b1_authz.sql"
+# INTEGRATION (2026-08-17): build on the REAL authorization stack.
+#
+# This runner used to stop at B1 and fixture_b1_authz, a simplified predicate.
+# That made its p95 meaningless once B2A and B2A.2 shipped: it was measuring
+# search over an authorization path production no longer runs, and it is the
+# authorization path — not the search layer — that dominated the cost. B2 was
+# blocked at 617 ms against a 300 ms budget for exactly that reason.
+#
+# fixture_b2a_authz.sql brings the production-shaped surface (recursive folder
+# cascade, faithful wassell_mos_can returning TRUE for any identity, personas
+# for every branch) AND the 8,000-row corpus. fixture_b2_scale.sql then stamps
+# the search-specific attributes onto it.
+run "$ROOT/supabase/tests/ci/fixture_b2a_authz.sql"
 run "$ROOT/supabase/migrations/2026-08-16_01_business_file_metadata.sql"
+psql "$DBURL" -v ON_ERROR_STOP=1 -q <<'SQL'
+ALTER TABLE public.files ENABLE ROW LEVEL SECURITY;
+GRANT SELECT ON public.files TO authenticated;
+DROP POLICY IF EXISTS files_update ON public.files;
+CREATE POLICY files_update ON public.files FOR UPDATE TO authenticated
+USING (wassell_can_access_file(id, 'edit'::text));
+DROP POLICY IF EXISTS files_delete ON public.files;
+CREATE POLICY files_delete ON public.files FOR DELETE TO authenticated
+USING (wassell_can_access_file(id, 'delete'::text));
+SQL
+run "$ROOT/supabase/rollback/2026-08-16_03_file_authz_performance_down.sql"   # pre-B2A baseline predicate
+run "$ROOT/supabase/migrations/2026-08-16_03_file_authz_performance.sql"      # B2A
+run "$ROOT/supabase/migrations/2026-08-16_06_file_authz_grant_sets_v2.sql"    # B2A.2 = production today
 
 # The pre-B2 population is "every row whose storage_path is not a scale/ row".
 # coalesce() is load-bearing: the Phase 1 fixture inserts files with a NULL

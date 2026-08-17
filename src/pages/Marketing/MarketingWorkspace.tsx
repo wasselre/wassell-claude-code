@@ -101,7 +101,12 @@ export type Capability =
   | 'read' | 'comment' | 'write_content' | 'assign' | 'assign_task' | 'schedule' | 'publish'
   | 'approve_creative' | 'approve_process' | 'approve_budget'
   | 'manage_assets' | 'enter_metrics' | 'review_performance'
+  // Deleting any marketing record (content, scenes, campaigns, executions, ads,
+  // assets, manual tasks) — its own gate, separate from the edit capabilities.
+  | 'delete_records'
   | 'manage_settings' | 'manage_roles'
+  // Sync + create/manage OUR Meta campaigns via the Marketing API (live spend).
+  | 'manage_paid_ads'
   // Fine-grained view gates (replace the old hardcoded `role === 'ceo'` checks).
   | 'view_content_body' | 'view_activity' | 'compare_versions';
 

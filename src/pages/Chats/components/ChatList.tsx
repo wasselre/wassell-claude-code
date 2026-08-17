@@ -84,11 +84,35 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     return map;
   }, [clientRecords]);
 
-  /** The linked LIVE client for a chat (a dangling client_link counts as none). */
+  // chat id → matched client, computed live by phone — the SAME digits match
+  // used for advertisers/contacts below. This is the fallback for the common
+  // case where `client_link` was never persisted (or got reverted by a record
+  // refetch): an existing client with this number links on render instead of
+  // showing as a brand-new contact. A stored `client_link` still wins when it
+  // points at a live client (an admin may have linked to someone other than the
+  // phone owner and we respect that).
+  const clientByChatId = useMemo(() => {
+    const map = new Map<string, AppRecord>();
+    const slugs = phoneFieldSlugs(clientsModel);
+    if (clientRecords.length === 0 || slugs.length === 0) return map;
+    for (const chat of chatRecords) {
+      const phone = (chat.data as Record<string, unknown>).phone as string | null | undefined;
+      const match = matchRecordByPhone(phone, clientRecords, slugs);
+      if (match) map.set(chat.id, match);
+    }
+    return map;
+  }, [chatRecords, clientRecords, clientsModel]);
+
+  /** The linked LIVE client for a chat: stored link (if live) else live phone
+   *  match. A dangling client_link (deleted client) falls through to the match. */
   const clientOf = useCallback((chat: AppRecord): AppRecord | null => {
     const link = (chat.data as Record<string, unknown>).client_link;
-    return typeof link === 'string' && link ? clientsById.get(link) ?? null : null;
-  }, [clientsById]);
+    if (typeof link === 'string' && link) {
+      const stored = clientsById.get(link);
+      if (stored) return stored;
+    }
+    return clientByChatId.get(chat.id) ?? null;
+  }, [clientsById, clientByChatId]);
 
   // chat id → matched advertiser record, computed live by phone (same
   // digits-suffix match as the client linker). Nothing is stored on the

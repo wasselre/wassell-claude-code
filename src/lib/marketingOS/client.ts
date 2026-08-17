@@ -1212,6 +1212,93 @@ export const saveAd = (executionId: string, ad: Record<string, unknown>) =>
 export const deleteAd = (executionId: string, id: string) =>
   call<{ ads: MosAd[] }>('ad_delete', { execution_id: executionId, id });
 
+/* ------------------------------------------------------------------ */
+/* Nested campaign tree (execution → ad sets → ads) — fast bulk entry  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * An ad set as returned by `campaign_tree_get` — the middle level between an
+ * execution ("platform campaign") and its ads. Meta calls it an "Ad Set";
+ * other platforms an "Ad Group" — the execution's platform decides the label.
+ */
+export interface CampaignTreeAdSet {
+  id: string;
+  name: string;
+  /** The ad set's own id on the platform (Meta ad set / TikTok ad group id). */
+  platform_adset_id: string | null;
+  status: string;
+  sort_order: number;
+}
+
+/**
+ * An ad as returned by `campaign_tree_get`. `ad_set_id === null` means the ad
+ * sits directly under the execution (a "loose"/unassigned ad). `platform_ad_id`
+ * is the external Meta Ad ID that inbound WhatsApp attribution resolves against.
+ */
+export interface CampaignTreeAd {
+  id: string;
+  label: string;
+  platform_ad_id: string | null;
+  ad_set_id: string | null;
+  content_id: string | null;
+  status: string;
+}
+
+/** The whole nested tree for one execution — the shape both tree RPCs return. */
+export interface CampaignTree {
+  execution: {
+    id: string;
+    campaign_id: string;
+    platform: string;
+    label: string | null;
+    platform_campaign_id: string | null;
+  };
+  ad_sets: CampaignTreeAdSet[];
+  ads: CampaignTreeAd[];
+}
+
+/**
+ * One ad inside a save payload. `id` present ⇒ update that row; absent ⇒ the
+ * server assigns a real id. External ids are optional.
+ */
+export interface AdDraft {
+  id?: string;
+  label: string;
+  platform_ad_id?: string | null;
+  content_id?: string | null;
+  status?: string;
+}
+
+/** One ad set inside a save payload, carrying its ads. */
+export interface AdSetDraft {
+  id?: string;
+  name: string;
+  platform_adset_id?: string | null;
+  sort_order?: number;
+  ads: AdDraft[];
+}
+
+/**
+ * The full-replace save payload. The WHOLE tree is sent on every save — rows
+ * present in the DB but absent here are soft-archived server-side.
+ *
+ * Written as a `type` (not an `interface`) so it satisfies the `call<T>`
+ * transport's `Record<string, unknown>` param — a named interface lacks the
+ * implicit index signature that assignability needs (same reason `saveWorkflow`
+ * uses an inline object type for its payload).
+ */
+export type CampaignTreeSavePayload = {
+  execution_id: string;
+  platform_campaign_id?: string | null;
+  ad_sets: AdSetDraft[];
+};
+
+export const fetchCampaignTree = (executionId: string) =>
+  call<CampaignTree>('campaign_tree_get', { execution_id: executionId });
+
+export const saveCampaignTree = (payload: CampaignTreeSavePayload) =>
+  call<CampaignTree>('campaign_tree_save', payload);
+
 export const saveDaily = (
   executionId: string,
   entry: { day: string; spend?: number | null; leads?: number | null; qualified?: number | null },
@@ -1832,3 +1919,64 @@ export function isOverdue(row: MosContentRow): boolean {
   if (row.status_key === 'done') return false;
   return new Date(due).getTime() < Date.now();
 }
+
+/* ------------------------------------------------------------------ */
+/* Meta Marketing API — OUR ad account (sync + create/manage)         */
+/* ------------------------------------------------------------------ */
+
+export interface MetaSyncState {
+  is_enabled: boolean;
+  currency: string | null;
+  last_synced_at: string | null;
+  last_result: Record<string, unknown> | null;
+  last_error: string | null;
+  holder_campaign_id: string | null;
+}
+export interface MetaAccountInfo {
+  configured: boolean;
+  ad_account_id?: string;
+  state?: MetaSyncState | null;
+}
+export interface MetaSyncResult {
+  ok: boolean;
+  skipped?: 'not_configured' | 'disabled';
+  account?: { id: string; name: string; currency: string };
+  applied?: Record<string, unknown>;
+  error?: string;
+}
+
+/** Read-only status panel: is Meta wired + the last sync outcome. */
+export const mosMetaAccount = (): Promise<MetaAccountInfo> => call<MetaAccountInfo>('meta_account');
+
+/** Run a full sync now (manage_paid_ads). */
+export const mosMetaSync = (): Promise<MetaSyncResult> => call<MetaSyncResult>('meta_sync');
+
+/** Flip the sync kill switch (manage_paid_ads). */
+export const mosMetaToggle = (enabled: boolean): Promise<{ ok: boolean; is_enabled: boolean }> =>
+  call('meta_toggle', { enabled });
+
+/** Link a synced Meta execution to a real project campaign + force re-resolve. */
+export const mosMetaLinkExecution = (
+  executionId: string, campaignId: string,
+): Promise<{ ok: boolean; reresolved: number | null }> =>
+  call('meta_link_execution', { execution_id: executionId, campaign_id: campaignId });
+
+/** Pause / resume a Meta campaign / ad set / ad by its Meta node id. */
+export const mosMetaSetStatus = (
+  nodeId: string, status: 'ACTIVE' | 'PAUSED',
+): Promise<{ ok: boolean; node_id: string; status: string }> =>
+  call('meta_set_status', { node_id: nodeId, status });
+
+/** Create a Meta object from a Graph-shaped payload; validateOnly = dry-run. */
+export const mosMetaCreate = (
+  level: 'campaign' | 'adset' | 'creative' | 'ad',
+  payload: Record<string, unknown>,
+  validateOnly = false,
+): Promise<{ ok: boolean; level: string; validate_only: boolean; result: { id: string } }> =>
+  call('meta_create', { level, payload, validate_only: validateOnly });
+
+/** Update a Meta node's mutable fields from a Graph-shaped payload. */
+export const mosMetaUpdate = (
+  nodeId: string, payload: Record<string, unknown>,
+): Promise<{ ok: boolean; node_id: string }> =>
+  call('meta_update', { node_id: nodeId, payload });

@@ -22,7 +22,7 @@ import { isModelServerEnrolled, loadServerEnrolledModelIds } from '@/lib/serverW
 import { assignAutoIdsAsync } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
-import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
+import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, healDisplayedChildModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient, deviceIdString } from '@/lib/haberchat/normalize';
@@ -2408,6 +2408,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     // it (covers version-drift past 10 without running migration_9_to_10).
     const healedMaps = healMapsConfigForModels(models);
     if (healedMaps.changed) models = healedMaps.models;
+
+    // Always-run heal for displayed_child_models — propagates the seed's
+    // embedded-child declarations (e.g. all_projects → units) onto existing
+    // system models so the reference-dependency resolver can surface child
+    // modules. refreshSystemModels only inserts, never updates, so an existing
+    // install needs this backfill.
+    const healedChildren = healDisplayedChildModels(models);
+    if (healedChildren.changed) models = healedChildren.models;
 
     // Always-run heal — backfills any `is_system` model from SEED_MODELS that's
     // MISSING from this install (e.g. a returning user whose stored models
