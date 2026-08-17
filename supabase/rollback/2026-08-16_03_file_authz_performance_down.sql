@@ -59,24 +59,4 @@ DROP FUNCTION IF EXISTS public.wassell_can_access_file_row(uuid,text,uuid,uuid,u
 DROP FUNCTION IF EXISTS public.wassell_user_has_file_grants(uuid);
 DROP FUNCTION IF EXISTS public.wassell_user_has_folder_grants(uuid);
 
--- The 2026-08-17 caller-scoping correction REVOKED EXECUTE on these three from
--- anon/authenticated, because the live B2A.2 policy stopped calling them. The
--- policy recreated just above DOES call them, and an RLS policy's functions are
--- permission-checked against the QUERYING role — so without this re-grant the
--- restored policy fails at query time for every authenticated user.
-DO $g$
-DECLARE fn text;
-BEGIN
-  FOREACH fn IN ARRAY ARRAY[
-    'public.wassell_can_access_file_row(uuid,text,uuid,uuid,uuid,boolean,boolean,boolean,boolean)',
-    'public.wassell_user_has_file_grants(uuid)',
-    'public.wassell_user_has_folder_grants(uuid)'
-  ] LOOP
-    IF to_regprocedure(fn) IS NOT NULL
-       AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
-      EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO authenticated', fn);
-    END IF;
-  END LOOP;
-END $g$;
-
 COMMIT;

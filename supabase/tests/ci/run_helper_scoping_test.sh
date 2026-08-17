@@ -52,7 +52,14 @@ SQL
 # functions being absent (after the fix the old names are gone), so the same
 # probe works either side of the migration.
 bypass_reach() {   # $1 = uid
-  psql "$DBURL" -v ON_ERROR_STOP=1 -tAq <<SQL | grep -E '^BYPASS '
+  # Result comes back on STDOUT via a temp table, NOT via RAISE NOTICE.
+  # NOTICE goes to stderr, so $(...) captured nothing, and under `set -e` the
+  # empty assignment killed the script before any assertion ran — while the log
+  # showed the bypass reproducing perfectly. The test looked broken when it was
+  # actually working.
+  psql "$DBURL" -v ON_ERROR_STOP=1 -tAq <<SQL | grep -E '^BYPASS ' || true
+CREATE TEMP TABLE IF NOT EXISTS _b(g bigint, m bigint); TRUNCATE _b;
+GRANT INSERT ON _b TO authenticated;
 BEGIN;
 SELECT set_config('test.uid','$1', true);
 SET LOCAL ROLE authenticated;
@@ -67,8 +74,10 @@ BEGIN
   BEGIN
     EXECUTE 'SELECT count(*) FROM public.wassell_marketing_file_ids()' INTO m;
   EXCEPTION WHEN others THEN m := -1; END;
-  RAISE NOTICE 'BYPASS victim_grants=% marketing=%', g, m;
+  INSERT INTO _b VALUES (g, m);
 END \$\$;
+RESET ROLE;
+SELECT 'BYPASS victim_grants=' || g || ' marketing=' || m FROM _b;
 ROLLBACK;
 SQL
 }
