@@ -108,5 +108,10 @@ BEGIN
   END LOOP;
 END $link$;
 
-ANALYZE public.files;
+-- A full-table UPDATE just rewrote every row AFTER B2 built its GIN/btree
+-- indexes, so the heap carries ~8,000 dead tuples and the indexes are bloated.
+-- ANALYZE alone only refreshes statistics; without VACUUM every subsequent scan
+-- still reads the dead pages, which shows up as wild p95 variance rather than a
+-- steady cost.
+VACUUM (ANALYZE) public.files;
 ANALYZE public.file_links;

@@ -178,13 +178,19 @@ echo "== performance (40 calls, non-admin, 8k corpus)"
 # MEASURED HERE, ASSERTED AT THE END. A perf failure that aborts the script
 # hides whether rollback and re-application work, which is exactly the evidence
 # needed to decide what to do about the perf failure.
-psql "$DBURL" -v ON_ERROR_STOP=1 -tAq > "$WORK/perf.txt" <<'SQL'
-CREATE TEMP TABLE _perf(ms numeric);
+# Measured for THREE personas, deliberately including the two the B2A.2 runner
+# uses, so a number here can be compared directly with the 69-78 ms it reported
+# for the same migration on the same authorization stack. A divergence then
+# points at the persona or the corpus, not at "search is slow".
+: > "$WORK/perf.txt"
+for PU in 22222222-2222-2222-2222-222222222222           55555555-5555-5555-5555-555555555555           99999999-9999-9999-9999-999999999999; do
+  psql "$DBURL" -v ON_ERROR_STOP=1 -tAq >> "$WORK/perf.txt" <<SQL
+CREATE TEMP TABLE IF NOT EXISTS _perf(ms numeric); TRUNCATE _perf;
 GRANT INSERT ON _perf TO authenticated;
 BEGIN;
-SELECT set_config('test.uid','22222222-2222-2222-2222-222222222222', true);
+SELECT set_config('test.uid','$PU', true);
 SET LOCAL ROLE authenticated;
-DO $$
+DO \$\$
 DECLARE t0 timestamptz; i int; s text;
         scenarios text[] := ARRAY['','مخطط','ابراج','floor plan'];
 BEGIN
@@ -195,9 +201,9 @@ BEGIN
       INSERT INTO _perf VALUES (EXTRACT(epoch FROM clock_timestamp() - t0) * 1000);
     END LOOP;
   END LOOP;
-END $$;
+END \$\$;
 RESET ROLE;
-SELECT 'PERF'
+SELECT 'PERF ' || left('$PU',8)
     || ' n='   || count(*)
     || ' p50=' || round(percentile_disc(0.50) WITHIN GROUP (ORDER BY ms), 1)
     || ' p95=' || round(percentile_disc(0.95) WITHIN GROUP (ORDER BY ms), 1)
@@ -205,10 +211,12 @@ SELECT 'PERF'
   FROM _perf;
 ROLLBACK;
 SQL
-PERF_LINE=$(grep -E '^PERF ' "$WORK/perf.txt" || true)
-[ -n "$PERF_LINE" ] || { echo "FAIL: perf harness produced no measurement"; exit 1; }
-P95=$(sed -n 's/.*p95=\([0-9.]*\).*/\1/p' <<<"$PERF_LINE")
-echo "   $PERF_LINE"
+done
+grep -E '^PERF ' "$WORK/perf.txt" > "$WORK/perf.lines" || true
+[ "$(wc -l < "$WORK/perf.lines")" -eq 3 ]   || { echo "FAIL: expected 3 persona measurements, got $(wc -l < "$WORK/perf.lines")"; exit 1; }
+sed 's/^/   /' "$WORK/perf.lines"
+P95=$(grep -o "p95=[0-9.]*" "$WORK/perf.lines" | cut -d= -f2 | sort -g | tail -1)
+echo "   worst persona p95 = ${P95} ms"
 
 # ── rollback ────────────────────────────────────────────────────────────────
 echo "== rollback"
