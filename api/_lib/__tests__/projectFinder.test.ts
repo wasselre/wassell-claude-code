@@ -636,8 +636,43 @@ function makeCore(parts: { our?: MatchResultItem[]; all?: MatchResultItem[]; mar
   };
 }
 
+// ── OUR PORTFOLIO preferential (loose) treatment in the grouping layer ───────
+describe('our_projects get preferential grouping (loose matching)', () => {
+  const mkItem = (over: Partial<MatchResultItem> & { project_id: string; data_source: MatchResultItem['data_source']; score: number }): MatchResultItem => ({
+    project_name: over.project_id, match_band: 'partial', match_type: 'same_city', district_match_basis: null,
+    score_breakdown: {}, facts: {}, data_gaps: [], missing_info: [],
+    location_tier: 'same_city', distance_km: null, geo_confidence: null, ...over,
+  });
+
+  it('exempts our_projects from the caller minScore floor; still applies it to others', () => {
+    const core = makeCore({
+      our: [mkItem({ project_id: 'ours-weak', data_source: 'our_projects', score: 55 })],
+      all: [mkItem({ project_id: 'all-weak', data_source: 'all_projects', score: 55 })],
+      market: [mkItem({ project_id: 'mkt-weak', data_source: 'market_listings', score: 55 })],
+    });
+    const res = groupForFinder(core, {}, { minScore: 70, sources: ['our_projects', 'all_projects', 'market_listings'] });
+    const ids = FINDER_GROUP_KEYS_LOCAL.flatMap((k) => res.groups[k].map((m) => m.project_id));
+    expect(ids).toContain('ours-weak');       // our project survives the 70 floor
+    expect(ids).not.toContain('all-weak');     // all_projects dropped
+    expect(ids).not.toContain('mkt-weak');     // market dropped
+  });
+
+  it('passes our_fit through to the FinderMatch', () => {
+    const core = makeCore({
+      our: [mkItem({
+        project_id: 'ours', data_source: 'our_projects', score: 82,
+        our_fit: { location: 'nearby', distance_km: 2.1, budget: 'within', area: 'match' },
+      })],
+    });
+    const res = groupForFinder(core, {}, { sources: ['our_projects'] });
+    const m = FINDER_GROUP_KEYS_LOCAL.flatMap((k) => res.groups[k]).find((x) => x.project_id === 'ours');
+    expect(m?.our_fit).toEqual({ location: 'nearby', distance_km: 2.1, budget: 'within', area: 'match' });
+  });
+});
+
 // ── unit age (عمر العقار) ───────────────────────────────────────────────────
 import { __test as matchTest } from '../matchAgent.js';
+import { FINDER_GROUP_KEYS as FINDER_GROUP_KEYS_LOCAL } from '../projectFinder.js';
 
 describe('unit age parsing (TS twin of wassell_parse_unit_age — keep in sync)', () => {
   const p = matchTest.parseUnitAgeText;

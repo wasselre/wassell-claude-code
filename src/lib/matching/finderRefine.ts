@@ -114,7 +114,12 @@ export function refineGroups(
 ): Record<FinderGroupKey, FinderMatch[]> {
   const out = {} as Record<FinderGroupKey, FinderMatch[]>;
   for (const k of FINDER_GROUP_KEYS) {
-    const base = (groups?.[k] ?? []).filter((it) => it.score >= scoreThreshold && passesRefine(it, refine));
+    // OUR PORTFOLIO is EXEMPT from the match-% slider — our projects always show
+    // (badged with their real fit), never hidden by raising the threshold. Explicit
+    // rep refine filters (price/area/beds/available) still apply to everything.
+    const base = (groups?.[k] ?? []).filter(
+      (it) => (it.source === 'our_projects' || it.score >= scoreThreshold) && passesRefine(it, refine),
+    );
     out[k] = sortItems(base, sortKey);
   }
   return out;

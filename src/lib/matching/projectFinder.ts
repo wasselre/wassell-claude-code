@@ -41,6 +41,18 @@ export type GeoStatus =
   | 'unverified_no_coords'
   | 'no_geography';
 
+/** Preferential-fit summary for an `our_projects` card (loose matching). MIRRORS
+ *  `OurFit` in api/_lib/matchAgent.ts — keep in sync. Present only on our projects;
+ *  `budget`/`area` set only when the client stated that criterion. */
+export interface OurFit {
+  location: 'in_area' | 'nearby' | 'same_city' | 'other';
+  distance_km: number | null;
+  budget?: 'within' | 'over' | 'under';
+  budget_over_pct?: number | null;
+  area?: 'match' | 'smaller' | 'larger';
+  area_gap_pct?: number | null;
+}
+
 export interface FinderMatch {
   project_id: string;
   project_name: string;
@@ -63,6 +75,8 @@ export interface FinderMatch {
   /** Decision-support deal-quality badge (Market Intelligence). Set by the endpoint
    *  AFTER ranking — never affects score/band/order. Absent if no benchmark applies. */
   deal?: DealBadge;
+  /** Preferential-fit summary — present ONLY on source 'our_projects' (loose matching). */
+  our_fit?: OurFit;
 }
 
 export interface FinderResponse {

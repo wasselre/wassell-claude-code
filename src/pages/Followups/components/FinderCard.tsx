@@ -4,7 +4,7 @@ import {
   CheckSquare, Square, Send,
 } from 'lucide-react';
 import { useState } from 'react';
-import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus } from '@/lib/matching/projectFinder';
+import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus, OurFit } from '@/lib/matching/projectFinder';
 import { dealBadgeLabel, dealBadgeTone, type DealBadge } from '@/lib/market/dealBadge';
 import { CLIENT_OPTION_STATUS_META, CLIENT_OPTION_STATUS_ORDER, type ClientOptionStatus } from '@/lib/matching/clientOptions';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
@@ -188,7 +188,11 @@ export default function FinderCard({
       <div className="space-y-2.5 p-3">
         {/* Match type + geography verification + distance */}
         <div className="flex flex-wrap items-center gap-1.5">
-          <MatchTypePill type={item.match_type} isAr={isAr} />
+          {/* Our portfolio is matched LOOSELY, so it shows an honest fit summary
+              (location/budget/size) instead of the generic match-type pill. */}
+          {item.source === 'our_projects' && item.our_fit
+            ? <OurFitBadges fit={item.our_fit} isAr={isAr} />
+            : <MatchTypePill type={item.match_type} isAr={isAr} />}
           <SourcePill source={item.source} isAr={isAr} />
           {adId && (
             <span
@@ -215,7 +219,9 @@ export default function FinderCard({
           )}
           {item.geo_status && <GeoStatusPill status={item.geo_status} isAr={isAr} />}
           {item.geo_confidence && <GeoConfidencePill confidence={item.geo_confidence} isAr={isAr} />}
-          {item.distance_km != null && (
+          {/* The generic distance pill is redundant for our projects (OurFitBadges
+              already carries the distance in its location badge). */}
+          {item.distance_km != null && !(item.source === 'our_projects' && item.our_fit) && (
             <span
               className="inline-flex items-center gap-1 rounded-full border border-sand/60 bg-cream/50 px-2 py-0.5 text-[11px] text-charcoal/70"
               title={L('المسافة من أقرب منطقة مختارة', 'Distance from the nearest selected area')}
@@ -398,6 +404,49 @@ function BandBadge({ band, score, isAr }: { band: FinderBand; score: number; isA
       {isAr ? e.ar : e.en}<span className="opacity-70">· {score}</span>
     </span>
   );
+}
+
+/**
+ * PREFERENTIAL-FIT badges for an our_projects card. Our portfolio is matched
+ * loosely (location/budget/size no longer EXCLUDE — they become these honest
+ * badges), so the rep sees every real matching project of ours and judges the
+ * stretch. Green = on-target, amber = a stretch worth showing, gray = neutral.
+ */
+function OurFitBadges({ fit, isAr }: { fit: OurFit; isAr: boolean }) {
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+  const green = 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  const amber = 'border-amber-200 bg-amber-50 text-amber-700';
+  const rose = 'border-rose-200 bg-rose-50 text-rose-700';
+  const gray = 'border-sand/60 bg-cream/50 text-charcoal/60';
+  const pill = (cls: string, text: string, key: string, icon?: React.ReactNode) => (
+    <span key={key} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${cls}`}>
+      {icon}{text}
+    </span>
+  );
+  const geoIcon = <MapPin size={11} className="opacity-60" />;
+  const km = fit.distance_km != null ? L(`~${fit.distance_km} كم`, `~${fit.distance_km} km`) : '';
+  const out: React.ReactNode[] = [];
+
+  // Location
+  if (fit.location === 'in_area') out.push(pill(green, L('ضمن المنطقة المطلوبة', 'In requested area'), 'loc', geoIcon));
+  else if (fit.location === 'nearby') out.push(pill(amber, [L('قريب', 'Nearby'), km].filter(Boolean).join(' · '), 'loc', geoIcon));
+  else if (fit.location === 'same_city') out.push(pill(amber, [L('نفس المدينة · خارج المنطقة', 'Same city · outside area'), km].filter(Boolean).join(' · '), 'loc', geoIcon));
+  else out.push(pill(gray, [L('خارج المنطقة', 'Outside area'), km].filter(Boolean).join(' · '), 'loc', geoIcon));
+
+  // Budget (only when the client stated a budget)
+  if (fit.budget === 'within') out.push(pill(green, L('ضمن الميزانية', 'Within budget'), 'bud'));
+  else if (fit.budget === 'over') {
+    const p = fit.budget_over_pct;
+    const heavy = p != null && p > 15;
+    out.push(pill(heavy ? rose : amber, p != null ? L(`أعلى من الميزانية +${p}%`, `Over budget +${p}%`) : L('أعلى من الميزانية', 'Over budget'), 'bud'));
+  } else if (fit.budget === 'under') out.push(pill(gray, L('أقل من الميزانية', 'Under budget'), 'bud'));
+
+  // Size (only when the client stated an area)
+  if (fit.area === 'match') out.push(pill(green, L('المساحة مطابقة', 'Size matches'), 'area'));
+  else if (fit.area === 'smaller') out.push(pill(amber, fit.area_gap_pct != null ? L(`المساحة أصغر −${fit.area_gap_pct}%`, `Smaller −${fit.area_gap_pct}%`) : L('المساحة أصغر', 'Smaller'), 'area'));
+  else if (fit.area === 'larger') out.push(pill(amber, fit.area_gap_pct != null ? L(`المساحة أكبر +${fit.area_gap_pct}%`, `Larger +${fit.area_gap_pct}%`) : L('المساحة أكبر', 'Larger'), 'area'));
+
+  return <>{out}</>;
 }
 
 function MatchTypePill({ type, isAr }: { type: FinderMatchType; isAr: boolean }) {
