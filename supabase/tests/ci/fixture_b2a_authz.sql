@@ -88,12 +88,28 @@ BEGIN
   RETURN best_role;
 END $$;
 
--- Marketing capability: admin, or the mkt persona.
+-- Marketing capability — FAITHFUL to production, and that fidelity is the whole
+-- point of this block.
+--
+-- The earlier version of this fixture returned false for any identity except a
+-- designated marketing persona. Production does NOT behave that way: measured
+-- 2026-08-16, wassell_mos_roles() returns {viewer} for ANY auth uid, mapped or
+-- not, so wassell_mos_can('read', <unknown uid>) is TRUE.
+--
+-- Because the fixture was gentler than production, B2A.1's missing identity
+-- guard passed CI and then exposed 1,270 marketing files to two identity-less
+-- principals in production for 99 seconds. Reproducing the real default is what
+-- makes the negative-control test below able to fail.
+CREATE OR REPLACE FUNCTION public.wassell_mos_roles(p_auth_uid uuid)
+RETURNS text[] LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $$
+  SELECT ARRAY['viewer']::text[];
+$$;
+
 CREATE OR REPLACE FUNCTION public.wassell_mos_can(p_capability text, p_auth_uid uuid DEFAULT auth.uid())
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $$
   SELECT public.wassell_is_admin(p_auth_uid)
       OR (p_capability = 'read'
-          AND p_auth_uid = '44444444-4444-4444-4444-444444444444'::uuid);
+          AND 'viewer' = ANY (public.wassell_mos_roles(p_auth_uid)));
 $$;
 
 -- ── the 8,000-row corpus with a production-shaped grant distribution ───────

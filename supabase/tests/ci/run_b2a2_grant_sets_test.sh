@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Designated validator for supabase/migrations/2026-08-16_04_file_authz_grant_sets.sql
+# Designated validator for supabase/migrations/2026-08-16_06_file_authz_grant_sets_v2.sql
 #
-# B2A.1 replaces the files_select policy with a set-based form. B2A stays
+# B2A.2 replaces the files_select policy with a set-based form. B2A stays
 # installed underneath, so the baseline here is B2A (which is what production
 # runs), and the reference oracle is still the PRE-B2A function — that way the
-# chain B2A -> B2A.1 is proved equivalent to the original all the way back.
+# chain B2A -> B2A.2 is proved equivalent to the original all the way back.
 #
 #   1. Phase 1 + Phase 2 + B1 + authorization surface + B2A + high-cardinality
 #   2. BEFORE (on B2A): 30 function fingerprints + 10 policy fingerprints
-#   3. apply B2A.1
+#   3. apply B2A.2
 #   4. AFTER: byte-identical fingerprints (hard gate)
 #   5. every persona's p95 < 300 ms, INCLUDING the high-cardinality ones
 #   6. B2 layered on top stays < 300 ms
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 PGURL="${PGURL:-postgresql://postgres:ci@localhost:5432/postgres}"
-DB=wassell_b2a1
+DB=wassell_b2a2
 BASE="${PGURL%/*}"; DBURL="$BASE/$DB"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -36,7 +36,8 @@ PERSONAS='99999999-9999-9999-9999-999999999999
 66666666-6666-6666-6666-666666666666
 77777777-7777-7777-7777-777777777777
 88888888-8888-8888-8888-888888888888
-00000000-0000-0000-0000-0000000000ff'
+00000000-0000-0000-0000-0000000000ff
+00000000-0000-0000-0000-0000000000fe'
 
 fingerprints() {
   local uid k
@@ -130,8 +131,8 @@ $(q "SELECT count(*) FROM public.folders") folders"
 echo "== BEFORE (on B2A): fingerprints"
 fingerprints        > "$WORK/fp.before"
 policy_fingerprints > "$WORK/pol.before"
-[ "$(wc -l < "$WORK/fp.before")" -eq 30 ]  || { echo "FAIL: expected 30 fingerprints"; exit 1; }
-[ "$(wc -l < "$WORK/pol.before")" -eq 10 ] || { echo "FAIL: expected 10 policy fingerprints"; exit 1; }
+[ "$(wc -l < "$WORK/fp.before")" -eq 33 ]  || { echo "FAIL: expected 33 fingerprints"; exit 1; }
+[ "$(wc -l < "$WORK/pol.before")" -eq 11 ] || { echo "FAIL: expected 11 policy fingerprints"; exit 1; }
 [ "$(awk '{print $4}' "$WORK/fp.before" | sort -u | wc -l)" -ge 6 ] \
   || { echo "FAIL: fingerprints too uniform"; exit 1; }
 # The high-cardinality personas must actually see a lot, or they prove nothing.
@@ -142,15 +143,38 @@ for p in 66666666 77777777 88888888; do
 done
 measure_all before > "$WORK/meas.before"; sed 's/^/     /' "$WORK/meas.before"
 
-echo "== applying B2A.1"
-run "$ROOT/supabase/migrations/2026-08-16_04_file_authz_grant_sets.sql"
+echo "== applying B2A.2"
+run "$ROOT/supabase/migrations/2026-08-16_06_file_authz_grant_sets_v2.sql"
 
 echo "== AFTER: the hard semantic gate"
 fingerprints        > "$WORK/fp.after"
 policy_fingerprints > "$WORK/pol.after"
 diff -u "$WORK/fp.before"  "$WORK/fp.after"  || { echo "FAIL: function id-sets changed"; exit 1; }
 diff -u "$WORK/pol.before" "$WORK/pol.after" || { echo "FAIL: policy id-sets changed"; exit 1; }
-echo "   OK: 30 function + 10 policy fingerprints identical"
+echo "   OK: 33 function + 11 policy fingerprints identical"
+
+# ── NEGATIVE CONTROL ────────────────────────────────────────────────────────
+# Install the SAME policy with the identity invariant removed — byte-for-byte
+# what B2A.1 shipped — and require the suite to notice. A green run against this
+# mutant would mean the fingerprints prove nothing.
+echo "== negative control: identity guard removed"
+run "$ROOT/supabase/tests/ci/mutant_b2a2_drop_identity_guard.sql"
+policy_fingerprints > "$WORK/pol.mutant"
+if diff -q "$WORK/pol.before" "$WORK/pol.mutant" >/dev/null; then
+  echo "FAIL: removing the identity guard changed NOTHING — the suite is blind"; exit 1
+fi
+MUT=$(diff "$WORK/pol.before" "$WORK/pol.mutant" | grep -c '^>' || true)
+echo "   OK: mutant diverges on $MUT persona fingerprint(s)"
+for p in 00000000-0000-0000-0000-0000000000ff 00000000-0000-0000-0000-0000000000fe; do
+  n=$(grep "POL $p " "$WORK/pol.mutant" | grep -o "n=[0-9]*" | cut -d= -f2)
+  [ "${n:-0}" -gt 0 ] || { echo "FAIL: mutant did not expose files to identity-less $p"; exit 1; }
+  echo "     identity-less $p saw $n files under the mutant (expected >0)"
+done
+# restore the real B2A.2 policy before continuing
+run "$ROOT/supabase/migrations/2026-08-16_06_file_authz_grant_sets_v2.sql"
+policy_fingerprints > "$WORK/pol.restored"
+diff -q "$WORK/pol.before" "$WORK/pol.restored" >/dev/null   || { echo "FAIL: restoring B2A.2 after the mutant did not return to baseline"; exit 1; }
+echo "   OK: B2A.2 restored, fingerprints back to baseline"
 
 echo "== smoke"
 psql "$DBURL" -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/ci/smoke_b2a_authz_perf.sql"
@@ -162,7 +186,7 @@ echo "== write latency"
 WMS=$(psql "$DBURL" -v ON_ERROR_STOP=1 -tAq <<'SQL' | grep -E '^WRITE ' | sed 's/^WRITE //'
 CREATE TEMP TABLE _w(ms numeric);
 DO $$ DECLARE t0 timestamptz := clock_timestamp(); BEGIN
-  UPDATE public.files SET description='b2a1-probe'
+  UPDATE public.files SET description='b2a2-probe'
    WHERE storage_path LIKE 'scale/%' AND right(id::text,12)::bigint <= 200;
   INSERT INTO _w VALUES (EXTRACT(epoch FROM clock_timestamp()-t0)*1000);
 END $$;
@@ -171,7 +195,7 @@ SQL
 )
 echo "   200 metadata UPDATEs in ${WMS} ms"
 
-echo "== B2 layered on B2A.1"
+echo "== B2 layered on B2A.2"
 P_B2=""
 if [ -n "${B2_MIGRATION:-}" ] && [ -f "${B2_MIGRATION}" ]; then
   run "$ROOT/supabase/migrations/2026-09-02_02_search_norm_alef_madda_fix.sql"
@@ -210,22 +234,22 @@ else
 fi
 
 echo "== rollback to B2A + re-apply"
-run "$ROOT/supabase/rollback/2026-08-16_04_file_authz_grant_sets_down.sql"
+run "$ROOT/supabase/rollback/2026-08-16_06_file_authz_grant_sets_v2_down.sql"
 fingerprints > "$WORK/fp.rb"
 diff -q "$WORK/fp.before" "$WORK/fp.rb" >/dev/null || { echo "FAIL: rollback changed id-sets"; exit 1; }
 [ "$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
         WHERE n.nspname='public' AND p.proname='wassell_granted_file_ids'")" = "0" ] \
   || { echo "FAIL: set helper survived rollback"; exit 1; }
-run "$ROOT/supabase/migrations/2026-08-16_04_file_authz_grant_sets.sql"
+run "$ROOT/supabase/migrations/2026-08-16_06_file_authz_grant_sets_v2.sql"
 fingerprints > "$WORK/fp.re"
 diff -q "$WORK/fp.before" "$WORK/fp.re" >/dev/null || { echo "FAIL: re-apply changed id-sets"; exit 1; }
 echo "   OK"
 
 echo
-echo "──────── B2A.1 results ────────"
+echo "──────── B2A.2 results ────────"
 paste -d'\n' /dev/null /dev/null >/dev/null 2>&1 || true
 echo "  BEFORE (B2A):"; sed 's/^/    /' "$WORK/meas.before"
-echo "  AFTER (B2A.1):"; sed 's/^/    /' "$WORK/meas.after"
+echo "  AFTER (B2A.2):"; sed 's/^/    /' "$WORK/meas.after"
 FAILED=0
 while read -r line; do
   p95=$(sed -n 's/.*p95=\([0-9.]*\).*/\1/p' <<<"$line")
@@ -241,6 +265,6 @@ while read -r a; do
   awk "BEGIN{exit !($nowv > $wasv * 1.25 && $nowv - $wasv > 20)}" \
     && { echo "  ✗ persona $who REGRESSED ${wasv} -> ${nowv} ms"; FAILED=1; } || true
 done < "$WORK/meas.after"
-[ "$FAILED" -eq 0 ] || { echo; echo "B2A.1: GATE NOT MET"; exit 1; }
+[ "$FAILED" -eq 0 ] || { echo; echo "B2A.2: GATE NOT MET"; exit 1; }
 echo
-echo "B2A.1 grant sets: ALL CHECKS PASSED"
+echo "B2A.2 grant sets: ALL CHECKS PASSED"
