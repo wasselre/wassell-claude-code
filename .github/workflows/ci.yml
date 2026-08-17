@@ -151,6 +151,16 @@ jobs:
           fi
           B2_MIGRATION="$B2" bash supabase/tests/ci/run_b2a2_grant_sets_test.sh
 
+      # SECURITY: the B2A.2 helpers were SECURITY DEFINER, took a target user as
+      # a parameter and were granted to `authenticated` — and being
+      # set-returning, PostgREST published them as RPC. The policy was correct;
+      # calling the helpers directly was not. This step reproduces the bypass,
+      # applies the caller-scoping correction, and requires the bypass to be gone
+      # while files_select reach stays byte-identical. Policy-fingerprint tests
+      # alone could not see this class of bug.
+      - name: Authz helper scoping — direct-RPC abuse, reach unchanged
+        run: bash supabase/tests/ci/run_helper_scoping_test.sh
+
   market-listings-reconciliation:
     # Designated validator for
     # supabase/migrations/2026-09-04_00_market_listings_view_reconciliation.sql.
