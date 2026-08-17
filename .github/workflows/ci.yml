@@ -150,14 +150,32 @@ jobs:
             if git show FETCH_HEAD:supabase/migrations/2026-08-16_02_business_files_search.sql                  > /tmp/b2/b2.sql 2>/dev/null; then B2=/tmp/b2/b2.sql; fi
           fi
           B2_MIGRATION="$B2" bash supabase/tests/ci/run_b2a2_grant_sets_test.sh
-
-      # SECURITY: the B2A.2 helpers were SECURITY DEFINER, took a target user as
-      # a parameter and were granted to `authenticated` — and being
-      # set-returning, PostgREST published them as RPC. The policy was correct;
-      # calling the helpers directly was not. This step reproduces the bypass,
-      # applies the caller-scoping correction, and requires the bypass to be gone
-      # while files_select reach stays byte-identical. Policy-fingerprint tests
-      # alone could not see this class of bug.
+  authz-helper-scoping:
+    # Its OWN job, not another step on db-migrations. Each Files authorization
+    # suite now takes ~10 minutes (three full fingerprint sweeps over an 8k
+    # corpus), and stacking a fourth onto that job blew the 25-minute cap with
+    # the security test barely started. Separate jobs also run in parallel.
+    #
+    # Designated validator for
+    # supabase/migrations/2026-08-17_01_scope_authz_helpers.sql. It reproduces
+    # the direct-RPC bypass, applies the fix, and requires the bypass gone while
+    # files_select reach stays byte-identical.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
       - name: Authz helper scoping — direct-RPC abuse, reach unchanged
         run: bash supabase/tests/ci/run_helper_scoping_test.sh
 
