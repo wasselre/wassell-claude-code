@@ -83,14 +83,25 @@ UPDATE public.records SET data = data || jsonb_build_object('visible_to',
           ELSE '[]'::jsonb END)
 WHERE id::text LIKE 'a0000000-%' OR id::text LIKE 'a1000000-%';
 
+-- Production decides record visibility with wassell_can_view_record(auth.uid(),
+-- records.*) and B4's derived branch calls that SAME function rather than
+-- re-implementing the rule. The fixture must therefore provide it, and the
+-- policy must be expressed THROUGH it -- otherwise CI could pass with a policy
+-- and a function that disagree, which is precisely the class of gap that let
+-- B2A.1 reach production: a fixture gentler than the real thing.
+CREATE OR REPLACE FUNCTION public.wassell_can_view_record(p_auth_uid uuid, r public.records)
+RETURNS boolean
+LANGUAGE sql STABLE
+SET search_path TO 'public', 'pg_temp' AS $crv$
+  SELECT public.wassell_is_admin(p_auth_uid)
+      OR (r.data->'visible_to') ? (public.wassell_app_user_id(p_auth_uid)::text)
+      -- the Phase 1 fixture's GUC form, kept so its own smokes still work
+      OR r.id::text = ANY(string_to_array(coalesce(current_setting('test.visible_records',true),''),','))
+$crv$;
+
 DROP POLICY IF EXISTS records_select ON public.records;
 CREATE POLICY records_select ON public.records FOR SELECT TO authenticated
-USING (
-  public.wassell_is_admin((SELECT auth.uid()))
-  OR (data->'visible_to') ? (public.wassell_app_user_id((SELECT auth.uid()))::text)
-  -- the Phase 1 fixture's GUC form, kept so its own smokes still work
-  OR id::text = ANY(string_to_array(coalesce(current_setting('test.visible_records',true),''),','))
-);
+USING (public.wassell_can_view_record((SELECT auth.uid()), records.*));
 
 ANALYZE public.records;
 
