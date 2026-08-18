@@ -1424,20 +1424,47 @@ function availableRange(data: Record<string, unknown>, availKey: string, allKey:
 
 /** Build the preferential-fit summary shown on an our_projects card. Pure: reads
  *  the client's stated criteria vs the project's available price/size + the scored
- *  location tier. `geoInside` is true when the project passed the client's geo gate
- *  (its pin sits inside the drawn area / requested district). */
+ *  location tier. `geoGateActive` is true when the client has a location gate (a
+ *  drawn polygon / district includes / element rules); `geoInside` is true when this
+ *  project passed that gate. */
 function computeOurFit(
   data: Record<string, unknown>,
   req: MatchRequirements,
+  geoGateActive: boolean,
   geoInside: boolean,
   scored: ScoredProject,
 ): OurFit {
   // ── Location ──
+  // "The requested area" = the client's location GATE when they have one. When a gate
+  // is active, ONLY the gate proves a project is inside it — `location_tier === 'exact'`
+  // can mean merely "same city" (when the requirements carry a city but NO district),
+  // so trusting the tier would falsely badge an out-of-area project «ضمن المنطقة»
+  // (live bug: a Jadriyah project shown "in area" for a north-Riyadh drawn polygon).
+  // Without a gate we fall back to the district/city tier.
+  const districtRequested = !!(
+    req.district || (req.districts && req.districts.length) || (req.district_ids && req.district_ids.length)
+  );
   let location: OurFit['location'];
-  if (geoInside || scored.location_tier === 'exact') location = 'in_area';
-  else if (scored.location_tier === 'nearby') location = 'nearby';
-  else if (scored.location_tier === 'same_city') location = 'same_city';
-  else location = 'other';
+  if (geoGateActive) {
+    location = geoInside
+      ? 'in_area'
+      : scored.location_tier === 'nearby'
+        ? 'nearby'
+        : scored.location_tier === 'none'
+          ? 'other'
+          : 'same_city'; // outside the drawn shape, but still the same city (guard keeps ours same-city)
+  } else if (districtRequested) {
+    location = scored.location_tier === 'exact'
+      ? 'in_area'
+      : scored.location_tier === 'nearby'
+        ? 'nearby'
+        : scored.location_tier === 'same_city'
+          ? 'same_city'
+          : 'other';
+  } else {
+    // Only a city (or nothing) was requested — the city itself is the "area".
+    location = scored.location_tier === 'none' ? 'other' : 'same_city';
+  }
 
   const fit: OurFit = { location, distance_km: scored.distance_km };
 
@@ -2285,7 +2312,7 @@ export async function matchProjectsCore(
         item.requires_verification = true;
         item.verification_warning = VERIFY_WARNING;
       }
-      if (isOurs) item.our_fit = computeOurFit(r.data, req, geoInside, s);
+      if (isOurs) item.our_fit = computeOurFit(r.data, req, geoGate !== null, geoInside, s);
       out.push(item);
     }
     return out.sort(byBandThenScore);
@@ -2988,4 +3015,4 @@ export async function executeMatchTool(
 }
 
 // Exported for unit testing the deterministic scorer + metadata enforcement.
-export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature, resolveClientFromCandidates, adaptListingToScorable, parseUnitAgeText };
+export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature, resolveClientFromCandidates, adaptListingToScorable, parseUnitAgeText, computeOurFit };

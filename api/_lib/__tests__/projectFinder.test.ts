@@ -674,6 +674,33 @@ describe('our_projects get preferential grouping (loose matching)', () => {
 import { __test as matchTest } from '../matchAgent.js';
 import { FINDER_GROUP_KEYS as FINDER_GROUP_KEYS_LOCAL } from '../projectFinder.js';
 
+describe('computeOurFit location — a drawn gate is the ONLY proof of "in area"', () => {
+  const fit = matchTest.computeOurFit;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const scored = (tier: string, dist: number | null = null): any => ({ location_tier: tier, distance_km: dist });
+
+  it('gate active + OUTSIDE + tier "exact" (city-only match) → same_city, NOT in_area', () => {
+    // The live bug: a city-only request marks every same-city project location_tier
+    // "exact"; a Jadriyah project outside a north-Riyadh polygon must not read in_area.
+    const f = fit({}, { city: 'الرياض' } as MatchRequirements, /*gate*/ true, /*inside*/ false, scored('exact', 8));
+    expect(f.location).toBe('same_city');
+  });
+  it('gate active + INSIDE → in_area', () => {
+    expect(fit({}, {} as MatchRequirements, true, true, scored('exact')).location).toBe('in_area');
+  });
+  it('gate active + OUTSIDE + tier "none" (different city) → other', () => {
+    expect(fit({}, {} as MatchRequirements, true, false, scored('none')).location).toBe('other');
+  });
+  it('no gate + a district WAS requested + tier "exact" → in_area', () => {
+    const f = fit({}, { district: 'العليا' } as MatchRequirements, false, false, scored('exact'));
+    expect(f.location).toBe('in_area');
+  });
+  it('no gate + city-only + tier "exact" → same_city (the city is the area)', () => {
+    const f = fit({}, { city: 'الرياض' } as MatchRequirements, false, false, scored('exact'));
+    expect(f.location).toBe('same_city');
+  });
+});
+
 describe('unit age parsing (TS twin of wassell_parse_unit_age — keep in sync)', () => {
   const p = matchTest.parseUnitAgeText;
   it('parses the observed Aqar value space', () => {
