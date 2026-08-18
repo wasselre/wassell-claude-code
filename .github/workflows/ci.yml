@@ -179,6 +179,33 @@ jobs:
       - name: Authz helper scoping — direct-RPC abuse, reach unchanged
         run: bash supabase/tests/ci/run_helper_scoping_test.sh
 
+  b2a3-profile:
+    # MEASUREMENT ONLY for B2A.3 — applies no migration and changes nothing.
+    # Isolates where file_links_select spends its time (file-visibility half vs
+    # record-visibility half vs the three B2 link consumers) on a
+    # production-shaped ~10k-edge corpus, so the design is chosen from plans
+    # rather than assumption. Profiling on production directly is not an option:
+    # a full-corpus EXPLAIN ANALYZE there exceeded the tool timeout and wedged
+    # the session, which is exactly why this belongs on an ephemeral database.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Profile file_links_select and the B2 consumers
+        run: bash supabase/tests/ci/profile_b2a3_link_authz.sh
+
   market-listings-reconciliation:
     # Designated validator for
     # supabase/migrations/2026-09-04_00_market_listings_view_reconciliation.sql.
