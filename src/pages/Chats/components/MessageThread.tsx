@@ -161,7 +161,9 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
     // hiding the newest message even though the thread was scrolled to the
     // bottom (live bug 2026-07-04, root cause of "the last message doesn't
     // show").
-    <div className="card p-0 overflow-hidden flex flex-col h-full min-h-0">
+    // Mobile: a plain full-bleed scroll area (the thread IS the screen).
+    // Desktop (md+): the framed card, matching the rest of the split view.
+    <div className="bg-white overflow-hidden flex flex-col h-full min-h-0 md:rounded-2xl md:border md:border-sand/20 md:shadow-sm">
       {/* Scrollable region. The inner div exists so the ResizeObserver can
           watch content height — observing the scroll container itself only
           reports its border box. overflow-anchor:none disables the

@@ -280,8 +280,9 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     <>
     {showStartModal && <StartChatModal onClose={() => setShowStartModal(false)} />}
     <div className="flex flex-col h-full min-h-0">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-sand/20 shrink-0">
+      {/* Header — compact on mobile (safe-top clears the notch when installed to
+          the Home Screen), a touch roomier on desktop. */}
+      <div className="safe-top flex items-center gap-2 px-4 pt-2.5 pb-2 md:pt-4 md:pb-3 border-b border-sand/20 shrink-0">
         <MessageCircle size={18} className="text-copper" />
         <h2 className="font-bold text-chocolate flex-1">
           {isAr ? 'المحادثات' : 'Chats'}

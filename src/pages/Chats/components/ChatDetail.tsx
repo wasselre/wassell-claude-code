@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, ChevronDown, NotebookPen, Bot, Contact } from 'lucide-react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { useNavigate, type NavigateFunction } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
@@ -143,9 +144,11 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
 
   // Client-options popup (options list + embedded Project Finder).
   const [showClientOptions, setShowClientOptions] = useState(false);
-  // Mobile-only: preference chips collapse behind a toggle so a long
-  // preference list doesn't shrink the thread. Desktop always shows them.
-  const [prefsExpanded, setPrefsExpanded] = useState(false);
+  // Mobile-only: the CRM actions live in a bottom sheet (keeps the header
+  // compact so the thread owns the screen), and conversation-state actions
+  // (status / Done / Reopen) live in a ⋯ overflow menu.
+  const [showCrmSheet, setShowCrmSheet] = useState(false);
+  const [showOverflow, setShowOverflow] = useState(false);
   // "Complete WhatsApp Follow-Up" popup (shown when Done/Resolve is clicked and
   // an active WhatsApp follow-up exists for the linked client).
   const [showCompleteFollowup, setShowCompleteFollowup] = useState(false);
@@ -220,17 +223,37 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     );
   }
 
+  // Props shared by the CRM-actions cluster, rendered inline on desktop and
+  // inside the mobile bottom sheet — ONE source of truth, no duplicated markup.
+  const crmActionProps = {
+    isAr,
+    navigate,
+    clientLinkId,
+    clientRecordUrl,
+    matchedContact,
+    matchedAdvertiser,
+    matchedAdvertiserName,
+    recordId,
+    aiManaged,
+    onClientOptions: () => setShowClientOptions(true),
+    onLogInteraction: () => setShowLogInteraction(true),
+    onLeadIntake: () => setShowLeadIntake(true),
+    onContactIntake: () => setShowContactIntake(true),
+  };
+
   return (
-    <div className="flex flex-col h-full min-h-0">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-sand/20 shrink-0 flex items-start gap-3">
+    <div className="flex flex-col h-full min-h-0 bg-white">
+      {/* Header — compact messaging-style bar. On mobile the heavy CRM stack and
+          the Done button move OUT of the bar (into the ⋯ menu + the CRM sheet)
+          so the thread owns the screen; desktop keeps the full inline header. */}
+      <div className="safe-top px-3 py-2 md:px-4 md:py-3 border-b border-sand/20 shrink-0 flex items-start gap-2.5 md:gap-3">
         {/* Back (mobile only — desktop shows split view) */}
         <button
           onClick={() => navigate('/model/chats')}
-          className="md:hidden -ms-1 p-1.5 rounded-lg text-charcoal/60 hover:text-copper hover:bg-cream transition-colors"
+          className="md:hidden -ms-1 mt-0.5 p-1.5 rounded-lg text-charcoal/60 hover:text-copper hover:bg-cream transition-colors"
           aria-label={isAr ? 'رجوع' : 'Back'}
         >
-          <BackIcon size={18} />
+          <BackIcon size={20} />
         </button>
         {clientRecordUrl ? (
           <a
@@ -275,7 +298,8 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
               {phone}
             </p>
           )}
-          <div className="flex items-center gap-3 mt-1 text-[11px] text-charcoal/50 flex-wrap">
+          {/* Kind / last-message meta — desktop only; it's noise on a phone. */}
+          <div className="hidden md:flex items-center gap-3 mt-1 text-[11px] text-charcoal/50 flex-wrap">
             <span className="inline-flex items-center gap-1">
               <Hash size={10} />
               {kindLabel(kind, isAr)}
@@ -287,161 +311,103 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
               </span>
             )}
           </div>
-          {/* Client link row — either opens the matched client's full record
-              in a new tab or offers to file this number: as a CLIENT (starts
-              the sales follow-up) or as a plain address-book CONTACT (name +
-              number, no follow-up). A phone-matched advertiser (REGA lookup)
-              or contact gets its own link alongside. */}
-          <div className="flex items-center gap-2 mt-1.5 text-xs flex-wrap">
-            <ProjectsUnitsBrowserButton clientId={clientLinkId} />
-            {matchedContact && (
-              <button
-                onClick={() => navigate(`/model/contacts/${matchedContact.id}`)}
-                className="inline-flex items-center gap-1.5 rounded-full bg-charcoal/8 px-2 py-0.5 font-medium text-charcoal transition-colors hover:bg-charcoal/15"
-                title={isAr ? 'فتح بطاقة جهة الاتصال' : 'Open contact record'}
-              >
-                <Contact size={12} />
-                {/* The contact's name is already the conversation title, so this
-                    pill only marks WHAT the number is and links to the card. */}
-                {isAr ? 'جهة اتصال' : 'Contact'}
-              </button>
-            )}
-            {matchedAdvertiser && (
-              <button
-                onClick={() => navigate(`/model/advertisers/${matchedAdvertiser.id}`)}
-                className="inline-flex items-center gap-1.5 rounded-full bg-gold/20 px-2 py-0.5 font-medium text-chocolate transition-colors hover:bg-gold/30"
-                title={isAr ? 'فتح بطاقة المعلن' : 'Open advertiser record'}
-              >
-                <Megaphone size={12} />
-                <span className="truncate max-w-[220px]">
-                  {isAr ? 'معلن: ' : 'Advertiser: '}
-                  {matchedAdvertiserName ?? (isAr ? 'عرض البطاقة' : 'open record')}
-                </span>
-              </button>
-            )}
-            {clientRecordUrl ? (
-              <>
-                <a
-                  href={clientRecordUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-copper hover:text-terracotta font-medium"
-                  title={isAr ? 'فتح ملف العميل في تبويب جديد' : 'Open client record in a new tab'}
-                >
-                  <User size={12} />
-                  {/* The client's name is already the conversation title, so this
-                      link only marks WHAT the number is and opens the record. */}
-                  {isAr ? 'عميل مرتبط' : 'Linked client'}
-                </a>
-                <button
-                  onClick={() => setShowClientOptions(true)}
-                  className="inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 px-2 py-0.5 font-medium text-copper transition-colors hover:bg-copper/10"
-                  title={isAr ? 'عرض خيارات العميل والبحث عن المزيد' : 'View client options & find more'}
-                >
-                  <ListChecks size={12} />
-                  {isAr ? 'خيارات العميل' : 'Client options'}
-                </button>
-                <button
-                  onClick={() => setShowLogInteraction(true)}
-                  className="inline-flex items-center gap-1 rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 font-medium text-[#8a6a2f] transition-colors hover:bg-gold/20"
-                  title={isAr ? 'تسجيل مكالمة أو تواصل خارج المهام' : 'Log a call or other interaction'}
-                >
-                  <NotebookPen size={12} />
-                  {isAr ? 'تسجيل تواصل' : 'Log interaction'}
-                </button>
-                <AiHandoverButton chatRecordId={recordId} aiManaged={aiManaged} isAr={isAr} />
-              </>
-            ) : (
-              <>
-                <button
-                  onClick={() => setShowLeadIntake(true)}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-copper/40 bg-copper/10 px-2 py-0.5 font-medium text-copper transition-colors hover:bg-copper/20"
-                  title={isAr ? 'إنشاء عميل من هذا الرقم وبدء المتابعة' : 'Create a client from this phone and start the follow-up'}
-                >
-                  <UserPlus size={12} />
-                  {isAr ? 'إضافة كعميل' : 'Add as a client'}
-                </button>
-                {/* Not a prospect — just save the name and number. Hidden once
-                    a contact with this phone already exists (the chip above
-                    links to it instead). */}
-                {!matchedContact && (
-                  <button
-                    onClick={() => setShowContactIntake(true)}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-charcoal/25 bg-charcoal/5 px-2 py-0.5 font-medium text-charcoal transition-colors hover:bg-charcoal/10"
-                    title={
-                      isAr
-                        ? 'حفظ الاسم والرقم فقط — بدون إنشاء عميل أو مهمة متابعة'
-                        : 'Save just the name and number — no client, no follow-up task'
-                    }
-                  >
-                    <Contact size={12} />
-                    {isAr ? 'إضافة جهة اتصال جديدة' : 'Add a new contact'}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
+          {/* CRM actions inline — DESKTOP ONLY. On mobile these live in the
+              bottom sheet opened from the header's grid button. */}
+          <CrmActions
+            {...crmActionProps}
+            layout="inline"
+            className="hidden md:flex items-center gap-2 mt-1.5 text-xs flex-wrap"
+          />
           {/* Client preference chips — the full preference picture (unit type,
               budget, bedrooms, area, location, direction, amenities, notes…).
-              Preferences only; chat labels/tags deliberately don't render here.
-              On mobile they collapse behind a count toggle so a long preference
-              list doesn't push the thread off-screen; desktop always shows them. */}
+              On mobile: a single horizontally-scrollable row so a long list never
+              pushes the thread down. Desktop: wraps as before. */}
           {prefChips.length > 0 && (
-            <>
-              <button
-                onClick={() => setPrefsExpanded((v) => !v)}
-                className="md:hidden mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-charcoal/60 hover:text-copper transition-colors"
-                aria-expanded={prefsExpanded}
-              >
-                <ChevronDown
-                  size={12}
-                  className={`transition-transform ${prefsExpanded ? 'rotate-180' : ''}`}
-                />
-                {isAr ? `التفضيلات (${prefChips.length})` : `Preferences (${prefChips.length})`}
-              </button>
-              <div className={`${prefsExpanded ? 'flex' : 'hidden'} md:flex items-center gap-1 mt-2 flex-wrap`}>
-                {prefChips.map((chip) => (
-                  <span
-                    key={chip.key}
-                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded truncate max-w-[240px] ${DETAIL_CHIP_STYLES[chip.kind]}`}
-                    title={chip.title ?? chip.text}
-                  >
-                    {chip.text}
-                  </span>
-                ))}
-              </div>
-            </>
+            <div className="flex items-center gap-1 mt-2 flex-nowrap overflow-x-auto md:flex-wrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {prefChips.map((chip) => (
+                <span
+                  key={chip.key}
+                  className={`shrink-0 md:shrink text-[10px] font-medium px-1.5 py-0.5 rounded truncate max-w-[240px] ${DETAIL_CHIP_STYLES[chip.kind]}`}
+                  title={chip.title ?? chip.text}
+                >
+                  {chip.text}
+                </span>
+              ))}
+            </div>
           )}
         </div>
 
-        {/* Done / Reopen — one click closes the finished conversation. When an
-            active WhatsApp follow-up exists, Done opens the completion popup
-            (records the outcome on the task) instead of silently resolving. */}
+        {/* Desktop trailing action: Done / Reopen. */}
         <DoneButton
           chatWid={chatWid}
           status={status}
           isAr={isAr}
           onChange={requestStatusChange}
+          className="hidden md:inline-flex"
         />
+
+        {/* Mobile trailing cluster: call · CRM sheet · ⋯ overflow. */}
+        <div className="md:hidden flex items-center gap-0.5 shrink-0 self-center">
+          {phone && (
+            <a
+              href={`tel:${phone}`}
+              className="p-2 rounded-full text-charcoal/60 hover:text-copper hover:bg-cream transition-colors"
+              aria-label={isAr ? 'اتصال' : 'Call'}
+              title={isAr ? 'اتصال هاتفي' : 'Phone call'}
+            >
+              <Phone size={18} />
+            </a>
+          )}
+          <button
+            onClick={() => setShowCrmSheet(true)}
+            className="p-2 rounded-full text-charcoal/60 hover:text-copper hover:bg-cream transition-colors"
+            aria-label={isAr ? 'إجراءات العميل' : 'CRM actions'}
+            title={isAr ? 'إجراءات العميل والمشاريع' : 'Client & project actions'}
+          >
+            <LayoutGrid size={18} />
+          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowOverflow((v) => !v)}
+              className="p-2 rounded-full text-charcoal/60 hover:text-copper hover:bg-cream transition-colors"
+              aria-label={isAr ? 'المزيد' : 'More'}
+              aria-haspopup="menu"
+              aria-expanded={showOverflow}
+            >
+              <MoreVertical size={18} />
+            </button>
+            {showOverflow && (
+              <OverflowMenu
+                isAr={isAr}
+                status={status}
+                chatWid={chatWid}
+                onStatusChange={requestStatusChange}
+                onClose={() => setShowOverflow(false)}
+              />
+            )}
+          </div>
+        </div>
       </div>
 
       {/* App-triggered client study (claude_jobs) — button + status/review
           strip. Client-linked chats only: a study is a client deliverable. */}
       {clientLinkId && <StudyJobCard chatRecordId={recordId} />}
 
-      {/* Thread (scrolls within its own card) */}
-      <div className="flex-1 min-h-0 overflow-hidden px-3 pt-3">
+      {/* Thread — full-bleed scroll area on mobile, framed card on desktop
+          (MessageThread drops its own card chrome below md). */}
+      <div className="flex-1 min-h-0 overflow-hidden px-0 pt-0 md:px-3 md:pt-3">
         <MessageThread chatWid={chatWid ?? ''} />
       </div>
 
       {/* Composer — mounted ONLY once the conversation identity is resolved.
           Until then the rep sees why, instead of an enabled box whose sends
-          would be rejected on the way out (see conversationIdentity.ts). */}
-      <div className="px-3 pb-3 shrink-0">
+          would be rejected on the way out (see conversationIdentity.ts).
+          Edge-to-edge and pinned at the bottom on mobile; inset on desktop. */}
+      <div className="px-0 pb-0 md:px-3 md:pb-3 shrink-0 safe-bottom md:pb-3">
         {identity.status === 'ready' ? (
           <Composer identity={identity} />
         ) : (
-          <div className="card flex items-center justify-center gap-2 p-4 text-xs text-charcoal/60">
+          <div className="flex items-center justify-center gap-2 p-4 text-xs text-charcoal/60 border-t border-sand/20 md:border md:rounded-2xl md:mt-3">
             {identity.status === 'loading' && (
               <Loader2 size={14} className="animate-spin text-charcoal/40" />
             )}
@@ -449,6 +415,23 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           </div>
         )}
       </div>
+
+      {/* Mobile CRM actions bottom sheet — the same CrmActions cluster, tucked
+          out of the header. Tapping any action closes the sheet first. */}
+      {showCrmSheet && (
+        <MobileActionSheet
+          title={isAr ? 'إجراءات العميل والمشاريع' : 'Client & project actions'}
+          isAr={isAr}
+          onClose={() => setShowCrmSheet(false)}
+        >
+          <CrmActions
+            {...crmActionProps}
+            layout="sheet"
+            close={() => setShowCrmSheet(false)}
+            className="flex flex-wrap gap-2"
+          />
+        </MobileActionSheet>
+      )}
 
       {/* Client-options popup — the client's saved options with the Project
           Finder embedded, without leaving the conversation. */}
@@ -525,6 +508,250 @@ const DETAIL_CHIP_STYLES: Record<ClientPrefDetailChip['kind'], string> = {
 };
 
 /**
+ * The CRM action cluster for a conversation — Projects/Units browser, the
+ * linked-client / advertiser / contact links, Client options, Log interaction,
+ * AI handover, and (for an unlinked chat) Add-as-client / Add-contact.
+ *
+ * ONE definition, two placements: rendered inline in the header on desktop
+ * (`layout="inline"`) and inside the mobile bottom sheet (`layout="sheet"`,
+ * roomier tap targets). `close` is passed only in the sheet, so tapping an
+ * action dismisses the sheet before its modal/drawer/nav takes over.
+ */
+function CrmActions({
+  isAr,
+  navigate,
+  clientLinkId,
+  clientRecordUrl,
+  matchedContact,
+  matchedAdvertiser,
+  matchedAdvertiserName,
+  recordId,
+  aiManaged,
+  onClientOptions,
+  onLogInteraction,
+  onLeadIntake,
+  onContactIntake,
+  layout,
+  className = '',
+  close,
+}: {
+  isAr: boolean;
+  navigate: NavigateFunction;
+  clientLinkId: string | null;
+  clientRecordUrl: string | null;
+  matchedContact: AppRecord | null;
+  matchedAdvertiser: AppRecord | null;
+  matchedAdvertiserName: string | null;
+  recordId: string;
+  aiManaged: boolean;
+  onClientOptions: () => void;
+  onLogInteraction: () => void;
+  onLeadIntake: () => void;
+  onContactIntake: () => void;
+  layout: 'inline' | 'sheet';
+  className?: string;
+  close?: () => void;
+}) {
+  const big = layout === 'sheet';
+  const pad = big ? 'px-3 py-1.5 text-sm' : 'px-2 py-0.5';
+  // Every tap closes the sheet first (no-op on desktop), then runs the action.
+  const run = (fn: () => void) => () => {
+    close?.();
+    fn();
+  };
+
+  return (
+    <div className={className}>
+      {/* Sub-components own their onClick — an onClickCapture wrapper closes the
+          sheet before their internal handler opens the drawer/toggles AI. */}
+      <span onClickCapture={() => close?.()} className="contents">
+        <ProjectsUnitsBrowserButton clientId={clientLinkId} />
+      </span>
+      {matchedContact && (
+        <button
+          onClick={run(() => navigate(`/model/contacts/${matchedContact.id}`))}
+          className={`inline-flex items-center gap-1.5 rounded-full bg-charcoal/8 ${pad} font-medium text-charcoal transition-colors hover:bg-charcoal/15`}
+          title={isAr ? 'فتح بطاقة جهة الاتصال' : 'Open contact record'}
+        >
+          <Contact size={12} />
+          {isAr ? 'جهة اتصال' : 'Contact'}
+        </button>
+      )}
+      {matchedAdvertiser && (
+        <button
+          onClick={run(() => navigate(`/model/advertisers/${matchedAdvertiser.id}`))}
+          className={`inline-flex items-center gap-1.5 rounded-full bg-gold/20 ${pad} font-medium text-chocolate transition-colors hover:bg-gold/30`}
+          title={isAr ? 'فتح بطاقة المعلن' : 'Open advertiser record'}
+        >
+          <Megaphone size={12} />
+          <span className="truncate max-w-[220px]">
+            {isAr ? 'معلن: ' : 'Advertiser: '}
+            {matchedAdvertiserName ?? (isAr ? 'عرض البطاقة' : 'open record')}
+          </span>
+        </button>
+      )}
+      {clientRecordUrl ? (
+        <>
+          <a
+            href={clientRecordUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => close?.()}
+            className={`inline-flex items-center gap-1.5 font-medium text-copper hover:text-terracotta ${big ? 'rounded-full bg-copper/5 ' + pad : ''}`}
+            title={isAr ? 'فتح ملف العميل في تبويب جديد' : 'Open client record in a new tab'}
+          >
+            <User size={12} />
+            {isAr ? 'عميل مرتبط' : 'Linked client'}
+          </a>
+          <button
+            onClick={run(onClientOptions)}
+            className={`inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 ${pad} font-medium text-copper transition-colors hover:bg-copper/10`}
+            title={isAr ? 'عرض خيارات العميل والبحث عن المزيد' : 'View client options & find more'}
+          >
+            <ListChecks size={12} />
+            {isAr ? 'خيارات العميل' : 'Client options'}
+          </button>
+          <button
+            onClick={run(onLogInteraction)}
+            className={`inline-flex items-center gap-1 rounded-full border border-gold/40 bg-gold/10 ${pad} font-medium text-[#8a6a2f] transition-colors hover:bg-gold/20`}
+            title={isAr ? 'تسجيل مكالمة أو تواصل خارج المهام' : 'Log a call or other interaction'}
+          >
+            <NotebookPen size={12} />
+            {isAr ? 'تسجيل تواصل' : 'Log interaction'}
+          </button>
+          <span onClickCapture={() => close?.()} className="contents">
+            <AiHandoverButton chatRecordId={recordId} aiManaged={aiManaged} isAr={isAr} />
+          </span>
+        </>
+      ) : (
+        <>
+          <button
+            onClick={run(onLeadIntake)}
+            className={`inline-flex items-center gap-1.5 rounded-full border border-copper/40 bg-copper/10 ${pad} font-medium text-copper transition-colors hover:bg-copper/20`}
+            title={isAr ? 'إنشاء عميل من هذا الرقم وبدء المتابعة' : 'Create a client from this phone and start the follow-up'}
+          >
+            <UserPlus size={12} />
+            {isAr ? 'إضافة كعميل' : 'Add as a client'}
+          </button>
+          {!matchedContact && (
+            <button
+              onClick={run(onContactIntake)}
+              className={`inline-flex items-center gap-1.5 rounded-full border border-charcoal/25 bg-charcoal/5 ${pad} font-medium text-charcoal transition-colors hover:bg-charcoal/10`}
+              title={
+                isAr
+                  ? 'حفظ الاسم والرقم فقط — بدون إنشاء عميل أو مهمة متابعة'
+                  : 'Save just the name and number — no client, no follow-up task'
+              }
+            >
+              <Contact size={12} />
+              {isAr ? 'إضافة جهة اتصال جديدة' : 'Add a new contact'}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Mobile-only bottom sheet. Slides up from the bottom edge; closes on backdrop
+ * tap (the `e.target === e.currentTarget` check, same as ClientOptionsModal) or
+ * Escape. Portalled to <body> so it escapes the chat's overflow-hidden column.
+ */
+function MobileActionSheet({
+  title,
+  isAr,
+  onClose,
+  children,
+}: {
+  title: string;
+  isAr: boolean;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-[55] flex items-end bg-charcoal/40 md:hidden"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      dir={isAr ? 'rtl' : 'ltr'}
+    >
+      <div className="w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-2xl safe-bottom animate-[slideIn_0.16s_ease-out]">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-sand/30 bg-white px-4 py-3">
+          <h3 className="text-sm font-bold text-chocolate">{title}</h3>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-charcoal/50 hover:text-copper hover:bg-cream transition-colors"
+            aria-label={isAr ? 'إغلاق' : 'Close'}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="p-4">{children}</div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/**
+ * Mobile ⋯ overflow menu — the conversation-STATE actions that used to be the
+ * permanent «إنهاء المحادثة» button: Done / Reopen, plus Archive. Reuses the
+ * detail's `requestStatusChange`, so a resolve with an active WhatsApp follow-up
+ * still routes through the completion popup.
+ */
+function OverflowMenu({
+  isAr,
+  status,
+  chatWid,
+  onStatusChange,
+  onClose,
+}: {
+  isAr: boolean;
+  status: string;
+  chatWid: string | null;
+  onStatusChange: (status: 'active' | 'resolved' | 'archived') => Promise<void>;
+  onClose: () => void;
+}) {
+  const closed = status === 'resolved' || status === 'archived';
+  const pick = (next: 'active' | 'resolved' | 'archived') => () => {
+    onClose();
+    void onStatusChange(next);
+  };
+  const rowCls =
+    'w-full px-3 py-2 text-start text-xs flex items-center gap-2 transition-colors hover:bg-cream/60 disabled:opacity-50';
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="absolute end-0 top-full mt-1 z-50 min-w-[190px] rounded-xl border border-sand/30 bg-white py-1 shadow-lg">
+        <button onClick={pick(closed ? 'active' : 'resolved')} disabled={!chatWid} className={rowCls}>
+          {closed ? <RotateCcw size={13} className="text-charcoal/50" /> : <CheckCheck size={13} className="text-copper" />}
+          {closed ? (isAr ? 'إعادة فتح المحادثة' : 'Reopen conversation') : (isAr ? 'إنهاء المحادثة' : 'End conversation')}
+        </button>
+        {status !== 'archived' && (
+          <button onClick={pick('archived')} disabled={!chatWid} className={rowCls}>
+            <Check size={13} className="text-charcoal/40" />
+            {isAr ? 'أرشفة' : 'Archive'}
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
+/**
  * One-click close for a finished conversation. Sets status 'resolved'
  * (what the list's Open/Closed filter reads); on an already-closed chat
  * it flips to a subtle Reopen. Same optimistic patchChat path as the
@@ -535,11 +762,13 @@ function DoneButton({
   status,
   isAr,
   onChange,
+  className = '',
 }: {
   chatWid: string | null;
   status: string;
   isAr: boolean;
   onChange: (status: 'active' | 'resolved') => Promise<void>;
+  className?: string;
 }) {
   const [saving, setSaving] = useState(false);
   const closed = status === 'resolved' || status === 'archived';
@@ -560,7 +789,7 @@ function DoneButton({
     <button
       onClick={() => void act()}
       disabled={!chatWid || saving}
-      className={`self-start shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50 ${
+      className={`self-start shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50 ${className} ${
         closed
           ? 'border border-sand text-charcoal/60 hover:text-copper hover:border-copper/40 bg-white'
           : 'bg-copper text-white hover:bg-terracotta'

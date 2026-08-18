@@ -29,7 +29,12 @@ export default function ChatsSplitPage() {
   }, [subscribeToAllChats, unsubscribeFromAllChats]);
 
   return (
-    <div className="chats-split h-[calc(100vh-8rem)] flex overflow-hidden rounded-2xl border border-sand/20 bg-white">
+    // Mobile: edge-to-edge, full-screen native inbox. The negative margins cancel
+    // the AppLayout <main> mobile padding (px-4 py-6); the root is overflow-x-hidden
+    // so the -mx can't spawn a horizontal scrollbar. `dvh` keeps the mobile browser
+    // chrome from clipping the composer. 4.25rem ≈ the sticky Header height (68px,
+    // measured). Desktop (md+) is unchanged: the framed, inset two-pane card.
+    <div className="chats-split -mx-4 -mt-6 h-[calc(100dvh-4.25rem)] md:mx-0 md:mt-0 md:h-[calc(100vh-8rem)] flex overflow-hidden bg-white md:rounded-2xl md:border md:border-sand/20">
       {/* Left: list. Hidden on mobile when a chat is selected. */}
       <div
         className={`w-full md:w-[360px] shrink-0 border-e border-sand/20 flex-col ${

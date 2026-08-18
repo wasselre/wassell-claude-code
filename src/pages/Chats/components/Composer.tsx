@@ -441,7 +441,9 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
         />
       )}
 
-      <div className="card p-3 mt-3 flex flex-col gap-2">
+      {/* Mobile: edge-to-edge composer pinned at the bottom with a top hairline;
+          desktop (md+): the framed, inset card as before. */}
+      <div className="bg-white p-3 flex flex-col gap-2 border-t border-sand/20 md:mt-3 md:rounded-2xl md:border md:shadow-sm">
         {/* Scheduled messages waiting in Haberchat's queue for THIS chat. */}
         <ScheduledStrip
           deviceId={deviceId}
