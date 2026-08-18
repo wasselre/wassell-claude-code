@@ -26,6 +26,7 @@ import {
   type MatchResultItem,
   type MatchSource,
   type MarketInfo,
+  type OurFit,
 } from './matchAgent.js';
 import type { GeoStatus } from './geoVerify.js';
 import type { ConstraintField } from './constraints.js';
@@ -75,6 +76,9 @@ export interface FinderMatch {
    *  by the endpoint AFTER ranking + the assertRankingUnchanged guard, so it can never
    *  influence score/band/source/match_type/order. */
   deal?: import('../../src/lib/market/dealBadge.js').DealBadge;
+  /** Preferential-fit summary — present ONLY on source 'our_projects' (loose matching:
+   *  location/budget/size become honest badges instead of hard exclusions). */
+  our_fit?: OurFit;
 }
 
 export interface FinderResult {
@@ -342,6 +346,7 @@ function toFinderMatch(item: MatchResultItem, districtRequested: boolean, locale
     facts: item.facts,
     score_breakdown: item.score_breakdown,
     explanation,
+    our_fit: item.our_fit,
   };
 }
 
@@ -377,8 +382,10 @@ export function groupForFinder(
 
   for (const item of pool) {
     // Score floor (e.g. "show all options ≥ 70"). The engine already drops < MIN_RETURN;
-    // this is an optional stricter, caller-set threshold.
-    if (minScore != null && item.score < minScore) continue;
+    // this is an optional stricter, caller-set threshold. OUR PORTFOLIO is EXEMPT — our
+    // projects always surface (badged), never hidden by the quality floor (they beat
+    // market ads even as a stretch), so the rep sees every real matching project.
+    if (minScore != null && item.data_source !== 'our_projects' && item.score < minScore) continue;
     const m = toFinderMatch(item, districtRequested, locale);
     groups[m.group].push(m);
   }

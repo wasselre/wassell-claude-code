@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-30
+**Last updated (from DB):** 2026-08-18
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -159,11 +159,11 @@
 | `preferred_projects` | Preferred Projects / المشاريع المفضلة | Lookup | no | half | no | → All Projects · multi |
 | `client_favorite_units` | Client Favorite Units / الوحدات المفضلة للعميل | unit_picker | no | half | yes |  |
 | `preferred_direction` | Preferred Direction / الإتجاه المفضل | Multi-select | no | half | no | 8 options · multi |
-| `preferred_area` | Preferred Area / المساحة المفضلة للعميل | Range | no | half | no | 100–2000 |
+| `preferred_area` | Preferred Area / المساحة المفضلة للعميل | Range | no | half | no | 50–5000 |
 | `preferred_language` | Preferred Language / اللغة المفضلة للعميل | Dropdown | no | half | no | 2 options |
 | `preferred_unit_type` | Preferred Unit Type / نوع الوحدة المفضل للعميل | Multi-select | no | half | no | 7 options · multi |
 | `preferred_amenities` | Preferred Amenities / المرافق المفضلة للعميل | Multi-select | no | half | no | 9 options · multi |
-| `budget` | Budget / الميزانية | Range | no | half | no | 50000–5000000 |
+| `budget` | Budget / الميزانية | Range | no | half | no | 500000–10000000 |
 | `location_priority` | Location Priority / أولوية الموقع | Dropdown | no | half | no | 4 options |
 | `max_distance_km` | Max Distance (km) / أقصى مسافة (كم) | Number | no | half | no |  |
 | `preferred_bedrooms` | Preferred Bedrooms / عدد غرف النوم المفضل | Range | no | half | no | 1–10 |
@@ -188,7 +188,8 @@
   - API value `جنوب غرب` → "South West" / "جنوب غرب"
   - API value `جنوب شرق` → "South East" / "جنوب شرق"
 - **Preferred Area / المساحة المفضلة للعميل** (`preferred_area`, type `range`):
-  - 100 to 2000 step 50 m²
+  - 50 to 5000 step 10 m²
+  - selectable values (91): 50 … 500 step 10, then 500 … 5,000 step 100
 - **Preferred Language / اللغة المفضلة للعميل** (`preferred_language`, type `dropdown`) — options:
   - API value `العربية` → "Arabic" / "العربية"
   - API value `الإنجليزية` → "English" / "الإنجليزية"
@@ -211,7 +212,8 @@
   - API value `ملحق` → "Annex" / "ملحق"
   - API value `قبو` → "Basement" / "قبو"
 - **Budget / الميزانية** (`budget`, type `range`):
-  - 50000 to 5000000 step 50000 SAR
+  - 500000 to 10000000 step 50000 SAR
+  - selectable values (191): 500,000 … 10,000,000 step 50,000
 - **Location Priority / أولوية الموقع** (`location_priority`, type `dropdown`) — options:
   - API value `strict_district` → "Strict district" / "الحي بدقة" · color `#dc2626`
   - API value `nearby_district_ok` → "Nearby district OK" / "الأحياء القريبة مقبولة" · color `#22c55e`

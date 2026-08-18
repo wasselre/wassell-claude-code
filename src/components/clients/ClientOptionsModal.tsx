@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, ListChecks } from 'lucide-react';
+import { X, ListChecks, Building2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanEditRecord } from '@/hooks/usePermission';
 import type { AppRecord } from '@/types';
 import ClientOptionsTab from '@/pages/Clients/components/tabs/ClientOptionsTab';
 import SuggestedProjectsView from '@/pages/Followups/components/SuggestedProjectsView';
+import ProjectsUnitsBrowser from '@/pages/Chats/components/ProjectsUnitsBrowser';
 
 /**
  * Client Options POPUP — the client's unified options list (ClientOptionsTab)
@@ -13,6 +14,13 @@ import SuggestedProjectsView from '@/pages/Followups/components/SuggestedProject
  * this client; its Done returns to the list). Lets any surface — the WhatsApp
  * chat, a workspace popup — review and grow a client's options without
  * navigating away from where the rep is standing.
+ *
+ * A third mode, `browse`, hands over to the PROJECTS & UNITS BROWSER — the
+ * whole catalogue, plus each project's unit inventory, for when the rep wants
+ * to look around rather than have the finder score matches against this
+ * client's stated preferences. It REPLACES this modal while it is open (rather
+ * than stacking on top of it) so the browser's own stacked surfaces — the unit
+ * drawer, unit compare, the send-to-client flow — keep their z-order.
  */
 export default function ClientOptionsModal({ clientId, onClose }: { clientId: string; onClose: () => void }) {
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -27,7 +35,7 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
   );
   const canEdit = useCanEditRecord(clientsModel, client);
 
-  const [mode, setMode] = useState<'options' | 'finder'>('options');
+  const [mode, setMode] = useState<'options' | 'finder' | 'browse'>('options');
 
   const clientName = useMemo(() => {
     const d = client?.data as Record<string, unknown> | undefined;
@@ -48,6 +56,11 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
     return () => window.removeEventListener('keydown', onKey);
   }, [mode, onClose]);
 
+  // Catalogue browsing takes over the screen; closing it comes back here.
+  if (mode === 'browse') {
+    return <ProjectsUnitsBrowser clientId={clientId} onClose={() => setMode('options')} />;
+  }
+
   return (
     <div
       role="dialog"
@@ -67,6 +80,17 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
                 <h2 className="truncate text-base font-bold text-chocolate">{L('خيارات العميل', 'Client Options')}</h2>
                 {clientName && <p className="truncate text-[11px] text-charcoal/60">{clientName}</p>}
               </div>
+              {/* Browse the whole catalogue (projects + their units) — the
+                  "look around" counterpart to the finder's scored matching. */}
+              <button
+                type="button"
+                onClick={() => setMode('browse')}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-copper/30 bg-copper/5 px-2.5 py-1 text-xs font-medium text-copper transition-colors hover:bg-copper/10"
+                title={L('تصفح كل المشاريع والوحدات', 'Browse all projects & units')}
+              >
+                <Building2 size={13} />
+                <span className="hidden sm:inline">{L('تصفح المشاريع', 'Browse projects')}</span>
+              </button>
               <button
                 type="button"
                 onClick={onClose}

@@ -61,7 +61,17 @@ const STRONG = 75;
 // A Tier-1 (our_projects) result at/above GOOD suppresses the Tier-2 fallback —
 // i.e. we only reach into all_projects when our portfolio has nothing this good.
 const GOOD = 60;
-const MIN_RETURN = 40; // never surface a project below this
+const MIN_RETURN = 40; // never surface a project below this (market/all_projects only — see OUR_* below)
+// OUR PORTFOLIO gets PREFERENTIAL, looser matching than the external market:
+// our projects are far fewer and higher-value, so a near-miss should surface with
+// an honest fit badge instead of being silently hard-excluded. For source
+// 'our_projects' the engine drops ONLY the location gate, the numeric hard
+// constraints (budget/area/beds/baths/age → treated as soft/badge), and the
+// MIN_RETURN score floor. Two guards remain so absurd options never show:
+//   - property type stays HARD (a villa-seeker never sees apartments), and
+//   - a BUDGET CEILING (this multiple of the client's max) — the cheapest available
+//     unit above it is genuinely out of reach, so we still drop it.
+const OUR_PROJECT_BUDGET_CEILING_MULT = 1.5;
 // A unit up to 15% over budget is a "stretch" — surfaced, scored down (0.5) and
 // labelled. This MUST also be applied to the market DB pre-filter's ceiling:
 // the filter runs BEFORE scoring, so a hard `price <= budget_max` cut made the
@@ -1082,6 +1092,14 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   put('district', geo?.projDistrictName ?? undefined);
   put('unit_types', asArr(data.unit_types));
   put('project_status', data.project_status);
+  // Delivery readiness for the finder card — "جاهز / Ready" vs "على الخارطة /
+  // Off-plan" + the expected handover date when off-plan. These are the EXISTING
+  // all_projects source-of-truth fields (no derived/duplicate field); the card
+  // resolves them via src/lib/matching/deliveryStatus.ts. Market listings carry
+  // neither (a resale ad has no construction stage) — that renders as "unknown",
+  // never as a readiness claim.
+  put('construction_status', data.construction_status);
+  put('handover_date', data.handover_date);
   put('project_type', data.project_type);
   put('price_range', data.price_range);
   put('area_range', data.area_range);
@@ -1138,6 +1156,28 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
 
 export type MatchSource = 'our_projects' | 'all_projects' | 'market_listings';
 
+/**
+ * PREFERENTIAL-FIT summary for an `our_projects` match. Because our portfolio is
+ * matched loosely (location/budget/area no longer EXCLUDE — see the OUR_* rules),
+ * each card must honestly say HOW it fits so the rep judges the stretch. Present
+ * ONLY on source 'our_projects'. `budget` / `area` are set only when the client
+ * stated that criterion (so we don't badge "size matches" when no size was asked).
+ */
+export interface OurFit {
+  /** Location relationship to the client's requested area (drawn polygon / district). */
+  location: 'in_area' | 'nearby' | 'same_city' | 'other';
+  /** Distance (km) to the nearest requested reference — for the nearby/other badge. */
+  distance_km: number | null;
+  /** Budget relationship — cheapest AVAILABLE unit vs the client's window. */
+  budget?: 'within' | 'over' | 'under';
+  /** When `budget:'over'` — how far the cheapest available unit exceeds the max (%). */
+  budget_over_pct?: number | null;
+  /** Size relationship — available area range vs the requested window. */
+  area?: 'match' | 'smaller' | 'larger';
+  /** When `area` is 'smaller'/'larger' — the magnitude of the miss (%). */
+  area_gap_pct?: number | null;
+}
+
 export interface MatchResultItem {
   project_id: string;
   project_name: string;
@@ -1162,6 +1202,8 @@ export interface MatchResultItem {
   geo_status?: GeoStatus;
   /** Geo data-integrity warnings (e.g. stored district ≠ coordinate polygon). */
   mismatch_warnings?: string[];
+  /** Preferential-fit summary — set ONLY on source 'our_projects' (loose matching). */
+  our_fit?: OurFit;
 }
 
 const VERIFY_WARNING =
@@ -1369,6 +1411,97 @@ function amenitiesAllPresent(data: Record<string, unknown>, wanted: string[]): b
   const have = asArr(data.preferred_amenities);
   if (have.length === 0) return false;
   return required.every((w) => have.some((h) => fuzzyContains(h, w)));
+}
+
+/** Cheapest / dearest AVAILABLE unit price and the available size band. Prefers the
+ *  persisted available_* rollups (what the client can actually buy right now); falls
+ *  back to the all-units range when a project has no available_* rollup yet. */
+function availableRange(data: Record<string, unknown>, availKey: string, allKey: string) {
+  const r = pickRange(data, availKey) ?? pickRange(data, allKey);
+  if (!r) return { min: null as number | null, max: null as number | null };
+  return { min: r.min ?? r.max ?? null, max: r.max ?? r.min ?? null };
+}
+
+/** Build the preferential-fit summary shown on an our_projects card. Pure: reads
+ *  the client's stated criteria vs the project's available price/size + the scored
+ *  location tier. `geoGateActive` is true when the client has a location gate (a
+ *  drawn polygon / district includes / element rules); `geoInside` is true when this
+ *  project passed that gate. */
+function computeOurFit(
+  data: Record<string, unknown>,
+  req: MatchRequirements,
+  geoGateActive: boolean,
+  geoInside: boolean,
+  scored: ScoredProject,
+): OurFit {
+  // ── Location ──
+  // "The requested area" = the client's location GATE when they have one. When a gate
+  // is active, ONLY the gate proves a project is inside it — `location_tier === 'exact'`
+  // can mean merely "same city" (when the requirements carry a city but NO district),
+  // so trusting the tier would falsely badge an out-of-area project «ضمن المنطقة»
+  // (live bug: a Jadriyah project shown "in area" for a north-Riyadh drawn polygon).
+  // Without a gate we fall back to the district/city tier.
+  const districtRequested = !!(
+    req.district || (req.districts && req.districts.length) || (req.district_ids && req.district_ids.length)
+  );
+  let location: OurFit['location'];
+  if (geoGateActive) {
+    location = geoInside
+      ? 'in_area'
+      : scored.location_tier === 'nearby'
+        ? 'nearby'
+        : scored.location_tier === 'none'
+          ? 'other'
+          : 'same_city'; // outside the drawn shape, but still the same city (guard keeps ours same-city)
+  } else if (districtRequested) {
+    location = scored.location_tier === 'exact'
+      ? 'in_area'
+      : scored.location_tier === 'nearby'
+        ? 'nearby'
+        : scored.location_tier === 'same_city'
+          ? 'same_city'
+          : 'other';
+  } else {
+    // Only a city (or nothing) was requested — the city itself is the "area".
+    location = scored.location_tier === 'none' ? 'other' : 'same_city';
+  }
+
+  const fit: OurFit = { location, distance_km: scored.distance_km };
+
+  // ── Budget (cheapest available unit vs the client's window) ──
+  if (req.budget_min != null || req.budget_max != null) {
+    const price = availableRange(data, 'available_price_range', 'price_range');
+    if (price.min != null || price.max != null) {
+      const cheapest = price.min;
+      const dearest = price.max;
+      if (req.budget_max != null && cheapest != null && cheapest > req.budget_max) {
+        fit.budget = 'over';
+        fit.budget_over_pct = Math.round(((cheapest - req.budget_max) / req.budget_max) * 100);
+      } else if (req.budget_min != null && dearest != null && dearest < req.budget_min) {
+        fit.budget = 'under';
+      } else {
+        fit.budget = 'within';
+      }
+    }
+  }
+
+  // ── Area (available size band vs the requested window) ──
+  if (req.area_min != null || req.area_max != null) {
+    const a = availableRange(data, 'available_area_range', 'area_range');
+    if (a.min != null && a.max != null) {
+      if (req.area_min != null && a.max < req.area_min) {
+        fit.area = 'smaller';
+        fit.area_gap_pct = Math.round(((req.area_min - a.max) / req.area_min) * 100);
+      } else if (req.area_max != null && a.min > req.area_max) {
+        fit.area = 'larger';
+        fit.area_gap_pct = Math.round(((a.min - req.area_max) / req.area_max) * 100);
+      } else {
+        fit.area = 'match';
+      }
+    }
+  }
+
+  return fit;
 }
 
 function adaptListingToScorable(d: Record<string, unknown>): Record<string, unknown> {
@@ -2079,14 +2212,58 @@ export async function matchProjectsCore(
 
   const scoreInto = (sourceRows: RecordRow[], source: 'our_projects' | 'all_projects'): MatchResultItem[] => {
     const out: MatchResultItem[] = [];
+    const isOurs = source === 'our_projects';
+    // OUR PORTFOLIO — preferential, LOOSE matching (our projects beat market ads).
+    // The numeric hard constraints (budget/area/beds/baths/age) are demoted to SOFT
+    // so a near-miss ranks + badges instead of being excluded; property_type stays
+    // HARD (a villa-seeker never sees apartments). Scoring itself is UNCHANGED — the
+    // scorer below still gets the original `req`, so a stretch still ranks lower.
+    const effReq: MatchRequirements = isOurs
+      ? {
+          ...req,
+          constraints: {
+            ...(req.constraints ?? {}),
+            budget: { mode: 'soft' },
+            area: { mode: 'soft' },
+            bedrooms: { mode: 'soft' },
+            bathrooms: { mode: 'soft' },
+            unit_age: { mode: 'soft' },
+            property_type: { mode: 'hard' },
+          },
+        }
+      : req;
     for (const r of sourceRows) {
       const name = asStr(r.data.project_name);
       if (!name) continue;
-      if (!passesGeoGate(r.id)) continue; // location_items gate (before scoring)
+      // Did this project pass the client's location gate (pin inside the drawn area /
+      // requested district)? For ours this only drives the fit badge — location NEVER
+      // excludes our portfolio; market + all_projects still hard-gate on it.
+      const geoInside = geoGate !== null && geoGate.has(r.id);
+      if (!isOurs && !passesGeoGate(r.id)) continue; // location_items gate (before scoring)
       // unit_age default 0 mirrors the scorer's catalog assumption (new-development
       // stock), so a hard age cap doesn't reject the whole catalog as "unknown age".
-      const failed = firstFailedHardConstraint({ unit_age: 0, ...r.data }, req);
+      const failed = firstFailedHardConstraint({ unit_age: 0, ...r.data }, effReq);
       if (failed) { noteConstraintDrop(failed); continue; }
+      // BUDGET CEILING for ours: budget is otherwise soft, but if even the cheapest
+      // AVAILABLE unit is far past the client's max it's genuinely out of reach — drop
+      // it so absurd options never show. Only in-reach near-misses become badges.
+      if (isOurs && req.budget_max != null) {
+        const price = availableRange(r.data, 'available_price_range', 'price_range');
+        if (price.min != null && price.min > req.budget_max * OUR_PROJECT_BUDGET_CEILING_MULT) {
+          noteConstraintDrop('budget');
+          continue;
+        }
+      }
+      // Same-CITY sanity boundary for ours (an "absurd guard", like the budget ceiling
+      // above): our portfolio is never excluded by the client's DRAWN AREA / district
+      // (that becomes the fit badge), but a project in a DIFFERENT city than the one they
+      // asked for is noise — a Dubai villa for a Riyadh search. So when a city was
+      // requested we still keep results within it. A project with NO known city is kept
+      // (we stay lenient — never fail-closed on missing geography for our own stock).
+      if (isOurs && reqCityIds.length) {
+        const pc = recordLocationIds(r.data).city;
+        if (pc && !reqCityIds.includes(pc)) continue;
+      }
       const loc = recordLocationIds(r.data);
       const g = geoFor(r, loc, polyMap, verifyGeo);
       // unit_age default 0: the catalog (our_projects/all_projects) is new-
@@ -2111,8 +2288,8 @@ export async function matchProjectsCore(
       });
       if (s.district_exact) anyDistrictExact = true;
       if (s.location_tier === 'nearby') anyNearby = true;
-      if (s.score < MIN_RETURN) continue;
-      if (s.available_units_zero && !includeSoldOut) continue; // sold-out excluded by default
+      if (!isOurs && s.score < MIN_RETURN) continue; // ours are never score-floored (they always surface, badged)
+      if (s.available_units_zero && !includeSoldOut) continue; // sold-out excluded by default (both)
       const item: MatchResultItem = {
         project_id: r.id,
         project_name: name,
@@ -2135,6 +2312,7 @@ export async function matchProjectsCore(
         item.requires_verification = true;
         item.verification_warning = VERIFY_WARNING;
       }
+      if (isOurs) item.our_fit = computeOurFit(r.data, req, geoGate !== null, geoInside, s);
       out.push(item);
     }
     return out.sort(byBandThenScore);
@@ -2837,4 +3015,4 @@ export async function executeMatchTool(
 }
 
 // Exported for unit testing the deterministic scorer + metadata enforcement.
-export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature, resolveClientFromCandidates, adaptListingToScorable, parseUnitAgeText };
+export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature, resolveClientFromCandidates, adaptListingToScorable, parseUnitAgeText, computeOurFit };

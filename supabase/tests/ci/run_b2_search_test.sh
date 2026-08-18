@@ -74,7 +74,15 @@ USING (wassell_can_access_file(id, 'delete'::text));
 SQL
 run "$ROOT/supabase/rollback/2026-08-16_03_file_authz_performance_down.sql"   # pre-B2A baseline predicate
 run "$ROOT/supabase/migrations/2026-08-16_03_file_authz_performance.sql"      # B2A
-run "$ROOT/supabase/migrations/2026-08-16_06_file_authz_grant_sets_v2.sql"    # B2A.2 = production today
+run "$ROOT/supabase/migrations/2026-08-16_06_file_authz_grant_sets_v2.sql"    # B2A.2
+run "$ROOT/supabase/migrations/2026-08-17_01_scope_authz_helpers.sql"          # caller-scoped helpers
+run "$ROOT/supabase/migrations/2026-08-18_02_link_authz_denormalized.sql"      # B2A.4 = production today
+# The stack above must stay equal to what production actually runs. It said
+# "B2A.2 = production today" until 2026-08-18, by which point two more
+# authorization migrations had shipped — so B2 was being measured against a
+# database that no longer resembled the one it will run on. B2A.4 in particular
+# rewrites BOTH files_select and file_links_select and adds two columns to
+# file_links, which is exactly the surface business_files_search reads through.
 
 # The pre-B2 population is "every row whose storage_path is not a scale/ row".
 # coalesce() is load-bearing: the Phase 1 fixture inserts files with a NULL

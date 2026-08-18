@@ -636,8 +636,70 @@ function makeCore(parts: { our?: MatchResultItem[]; all?: MatchResultItem[]; mar
   };
 }
 
+// ── OUR PORTFOLIO preferential (loose) treatment in the grouping layer ───────
+describe('our_projects get preferential grouping (loose matching)', () => {
+  const mkItem = (over: Partial<MatchResultItem> & { project_id: string; data_source: MatchResultItem['data_source']; score: number }): MatchResultItem => ({
+    project_name: over.project_id, match_band: 'partial', match_type: 'same_city', district_match_basis: null,
+    score_breakdown: {}, facts: {}, data_gaps: [], missing_info: [],
+    location_tier: 'same_city', distance_km: null, geo_confidence: null, ...over,
+  });
+
+  it('exempts our_projects from the caller minScore floor; still applies it to others', () => {
+    const core = makeCore({
+      our: [mkItem({ project_id: 'ours-weak', data_source: 'our_projects', score: 55 })],
+      all: [mkItem({ project_id: 'all-weak', data_source: 'all_projects', score: 55 })],
+      market: [mkItem({ project_id: 'mkt-weak', data_source: 'market_listings', score: 55 })],
+    });
+    const res = groupForFinder(core, {}, { minScore: 70, sources: ['our_projects', 'all_projects', 'market_listings'] });
+    const ids = FINDER_GROUP_KEYS_LOCAL.flatMap((k) => res.groups[k].map((m) => m.project_id));
+    expect(ids).toContain('ours-weak');       // our project survives the 70 floor
+    expect(ids).not.toContain('all-weak');     // all_projects dropped
+    expect(ids).not.toContain('mkt-weak');     // market dropped
+  });
+
+  it('passes our_fit through to the FinderMatch', () => {
+    const core = makeCore({
+      our: [mkItem({
+        project_id: 'ours', data_source: 'our_projects', score: 82,
+        our_fit: { location: 'nearby', distance_km: 2.1, budget: 'within', area: 'match' },
+      })],
+    });
+    const res = groupForFinder(core, {}, { sources: ['our_projects'] });
+    const m = FINDER_GROUP_KEYS_LOCAL.flatMap((k) => res.groups[k]).find((x) => x.project_id === 'ours');
+    expect(m?.our_fit).toEqual({ location: 'nearby', distance_km: 2.1, budget: 'within', area: 'match' });
+  });
+});
+
 // ── unit age (عمر العقار) ───────────────────────────────────────────────────
 import { __test as matchTest } from '../matchAgent.js';
+import { FINDER_GROUP_KEYS as FINDER_GROUP_KEYS_LOCAL } from '../projectFinder.js';
+
+describe('computeOurFit location — a drawn gate is the ONLY proof of "in area"', () => {
+  const fit = matchTest.computeOurFit;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const scored = (tier: string, dist: number | null = null): any => ({ location_tier: tier, distance_km: dist });
+
+  it('gate active + OUTSIDE + tier "exact" (city-only match) → same_city, NOT in_area', () => {
+    // The live bug: a city-only request marks every same-city project location_tier
+    // "exact"; a Jadriyah project outside a north-Riyadh polygon must not read in_area.
+    const f = fit({}, { city: 'الرياض' } as MatchRequirements, /*gate*/ true, /*inside*/ false, scored('exact', 8));
+    expect(f.location).toBe('same_city');
+  });
+  it('gate active + INSIDE → in_area', () => {
+    expect(fit({}, {} as MatchRequirements, true, true, scored('exact')).location).toBe('in_area');
+  });
+  it('gate active + OUTSIDE + tier "none" (different city) → other', () => {
+    expect(fit({}, {} as MatchRequirements, true, false, scored('none')).location).toBe('other');
+  });
+  it('no gate + a district WAS requested + tier "exact" → in_area', () => {
+    const f = fit({}, { district: 'العليا' } as MatchRequirements, false, false, scored('exact'));
+    expect(f.location).toBe('in_area');
+  });
+  it('no gate + city-only + tier "exact" → same_city (the city is the area)', () => {
+    const f = fit({}, { city: 'الرياض' } as MatchRequirements, false, false, scored('exact'));
+    expect(f.location).toBe('same_city');
+  });
+});
 
 describe('unit age parsing (TS twin of wassell_parse_unit_age — keep in sync)', () => {
   const p = matchTest.parseUnitAgeText;

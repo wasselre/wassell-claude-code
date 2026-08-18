@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback, type KeyboardEvent } from 'react';
-import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic, MessageSquare, Clock, Play, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic, MessageSquare, Clock, Play, ChevronLeft, ChevronRight, AlertCircle, RotateCcw } from 'lucide-react';
+import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { uploadLocalFile, listScheduledMessages, cancelScheduledMessage } from '@/lib/haberchat/client';
 import {
@@ -10,6 +11,7 @@ import {
 import { sendProjectImageMessages } from '@/lib/projectMessageImages';
 import TemplatePickerModal from './TemplatePickerModal';
 import SchedulePopover, { formatScheduleTime } from './SchedulePopover';
+import type { ResolvedConversationIdentity } from '../lib/conversationIdentity';
 import type { ChatMessage, ScheduledChatMessage } from '@/types';
 
 /**
@@ -19,6 +21,21 @@ import type { ChatMessage, ScheduledChatMessage } from '@/types';
  *   • Pre-uploaded (from a template). Already has a Haberchat fileId,
  *     no re-upload at send time.
  * Both are mutually exclusive (picking from one path clears the other).
+ *
+ * TWO invariants this component exists to uphold (2026-08-18):
+ *
+ * 1. **Sending NEVER blocks typing.** Every send is dispatched into the
+ *    BACKGROUND; the textarea stays enabled and focused so message N can be
+ *    typed while N-1 is still in flight. Progress is per-message — each send
+ *    gets its own optimistic bubble in the thread with its own
+ *    pending / sent / failed state (and a Retry button when it fails) — not a
+ *    single global "sending" flag that greys the whole composer out.
+ * 2. **It only exists once the conversation identity is RESOLVED.** It takes a
+ *    `ResolvedConversationIdentity` by value, so the record id, chat wid,
+ *    recipient phone and send-from device are all known and all belong to the
+ *    conversation on screen. Each dispatch CAPTURES that identity, so a
+ *    resolution (or a chat switch) landing later can never re-target a send
+ *    that is already on its way.
  */
 
 type LocalAttachment = { kind: 'local'; file: File };
@@ -32,13 +49,30 @@ type TemplateAttachment = {
 };
 type Attachment = LocalAttachment | TemplateAttachment;
 
-export default function Composer({
-  chatWid,
-  disabled = false,
-}: {
-  chatWid: string;
-  disabled?: boolean;
-}) {
+/** Exactly what one Send click composed. Captured up-front so clearing the
+ *  box cannot race the background dispatch. */
+interface SendSnapshot {
+  body: string;
+  files: File[];
+  tmpl: TemplateAttachment | null;
+  projectImages: string[];
+}
+
+/** One composed-but-unsent message parked for one-click restore. Only ever
+ *  populated by failures that produce NO thread bubble (an attachment upload
+ *  that never reached the send, or a rejected scheduled send) — everything
+ *  that reaches the thread is recovered from its own failed bubble instead. */
+interface UnsentDraft {
+  id: string;
+  text: string;
+  files: File[];
+  templateAtt: TemplateAttachment | null;
+  projectImageFileIds: string[];
+  error: string;
+}
+
+export default function Composer({ identity }: { identity: ResolvedConversationIdentity }) {
+  const chatWid = identity.chatWid;
   const isAr = useAppStore((s) => s.language === 'ar');
   const sendChatMessage = useAppStore((s) => s.sendChatMessage);
   const addToast = useAppStore((s) => s.addToast);
@@ -58,7 +92,9 @@ export default function Composer({
   // ids) or a listing template's cleaned photos (public URLs). Set when such
   // a template is picked; cleared on send or when a local file replaces it.
   const [projectImageFileIds, setProjectImageFileIds] = useState<string[]>([]);
-  const [sending, setSending] = useState(false);
+  // Composed messages that failed BEFORE reaching the thread. Never dropped —
+  // the rep restores them into the box with one click.
+  const [unsentDrafts, setUnsentDrafts] = useState<UnsentDraft[]>([]);
   const [showPicker, setShowPicker] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   // Bumped after schedule/cancel so the scheduled strip re-fetches.
@@ -66,30 +102,13 @@ export default function Composer({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Recipient phone + send-from device for this chat — same resolution as
-  // appStore.sendChatMessage. Needed to query Haberchat's queue for the
-  // scheduled-messages strip.
-  const models = useAppStore((s) => s.models);
-  const records = useAppStore((s) => s.records);
-  const waDevices = useAppStore((s) => s.waDevices);
-  const waDevicesLive = useAppStore((s) => s.waDevicesLive);
-  const { chatPhone, deviceId } = useMemo(() => {
-    const chatsModel = models.find((m) => m.name === 'chats');
-    const record = chatsModel
-      ? (records[chatsModel.id] ?? []).find((r) => (r.data as Record<string, unknown>).wid === chatWid)
-      : undefined;
-    const data = (record?.data ?? {}) as Record<string, unknown>;
-    const phone = typeof data.phone === 'string' && data.phone ? data.phone : null;
-    const recordDeviceId = typeof data.device_id === 'string' && data.device_id ? data.device_id : null;
-    // Defensive ?? [] — a failed device load can leave these undefined.
-    const resolvedDevice =
-      recordDeviceId ??
-      (waDevices ?? []).find((d) => d.is_default && d.is_active)?.device_id ??
-      (waDevices ?? []).find((d) => d.is_active)?.device_id ??
-      (waDevicesLive ?? [])[0]?.id ??
-      null;
-    return { chatPhone: phone, deviceId: resolvedDevice };
-  }, [models, records, waDevices, waDevicesLive, chatWid]);
+  // Recipient phone + send-from device come from the RESOLVED identity — the
+  // same value the send is bound to. (This used to be a third, open-coded copy
+  // of the store's device-resolution chain; copies drift, and a copy that
+  // disagreed with the store is how the composer stayed usable for a
+  // conversation the send path then refused.)
+  const chatPhone = identity.phone;
+  const deviceId = identity.deviceId;
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -141,9 +160,10 @@ export default function Composer({
     void saveDraftFiles(chatWid, localFiles);
   }, [chatWid, localFiles]);
 
+  // NOTE: deliberately NOT gated on an in-flight send. Sending message N-1
+  // must never stop the rep from composing and sending message N.
   const canSend =
-    (text.trim().length > 0 || localFiles.length > 0 || templateAtt !== null || projectImageFileIds.length > 0) &&
-    !sending && !disabled;
+    text.trim().length > 0 || localFiles.length > 0 || templateAtt !== null || projectImageFileIds.length > 0;
 
   const kindForLocalFile = (file: File): ChatMessage['kind'] => {
     if (file.type.startsWith('image/')) return 'image';
@@ -155,14 +175,23 @@ export default function Composer({
   /**
    * Send now (no arg) or schedule (future ISO datetime). Scheduled sends
    * go to Haberchat's delivery queue — no thread bubble until delivery.
+   *
+   * SYNCHRONOUS by design: it snapshots what was composed, clears the box and
+   * hands the work to `dispatchSend` in the BACKGROUND. It never awaits, so
+   * the rep can start typing the next message the instant they hit Send.
    */
-  const doSend = async (deliverAt?: string) => {
+  const doSend = (deliverAt?: string) => {
     if (!canSend) return;
-    const body = text.trim();
-    const files = localFiles;
-    const tmpl = templateAtt;
-    const projectImages = projectImageFileIds;
-    setSending(true);
+    // Capture the conversation identity for THIS send. An identity that
+    // re-resolves later — or a switch to a different chat — can never
+    // re-target work that is already on its way.
+    const sendIdentity = identity;
+    const snapshot = {
+      body: text.trim(),
+      files: localFiles,
+      tmpl: templateAtt,
+      projectImages: projectImageFileIds,
+    };
     setShowSchedule(false);
     setText('');
     setLocalFiles([]);
@@ -171,16 +200,72 @@ export default function Composer({
     // The message is on its way — drop the stored draft so it can't come back
     // on the next visit. (The state resets above race the persistence effects,
     // so clear the stores explicitly rather than relying on them.)
-    void clearDraft(chatWid);
+    void clearDraft(sendIdentity.chatWid);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    textareaRef.current?.focus();
+    void dispatchSend(sendIdentity, snapshot, deliverAt);
+  };
+
+  /** Park a composed-but-unsent message so nothing the rep typed is lost. */
+  const parkUnsent = (snapshot: SendSnapshot, error: string) => {
+    setUnsentDrafts((prev) => [
+      ...prev,
+      {
+        id: uuid(),
+        text: snapshot.body,
+        files: snapshot.files,
+        templateAtt: snapshot.tmpl,
+        projectImageFileIds: snapshot.projectImages,
+        error,
+      },
+    ]);
+  };
+
+  /** Put a parked message back in the box. Appends below anything already
+   *  typed rather than replacing it — neither text is ever discarded. */
+  const restoreUnsent = (draft: UnsentDraft) => {
+    setUnsentDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+    setText((cur) => (cur.trim() ? `${draft.text}\n${cur}` : draft.text));
+    if (draft.files.length > 0) {
+      setLocalFiles((prev) => [...prev, ...draft.files]);
+      setTemplateAtt(null);
+    } else if (draft.templateAtt) {
+      setTemplateAtt(draft.templateAtt);
+    }
+    if (draft.projectImageFileIds.length > 0) setProjectImageFileIds(draft.projectImageFileIds);
+    textareaRef.current?.focus();
+  };
+
+  /**
+   * The actual send, run in the background. Every message that reaches the
+   * store gets its OWN optimistic bubble (pending → sent / failed + Retry), so
+   * this never needs a global busy flag — and a failure that never produced a
+   * bubble is parked for restore instead of being swallowed.
+   */
+  const dispatchSend = async (
+    sendIdentity: ResolvedConversationIdentity,
+    snapshot: SendSnapshot,
+    deliverAt?: string,
+  ) => {
+    const wid = sendIdentity.chatWid;
+    const { body, files, tmpl, projectImages } = snapshot;
+    // Did the primary message reach the thread as an optimistic bubble? If it
+    // did, a failure is already visible there (red bubble + Retry) and parking
+    // a second copy in the composer would just duplicate it. If it did NOT —
+    // an attachment upload that never got that far, or a scheduled send the
+    // queue rejected — the composed message exists nowhere else, so it must be
+    // parked. This is the whole "never silently drop the typed text" contract.
+    let reachedThread = false;
     try {
       if (files.length > 0) {
         // Multiple files: the FIRST carries the text as its caption (like a
         // WhatsApp album caption); it's awaited so recipient/device errors
-        // surface in place. The REST fan out in the BACKGROUND so the composer
-        // frees up immediately — each uploaded then sent, in order.
+        // surface in place. The REST fan out in the BACKGROUND — each
+        // uploaded then sent, in order.
         const first = files[0]!;
         const up0 = await uploadLocalFile(first);
-        await sendChatMessage(chatWid, {
+        reachedThread = !deliverAt;
+        await sendChatMessage(wid, {
           body: body || undefined,
           mediaFileId: up0.fileId,
           mediaCaption: body || undefined,
@@ -202,7 +287,7 @@ export default function Composer({
                 const at = deliverAt
                   ? new Date(new Date(deliverAt).getTime() + (i + 1) * 10_000).toISOString()
                   : undefined;
-                await sendChatMessage(chatWid, {
+                await sendChatMessage(wid, {
                   mediaFileId: up.fileId,
                   kind: kindForLocalFile(f),
                   mediaMime: up.mime ?? f.type,
@@ -229,7 +314,8 @@ export default function Composer({
       } else if (tmpl) {
         // Reuse the template's pre-uploaded file — no upload needed.
         const kind = (tmpl.mediaKind as ChatMessage['kind']) || 'document';
-        await sendChatMessage(chatWid, {
+        reachedThread = !deliverAt;
+        await sendChatMessage(wid, {
           body: body || undefined,
           mediaFileId: tmpl.fileId,
           mediaCaption: body || undefined,
@@ -239,18 +325,18 @@ export default function Composer({
           deliverAt,
         });
       } else if (body) {
-        await sendChatMessage(chatWid, { body, deliverAt });
+        reachedThread = !deliverAt;
+        await sendChatMessage(wid, { body, deliverAt });
       }
       // Project gallery rides along as its own image messages after the text.
       // Scheduled sends stagger each image a few seconds after the text so
-      // the queue delivers them in order. NOT awaited — the composer frees up
-      // right after the text send; the fan-out is ONE keepalive request to
-      // /api/whatsapp/send-media-batch, so the server completes the sends even
-      // if the tab refreshes (failures toast from inside the lib).
-      // Immediate sends surface progress as bubbles landing in the thread;
-      // scheduled ones re-sync the strip when the fan-out completes.
+      // the queue delivers them in order. NOT awaited — the fan-out is ONE
+      // keepalive request to /api/whatsapp/send-media-batch, so the server
+      // completes the sends even if the tab refreshes (failures toast from
+      // inside the lib). Immediate sends surface progress as bubbles landing
+      // in the thread; scheduled ones re-sync the strip when it completes.
       if (projectImages.length > 0) {
-        void sendProjectImageMessages(chatWid, projectImages, { deliverAt }).then(() => {
+        void sendProjectImageMessages(wid, projectImages, { deliverAt }).then(() => {
           if (deliverAt) setScheduledRefreshKey((k) => k + 1);
         });
         if (!deliverAt) {
@@ -273,20 +359,18 @@ export default function Composer({
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Immediate text sends are toasted by the store; attachment uploads
-      // and scheduled sends surface here.
-      if (files.length > 0 || tmpl || deliverAt) addToast(msg, 'error');
-    } finally {
-      setSending(false);
-      textareaRef.current?.focus();
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      console.error('[composer] send failed:', err);
+      if (!reachedThread) {
+        addToast(msg, 'error');
+        parkUnsent(snapshot, msg);
+      }
     }
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      void doSend();
+      doSend();
     }
   };
 
@@ -357,7 +441,9 @@ export default function Composer({
         />
       )}
 
-      <div className="card p-3 mt-3 flex flex-col gap-2">
+      {/* Mobile: edge-to-edge composer pinned at the bottom with a top hairline;
+          desktop (md+): the framed, inset card as before. */}
+      <div className="bg-white p-3 flex flex-col gap-2 border-t border-sand/20 md:mt-3 md:rounded-2xl md:border md:shadow-sm">
         {/* Scheduled messages waiting in Haberchat's queue for THIS chat. */}
         <ScheduledStrip
           deviceId={deviceId}
@@ -365,6 +451,42 @@ export default function Composer({
           refreshKey={scheduledRefreshKey}
           isAr={isAr}
         />
+
+        {/* Composed messages that never reached the thread. Loud, and one
+            click from being back in the box — nothing typed is ever lost. */}
+        {unsentDrafts.map((draft) => (
+          <div
+            key={draft.id}
+            className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-2 py-1.5"
+          >
+            <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+            <div className="min-w-0 flex-1 text-xs text-red-800">
+              <div className="font-medium">
+                {isAr ? 'لم تُرسل الرسالة' : 'Message not sent'}
+              </div>
+              <div className="truncate opacity-80">{draft.error}</div>
+              {draft.text && (
+                <div className="mt-0.5 truncate text-charcoal/60" dir="auto">{draft.text}</div>
+              )}
+            </div>
+            <button
+              onClick={() => restoreUnsent(draft)}
+              className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-red-300 px-2 py-1 text-[11px] font-medium text-red-700 transition-colors hover:bg-red-100"
+              type="button"
+            >
+              <RotateCcw size={12} />
+              {isAr ? 'استعادة' : 'Restore'}
+            </button>
+            <button
+              onClick={() => setUnsentDrafts((prev) => prev.filter((d) => d.id !== draft.id))}
+              className="shrink-0 rounded p-1 text-red-500 transition-colors hover:bg-red-100"
+              aria-label={isAr ? 'تجاهل' : 'Dismiss'}
+              type="button"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        ))}
 
         {templateAtt && (
           <AttachmentChip attachment={templateAtt} isAr={isAr} onRemove={() => setTemplateAtt(null)} />
@@ -402,7 +524,6 @@ export default function Composer({
           {/* Attach file */}
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={sending || disabled}
             className="shrink-0 w-9 h-9 rounded-full text-charcoal/60 hover:text-copper hover:bg-cream disabled:text-charcoal/20 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
             aria-label={isAr ? 'إرفاق ملف' : 'Attach file'}
             title={isAr ? 'إرفاق ملف' : 'Attach file'}
@@ -414,7 +535,6 @@ export default function Composer({
           {/* Templates */}
           <button
             onClick={() => setShowPicker(true)}
-            disabled={sending || disabled}
             className="shrink-0 w-9 h-9 rounded-full text-charcoal/60 hover:text-copper hover:bg-cream disabled:text-charcoal/20 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
             aria-label={isAr ? 'قوالب' : 'Templates'}
             title={isAr ? 'قوالب الرسائل' : 'Message templates'}
@@ -442,7 +562,6 @@ export default function Composer({
                 ? (isAr ? 'أضف تعليقًا (اختياري)...' : 'Add a caption (optional)…')
                 : (isAr ? 'اكتب رسالتك...' : 'Type a message…')
             }
-            disabled={sending || disabled}
             rows={1}
             className="flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-charcoal placeholder:text-charcoal/40 focus:outline-none leading-relaxed"
             dir="auto"
@@ -464,24 +583,23 @@ export default function Composer({
               <SchedulePopover
                 isAr={isAr}
                 onClose={() => setShowSchedule(false)}
-                onConfirm={(iso) => void doSend(iso)}
+                onConfirm={(iso) => doSend(iso)}
               />
             )}
           </div>
 
           <button
-            onClick={() => void doSend()}
+            onClick={() => doSend()}
             disabled={!canSend}
             className="shrink-0 w-10 h-10 rounded-full bg-copper text-white hover:bg-terracotta disabled:bg-charcoal/20 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
             aria-label={isAr ? 'إرسال' : 'Send'}
             title={isAr ? 'إرسال (Enter)' : 'Send (Enter)'}
             type="button"
           >
-            {sending ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : (
-              <Send size={16} className={isAr ? 'rotate-180' : ''} />
-            )}
+            {/* No busy spinner here on purpose: in-flight sends are shown
+                per-message in the thread (clock → tick → red warning), and the
+                button must stay live so the next message can go out at once. */}
+            <Send size={16} className={isAr ? 'rotate-180' : ''} />
           </button>
         </div>
       </div>

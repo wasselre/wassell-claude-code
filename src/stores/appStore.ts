@@ -25,7 +25,7 @@ import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, healDisplayedChildModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
-import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient, deviceIdString } from '@/lib/haberchat/normalize';
+import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient, deviceIdString, resolveSendDeviceId } from '@/lib/haberchat/normalize';
 import { mergeMessageSources, identityKey } from '@/lib/chat/messageIdentity';
 import { normalizePhone } from '@/lib/phone';
 import { markRecentlyWritten } from '@/lib/realtime/dedup';
@@ -1662,6 +1662,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   fieldTemplates: [],
   waDevices: [],
   waDevicesLive: [],
+  waDevicesLoaded: false,
   chatMessages: {},
   webhookSlugs: [],
   webhookPayloads: [],
@@ -4795,7 +4796,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     let overlay = await supabaseLoad<WhatsAppNumber>('whatsapp_numbers', { idColumn: 'device_id' });
     if (!overlay) overlay = loadLocal<WhatsAppNumber[]>('wassell_wa_numbers') ?? [];
     saveLocal('wassell_wa_numbers', overlay);
-    set({ waDevices: overlay });
+    // `waDevicesLoaded` flips here — BEFORE the live fetch, which is allowed to
+    // fail. It lets identity resolution tell "the device list hasn't arrived
+    // yet" (wait) apart from "there is no device configured" (a real error the
+    // user must act on), instead of leaving the composer in limbo.
+    set({ waDevices: overlay, waDevicesLoaded: true });
 
     // Live list — tolerated to fail (admin still sees the overlay even
     // if HABERCHAT_TOKEN is misconfigured). We re-throw after the overlay
@@ -5032,58 +5037,101 @@ export const useAppStore = create<AppState>((set, get) => ({
       deliverAt?: string;
     },
   ) => {
-    const state = get();
-    const chatsModel = state.models.find((m) => m.name === 'chats');
-    if (!chatsModel) throw new Error('chats model not found');
-
-    const record = (state.records[chatsModel.id] ?? []).find((r) => {
-      const wid = (r.data as Record<string, unknown>).wid;
-      return typeof wid === 'string' && wid === chatWid;
-    });
-    if (!record) throw new Error('conversation not found in records');
-
-    const data = record.data as Record<string, unknown>;
-    const convKind = (data.kind as string | null) ?? 'user';
-    if (convKind !== 'user') {
-      throw new Error(get().language === 'ar'
-        ? 'الإرسال للمجموعات والقنوات غير مدعوم حاليًا'
-        : 'Sending to groups and channels is not yet supported');
-    }
-    const phone = data.phone as string | null;
-    if (!phone) throw new Error('conversation is missing the recipient phone');
-
     const body = input.body?.trim() || undefined;
     const mediaFileId = input.mediaFileId || undefined;
     if (!body && !mediaFileId) {
+      // Nothing was composed — there is no content to lose and no bubble to
+      // show. The only throw that still precedes the optimistic placeholder.
       throw new Error(get().language === 'ar'
         ? 'يلزم نص أو مرفق للإرسال'
         : 'Body or attachment is required');
     }
 
-    // deviceIdString: legacy webhook-created chats can carry the whole
-    // device OBJECT in data.device_id — sending with it 400s at Haberchat.
-    const recordDeviceId = deviceIdString(data.device_id);
-    const deviceId =
-      recordDeviceId ??
-      state.waDevices.find((d) => d.is_default && d.is_active)?.device_id ??
-      state.waDevices.find((d) => d.is_active)?.device_id ??
-      state.waDevicesLive[0]?.id ??
-      '';
-    if (!deviceId) throw new Error('no WhatsApp device configured to send from');
-
-    const fromPhone =
-      state.waDevicesLive.find((d) => d.id === deviceId)?.phone ??
-      state.waDevices.find((d) => d.device_id === deviceId)?.phone ??
-      null;
+    /**
+     * Resolve everything a send needs from the conversation: the record, its
+     * recipient phone, and the send-from device.
+     *
+     * These checks used to `throw` on the way in — BEFORE the optimistic
+     * bubble existed. A conversation whose identity had not finished
+     * resolving (no phone yet, device overlay still loading) therefore
+     * destroyed the typed text: the composer had already cleared itself, no
+     * bubble appeared, and for a plain-text send NOTHING was toasted. Now the
+     * failure is returned, the caller creates the bubble first and marks it
+     * FAILED with a toast, so a lost send is always visible and retryable.
+     * (The composer additionally refuses to send until identity resolves —
+     * see src/pages/Chats/lib/conversationIdentity.ts.)
+     */
+    const resolveIdentity = ():
+      | { ok: true; phone: string; deviceId: string; fromPhone: string | null }
+      | { ok: false; message: string } => {
+      const state = get();
+      const isAr = state.language === 'ar';
+      const chatsModel = state.models.find((m) => m.name === 'chats');
+      if (!chatsModel) {
+        return { ok: false, message: isAr ? 'لم يُحمَّل نموذج المحادثات بعد' : 'The chats model has not loaded yet' };
+      }
+      const record = (state.records[chatsModel.id] ?? []).find((r) => {
+        const wid = (r.data as Record<string, unknown>).wid;
+        return typeof wid === 'string' && wid === chatWid;
+      });
+      if (!record) {
+        return {
+          ok: false,
+          message: isAr ? 'لم يتم العثور على هذه المحادثة — أعد تحميل الصفحة' : 'Conversation not found — reload the page',
+        };
+      }
+      const data = record.data as Record<string, unknown>;
+      const convKind = (data.kind as string | null) ?? 'user';
+      if (convKind !== 'user') {
+        return {
+          ok: false,
+          message: isAr
+            ? 'الإرسال للمجموعات والقنوات غير مدعوم حاليًا'
+            : 'Sending to groups and channels is not yet supported',
+        };
+      }
+      const phone = typeof data.phone === 'string' && data.phone ? data.phone : null;
+      if (!phone) {
+        return {
+          ok: false,
+          message: isAr
+            ? 'هذه المحادثة بلا رقم مستلم — لم يكتمل التعرّف عليها بعد'
+            : "This conversation has no recipient phone — its identity hasn't resolved yet",
+        };
+      }
+      // deviceIdString (inside resolveSendDeviceId): legacy webhook-created
+      // chats can carry the whole device OBJECT in data.device_id — sending
+      // with it 400s at Haberchat.
+      const deviceId = resolveSendDeviceId(data.device_id, state.waDevices, state.waDevicesLive);
+      if (!deviceId) {
+        return {
+          ok: false,
+          message: isAr
+            ? 'لم يتم تحديد رقم واتساب للإرسال — أضف رقمًا افتراضيًا في الإعدادات'
+            : 'No WhatsApp device configured to send from — set a default in Settings',
+        };
+      }
+      const fromPhone =
+        state.waDevicesLive.find((d) => d.id === deviceId)?.phone ??
+        state.waDevices.find((d) => d.device_id === deviceId)?.phone ??
+        null;
+      return { ok: true, phone, deviceId, fromPhone };
+    };
 
     // Scheduled send — hand the message to Haberchat's delivery queue and
     // stop. No optimistic bubble: nothing has been sent yet, and the normal
     // message:out webhook will echo it into the thread at delivery time.
-    // Errors propagate to the caller (Composer toasts them).
+    // Errors are toasted here AND propagate to the caller (which restores the
+    // composed message rather than dropping it).
     if (input.deliverAt) {
+      const scheduled = resolveIdentity();
+      if (!scheduled.ok) {
+        get().addToast(scheduled.message, 'error');
+        throw new Error(scheduled.message);
+      }
       await sendHaberchatMessage({
-        deviceId,
-        phone,
+        deviceId: scheduled.deviceId,
+        phone: scheduled.phone,
         body,
         mediaFileId,
         mediaCaption: input.mediaCaption,
@@ -5093,6 +5141,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       return;
     }
+
+    const identity = resolveIdentity();
 
     // Pick the bubble kind. If caller supplied one, use that. Else infer
     // from whether there's media (guessing 'image' is safer than 'document'
@@ -5128,8 +5178,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       flow: 'out',
       kind: bubbleKind,
       body: body ?? null,
-      from_phone: fromPhone,
-      to_phone: phone,
+      from_phone: identity.ok ? identity.fromPhone : null,
+      to_phone: identity.ok ? identity.phone : null,
       ack: 'pending',
       date: new Date().toISOString(),
       media_file_id: mediaFileId ?? null,
@@ -5146,10 +5196,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { chatMessages: { ...s.chatMessages, [chatWid]: [...existing, placeholder] } };
     });
 
+    /** Flip THIS attempt's bubble to the red failed state. */
+    const markFailed = () => {
+      set((s) => {
+        const existing = s.chatMessages[chatWid] ?? [];
+        const next = existing.map((m) =>
+          m.client_id === clientId ? { ...m, pending: false, ack: 'failed' as const } : m,
+        );
+        return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
+      });
+    };
+
+    // Identity never resolved. The bubble now exists, so the message is on
+    // screen, marked failed and retryable — never silently swallowed.
+    if (!identity.ok) {
+      markFailed();
+      inFlightSends.delete(dedupeKey);
+      get().addToast(identity.message, 'error');
+      throw new Error(identity.message);
+    }
+
     try {
       const result = await sendHaberchatMessage({
-        deviceId,
-        phone,
+        deviceId: identity.deviceId,
+        phone: identity.phone,
         body,
         mediaFileId,
         mediaCaption: input.mediaCaption,
@@ -5175,14 +5245,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
       });
     } catch (err) {
-      // Mark the placeholder as failed so the bubble shows the red warning.
-      set((s) => {
-        const existing = s.chatMessages[chatWid] ?? [];
-        const next = existing.map((m) =>
-          m.client_id === clientId ? { ...m, pending: false, ack: 'failed' as const } : m,
-        );
-        return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
-      });
+      // Mark the placeholder as failed so the bubble shows the red warning
+      // (and its Retry button).
+      markFailed();
       // Surface the error as a toast so the user knows something went wrong.
       const msg = err instanceof Error ? err.message : String(err);
       get().addToast(msg, 'error');
@@ -5191,6 +5256,53 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Released whichever way it ended: a failed attempt must be retryable
       // with a fresh key, or the chat would be stuck refusing that message.
       inFlightSends.delete(dedupeKey);
+    }
+  },
+
+  retryChatMessage: async (chatWid: string, messageId: string) => {
+    const failed = (get().chatMessages[chatWid] ?? []).find((m) => m.id === messageId);
+    if (!failed || failed.flow !== 'out' || failed.ack !== 'failed') return;
+
+    // Drop the failed bubble and re-send its exact payload — `sendChatMessage`
+    // mints a brand-new optimistic bubble (and a fresh idempotency key), so the
+    // retry behaves like any other send and the thread never shows the same
+    // message twice.
+    set((s) => ({
+      chatMessages: {
+        ...s.chatMessages,
+        [chatWid]: (s.chatMessages[chatWid] ?? []).filter((m) => m.id !== messageId),
+      },
+    }));
+
+    try {
+      await get().sendChatMessage(chatWid, {
+        body: failed.body ?? undefined,
+        mediaFileId: failed.media_file_id ?? undefined,
+        mediaCaption: failed.media_caption ?? undefined,
+        kind: failed.kind,
+        mediaMime: failed.media_mime,
+        mediaSize: failed.media_size,
+        quotedWid: failed.quoted?.wid,
+      });
+    } catch (err) {
+      // sendChatMessage has already toasted AND left its own failed bubble
+      // behind for every path that got as far as one — which is every path
+      // except "nothing to send". Restore the original bubble only when no
+      // equivalent failed bubble exists, so the message can never be lost by
+      // pressing Retry, and never duplicated either.
+      console.error('[retryChatMessage] retry failed:', err);
+      set((s) => {
+        const existing = s.chatMessages[chatWid] ?? [];
+        const alreadyThere = existing.some(
+          (m) =>
+            m.flow === 'out' &&
+            m.ack === 'failed' &&
+            m.body === failed.body &&
+            m.media_file_id === failed.media_file_id,
+        );
+        if (alreadyThere) return {};
+        return { chatMessages: { ...s.chatMessages, [chatWid]: [...existing, failed] } };
+      });
     }
   },
 

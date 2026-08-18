@@ -5,7 +5,7 @@
  */
 
 import { v5 as uuidv5 } from 'uuid';
-import type { AppRecord, AppModel, HaberchatChat } from '@/types';
+import type { AppRecord, AppModel, HaberchatChat, WhatsAppNumber, HaberchatDevice } from '@/types';
 
 /** Strip everything but digits — lets "+966 55 444 6109", "0555 444 6109",
  *  and "966554446109" all match. Returns '' for null/empty. */
@@ -176,6 +176,32 @@ export function deviceIdString(value: unknown): string | null {
     if (typeof id === 'string' && id) return id;
   }
   return null;
+}
+
+/**
+ * Resolve WHICH WhatsApp device an outbound message for a conversation goes
+ * out from: the conversation record's own `device_id` first, then the local
+ * overlay's default, then any active overlay row, then the first live
+ * Haberchat device. Returns null when nothing is resolvable yet.
+ *
+ * Single source of truth for a chain that used to be open-coded in three
+ * places (appStore.sendChatMessage, appStore.loadMessagesForChat, the
+ * Composer's scheduled-strip lookup). Copies of it could disagree about
+ * whether a conversation was sendable, which is exactly how the composer
+ * ended up enabled for a chat the send path then refused.
+ */
+export function resolveSendDeviceId(
+  recordDeviceId: unknown,
+  waDevices: WhatsAppNumber[] | null | undefined,
+  waDevicesLive: HaberchatDevice[] | null | undefined,
+): string | null {
+  return (
+    deviceIdString(recordDeviceId) ??
+    (waDevices ?? []).find((d) => d.is_default && d.is_active)?.device_id ??
+    (waDevices ?? []).find((d) => d.is_active)?.device_id ??
+    (waDevicesLive ?? [])[0]?.id ??
+    null
+  );
 }
 
 /**

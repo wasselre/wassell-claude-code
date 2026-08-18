@@ -1,0 +1,281 @@
+-- ============================================================================
+-- B2A.4 — denormalized link authorization.
+--
+-- Denormalization trades a join for a synchronisation obligation. Every
+-- assertion here exists because breaking that obligation is the failure mode:
+-- a stale uploaded_by_user_id or folder_id on file_links does not merely show
+-- a wrong number, it GRANTS ACCESS THAT WAS REVOKED. So the invariant is
+-- tested at rest AND under every mutation that can disturb it.
+-- ============================================================================
+
+\set ON_ERROR_STOP on
+
+-- ── 1. Non-vacuity, then the invariant at rest ──────────────────────────────
+DO $$
+DECLARE n_edges bigint; n_bad bigint;
+BEGIN
+  SELECT count(*) INTO n_edges FROM public.file_links;
+  IF n_edges < 100 THEN
+    RAISE EXCEPTION 'B2A4.1 vacuous: only % edges — this suite proves nothing on an empty corpus', n_edges;
+  END IF;
+
+  SELECT count(*) INTO n_bad
+    FROM public.file_links l JOIN public.files f ON f.id = l.file_id
+   WHERE l.uploaded_by_user_id IS DISTINCT FROM f.uploaded_by_user_id
+      OR l.folder_id           IS DISTINCT FROM f.folder_id;
+  IF n_bad <> 0 THEN
+    RAISE EXCEPTION 'B2A4.1 % edge(s) disagree with their file after backfill', n_bad;
+  END IF;
+  RAISE NOTICE 'B2A4.1 % edges, all agree with their file', n_edges;
+END $$;
+
+-- ── 2. The invariant must survive a FOLDER MOVE ─────────────────────────────
+-- Phase 2's files_sync_file_links early-exits unless model_id/record_id change,
+-- so a folder move reaches file_links only through the B2A.4 trigger. If that
+-- trigger is ever dropped, this is the assertion that notices.
+DO $$
+DECLARE v_file uuid; v_old uuid; v_new uuid; n_bad bigint; n_edges bigint;
+BEGIN
+  SELECT l.file_id INTO v_file
+    FROM public.file_links l JOIN public.files f ON f.id = l.file_id
+   WHERE f.folder_id IS NOT NULL LIMIT 1;
+  IF v_file IS NULL THEN
+    RAISE EXCEPTION 'B2A4.2 vacuous: no linked file sits in a folder';
+  END IF;
+
+  SELECT folder_id INTO v_old FROM public.files WHERE id = v_file;
+  SELECT id INTO v_new FROM public.folders WHERE id IS DISTINCT FROM v_old LIMIT 1;
+
+  UPDATE public.files SET folder_id = v_new WHERE id = v_file;
+
+  SELECT count(*) INTO n_edges FROM public.file_links WHERE file_id = v_file;
+  SELECT count(*) INTO n_bad FROM public.file_links
+   WHERE file_id = v_file AND folder_id IS DISTINCT FROM v_new;
+  IF n_bad <> 0 THEN
+    RAISE EXCEPTION 'B2A4.2 folder move left % of % edge(s) stale — denormalized authz is now WRONG', n_bad, n_edges;
+  END IF;
+
+  UPDATE public.files SET folder_id = v_old WHERE id = v_file;   -- restore
+  SELECT count(*) INTO n_bad FROM public.file_links
+   WHERE file_id = v_file AND folder_id IS DISTINCT FROM v_old;
+  IF n_bad <> 0 THEN RAISE EXCEPTION 'B2A4.2 move-back left % edge(s) stale', n_bad; END IF;
+  RAISE NOTICE 'B2A4.2 folder move propagates to all % edge(s), both directions', n_edges;
+END $$;
+
+-- ── 3. The invariant must survive an OWNER change ───────────────────────────
+DO $$
+DECLARE v_file uuid; v_old uuid; v_new uuid; n_bad bigint;
+BEGIN
+  SELECT l.file_id INTO v_file FROM public.file_links l LIMIT 1;
+  SELECT uploaded_by_user_id INTO v_old FROM public.files WHERE id = v_file;
+  SELECT id INTO v_new FROM public.users WHERE id IS DISTINCT FROM v_old LIMIT 1;
+  IF v_new IS NULL THEN RAISE EXCEPTION 'B2A4.3 vacuous: fewer than two users'; END IF;
+
+  UPDATE public.files SET uploaded_by_user_id = v_new WHERE id = v_file;
+  SELECT count(*) INTO n_bad FROM public.file_links
+   WHERE file_id = v_file AND uploaded_by_user_id IS DISTINCT FROM v_new;
+  IF n_bad <> 0 THEN
+    RAISE EXCEPTION 'B2A4.3 owner change left % edge(s) stale — the previous owner keeps access', n_bad;
+  END IF;
+
+  UPDATE public.files SET uploaded_by_user_id = v_old WHERE id = v_file;
+  RAISE NOTICE 'B2A4.3 owner change propagates';
+END $$;
+
+-- ── 4. A NEW edge fills itself ──────────────────────────────────────────────
+DO $$
+DECLARE v_file uuid; v_model uuid; v_rec uuid; got_u uuid; got_f uuid; exp_u uuid; exp_f uuid;
+BEGIN
+  SELECT id, uploaded_by_user_id, folder_id INTO v_file, exp_u, exp_f
+    FROM public.files WHERE folder_id IS NOT NULL LIMIT 1;
+  SELECT model_id, record_id INTO v_model, v_rec FROM public.file_links LIMIT 1;
+
+  INSERT INTO public.file_links (file_id, model_id, record_id, role)
+  VALUES (v_file, v_model, v_rec, 'b2a4_probe')
+  ON CONFLICT ON CONSTRAINT file_links_identity DO NOTHING;
+
+  SELECT uploaded_by_user_id, folder_id INTO got_u, got_f
+    FROM public.file_links
+   WHERE file_id = v_file AND model_id = v_model AND record_id = v_rec AND role = 'b2a4_probe';
+
+  IF got_u IS DISTINCT FROM exp_u OR got_f IS DISTINCT FROM exp_f THEN
+    RAISE EXCEPTION 'B2A4.4 new edge not filled: got (%,%) expected (%,%)', got_u, got_f, exp_u, exp_f;
+  END IF;
+
+  DELETE FROM public.file_links
+   WHERE file_id = v_file AND model_id = v_model AND record_id = v_rec AND role = 'b2a4_probe';
+  RAISE NOTICE 'B2A4.4 new edge fills its authorization columns on insert';
+END $$;
+
+-- ── 5. THE ONE THAT MATTERS: revoking access must actually revoke it ────────
+-- A folder-granted caller sees a file's edges. Move the file OUT of that
+-- folder. If the denormalized column went stale the caller would keep seeing
+-- edges for a file they can no longer reach -- access surviving its own
+-- revocation, which is the specific danger this design introduces.
+--
+-- The test CONSTRUCTS its precondition instead of hoping the fixture supplies
+-- one: it files a suitable linked file into the granted folder. "Suitable"
+-- is load-bearing -- the caller must reach that file ONLY through the folder,
+-- or moving it out would not revoke anything and the test would either pass
+-- trivially or raise a false alarm. So the candidate must not be uploaded by
+-- them, not separately granted to them, and not a marketing asset; and its
+-- record must be visible to them, since an edge needs both halves.
+DO $$
+DECLARE
+  v_uid uuid; v_app uuid; v_folder uuid; v_file uuid; v_orig uuid;
+  v_before bigint; v_after bigint; v_restored bigint; cand uuid; n_tried int := 0;
+BEGIN
+  SELECT u.auth_uid, u.id, fp.folder_id INTO v_uid, v_app, v_folder
+    FROM public.folder_permissions fp
+    JOIN public.users u ON u.id = fp.user_id
+   WHERE public.wassell_role_satisfies(fp.role, 'view')
+     AND NOT public.wassell_is_admin(u.auth_uid)
+   LIMIT 1;
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'B2A4.5 vacuous: no non-admin folder grant in the fixture';
+  END IF;
+
+  -- find a file this caller can reach ONLY via the folder, whose record they see
+  FOR cand IN
+    SELECT DISTINCT l.file_id
+      FROM public.file_links l
+      JOIN public.files f ON f.id = l.file_id
+     WHERE f.uploaded_by_user_id IS DISTINCT FROM v_app
+       AND NOT EXISTS (SELECT 1 FROM public.file_permissions p
+                        WHERE p.file_id = f.id AND p.user_id = v_app)
+       AND NOT EXISTS (SELECT 1 FROM public.mos_assets ma WHERE ma.file_id = f.id)
+     LIMIT 50
+  LOOP
+    n_tried := n_tried + 1;
+    SELECT folder_id INTO v_orig FROM public.files WHERE id = cand;
+    UPDATE public.files SET folder_id = v_folder WHERE id = cand;
+
+    PERFORM set_config('test.uid', v_uid::text, true);
+    EXECUTE 'SET LOCAL ROLE authenticated';
+    SELECT count(*) INTO v_before FROM public.file_links WHERE file_id = cand;
+    EXECUTE 'RESET ROLE';
+
+    IF v_before > 0 THEN v_file := cand; EXIT; END IF;
+    UPDATE public.files SET folder_id = v_orig WHERE id = cand;   -- put it back
+  END LOOP;
+
+  IF v_file IS NULL THEN
+    RAISE EXCEPTION 'B2A4.5 vacuous: none of % candidate file(s) produced a visible edge for the folder-granted caller -- the record half never lined up', n_tried;
+  END IF;
+
+  -- revoke, by moving the file out of the granted folder
+  UPDATE public.files SET folder_id = NULL WHERE id = v_file;
+
+  PERFORM set_config('test.uid', v_uid::text, true);
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  SELECT count(*) INTO v_after FROM public.file_links WHERE file_id = v_file;
+  EXECUTE 'RESET ROLE';
+
+  IF v_after <> 0 THEN
+    RAISE EXCEPTION 'B2A4.5 ACCESS SURVIVED REVOCATION: caller still sees % edge(s) for a file removed from their granted folder', v_after;
+  END IF;
+
+  -- re-grant, by filing it back
+  UPDATE public.files SET folder_id = v_folder WHERE id = v_file;
+
+  PERFORM set_config('test.uid', v_uid::text, true);
+  EXECUTE 'SET LOCAL ROLE authenticated';
+  SELECT count(*) INTO v_restored FROM public.file_links WHERE file_id = v_file;
+  EXECUTE 'RESET ROLE';
+
+  IF v_restored <> v_before THEN
+    RAISE EXCEPTION 'B2A4.5 re-filing restored % edge(s), expected %', v_restored, v_before;
+  END IF;
+
+  UPDATE public.files SET folder_id = v_orig WHERE id = v_file;   -- leave no trace
+  RAISE NOTICE 'B2A4.5 revocation takes effect (% -> 0 -> %) after % candidate(s)', v_before, v_restored, n_tried;
+END $$;
+
+-- ── 6. ONE AUTHORITY, structurally ────────────────────────────────
+-- Both policies are generated from a single predicate string in the migration,
+-- differing only in which column names the file. Postgres does not store that
+-- string -- it stores a parse tree and re-renders it -- so this compares the
+-- RENDERED quals after normalising the three things rendering is free to
+-- change: the file column's name, whitespace, and parenthesisation.
+--
+-- That makes this a structural check, not a byte comparison: it catches a
+-- branch being added, removed, reordered or rewritten in one policy and not
+-- the other, which is the drift that matters. It would not catch a pure
+-- re-parenthesisation that changes precedence, so the identity invariant and
+-- the record half are asserted separately below and in §7.
+DO $$
+DECLARE q_files text; q_links text; n_files text; n_links text;
+BEGIN
+  SELECT pg_get_expr(pol.polqual, pol.polrelid) INTO q_files
+    FROM pg_policy pol WHERE pol.polname = 'files_select'
+     AND pol.polrelid = 'public.files'::regclass;
+  SELECT pg_get_expr(pol.polqual, pol.polrelid) INTO q_links
+    FROM pg_policy pol WHERE pol.polname = 'file_links_select'
+     AND pol.polrelid = 'public.file_links'::regclass;
+
+  IF q_files IS NULL OR q_links IS NULL THEN
+    RAISE EXCEPTION 'B2A4.6 a policy is missing (files=%, links=%)',
+      q_files IS NOT NULL, q_links IS NOT NULL;
+  END IF;
+
+  -- the link policy is the file policy AND the record half
+  IF position('unified_records' IN q_links) = 0 THEN
+    RAISE EXCEPTION 'B2A4.6 file_links_select lost the record-visibility half';
+  END IF;
+  IF position('unified_records' IN q_files) <> 0 THEN
+    RAISE EXCEPTION 'B2A4.6 files_select acquired a record predicate it should not have';
+  END IF;
+
+  -- cut the record half off the link qual, then normalise both
+  n_links := regexp_replace(q_links, 'AND\s*\(?\s*EXISTS.*$', '', 'g');
+
+  -- The one intended difference is which column names the file: `id` on
+  -- files, `file_id` on file_links. Map BOTH tokens to one placeholder, on
+  -- BOTH strings. Replacing only the side-specific token is asymmetric and
+  -- was the previous bug: on the link qual, \mfile_id\M also matched the
+  -- HELPER's output column (g.file_id, m.file_id, and the g(file_id) alias
+  -- list), which on the files qual it correctly left alone -- so the two
+  -- normalised forms differed even though the policies did not.
+  --
+  -- Collapsing both tokens loses the ability to tell `id` from `file_id`,
+  -- which is precisely the difference we intend to ignore.
+  n_files := regexp_replace(q_files, '\mfile_id\M', 'FILECOL', 'g');
+  n_files := regexp_replace(n_files, '\mid\M',      'FILECOL', 'g');
+  n_links := regexp_replace(n_links, '\mfile_id\M', 'FILECOL', 'g');
+  n_links := regexp_replace(n_links, '\mid\M',      'FILECOL', 'g');
+
+  -- rendering is free to choose whitespace and parens; the migration is not
+  -- free to choose branches.
+  n_files := regexp_replace(regexp_replace(n_files, '[()]', '', 'g'), '\s+', ' ', 'g');
+  n_links := regexp_replace(regexp_replace(n_links, '[()]', '', 'g'), '\s+', ' ', 'g');
+  n_files := btrim(n_files);
+  n_links := btrim(n_links);
+
+  IF n_files IS DISTINCT FROM n_links THEN
+    RAISE EXCEPTION E'B2A4.6 the two policies have DRIFTED apart.
+files: %
+links: %',
+      n_files, n_links;
+  END IF;
+
+  IF position('wassell_app_user_id' IN n_files) = 0 THEN
+    RAISE EXCEPTION 'B2A4.6 the identity invariant is absent';
+  END IF;
+  RAISE NOTICE 'B2A4.6 both policies reduce to one predicate (% chars), identity invariant present',
+    length(n_files);
+END $$;
+
+-- ── 7. The pre-B2A.2 authority must no longer be reachable from a policy ────
+DO $$
+DECLARE q text;
+BEGIN
+  SELECT pg_get_expr(pol.polqual, pol.polrelid) INTO q
+    FROM pg_policy pol WHERE pol.polname = 'file_links_select'
+     AND pol.polrelid = 'public.file_links'::regclass;
+  IF position('wassell_can_access_file' IN q) <> 0 THEN
+    RAISE EXCEPTION 'B2A4.7 file_links_select still routes through the pre-B2A.2 decision';
+  END IF;
+  RAISE NOTICE 'B2A4.7 the side door is closed';
+END $$;
+
+SELECT 'B2A.4 smoke: all assertions passed' AS result;

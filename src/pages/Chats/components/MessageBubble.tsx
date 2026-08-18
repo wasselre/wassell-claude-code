@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle, MessageSquare, ListChecks, User } from 'lucide-react';
+import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle, MessageSquare, ListChecks, User, RotateCcw } from 'lucide-react';
 import AckIndicator from './AckIndicator';
 import { fetchFileBlob } from '@/lib/haberchat/client';
 import { isLegacyHaberchatRef } from '@/lib/chat/legacyMedia';
@@ -20,13 +20,18 @@ export default function MessageBubble({
   message,
   isAr,
   reactions,
+  onRetry,
 }: {
   message: ChatMessage;
   isAr: boolean;
   /** Reaction rows whose `quoted.wid` targets THIS message (see MessageThread). */
   reactions?: ChatMessage[];
+  /** Re-send THIS message. Supplied for outbound bubbles only; rendered as an
+   *  explicit Retry action once the bubble has gone `ack: 'failed'`. */
+  onRetry?: () => void;
 }) {
   const isOut = message.flow === 'out';
+  const failed = isOut && message.ack === 'failed';
 
   // WhatsApp system events (privacy notices, call logs, E2E notices, deleted
   // messages…) aren't conversational messages — Haberchat delivers them
@@ -57,7 +62,7 @@ export default function MessageBubble({
           isOut
             ? 'bg-copper/10 text-charcoal rounded-br-md'
             : 'bg-sand/20 text-charcoal rounded-bl-md'
-        } ${message.ack === 'failed' ? 'border border-red-300' : ''}`}
+        } ${failed ? 'border border-red-300' : ''}`}
       >
         {message.quoted && (
           <div className="mb-1.5 pl-2 border-s-2 border-copper/40 text-xs text-charcoal/60">
@@ -71,6 +76,25 @@ export default function MessageBubble({
         )}
 
         <MessageBody message={message} isAr={isAr} />
+
+        {/* A failed send is stated in words, not just a tick colour, and stays
+            one click from going out again. The text is never discarded — the
+            bubble IS the copy of it. */}
+        {failed && (
+          <div className="mt-1.5 flex items-center gap-2 border-t border-red-200 pt-1.5 text-[11px] text-red-700">
+            <span className="font-medium">{isAr ? 'لم تُرسل' : 'Not sent'}</span>
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                className="inline-flex items-center gap-1 rounded-lg border border-red-300 px-1.5 py-0.5 font-medium transition-colors hover:bg-red-50"
+                type="button"
+              >
+                <RotateCcw size={11} />
+                {isAr ? 'إعادة المحاولة' : 'Retry'}
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-1.5 mt-1 text-[10px] text-charcoal/50 justify-end">
           <span>{formatTime(message.date, isAr)}</span>
