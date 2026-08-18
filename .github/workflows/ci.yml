@@ -235,6 +235,57 @@ jobs:
       - name: Run Gate A ingest migration tests
         run: bash supabase/tests/ci/run_market_ingest_gate_a_test.sh
 
+  ingestion-write-path:
+    # Designated validator for 2026-09-06_01_ingestion_write_path.sql — the
+    # owner-run definer write-path RPCs. Applies the Gate A fixture + _01..04 +
+    # the write-path migration on an ephemeral Postgres 17, proves idempotent
+    # re-apply and the functional/ACL contract (capture idempotency, optional-
+    # absent vs schema-gap, service_role-only EXECUTE).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ingestion write-path tests
+        run: bash supabase/tests/ci/run_ingestion_write_path_test.sh
+
+  market-publisher:
+    # Designated validator for 2026-09-06_02_market_listings_publisher.sql — the
+    # controlled canonical publisher. Applies the full chain + a minimal
+    # market_listings publisher fixture (which makes NO fresh-vs-prod parity
+    # claim), proves idempotent re-apply, and exercises the publisher contract
+    # (allowlist/flag gate, insert/update identity, destructive quarantine,
+    # required-field + ambiguous-identity rejection, service_role-only EXECUTE).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run market publisher tests
+        run: bash supabase/tests/ci/run_market_publisher_test.sh
+
   freeze-baseline-sequence:
     # Designated validator for the FULL market-ingest replay chain:
     #   pre-freeze predecessor fixture
@@ -308,3 +359,6 @@ jobs:
       - name: Typecheck worker
         working-directory: worker
         run: npx tsc --noEmit
+      - name: Ingest adapter tests (worker)
+        working-directory: worker
+        run: npm run test:ingest
