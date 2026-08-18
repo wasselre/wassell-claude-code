@@ -42,6 +42,14 @@ export default function NotificationSettings() {
   const [checked, setChecked] = useState(false);
   const [builtins, setBuiltins] = useState<PushBuiltinSettings>(PUSH_BUILTIN_DEFAULTS);
   const [savingBuiltin, setSavingBuiltin] = useState<keyof PushBuiltinSettings | null>(null);
+  const [savingInbox, setSavingInbox] = useState(false);
+
+  // Active users, sorted by display name — the pool for the WhatsApp inbox
+  // fallback picker below.
+  const activeUsers = users
+    .filter((u) => u.is_active)
+    .map((u) => ({ id: u.id, name: (isAr ? u.name_ar : u.name_en) || u.email || u.id }))
+    .sort((a, b) => a.name.localeCompare(b.name, isAr ? 'ar' : 'en'));
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +78,22 @@ export default function NotificationSettings() {
     setSavingBuiltin(null);
     if (!res.ok) {
       setBuiltins((prev) => ({ ...prev, [key]: !next }));
+      addToast(
+        (isAr ? 'تعذّر الحفظ: ' : 'Could not save: ') + (res.error ?? ''),
+        'error',
+      );
+    }
+  };
+
+  const saveInboxUser = async (userId: string | null) => {
+    const prev = builtins.whatsapp_inbox_user_id;
+    setSavingInbox(true);
+    // Optimistic, reverted on failure — same posture as the toggles.
+    setBuiltins((p) => ({ ...p, whatsapp_inbox_user_id: userId }));
+    const res = await savePushBuiltinSettings({ whatsapp_inbox_user_id: userId });
+    setSavingInbox(false);
+    if (!res.ok) {
+      setBuiltins((p) => ({ ...p, whatsapp_inbox_user_id: prev }));
       addToast(
         (isAr ? 'تعذّر الحفظ: ' : 'Could not save: ') + (res.error ?? ''),
         'error',
@@ -259,6 +283,43 @@ export default function NotificationSettings() {
               </span>
             </label>
           ))}
+
+          {/* Inbox fallback for the WhatsApp built-in. A new inbound message is
+              normally sent to the client's assigned Sales Consultant. When the
+              chat has no assigned rep (unlinked, or a client with no follow-up
+              yet), it would otherwise notify nobody — this routes it here. */}
+          <div className="pt-2 mt-1 border-t border-sand/20">
+            <div className="text-[11px] font-bold text-charcoal/65">
+              {isAr
+                ? 'صندوق واتساب غير المُسند'
+                : 'Unassigned WhatsApp inbox'}
+            </div>
+            <div className="text-[11px] text-charcoal/55 mt-0.5 mb-1.5">
+              {isAr
+                ? 'رسالة واتساب جديدة من محادثة بلا مستشار مبيعات مُسنَد (محادثة غير مرتبطة بعميل، أو عميل بلا متابعة بعد) تُرسَل لهذا الشخص. المحادثات المُسندة تصل لمستشارها كالمعتاد. اترك الخيار فارغًا لتعطيل هذا التنبيه.'
+                : 'A new WhatsApp message from a chat with no assigned Sales Consultant (an unlinked chat, or a client with no follow-up yet) is sent to this person. Assigned chats still reach their consultant as usual. Leave unset to disable this alert.'}
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={builtins.whatsapp_inbox_user_id ?? ''}
+                disabled={savingInbox}
+                onChange={(e) => void saveInboxUser(e.target.value || null)}
+                className="form-input text-sm py-1.5 flex-1 min-w-0"
+              >
+                <option value="">
+                  {isAr ? '— بدون (تنبيه معطّل) —' : '— None (alert off) —'}
+                </option>
+                {activeUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+              {savingInbox && (
+                <Loader2 size={14} className="animate-spin text-charcoal/40 shrink-0" />
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

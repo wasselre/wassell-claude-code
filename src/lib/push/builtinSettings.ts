@@ -20,13 +20,25 @@ export interface PushBuiltinSettings {
   customer_replied_enabled: boolean;
   /** «💬 رسالة واتساب جديدة» — added 2026-08-18. */
   whatsapp_inbound_enabled: boolean;
+  /**
+   * Fallback recipient (public.users.id) for a new inbound WhatsApp message
+   * when NO sales rep is assigned to the chat — an unlinked conversation, or a
+   * client with no follow-up yet. NULL = no fallback (assigned chats always go
+   * to their consultant regardless). Added 2026-08-18.
+   */
+  whatsapp_inbox_user_id: string | null;
 }
 
-/** All ON — matches the database defaults and the triggers' own fallback. */
+/**
+ * Toggles ON, inbox user unset — matches the database defaults and the
+ * triggers' own fallback (a missing settings row degrades to all toggles ON,
+ * no inbox fallback).
+ */
 export const PUSH_BUILTIN_DEFAULTS: PushBuiltinSettings = {
   hot_lead_enabled: true,
   customer_replied_enabled: true,
   whatsapp_inbound_enabled: true,
+  whatsapp_inbox_user_id: null,
 };
 
 /**
@@ -43,7 +55,7 @@ export async function loadPushBuiltinSettings(): Promise<PushBuiltinSettings> {
   try {
     const { data, error } = await supabase
       .from('push_builtin_settings')
-      .select('hot_lead_enabled, customer_replied_enabled, whatsapp_inbound_enabled')
+      .select('hot_lead_enabled, customer_replied_enabled, whatsapp_inbound_enabled, whatsapp_inbox_user_id')
       .eq('id', 1)
       .maybeSingle();
     if (error) throw error;
@@ -52,6 +64,7 @@ export async function loadPushBuiltinSettings(): Promise<PushBuiltinSettings> {
       hot_lead_enabled: data.hot_lead_enabled !== false,
       customer_replied_enabled: data.customer_replied_enabled !== false,
       whatsapp_inbound_enabled: data.whatsapp_inbound_enabled !== false,
+      whatsapp_inbox_user_id: data.whatsapp_inbox_user_id ?? null,
     };
   } catch (err) {
     console.error(
