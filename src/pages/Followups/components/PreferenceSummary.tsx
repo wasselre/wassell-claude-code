@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { SlidersHorizontal, Save, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
-import type { AppRecord, ModelField } from '@/types';
+import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferences';
+import type { ModelField } from '@/types';
 
 interface PreferenceSummaryProps {
   clientId: string | null;
@@ -68,30 +69,27 @@ export default function PreferenceSummary({ clientId, onEditFull, draft: draftPr
 
   if (!clientsModel || !clientId || !clientRec) return null;
 
-  const eq = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-  // location_items (district + geo-element preferences) rides inside the unified
-  // location field (ClientLocationField) but isn't a PREF_SLUG, so track + persist
-  // it explicitly here too.
-  const itemsDirty = !eq(draft.location_items, clientRec.data.location_items);
-  const dirty = PREF_SLUGS.some((slug) => !eq(draft[slug], clientRec.data[slug])) || itemsDirty;
+  // location_items (district + geo-element preferences) and preference_constraints
+  // (per-field strictness bands) ride inside other fields (ClientLocationField /
+  // the band control) rather than being PREF_SLUGS — the shared helper tracks and
+  // persists them alongside the slugs.
+  const dirty = preferencesDirty(clientRec.data, draft, PREF_SLUGS);
 
   const setField = (slug: string, value: unknown) =>
     controlled ? onFieldChange!(slug, value) : setInternalDraft((d) => ({ ...d, [slug]: value }));
 
   const save = async () => {
-    const base = clientRec; // freshest copy from the store
-    const patch: Record<string, unknown> = {};
-    PREF_SLUGS.forEach((slug) => { patch[slug] = draft[slug]; });
-    if (itemsDirty) patch.location_items = draft.location_items ?? [];
     setSaving(true);
-    const next: AppRecord = { ...base, data: { ...base.data, ...patch }, updated_at: new Date().toISOString() };
-    const res = await saveRecord(next, { expectedVersion: base.version ?? null });
+    const res = await saveClientPreferences({
+      client: clientRec, // freshest copy from the store
+      draft,
+      slugs: PREF_SLUGS,
+      saveRecord,
+      expectedVersion: clientRec.version ?? null,
+      isAr,
+    });
     setSaving(false);
-    if (res.status === 'conflict') {
-      addToast(isAr ? 'تم تعديل بيانات العميل في مكان آخر — أعد التحميل.' : 'Client was edited elsewhere — reload before saving.', 'error');
-      return;
-    }
-    addToast(isAr ? 'تم حفظ التفضيلات' : 'Preferences saved', 'success');
+    addToast(res.message, res.tone);
   };
 
   return (

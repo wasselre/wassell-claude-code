@@ -51,6 +51,52 @@ function opt(ar: string, en?: string): FieldOption {
   return { id: uuid(), label_ar: ar, label_en: en ?? ar, value: ar };
 }
 
+/**
+ * Build the option ladder for a `range` field from one or more step segments.
+ *
+ * A range field carries a SINGLE `range_step`, which cannot express a
+ * non-uniform increment schedule (e.g. "10 m² up to 500, then 100 m² up to
+ * 5,000"). `field.options` can: RangeField renders the min/max inputs as two
+ * <select> pickers when the field has options, and option `value`s are NUMERIC
+ * strings so the stored value stays `{min,max}` numeric. So the ladder IS the
+ * step spec. `range_step` stays on the field as Builder-editor metadata and
+ * should carry the FINEST step in the ladder.
+ *
+ * Segments are inclusive of both ends; a value repeated across two adjacent
+ * segments (e.g. 500 ending one and starting the next) is emitted once.
+ * Ids are deterministic (`<prefix>_<value>`) — never `uuid()` — so re-seeding
+ * cannot silently break filters that reference an option value (see the
+ * "Inline-create UUID drift" incident in CLAUDE.md).
+ *
+ * Mirrors the SQL in supabase/migrations/2026-08-18_client_pref_area_budget_ranges.sql.
+ */
+function rangeLadder(
+  prefix: string,
+  segments: ReadonlyArray<{ from: number; to: number; step: number }>,
+): FieldOption[] {
+  const values: number[] = [];
+  for (const { from, to, step } of segments) {
+    for (let v = from; v <= to; v += step) {
+      if (values[values.length - 1] !== v) values.push(v);
+    }
+  }
+  return values.map((v) => {
+    const label = v.toLocaleString('en-US');
+    return { id: `${prefix}_${v}`, label_ar: label, label_en: label, value: String(v) };
+  });
+}
+
+// Client preference ranges. Preferred area (م²): 10 m² steps from 50 to 500,
+// then 100 m² steps to 5,000 (91 values). Budget (ر.س): uniform 50,000 steps
+// from 500,000 to 10,000,000 (191 values).
+const PREFERRED_AREA_OPTIONS: FieldOption[] = rangeLadder('area_opt', [
+  { from: 50, to: 500, step: 10 },
+  { from: 500, to: 5000, step: 100 },
+]);
+const BUDGET_OPTIONS: FieldOption[] = rangeLadder('budget_opt', [
+  { from: 500000, to: 10000000, step: 50000 },
+]);
+
 // --- Saudi city + Riyadh-district dropdown options (user-provided, Apr 2026) ---
 // English labels are provided for the most common places; the rest fall back to Arabic
 // until an admin customizes them in the Builder.
@@ -771,11 +817,12 @@ const clientsModel: AppModel = {
             section_id: clientsPrefsSectionId,
             width: 'half',
             show_in_table: false,
-            range_min: 100,
-            range_max: 2000,
-            range_step: 50,
+            range_min: 50,
+            range_max: 5000,
+            range_step: 10, // finest step; the full ladder lives in `options`
             range_unit_ar: 'م²',
             range_unit_en: 'm²',
+            options: PREFERRED_AREA_OPTIONS,
           },
           {
             id: uuid(),
@@ -875,11 +922,12 @@ const clientsModel: AppModel = {
             section_id: clientsPrefsSectionId,
             width: 'half',
             show_in_table: false,
-            range_min: 50000,
-            range_max: 5000000,
+            range_min: 500000,
+            range_max: 10000000,
             range_step: 50000,
             range_unit_ar: 'ر.س',
             range_unit_en: 'SAR',
+            options: BUDGET_OPTIONS,
           },
           {
             id: uuid(),

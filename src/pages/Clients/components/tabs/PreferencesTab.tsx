@@ -4,6 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import { useRecordDraft } from '@/hooks/useRecordDraft';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import DynamicCell from '@/pages/Records/components/DynamicCell';
+import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferences';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { PREFERENCE_EDIT_SLUGS, isDerivedReadOnly, allFields } from '../../lib/clientView';
 
@@ -44,35 +45,28 @@ export default function PreferencesTab({ client, clientsModel, isAr, canEdit }: 
     .map((slug) => allFields(clientsModel).find((f) => f.name === slug))
     .filter((f): f is ModelField => !!f);
 
-  // The detailed location preferences (clients.data.location_items) live INSIDE the
-  // unified location field (ClientLocationField, rendered by DynamicField for the
-  // clients model) — written via the onPatch sibling-writer below. They still ride
+  // The detailed location preferences (clients.data.location_items) and the
+  // per-field strictness bands (preference_constraints) live INSIDE other fields
+  // (ClientLocationField / the band control, both rendered by DynamicField and
+  // written via the onPatch sibling-writer below). The shared helper carries them
   // alongside the field patch on the same versioned save.
-  const eq = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-  const itemsDirty = !eq(draft.location_items ?? [], client.data.location_items ?? []);
-  const dirty = fields.some((f) => !eq(draft[f.name], client.data[f.name])) || itemsDirty;
+  const slugs = fields.map((f) => f.name);
+  const dirty = preferencesDirty(client.data, draft, slugs);
 
   const save = async () => {
-    const patch: Record<string, unknown> = {};
-    fields.forEach((f) => {
-      patch[f.name] = draft[f.name];
-    });
-    if (itemsDirty) patch.location_items = draft.location_items ?? [];
     setSaving(true);
-    const next: AppRecord = { ...client, data: { ...client.data, ...patch }, updated_at: new Date().toISOString() };
-    const res = await saveRecord(next, { expectedVersion: versionRef.current?.version ?? null });
+    const res = await saveClientPreferences({
+      client,
+      draft,
+      slugs,
+      saveRecord,
+      expectedVersion: versionRef.current?.version ?? null,
+      isAr,
+    });
     setSaving(false);
-    if (res.status === 'conflict') {
-      addToast(isAr ? 'تم تعديل بيانات العميل في مكان آخر — أعد التحميل قبل الحفظ.' : 'Client was edited elsewhere — reload before saving.', 'error');
-      return;
-    }
-    if (res.status === 'queued') {
-      addToast(isAr ? 'تم الحفظ محلياً — سيُزامن لاحقاً.' : 'Saved locally — will sync later.', 'info');
-    } else {
-      addToast(isAr ? 'تم حفظ التفضيلات' : 'Preferences saved', 'success');
-      // Adopt the bumped version so a second edit in the same mount doesn't self-conflict.
-      if (versionRef.current) versionRef.current = { id: client.id, version: (versionRef.current.version ?? 0) + 1 };
-    }
+    // Adopt the bumped version so a second edit in the same mount doesn't self-conflict.
+    if (res.ok && versionRef.current) versionRef.current = { id: client.id, version: res.nextVersion };
+    addToast(res.message, res.tone);
   };
 
   if (fields.length === 0) {

@@ -1,11 +1,13 @@
-// Kill switch for the two BUILT-IN notifications (hot lead, customer replied).
+// Kill switch for the BUILT-IN notifications (hot lead, customer replied, new
+// inbound WhatsApp message).
 //
-// Those two are produced by the `tg_records_enqueue_push` database trigger, not
-// by a workflow. Now that a Notification action can be configured per workflow,
-// someone building their own "new lead" rule would receive TWO alerts for one
-// event. This switch lets the built-ins be turned off so a hand-built rule can
-// replace them, instead of forcing a choice between an editable rule and a
-// working one.
+// They are produced by database triggers — `tg_records_enqueue_push` on
+// `records` for the first two, `tg_chat_messages_enqueue_push` on
+// `chat_messages` for the third — not by a workflow. Now that a Notification
+// action can be configured per workflow, someone building their own "new lead"
+// rule would receive TWO alerts for one event. This switch lets the built-ins
+// be turned off so a hand-built rule can replace them, instead of forcing a
+// choice between an editable rule and a working one.
 //
 // Workspace-wide and admin-only: one rep turning it off would silence every
 // other rep. RLS enforces that (push_builtin_admin_update) — this module is
@@ -16,19 +18,22 @@ import { supabase } from '@/lib/supabase';
 export interface PushBuiltinSettings {
   hot_lead_enabled: boolean;
   customer_replied_enabled: boolean;
+  /** «💬 رسالة واتساب جديدة» — added 2026-08-18. */
+  whatsapp_inbound_enabled: boolean;
 }
 
-/** Both ON — matches the database default and the trigger's own fallback. */
+/** All ON — matches the database defaults and the triggers' own fallback. */
 export const PUSH_BUILTIN_DEFAULTS: PushBuiltinSettings = {
   hot_lead_enabled: true,
   customer_replied_enabled: true,
+  whatsapp_inbound_enabled: true,
 };
 
 /**
  * Load the switch state.
  *
- * FAIL-SAFE ON: a read failure returns both enabled, which is what the trigger
- * itself does when the row is missing. The alternative — defaulting to off —
+ * FAIL-SAFE ON: a read failure returns them all enabled, which is what the
+ * triggers themselves do when the row is missing. The alternative — off —
  * would make a transient read error look identical to "notifications are
  * disabled", and the UI would tell an admin their alerts are off when they are
  * not. Reporting ON matches what the server will actually do.
@@ -38,7 +43,7 @@ export async function loadPushBuiltinSettings(): Promise<PushBuiltinSettings> {
   try {
     const { data, error } = await supabase
       .from('push_builtin_settings')
-      .select('hot_lead_enabled, customer_replied_enabled')
+      .select('hot_lead_enabled, customer_replied_enabled, whatsapp_inbound_enabled')
       .eq('id', 1)
       .maybeSingle();
     if (error) throw error;
@@ -46,6 +51,7 @@ export async function loadPushBuiltinSettings(): Promise<PushBuiltinSettings> {
     return {
       hot_lead_enabled: data.hot_lead_enabled !== false,
       customer_replied_enabled: data.customer_replied_enabled !== false,
+      whatsapp_inbound_enabled: data.whatsapp_inbound_enabled !== false,
     };
   } catch (err) {
     console.error(

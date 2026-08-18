@@ -5,7 +5,7 @@
 # Model: Chats / المحادثات  `chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-10
+**Last updated (from DB):** 2026-08-14
 **Model id:** `7e6c23b5-5492-413a-bc34-d928086f6e7e`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **12**
+- Fields: **13**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -42,6 +42,7 @@
 | `last_message_at` | Last Message / آخر رسالة | Date & time | no | third | yes |  |
 | `last_message_preview` | Preview / معاينة | Text | no | full | yes |  |
 | `client_link` | Linked Client / العميل المرتبط | Lookup | no | half | yes | → Clients |
+| `client_owner` | Sales Consultant / مستشار المبيعات | Assignee | no | half | no | any user |
 
 **Field details:**
 
@@ -61,3 +62,5 @@
   - target model: Clients
   - shows field: `name`
   - multiple: no
+- **Sales Consultant / مستشار المبيعات** (`client_owner`, type `assignee`):
+  - eligible users: any active user

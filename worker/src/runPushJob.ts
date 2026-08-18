@@ -1,11 +1,17 @@
 /**
  * Deliver queued push notifications to a rep's devices.
  *
- * Eighth queue on this worker. `push_outbox` is filled by the
- * records_enqueue_push trigger (see supabase/migrations/2026-07-29_web_push.sql)
- * the moment a hot lead lands or a customer replies. Delivery has to happen
- * here rather than in Postgres because neither pg_net nor pg_cron is installed
- * on this project — the database cannot make an outbound HTTP call.
+ * Eighth queue on this worker. `push_outbox` is filled by two triggers, and
+ * this loop is deliberately blind to which one:
+ *   * records_enqueue_push       — hot lead / customer replied
+ *                                  (supabase/migrations/2026-07-29_web_push.sql)
+ *   * chat_messages_enqueue_push — a new INBOUND WhatsApp message, sent to the
+ *                                  assigned salesperson
+ *                                  (…/2026-08-18_09_whatsapp_inbound_push.sql)
+ * Adding a `kind` is therefore a migration, never a worker change. Delivery
+ * has to happen here rather than in Postgres because neither pg_net nor
+ * pg_cron is installed on this project — the database cannot make an outbound
+ * HTTP call.
  *
  * Encryption is delegated to `web-push`. Web Push payloads are aes128gcm with
  * an ECDH key agreement per subscription and a VAPID JWT per request; that is

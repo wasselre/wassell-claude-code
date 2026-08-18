@@ -16,6 +16,7 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const messages = useAppStore((s) => s.chatMessages[chatWid] ?? EMPTY);
   const loadMessagesForChat = useAppStore((s) => s.loadMessagesForChat);
+  const retryChatMessage = useAppStore((s) => s.retryChatMessage);
 
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -220,6 +221,9 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
                 message={m}
                 isAr={isAr}
                 reactions={reactionsByTarget.get(m.id)}
+                // Bound to THIS conversation's wid, so a retry can never land
+                // in a chat the user has since switched to.
+                onRetry={m.flow === 'out' ? () => void retryChatMessage(chatWid, m.id) : undefined}
               />
             ))}
           </div>

@@ -1,10 +1,13 @@
 import {
   Building2, MapPin, Wallet, Ruler, BedDouble, Bath, PackageCheck, AlertTriangle,
   ExternalLink, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
-  CheckSquare, Square, Send,
+  CheckSquare, Square, Send, KeyRound, HardHat,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus, OurFit } from '@/lib/matching/projectFinder';
+import {
+  resolveDeliveryStatus, deliveryLabel, formatHandoverMonth, type DeliveryKind,
+} from '@/lib/matching/deliveryStatus';
 import { dealBadgeLabel, dealBadgeTone, type DealBadge } from '@/lib/market/dealBadge';
 import { CLIENT_OPTION_STATUS_META, CLIENT_OPTION_STATUS_ORDER, type ClientOptionStatus } from '@/lib/matching/clientOptions';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
@@ -95,6 +98,47 @@ function DealPill({ deal, isAr }: { deal: DealBadge; isAr: boolean }) {
     <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${cls[tone]}`}
       title={isAr ? (deal.asking_only ? 'مبني على الأسعار المعروضة' : '') : (deal.asking_only ? 'Based on asking prices' : '')}>
       {dealBadgeLabel(deal.kind, isAr)}{showPct ? pct : ''}
+    </span>
+  );
+}
+
+/**
+ * Delivery readiness — "جاهز / Ready" vs "على الخارطة / Off-plan", and for
+ * off-plan the expected handover month. Derived ONLY from the project's existing
+ * `construction_status` / `project_status` / `handover_date` facts (see
+ * `src/lib/matching/deliveryStatus.ts`); it never guesses "Ready".
+ *
+ * Unknown readiness renders a neutral "غير محدد" chip on catalog projects (a real
+ * data-quality signal the rep should see) but nothing on market listings, where a
+ * resale ad simply has no construction stage.
+ */
+function DeliveryPill({ facts, source, isAr }: { facts: Record<string, unknown>; source: FinderSource; isAr: boolean }) {
+  const { kind, handoverDate } = resolveDeliveryStatus(facts);
+  if (kind === 'unknown' && source === 'market_listings') return null;
+  const handover = kind === 'off_plan' ? formatHandoverMonth(handoverDate, isAr) : null;
+  const cls: Record<DeliveryKind, string> = {
+    ready: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    off_plan: 'border-copper/40 bg-copper/10 text-terracotta',
+    unknown: 'border-sand/60 bg-cream/50 text-charcoal/55',
+  };
+  const Icon = kind === 'ready' ? KeyRound : kind === 'off_plan' ? HardHat : HelpCircle;
+  const title = kind === 'off_plan' && handoverDate
+    ? (isAr ? `تاريخ التسليم المتوقع: ${handoverDate}` : `Expected handover date: ${handoverDate}`)
+    : (isAr ? 'حالة التسليم' : 'Delivery status');
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${cls[kind]}`}
+      title={title}
+    >
+      <Icon size={11} className="shrink-0" />
+      {deliveryLabel(kind, isAr)}
+      {kind === 'off_plan' && (
+        <span className="font-semibold">
+          {handover
+            ? (isAr ? `· التسليم ${handover}` : `· handover ${handover}`)
+            : (isAr ? '· تاريخ التسليم غير محدد' : '· handover date not set')}
+        </span>
+      )}
     </span>
   );
 }
@@ -193,6 +237,9 @@ export default function FinderCard({
           {item.source === 'our_projects' && item.our_fit
             ? <OurFitBadges fit={item.our_fit} isAr={isAr} />
             : <MatchTypePill type={item.match_type} isAr={isAr} />}
+          {/* Ready (جاهز) vs off-plan (على الخارطة) + the expected handover date.
+              Every result carries it; unknown reads as "غير محدد", never "ready". */}
+          <DeliveryPill facts={f} source={item.source} isAr={isAr} />
           <SourcePill source={item.source} isAr={isAr} />
           {adId && (
             <span

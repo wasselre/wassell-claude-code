@@ -303,6 +303,28 @@ function fieldDetailHint(field) {
   if (field.is_rollup ?? field.is_computed) return `rollup: ${field.rollup_kind ?? field.computed_kind ?? '?'}`;
   return '';
 }
+/**
+ * Summarize a range field's option ladder as its step segments, e.g.
+ * "50 … 500 step 10, then 500 … 5,000 step 100". Returns null when the field
+ * has no options (free numeric entry) or the values aren't numeric.
+ * Run-length-encodes the gaps, so a uniform ladder collapses to one segment.
+ */
+function rangeLadderSummary(options) {
+  const vals = (options || []).map((o) => Number(o.value));
+  if (vals.length < 2 || vals.some((v) => !Number.isFinite(v))) return null;
+  const num = (n) => n.toLocaleString('en-US');
+  const segs = [];
+  for (let i = 1; i < vals.length; i++) {
+    const step = vals[i] - vals[i - 1];
+    const last = segs[segs.length - 1];
+    if (last && last.step === step) last.to = vals[i];
+    else segs.push({ from: vals[i - 1], to: vals[i], step });
+  }
+  return segs
+    .map((s, i) => `${i ? 'then ' : ''}${num(s.from)} … ${num(s.to)} step ${num(s.step)}`)
+    .join(', ');
+}
+
 function truncate(s, n) {
   const str = String(s ?? '');
   return str.length > n ? str.slice(0, n - 1) + '…' : str;
@@ -346,6 +368,11 @@ function fieldDetailBlock(field, model) {
   } else if (t === 'range') {
     lines.push(head + `:`);
     lines.push(`  - ${field.range_min ?? '?'} to ${field.range_max ?? '?'}${field.range_step ? ` step ${field.range_step}` : ''}${field.range_unit_en ? ` ${field.range_unit_en}` : ''}`);
+    // A range field with an option list renders as two <select> pickers, and
+    // the ladder — not `range_step` — is what the user can actually pick. It
+    // may be non-uniform, so summarize it as its step segments.
+    const ladder = rangeLadderSummary(field.options);
+    if (ladder) lines.push(`  - selectable values (${(field.options || []).length}): ${ladder}`);
   } else if (t === 'table') {
     lines.push(head + ' — columns:');
     for (const c of (field.table_columns || [])) {

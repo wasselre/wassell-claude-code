@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, User, X, Bookmark, XCircle, TimerOff, RefreshCw, CheckSquare } from 'lucide-react';
+import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, User, X, Bookmark, XCircle, TimerOff, RefreshCw, CheckSquare, Save } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
+import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferences';
 import { draftToMatchRequirements, type MatchRequirementsInput } from '@/lib/matching/requirements';
 import {
   fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS, FinderRequestError,
@@ -52,6 +53,12 @@ function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) 
  * result card gains the full client-option actions — inline status selector,
  * bulk-select + save, and eliminate — writing into that client's unified options.
  *
+ * SAVE and SEARCH are two SEPARATE actions (2026-08-18). "Save preferences"
+ * persists ONLY the preference fields onto the selected client (shared
+ * `saveClientPreferences`, version-aware, toasts every outcome) and runs no
+ * search; "Find projects" runs the match and never writes to the client record.
+ * An amber dirty line under the Save button flags unsaved preference edits.
+ *
  * The search always pulls EVERYTHING scoring ≥ FETCH_FLOOR. Above the results sits
  * the shared FinderRefinementBar (score slider + sort + hard refine filters) that
  * operates 100% client-side on that set — no re-fetch. Same bar + FinderCard are
@@ -83,6 +90,7 @@ export default function ProjectFinderPage() {
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
   const addToast = useAppStore((s) => s.addToast);
+  const saveRecord = useAppStore((s) => s.saveRecord);
   const isAr = language === 'ar';
   const L = (ar: string, en: string) => (isAr ? ar : en);
 
@@ -204,6 +212,23 @@ export default function ProjectFinderPage() {
   const setField = (slug: string, value: unknown) =>
     setDraft((d) => ({ ...d, [slug]: value }));
 
+  /** The picker draft for a client's SAVED preferences (location + rules, unit
+   *  type, budget, area, amenities, bands). Shared by select-client and Reset so
+   *  Reset restores the client's saved values instead of staging a wipe. */
+  function seedDraftFromClient(rec: AppRecord): Record<string, unknown> {
+    const d = rec.data as Record<string, unknown>;
+    const next: Record<string, unknown> = {};
+    for (const slug of FILTER_SLUGS) next[slug] = d[slug];
+    // location_items (district + geo-element rules) and preference_constraints
+    // (per-field strictness bands) aren't FILTER_SLUGS but ARE part of the
+    // client's preferences — seed them so an explicit Save round-trips them
+    // instead of replacing them with whatever the rep touched. Seeded only
+    // when the client actually has them, so an untouched draft reads clean.
+    if (d.location_items !== undefined) next.location_items = d.location_items;
+    if (d.preference_constraints !== undefined) next.preference_constraints = d.preference_constraints;
+    return next;
+  }
+
   // Seed the pickers from a client's saved preferences (location + rules, unit
   // type, budget, area, amenities, bedrooms). Resets any in-flight results.
   function selectClient(id: string) {
@@ -216,10 +241,7 @@ export default function ProjectFinderPage() {
     const rec = clientsModel ? (records[clientsModel.id] ?? []).find((r) => r.id === id) : null;
     if (rec) {
       const d = rec.data as Record<string, unknown>;
-      const next: Record<string, unknown> = {};
-      for (const slug of FILTER_SLUGS) next[slug] = d[slug];
-      next.location_items = d.location_items ?? [];
-      setDraft(next);
+      setDraft(seedDraftFromClient(rec));
       const pb = d.preferred_bedrooms;
       const bn = typeof pb === 'number' ? pb : pb && typeof pb === 'object' ? Number((pb as Record<string, unknown>).min) : NaN;
       setBedrooms(Number.isFinite(bn) && bn > 0 ? bn : '');
@@ -246,6 +268,40 @@ export default function ProjectFinderPage() {
     // (edited via the band control under each preference field, DynamicField-owned)
     // and are mapped by draftToMatchRequirements — nothing extra to wire here.
     return reqs;
+  }
+
+  // ── Preferences: SAVE and SEARCH are two separate actions ──────────────────
+  // Save writes ONLY the client's preference fields (no search); Search runs the
+  // match and NEVER writes to the client from this page. The version the surface
+  // loaded with is pinned per client so a second save in the same session
+  // doesn't self-conflict after the first one bumps the row.
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const prefVersionRef = useRef<{ id: string; version: number | null } | null>(null);
+  if (clientRec && prefVersionRef.current?.id !== clientRec.id) {
+    prefVersionRef.current = { id: clientRec.id, version: clientRec.version ?? null };
+  }
+
+  const prefsDirty = useMemo(
+    () => preferencesDirty(clientRec?.data, draft, FILTER_SLUGS),
+    [clientRec, draft],
+  );
+
+  async function savePrefs() {
+    if (!clientRec || savingPrefs) return;
+    setSavingPrefs(true);
+    const res = await saveClientPreferences({
+      client: clientRec,
+      draft,
+      slugs: FILTER_SLUGS,
+      saveRecord,
+      expectedVersion: prefVersionRef.current?.version ?? null,
+      isAr,
+    });
+    setSavingPrefs(false);
+    if (res.ok && prefVersionRef.current) {
+      prefVersionRef.current = { id: clientRec.id, version: res.nextVersion };
+    }
+    addToast(res.message, res.tone);
   }
 
   const hasAnyCriteria = useMemo(() => {
@@ -310,7 +366,10 @@ export default function ProjectFinderPage() {
 
   function resetFilters() {
     controllerRef.current?.abort();
-    setDraft({}); // clears preference_constraints too (they live in the draft now)
+    // With a client selected, "reset" means BACK TO THEIR SAVED PREFERENCES —
+    // never an empty draft, which the explicit Save would then persist as a
+    // wipe of everything the client told us.
+    setDraft(clientRec ? seedDraftFromClient(clientRec) : {}); // clears preference_constraints too (they live in the draft now)
     setBedrooms('');
     setSources({ our_projects: true, all_projects: true, market_listings: false });
     setScoreThreshold(FETCH_FLOOR);
@@ -455,12 +514,14 @@ export default function ProjectFinderPage() {
     if (mustConfirmLeave) setConfirmLeave(true);
     else clearClient();
   }
+  // Unsaved preference edits count as unsaved work too — closing the tab with
+  // either pending gets the browser's "leave site?" prompt.
   useEffect(() => {
-    if (!mustConfirmLeave) return;
+    if (!mustConfirmLeave && !prefsDirty) return;
     const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
     window.addEventListener('beforeunload', h);
     return () => window.removeEventListener('beforeunload', h);
-  }, [mustConfirmLeave]);
+  }, [mustConfirmLeave, prefsDirty]);
 
   // One card, wired for a selected client (full actions) or read-only discovery.
   const renderCard = (item: FinderMatch, key: string) => (
@@ -691,6 +752,35 @@ export default function ProjectFinderPage() {
                     ))}
                   </div>
                 </div>
+
+                {/* SAVE — persists the preference fields onto the selected
+                    client and runs NO search. Only offered with a client
+                    selected (without one there's nothing to save to). */}
+                {selectedClientId && (
+                  <div className="space-y-1.5 rounded-lg border border-sand/50 bg-cream/40 p-2.5">
+                    <button
+                      type="button"
+                      onClick={() => void savePrefs()}
+                      disabled={savingPrefs || !prefsDirty}
+                      title={prefsDirty
+                        ? L('حفظ التفضيلات على بطاقة العميل (بدون بحث)', 'Save preferences to the client (no search)')
+                        : L('لا توجد تغييرات لحفظها', 'No changes to save')}
+                      className={`inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-3.5 py-2.5 text-sm font-bold transition disabled:opacity-50 ${
+                        prefsDirty
+                          ? 'bg-chocolate text-white hover:bg-chocolate/90'
+                          : 'border border-sand/60 bg-white text-charcoal/70'
+                      }`}
+                    >
+                      {savingPrefs ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                      {savingPrefs ? L('جارٍ الحفظ…', 'Saving…') : L('حفظ التفضيلات', 'Save preferences')}
+                    </button>
+                    <p className={`text-[11px] ${prefsDirty ? 'font-semibold text-amber-700' : 'text-charcoal/50'}`}>
+                      {prefsDirty
+                        ? L('تعديلات غير محفوظة على تفضيلات العميل.', 'Unsaved changes to this client’s preferences.')
+                        : L('تفضيلات العميل محفوظة. «بحث» لا يغيّر بطاقة العميل.', 'Preferences saved. “Find projects” doesn’t change the client.')}
+                    </p>
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2 pt-1">
                   <button

@@ -22,6 +22,7 @@ import {
 } from '@/lib/matching/finderRefine';
 import { summarizeConstraintDrops } from '@/lib/matching/constraints';
 import { setFinderHandoff } from '@/lib/matching/finderHandoff';
+import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferences';
 import { saveFinderStash, loadFinderStash, clearFinderStash, type FinderStash } from '@/lib/matching/finderStash';
 import { setFormUnsaved } from '@/lib/staleBuild';
 import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
@@ -52,7 +53,15 @@ function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) 
  * filters), the rep can EDIT the client's preferences here (location, unit type,
  * budget, area, bedrooms, amenities) and press "Search" to RE-RUN the server-side
  * deterministic match — a genuinely more-detailed search. The edits also carry
- * back to the workspace (hand-off), and an explicit "Save to client" persists them.
+ * back to the workspace (hand-off).
+ *
+ * SAVING the preferences and SEARCHING are two separate actions (2026-08-18).
+ * "Save preferences only" persists them onto the client record and stays put —
+ * the WhatsApp Client-Options popup embeds this view, so a rep noting down what
+ * a client just said must not have to run a whole projects + market search to
+ * record it. "Search" keeps saving first (the server geo-gate compiles from the
+ * SAVED client, so an unsaved district rule wouldn't affect the results) and
+ * then runs the match. Both go through the shared `saveClientPreferences`.
  *
  * A prominent "Done" button (onDone) returns the rep to the follow-up record.
  */
@@ -140,6 +149,13 @@ export default function SuggestedProjectsView({
   // preferences, then search" start screen when editPrefsFirst defers it.
   const [hasSearched, setHasSearched] = useState(!editPrefsFirst);
   const [savingPrefs, setSavingPrefs] = useState(false);
+  // Version this surface loaded the client with (optimistic concurrency). Pinned
+  // in a ref and bumped after each successful save so a second save in the same
+  // session can't self-conflict; re-pinned when the viewed client changes.
+  const prefVersionRef = useRef<{ id: string; version: number | null } | null>(null);
+  if (clientRec && prefVersionRef.current?.id !== clientRec.id) {
+    prefVersionRef.current = { id: clientRec.id, version: clientRec.version ?? null };
+  }
   // The preferences-chips area (QA: collapsible so popup results get the height).
   const [showPrefs, setShowPrefs] = useState(!defaultPrefsCollapsed);
 
@@ -488,42 +504,63 @@ export default function SuggestedProjectsView({
     );
   }
 
-  // Persist the edited preferences (incl. location_items) to the client record,
-  // version-safe. REQUIRED before a re-search when location_items changed: the
+  // Persist the edited preferences (incl. location_items + the strictness bands)
+  // to the client record, version-safe, through the ONE shared helper every
+  // preference surface uses. Runs NO search.
+  //
+  // It is also REQUIRED before a re-search when location_items changed: the
   // server geo-gate compiles from the SAVED client (wassell_compile_client_geo by
-  // id), so an unsaved district/element rule wouldn't affect the results.
-  async function persistPrefs(): Promise<boolean> {
+  // id), so an unsaved district/element rule wouldn't affect the results — which
+  // is why Search still saves first (see onSearchWithPrefs).
+  //
+  // `silent` suppresses the success toast for the save-then-search path (the
+  // results landing is the feedback there); failures ALWAYS toast.
+  async function persistPrefs(silent = false): Promise<boolean> {
     if (!clientRec) return true;
     markActivity('finder: saving preferences to client');
     setSavingPrefs(true);
-    const patch: Record<string, unknown> = {};
-    for (const slug of EDIT_SLUGS) patch[slug] = editDraft[slug];
-    // location_items (district + geo-element rules) isn't a plain slug — persist it too.
-    patch.location_items = editDraft.location_items ?? [];
-    const next: AppRecord = { ...clientRec, data: { ...clientRec.data, ...patch }, updated_at: new Date().toISOString() };
-    const res = await saveRecord(next, { expectedVersion: clientRec.version ?? null });
+    const res = await saveClientPreferences({
+      client: clientRec,
+      draft: editDraft,
+      slugs: EDIT_SLUGS,
+      saveRecord,
+      expectedVersion: prefVersionRef.current?.version ?? null,
+      isAr,
+    });
     setSavingPrefs(false);
-    if (res?.status === 'conflict') {
-      addToast(L('تم تعديل بيانات العميل في مكان آخر — حدّث الصفحة.', 'Client was edited elsewhere — reload before saving.'), 'error');
-      return false;
+    if (res.ok && prefVersionRef.current) {
+      prefVersionRef.current = { id: clientRec.id, version: res.nextVersion };
     }
-    return true;
+    if (!res.ok || !silent) addToast(res.message, res.tone);
+    return res.ok;
+  }
+
+  // Explicit SAVE action — persists the preferences and stays put (no search).
+  async function onSavePrefsOnly() {
+    if (!clientRec || savingPrefs || !clientPrefsDirty) return;
+    await persistPrefs();
   }
 
   // The edited prefs differ from what's SAVED on the client (so a save is needed).
-  const clientPrefsDirty = useMemo(() => {
-    if (!clientRec) return false;
-    const base = clientRec.data as Record<string, unknown>;
-    if (EDIT_SLUGS.some((s) => JSON.stringify(editDraft[s] ?? null) !== JSON.stringify(base[s] ?? null))) return true;
-    return JSON.stringify(editDraft.location_items ?? null) !== JSON.stringify(base.location_items ?? null);
-  }, [editDraft, clientRec]);
+  const clientPrefsDirty = useMemo(
+    () => preferencesDirty(clientRec?.data, editDraft, EDIT_SLUGS),
+    [editDraft, clientRec],
+  );
+
+  // Unsaved PREFERENCE edits are unsaved work too — a forced stale-build reload
+  // must warn instead of binning what the rep just typed.
+  useEffect(() => {
+    const key = `finder-prefs:${clientRec?.id ?? 'none'}`;
+    setFormUnsaved(key, clientPrefsDirty);
+    return () => setFormUnsaved(key, false);
+  }, [clientPrefsDirty, clientRec?.id]);
 
   // Save the edited prefs to the client (if changed) THEN re-run the match — so
   // district/element rules in location_items actually narrow the results.
   // Collapse the panel so the incoming results are visible immediately.
   async function onSearchWithPrefs() {
     if (clientRec && clientPrefsDirty) {
-      const ok = await persistPrefs();
+      const ok = await persistPrefs(true);
       if (!ok) return;
     }
     setShowEdit(false);
@@ -759,12 +796,46 @@ export default function SuggestedProjectsView({
                     ? L('إعادة البحث بالتفضيلات الجديدة', 'Restart with new preferences')
                     : L('بحث بالتفضيلات الجديدة', 'Search with new preferences')}
               </button>
+              {/* SAVE — a first-class action of its own: persists the
+                  preferences onto the client and STAYS PUT (no search). The rep
+                  editing prefs from the WhatsApp popup shouldn't have to run a
+                  full projects + market search just to record what the client
+                  told them (user request 2026-08-18). */}
+              {clientRec && (
+                <button
+                  type="button"
+                  onClick={() => void onSavePrefsOnly()}
+                  disabled={savingPrefs || !clientPrefsDirty}
+                  title={clientPrefsDirty
+                    ? L('حفظ التفضيلات على بطاقة العميل بدون بحث', 'Save preferences to the client without searching')
+                    : L('لا توجد تغييرات لحفظها', 'No changes to save')}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition disabled:opacity-50 ${
+                    clientPrefsDirty
+                      ? 'bg-chocolate text-white hover:bg-chocolate/90'
+                      : 'border border-sand/60 bg-white text-charcoal/70'
+                  }`}
+                >
+                  {savingPrefs ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                  {savingPrefs
+                    ? L('جارٍ الحفظ…', 'Saving…')
+                    : L('حفظ التفضيلات فقط', 'Save preferences only')}
+                </button>
+              )}
               <span className="inline-flex items-center gap-1 text-[11px] text-charcoal/50">
-                <Save size={12} /> {L('تُحفظ التفضيلات للعميل عند البحث.', 'Preferences are saved to the client on search.')}
+                <Save size={12} /> {clientPrefsDirty
+                  ? L('«حفظ» يحفظ بدون بحث · «بحث» يحفظ ثم يبحث.', '“Save” saves without searching · “Search” saves then searches.')
+                  : L('التفضيلات محفوظة على بطاقة العميل.', 'Preferences are saved on the client.')}
               </span>
-              {editDirty && (
+              {clientPrefsDirty && (
                 <span className="text-[11px] font-semibold text-amber-700">
-                  {L('لديك تعديلات غير مطبّقة — اضغط «بحث».', 'Unapplied edits — press “Search”.')}
+                  {L('تعديلات غير محفوظة على تفضيلات العميل.', 'Unsaved changes to this client’s preferences.')}
+                </span>
+              )}
+              {/* Only when the prefs ARE saved but the results predate them —
+                  otherwise the "unsaved" line above already says it. */}
+              {editDirty && !clientPrefsDirty && (
+                <span className="text-[11px] font-semibold text-amber-700">
+                  {L('لديك تعديلات غير مطبّقة على النتائج — اضغط «بحث».', 'Edits not applied to the results — press “Search”.')}
                 </span>
               )}
             </div>

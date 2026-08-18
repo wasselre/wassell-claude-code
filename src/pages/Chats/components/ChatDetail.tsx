@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
+import { ProjectsUnitsBrowserButton } from './ProjectsUnitsBrowser';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
 import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
@@ -16,6 +17,7 @@ import StudyJobCard from './StudyJobCard';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
+import { resolveConversationIdentity, conversationIdentityMessage } from '../lib/conversationIdentity';
 
 /** First id from a scalar or array id field. */
 function firstId(v: unknown): string | null {
@@ -41,6 +43,27 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     if (!chatsModel) return null;
     return (records[chatsModel.id] ?? []).find((r) => r.id === recordId) ?? null;
   }, [chatsModel, records, recordId]);
+
+  // ── Conversation identity ─────────────────────────────────────────
+  // ONE explicit answer to "can this conversation be sent on, and with what?".
+  // The composer is gated on it (and takes it by value), so a send can never
+  // be dispatched against a half-resolved conversation — the race that made
+  // messages vanish on freshly-created chats. See ../lib/conversationIdentity.
+  const waDevices = useAppStore((s) => s.waDevices);
+  const waDevicesLive = useAppStore((s) => s.waDevicesLive);
+  const waDevicesLoaded = useAppStore((s) => s.waDevicesLoaded);
+  const identity = useMemo(
+    () =>
+      resolveConversationIdentity({
+        recordId,
+        chatsModel,
+        chatRecords: chatsModel ? records[chatsModel.id] ?? [] : [],
+        waDevices,
+        waDevicesLive,
+        devicesLoaded: waDevicesLoaded,
+      }),
+    [recordId, chatsModel, records, waDevices, waDevicesLive, waDevicesLoaded],
+  );
 
   const data = record?.data as Record<string, unknown> | undefined;
   const chatWid = (data?.wid as string | undefined) ?? null;
@@ -270,6 +293,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
               number, no follow-up). A phone-matched advertiser (REGA lookup)
               or contact gets its own link alongside. */}
           <div className="flex items-center gap-2 mt-1.5 text-xs flex-wrap">
+            <ProjectsUnitsBrowserButton clientId={clientLinkId} />
             {matchedContact && (
               <button
                 onClick={() => navigate(`/model/contacts/${matchedContact.id}`)}
@@ -410,15 +434,19 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         <MessageThread chatWid={chatWid ?? ''} />
       </div>
 
-      {/* Composer */}
+      {/* Composer — mounted ONLY once the conversation identity is resolved.
+          Until then the rep sees why, instead of an enabled box whose sends
+          would be rejected on the way out (see conversationIdentity.ts). */}
       <div className="px-3 pb-3 shrink-0">
-        <Composer chatWid={chatWid ?? ''} disabled={kind !== 'user'} />
-        {kind !== 'user' && (
-          <p className="text-xs text-charcoal/40 mt-1 text-center">
-            {isAr
-              ? 'الإرسال للمجموعات والقنوات غير مدعوم حاليًا.'
-              : 'Sending to groups and channels is not yet supported.'}
-          </p>
+        {identity.status === 'ready' ? (
+          <Composer identity={identity} />
+        ) : (
+          <div className="card flex items-center justify-center gap-2 p-4 text-xs text-charcoal/60">
+            {identity.status === 'loading' && (
+              <Loader2 size={14} className="animate-spin text-charcoal/40" />
+            )}
+            <span className="text-center">{conversationIdentityMessage(identity, isAr)}</span>
+          </div>
         )}
       </div>
 

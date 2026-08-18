@@ -115,8 +115,8 @@ export default function NotificationSettings() {
 
   const title = isAr ? 'الإشعارات' : 'Notifications';
   const explainer = isAr
-    ? 'تنبيهات فورية عند وصول عميل جديد أو رد أحد العملاء — حتى والتطبيق مغلق.'
-    : 'Instant alerts when a new lead arrives or a customer replies — even with the app closed.';
+    ? 'تنبيهات فورية عند وصول عميل جديد، أو رد أحد العملاء، أو وصول رسالة واتساب جديدة — حتى والتطبيق مغلق.'
+    : 'Instant alerts when a new lead arrives, a customer replies, or a new WhatsApp message comes in — even with the app closed.';
 
   return (
     <div className="card p-4">
@@ -215,8 +215,8 @@ export default function NotificationSettings() {
               </div>
               <div className="text-[11px] text-charcoal/55 mt-0.5">
                 {isAr
-                  ? 'هذان التنبيهان مدمجان في النظام. أوقف أحدهما إذا أنشأت قاعدة تنبيه خاصة بك لنفس الحالة في «سير العمل» — وإلا سيصل تنبيهان لنفس الحدث.'
-                  : 'These two are built into the system. Switch one off if you build your own Notification rule for the same event in Workflows — otherwise the same event sends two alerts.'}
+                  ? 'هذه التنبيهات مدمجة في النظام وتصل إلى مستشار المبيعات المسؤول. أوقف أحدها إذا أنشأت قاعدة تنبيه خاصة بك لنفس الحالة في «سير العمل» — وإلا سيصل تنبيهان لنفس الحدث.'
+                  : 'These are built into the system and go to the assigned sales consultant. Switch one off if you build your own Notification rule for the same event in Workflows — otherwise the same event sends two alerts.'}
               </div>
             </div>
           </div>
@@ -232,6 +232,11 @@ export default function NotificationSettings() {
                 key: 'customer_replied_enabled' as const,
                 ar: '💬 العميل رد — دورك الآن',
                 en: '💬 Customer replied — your turn',
+              },
+              {
+                key: 'whatsapp_inbound_enabled' as const,
+                ar: '💬 رسالة واتساب جديدة',
+                en: '💬 New WhatsApp message',
               },
             ]
           ).map((row) => (

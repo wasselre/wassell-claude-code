@@ -218,9 +218,15 @@ export interface ModelField {
   // <select> pickers instead of free number inputs. Option `value`s MUST be
   // numeric strings so the stored {min,max} stays numeric (v_* views, analytics,
   // PDF/Excel, sort/search all depend on it). Leave options empty for free entry.
-  range_min?: number; // inclusive lower bound for min/max inputs
-  range_max?: number; // inclusive upper bound for min/max inputs
-  range_step?: number; // step between allowed values
+  // The option list is ALSO how a NON-UNIFORM increment schedule is expressed
+  // (e.g. clients.preferred_area: 10 m² up to 500, then 100 m² up to 5,000) —
+  // `range_step` is a single number and cannot describe a multi-rate ladder.
+  // An option whose value isn't on the current ladder is still rendered (and
+  // kept) for a record that already stores it, so re-laddering never rewrites
+  // or clears existing data. See src/data/seedModels.ts `rangeLadder`.
+  range_min?: number; // inclusive lower bound. Metadata for the Builder's range editor — the renderer does not clamp to it.
+  range_max?: number; // inclusive upper bound. Same: Builder metadata, not enforced by the renderer.
+  range_step?: number; // step between allowed values. Builder metadata; when `options` is set, put the FINEST ladder step here.
   range_unit_ar?: string; // optional Arabic unit label (e.g. "م²", "ر.س")
   range_unit_en?: string; // optional English unit label
   // Auto ID config (type: 'auto_id'). The value stored on each record is the
@@ -2917,6 +2923,13 @@ export interface AppState {
    *  Not persisted — refreshed on demand by the Settings page. */
   waDevicesLive: HaberchatDevice[];
   /**
+   * True once the `whatsapp_numbers` overlay load has settled (regardless of
+   * whether it found any rows). Lets the Chats composer tell "the device list
+   * hasn't arrived yet" (wait) apart from "no device is configured" (an error
+   * the admin must fix) instead of enabling a composer that cannot send.
+   */
+  waDevicesLoaded: boolean;
+  /**
    * Fetch the live Haberchat device list via the proxy AND the local
    * `whatsapp_numbers` overlay from Supabase; update both state slices.
    * Admins call this on mount of /settings/whatsapp-numbers and after edits.
@@ -2975,6 +2988,14 @@ export interface AppState {
       deliverAt?: string;
     },
   ) => Promise<void>;
+  /**
+   * Re-send a message whose optimistic bubble ended up `ack: 'failed'`.
+   * Removes that bubble and dispatches the identical payload through
+   * `sendChatMessage`, which mints a fresh bubble + idempotency key. If the
+   * retry itself cannot produce a bubble, the original is put back — a failed
+   * message is never lost by pressing Retry, and never duplicated either.
+   */
+  retryChatMessage: (chatWid: string, messageId: string) => Promise<void>;
   /**
    * Start a brand-new WhatsApp conversation to a phone number we've never
    * messaged before. Creates a local chats record (optimistic — so the

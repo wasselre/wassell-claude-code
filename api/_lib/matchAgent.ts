@@ -1092,6 +1092,14 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   put('district', geo?.projDistrictName ?? undefined);
   put('unit_types', asArr(data.unit_types));
   put('project_status', data.project_status);
+  // Delivery readiness for the finder card — "جاهز / Ready" vs "على الخارطة /
+  // Off-plan" + the expected handover date when off-plan. These are the EXISTING
+  // all_projects source-of-truth fields (no derived/duplicate field); the card
+  // resolves them via src/lib/matching/deliveryStatus.ts. Market listings carry
+  // neither (a resale ad has no construction stage) — that renders as "unknown",
+  // never as a readiness claim.
+  put('construction_status', data.construction_status);
+  put('handover_date', data.handover_date);
   put('project_type', data.project_type);
   put('price_range', data.price_range);
   put('area_range', data.area_range);

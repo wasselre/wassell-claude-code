@@ -1,3 +1,13 @@
+// SUPERSEDED 2026-08-18 — DO NOT RE-RUN AGAINST PRODUCTION.
+// The ladders below (and the migration this script writes) are the ORIGINAL
+// 2026-06-17 brackets. They were replaced by
+// supabase/migrations/2026-08-18_client_pref_area_budget_ranges.sql, which sets
+// preferred_area to 50→5,000 (10 m² to 500, then 100 m²) and budget to
+// 500,000→10,000,000 in uniform 50,000 steps, and which generates its ladders in
+// SQL. Re-running this script and applying its output would REVERT that change.
+// The canonical TS copy of the current ladders is `rangeLadder(...)` in
+// src/data/seedModels.ts. Kept only as the record of the 2026-06-17 migration.
+//
 // Generates the bracket option ladders for the clients model's `budget` (SAR)
 // and `preferred_area` (m²) range fields, and writes the migration that injects
 // them into the live model schema. Option `value`s are NUMERIC strings so the
