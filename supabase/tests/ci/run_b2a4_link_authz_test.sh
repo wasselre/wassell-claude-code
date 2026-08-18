@@ -194,6 +194,30 @@ echo
 echo "== smoke"
 psql "$DBURL" -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/ci/smoke_b2a4_link_authz.sql"
 
+# ── B4: record-derived view access, layered on B2A.4 ────────────────────────
+# Applied here rather than in its own job because B4 REWRITES the same two
+# policies B2A.4 owns. Testing it against anything other than the exact stack
+# B2A.4 leaves behind would measure a database that does not exist.
+echo
+echo "== B4 (record-derived access) applied on top"
+run "$ROOT/supabase/migrations/2026-08-18_03_record_derived_file_access.sql"
+
+# Ships dark, so with the toggle OFF every edge set must still be byte-identical
+# to the B2A.4 baseline. A migration that claims to change nothing must be held
+# to that claim.
+edge_fp > "$WORK/e.b4dark"
+diff -u "$WORK/e.after" "$WORK/e.b4dark"   || { echo "FAIL: B4 changed edge sets while its toggle is OFF — it does not ship dark"; exit 1; }
+echo "   OK: B4 installed, toggle off, all 8 edge sets unchanged"
+
+psql "$DBURL" -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/ci/smoke_b4_derived_access.sql"
+
+# Rolling B4 back must return exactly to the B2A.4 state.
+run "$ROOT/supabase/rollback/2026-08-18_03_record_derived_file_access_down.sql"
+edge_fp > "$WORK/e.b4rb"
+diff -u "$WORK/e.after" "$WORK/e.b4rb"   || { echo "FAIL: B4 rollback did not restore the B2A.4 state"; exit 1; }
+run "$ROOT/supabase/migrations/2026-08-18_03_record_derived_file_access.sql"
+echo "   OK: B4 rollback and re-apply are clean"
+
 echo
 echo "== latency AFTER"
 facet_latency after > "$WORK/lat.after"; sed 's/^/   /' "$WORK/lat.after"
