@@ -191,9 +191,18 @@ BEGIN
   RAISE NOTICE 'B2A4.5 revocation takes effect (% -> 0 -> %) after % candidate(s)', v_before, v_restored, n_tried;
 END $$;
 
--- ── 6. ONE AUTHORITY, structurally ──────────────────────────────────────────
--- Both policies are generated from a single predicate string differing only in
--- which column names the file. Normalise that away and the two must be equal.
+-- ── 6. ONE AUTHORITY, structurally ────────────────────────────────
+-- Both policies are generated from a single predicate string in the migration,
+-- differing only in which column names the file. Postgres does not store that
+-- string -- it stores a parse tree and re-renders it -- so this compares the
+-- RENDERED quals after normalising the three things rendering is free to
+-- change: the file column's name, whitespace, and parenthesisation.
+--
+-- That makes this a structural check, not a byte comparison: it catches a
+-- branch being added, removed, reordered or rewritten in one policy and not
+-- the other, which is the drift that matters. It would not catch a pure
+-- re-parenthesisation that changes precedence, so the identity invariant and
+-- the record half are asserted separately below and in §7.
 DO $$
 DECLARE q_files text; q_links text; n_files text; n_links text;
 BEGIN
@@ -217,23 +226,34 @@ BEGIN
     RAISE EXCEPTION 'B2A4.6 files_select acquired a record predicate it should not have';
   END IF;
 
-  -- normalise the one intended difference, then require identity of the
-  -- authorization half
-  n_files := replace(q_files, '(id = ', '(FILE = ');
-  n_files := replace(n_files, ' id IN ', ' FILE IN ');
-  n_links := replace(q_links, '(file_id = ', '(FILE = ');
-  n_links := replace(n_links, ' file_id IN ', ' FILE IN ');
-  n_links := left(n_links, position(' AND (EXISTS' IN n_links) - 1);
+  -- cut the record half off the link qual, then normalise both
+  n_links := regexp_replace(q_links, 'AND\s*\(?\s*EXISTS.*$', '', 'g');
+
+  -- the one intended difference: which column names the file.
+  -- \m..\M are word boundaries, so bare `id` is replaced but folder_id,
+  -- record_id and uploaded_by_user_id are untouched.
+  n_files := regexp_replace(q_files, '\mid\M',      'FILECOL', 'g');
+  n_links := regexp_replace(n_links, '\mfile_id\M', 'FILECOL', 'g');
+
+  -- rendering is free to choose whitespace and parens; the migration is not
+  -- free to choose branches.
+  n_files := regexp_replace(regexp_replace(n_files, '[()]', '', 'g'), '\s+', ' ', 'g');
+  n_links := regexp_replace(regexp_replace(n_links, '[()]', '', 'g'), '\s+', ' ', 'g');
+  n_files := btrim(n_files);
+  n_links := btrim(n_links);
 
   IF n_files IS DISTINCT FROM n_links THEN
-    RAISE EXCEPTION E'B2A4.6 the two policies have DRIFTED apart.\nfiles: %\nlinks: %', n_files, n_links;
+    RAISE EXCEPTION E'B2A4.6 the two policies have DRIFTED apart.
+files: %
+links: %',
+      n_files, n_links;
   END IF;
 
-  -- and both must carry the identity invariant
   IF position('wassell_app_user_id' IN n_files) = 0 THEN
     RAISE EXCEPTION 'B2A4.6 the identity invariant is absent';
   END IF;
-  RAISE NOTICE 'B2A4.6 both policies derive from one predicate, identity invariant present';
+  RAISE NOTICE 'B2A4.6 both policies reduce to one predicate (% chars), identity invariant present',
+    length(n_files);
 END $$;
 
 -- ── 7. The pre-B2A.2 authority must no longer be reachable from a policy ────
