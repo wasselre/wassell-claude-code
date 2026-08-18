@@ -110,13 +110,22 @@ END $$;
 -- ── 5. THE ONE THAT MATTERS: revoking access must actually revoke it ────────
 -- A folder-granted caller sees a file's edges. Move the file OUT of that
 -- folder. If the denormalized column went stale the caller would keep seeing
--- edges for a file they can no longer reach — access surviving its own
+-- edges for a file they can no longer reach -- access surviving its own
 -- revocation, which is the specific danger this design introduces.
+--
+-- The test CONSTRUCTS its precondition instead of hoping the fixture supplies
+-- one: it files a suitable linked file into the granted folder. "Suitable"
+-- is load-bearing -- the caller must reach that file ONLY through the folder,
+-- or moving it out would not revoke anything and the test would either pass
+-- trivially or raise a false alarm. So the candidate must not be uploaded by
+-- them, not separately granted to them, and not a marketing asset; and its
+-- record must be visible to them, since an edge needs both halves.
 DO $$
 DECLARE
-  v_uid uuid; v_folder uuid; v_file uuid; v_before bigint; v_after bigint; v_restored bigint;
+  v_uid uuid; v_app uuid; v_folder uuid; v_file uuid; v_orig uuid;
+  v_before bigint; v_after bigint; v_restored bigint; cand uuid; n_tried int := 0;
 BEGIN
-  SELECT u.auth_uid, fp.folder_id INTO v_uid, v_folder
+  SELECT u.auth_uid, u.id, fp.folder_id INTO v_uid, v_app, v_folder
     FROM public.folder_permissions fp
     JOIN public.users u ON u.id = fp.user_id
    WHERE public.wassell_role_satisfies(fp.role, 'view')
@@ -126,23 +135,35 @@ BEGIN
     RAISE EXCEPTION 'B2A4.5 vacuous: no non-admin folder grant in the fixture';
   END IF;
 
-  SELECT l.file_id INTO v_file
-    FROM public.file_links l JOIN public.files f ON f.id = l.file_id
-   WHERE f.folder_id = v_folder LIMIT 1;
+  -- find a file this caller can reach ONLY via the folder, whose record they see
+  FOR cand IN
+    SELECT DISTINCT l.file_id
+      FROM public.file_links l
+      JOIN public.files f ON f.id = l.file_id
+     WHERE f.uploaded_by_user_id IS DISTINCT FROM v_app
+       AND NOT EXISTS (SELECT 1 FROM public.file_permissions p
+                        WHERE p.file_id = f.id AND p.user_id = v_app)
+       AND NOT EXISTS (SELECT 1 FROM public.mos_assets ma WHERE ma.file_id = f.id)
+     LIMIT 50
+  LOOP
+    n_tried := n_tried + 1;
+    SELECT folder_id INTO v_orig FROM public.files WHERE id = cand;
+    UPDATE public.files SET folder_id = v_folder WHERE id = cand;
+
+    PERFORM set_config('test.uid', v_uid::text, true);
+    EXECUTE 'SET LOCAL ROLE authenticated';
+    SELECT count(*) INTO v_before FROM public.file_links WHERE file_id = cand;
+    EXECUTE 'RESET ROLE';
+
+    IF v_before > 0 THEN v_file := cand; EXIT; END IF;
+    UPDATE public.files SET folder_id = v_orig WHERE id = cand;   -- put it back
+  END LOOP;
+
   IF v_file IS NULL THEN
-    RAISE EXCEPTION 'B2A4.5 vacuous: the granted folder holds no linked file';
+    RAISE EXCEPTION 'B2A4.5 vacuous: none of % candidate file(s) produced a visible edge for the folder-granted caller -- the record half never lined up', n_tried;
   END IF;
 
-  PERFORM set_config('test.uid', v_uid::text, true);
-  EXECUTE 'SET LOCAL ROLE authenticated';
-  SELECT count(*) INTO v_before FROM public.file_links WHERE file_id = v_file;
-  EXECUTE 'RESET ROLE';
-
-  IF v_before = 0 THEN
-    RAISE EXCEPTION 'B2A4.5 vacuous: the folder-granted caller sees no edges to begin with';
-  END IF;
-
-  -- revoke by moving the file out of the granted folder
+  -- revoke, by moving the file out of the granted folder
   UPDATE public.files SET folder_id = NULL WHERE id = v_file;
 
   PERFORM set_config('test.uid', v_uid::text, true);
@@ -154,6 +175,7 @@ BEGIN
     RAISE EXCEPTION 'B2A4.5 ACCESS SURVIVED REVOCATION: caller still sees % edge(s) for a file removed from their granted folder', v_after;
   END IF;
 
+  -- re-grant, by filing it back
   UPDATE public.files SET folder_id = v_folder WHERE id = v_file;
 
   PERFORM set_config('test.uid', v_uid::text, true);
@@ -164,7 +186,9 @@ BEGIN
   IF v_restored <> v_before THEN
     RAISE EXCEPTION 'B2A4.5 re-filing restored % edge(s), expected %', v_restored, v_before;
   END IF;
-  RAISE NOTICE 'B2A4.5 revocation takes effect (% -> 0 -> %), and re-granting restores it', v_before, v_restored;
+
+  UPDATE public.files SET folder_id = v_orig WHERE id = v_file;   -- leave no trace
+  RAISE NOTICE 'B2A4.5 revocation takes effect (% -> 0 -> %) after % candidate(s)', v_before, v_restored, n_tried;
 END $$;
 
 -- ── 6. ONE AUTHORITY, structurally ──────────────────────────────────────────
