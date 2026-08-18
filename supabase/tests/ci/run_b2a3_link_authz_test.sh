@@ -191,10 +191,10 @@ echo
 echo "== rollback + re-apply"
 run "$ROOT/supabase/rollback/2026-08-18_01_link_authz_set_based_down.sql"
 edge_fp > "$WORK/e.rb"
-diff -q "$WORK/e.before" "$WORK/e.rb" >/dev/null || { echo "FAIL: rollback changed edge sets"; exit 1; }
+diff -u "$WORK/e.before" "$WORK/e.rb"   || { echo "FAIL: rollback changed edge sets (diff above: -=before +=after rollback)"; exit 1; }
 run "$ROOT/supabase/migrations/2026-08-18_01_link_authz_set_based.sql"
 edge_fp > "$WORK/e.re"
-diff -q "$WORK/e.before" "$WORK/e.re" >/dev/null || { echo "FAIL: re-apply changed edge sets"; exit 1; }
+diff -u "$WORK/e.before" "$WORK/e.re"   || { echo "FAIL: re-apply changed edge sets (diff above)"; exit 1; }
 echo "   OK: rollback and re-application both preserve every edge set"
 
 echo
