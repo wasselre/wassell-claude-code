@@ -252,22 +252,23 @@ echo "   OK"
 
 # ── the p95 budget, asserted last so everything above is on the record ──────
 echo "== p95 budget"
-echo "   measured: $PERF_LINE"
+echo "   measured (worst of 3 personas): p95 = ${P95} ms"
 if awk "BEGIN{exit !($P95 >= 300)}"; then
   cat <<EOF
 
-  ✗ p95 is ${P95} ms against a 300 ms budget.
+  x p95 is ${P95} ms against a 300 ms budget.
 
-  This is NOT the search layer. The cost is the per-row authorization filter in
-  the files_select RLS policy, which B2 is simply the first feature to exercise
-  over a whole corpus. Measured on PRODUCTION (7,133 rows), a bare
+  Historically this was NOT the search layer: the cost was the per-row
+  authorization filter in files_select, which B2 was merely the first feature to
+  exercise over a whole corpus. On production a bare
       SELECT count(*) FROM files WHERE file_class='business'
-  costs 1,688 ms as an admin and 3,727 ms as a non-admin, with ~300k buffer
-  hits — all cache hits, so it is pure CPU in
-  wassell_app_user_id() + wassell_can_access_file(), both invoked per row.
+  cost 1,688 ms as admin and 3,727 ms as non-admin, all buffer-cache hits, i.e.
+  pure CPU in wassell_app_user_id() + wassell_can_access_file() per row.
 
-  B2 cannot fix this without editing the authorization surface, which is out of
-  its scope and belongs with B4 (which rewrites wassell_can_access_file anyway).
+  That diagnosis is now HISTORICAL. B2A.4 (2026-08-18) removed the per-row
+  authorization cost, and this stack includes it — so a failure here is much more
+  likely to be the search layer itself, or a regression in the shared predicate.
+  Check EXPLAIN on business_files_search before blaming authorization again.
 EOF
   exit 1
 fi
