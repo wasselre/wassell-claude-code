@@ -180,15 +180,21 @@ jobs:
         run: bash supabase/tests/ci/run_helper_scoping_test.sh
 
   b2a4-authz:
-    # MEASUREMENT ONLY for B2A.3 — applies no migration and changes nothing.
-    # Isolates where file_links_select spends its time (file-visibility half vs
-    # record-visibility half vs the three B2 link consumers) on a
-    # production-shaped ~10k-edge corpus, so the design is chosen from plans
-    # rather than assumption. Profiling on production directly is not an option:
-    # a full-corpus EXPLAIN ANALYZE there exceeded the tool timeout and wedged
-    # the session, which is exactly why this belongs on an ephemeral database.
+    # Designated validator for
+    # supabase/migrations/2026-08-18_02_link_authz_denormalized.sql (B2A.4).
+    # Proves, on a production-shaped ~7k-edge corpus, that no persona gains an
+    # edge, that both halves of the rule are actually tested (two mutants),
+    # that the denormalized authorization columns cannot go stale, and that
+    # the facets get faster rather than slower.
+    #
+    # The two exploratory profiling steps that used to run here are gone. They
+    # answered their questions — unified_records costs 0.2 ms and is innocent,
+    # and the COST-hint hypothesis is refuted because hashed SubPlans are
+    # evaluated after ordinary quals regardless of declared cost — and kept
+    # charging ~7 minutes per run to re-answer them. The scripts remain in
+    # supabase/tests/ci/ to be run by hand if the question comes back.
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:17-alpine
@@ -203,10 +209,6 @@ jobs:
       PGURL: postgresql://postgres:ci@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
-      - name: Profile file_links_select and the B2 consumers
-        run: bash supabase/tests/ci/profile_b2a3_link_authz.sh
-      - name: Test the COST-hint hypothesis (before/after, all personas)
-        run: bash supabase/tests/ci/profile_b2a3_cost_hint.sh
       - name: B2A.4 — edge equivalence, negative controls, perf
         run: |
           B2=""

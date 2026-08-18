@@ -229,11 +229,20 @@ BEGIN
   -- cut the record half off the link qual, then normalise both
   n_links := regexp_replace(q_links, 'AND\s*\(?\s*EXISTS.*$', '', 'g');
 
-  -- the one intended difference: which column names the file.
-  -- \m..\M are word boundaries, so bare `id` is replaced but folder_id,
-  -- record_id and uploaded_by_user_id are untouched.
-  n_files := regexp_replace(q_files, '\mid\M',      'FILECOL', 'g');
+  -- The one intended difference is which column names the file: `id` on
+  -- files, `file_id` on file_links. Map BOTH tokens to one placeholder, on
+  -- BOTH strings. Replacing only the side-specific token is asymmetric and
+  -- was the previous bug: on the link qual, \mfile_id\M also matched the
+  -- HELPER's output column (g.file_id, m.file_id, and the g(file_id) alias
+  -- list), which on the files qual it correctly left alone -- so the two
+  -- normalised forms differed even though the policies did not.
+  --
+  -- Collapsing both tokens loses the ability to tell `id` from `file_id`,
+  -- which is precisely the difference we intend to ignore.
+  n_files := regexp_replace(q_files, '\mfile_id\M', 'FILECOL', 'g');
+  n_files := regexp_replace(n_files, '\mid\M',      'FILECOL', 'g');
   n_links := regexp_replace(n_links, '\mfile_id\M', 'FILECOL', 'g');
+  n_links := regexp_replace(n_links, '\mid\M',      'FILECOL', 'g');
 
   -- rendering is free to choose whitespace and parens; the migration is not
   -- free to choose branches.
