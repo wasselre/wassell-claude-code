@@ -205,6 +205,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Profile file_links_select and the B2 consumers
         run: bash supabase/tests/ci/profile_b2a3_link_authz.sh
+      - name: Test the COST-hint hypothesis (before/after, all personas)
+        run: bash supabase/tests/ci/profile_b2a3_cost_hint.sh
 
   market-listings-reconciliation:
     # Designated validator for
