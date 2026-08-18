@@ -223,16 +223,27 @@ const DISTRICT_OPTIONS: FieldOption[] = [
 // ============================================================
 // Cross-model IDs — declared up-front so earlier models can reference later ones
 // via lookup_model_id without a TDZ issue.
+//
+// PINNED to fixed literals (2026-08-18), NOT uuid(). These MUST match the live
+// production model ids. Rationale: profiles store `model_permissions` keyed by
+// model UUID. When `uuid()` was used here, every re-seed of the system models
+// (a restore to before they existed, a DB reset, or the boot "backfill missing
+// SEED_MODELS by name" path running against an empty models table) minted NEW
+// random ids, orphaning every profile's permissions — the recurring
+// "records RLS flood + user sees 0 records" incident. Deterministic ids make a
+// re-seed idempotent-by-id, so permissions can never orphan again. (Roles and
+// profiles already use fixed literal ids for the same reason.) If you add a new
+// system model, give it a fixed literal id here too — never uuid().
 // ============================================================
-const allProjectsId = uuid();
-export const unitsId = uuid();
-export const appointmentsId = uuid();
+const allProjectsId = '220c49b9-de57-492d-9eca-c0d9f54fd40f';
+export const unitsId = '7ca3014d-f658-418e-9c53-2d279c97f009';
+export const appointmentsId = 'b032a675-6237-4436-9783-a1a253855f74';
 // Visits model (2026-05-10): user-built but seeded so fresh installs match
 // the migrated production state. Schema lives near ourProjectsModel below.
 // Field IDs are declared up-front because the followups model's
 // custom_buttons reference visits by id, and visits' auto-link / auto-fill
 // props on `phone` and `name` reference the sibling `client_id` lookup id.
-export const visitsId = uuid();
+export const visitsId = '372ed642-3753-40b4-9dd7-e8390f91b1f8';
 const visitsBasicSectionId = uuid();
 const visitsClientFieldId = uuid();
 const visitsPhoneFieldId = uuid();
@@ -247,7 +258,7 @@ const visitsSourceFollowupFieldId = uuid();
 // ============================================================
 // DEVELOPERS MODEL (new 2026-04-18)
 // ============================================================
-const developersId = uuid();
+const developersId = '11bade2c-7da9-4d00-b045-eaab37153da2';
 const developersBaseSectionId = uuid();
 const developerNameFieldId = uuid();
 const developerPhoneFieldId = uuid();
@@ -372,7 +383,7 @@ function now(): string {
 // ============================================================
 // 1. CLIENTS MODEL
 // ============================================================
-const clientsId = uuid();
+const clientsId = '2e86f197-385f-4853-908f-b4cb7237f7d8';
 const clientsBasicSectionId = uuid();
 const clientsPrefsSectionId = uuid();
 const clientsWhatsAppSectionId = uuid();
@@ -1021,7 +1032,7 @@ const clientsModel: AppModel = {
 // ============================================================
 // 2. FOLLOW-UPS MODEL
 // ============================================================
-export const followupsId = uuid();
+export const followupsId = '764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63';
 const fuBasicSectionId = uuid();
 export const fuPrefsSectionId = uuid();
 const fuCallSectionId = uuid();
@@ -2070,7 +2081,7 @@ const allProjectsModel: AppModel = {
 // ============================================================
 // 4. TARGETED PROJECTS MODEL
 // ============================================================
-const targetedProjectsId = uuid();
+const targetedProjectsId = '8550651a-8d65-4e4d-a842-c800be336f78';
 const tpBaseSectionId = uuid();
 const tpNameFieldId = uuid();
 const tpPriorityFieldId = uuid();
@@ -2202,7 +2213,7 @@ const targetedProjectsModel: AppModel = {
 // ============================================================
 // 5. OUR PROJECTS MODEL
 // ============================================================
-const ourProjectsId = uuid();
+const ourProjectsId = '6609286a-f95a-45db-94e6-48cfa915ccbd';
 const opBaseSectionId = uuid();
 const opNameFieldId = uuid();
 const opPhaseFieldId = uuid();
@@ -2770,7 +2781,7 @@ const visitsModel: AppModel = {
 // The detail route is overridden to render ChatDetailPage instead of the
 // generic RecordFormPage — see App.tsx dispatcher.
 
-export const chatsId = uuid();
+export const chatsId = '7e6c23b5-5492-413a-bc34-d928086f6e7e';
 const chatsBaseSectionId = uuid();
 const chatsNameFieldId = uuid();
 const chatsPhoneFieldId = uuid();
@@ -3034,7 +3045,7 @@ const chatsModel: AppModel = {
 // detail route is overridden to render AiAgentPage instead of the generic
 // RecordFormPage — see App.tsx dispatcher.
 
-export const aiChatsId = uuid();
+export const aiChatsId = 'ca95e4eb-da23-47fa-9f77-3149ba5fa37c';
 const aiChatsBaseSectionId = uuid();
 const aiChatsTitleFieldId = uuid();
 const aiChatsStatusFieldId = uuid();
@@ -3150,7 +3161,7 @@ const aiChatsModel: AppModel = {
 // over the enriched `competitors` reel library (proven patterns) + our
 // projects, and writes/improves/analyzes reel scripts + hooks. Phase 3 of the
 // copywriter intelligence system — see docs/prd/copywriter-intelligence.md.
-export const copywriterChatsId = uuid();
+export const copywriterChatsId = '09ba91d8-692f-4aed-a557-4af5888c81be';
 const copywriterChatsBaseSectionId = uuid();
 const copywriterChatsTitleFieldId = uuid();
 const copywriterChatsStatusFieldId = uuid();
@@ -3409,7 +3420,7 @@ const reelScriptsModel: AppModel = {
 //   - "customer pressed 2 in IVR": dtmf_digit = 2
 //   - "long call w/ negative tone": duration_seconds > 300 AND sentiment = negative
 
-export const phoneCallsId = uuid();
+export const phoneCallsId = '1ef36cc7-a5bb-4fdc-b3ef-9fc965c2b2d4';
 const phoneCallsBaseSectionId = uuid();
 const phoneCallsTranscriptSectionId = uuid();
 const phoneCallsDirectionFieldId = uuid();
@@ -3695,7 +3706,7 @@ const phoneCallsModel: AppModel = {
 // replaced by the template-driven design generator (2026-05-09 rebuild).
 
 // --- COMPETITORS MODEL ---
-const competitorsId = uuid();
+const competitorsId = '484b5157-ed8c-4013-9dd7-442476a7f9ff';
 const competitorsBaseId = uuid();
 const competitorsModel: AppModel = {
   id: competitorsId,
@@ -3826,7 +3837,7 @@ const competitorsModel: AppModel = {
 // Marketing-Operation records pick a template via lookup and fill its
 // variables; the orchestrator runs the three phases and writes each
 // phase's output back to the record.
-const designTemplatesId = uuid();
+const designTemplatesId = '457b679b-0c39-44ac-a345-8c911ebacfe1';
 const designTemplatesBaseId = uuid();
 const designTemplatesModel: AppModel = {
   id: designTemplatesId,
@@ -3895,7 +3906,7 @@ const designTemplatesModel: AppModel = {
 // `editing_input_hash` are written by the server (not declared as
 // fields) on `record.data` so the orchestrator can skip phases whose
 // inputs haven't changed across re-runs.
-const marketingOperationsId = uuid();
+const marketingOperationsId = '58e92e8d-b7c6-48ef-b9c4-41987e522075';
 const marketingOperationsOpSectionId = uuid();
 const marketingOperationsInfoSectionId = uuid();
 const marketingOperationsVarsSectionId = uuid();
@@ -4013,7 +4024,7 @@ const marketingOperationsModel: AppModel = {
 // custom ChatTemplateFormPage because the media upload doesn't fit the
 // generic record form. See docs/prd/chats.md.
 
-export const chatTemplatesId = uuid();
+export const chatTemplatesId = '4a70d8f1-2a6a-4ea7-b7ef-45c6e6af732b';
 const chatTemplatesBaseSectionId = uuid();
 const chatTemplatesNameFieldId = uuid();
 const chatTemplatesLanguageFieldId = uuid();
@@ -4250,7 +4261,7 @@ const chatTemplatesModel: AppModel = {
 // than one. Backed by the public-read RLS policy in the
 // `2026-05-09_j_website_integration.sql` migration so anon traffic from the
 // website can SELECT it.
-const siteSettingsId = uuid();
+const siteSettingsId = '0fcb55a5-f7e7-452f-90db-d05c728798c2';
 const ssBaseSectionId = uuid();
 const ssMapCardSectionId = uuid();
 const ssProjectCardSectionId = uuid();
@@ -4376,7 +4387,7 @@ const siteSettingsModel: AppModel = {
 // DecksPage re-signs from file_path when the URL expires.
 // See docs/prd/decks.md.
 
-export const decksId = uuid();
+export const decksId = 'b5593ffd-c79c-4847-87fb-4621e47d29d9';
 const decksBaseSectionId = uuid();
 const decksTitleFieldId = uuid();
 const decksBriefFieldId = uuid();
@@ -4593,7 +4604,7 @@ const decksModel: AppModel = {
 // `images` (logos, layout refs) as additional inputs to nano-banana-pro/edit.
 // Edited via the standard record form. Records here are shared across
 // the org — same RLS posture as design_templates.
-const imagePresetsId = uuid();
+const imagePresetsId = '4629991b-6d10-4048-ba96-06db708f67d5';
 const imagePresetsBaseId = uuid();
 const imagePresetsModel: AppModel = {
   id: imagePresetsId,
@@ -4636,7 +4647,7 @@ const imagePresetsModel: AppModel = {
 // picker in the Image Chats composer. Picking a snippet fills the
 // textarea (user can edit before sending) AND auto-attaches any
 // `images` on the snippet to the current turn's input list.
-const promptSnippetsId = uuid();
+const promptSnippetsId = 'fd5bab91-50a8-41e9-a733-bce2592559f3';
 const promptSnippetsBaseId = uuid();
 const promptSnippetsModel: AppModel = {
   id: promptSnippetsId,
@@ -4691,7 +4702,7 @@ const promptSnippetsModel: AppModel = {
 // the user message is appended client-side, the assistant message is
 // appended server-side once nano-banana-pro/edit returns and the
 // result is re-hosted in marketing-assets/image-chats/outputs/.
-const imageChatsId = uuid();
+const imageChatsId = '9dfb157f-b464-4899-b729-ad81360bfd0d';
 const imageChatsBaseId = uuid();
 const imageChatsTitleFieldId = uuid();
 const imageChatsStatusFieldId = uuid();
@@ -4793,7 +4804,7 @@ const imageChatsModel: AppModel = {
 // record form never renders for this model (App.tsx dispatches to
 // DataMigrationPage). Never frozen, never a migration target itself.
 // ============================================================
-export const dataMigrationId = uuid();
+export const dataMigrationId = 'd1aa4823-e020-494d-9ec1-ae9dc6caf426';
 const dmBaseSectionId = uuid();
 const dmTitleFieldId = uuid();
 const dmStatusFieldId = uuid();
@@ -4920,7 +4931,7 @@ const dataMigrationModel: AppModel = {
 // for the "update don't duplicate / don't silently reactivate eliminated" rules.
 // Display facts (price/area/beds/etc.) are snapshotted onto data.facts at save
 // time so the Client Options view renders without re-resolving 46k listings.
-const clientOptionsId = uuid();
+const clientOptionsId = 'e00d8df8-905c-4fb7-a117-3aefa6fd5603';
 const cpoBaseSectionId = uuid();
 const cpoClientFieldId = uuid();
 const cpoSourceNameFieldId = uuid();
