@@ -1,4 +1,4 @@
--- NEGATIVE CONTROL A for B2A.3: file-visibility half removed.
+-- NEGATIVE CONTROL A for B2A.4: file-visibility half removed.
 --
 -- Leaves only the record-visibility test, so an edge becomes visible whenever
 -- the caller can see the TARGET RECORD — regardless of whether they may see the

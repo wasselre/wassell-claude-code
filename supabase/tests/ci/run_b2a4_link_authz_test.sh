@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Designated validator for supabase/migrations/2026-08-18_01_link_authz_set_based.sql
+# Designated validator for supabase/migrations/2026-08-18_02_link_authz_denormalized.sql
+# (B2A.4. Supersedes the abandoned B2A.3 set-based attempt.)
 #
 # B2A.3 changes an AUTHORIZATION predicate, so the bar matches B2A/B2A.2: the
 # exact EDGE set every persona may read must be provably unchanged, and the
@@ -42,6 +43,45 @@ SELECT 'EFP $uid ' || coalesce(md5(string_agg(
 ROLLBACK;
 SQL
   done | sort
+}
+
+# Raw sorted edge list per persona, so we can compute ADDED vs REMOVED rather
+# than only "same or different". B2A.4 moves file_links onto the corrected
+# (B2A.2) authority, so a NARROWING is the expected fix and a WIDENING is a
+# bug -- an equality assertion cannot tell those apart.
+edge_dump() {   # $1 = phase label
+  local uid
+  for uid in $PERSONAS; do
+    psql "$DBURL" -v ON_ERROR_STOP=1 -tAq > "$WORK/edges.$1.${uid:0:8}" <<SQL
+BEGIN;
+SET LOCAL statement_timeout='300s';
+SELECT set_config('test.uid','$uid', true);
+SET LOCAL ROLE authenticated;
+SELECT l.file_id || '|' || l.model_id || '|' || l.record_id
+  FROM public.file_links l ORDER BY 1;
+ROLLBACK;
+SQL
+  done
+}
+
+# Fails if ANY persona gained an edge. Reports losses without failing, because
+# a loss is what closing the side door is supposed to look like.
+compare_reach() {   # $1 = before label  $2 = after label
+  local uid short added removed ta=0 tr=0
+  for uid in $PERSONAS; do
+    short="${uid:0:8}"
+    added=$(comm -13 "$WORK/edges.$1.$short" "$WORK/edges.$2.$short" | wc -l)
+    removed=$(comm -23 "$WORK/edges.$1.$short" "$WORK/edges.$2.$short" | wc -l)
+    ta=$((ta + added)); tr=$((tr + removed))
+    if [ "$added" -ne 0 ]; then
+      echo "   FAIL $short GAINED $added edge(s) -- this is a reach EXPANSION"
+      comm -13 "$WORK/edges.$1.$short" "$WORK/edges.$2.$short" | head -5 | sed 's/^/        /'
+      return 1
+    fi
+    [ "$removed" -ne 0 ] && echo "   $short lost $removed edge(s)"
+  done
+  echo "   reach delta across all personas: +$ta / -$tr"
+  return 0
 }
 
 facet_latency() {
@@ -104,6 +144,7 @@ echo "   corpus: $(q "SELECT count(*) FROM public.files") files, $(q "SELECT cou
 echo
 echo "== BEFORE (on B2A.2): edge fingerprints"
 edge_fp > "$WORK/e.before"
+edge_dump before
 [ "$(wc -l < "$WORK/e.before")" -eq 8 ] || { echo "FAIL: expected 8 edge fingerprints"; exit 1; }
 sed 's/^/   /' "$WORK/e.before"
 NZ=$(grep -c "n=[1-9]" "$WORK/e.before" || true)
@@ -114,27 +155,36 @@ facet_latency before > "$WORK/lat.before"; sed 's/^/   /' "$WORK/lat.before"
 echo "   worst facet BEFORE: $(worst_of "$WORK/lat.before") ms"
 
 echo
-echo "== applying B2A.3"
-run "$ROOT/supabase/migrations/2026-08-18_01_link_authz_set_based.sql"
+echo "== applying B2A.4"
+run "$ROOT/supabase/migrations/2026-08-18_02_link_authz_denormalized.sql"
 edge_fp > "$WORK/e.after"
-diff -u "$WORK/e.before" "$WORK/e.after" || { echo "FAIL: EDGE SETS CHANGED"; exit 1; }
-echo "   OK: all 8 edge fingerprints identical"
+edge_dump after
+# B2A.4 deliberately moves file_links off the pre-B2A.2 decision, so a
+# narrowing is the FIX and only a widening is a defect. Assert accordingly:
+# nobody may gain an edge; losses are printed and must be explainable.
+compare_reach before after || { echo "FAIL: B2A.4 expanded someone's reach"; exit 1; }
+if diff -q "$WORK/e.before" "$WORK/e.after" >/dev/null; then
+  echo "   OK: all 8 edge sets byte-identical (no reach change at all)"
+else
+  echo "   OK: no gains; the diff below is narrowing only"
+  diff -u "$WORK/e.before" "$WORK/e.after" | sed 's/^/      /' || true
+fi
 
 echo
 echo "== negative controls (each half removed separately must LEAK)"
-run "$ROOT/supabase/tests/ci/mutant_b2a3_drop_file_visibility.sql"
+run "$ROOT/supabase/tests/ci/mutant_b2a4_drop_file_visibility.sql"
 edge_fp > "$WORK/e.mutA"
 diff -q "$WORK/e.after" "$WORK/e.mutA" >/dev/null \
   && { echo "FAIL: removing FILE-visibility changed nothing - that half is untested"; exit 1; } || true
 echo "   OK: dropping file-visibility diverges"
-run "$ROOT/supabase/migrations/2026-08-18_01_link_authz_set_based.sql"
+run "$ROOT/supabase/migrations/2026-08-18_02_link_authz_denormalized.sql"
 
-run "$ROOT/supabase/tests/ci/mutant_b2a3_drop_record_visibility.sql"
+run "$ROOT/supabase/tests/ci/mutant_b2a4_drop_record_visibility.sql"
 edge_fp > "$WORK/e.mutB"
 diff -q "$WORK/e.after" "$WORK/e.mutB" >/dev/null \
   && { echo "FAIL: removing RECORD-visibility changed nothing - target privacy untested"; exit 1; } || true
 echo "   OK: dropping record-visibility diverges"
-run "$ROOT/supabase/migrations/2026-08-18_01_link_authz_set_based.sql"
+run "$ROOT/supabase/migrations/2026-08-18_02_link_authz_denormalized.sql"
 edge_fp > "$WORK/e.restored"
 diff -q "$WORK/e.after" "$WORK/e.restored" >/dev/null \
   || { echo "FAIL: restoring after the mutants did not return to baseline"; exit 1; }
@@ -142,7 +192,7 @@ echo "   OK: restored to baseline"
 
 echo
 echo "== smoke"
-psql "$DBURL" -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/ci/smoke_b2a3_link_authz.sql"
+psql "$DBURL" -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/ci/smoke_b2a4_link_authz.sql"
 
 echo
 echo "== latency AFTER"
@@ -189,21 +239,24 @@ fi
 
 echo
 echo "== rollback + re-apply"
-run "$ROOT/supabase/rollback/2026-08-18_01_link_authz_set_based_down.sql"
+run "$ROOT/supabase/rollback/2026-08-18_02_link_authz_denormalized_down.sql"
 edge_fp > "$WORK/e.rb"
-diff -u "$WORK/e.before" "$WORK/e.rb"   || { echo "FAIL: rollback changed edge sets (diff above: -=before +=after rollback)"; exit 1; }
-run "$ROOT/supabase/migrations/2026-08-18_01_link_authz_set_based.sql"
+# Rollback restores the Phase 1 link policy, i.e. the pre-B2A.2 authority --
+# which is exactly what "before" was measured on. So this must match BEFORE,
+# not after.
+diff -u "$WORK/e.before" "$WORK/e.rb"   || { echo "FAIL: rollback did not restore the prior state (-=before +=rolled back)"; exit 1; }
+run "$ROOT/supabase/migrations/2026-08-18_02_link_authz_denormalized.sql"
 edge_fp > "$WORK/e.re"
-diff -u "$WORK/e.before" "$WORK/e.re"   || { echo "FAIL: re-apply changed edge sets (diff above)"; exit 1; }
+diff -u "$WORK/e.after" "$WORK/e.re"   || { echo "FAIL: re-apply did not return to the post-migration state"; exit 1; }
 echo "   OK: rollback and re-application both preserve every edge set"
 
 echo
-echo "-------- B2A.3 verdict --------"
+echo "-------- B2A.4 verdict --------"
 FAILED=0
 awk "BEGIN{exit !($WORST < 300)}" || { echo "  x worst facet ${WORST} ms >= 300"; FAILED=1; }
 for v in $P_B2; do
   awk "BEGIN{exit !($v < 300)}" || { echo "  x B2 search p95 ${v} ms >= 300"; FAILED=1; }
 done
-[ "$FAILED" -eq 0 ] || { echo; echo "B2A.3: SEMANTICS OK, PERFORMANCE GATE NOT MET"; exit 1; }
+[ "$FAILED" -eq 0 ] || { echo; echo "B2A.4: SEMANTICS OK, PERFORMANCE GATE NOT MET"; exit 1; }
 echo
-echo "B2A.3 link authz: ALL CHECKS PASSED"
+echo "B2A.4 link authz: ALL CHECKS PASSED"
