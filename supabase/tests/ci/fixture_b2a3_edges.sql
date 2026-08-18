@@ -31,7 +31,6 @@ ON CONFLICT (id) DO NOTHING;
 -- Spread ~7,000 of the 8,000 files across those 500 records, so the edge count
 -- lands near production's ~9,856 once the multi-role field sources are counted.
 DO $link$
-DECLARE n integer;
 BEGIN
   UPDATE public.files f
      SET model_id  = (SELECT id FROM public.models WHERE name='units'),
@@ -47,8 +46,10 @@ BEGIN
    WHERE f.storage_path LIKE 'scale/%'
      AND right(f.id::text,12)::bigint BETWEEN 6001 AND 7000;
 
-  SELECT count(*) INTO n FROM public.file_links;
-  RAISE NOTICE 'B2A.3 fixture: % edges', n;
+  -- No edge count here on purpose: Phase 2 converges the projection in a
+  -- DEFERRED constraint trigger at COMMIT, so counting inside this block always
+  -- reports the pre-existing number and reads like the fixture did nothing.
+  -- The runner prints the committed count instead.
 END $link$;
 
 ANALYZE public.files;
@@ -68,15 +69,15 @@ ANALYZE public.records;
 -- containment test rather than a GUC string.
 UPDATE public.records SET data = data || jsonb_build_object('visible_to',
   CASE
-    WHEN (right(id::text,12)::bigint % 10) < 9 THEN
+    WHEN (abs(hashtext(id::text)) % 10) < 9 THEN
       jsonb_build_array('11111111-1111-1111-1111-111111111111',
                         '88888888-8888-8888-8888-888888888888')
     ELSE jsonb_build_array('88888888-8888-8888-8888-888888888888')
   END
-  || CASE WHEN (right(id::text,12)::bigint % 2) = 0
+  || CASE WHEN (abs(hashtext(id::text)) % 2) = 0
           THEN jsonb_build_array('22222222-2222-2222-2222-222222222222')
           ELSE '[]'::jsonb END
-  || CASE WHEN (right(id::text,12)::bigint % 5) = 0
+  || CASE WHEN (abs(hashtext(id::text)) % 5) = 0
           THEN jsonb_build_array('33333333-3333-3333-3333-333333333333',
                                  '44444444-4444-4444-4444-444444444444')
           ELSE '[]'::jsonb END)
