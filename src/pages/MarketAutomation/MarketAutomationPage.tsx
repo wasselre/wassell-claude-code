@@ -10,7 +10,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { RefreshCw, Database, ListChecks, Activity, AlertTriangle } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import { resolveEffectiveProfile } from '@/lib/permissions';
 import { fetchFieldStatus, summarize, exampleList, type FieldStatus } from '@/lib/marketAutomation/client';
 
 type Tab = 'raw' | 'decisions' | 'health';
@@ -30,10 +29,8 @@ function statusMeta(s: string | null) {
 const isUndecided = (s: string | null) => !s || s === 'review_required';
 
 export default function MarketAutomationPage() {
-  const { language, currentUserId, users, profiles, previewProfileId } = useAppStore();
+  const { language } = useAppStore();
   const isAr = language === 'ar';
-  const currentUser = users.find((u) => u.id === currentUserId);
-  const isAdmin = !!resolveEffectiveProfile(currentUser, profiles, previewProfileId)?.is_admin;
 
   const [rows, setRows] = useState<FieldStatus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,10 +52,6 @@ export default function MarketAutomationPage() {
   const scoped = useMemo(() => (platform === 'all' ? rows : rows.filter((r) => r.platform === platform)), [rows, platform]);
   const summary = useMemo(() => summarize(scoped), [scoped]);
   const queue = useMemo(() => scoped.filter((r) => isUndecided(r.authoritative_status)), [scoped]);
-
-  if (!isAdmin) {
-    return <div className="p-8 text-charcoal/60">{isAr ? 'هذه الصفحة للمشرفين فقط.' : 'This page is for admins only.'}</div>;
-  }
 
   const tabs: { id: Tab; ar: string; en: string; icon: typeof Database }[] = [
     { id: 'raw', ar: 'البيانات الخام', en: 'Raw Evidence', icon: Database },
