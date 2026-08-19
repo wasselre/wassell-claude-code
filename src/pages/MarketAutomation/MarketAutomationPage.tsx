@@ -10,7 +10,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { RefreshCw, Database, ListChecks, Activity, AlertTriangle } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import { fetchFieldStatus, summarize, exampleList, type FieldStatus } from '@/lib/marketAutomation/client';
+import { fetchFieldStatus, fetchTargetFields, summarize, exampleList, type FieldStatus } from '@/lib/marketAutomation/client';
+import DecisionPanel from './components/DecisionPanel';
 
 type Tab = 'raw' | 'decisions' | 'health';
 
@@ -33,6 +34,8 @@ export default function MarketAutomationPage() {
   const isAr = language === 'ar';
 
   const [rows, setRows] = useState<FieldStatus[]>([]);
+  const [targetFields, setTargetFields] = useState<string[]>([]);
+  const [deciding, setDeciding] = useState<FieldStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('raw');
@@ -47,6 +50,7 @@ export default function MarketAutomationPage() {
       .finally(() => setLoading(false));
   };
   useEffect(load, []);
+  useEffect(() => { fetchTargetFields().then(setTargetFields).catch(() => {}); }, []);
 
   const platforms = useMemo(() => Array.from(new Set(rows.map((r) => r.platform))).sort(), [rows]);
   const scoped = useMemo(() => (platform === 'all' ? rows : rows.filter((r) => r.platform === platform)), [rows, platform]);
@@ -115,15 +119,20 @@ export default function MarketAutomationPage() {
       {loading && <div className="text-charcoal/40 py-10 text-center">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>}
 
       {!loading && (tab === 'raw' || tab === 'decisions') && (
-        <FieldTable rows={tab === 'decisions' ? queue : scoped} isAr={isAr} emptyDecisions={tab === 'decisions'} />
+        <FieldTable rows={tab === 'decisions' ? queue : scoped} isAr={isAr} emptyDecisions={tab === 'decisions'} onDecide={setDeciding} />
       )}
 
       {!loading && tab === 'health' && <HealthTab summary={summary} isAr={isAr} />}
+
+      {deciding && (
+        <DecisionPanel field={deciding} targetFields={targetFields} isAr={isAr}
+          onClose={() => setDeciding(null)} onSaved={load} />
+      )}
     </div>
   );
 }
 
-function FieldTable({ rows, isAr, emptyDecisions }: { rows: FieldStatus[]; isAr: boolean; emptyDecisions?: boolean }) {
+function FieldTable({ rows, isAr, emptyDecisions, onDecide }: { rows: FieldStatus[]; isAr: boolean; emptyDecisions?: boolean; onDecide: (f: FieldStatus) => void }) {
   if (rows.length === 0) {
     return <div className="text-charcoal/40 py-10 text-center">{emptyDecisions ? (isAr ? 'لا حقول بانتظار قرار — كل شيء تمت مراجعته.' : 'No fields awaiting a decision — all reviewed.') : (isAr ? 'لا توجد حقول بعد. شغّل المستخرِج على عيّنة أولاً.' : 'No fields yet. Run the extractor over a sample first.')}</div>;
   }
@@ -141,7 +150,9 @@ function FieldTable({ rows, isAr, emptyDecisions }: { rows: FieldStatus[]; isAr:
           {rows.map((r) => {
             const m = statusMeta(r.authoritative_status);
             return (
-              <tr key={r.platform + r.source_path} className="border-b border-sand/20 last:border-0 hover:bg-sand/5">
+              <tr key={r.platform + r.source_path} onClick={() => onDecide(r)}
+                title={isAr ? 'اضغط لاتخاذ قرار' : 'Click to decide'}
+                className="border-b border-sand/20 last:border-0 hover:bg-copper/5 cursor-pointer">
                 <td className="px-3 py-2 align-top">
                   <div className="font-mono text-[12px] text-charcoal">{r.source_path}</div>
                   {r.source_label && <div className="text-[11px] text-charcoal/45">{r.source_label}</div>}

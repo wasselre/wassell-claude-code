@@ -78,3 +78,48 @@ export function exampleList(v: unknown, max = 4): string[] {
   const arr = Array.isArray(v) ? v : [];
   return arr.slice(0, max).map((x) => (x == null ? '∅' : String(x)));
 }
+
+/** The valid dispositions the operator can pick (matches the DB status CHECK). */
+export const DISPOSITIONS = [
+  'mapped_existing_field',
+  'candidate_new_field',
+  'reviewed_source_specific',
+  'intentionally_ignored',
+  'technical_excluded',
+  'review_required',
+] as const;
+export type Disposition = (typeof DISPOSITIONS)[number];
+
+export interface DecisionInput {
+  platform: string;
+  source_path: string;
+  status: Disposition;
+  canonical_field?: string | null;
+  transformation?: string | null;
+  reason?: string | null;
+}
+
+/** Write one field decision (upserts the mapping + resolves the gap) via the RPC. */
+export async function decideField(input: DecisionInput): Promise<void> {
+  if (!supabase) throw new Error('offline — no Supabase connection');
+  const { error } = await supabase.rpc('source_field_decide', {
+    p_platform: input.platform,
+    p_source_path: input.source_path,
+    p_status: input.status,
+    p_canonical_field: input.canonical_field ?? null,
+    p_transformation: input.transformation ?? null,
+    p_reason: input.reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** The market_listings field slugs — the target columns for "map to existing". */
+export async function fetchTargetFields(): Promise<string[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('models').select('schema').eq('name', 'market_listings').maybeSingle();
+  if (error) throw new Error(error.message);
+  const schema = (data?.schema ?? {}) as { sections?: { fields?: { name?: string }[] }[] };
+  const out: string[] = [];
+  for (const sec of schema.sections ?? []) for (const f of sec.fields ?? []) if (f.name) out.push(f.name);
+  return [...new Set(out)].sort();
+}
