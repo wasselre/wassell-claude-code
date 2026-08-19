@@ -52,21 +52,31 @@ BEGIN
     SELECT count(*) INTO v_pol FROM public.files;
     EXECUTE 'RESET ROLE';
 
-    -- baseline: the same policy with the toggle off
+    -- Baseline AND the "already visible" snapshot must both be taken with the
+    -- toggle OFF, in the same window.
+    --
+    -- They were not, and it produced a gain of exactly zero: _vf was captured
+    -- after the toggle went back ON, so it already contained every file the
+    -- derived branch adds, and NOT EXISTS(_vf) then excluded all of them. The
+    -- instrumentation named it immediately -- "visible files=7263" was the
+    -- POLICY count, not the 4651 baseline.
     UPDATE public.file_access_settings SET derived_view_enabled = false;
     PERFORM set_config('test.uid', r.uid::text, true);
     EXECUTE 'SET LOCAL ROLE authenticated';
     SELECT count(*) INTO v_base FROM public.files;
+    CREATE TEMP TABLE _vf ON COMMIT DROP AS SELECT id FROM public.files;
+    CREATE TEMP TABLE _vr ON COMMIT DROP AS
+      SELECT ur.id, ur.model_id FROM public.unified_records ur;
     EXECUTE 'RESET ROLE';
     UPDATE public.file_access_settings SET derived_view_enabled = true;
 
-    -- independent prediction of the gain
-    PERFORM set_config('test.uid', r.uid::text, true);
-    EXECUTE 'SET LOCAL ROLE authenticated';
-    CREATE TEMP TABLE _vr ON COMMIT DROP AS
-      SELECT ur.id, ur.model_id FROM public.unified_records ur;
-    CREATE TEMP TABLE _vf ON COMMIT DROP AS SELECT id FROM public.files;
-    EXECUTE 'RESET ROLE';
+    -- Guard the window itself: if the snapshot ever again matches the
+    -- post-toggle count instead of the baseline, fail here rather than
+    -- silently predicting zero.
+    IF (SELECT count(*) FROM _vf) <> v_base THEN
+      RAISE EXCEPTION 'B4.2 % : the already-visible snapshot (%) was not taken with the toggle OFF (baseline %)',
+        left(r.uid::text,8), (SELECT count(*) FROM _vf), v_base;
+    END IF;
 
     SELECT count(*) INTO v_pred
       FROM public.files f
