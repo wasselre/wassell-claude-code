@@ -241,6 +241,14 @@ without that, climbing out of a folder would silently leave the folder browser.
 - **An empty array is not "no filter".** The RPC tests key presence, so
   `{tags: []}` means *match nothing*. `pruneFilters` and the URL decoder both
   drop empty values, and removing the last value of a facet deletes the key.
+- **Narrowing to one record.** Choosing a linked model reveals a searchable
+  record picker (projects, units, clients…) that sets `model_id` **and**
+  `record_id` — the pair, because record ids are unique only per model. This is
+  what makes "Project pack" the real replacement for the `المشاريع` folder tree:
+  one project, grouped by document type. It searches the records already in the
+  store rather than the server, because `business_files_search` takes ids and
+  resolves no names; a record the caller cannot see was never in the store, so
+  the visibility answer is right, just arrived at by the store's RLS.
 - **Facets hide dead options.** A filter with no matching files is not rendered
   at all — a filter that can only produce an empty screen is a trap, not a filter.
 - **Grouping is page-local, and says so.** Pagination happens in the database (60
@@ -311,7 +319,7 @@ without that, climbing out of a folder would silently leave the folder browser.
 | `src/lib/files/libraryUrl.ts` | The feature flag and the URL codec. |
 | `src/pages/Files/FilesRoot.tsx` | The `/files` switch — the rollback boundary. |
 | `src/pages/Files/FilesLibraryPage.tsx` | The Library: query state, debounce, sequence guard, the three terminal states. |
-| `src/pages/Files/library/*` | Filter bar, chips, results (grouping + both layouts + paging), tile, row, badges, detail panel, save-view modal, label resolution. |
+| `src/pages/Files/library/*` | Filter bar, chips, results (grouping + both layouts + paging), tile, row, badges, detail panel, record picker, save-view modal, label resolution. |
 | `src/pages/Files/components/FilesTabs.tsx` | Library / Legacy folders / Shared when the flag is on; the original two when it is off. |
 | `src/pages/Files/components/UsedInPanel.tsx` | The promoted, restyled "Used in" panel. |
 

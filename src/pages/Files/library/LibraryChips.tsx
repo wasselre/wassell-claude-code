@@ -14,6 +14,7 @@
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { recordTitle } from '@/lib/documents/links';
 import type { FileDocumentTypeRow, LibraryFilters } from '@/types';
 import {
   confidentialityLabel, documentTypeLabel, modelLabel, originLabel, ownerLabel, shortDate, statusLabel,
@@ -27,18 +28,16 @@ interface Props {
    *  and clearing it from here clears the box. */
   q: string;
   onClearQuery: () => void;
-  /** The record filter is set by the project picker, which stores an id; the
-   *  chip needs a human name for it. */
-  recordLabel?: string | null;
 }
 
 interface Chip { key: string; label: string; value: string; onRemove: () => void }
 
-export default function LibraryChips({ filters, onFilters, types, q, onClearQuery, recordLabel }: Props) {
+export default function LibraryChips({ filters, onFilters, types, q, onClearQuery }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const users = useAppStore((s) => s.users);
   const models = useAppStore((s) => s.models);
+  const records = useAppStore((s) => s.records);
 
   const chips: Chip[] = [];
 
@@ -89,9 +88,20 @@ export default function LibraryChips({ filters, onFilters, types, q, onClearQuer
     chips.push({
       key: 'rec',
       label: t('files.library.filter.record'),
-      // The id is a poor label but an honest one: it is what is filtering, and
-      // it is still removable, which is what the chip is for.
-      value: recordLabel ?? filters.record_id.slice(0, 8),
+      // Resolved from the store when it holds the record. When it does not —
+      // a shared link into a record this caller cannot see — the id prefix is
+      // a poor label but an honest one: it IS what is filtering, and the chip
+      // still removes it, which is the point.
+      value: (() => {
+        // `records` is keyed by model id; the filter always carries the pair,
+        // because a record id alone is not an identity (ids are unique only
+        // PER MODEL — the same rule file_links enforces).
+        const bucket = filters.model_id ? records[filters.model_id] ?? [] : [];
+        const rec = bucket.find((r) => r.id === filters.record_id);
+        return rec
+          ? recordTitle(models.find((m) => m.id === rec.model_id), rec, isAr)
+          : filters.record_id!.slice(0, 8);
+      })(),
       onRemove: () => {
         const out = { ...filters };
         delete out.record_id;

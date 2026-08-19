@@ -32,6 +32,7 @@ import { LIBRARY_GROUPINGS, LIBRARY_SORTS } from '@/lib/files/libraryUrl';
 import {
   confidentialityLabel, documentTypeLabel, modelLabel, originLabel, ownerLabel, statusLabel,
 } from './labels';
+import RecordFilterPicker from './RecordFilterPicker';
 
 interface Props {
   /** The live text in the box — the page debounces it before searching. */
@@ -260,6 +261,13 @@ export default function LibraryFilterBar({
           onToggle={(v) => setScalar('linked_model', filters.linked_model === v ? null : v)}
           renderOption={(v) => modelLabel(v, models, isAr)}
         />
+        {/* Narrow to ONE record. Follows the linked-model choice, so picking
+            "Units" then searches units — and it only appears once a model is
+            chosen, because "pick a record from all 40,000 across every model"
+            is not a useful control. */}
+        {filters.linked_model && (
+          <RecordFilterPicker filters={filters} onFilters={onFilters} modelName={filters.linked_model} />
+        )}
         <FacetMenu
           label={t('files.library.filter.owner')}
           bucket={facets?.owner_user_id ?? {}}
