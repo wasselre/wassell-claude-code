@@ -31,8 +31,21 @@ function Kpi({ label, value, tone }: { label: string; value: string; tone?: stri
   );
 }
 
-export default function ProjectDetailPage() {
-  const { modelName, recordId } = useParams();
+/**
+ * Route usage passes NO props (reads modelName + recordId from the URL). It can
+ * also be embedded as an overlay (e.g. an option's "View source" inside the
+ * chat's Client Options popup) by passing `recordId` + `modelName` + `onClose`:
+ * the ids then come from props and the Exit button closes the overlay. All
+ * embedded behaviour is gated on `onClose`, so route usage is byte-identical.
+ */
+export default function ProjectDetailPage(
+  { recordId: recordIdProp, modelName: modelNameProp, onClose }:
+  { recordId?: string; modelName?: string; onClose?: () => void } = {},
+) {
+  const params = useParams();
+  const recordId = recordIdProp ?? params.recordId;
+  const modelName = modelNameProp ?? params.modelName;
+  const embedded = !!onClose;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { models, records, language, saveRecord, addToast, recordNavContext } = useAppStore();
@@ -149,38 +162,46 @@ export default function ProjectDetailPage() {
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
-          onClick={() => navigate(listHref)}
-          title={isAr ? 'إغلاق والعودة إلى القائمة' : 'Close and return to the list'}
+          onClick={embedded ? onClose : () => navigate(listHref)}
+          title={
+            embedded
+              ? (isAr ? 'العودة إلى خيارات العميل' : 'Back to Client Options')
+              : (isAr ? 'إغلاق والعودة إلى القائمة' : 'Close and return to the list')
+          }
           className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm text-charcoal/50 hover:text-charcoal hover:bg-sand/30 transition-colors"
         >
           <ArrowRight size={18} className="rtl:rotate-0 ltr:rotate-180" />
-          {isAr ? 'خروج' : 'Exit'}
+          {embedded ? (isAr ? 'رجوع' : 'Back') : (isAr ? 'خروج' : 'Exit')}
         </button>
-        <div className="flex items-center gap-1">
-          {currentIndex >= 0 && (
-            <span className="text-xs text-charcoal/40 tabular-nums px-1">{currentIndex + 1} / {orderedIds.length}</span>
-          )}
-          <button
-            type="button"
-            onClick={() => prevId && navigate(`${listHref}/${prevId}`)}
-            disabled={!prevId}
-            title={isAr ? 'السجل السابق' : 'Previous record'}
-            aria-label={isAr ? 'السجل السابق' : 'Previous record'}
-            className={navBtn}
-          >
-            <ChevronLeft size={20} className="rtl:rotate-180" />
-          </button>
-          <button
-            type="button"
-            onClick={() => nextId && navigate(`${listHref}/${nextId}`)}
-            disabled={!nextId}
-            title={isAr ? 'السجل التالي' : 'Next record'}
-            aria-label={isAr ? 'السجل التالي' : 'Next record'}
-            className={navBtn}
-          >
-            <ChevronRight size={20} className="rtl:rotate-180" />
-          </button>
-        </div>
+        {/* Prev/next steps through the browsed list — meaningless (and it would
+            navigate away) when embedded as an overlay, so hide it there. */}
+        {!embedded && (
+          <div className="flex items-center gap-1">
+            {currentIndex >= 0 && (
+              <span className="text-xs text-charcoal/40 tabular-nums px-1">{currentIndex + 1} / {orderedIds.length}</span>
+            )}
+            <button
+              type="button"
+              onClick={() => prevId && navigate(`${listHref}/${prevId}`)}
+              disabled={!prevId}
+              title={isAr ? 'السجل السابق' : 'Previous record'}
+              aria-label={isAr ? 'السجل السابق' : 'Previous record'}
+              className={navBtn}
+            >
+              <ChevronLeft size={20} className="rtl:rotate-180" />
+            </button>
+            <button
+              type="button"
+              onClick={() => nextId && navigate(`${listHref}/${nextId}`)}
+              disabled={!nextId}
+              title={isAr ? 'السجل التالي' : 'Next record'}
+              aria-label={isAr ? 'السجل التالي' : 'Next record'}
+              className={navBtn}
+            >
+              <ChevronRight size={20} className="rtl:rotate-180" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Hero */}

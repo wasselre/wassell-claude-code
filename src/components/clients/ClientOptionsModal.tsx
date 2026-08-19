@@ -7,6 +7,7 @@ import ClientOptionsTab from '@/pages/Clients/components/tabs/ClientOptionsTab';
 import SuggestedProjectsView from '@/pages/Followups/components/SuggestedProjectsView';
 import ProjectsUnitsBrowser from '@/pages/Chats/components/ProjectsUnitsBrowser';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
+import ProjectDetailPage from '@/pages/Projects/ProjectDetailPage';
 import { optionSourceUrl } from '@/lib/matching/clientOptions';
 import type { ClientOptionSourceType } from '@/lib/matching/clientOptions';
 
@@ -75,8 +76,22 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
     return <ProjectsUnitsBrowser clientId={clientId} onClose={() => setMode('options')} />;
   }
 
-  // A drilled-into option's source record — replaces this overlay (so it never
-  // stacks behind it) and its close (X / Cancel) returns to the options list.
+  // A drilled-into option's source — replaces this overlay (so it never stacks
+  // behind it) and its Back / close returns to the options list.
+  //   • PROJECT → the rich Project detail page as a full-screen overlay (z-40,
+  //     below the Modal tier so its own edit-master popup stacks above).
+  //   • UNIT / MARKET LISTING → the record form overlay (no bespoke page).
+  if (sourceView && sourceView.sourceType === 'project') {
+    return (
+      <div className="fixed inset-0 z-40 overflow-y-auto bg-cream" dir={isAr ? 'rtl' : 'ltr'}>
+        <ProjectDetailPage
+          recordId={sourceView.sourceId}
+          modelName="all_projects"
+          onClose={() => setSourceView(null)}
+        />
+      </div>
+    );
+  }
   if (sourceView && sourceModelId) {
     return (
       <RecordFormModal
