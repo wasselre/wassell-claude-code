@@ -106,12 +106,26 @@ BEGIN
     RAISE EXCEPTION 'B5.5: expected one "smoke view" per owner (2), found %', v_n;
   END IF;
 
-  -- ── updated_at moves on write ──────────────────────────────────────────
+  -- ── the touch trigger OWNS updated_at ──────────────────────────────────
+  --
+  -- Note what is NOT asserted: that updated_at advances between two writes in
+  -- this block. It cannot — `now()` is the TRANSACTION timestamp, constant for
+  -- the whole DO block, and pg_sleep does not move it. An earlier draft of
+  -- this test asserted exactly that and failed against a perfectly correct
+  -- trigger.
+  --
+  -- What IS provable, and is the thing that matters: a client cannot write
+  -- updated_at itself. The trigger overwrites whatever the statement supplies,
+  -- so a stale or forged timestamp can never be stored.
+  UPDATE public.file_views
+     SET pinned = true, updated_at = timestamptz '1999-01-01'
+   WHERE id = v_id;
   SELECT updated_at::text INTO v_txt FROM public.file_views WHERE id = v_id;
-  PERFORM pg_sleep(0.01);
-  UPDATE public.file_views SET pinned = true WHERE id = v_id;
-  IF (SELECT updated_at::text FROM public.file_views WHERE id = v_id) = v_txt THEN
-    RAISE EXCEPTION 'B5.5: updated_at did not advance on UPDATE';
+  IF v_txt LIKE '1999%' THEN
+    RAISE EXCEPTION 'B5.5: a client-supplied updated_at was stored (%) — the touch trigger did not fire', v_txt;
+  END IF;
+  IF (SELECT updated_at FROM public.file_views WHERE id = v_id) <> now() THEN
+    RAISE EXCEPTION 'B5.5: updated_at is not the transaction timestamp after a write';
   END IF;
 
   -- ── 6. the document-type vocabulary ────────────────────────────────────
@@ -158,14 +172,35 @@ $smoke$;
 -- B2A work recorded: measuring RLS needs SET LOCAL ROLE, not just claims.)
 -- ---------------------------------------------------------------------------
 DO $seed$
-DECLARE v_a uuid; v_b uuid;
+DECLARE
+  v_a uuid; v_b uuid;
+  v_auth_a uuid; v_auth_b uuid;
+  v_has_auth boolean;
 BEGIN
   SELECT id INTO v_a FROM public.users ORDER BY id LIMIT 1;
   SELECT id INTO v_b FROM public.users WHERE id <> v_a ORDER BY id LIMIT 1;
+
+  -- Which uuid to impersonate depends on the environment, and getting it wrong
+  -- makes every assertion below pass for the wrong reason:
+  --   production   users.auth_uid -> users.id via wassell_app_user_id
+  --   CI fixture   has no auth_uid column at all, and its wassell_app_user_id
+  --                is the identity function, so the app user id IS the claim
+  -- The column is probed rather than assumed, because reading a column that
+  -- does not exist is an error, not a NULL.
+  SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema='public' AND table_name='users'
+                    AND column_name='auth_uid') INTO v_has_auth;
+  IF v_has_auth THEN
+    EXECUTE 'SELECT auth_uid FROM public.users WHERE id = $1' INTO v_auth_a USING v_a;
+    EXECUTE 'SELECT auth_uid FROM public.users WHERE id = $1' INTO v_auth_b USING v_b;
+  END IF;
+  v_auth_a := coalesce(v_auth_a, v_a);
+  v_auth_b := coalesce(v_auth_b, v_b);
+
   PERFORM set_config('b5.user_a', v_a::text, false);
   PERFORM set_config('b5.user_b', v_b::text, false);
-  PERFORM set_config('b5.auth_a', coalesce((SELECT auth_uid::text FROM public.users WHERE id=v_a), v_a::text), false);
-  PERFORM set_config('b5.auth_b', coalesce((SELECT auth_uid::text FROM public.users WHERE id=v_b), v_b::text), false);
+  PERFORM set_config('b5.auth_a', v_auth_a::text, false);
+  PERFORM set_config('b5.auth_b', v_auth_b::text, false);
 
   INSERT INTO public.file_views (name, owner_user_id, visibility)
   VALUES ('a private', v_a, 'private'), ('a shared', v_a, 'shared');
@@ -179,8 +214,19 @@ BEGIN;
                                       'role', 'authenticated')::text, true);
 
   DO $b$
-  DECLARE v_n integer;
+  DECLARE v_n integer; v_me uuid;
   BEGIN
+    -- NON-VACUITY, and the most important line in this file. If the claim does
+    -- not resolve to user B, then B is NOBODY — and "B cannot see A's private
+    -- view", "B cannot update", "B cannot delete" all pass because a null
+    -- identity can do nothing at all. The suite would be green while testing
+    -- the opposite of what it claims.
+    v_me := public.wassell_app_user_id((SELECT auth.uid()));
+    IF v_me IS DISTINCT FROM current_setting('b5.user_b')::uuid THEN
+      RAISE EXCEPTION 'B5.2: impersonation resolved to %, expected user B (%) — every assertion below would be vacuous',
+        coalesce(v_me::text, '<null>'), current_setting('b5.user_b');
+    END IF;
+
     SELECT count(*) INTO v_n FROM public.file_views WHERE name = 'a private';
     IF v_n <> 0 THEN
       RAISE EXCEPTION 'B5.2: user B can see user A''s PRIVATE view';
