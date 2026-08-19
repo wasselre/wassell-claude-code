@@ -439,6 +439,24 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   context for anything above ~1 MB — do not call it on a 14/37/149 MB file. For a big Drive PDF, ask the user to
   download it (they land in `C:\Users\rayan\Downloads`, and the names carry an invisible LRM — glob by substring,
   never by literal filename).
+- **[2026-08-18] UPDATING an already-migrated project from an "اخر تحديث" availability sheet (الرمز ستون الندى):** when
+  the source is a NEWER-but-NARROWER developer sheet (a re-pricing / current-availability list) for a project already
+  in the CRM with full inventory, do NOT re-migrate — RECONCILE. Match every sheet row to an existing unit by
+  `(building_number, unit_number)` — that composite is the stable key (unit_number alone repeats across buildings;
+  unit_model can be refined by the newer sheet, e.g. ستون الندى B2 apt9 `K→K2`, apt10 `J→J1`, same area). Verify area
+  agreement per row before trusting a match. Then: (1) set `total_price` from the sheet for matched rows (repricing is
+  routinely NON-uniform and BIDIRECTIONAL — ستون الندى B1 went up +35k…+240k while B2 ground/first went DOWN 70k–118k;
+  a mixed delta is the signal it's a real developer update, not noise); (2) adopt the sheet's refined `unit_model`
+  labels. **The absence-of-a-unit question is a genuine fork — ASK the user, then act on their answer:** a sheet whose
+  every row is `متوفرة` and that omits whole buildings is scoped, so "not listed" can mean either "not part of this
+  price update" (leave unchanged) OR "no longer available" (the omitted in-scope units have sold). The user chose the
+  latter for ستون الندى (2026-08-18): flip the in-scope (B1/B2) available-but-absent units to `sold`; leave OTHER
+  buildings (B3/B4, never in the sheet) untouched; and leave already-`reserved` absent units as `reserved` (they're
+  already off the available list — never assert a `sold` you have no evidence for; `reserved` is the more specific,
+  truthful status). Run: 38 repriced + 30 available→sold (B2 apt14 A1 kept reserved). Writes go through the same
+  `record_save` REST RPC (service key, `p_expected_version:null`, `p_created_by:null` to preserve the original creator,
+  full merged `data` object per unit). The unit-change trigger auto-recomputes the project rollups (available_units,
+  sold_units, available_price_range) — never set those by hand. Back up all units to a local JSON before writing.
 
 ## Per-developer API/source adapters (document each site as you learn it)
 - **ريفا العقارية (riva.sa)** → **Laravel + Livewire v3, fully SERVER-RENDERED — plain `fetch` + regex,
