@@ -29,6 +29,12 @@ interface Props {
   /** Opens the Project Finder scoped to this client ("find more options").
    *  Rendered as a button in the toolbar + empty state when provided. */
   onFindMore?: () => void;
+  /** Opens an option's SOURCE record (project / unit / market listing) as an
+   *  in-place overlay the host can back out of, instead of the default
+   *  new-tab link. When absent, "View source" stays a `target="_blank"` link
+   *  (correct for the full-page 360 on desktop; the in-chat popups pass this so
+   *  the rep can return to where they were). */
+  onOpenSource?: (sourceType: ClientOptionSourceType, sourceId: string) => void;
 }
 
 const fmtNum = (n: number) => n.toLocaleString('en-US');
@@ -119,7 +125,7 @@ const UNIT_TYPE_AR: Record<string, string> = {
  * client-scoped Project Finder, or manually pick a specific project / unit /
  * market listing (AddOptionModal, added_from='manual').
  */
-export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: Props) {
+export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, onOpenSource }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const navigate = useNavigate();
   // "Find more options": hosts like ClientOptionsModal embed the finder in
@@ -627,14 +633,25 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
 
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            <a
-              href={optionSourceUrl(d.source_type as ClientOptionSourceType, d.source_id)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/75 transition hover:bg-cream/60"
-            >
-              <ExternalLink size={12} /> {L('عرض المصدر', 'View source')}
-            </a>
+            {onOpenSource ? (
+              // In-place overlay (in-chat popups): the host can return here.
+              <button
+                type="button"
+                onClick={() => onOpenSource(d.source_type as ClientOptionSourceType, d.source_id)}
+                className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/75 transition hover:bg-cream/60"
+              >
+                <ExternalLink size={12} /> {L('عرض المصدر', 'View source')}
+              </button>
+            ) : (
+              <a
+                href={optionSourceUrl(d.source_type as ClientOptionSourceType, d.source_id)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/75 transition hover:bg-cream/60"
+              >
+                <ExternalLink size={12} /> {L('عرض المصدر', 'View source')}
+              </a>
+            )}
 
             {/* Send THIS option to the client over WhatsApp — the prepared
                 message if one exists, else the creation flow. Projects +

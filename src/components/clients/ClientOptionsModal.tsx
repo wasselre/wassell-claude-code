@@ -6,6 +6,9 @@ import type { AppRecord } from '@/types';
 import ClientOptionsTab from '@/pages/Clients/components/tabs/ClientOptionsTab';
 import SuggestedProjectsView from '@/pages/Followups/components/SuggestedProjectsView';
 import ProjectsUnitsBrowser from '@/pages/Chats/components/ProjectsUnitsBrowser';
+import RecordFormModal from '@/pages/Records/components/RecordFormModal';
+import { optionSourceUrl } from '@/lib/matching/clientOptions';
+import type { ClientOptionSourceType } from '@/lib/matching/clientOptions';
 
 /**
  * Client Options POPUP — the client's unified options list (ClientOptionsTab)
@@ -36,6 +39,17 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
   const canEdit = useCanEditRecord(clientsModel, client);
 
   const [mode, setMode] = useState<'options' | 'finder' | 'browse'>('options');
+  // A drilled-into option's SOURCE record (project / unit / market listing),
+  // shown as an overlay the rep can back out of — closing it returns to the
+  // options list (the "give me a back button" fix), instead of the old
+  // new-tab link that stranded a mobile rep away from this popup.
+  const [sourceView, setSourceView] = useState<{ sourceType: ClientOptionSourceType; sourceId: string } | null>(null);
+  const sourceModelId = useMemo(() => {
+    if (!sourceView) return null;
+    const name =
+      sourceView.sourceType === 'market_listing' ? 'market_listings' : sourceView.sourceType === 'unit' ? 'units' : 'all_projects';
+    return models.find((m) => m.name === name)?.id ?? null;
+  }, [sourceView, models]);
 
   const clientName = useMemo(() => {
     const d = client?.data as Record<string, unknown> | undefined;
@@ -59,6 +73,19 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
   // Catalogue browsing takes over the screen; closing it comes back here.
   if (mode === 'browse') {
     return <ProjectsUnitsBrowser clientId={clientId} onClose={() => setMode('options')} />;
+  }
+
+  // A drilled-into option's source record — replaces this overlay (so it never
+  // stacks behind it) and its close (X / Cancel) returns to the options list.
+  if (sourceView && sourceModelId) {
+    return (
+      <RecordFormModal
+        modelId={sourceModelId}
+        recordId={sourceView.sourceId}
+        openInPageHref={optionSourceUrl(sourceView.sourceType, sourceView.sourceId)}
+        onClose={() => setSourceView(null)}
+      />
+    );
   }
 
   return (
@@ -102,7 +129,13 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {client ? (
-                <ClientOptionsTab client={client} isAr={isAr} canEdit={canEdit} onFindMore={() => setMode('finder')} />
+                <ClientOptionsTab
+                  client={client}
+                  isAr={isAr}
+                  canEdit={canEdit}
+                  onFindMore={() => setMode('finder')}
+                  onOpenSource={(sourceType, sourceId) => setSourceView({ sourceType, sourceId })}
+                />
               ) : (
                 <div className="rounded-2xl border border-sand/30 bg-white p-6 text-sm text-charcoal/55">
                   {L('العميل غير موجود أو لم يُحمَّل بعد.', 'Client not found or not loaded yet.')}
