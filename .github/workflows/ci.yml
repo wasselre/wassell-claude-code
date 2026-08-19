@@ -226,6 +226,41 @@ jobs:
       - name: File search (B2) — migration, 8k corpus, smoke, RLS, p95, rollback
         run: bash supabase/tests/ci/run_b2_search_test.sh
 
+  b2a5-record-scope:
+    # Designated validator for
+    # supabase/migrations/2026-08-19_01_record_scope_fast_path.sql (B2A.5).
+    #
+    # Separate job, separate database, deliberately NOT layered onto b2a4-authz:
+    # that suite's fixtures stub records RLS with a GUC, and B2A.5 changes how
+    # the real wassell_can_view_record is reached. Validating it against a stub
+    # would prove nothing — the exact shape of mistake that put B2A.1 on
+    # production.
+    #
+    # Gates: no persona gains OR loses a record or a file_links edge (sorted-id
+    # fingerprints), three mutants each demonstrate the leak they prevent, and
+    # the hoisted set-returning function appears in the plan with loops=1. That
+    # last one is the performance gate — machine-independent, unlike the
+    # millisecond thresholds this repo has already seen swing 2x between
+    # runners for identical code.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: B2A.5 — record-scope equivalence, mutants, plan shape
+        run: bash supabase/tests/ci/run_b2a5_record_scope_test.sh
+
   market-listings-reconciliation:
     # Designated validator for
     # supabase/migrations/2026-09-04_00_market_listings_view_reconciliation.sql.
