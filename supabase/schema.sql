@@ -748,6 +748,14 @@ $$;
 -- wassell_record_passes_scope EXACTLY — if you change either of those, update this
 -- too or the fast path (wassell_market_candidates_json) disagrees with real RLS.
 -- Added 2026-07-13 (migration 2026-07-13_market_candidates_fast_path.sql).
+-- 2026-08-19: there is now a THIRD copy of this classification —
+-- wassell_my_view_scope_all_models(), which records_view hoists once per statement
+-- (Phase 3 · B2A.5, migration 2026-08-19_01_record_scope_fast_path.sql). It derives
+-- every model’s class from ONE profile read instead of one read per model, which is
+-- what makes it cheap enough to sit in a policy. All three must agree;
+-- supabase/tests/ci/smoke_b2a5_record_scope.sql asserts it against
+-- wassell_view_scope_class on every (user, model) pair, so a change here that is not
+-- carried across fails CI rather than silently widening someone’s reach.
 CREATE OR REPLACE FUNCTION wassell_view_scope_class(auth_user_id UUID, the_model_id UUID)
 RETURNS text
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
