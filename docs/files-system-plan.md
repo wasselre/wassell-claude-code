@@ -2,11 +2,11 @@
 
 **Status:** living document · **Last updated:** 2026-08-19
 
-This is the governing plan for the Files system across all phases. Until now it
-existed only as `phase3-business-files-spec.md` in an untracked folder on one
-laptop, covering Phase 3 alone; Phases 0–2 had no plan document at all and
-survived only as history entries in `docs/prd/files.md`. That is why this file
-exists.
+This is the governing plan for the Files system across **all five phases (0–4)**.
+Until now it existed only as `phase3-business-files-spec.md` in an untracked
+folder on one laptop, covering Phase 3 alone; Phases 0–2 and 4 had no plan
+document at all and survived only as history entries in `docs/prd/files.md` and
+a single forward reference. That is why this file exists.
 
 Two companion documents, and the division of labour between them:
 
@@ -59,7 +59,28 @@ files never enter.
 
 ---
 
-## 2. Phases 0–2 — the substrate (SHIPPED)
+## 2. The roadmap — Phases 0–4
+
+There are **five top-level phases, 0 through 4**. Phase 3 is the large one and
+carries nine implementation batches. (An earlier draft of this file claimed
+"seven phases"; that was wrong and is corrected here.)
+
+| phase | goal | status |
+|---|---|---|
+| **0 — Canonical storage** | Store each business file once in the private canonical store; keep backend/system files separate. | ✅ Done |
+| **1 — Relationship graph** | Connect files to projects, units, clients, tasks, marketing assets. | ✅ Done |
+| **2 — Live synchronization** | Keep those relationships accurate automatically whenever records change. | ✅ Done |
+| **3 — Business Files Library** | Deliver the folderless, metadata-driven experience. | 🟡 In progress |
+| **4 — Folder retirement** | Once saved views prove themselves, retire legacy folders and folder-based permissions. | ⏳ Not started |
+
+Phase 4 is conditional by design — the spec commits to retirement *"conditional
+on the saved views being in real use"*, so B5 has to earn it before Phase 4 may
+begin. Nothing is ever deleted: B9 freezes folder creation and keeps a Legacy
+tab.
+
+---
+
+## 3. Phases 0–2 — the substrate (SHIPPED)
 
 These built storage and a relationship graph. **None of it is visible to a
 user** — that is Phase 3's job.
@@ -86,25 +107,41 @@ which is exactly why B2A.4 needed its own trigger.
 
 ---
 
-## 3. Phase 3 — the Business Files Library
+## 4. Phase 3 — the Business Files Library
 
 Turns the substrate into the product. Nine batches, each independently
 rollback-able.
 
 ### Status as of 2026-08-19
 
-| batch | what it is | state |
+| batch | deliverable | state |
 |---|---|---|
-| **B1** | business metadata on `files` (title, type, status, tags, owner, dates, confidentiality) | ✅ shipped dark |
-| **B2** | `business_files_search` — server-side search, filters, facets | ⚠️ applied dark, **fails its own acceptance bar** |
-| **B2A / .1 / .2 / .4** | file-authorization performance (not in the original spec — inserted when B2 exposed the cost) | ✅ live |
-| **B3** | read-only per-user access report | ✅ done; D1 approved |
-| **B4** | record-derived view access + confidentiality suppression | ⚠️ applied **dark**; ON path unvalidated |
-| **B5** | Library UI and saved views | ⛔ blocked (see below) |
-| **B6** | linking and the unified record panel | not started |
-| **B7** | upload, dedupe, bulk | not started |
-| **B8** | Marketing convergence — canonicalise the 317 URL-only assets | not started |
-| **B9** | folder backfill and freeze | not started |
+| **B1** | Metadata foundation: title, type, owner, tags, confidentiality, status | ✅ **Live** (applied dark) |
+| **B2** | Fast server-side search, Arabic folding, filters and facets | ⚠️ **Applied dark** — 0 callers. Misses its 300 ms acceptance bar (§6.1). |
+| **B3** | Measure how record-linked access changes visibility | ✅ **Done** — D1 approved |
+| **B4** | Let users view files through records they can access, excluding restricted files | ⚠️ **Applied dark** — toggle OFF, ON path unvalidated |
+| **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ⛔ **Blocked** — needs §6.1 fixed *and* B4 ON |
+| **B6** | Manual linking/unlinking and Files panels inside records | ⏳ Not started |
+| **B7** | Upload metadata, duplicate detection, bulk actions | ⏳ Not started |
+| **B8** | Move the remaining 317 Marketing assets onto the canonical file system | ⏳ Not started |
+| **B9** | Convert folder names into metadata, freeze folder creation, retain Legacy folders | ⏳ Not started |
+
+**Plus one branch that is in no spec but IS live on production:**
+
+| | | |
+|---|---|---|
+| **B2A · B2A.2 · helper scoping · B2A.4** | file-authorization performance | ✅ **Live** — 20.9 s → 0.48 s |
+
+### Reading the statuses
+
+"Applied dark" is not the same as "pending", and the difference is operational:
+
+- **B2 and B4 are ON PRODUCTION right now.** Their objects exist; nothing calls
+  them. A roadmap that shows them as "pending" hides the fact that there is a
+  switch on production (`file_access_settings.derived_view_enabled`) which, if
+  flipped, moves three users from ~1,280 files to ~6,100.
+- **"Blocked" describes an acceptance gate, not a deployment state.** B2 is
+  deployed and unaccepted at the same time.
 
 ### The unplanned branch: B2A
 
@@ -138,7 +175,7 @@ Starting B5 now builds a page that is **slow and mostly empty**.
 
 ---
 
-## 4. Live state (measured 2026-08-18/19, production)
+## 5. Live state (measured 2026-08-18/19, production)
 
 | | |
 |---|---|
@@ -171,9 +208,9 @@ load-bearing ones.
 
 ---
 
-## 5. Open problems
+## 6. Open problems
 
-### 5.1 Per-row record-visibility cost on bulk link reads — the real one
+### 6.1 Per-row record-visibility cost on bulk link reads — the real one
 
 **Measured 2026-08-19.** `business_files_search` takes 1.5–2.9 s against a
 300 ms budget. Attribution:
@@ -209,23 +246,23 @@ be fixed at the authorization layer, before B5.
 
 Tracked as [#32](https://github.com/wasselre/wassell-claude-code/issues/32).
 
-### 5.2 B2 is applied but not accepted
+### 6.2 B2 is applied but not accepted
 Acceptance is *"p95 < 300 ms at 7,097 files."* It is 1.5–2.9 s. Applied dark,
 zero callers, so nothing is broken — but the gate is unmet.
 
-### 5.3 B4's ON path is unvalidated
+### 6.3 B4's ON path is unvalidated
 Installed dark and verified inert (all personas byte-identical, toggle `false`,
 zero write policies touched). **Do not flip
 `file_access_settings.derived_view_enabled` until CI is green on the ON path.**
 
-### 5.4 Scheduled PRD sync is broken
+### 6.4 Scheduled PRD sync is broken
 60/60 runs failing since 2026-08-17 on a TipTap peer-dependency conflict, so
 `docs/prd/models/**` and `docs/prd/workflows/**` are drifting. Unrelated to
 Files; noted because it silently erodes the record of in-app changes.
 
 ---
 
-## 6. After Phase 3
+## 7. After Phase 3
 
 From the spec, in order: body-text extraction from PDFs and Office files ·
 versioning lineage · static collections · duplicate merge · retention
@@ -233,7 +270,7 @@ automation · folder retirement.
 
 ---
 
-## 7. Rules that outlived their batch
+## 8. Rules that outlived their batch
 
 Earned the hard way; violating them has already cost production incidents.
 
