@@ -27,15 +27,27 @@ export default function ScrapedExtrasField({ value }: { value: unknown }) {
 
   return (
     <div className="rounded-xl border border-sand/40 overflow-hidden">
-      {items.map((e, i) => (
-        <div
-          key={i}
-          className="flex items-start justify-between gap-4 px-3 py-2 text-sm odd:bg-sand/5 border-b border-sand/20 last:border-b-0"
-        >
-          <span className="text-charcoal/55 shrink-0">{e.raw_label || '—'}</span>
-          <span className="text-charcoal font-medium text-right break-words">{e.details || '—'}</span>
-        </div>
-      ))}
+      {items.map((e, i) => {
+        const isPlatform = e.source_section === 'platform_specific';
+        return (
+          <div
+            key={i}
+            className="flex items-start justify-between gap-4 px-3 py-2 text-sm odd:bg-sand/5 border-b border-sand/20 last:border-b-0"
+          >
+            <span className={`shrink-0 ${isPlatform ? 'font-mono text-[12px] text-charcoal/45' : 'text-charcoal/55'}`}>
+              {e.raw_label || '—'}
+            </span>
+            <span className="flex items-center gap-2 min-w-0">
+              {isPlatform && (
+                <span className="shrink-0 text-[10px] text-copper bg-copper/10 rounded px-1.5 py-0.5">
+                  خاص بالمنصة
+                </span>
+              )}
+              <span className="text-charcoal font-medium text-right break-words">{e.details || '—'}</span>
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

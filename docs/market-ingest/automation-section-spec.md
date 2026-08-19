@@ -111,12 +111,29 @@ the panel flags "meaning may vary by type" and lets the decision be conditional.
 | Same as an existing Wassell field | `mapped_existing_field` | `canonical_field` (target column picker), `transformation`, `is_equivalent_to_existing` |
 | A genuinely new *universal* concept | `candidate_new_field` | proposed name/type → later promoted to a real column |
 | Belongs only to the ad (keep, no column) | `kept_in_extras` *(new value)* | routes the value into `scraped_extras` |
-| Unique platform metadata | `reviewed_source_specific` | kept per-platform |
+| Unique platform metadata | `reviewed_source_specific` | kept per-platform (see below) |
 | Noise / technical junk | `intentionally_ignored` / `technical_excluded` | dropped |
 | Ambiguous — not understood yet | `review_required` | **held**; nothing flows |
 
 Every ruling stamps `reviewer`, `reason`, `decided_at`, `contract_version`.
 Writing a decision resolves the matching `schema_gap_events` row.
+
+**`reviewed_source_specific` produces a real behavior (added 2026-08-19).** A
+`reviewed_source_specific` ruling is not just a label: the aqar-scraper extractor
+(`src/decisions.ts` → `src/rsc.ts`) loads the platform's set of these source paths
+once per run and, for each top-level raw RSC field in the set, appends the value
+verbatim to the listing's `scraped_extras` — tagged `source_section:
+'platform_specific'`, keyed by source path (e.g. `listing.rega_total_price`),
+objects JSON-stringified, capped at 2000 chars. The record form badges these
+`خاص بالمنصة` (see `ScrapedExtrasField.tsx`), distinct from the curated Arabic-
+labeled details. Fields ruled `intentionally_ignored` / `technical_excluded` are
+never in the set, so they are **dropped from the record entirely** (they survive
+only as immutable raw evidence in the `market-raw` bucket). Because the extractor
+is the only stage holding the full raw object, the routing lives there; it fails
+open (no Supabase env → capture skipped that run, logged). Storage is the existing
+`scraped_extras` jsonb column — deliberately NOT a dedicated `platform_extras`
+column, to avoid a frozen-table view-chain migration on the 4.85 GB
+`market_listings`. Decisions take effect on the next (re-)scrape of a listing.
 
 **Guardrails in the UI:**
 - `mapped_existing_field` requires picking a real `market_listings` column, and
