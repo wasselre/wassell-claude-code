@@ -1,0 +1,19 @@
+-- generation_jobs is a POLYMORPHIC queue: record_id points at DIFFERENT tables by
+-- `kind` — image jobs → image_chats records (in public.records), but listing-mirror
+-- jobs → the FROZEN public.market_listings table (whose ids are NOT in records).
+-- A single FK to records(id) cannot express a polymorphic reference.
+--
+-- Since market_listings froze 2026-08-07, the listing-mirror enqueue path
+--   market_listings_enqueue_listing_mirror (AFTER INSERT/UPDATE)
+--     → listing_mirror_enqueue()
+--       → INSERT INTO generation_jobs (record_id = <frozen listing id>, ...)
+-- fails 23503 "Key (record_id)=… is not present in table records" for EVERY frozen
+-- listing id. This blocked all NEW market_listings inserts and any image-changing
+-- update (plain price/last_seen updates skip the mirror trigger, so they survived —
+-- which is why the breakage stayed hidden while the scraper was fully dark).
+--
+-- Drop the FK. A polymorphic queue can't enforce referential integrity to one table;
+-- workers already tolerate a missing source record (claim → no-op/fail gracefully),
+-- and the ON DELETE CASCADE it provided for image/clean-text jobs is superseded by
+-- the job lifecycle + generation_jobs_watchdog. Applied to prod (wassell-prod).
+ALTER TABLE public.generation_jobs DROP CONSTRAINT IF EXISTS generation_jobs_record_id_fkey;
