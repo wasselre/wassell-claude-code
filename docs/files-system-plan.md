@@ -117,7 +117,7 @@ rollback-able.
 | batch | deliverable | state |
 |---|---|---|
 | **B1** | Metadata foundation: title, type, owner, tags, confidentiality, status | ✅ **Live** (applied dark) |
-| **B2** | Fast server-side search, Arabic folding, filters and facets | ⚠️ **Applied dark** — 0 callers. Misses its 300 ms acceptance bar (§6.1). |
+| **B2** | Fast server-side search, Arabic folding, filters and facets | ⚠️ **Applied dark** — 0 callers. 6,933 ms → 395 ms, but still misses the 300 ms bar (§6.1). |
 | **B3** | Measure how record-linked access changes visibility | ✅ **Done** — D1 approved |
 | **B4** | Let users view files through records they can access, excluding restricted files | ✅ **LIVE — toggle ON since 2026-08-19 11:09 UTC** |
 | **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ⛔ **Blocked** — needs §6.1 fixed *and* B4 ON |
@@ -210,41 +210,42 @@ load-bearing ones.
 
 ## 6. Open problems
 
-### 6.1 Per-row record-visibility cost on bulk link reads — the real one
+### 6.1 Per-row record-visibility cost — LARGELY RESOLVED (2026-08-19)
 
-**Measured 2026-08-19.** `business_files_search` takes 1.5–2.9 s against a
-300 ms budget. Attribution:
+Two migrations, both live: `2026-08-19_01_record_scope_fast_path` (B2A.5, hoists
+the per-model scope class out of `records_view`) and
+`derived_file_ids_fast_path` (the same lemma applied to B4's helper, which
+called `wassell_can_view_record` directly and so bypassed the policy fast path
+entirely).
 
-| group | ms |
-|---|---|
-| base + total | 20.5 |
-| six simple facets | 15.4 |
-| tag facet | 11.9 |
-| **`linked_model` + `role` facets** | **1,136.2** |
-| **health block** | **565.7** |
+**`business_files_search`: 6,933 ms → 395 ms median (17.5x).** Reach byte-identical
+for all 7 users, +0/-0, verified transactionally and again on production.
 
-Root cause: both hot groups read `file_links` in **bulk**, and every candidate
-row calls `wassell_can_view_record`.
+Residue is now thin rather than concentrated: `linked_model` facet 121 ms (was
+7,924), `file_links` scan 92 ms (was 1,457), `files` scan 37 ms (was 1,566).
 
-| | |
-|---|---|
-| `wassell_can_view_record` | **0.118 ms/call** |
-| bare row access | 0.0014 ms/row |
-| full `file_links` scan under RLS | 691 ms |
+**Three lessons worth more than the fix:**
 
-The function costs ~85× the row it guards. ~9,856 rows × ~0.1 ms ≈ 0.7 s per
-scan; the search does ~2.5 of them.
+1. **The plan is the unit of cost, not the predicate.** The obvious fix — paste
+   the fast-path disjunct into B4's helper — measured 2.3x SLOWER (731 ->
+   1,693 ms). The existing plan carried a **Memoize** node deduplicating
+   `can_view_record` to one call per distinct linked record; the extra `OR` made
+   the planner abandon it for a Hash Join seq-scanning all 39,975 records. What
+   shipped instead PARTITIONS (branch 1 = unrestricted models, no function call;
+   branch 2 = the residue, 3 links and 2 calls) rather than disjoins.
+2. **Two guards will be "tidied" away by someone.** `WHERE s.model_id IS NOT NULL`
+   protects a `NOT IN` — one NULL silently narrows the result (CI mutant: 2,943
+   ids lost). And the zero-permission guard MUST stay two statements, or the
+   planner pushes the filter below the `DISTINCT` and evaluates 9,856 links
+   instead of 10 models (389 ms vs 2 ms).
+3. **Measuring RLS requires `SET LOCAL ROLE authenticated`, not just JWT claims.**
+   `business_files_search` is SECURITY INVOKER; claims alone measure 89 ms with
+   RLS never applied. Two earlier readings on this issue were wrong for exactly
+   this reason.
 
-**Two explanations were wrong and are recorded so they are not re-proposed:**
-the eight "expensive" facets cost **27 ms combined** (the CTE materialises
-once), and `unified_records` **prunes correctly** — a keyed probe executes one
-branch and marks the four frozen branches `(never executed)`.
-
-**This is not B2's bug.** B2 is the first feature to read links in bulk.
-**B5's "Used in" panel and B6's linking UI will hit the same wall.** It should
-be fixed at the authorization layer, before B5.
-
-Tracked as [#32](https://github.com/wasselre/wassell-claude-code/issues/32).
+**Still open:** 395-460 ms against a 300 ms bar. The next lever is B2's own —
+the helper is invoked once per internal query (~24 ms each), recomputing a
+caller-constant set. That is a B2 optimisation, not another authorization fix.
 
 ### 6.2 B2 is applied but not accepted
 Acceptance is *"p95 < 300 ms at 7,097 files."* It is 1.5–2.9 s. Applied dark,
