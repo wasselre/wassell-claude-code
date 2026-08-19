@@ -209,9 +209,19 @@ $seed$;
 
 BEGIN;
   SET LOCAL ROLE authenticated;
+  -- Impersonation is set THREE ways on purpose, because auth.uid() is not one
+  -- function — it is whichever stub the surrounding environment defines:
+  --   production            reads request.jwt.claims ->> 'sub'
+  --   fixture_file_links    reads current_setting('test.uid')
+  --   bootstrap_fixture     reads current_setting('request.jwt.claim.sub')
+  -- Setting only the production shape resolves to NULL under the CI fixture,
+  -- which the non-vacuity guard below would (correctly) report as a failure.
+  -- Setting all three is what makes this file mean the same thing in both.
   SELECT set_config('request.jwt.claims',
                     json_build_object('sub', current_setting('b5.auth_b'),
                                       'role', 'authenticated')::text, true);
+  SELECT set_config('test.uid', current_setting('b5.auth_b'), true);
+  SELECT set_config('request.jwt.claim.sub', current_setting('b5.auth_b'), true);
 
   DO $b$
   DECLARE v_n integer; v_me uuid;

@@ -44,6 +44,28 @@ run "$ROOT/supabase/migrations/2026-08-12_file_link_sync.sql"
 run "$ROOT/supabase/tests/ci/fixture_b1_authz.sql"
 run "$ROOT/supabase/migrations/2026-08-16_01_business_file_metadata.sql"
 
+# Mirror ONE production grant the shared fixture does not carry.
+#
+# B5's policies call `auth.uid()` inline, evaluated by the CALLER — that is how
+# every RLS policy in this database resolves identity. On production
+# `authenticated` holds USAGE on schema auth and EXECUTE on auth.uid()
+# (verified: has_schema_privilege = true). The fixture never granted it, because
+# every earlier suite reached auth.uid() only from INSIDE a SECURITY DEFINER
+# helper, where the definer's rights apply and the caller's do not.
+#
+# Without this the ownership assertions fail with "permission denied for schema
+# auth" — a fixture that is STRICTER than production, which is its own kind of
+# wrong: it would have reported a correct migration as broken. (The opposite
+# error, a fixture gentler than production, is how B2A.1 shipped a security bug.)
+psql "$DBURL" -v ON_ERROR_STOP=1 -q -c "
+  DO \$g\$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='auth')
+       AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+      GRANT USAGE ON SCHEMA auth TO authenticated;
+      EXECUTE 'GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated';
+    END IF;
+  END \$g\$;"
+
 edges()   { q "SELECT count(*) FROM public.file_links"; }
 sources() { q "SELECT count(*) FROM public.file_link_sources"; }
 drift()   { q "SELECT coalesce(sum(value),0) FROM public.file_links_reconcile() WHERE category='drift'"; }
