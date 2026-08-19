@@ -605,6 +605,41 @@ They are editable in the Builder but cannot be deleted (is_system: true).
 - [x] Phase 6: PDF Generation + Public Links
 - [x] Phase 7: Polish (home page, schema.sql, toasts)
 
+## Explaining things (CRITICAL — added 2026-08-19)
+
+**Every technical explanation MUST be followed by a plain-language version.**
+Not instead of the technical detail — in addition to it. The operator reads both,
+and the plain version is the one that gets acted on.
+
+**The rule:** if a message contains a root-cause analysis, a design decision, a
+measurement, a diagnosis, a trade-off, or a failure report, it needs a short
+section that a non-engineer could read and act on. Put the technical content
+first for the record, then the plain version.
+
+**Plain means:**
+- No jargon without a translation. Not "the RLS predicate evaluates per-row" —
+  "the database re-checks your permission once for every row, and there are ten
+  thousand rows."
+- Say the consequence in human terms: what breaks, who notices, what it costs,
+  what happens if we do nothing.
+- Numbers with meaning attached. Not "0.118 ms/call" alone — "that's 85× more
+  than reading the row it's guarding, which is why a page takes 2 seconds."
+- Analogies are fine when they are honest. Don't stretch one past the point
+  where it stops being true.
+- State what is certain vs. what is a guess. "Measured" and "I think" are
+  different words and must not be blurred together.
+
+**Do NOT:**
+- Dumb down the technical section to avoid writing the plain one. Both, always.
+- Hide bad news in jargon. If something broke, or a claim turned out wrong, the
+  plain version says so in plain words.
+- Write the plain version as marketing. It is a translation, not a pitch.
+
+**Why this exists:** during the Files Phase 3 work the operator repeatedly had to
+ask "explain in simple terms" and once "explain the problem in detail" because
+the technical reporting alone did not convey what was actually happening or what
+it cost. A correct explanation nobody can act on is not a finished explanation.
+
 ## Coding Conventions
 - All components use TypeScript with explicit prop types
 - No `any` types — use proper types from `src/types/index.ts`
@@ -764,3 +799,4 @@ Kill the worktree (`git worktree remove <path>` + `git branch -d claude/<name>`)
 - Do not add non-schema keys (`_comment`, etc.) to `vercel.json` — see "Deployment Config" above
 - Do not silently swallow errors — see "Silent Failures" above
 - Do not push directly to `main` from a stale worktree — see "Worktree workflow" above
+- Do not give a technical explanation without a plain-language version — see "Explaining things" above
