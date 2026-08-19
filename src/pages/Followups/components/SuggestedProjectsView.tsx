@@ -631,8 +631,9 @@ export default function SuggestedProjectsView({
 
   return (
     <div className="flex h-full flex-col bg-cream" dir={isAr ? 'rtl' : 'ltr'}>
-      {/* Header with Edit-preferences toggle + Done button */}
-      <div className="flex items-center gap-3 border-b border-sand/40 bg-white px-4 py-3 sm:px-6">
+      {/* Header with Edit-preferences toggle + Done button. flex-wrap so the
+          action buttons drop to a second line on a phone instead of crowding. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-sand/40 bg-white px-4 py-3 sm:px-6">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-copper/10">
           <Compass size={20} className="text-copper" />
         </div>

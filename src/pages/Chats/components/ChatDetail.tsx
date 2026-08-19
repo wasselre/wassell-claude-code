@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate, type NavigateFunction } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
@@ -15,6 +15,7 @@ import LeadIntakeModal from './LeadIntakeModal';
 import ContactIntakeModal from './ContactIntakeModal';
 import LogInteractionModal from './LogInteractionModal';
 import StudyJobCard from './StudyJobCard';
+import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
@@ -115,16 +116,16 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     [linkedClientData, clientsModel, geoNames, isAr],
   );
 
-  // Full client record in a NEW TAB (explicitly not a modal / same-tab nav).
-  const clientRecordUrl = clientLinkId ? `/model/clients/${clientLinkId}` : null;
 
   // Advertiser whose phone matches this chat — computed live (nothing is
-  // stored on the chat), so a fresh REGA lookup links instantly.
+  // stored on the chat), so a fresh REGA lookup links instantly. The model
+  // refs are lifted so we have their ids for the in-chat record popups below.
+  const advertisersModel = useMemo(() => models.find((m) => m.name === 'advertisers') ?? null, [models]);
+  const contactsModel = useMemo(() => models.find((m) => m.name === 'contacts') ?? null, [models]);
   const matchedAdvertiser = useMemo(() => {
-    const advertisersModel = models.find((m) => m.name === 'advertisers') ?? null;
     if (!advertisersModel || !phone) return null;
     return matchRecordByPhone(phone, records[advertisersModel.id] ?? [], phoneFieldSlugs(advertisersModel));
-  }, [models, records, phone]);
+  }, [advertisersModel, records, phone]);
   const matchedAdvertiserName = matchedAdvertiser
     ? ((matchedAdvertiser.data as Record<string, unknown>).name as string | null) ?? null
     : null;
@@ -134,10 +135,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   // instantly and a deleted one unlinks on its own. Nothing is stored on the
   // chat record.
   const matchedContact = useMemo(() => {
-    const contactsModel = models.find((m) => m.name === 'contacts') ?? null;
     if (!contactsModel || !phone) return null;
     return matchRecordByPhone(phone, records[contactsModel.id] ?? [], phoneFieldSlugs(contactsModel));
-  }, [models, records, phone]);
+  }, [contactsModel, records, phone]);
   // Our own name for this number (client, else contact) wins over the WhatsApp
   // push name — see resolveChatDisplayName.
   const name = resolveChatDisplayName(data, matchedContact, linkedClient);
@@ -158,6 +158,12 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const [showContactIntake, setShowContactIntake] = useState(false);
   // "Log an interaction" — record an off-task call/visit result.
   const [showLogInteraction, setShowLogInteraction] = useState(false);
+  // In-chat record popup (client profile / contact / advertiser). Opening a
+  // record NEVER navigates away from the conversation — it renders a
+  // RecordFormModal overlay with an "Open full page" escape hatch.
+  const [recordPopup, setRecordPopup] = useState<
+    { modelId: string; recordId: string; href: string } | null
+  >(null);
 
   // The linked client's active WhatsApp follow-up (open/in_progress). Resolving
   // the chat should complete THIS task through the normal follow-up path rather
@@ -223,18 +229,34 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     );
   }
 
+  // Open a record (client / contact / advertiser) as an IN-CHAT popup instead of
+  // navigating away. Null when the model or record isn't available.
+  const openClientProfile =
+    clientLinkId && clientsModel
+      ? () => setRecordPopup({ modelId: clientsModel.id, recordId: clientLinkId, href: `/model/clients/${clientLinkId}` })
+      : null;
+  const openContactRecord =
+    matchedContact && contactsModel
+      ? () => setRecordPopup({ modelId: contactsModel.id, recordId: matchedContact.id, href: `/model/contacts/${matchedContact.id}` })
+      : null;
+  const openAdvertiserRecord =
+    matchedAdvertiser && advertisersModel
+      ? () => setRecordPopup({ modelId: advertisersModel.id, recordId: matchedAdvertiser.id, href: `/model/advertisers/${matchedAdvertiser.id}` })
+      : null;
+
   // Props shared by the CRM-actions cluster, rendered inline on desktop and
   // inside the mobile bottom sheet — ONE source of truth, no duplicated markup.
   const crmActionProps = {
     isAr,
-    navigate,
     clientLinkId,
-    clientRecordUrl,
     matchedContact,
     matchedAdvertiser,
     matchedAdvertiserName,
     recordId,
     aiManaged,
+    onOpenClient: openClientProfile,
+    onOpenContact: openContactRecord,
+    onOpenAdvertiser: openAdvertiserRecord,
     onClientOptions: () => setShowClientOptions(true),
     onLogInteraction: () => setShowLogInteraction(true),
     onLeadIntake: () => setShowLeadIntake(true),
@@ -255,16 +277,14 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         >
           <BackIcon size={20} />
         </button>
-        {clientRecordUrl ? (
-          <a
-            href={clientRecordUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+        {openClientProfile ? (
+          <button
+            onClick={openClientProfile}
             className="w-10 h-10 rounded-full bg-copper/10 text-copper flex items-center justify-center shrink-0 font-semibold hover:bg-copper/20 transition-colors"
-            title={isAr ? 'فتح ملف العميل في تبويب جديد' : 'Open client record in a new tab'}
+            title={isAr ? 'عرض ملف العميل' : 'View client profile'}
           >
             {(name.trim().charAt(0) || '#').toUpperCase()}
-          </a>
+          </button>
         ) : (
           <div className="w-10 h-10 rounded-full bg-copper/10 text-copper flex items-center justify-center shrink-0 font-semibold">
             {(name.trim().charAt(0) || '#').toUpperCase()}
@@ -272,16 +292,14 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            {clientRecordUrl ? (
-              <a
-                href={clientRecordUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-base font-bold text-chocolate truncate hover:text-copper transition-colors"
-                title={isAr ? 'فتح ملف العميل في تبويب جديد' : 'Open client record in a new tab'}
+            {openClientProfile ? (
+              <button
+                onClick={openClientProfile}
+                className="text-base font-bold text-chocolate truncate hover:text-copper transition-colors text-start"
+                title={isAr ? 'عرض ملف العميل' : 'View client profile'}
               >
                 {name}
-              </a>
+              </button>
             ) : (
               <h1 className="text-base font-bold text-chocolate truncate">{name}</h1>
             )}
@@ -433,6 +451,19 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         </MobileActionSheet>
       )}
 
+      {/* In-chat record popup — client profile / contact / advertiser opened as
+          an overlay over the conversation (never a full-page navigation). The
+          footer's "Open full page" hands off to the record route when the rep
+          wants the full cockpit. */}
+      {recordPopup && (
+        <RecordFormModal
+          modelId={recordPopup.modelId}
+          recordId={recordPopup.recordId}
+          openInPageHref={recordPopup.href}
+          onClose={() => setRecordPopup(null)}
+        />
+      )}
+
       {/* Client-options popup — the client's saved options with the Project
           Finder embedded, without leaving the conversation. */}
       {showClientOptions && clientLinkId && (
@@ -519,14 +550,15 @@ const DETAIL_CHIP_STYLES: Record<ClientPrefDetailChip['kind'], string> = {
  */
 function CrmActions({
   isAr,
-  navigate,
   clientLinkId,
-  clientRecordUrl,
   matchedContact,
   matchedAdvertiser,
   matchedAdvertiserName,
   recordId,
   aiManaged,
+  onOpenClient,
+  onOpenContact,
+  onOpenAdvertiser,
   onClientOptions,
   onLogInteraction,
   onLeadIntake,
@@ -536,14 +568,15 @@ function CrmActions({
   close,
 }: {
   isAr: boolean;
-  navigate: NavigateFunction;
   clientLinkId: string | null;
-  clientRecordUrl: string | null;
   matchedContact: AppRecord | null;
   matchedAdvertiser: AppRecord | null;
   matchedAdvertiserName: string | null;
   recordId: string;
   aiManaged: boolean;
+  onOpenClient: (() => void) | null;
+  onOpenContact: (() => void) | null;
+  onOpenAdvertiser: (() => void) | null;
   onClientOptions: () => void;
   onLogInteraction: () => void;
   onLeadIntake: () => void;
@@ -567,21 +600,21 @@ function CrmActions({
       <span onClickCapture={() => close?.()} className="contents">
         <ProjectsUnitsBrowserButton clientId={clientLinkId} />
       </span>
-      {matchedContact && (
+      {matchedContact && onOpenContact && (
         <button
-          onClick={run(() => navigate(`/model/contacts/${matchedContact.id}`))}
+          onClick={run(onOpenContact)}
           className={`inline-flex items-center gap-1.5 rounded-full bg-charcoal/8 ${pad} font-medium text-charcoal transition-colors hover:bg-charcoal/15`}
-          title={isAr ? 'فتح بطاقة جهة الاتصال' : 'Open contact record'}
+          title={isAr ? 'عرض بطاقة جهة الاتصال' : 'View contact record'}
         >
           <Contact size={12} />
           {isAr ? 'جهة اتصال' : 'Contact'}
         </button>
       )}
-      {matchedAdvertiser && (
+      {matchedAdvertiser && onOpenAdvertiser && (
         <button
-          onClick={run(() => navigate(`/model/advertisers/${matchedAdvertiser.id}`))}
+          onClick={run(onOpenAdvertiser)}
           className={`inline-flex items-center gap-1.5 rounded-full bg-gold/20 ${pad} font-medium text-chocolate transition-colors hover:bg-gold/30`}
-          title={isAr ? 'فتح بطاقة المعلن' : 'Open advertiser record'}
+          title={isAr ? 'عرض بطاقة المعلن' : 'View advertiser record'}
         >
           <Megaphone size={12} />
           <span className="truncate max-w-[220px]">
@@ -590,19 +623,16 @@ function CrmActions({
           </span>
         </button>
       )}
-      {clientRecordUrl ? (
+      {onOpenClient ? (
         <>
-          <a
-            href={clientRecordUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => close?.()}
+          <button
+            onClick={run(onOpenClient)}
             className={`inline-flex items-center gap-1.5 font-medium text-copper hover:text-terracotta ${big ? 'rounded-full bg-copper/5 ' + pad : ''}`}
-            title={isAr ? 'فتح ملف العميل في تبويب جديد' : 'Open client record in a new tab'}
+            title={isAr ? 'عرض ملف العميل' : 'View client profile'}
           >
             <User size={12} />
             {isAr ? 'عميل مرتبط' : 'Linked client'}
-          </a>
+          </button>
           <button
             onClick={run(onClientOptions)}
             className={`inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 ${pad} font-medium text-copper transition-colors hover:bg-copper/10`}
