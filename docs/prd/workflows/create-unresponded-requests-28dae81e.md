@@ -17,12 +17,12 @@
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Outcome (`call_result`) equals "Unanswered Request" (`unanswered_request`)
+- Call Result (`call_result`) equals unanswered_request
 - Actual Follow-up (`actual_datetime`) is not empty
 
 **Actions (run in order):**
 
 **Action 1 — Create Record**
 Create a **Unanswered Requests / طلبات غير مجابة** record with:
-- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client (`client_id`)
 - Request Status (`request_status`) ← static value (empty)

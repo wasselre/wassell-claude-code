@@ -5,7 +5,7 @@
 # Model: Decks / العروض التقديمية  `decks`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-08-19
 **Model id:** `b5593ffd-c79c-4847-87fb-4621e47d29d9`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -54,8 +54,8 @@
   - API value `en` → "English" / "إنجليزي"
   - API value `mixed` → "Mixed" / "مختلط"
 - **Model / النموذج المستخدم** (`model_used`, type `dropdown`) — options:
-  - API value `claude-opus-4-7` → "Opus 4.7" / "أوبس 4.7"
-  - API value `claude-sonnet-4-6` → "Sonnet 4.6" / "سونيت 4.6"
+  - API value `claude-opus-4-7` → "Opus 4.7" / "Opus 4.7"
+  - API value `claude-sonnet-4-6` → "Sonnet 4.6" / "Sonnet 4.6"
 - **Size / الحجم** (`size`, type `dropdown`) — options:
   - API value `16:9` → "16:9 (Widescreen)" / "١٦:٩ (أفقي)"
   - API value `9:16` → "9:16 (Vertical)" / "٩:١٦ (رأسي)"

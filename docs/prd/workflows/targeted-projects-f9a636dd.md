@@ -23,8 +23,8 @@ _Match: ALL must pass (AND)_
 
 **Action 1 — Create Record**
 Create a **Targeted Projects / المشاريع المستهدفة** record with:
-- Project (`project`) ← the trigger record's id
-- _Skipped if a record already exists with matching Project (`project`)._
+- `project` (unknown field) ← the trigger record's id
+- _Skipped if a record already exists with matching `project` (unknown field)._
 
 **Action 2 — Update Record**
 Update **All Projects / جميع المشاريع** records where Project ID (`project_id`) = the trigger record's Project ID (`project_id`), setting:

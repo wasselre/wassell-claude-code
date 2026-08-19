@@ -25,8 +25,8 @@ _Match: ALL must pass (AND)_
 
 **Action 1 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client ID (`client_id`) ← the trigger record's id
+- Client (`client_id`) ← the trigger record's id
 - Sales Rep (`sales_rep`) ← static value d6256837-bae8-408a-9ba8-090869281ea3
 - Follow-up Type (`followup_type`) ← static value appointment_booking_call
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by ``
-- Follow-up Number (`followup_number`) ← static value 1
+- `followup_number` (unknown field) ← static value 1

@@ -5,7 +5,7 @@
 # Model: Prompt Library / مكتبة التعليمات  `prompt_snippets`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-31
+**Last updated (from DB):** 2026-08-19
 **Model id:** `fd5bab91-50a8-41e9-a733-bce2592559f3`
 **Storage:** unified records (JSONB)
 **Group:** Designs
@@ -26,7 +26,7 @@
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `title` | Title / العنوان | Text | yes | half | yes |  |
-| `category` | Category / التصنيف | Dropdown | no | half | yes | 6 options |
+| `category` | Category / التصنيف | Dropdown | no | half | yes | 5 options |
 | `text` | Prompt text / النص | Text area | yes | full | no |  |
 | `images` | Attached images / صور مرفقة | Multi-image | no | full | no |  |
 
@@ -38,4 +38,3 @@
   - API value `نمط حياة` → "Lifestyle" / "نمط حياة"
   - API value `تحرير / تنظيف` → "Edit / cleanup" / "تحرير / تنظيف"
   - API value `متفرقات` → "Other" / "متفرقات"
-  - API value `مخططات` → "Floor Plans" / "مخططات" · color `#EC4899`

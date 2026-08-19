@@ -27,19 +27,19 @@ Update **Clients / العملاء** records where `id` (unknown field) = the tri
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client ID (`client_id`) ← the trigger record's Client (`client_id`)
+- Client (`client_id`) ← the trigger record's Client (`client_id`)
 - Follow-up Type (`followup_type`) ← static value follow_up_call_after_visit
-- Visit (`visit`) ← the trigger record's id
+- `visit` (unknown field) ← the trigger record's id
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d @10:00`
-- Status (`followup_status`) ← static value open
+- `followup_status` (unknown field) ← static value open
 - Sales Rep (`sales_rep`) ← the trigger record's Sales Representative (`sales_representative`)
-- Follow-up Number (`followup_number`) ← static value 1
+- `followup_number` (unknown field) ← static value 1
 
 **Action 3 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client ID (`client_id`) ← the trigger record's Client (`client_id`)
+- Client (`client_id`) ← the trigger record's Client (`client_id`)
 - Follow-up Type (`followup_type`) ← static value rating_request
-- Rating Token (`rating_token`) ← the trigger record's Rating Token (`rating_token`)
-- Visit (`visit`) ← the trigger record's id
+- `rating_token` (unknown field) ← the trigger record's `rating_token` (unknown field)
+- `visit` (unknown field) ← the trigger record's id
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by ``
-- Status (`followup_status`) ← static value scheduled
+- `followup_status` (unknown field) ← static value scheduled

@@ -5,16 +5,16 @@
 # Model: Phone Calls / المكالمات  `phone_calls`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-16
+**Last updated (from DB):** 2026-08-19
 **Model id:** `1ef36cc7-a5bb-4fdc-b3ef-9fc965c2b2d4`
 **Storage:** unified records (JSONB)
-**Group:** New Group
+**Group:** (ungrouped)
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `phone-call`   ·   **Color:** `#B8734F`
 
 ## Overview
 - Sections: **2** (2 base, 0 non-base)
-- Fields: **15**
+- Fields: **16**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -36,14 +36,15 @@
 | `customer_phone` | Customer Phone / رقم العميل | Phone | no | third | yes |  |
 | `duration_seconds` | Duration (seconds) / مدة المكالمة (ثوانٍ) | Number | no | third | yes |  |
 | `call_time` | Call Time / وقت المكالمة | Date & time | no | third | yes |  |
-| `agent_name` | Agent / الوكيل | Assignee | no | third | yes | any user |
+| `agent_name` | Agent / الموظف | Assignee | no | third | yes | any user |
 | `dtmf_digit` | DTMF Digit / الرقم المضغوط | Text | no | third | yes |  |
 | `dtmf_label` | DTMF Label / تسمية الخيار | Text | no | third | no |  |
 | `sentiment` | Sentiment / الانطباع | Dropdown | no | third | yes | 5 options |
 | `ai_summary` | AI Summary / ملخص الذكاء الاصطناعي | Text area | no | full | no |  |
+| `pickup_time` | Picked Up At / وقت الرد | Date & time | no | half | no |  |
+| `hangup_time` | Hung Up At / وقت الإنهاء | Date & time | no | half | no |  |
 | `recording_url` | Recording URL / رابط التسجيل | URL | no | full | no |  |
 | `client_link` | Linked Client / العميل المرتبط | Lookup | no | half | yes | → Clients |
-| `linked_followup_id` | Linked Follow-up / المتابعة المرتبطة | Lookup | no | half | no | → Follow-ups |
 
 **Field details:**
 
@@ -62,7 +63,7 @@
   - API value `active` → "Active" / "نشطة" · color `#eab308`
 - **Customer Phone / رقم العميل** (`customer_phone`, type `phone`):
   - default country code `+966`
-- **Agent / الوكيل** (`agent_name`, type `assignee`):
+- **Agent / الموظف** (`agent_name`, type `assignee`):
   - eligible users: any active user
 - **Sentiment / الانطباع** (`sentiment`, type `dropdown`) — options:
   - API value `positive` → "Positive" / "إيجابي" · color `#22c55e`
@@ -72,11 +73,7 @@
   - API value `unknown` → "Unknown" / "غير معروف" · color `#9ca3af`
 - **Linked Client / العميل المرتبط** (`client_link`, type `lookup`):
   - target model: Clients
-  - shows field: `client_id`
-  - multiple: no · max in dropdown: 2000
-- **Linked Follow-up / المتابعة المرتبطة** (`linked_followup_id`, type `lookup`):
-  - target model: Follow-ups
-  - shows field: `scheduled_datetime`
+  - shows field: `name`
   - multiple: no
 
 ### 2. Call Transcript / نص المكالمة  _(base, color #B8734F)_

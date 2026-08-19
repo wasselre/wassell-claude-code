@@ -5,10 +5,10 @@
 # Model: Copywriter / كاتب المحتوى  `copywriter_chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-11
+**Last updated (from DB):** 2026-08-19
 **Model id:** `09ba91d8-692f-4aed-a557-4af5888c81be`
 **Storage:** unified records (JSONB)
-**Group:** Designs
+**Group:** (ungrouped)
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `pen-line`   ·   **Color:** `#B8734F`
 

@@ -5,7 +5,7 @@
 # Model: Developers / المطورون  `developers`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-08-19
 **Model id:** `11bade2c-7da9-4d00-b045-eaab37153da2`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -14,9 +14,9 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **6**
+- Fields: **5**
 - Section-selector field: none
-- Duplicate-check field: Developer Name (`name`)
+- Duplicate-check field: none
 - Custom buttons: 0
 
 ## Card view
@@ -29,7 +29,6 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `developer_id` | Developer ID / معرف المطور | Auto ID | no | half | yes | م ط### |
 | `name` | Developer Name / اسم المطور | Text | yes | half | yes |  |
 | `phone` | Phone / رقم الهاتف | Phone | no | half | yes |  |
 | `email` | Email / البريد الإلكتروني | Email | no | half | yes |  |
@@ -38,7 +37,5 @@
 
 **Field details:**
 
-- **Developer ID / معرف المطور** (`developer_id`, type `auto_id`):
-  - format: `م ط000` · starts at 1
 - **Phone / رقم الهاتف** (`phone`, type `phone`):
   - default country code `+966`

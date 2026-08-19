@@ -52,8 +52,8 @@ Update **Clients / العملاء** records where `id` (unknown field) = the tri
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client ID (`client_id`) ← the trigger record's Client (`client_id`)
+- Client (`client_id`) ← the trigger record's Client (`client_id`)
 - Follow-up Type (`followup_type`) ← static value ownership_transfer_follow_up
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d @10:00`
-- Status (`followup_status`) ← static value open
+- `followup_status` (unknown field) ← static value open
 - Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)

@@ -5,7 +5,7 @@
 # Model: Targeted Projects / المشاريع المستهدفة  `targeted_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-11
+**Last updated (from DB):** 2026-08-19
 **Model id:** `8550651a-8d65-4e4d-a842-c800be336f78`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -13,15 +13,15 @@
 **Icon:** `target`   ·   **Color:** `#4A2C2A`
 
 ## Overview
-- Sections: **2** (2 base, 0 non-base)
-- Fields: **5**
+- Sections: **1** (1 base, 0 non-base)
+- Fields: **7**
 - Section-selector field: none
-- Duplicate-check field: Project (`project`)
+- Duplicate-check field: none
 - Custom buttons: 0
 
 ## Card view
-- Title: `98b841c9-93d9-474d-b101-9b38268e8fa6` (unknown field)
-- Badge: `a88ebe04-76b7-4316-9560-93a82199f640` (unknown field)
+- Title: Project Name (`project_name`)
+- Badge: Priority (`priority`)
 
 ## Sections & fields
 
@@ -29,39 +29,17 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `project` | Project / المشروع | Lookup | no | half | yes | → All Projects |
-| `project_info` | Project Information / معلومات المشروع | Section mirror | no | full | no | embedded section |
-| `updates` | Updates / التحديثات | Notes | no | full | yes |  |
-| `dfghjkl` | Project Location / موقع المشروع | Mirror | no | half | yes | computed mirror |
+| `project_name` | Project Name / اسم المشروع | Text | yes | half | yes |  |
+| `developer` | Developer / المطور | Text | no | half | yes |  |
+| `priority` | Priority / الأولوية | Dropdown | no | half | yes | 3 options |
+| `target_date` | Target Date / التاريخ المستهدف | Date | no | half | yes |  |
+| `contact_person` | Contact Person / جهة الاتصال | Text | no | half | no |  |
+| `contact_phone` | Contact Phone / هاتف جهة الاتصال | Phone | no | half | no |  |
+| `notes` | Notes / ملاحظات | Text area | no | full | no |  |
 
 **Field details:**
 
-- **Project / المشروع** (`project`, type `lookup`):
-  - target model: All Projects
-  - shows field: `project_name`
-  - multiple: no
-- **Project Information / معلومات المشروع** (`project_info`, type `section_mirror`):
-  - via lookup: Project (`project`)
-  - source section: `fad0a581-049d-4a1a-b975-b3d87df8c901`
-  - fields: custom · editable: custom · sync-back: custom
-- **Project Location / موقع المشروع** (`dfghjkl`, type `mirror`) — read-only; shows `project_location` from the record linked via Project (`project`).
-
-### 2. 2-Kilometer Study / دراسة 2 كيلو  _(base, color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `comparison_table_2km` | 2-Kilometer Comparison Table / جدول مقارنة 2 كيلو حول المشروع | Table | no | full | yes | 10 columns |
-
-**Field details:**
-
-- **2-Kilometer Comparison Table / جدول مقارنة 2 كيلو حول المشروع** (`comparison_table_2km`, type `table`) — columns:
-  - `col_1` "source" (text)
-  - `col_2` "Use" (text)
-  - `col_3` "Deals" (number)
-  - `col_4` "" (currency)
-  - `col_5` "" (number)
-  - `col_6` "" (number)
-  - `col_7` "" (number)
-  - `col_8` "" (currency)
-  - `col_9` "" (currency)
-  - `col_10` "" (formula) · = `{col_4}/{col_7}`
+- **Priority / الأولوية** (`priority`, type `dropdown`) — options:
+  - API value `high` → "High" / "عالية" · color `#EF4444`
+  - API value `medium` → "Medium" / "متوسطة" · color `#F59E0B`
+  - API value `low` → "Low" / "منخفضة" · color `#10B981`

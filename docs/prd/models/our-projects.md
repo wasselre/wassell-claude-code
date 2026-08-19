@@ -5,7 +5,7 @@
 # Model: Our Projects / مشاريعنا  `our_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-29
+**Last updated (from DB):** 2026-08-19
 **Model id:** `6609286a-f95a-45db-94e6-48cfa915ccbd`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -13,21 +13,15 @@
 **Icon:** `star`   ·   **Color:** `#C09B5F`
 
 ## Overview
-- Sections: **5** (2 base, 3 non-base)
-- Fields: **15**
+- Sections: **1** (1 base, 0 non-base)
+- Fields: **18**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
 
 ## Card view
-- Title: Project (`project`)
-- Badge: Portfolio Status (`portfolio_status`)
-- Shown: Sales Priority (`sales_priority`), Exclusive Status (`exclusive_status`)
-
-## Maps view
-- Location URL field: `0cf73ff9-fb05-452f-9d5b-30d2d9c3c4b2::project_location` (unknown field)
-- Pin label field: Project (`project`)
-- Click action: popup
+- Title: Project Name (`project_name`)
+- Badge: Phase (`phase`)
 
 ## Sections & fields
 
@@ -35,83 +29,65 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `project` | Project / المشروع | Lookup | no | full | yes | → All Projects |
-| `brochure` | Brochure / البروشور | Mirror | no | half | yes | computed mirror |
+| `project_name` | Project Name / اسم المشروع | Text | yes | half | yes |  |
+| `location` | Location / الموقع | Text | no | half | yes |  |
+| `phase` | Phase / المرحلة | Dropdown | no | half | yes | 4 options |
+| `project` | Master Project / المشروع (من جميع المشاريع) | Lookup | no | half | yes | → All Projects |
+| `total_units` | Units Count / عدد الوحدات | Number | no | half | yes | rollup: units_count |
+| `units_available` | Units Available / الوحدات المتاحة | Number | no | half | yes | rollup: units_available_count |
+| `sold_units` | Units Sold / الوحدات المباعة | Number | no | half | yes | rollup: units_sold_count |
+| `units_reserved` | Units Reserved / الوحدات المحجوزة | Number | no | half | yes | rollup: units_reserved_count |
+| `price_range` | Price Range / نطاق السعر | Range | no | half | yes | ?–? |
+| `area_range` | Area Range / نطاق المساحة | Range | no | half | yes | ?–? |
+| `bedroom_range` | Bedrooms Range / نطاق غرف النوم | Range | no | half | no | ?–? |
+| `bathroom_range` | Bathrooms Range / نطاق دورات المياه | Range | no | half | no | ?–? |
+| `min_price_per_meter` | Min Avg Price per m² / أدنى متوسط لسعر المتر | Currency | no | third | no | rollup: min_price_per_meter |
+| `max_price_per_meter` | Max Avg Price per m² / أعلى متوسط لسعر المتر | Currency | no | third | no | rollup: max_price_per_meter |
+| `avg_price_per_meter` | Avg Price per m² / متوسط سعر المتر | Currency | no | third | no | rollup: avg_price_per_meter |
+| `available_price_range` | Available Price Range / نطاق سعر الوحدات المتاحة | Range | no | half | no | ?–? |
+| `available_area_range` | Available Area Range / نطاق مساحة الوحدات المتاحة | Range | no | half | no | ?–? |
+| `notes` | Notes / ملاحظات | Text area | no | full | no |  |
 
 **Field details:**
 
-- **Project / المشروع** (`project`, type `lookup`):
+- **Phase / المرحلة** (`phase`, type `dropdown`) — options:
+  - API value `planning` → "Planning" / "تخطيط" · color `#3B82F6`
+  - API value `marketing` → "Marketing" / "تسويق" · color `#F59E0B`
+  - API value `selling` → "Selling" / "بيع" · color `#10B981`
+  - API value `completed` → "Completed" / "مكتمل" · color `#6B7280`
+- **Master Project / المشروع (من جميع المشاريع)** (`project`, type `lookup`):
   - target model: All Projects
   - shows field: `project_name`
-  - multiple: no · max in dropdown: 20
-- **Brochure / البروشور** (`brochure`, type `mirror`) — read-only; shows `brochure_link` from the record linked via Project (`project`).
-
-### 2. Project Data / بيانات المشروع  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `project_data` | Project Data / بيانات المشروع | Section mirror | no | half | no | embedded section |
-
-**Field details:**
-
-- **Project Data / بيانات المشروع** (`project_data`, type `section_mirror`):
-  - via lookup: Project (`project`)
-  - source section: `fad0a581-049d-4a1a-b975-b3d87df8c901`
-  - fields: all · editable: none · sync-back: all
-
-### 3. Location / الموقع  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `geographic_info` | Geographic Information / المعلومات الجغرافية | Section mirror | no | half | no | embedded section |
-
-**Field details:**
-
-- **Geographic Information / المعلومات الجغرافية** (`geographic_info`, type `section_mirror`):
-  - via lookup: Project (`project`)
-  - source section: `9e8fc144-d3ae-4b62-bf1c-831b152c58ac`
-  - fields: all · editable: none · sync-back: all
-
-### 4. Unit Details / تفاصيل الوحدات  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `unit_details` | Unit Details / تفاصيل الوحدات | Section mirror | no | half | no | embedded section |
-
-**Field details:**
-
-- **Unit Details / تفاصيل الوحدات** (`unit_details`, type `section_mirror`):
-  - via lookup: Project (`project`)
-  - source section: `2b138126-5054-4662-88f0-f7dd4a173623`
-  - fields: all · editable: none · sync-back: all
-
-### 5. Portfolio / المحفظة  _(base, color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `portfolio_status` | Portfolio Status / حالة المحفظة | Dropdown | no | half | yes | 4 options |
-| `sales_priority` | Sales Priority / أولوية المبيعات | Dropdown | no | half | yes | 3 options |
-| `website_display_order` | Website Display Order / ترتيب العرض على الموقع | Number | no | half | no |  |
-| `hero_image_override` | Hero Image Override / صورة الغلاف البديلة | Image | no | half | no |  |
-| `sales_pitch` | Sales Pitch / عرض البيع | Text area | no | full | no |  |
-| `objection_handling_notes` | Objection Handling Notes / التعامل مع الاعتراضات | Text area | no | full | no |  |
-| `exclusive_status` | Exclusive Status / حالة الحصرية | Dropdown | no | half | yes | 3 options |
-| `commission_notes` | Commission Notes / ملاحظات العمولة | Text area | no | full | no |  |
-| `show_on_website` | Show on Website / عرض على الموقع | Checkbox | no | half | yes |  |
-| `portfolio_notes` | Portfolio Notes / ملاحظات المحفظة | Text area | no | full | no |  |
-
-**Field details:**
-
-- **Portfolio Status / حالة المحفظة** (`portfolio_status`, type `dropdown`) — options:
-  - API value `active` → "Active" / "نشط" · color `#10B981`
-  - API value `paused` → "Paused" / "متوقف" · color `#F59E0B`
-  - API value `hidden` → "Hidden" / "مخفي" · color `#9CA3AF`
-  - API value `sold_out` → "Sold Out" / "مكتمل البيع" · color `#8B5CF6`
-- **Sales Priority / أولوية المبيعات** (`sales_priority`, type `dropdown`) — options:
-  - API value `high` → "High" / "عالية" · color `#8E4E3A`
-  - API value `normal` → "Normal" / "عادية" · color `#C09B5F`
-  - API value `low` → "Low" / "منخفضة" · color `#9CA3AF`
-- **Exclusive Status / حالة الحصرية** (`exclusive_status`, type `dropdown`) — options:
-  - API value `exclusive` → "Exclusive" / "حصري" · color `#8E4E3A`
-  - API value `shared` → "Shared" / "مشترك" · color `#C09B5F`
-  - API value `open_market` → "Open Market" / "سوق مفتوح" · color `#9CA3AF`
+  - multiple: no
+- **Units Count / عدد الوحدات** (`total_units`, type `number`):
+  - stored rollup (`units_count`), read-only
+- **Units Available / الوحدات المتاحة** (`units_available`, type `number`):
+  - stored rollup (`units_available_count`), read-only
+- **Units Sold / الوحدات المباعة** (`sold_units`, type `number`):
+  - stored rollup (`units_sold_count`), read-only
+- **Units Reserved / الوحدات المحجوزة** (`units_reserved`, type `number`):
+  - stored rollup (`units_reserved_count`), read-only
+- **Price Range / نطاق السعر** (`price_range`, type `range`):
+  - ? to ? SAR
+  - stored rollup (`price_range`), read-only
+- **Area Range / نطاق المساحة** (`area_range`, type `range`):
+  - ? to ? m²
+  - stored rollup (`area_range`), read-only
+- **Bedrooms Range / نطاق غرف النوم** (`bedroom_range`, type `range`):
+  - ? to ?
+  - stored rollup (`bedroom_range`), read-only
+- **Bathrooms Range / نطاق دورات المياه** (`bathroom_range`, type `range`):
+  - ? to ?
+  - stored rollup (`bathroom_range`), read-only
+- **Min Avg Price per m² / أدنى متوسط لسعر المتر** (`min_price_per_meter`, type `currency`):
+  - stored rollup (`min_price_per_meter`), read-only
+- **Max Avg Price per m² / أعلى متوسط لسعر المتر** (`max_price_per_meter`, type `currency`):
+  - stored rollup (`max_price_per_meter`), read-only
+- **Avg Price per m² / متوسط سعر المتر** (`avg_price_per_meter`, type `currency`):
+  - stored rollup (`avg_price_per_meter`), read-only
+- **Available Price Range / نطاق سعر الوحدات المتاحة** (`available_price_range`, type `range`):
+  - ? to ? SAR
+  - stored rollup (`available_price_range`), read-only
+- **Available Area Range / نطاق مساحة الوحدات المتاحة** (`available_area_range`, type `range`):
+  - ? to ? m²
+  - stored rollup (`available_area_range`), read-only

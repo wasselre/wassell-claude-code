@@ -5,7 +5,7 @@
 # Model: Brand Presets / إعدادات العلامة التجارية  `image_presets`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-08-19
 **Model id:** `4629991b-6d10-4048-ba96-06db708f67d5`
 **Storage:** unified records (JSONB)
 **Group:** Designs

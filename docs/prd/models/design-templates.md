@@ -5,7 +5,7 @@
 # Model: Templates Library / مكتبة القوالب  `design_templates`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-05-09
+**Last updated (from DB):** 2026-08-19
 **Model id:** `457b679b-0c39-44ac-a345-8c911ebacfe1`
 **Storage:** unified records (JSONB)
 **Group:** Designs

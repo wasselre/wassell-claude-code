@@ -5,7 +5,7 @@
 # Model: Competitors / مكتبة المنافسين  `competitors`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-09
+**Last updated (from DB):** 2026-08-19
 **Model id:** `484b5157-ed8c-4013-9dd7-442476a7f9ff`
 **Storage:** unified records (JSONB)
 **Group:** Designs
@@ -44,8 +44,8 @@
 **Field details:**
 
 - **Type / النوع** (`type`, type `dropdown`) — options:
-  - API value `reel_script` → "Reel Script" / "نص الريل"
-  - API value `post_example` → "Post Example" / "مثال منشور"
+  - API value `reel_script` → "Reel Script" / "reel_script"
+  - API value `post_example` → "Post Example" / "post_example"
   - API value `our_script` → "Our Script" / "نصّنا"
 - **Hook Type / نوع الخطّاف** (`hook_type`, type `dropdown`) — options:
   - API value `question` → "Question" / "سؤال"
