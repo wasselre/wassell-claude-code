@@ -7,7 +7,8 @@ import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
-import { ProjectsUnitsBrowserButton } from './ProjectsUnitsBrowser';
+import ProjectsUnitsBrowser from './ProjectsUnitsBrowser';
+import ClientDetailPage from '@/pages/Clients/ClientDetailPage';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
 import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
@@ -158,12 +159,18 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const [showContactIntake, setShowContactIntake] = useState(false);
   // "Log an interaction" — record an off-task call/visit result.
   const [showLogInteraction, setShowLogInteraction] = useState(false);
-  // In-chat record popup (client profile / contact / advertiser). Opening a
-  // record NEVER navigates away from the conversation — it renders a
-  // RecordFormModal overlay with an "Open full page" escape hatch.
+  // In-chat record popup for a matched CONTACT / ADVERTISER (a plain record with
+  // no bespoke page). Opening it never navigates away — RecordFormModal overlay
+  // with an "Open full page" escape hatch.
   const [recordPopup, setRecordPopup] = useState<
     { modelId: string; recordId: string; href: string } | null
   >(null);
+  // The linked CLIENT opens the full 360 cockpit as an overlay over the chat
+  // (the purpose-built page, not the generic form).
+  const [showClient360, setShowClient360] = useState(false);
+  // Projects & Units browser — its overlay lives HERE (not inside the sheet), so
+  // closing the mobile action sheet can't unmount it before it opens.
+  const [showProjectsBrowser, setShowProjectsBrowser] = useState(false);
 
   // The linked client's active WhatsApp follow-up (open/in_progress). Resolving
   // the chat should complete THIS task through the normal follow-up path rather
@@ -229,12 +236,10 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     );
   }
 
-  // Open a record (client / contact / advertiser) as an IN-CHAT popup instead of
-  // navigating away. Null when the model or record isn't available.
-  const openClientProfile =
-    clientLinkId && clientsModel
-      ? () => setRecordPopup({ modelId: clientsModel.id, recordId: clientLinkId, href: `/model/clients/${clientLinkId}` })
-      : null;
+  // Open a record as an IN-CHAT popup instead of navigating away. The linked
+  // CLIENT opens the full 360 cockpit; a matched CONTACT / ADVERTISER (no
+  // bespoke page) opens the generic record overlay. Null when unavailable.
+  const openClientProfile = clientLinkId ? () => setShowClient360(true) : null;
   const openContactRecord =
     matchedContact && contactsModel
       ? () => setRecordPopup({ modelId: contactsModel.id, recordId: matchedContact.id, href: `/model/contacts/${matchedContact.id}` })
@@ -248,12 +253,12 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   // inside the mobile bottom sheet — ONE source of truth, no duplicated markup.
   const crmActionProps = {
     isAr,
-    clientLinkId,
     matchedContact,
     matchedAdvertiser,
     matchedAdvertiserName,
     recordId,
     aiManaged,
+    onOpenProjectsBrowser: () => setShowProjectsBrowser(true),
     onOpenClient: openClientProfile,
     onOpenContact: openContactRecord,
     onOpenAdvertiser: openAdvertiserRecord,
@@ -451,10 +456,32 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         </MobileActionSheet>
       )}
 
-      {/* In-chat record popup — client profile / contact / advertiser opened as
-          an overlay over the conversation (never a full-page navigation). The
-          footer's "Open full page" hands off to the record route when the rep
-          wants the full cockpit. */}
+      {/* Linked CLIENT → the full 360 cockpit as an overlay over the chat (never
+          a page nav). Rendered below the Modal tier (z-40) so its own create
+          follow-up / appointment modals (z-50) stack above it. */}
+      {showClient360 && clientLinkId &&
+        createPortal(
+          <div className="fixed inset-0 z-40 overflow-y-auto bg-cream" dir={isAr ? 'rtl' : 'ltr'}>
+            <button
+              onClick={() => setShowClient360(false)}
+              className="fixed end-3 top-3 z-[41] rounded-full bg-white/90 p-2 text-charcoal/70 shadow-md transition-colors hover:text-copper"
+              aria-label={isAr ? 'إغلاق' : 'Close'}
+            >
+              <X size={18} />
+            </button>
+            <ClientDetailPage clientId={clientLinkId} onClose={() => setShowClient360(false)} />
+          </div>,
+          document.body,
+        )}
+
+      {/* Projects & Units browser — its own fixed overlay, mounted here so the
+          mobile action sheet closing can never unmount it mid-open. */}
+      {showProjectsBrowser && (
+        <ProjectsUnitsBrowser clientId={clientLinkId} onClose={() => setShowProjectsBrowser(false)} />
+      )}
+
+      {/* In-chat record popup — a matched CONTACT / ADVERTISER (no bespoke page)
+          opened as an overlay, with an "Open full page" escape hatch. */}
       {recordPopup && (
         <RecordFormModal
           modelId={recordPopup.modelId}
@@ -550,12 +577,12 @@ const DETAIL_CHIP_STYLES: Record<ClientPrefDetailChip['kind'], string> = {
  */
 function CrmActions({
   isAr,
-  clientLinkId,
   matchedContact,
   matchedAdvertiser,
   matchedAdvertiserName,
   recordId,
   aiManaged,
+  onOpenProjectsBrowser,
   onOpenClient,
   onOpenContact,
   onOpenAdvertiser,
@@ -568,12 +595,12 @@ function CrmActions({
   close,
 }: {
   isAr: boolean;
-  clientLinkId: string | null;
   matchedContact: AppRecord | null;
   matchedAdvertiser: AppRecord | null;
   matchedAdvertiserName: string | null;
   recordId: string;
   aiManaged: boolean;
+  onOpenProjectsBrowser: () => void;
   onOpenClient: (() => void) | null;
   onOpenContact: (() => void) | null;
   onOpenAdvertiser: (() => void) | null;
@@ -595,11 +622,18 @@ function CrmActions({
 
   return (
     <div className={className}>
-      {/* Sub-components own their onClick — an onClickCapture wrapper closes the
-          sheet before their internal handler opens the drawer/toggles AI. */}
-      <span onClickCapture={() => close?.()} className="contents">
-        <ProjectsUnitsBrowserButton clientId={clientLinkId} />
-      </span>
+      {/* Projects & Units — the browser overlay lives in ChatDetail (not here),
+          so tapping this closes the sheet first, then opens it. (Rendering the
+          overlay inside the sheet meant the sheet-close unmounted it before it
+          could appear — the "nothing happens" bug.) */}
+      <button
+        onClick={run(onOpenProjectsBrowser)}
+        className={`inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 ${pad} font-medium text-copper transition-colors hover:bg-copper/10`}
+        title={isAr ? 'تصفح المشاريع والوحدات دون مغادرة المحادثة' : 'Browse projects & units without leaving the conversation'}
+      >
+        <LayoutGrid size={12} />
+        {isAr ? 'المشاريع والوحدات' : 'Projects & units'}
+      </button>
       {matchedContact && onOpenContact && (
         <button
           onClick={run(onOpenContact)}
@@ -649,9 +683,10 @@ function CrmActions({
             <NotebookPen size={12} />
             {isAr ? 'تسجيل تواصل' : 'Log interaction'}
           </button>
-          <span onClickCapture={() => close?.()} className="contents">
-            <AiHandoverButton chatRecordId={recordId} aiManaged={aiManaged} isAr={isAr} />
-          </span>
+          {/* AI handover is a self-contained toggle (a fetch, no overlay) — it
+              stays mounted in the sheet so its busy spinner + result toast show;
+              the rep closes the sheet via its own X. */}
+          <AiHandoverButton chatRecordId={recordId} aiManaged={aiManaged} isAr={isAr} />
         </>
       ) : (
         <>

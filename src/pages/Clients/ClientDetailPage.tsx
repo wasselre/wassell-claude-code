@@ -48,9 +48,19 @@ function clientLookupSlug(modelId: string | undefined, models: ClientViewCtx['mo
   return allFields(m).find((f) => f.type === 'lookup' && f.lookup_model_id === clientsModelId)?.name ?? null;
 }
 
-/** Custom Client 360 cockpit — replaces the generic record form for clients. */
-export default function ClientDetailPage() {
-  const { recordId } = useParams();
+/**
+ * Custom Client 360 cockpit — replaces the generic record form for clients.
+ *
+ * Route usage passes NO props (reads the id from the URL). It can also be
+ * embedded as an overlay (e.g. from the WhatsApp chat) by passing `clientId`
+ * + `onClose`: the id then comes from the prop and the header's Back button
+ * closes the overlay instead of navigating. All embedded behaviour is gated on
+ * `onClose` being set, so the route usage is byte-identical.
+ */
+export default function ClientDetailPage({ clientId, onClose }: { clientId?: string; onClose?: () => void } = {}) {
+  const { recordId: routeRecordId } = useParams();
+  const recordId = clientId ?? routeRecordId;
+  const embedded = !!onClose;
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -137,10 +147,18 @@ export default function ClientDetailPage() {
         view={view}
         isAr={isAr}
         returnTo={listReturnTo}
+        onBack={embedded ? onClose : undefined}
         onWhatsApp={() => openWhatsApp(client.id, view.phone)}
         onCreateFollowup={() => setShowFollowupModal(true)}
         onCreateAppointment={() => setShowApptModal(true)}
         onAdvancedView={() => {
+          // Embedded (chat overlay): the advanced raw-record view is a
+          // full-page concern — close the overlay and hand off to the route.
+          if (embedded) {
+            onClose?.();
+            navigate(`/model/clients/${client.id}?generic=1`);
+            return;
+          }
           const sp = new URLSearchParams(location.search);
           sp.set('generic', '1');
           navigate({ pathname: location.pathname, search: sp.toString() });
@@ -189,7 +207,10 @@ export default function ClientDetailPage() {
             client={client}
             isAr={isAr}
             canEdit={canEdit}
-            onFindMore={() => navigate(`/model/clients/${client.id}/projects`)}
+            onFindMore={() => {
+              if (embedded) onClose?.();
+              navigate(`/model/clients/${client.id}/projects`);
+            }}
           />
         )}
         {activeTab === 'timeline' && <TimelineTab view={view} ctx={ctx} isAr={isAr} />}

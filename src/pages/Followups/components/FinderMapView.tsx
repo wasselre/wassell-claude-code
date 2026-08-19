@@ -251,6 +251,11 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
             streetViewControl: false,
             fullscreenControl: true,
             clickableIcons: false,
+            // One-finger pan on touch devices. The default ('cooperative')
+            // demands two fingers and shows a "use two fingers" banner, so a
+            // one-finger drag scrolls the surrounding modal instead of the map —
+            // which reads as "the map doesn't work" on a phone.
+            gestureHandling: 'greedy',
           }}
         />
 

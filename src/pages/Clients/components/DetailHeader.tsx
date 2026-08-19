@@ -14,11 +14,14 @@ interface DetailHeaderProps {
   onCreateFollowup: () => void;
   onCreateAppointment: () => void;
   onAdvancedView: () => void;
+  /** When set (embedded / modal usage) the Back button calls this instead of
+      navigating to `returnTo` — lets the 360 view close an overlay it's in. */
+  onBack?: () => void;
   now?: number;
 }
 
 /** Client 360 header — identity, badges, next-action summary, quick actions. */
-export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreateFollowup, onCreateAppointment, onAdvancedView, now = Date.now() }: DetailHeaderProps) {
+export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreateFollowup, onCreateAppointment, onAdvancedView, onBack, now = Date.now() }: DetailHeaderProps) {
   const navigate = useNavigate();
   const overdue = isOverdue(view, now);
   const due = formatRelative(view.nextActionDueAt, isAr, now);
@@ -28,7 +31,7 @@ export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreat
     <div className="card p-5">
       <button
         type="button"
-        onClick={() => navigate(returnTo)}
+        onClick={onBack ?? (() => navigate(returnTo))}
         className="mb-3 inline-flex items-center gap-1 text-sm font-semibold text-terracotta hover:underline"
       >
         <ArrowLeft size={15} className={isAr ? 'rotate-180' : ''} /> {isAr ? 'رجوع' : 'Back'}
