@@ -130,6 +130,7 @@ END $$;
 DO $$
 DECLARE
   v_uid uuid; v_file uuid; v_model uuid; v_rec uuid; v_seen bigint; v_seen_after bigint;
+  v_other uuid;
 BEGIN
   -- a caller who gains something from the derived branch (so the branch is the
   -- only way they could reach the file we are about to build)
@@ -154,12 +155,24 @@ BEGIN
 
   -- a RESTRICTED file, owned by nobody they are, in no folder they hold,
   -- reachable ONLY through the derived branch
+  -- uploaded_by_user_id is NOT NULL, and it must be SOMEONE ELSE: if the probe
+  -- were uploaded by the test caller they would reach it through the uploader
+  -- branch, the file would stay visible when restricted, and §3 would report a
+  -- leak that is not one.
+  SELECT u.id INTO v_other FROM public.users u
+   WHERE u.auth_uid IS DISTINCT FROM v_uid LIMIT 1;
+  IF v_other IS NULL THEN
+    RAISE EXCEPTION 'B4.3 vacuous: no second user to own the probe file';
+  END IF;
+
   INSERT INTO public.files (id, original_name, storage_bucket, storage_path,
                             kind, mime_type, size_bytes, file_class,
-                            confidentiality, status, document_type, title)
+                            confidentiality, status, document_type, title,
+                            uploaded_by_user_id)
   VALUES (gen_random_uuid(), 'b4-restricted-probe.pdf', 'wassel-files',
           'b4/probe.pdf', 'pdf', 'application/pdf', 1, 'business',
-          'restricted', 'active', 'contract', 'B4 restricted probe')
+          'restricted', 'active', 'contract', 'B4 restricted probe',
+          v_other)
   RETURNING id INTO v_file;
 
   INSERT INTO public.file_links (file_id, model_id, record_id, role)
