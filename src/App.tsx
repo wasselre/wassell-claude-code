@@ -5,106 +5,106 @@ import { isAuthAvailable } from '@/lib/auth';
 import AppLayout from '@/components/layout/AppLayout';
 import ToastContainer from '@/components/ui/Toast';
 import UpdateBanner from '@/components/UpdateBanner';
-import HomePage from '@/pages/Home/HomePage';
-import ModelBuilderPage from '@/pages/Builder/ModelBuilderPage';
-import BuilderAgentPage from '@/pages/Builder/BuilderAgentPage';
-import RecordListPage from '@/pages/Records/RecordListPage';
-import RecordFormPage from '@/pages/Records/RecordFormPage';
-import WorkflowListPage from '@/pages/Workflow/WorkflowListPage';
-import WorkflowEditorPage from '@/pages/Workflow/WorkflowEditorPage';
-import WorkflowAgentPage from '@/pages/Workflow/WorkflowAgentPage';
-import WorkflowLogsPage from '@/pages/Workflow/WorkflowLogsPage';
-import WorkflowRunDetailPage from '@/pages/Workflow/WorkflowRunDetailPage';
-import DashboardListPage from '@/pages/Dashboard/DashboardListPage';
-import DashboardEditorPage from '@/pages/Dashboard/DashboardEditorPage';
-import ScheduledReportsPage from '@/pages/Dashboard/ScheduledReportsPage';
-import PublicDashboardPage from '@/pages/Dashboard/PublicDashboardPage';
-import SettingsPage from '@/pages/Settings/SettingsPage';
-import LogsPage from '@/pages/Logs/LogsPage';
-import TranslationSettingsPage from '@/pages/Settings/TranslationSettingsPage';
-import ProfilesPage from '@/pages/Settings/ProfilesPage';
-import RolesPage from '@/pages/Settings/RolesPage';
-import UsersPage from '@/pages/Settings/UsersPage';
-import AuditLogPage from '@/pages/Settings/AuditLogPage';
-import GeoElementsPage from '@/pages/Settings/GeoElementsPage';
-import MarketingOpsPage from '@/pages/Settings/MarketingOpsPage';
-import ContentIntelligencePage from '@/pages/Settings/ContentIntelligencePage';
-import MarketingAdvertisersPage from '@/pages/Settings/MarketingAdvertisersPage';
-import ProfilePage from '@/pages/ProfilePage';
-import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
-import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
-import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
-import WhatsAppAiPage from '@/pages/Settings/WhatsAppAiPage';
-import WhatsAppPermissionsPage from '@/pages/Settings/WhatsAppPermissionsPage';
-import DocumentTemplatesPage from '@/pages/DocumentTemplates/DocumentTemplatesPage';
-import WebsiteSettingsPage from '@/pages/Settings/WebsiteSettingsPage';
-import ProjectDetailsListPage from '@/pages/Settings/ProjectDetailsListPage';
-import ProjectDetailsBridgePage from '@/pages/Settings/ProjectDetailsBridgePage';
-import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
-import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
+const HomePage = lazy(() => import('@/pages/Home/HomePage'));
+const ModelBuilderPage = lazy(() => import('@/pages/Builder/ModelBuilderPage'));
+const BuilderAgentPage = lazy(() => import('@/pages/Builder/BuilderAgentPage'));
+const RecordListPage = lazy(() => import('@/pages/Records/RecordListPage'));
+const RecordFormPage = lazy(() => import('@/pages/Records/RecordFormPage'));
+const WorkflowListPage = lazy(() => import('@/pages/Workflow/WorkflowListPage'));
+const WorkflowEditorPage = lazy(() => import('@/pages/Workflow/WorkflowEditorPage'));
+const WorkflowAgentPage = lazy(() => import('@/pages/Workflow/WorkflowAgentPage'));
+const WorkflowLogsPage = lazy(() => import('@/pages/Workflow/WorkflowLogsPage'));
+const WorkflowRunDetailPage = lazy(() => import('@/pages/Workflow/WorkflowRunDetailPage'));
+const DashboardListPage = lazy(() => import('@/pages/Dashboard/DashboardListPage'));
+const DashboardEditorPage = lazy(() => import('@/pages/Dashboard/DashboardEditorPage'));
+const ScheduledReportsPage = lazy(() => import('@/pages/Dashboard/ScheduledReportsPage'));
+const PublicDashboardPage = lazy(() => import('@/pages/Dashboard/PublicDashboardPage'));
+const SettingsPage = lazy(() => import('@/pages/Settings/SettingsPage'));
+const LogsPage = lazy(() => import('@/pages/Logs/LogsPage'));
+const TranslationSettingsPage = lazy(() => import('@/pages/Settings/TranslationSettingsPage'));
+const ProfilesPage = lazy(() => import('@/pages/Settings/ProfilesPage'));
+const RolesPage = lazy(() => import('@/pages/Settings/RolesPage'));
+const UsersPage = lazy(() => import('@/pages/Settings/UsersPage'));
+const AuditLogPage = lazy(() => import('@/pages/Settings/AuditLogPage'));
+const GeoElementsPage = lazy(() => import('@/pages/Settings/GeoElementsPage'));
+const MarketingOpsPage = lazy(() => import('@/pages/Settings/MarketingOpsPage'));
+const ContentIntelligencePage = lazy(() => import('@/pages/Settings/ContentIntelligencePage'));
+const MarketingAdvertisersPage = lazy(() => import('@/pages/Settings/MarketingAdvertisersPage'));
+const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
+const MenuArrangementPage = lazy(() => import('@/pages/Settings/MenuArrangementPage'));
+const WebhookSlugsPage = lazy(() => import('@/pages/Settings/WebhookSlugsPage'));
+const WhatsAppNumbersPage = lazy(() => import('@/pages/Settings/WhatsAppNumbersPage'));
+const WhatsAppAiPage = lazy(() => import('@/pages/Settings/WhatsAppAiPage'));
+const WhatsAppPermissionsPage = lazy(() => import('@/pages/Settings/WhatsAppPermissionsPage'));
+const DocumentTemplatesPage = lazy(() => import('@/pages/DocumentTemplates/DocumentTemplatesPage'));
+const WebsiteSettingsPage = lazy(() => import('@/pages/Settings/WebsiteSettingsPage'));
+const ProjectDetailsListPage = lazy(() => import('@/pages/Settings/ProjectDetailsListPage'));
+const ProjectDetailsBridgePage = lazy(() => import('@/pages/Settings/ProjectDetailsBridgePage'));
+const ChatsSplitPage = lazy(() => import('@/pages/Chats/ChatsSplitPage'));
+const ChatTemplateFormPage = lazy(() => import('@/pages/Chats/ChatTemplateFormPage'));
 import RetiredAssistantNotice from '@/components/RetiredAssistantNotice';
 import { isRetiredModel } from '@/lib/featureFlags';
 import { useDeepLinkRecordPending } from '@/hooks/useDeepLinkRecord';
 import { Loader2 } from 'lucide-react';
-import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
-import SuggestedProjectsPage from '@/pages/Followups/SuggestedProjectsPage';
-import ClientProjectsPage from '@/pages/Clients/ClientProjectsPage';
-import ProjectsListPage from '@/pages/Projects/ProjectsListPage';
-import ProjectDetailPage from '@/pages/Projects/ProjectDetailPage';
-import ClientsListPage from '@/pages/Clients/ClientsListPage';
-import ClientDetailPage from '@/pages/Clients/ClientDetailPage';
-import OurProjectsPortfolioPage from '@/pages/Projects/OurProjectsPortfolioPage';
-import SalesValuationReviewPage from '@/pages/SalesValuation/ReviewDetailPage';
-import SalesValuationQueuePage from '@/pages/SalesValuation/QueuePage';
-import SalesValuationBoardPage from '@/pages/SalesValuation/CorrectionBoardPage';
-import SalesValuationCorrectionDetailPage from '@/pages/SalesValuation/CorrectionDetailPage';
-import SalesValuationCoachingPage from '@/pages/SalesValuation/CoachingPage';
-import SalesValuationCategoriesPage from '@/pages/SalesValuation/CategoriesPage';
-import SalesValuationSettingsPage from '@/pages/SalesValuation/SettingsPage';
-import SalesTasksPage from '@/pages/Sales/SalesTasksPage';
-import MyClientsPage from '@/pages/Sales/MyClientsPage';
-import MyTasksPage from '@/pages/Sales/MyTasksPage';
-import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage';
-import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
-import MarketIntelligencePage from '@/pages/MarketIntelligence/MarketIntelligencePage';
-import MarketAutomationPage from '@/pages/MarketAutomation/MarketAutomationPage';
-import MarketingIntelligencePage from '@/pages/MarketingIntelligence/MarketingIntelligencePage';
+const FollowUpWorkspacePage = lazy(() => import('@/pages/Followups/FollowUpWorkspacePage'));
+const SuggestedProjectsPage = lazy(() => import('@/pages/Followups/SuggestedProjectsPage'));
+const ClientProjectsPage = lazy(() => import('@/pages/Clients/ClientProjectsPage'));
+const ProjectsListPage = lazy(() => import('@/pages/Projects/ProjectsListPage'));
+const ProjectDetailPage = lazy(() => import('@/pages/Projects/ProjectDetailPage'));
+const ClientsListPage = lazy(() => import('@/pages/Clients/ClientsListPage'));
+const ClientDetailPage = lazy(() => import('@/pages/Clients/ClientDetailPage'));
+const OurProjectsPortfolioPage = lazy(() => import('@/pages/Projects/OurProjectsPortfolioPage'));
+const SalesValuationReviewPage = lazy(() => import('@/pages/SalesValuation/ReviewDetailPage'));
+const SalesValuationQueuePage = lazy(() => import('@/pages/SalesValuation/QueuePage'));
+const SalesValuationBoardPage = lazy(() => import('@/pages/SalesValuation/CorrectionBoardPage'));
+const SalesValuationCorrectionDetailPage = lazy(() => import('@/pages/SalesValuation/CorrectionDetailPage'));
+const SalesValuationCoachingPage = lazy(() => import('@/pages/SalesValuation/CoachingPage'));
+const SalesValuationCategoriesPage = lazy(() => import('@/pages/SalesValuation/CategoriesPage'));
+const SalesValuationSettingsPage = lazy(() => import('@/pages/SalesValuation/SettingsPage'));
+const SalesTasksPage = lazy(() => import('@/pages/Sales/SalesTasksPage'));
+const MyClientsPage = lazy(() => import('@/pages/Sales/MyClientsPage'));
+const MyTasksPage = lazy(() => import('@/pages/Sales/MyTasksPage'));
+const SalesProcessStudioPage = lazy(() => import('@/pages/SalesProcess/SalesProcessStudioPage'));
+const SalesManagerPage = lazy(() => import('@/pages/Sales/SalesManagerPage'));
+const MarketIntelligencePage = lazy(() => import('@/pages/MarketIntelligence/MarketIntelligencePage'));
+const MarketAutomationPage = lazy(() => import('@/pages/MarketAutomation/MarketAutomationPage'));
+const MarketingIntelligencePage = lazy(() => import('@/pages/MarketingIntelligence/MarketingIntelligencePage'));
 // ── The Marketing WORKSPACE ────────────────────────────────────────────
 // A second workspace, not a page inside the Sales one: it mounts OUTSIDE
 // AppLayout with its own shell, rail and visual system, under /m. The switcher
 // in each shell's header is how you move between the two.
 import MarketingWorkspace, { RequireMarketingWorkspace } from '@/pages/Marketing/MarketingWorkspace';
-import MarketingOverviewPage from '@/pages/Marketing/OverviewPage';
-import MarketingWorkPage from '@/pages/Marketing/WorkPage';
-import MarketingTeamPage from '@/pages/Marketing/TeamPage';
-import MarketingAssetDetailPage from '@/pages/Marketing/AssetDetailPage';
-import MarketingShootRequestPage from '@/pages/Marketing/ShootRequestPage';
-import MarketingLibraryUnusedPage from '@/pages/Marketing/LibraryUnusedPage';
-import MarketingAccountPage from '@/pages/Marketing/AccountPage';
-import MarketingContentListPage from '@/pages/Marketing/ContentListPage';
-import MarketingSearchPage from '@/pages/Marketing/SearchPage';
-import MarketingContentDetailPage from '@/pages/Marketing/ContentDetailPage';
-import MarketingCalendarPage from '@/pages/Marketing/CalendarPage';
-import MarketingCampaignsPage from '@/pages/Marketing/CampaignsPage';
-import MarketingGoalsPage from '@/pages/Marketing/GoalsPage';
-import MarketingCampaignDetailPage from '@/pages/Marketing/CampaignDetailPage';
-import MarketingExecutionDetailPage from '@/pages/Marketing/ExecutionDetailPage';
-import MarketingUploadPage from '@/pages/Marketing/UploadPage';
-import MarketingLibraryPage from '@/pages/Marketing/LibraryPage';
-import MarketingShootsPage from '@/pages/Marketing/ShootsPage';
-import MarketingNumbersPage from '@/pages/Marketing/NumbersPage';
+const MarketingOverviewPage = lazy(() => import('@/pages/Marketing/OverviewPage'));
+const MarketingWorkPage = lazy(() => import('@/pages/Marketing/WorkPage'));
+const MarketingTeamPage = lazy(() => import('@/pages/Marketing/TeamPage'));
+const MarketingAssetDetailPage = lazy(() => import('@/pages/Marketing/AssetDetailPage'));
+const MarketingShootRequestPage = lazy(() => import('@/pages/Marketing/ShootRequestPage'));
+const MarketingLibraryUnusedPage = lazy(() => import('@/pages/Marketing/LibraryUnusedPage'));
+const MarketingAccountPage = lazy(() => import('@/pages/Marketing/AccountPage'));
+const MarketingContentListPage = lazy(() => import('@/pages/Marketing/ContentListPage'));
+const MarketingSearchPage = lazy(() => import('@/pages/Marketing/SearchPage'));
+const MarketingContentDetailPage = lazy(() => import('@/pages/Marketing/ContentDetailPage'));
+const MarketingCalendarPage = lazy(() => import('@/pages/Marketing/CalendarPage'));
+const MarketingCampaignsPage = lazy(() => import('@/pages/Marketing/CampaignsPage'));
+const MarketingGoalsPage = lazy(() => import('@/pages/Marketing/GoalsPage'));
+const MarketingCampaignDetailPage = lazy(() => import('@/pages/Marketing/CampaignDetailPage'));
+const MarketingExecutionDetailPage = lazy(() => import('@/pages/Marketing/ExecutionDetailPage'));
+const MarketingUploadPage = lazy(() => import('@/pages/Marketing/UploadPage'));
+const MarketingLibraryPage = lazy(() => import('@/pages/Marketing/LibraryPage'));
+const MarketingShootsPage = lazy(() => import('@/pages/Marketing/ShootsPage'));
+const MarketingNumbersPage = lazy(() => import('@/pages/Marketing/NumbersPage'));
 import MarketingSettingsPage, { SettingsSectionPage } from '@/pages/Marketing/SettingsPage';
-import ProjectFinderPage from '@/pages/ProjectFinder/ProjectFinderPage';
-import FinancingPage from '@/pages/Financing/FinancingPage';
-import PostsContentPage from '@/pages/PostsContent/PostsContentPage';
-import SalesStudioHomePage from '@/pages/SalesStudio/SalesStudioHomePage';
-import ProcessJourneyPage from '@/pages/SalesStudio/ProcessJourneyPage';
-import ExperimentsPage from '@/pages/SalesStudio/ExperimentsPage';
-import ExperimentDetailPage from '@/pages/SalesStudio/ExperimentDetailPage';
-import FilesPage from '@/pages/Files/FilesPage';
-import DocumentEditorPage from '@/pages/Documents/DocumentEditorPage';
-import PublicShareFilePage from '@/pages/PublicShare/PublicShareFilePage';
-import RateVisitPage from '@/pages/PublicRate/RateVisitPage';
+const ProjectFinderPage = lazy(() => import('@/pages/ProjectFinder/ProjectFinderPage'));
+const FinancingPage = lazy(() => import('@/pages/Financing/FinancingPage'));
+const PostsContentPage = lazy(() => import('@/pages/PostsContent/PostsContentPage'));
+const SalesStudioHomePage = lazy(() => import('@/pages/SalesStudio/SalesStudioHomePage'));
+const ProcessJourneyPage = lazy(() => import('@/pages/SalesStudio/ProcessJourneyPage'));
+const ExperimentsPage = lazy(() => import('@/pages/SalesStudio/ExperimentsPage'));
+const ExperimentDetailPage = lazy(() => import('@/pages/SalesStudio/ExperimentDetailPage'));
+const FilesPage = lazy(() => import('@/pages/Files/FilesPage'));
+const DocumentEditorPage = lazy(() => import('@/pages/Documents/DocumentEditorPage'));
+const PublicShareFilePage = lazy(() => import('@/pages/PublicShare/PublicShareFilePage'));
+const RateVisitPage = lazy(() => import('@/pages/PublicRate/RateVisitPage'));
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import RequirePageAccess from '@/components/guards/RequirePageAccess';
 import RequireWorkflowView from '@/components/guards/RequireWorkflowView';
@@ -311,6 +311,17 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      {/* Outer boundary for the lazy PUBLIC routes (share / rate / public
+          dashboard). Authenticated pages resolve at AppLayout's own inner
+          Suspense (which keeps the shell), so this only shows for the handful
+          of no-layout public pages. */}
+      <Suspense
+        fallback={
+          <div className="min-h-screen flex items-center justify-center bg-cream-light">
+            <Loader2 size={24} className="animate-spin text-copper" />
+          </div>
+        }
+      >
       <Routes>
         {/* ── Public routes (no auth required, no layout) ─────────────── */}
         <Route path="/login" element={<Login />} />
@@ -481,6 +492,7 @@ export default function App() {
           <Route path="/m/*" element={<Navigate to="/m" replace />} />
         </Route>
       </Routes>
+      </Suspense>
       <ToastContainer />
       <UpdateBanner />
     </BrowserRouter>

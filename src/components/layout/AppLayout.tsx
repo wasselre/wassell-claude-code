@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
+import { Loader2 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
@@ -50,7 +51,19 @@ export default function AppLayout() {
         {/* `safe-bottom` keeps the last row of content above the home
             indicator when running standalone from the Home Screen. */}
         <main className="safe-bottom px-4 md:px-8 py-6">
-          <Outlet />
+          {/* Route-level code-splitting: authenticated pages are lazy-loaded, so
+              the initial JS bundle is the shell + current page, not the whole
+              app. This content-area fallback keeps the sidebar/header on screen
+              while a page's chunk loads. */}
+          <Suspense
+            fallback={
+              <div className="flex items-center justify-center py-24 text-charcoal/40">
+                <Loader2 size={22} className="animate-spin text-copper" />
+              </div>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </main>
       </div>
       {/* App-level WhatsApp composer — any phone WhatsApp action opens the chat

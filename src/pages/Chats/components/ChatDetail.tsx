@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X } from 'lucide-react';
@@ -6,9 +6,14 @@ import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
-import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
-import ProjectsUnitsBrowser from './ProjectsUnitsBrowser';
-import ClientDetailPage from '@/pages/Clients/ClientDetailPage';
+// Heavy, only-when-opened overlays are lazy-loaded so the chats chunk stays
+// lean — the Project Finder (Google Maps), the client 360 cockpit, the
+// projects/units browser and the record form load on demand, not with the
+// conversation.
+const ClientOptionsModal = lazy(() => import('@/components/clients/ClientOptionsModal'));
+const ProjectsUnitsBrowser = lazy(() => import('./ProjectsUnitsBrowser'));
+const ClientDetailPage = lazy(() => import('@/pages/Clients/ClientDetailPage'));
+const RecordFormModal = lazy(() => import('@/pages/Records/components/RecordFormModal'));
 import MessageThread from './MessageThread';
 import Composer from './Composer';
 import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
@@ -16,11 +21,19 @@ import LeadIntakeModal from './LeadIntakeModal';
 import ContactIntakeModal from './ContactIntakeModal';
 import LogInteractionModal from './LogInteractionModal';
 import StudyJobCard from './StudyJobCard';
-import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
 import { resolveConversationIdentity, conversationIdentityMessage } from '../lib/conversationIdentity';
+
+/** Full-screen spinner shown while a lazy overlay chunk loads. */
+function OverlayFallback() {
+  return (
+    <div className="fixed inset-0 z-[55] flex items-center justify-center bg-charcoal/20">
+      <Loader2 size={24} className="animate-spin text-copper" />
+    </div>
+  );
+}
 
 /** First id from a scalar or array id field. */
 function firstId(v: unknown): string | null {
@@ -469,7 +482,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
             >
               <X size={18} />
             </button>
-            <ClientDetailPage clientId={clientLinkId} onClose={() => setShowClient360(false)} />
+            <Suspense fallback={<div className="flex items-center justify-center py-24"><Loader2 size={24} className="animate-spin text-copper" /></div>}>
+              <ClientDetailPage clientId={clientLinkId} onClose={() => setShowClient360(false)} />
+            </Suspense>
           </div>,
           document.body,
         )}
@@ -477,24 +492,30 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       {/* Projects & Units browser — its own fixed overlay, mounted here so the
           mobile action sheet closing can never unmount it mid-open. */}
       {showProjectsBrowser && (
-        <ProjectsUnitsBrowser clientId={clientLinkId} onClose={() => setShowProjectsBrowser(false)} />
+        <Suspense fallback={<OverlayFallback />}>
+          <ProjectsUnitsBrowser clientId={clientLinkId} onClose={() => setShowProjectsBrowser(false)} />
+        </Suspense>
       )}
 
       {/* In-chat record popup — a matched CONTACT / ADVERTISER (no bespoke page)
           opened as an overlay, with an "Open full page" escape hatch. */}
       {recordPopup && (
-        <RecordFormModal
-          modelId={recordPopup.modelId}
-          recordId={recordPopup.recordId}
-          openInPageHref={recordPopup.href}
-          onClose={() => setRecordPopup(null)}
-        />
+        <Suspense fallback={<OverlayFallback />}>
+          <RecordFormModal
+            modelId={recordPopup.modelId}
+            recordId={recordPopup.recordId}
+            openInPageHref={recordPopup.href}
+            onClose={() => setRecordPopup(null)}
+          />
+        </Suspense>
       )}
 
       {/* Client-options popup — the client's saved options with the Project
           Finder embedded, without leaving the conversation. */}
       {showClientOptions && clientLinkId && (
-        <ClientOptionsModal clientId={clientLinkId} onClose={() => setShowClientOptions(false)} />
+        <Suspense fallback={<OverlayFallback />}>
+          <ClientOptionsModal clientId={clientLinkId} onClose={() => setShowClientOptions(false)} />
+        </Suspense>
       )}
 
       {/* Assisted lead capture — approve a proposed client from this chat,
