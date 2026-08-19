@@ -63,52 +63,33 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
   }, [client]);
 
   // Esc closes the popup in options mode only — the embedded finder installs its
-  // own Esc handler (→ back to the options list).
+  // own Esc handler (→ back to the options list). Suppressed while a source
+  // overlay is open on top (its own close/Back handles Esc).
   useEffect(() => {
-    if (mode !== 'options') return;
+    if (mode !== 'options' || sourceView) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, onClose]);
+  }, [mode, sourceView, onClose]);
 
   // Catalogue browsing takes over the screen; closing it comes back here.
   if (mode === 'browse') {
     return <ProjectsUnitsBrowser clientId={clientId} onClose={() => setMode('options')} />;
   }
 
-  // A drilled-into option's source — replaces this overlay (so it never stacks
-  // behind it) and its Back / close returns to the options list.
-  //   • PROJECT → the rich Project detail page as a full-screen overlay (z-40,
-  //     below the Modal tier so its own edit-master popup stacks above).
-  //   • UNIT / MARKET LISTING → the record form overlay (no bespoke page).
-  if (sourceView && sourceView.sourceType === 'project') {
-    return (
-      <div className="fixed inset-0 z-40 overflow-y-auto bg-cream" dir={isAr ? 'rtl' : 'ltr'}>
-        <ProjectDetailPage
-          recordId={sourceView.sourceId}
-          modelName="all_projects"
-          onClose={() => setSourceView(null)}
-        />
-      </div>
-    );
-  }
-  if (sourceView && sourceModelId) {
-    return (
-      <RecordFormModal
-        modelId={sourceModelId}
-        recordId={sourceView.sourceId}
-        openInPageHref={optionSourceUrl(sourceView.sourceType, sourceView.sourceId)}
-        onClose={() => setSourceView(null)}
-      />
-    );
-  }
-
+  // A drilled-into option's / finder result's SOURCE opens as an overlay that
+  // STACKS ON TOP of this popup (rendered as a sibling below), so closing it
+  // returns to whatever the rep was looking at — the options list OR the finder
+  // WITH ITS RESULTS INTACT (the finder stays mounted). While a source is open
+  // the popup drops to z-30 so the source (project overlay z-40 / RecordFormModal
+  // z-50) sits above it.
   return (
+    <>
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-[55] flex items-center justify-center bg-charcoal/40 p-2 sm:p-4"
-      onMouseDown={(e) => { if (e.target === e.currentTarget && mode === 'options') onClose(); }}
+      className={`fixed inset-0 ${sourceView ? 'z-30' : 'z-[55]'} flex items-center justify-center bg-charcoal/40 p-2 sm:p-4`}
+      onMouseDown={(e) => { if (e.target === e.currentTarget && mode === 'options' && !sourceView) onClose(); }}
       dir={isAr ? 'rtl' : 'ltr'}
     >
       <div className="flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-cream shadow-2xl">
@@ -178,11 +159,33 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
                 // 2026-07-19).
                 editPrefsFirst
                 onDone={() => setMode('options')}
+                onOpenSource={(sourceType, sourceId) => setSourceView({ sourceType, sourceId })}
               />
             )}
           </div>
         )}
       </div>
     </div>
+
+    {/* Source overlay — stacks above the popup; close returns to it. PROJECT →
+        the rich Project detail page; UNIT / MARKET LISTING → the record form. */}
+    {sourceView && sourceView.sourceType === 'project' && (
+      <div className="fixed inset-0 z-40 overflow-y-auto bg-cream" dir={isAr ? 'rtl' : 'ltr'}>
+        <ProjectDetailPage
+          recordId={sourceView.sourceId}
+          modelName="all_projects"
+          onClose={() => setSourceView(null)}
+        />
+      </div>
+    )}
+    {sourceView && sourceView.sourceType !== 'project' && sourceModelId && (
+      <RecordFormModal
+        modelId={sourceModelId}
+        recordId={sourceView.sourceId}
+        openInPageHref={optionSourceUrl(sourceView.sourceType, sourceView.sourceId)}
+        onClose={() => setSourceView(null)}
+      />
+    )}
+    </>
   );
 }

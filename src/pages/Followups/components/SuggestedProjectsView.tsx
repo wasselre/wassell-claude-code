@@ -86,6 +86,12 @@ interface Props {
    *  follow-up workspace, the standalone page) simply omit this. */
   editPrefsFirst?: boolean;
   onDone: () => void;
+  /** Open a result's SOURCE (project / market listing) as an in-place overlay
+   *  the host can back out of, instead of the default new-tab `window.open`.
+   *  In-chat hosts pass this so "Details" returns to THIS finder, not the
+   *  All Projects list. Absent = the old new-tab behaviour (standalone page /
+   *  follow-up workspace). */
+  onOpenSource?: (sourceType: 'project' | 'market_listing', sourceId: string) => void;
 }
 
 const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
@@ -103,7 +109,7 @@ const PAGE = 24;
 
 export default function SuggestedProjectsView({
   isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName, clientName,
-  defaultPrefsCollapsed, editPrefsFirst, onDone,
+  defaultPrefsCollapsed, editPrefsFirst, onDone, onOpenSource,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
@@ -373,6 +379,12 @@ export default function SuggestedProjectsView({
   }, [mustConfirmLeave]);
 
   function onOpenDetails(item: FinderMatch) {
+    // In-chat host: open the source as an overlay it can back out of (returns to
+    // THIS finder). Standalone / follow-up workspace: the old new-tab.
+    if (onOpenSource) {
+      onOpenSource(item.source === 'market_listings' ? 'market_listing' : 'project', item.project_id);
+      return;
+    }
     const model = item.source === 'market_listings' ? 'market_listings' : 'all_projects';
     window.open(`/model/${model}/${item.project_id}`, '_blank', 'noopener');
   }
