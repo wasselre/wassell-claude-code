@@ -613,14 +613,19 @@ This workspace answers the three questions the old process could not:
 
 - **Organic auto-publish + automatic metrics are live for Instagram / TikTok /
   Snapchat** via bundle.social (see the Publishing + Metrics Key-behaviors
-  bullets). What's NOT built yet: a **webhook** (post-status flips rely on on-open
-  auto-poll + the manual «تحديث الحالة» — a `post.published` webhook would make
-  POSTED/ERROR instant; analytics have no webhook and are pulled), richer
-  per-platform options (Snapchat Spotlight, first-comment hashtags,
-  carousels/multi-file posts, IG collaborators/location), and **profile-level**
-  analytics (follower growth etc. — only per-post metrics are pulled today).
-  Meta/TikTok *ad* review is unrelated — that's the paid side (Meta Marketing
-  API), already partly synced.
+  bullets). Instant post-status is wired too: `api/webhook/bundle-social.ts`
+  receives bundle's `post.published` event (HMAC-SHA256 `x-signature` verified)
+  and flips the row to `published` + permalink / records the error the moment
+  bundle finishes — the poll paths (on-open auto-poll, «تحديث الحالة», daily
+  cron) remain as the fallback. **One manual step:** the webhook URL +
+  `BUNDLE_SOCIAL_WEBHOOK_SECRET` must be set from the bundle.social Webhooks
+  dashboard (bundle exposes no webhook API); until then the endpoint is a safe
+  no-op. What's NOT built: richer per-platform options (Snapchat Spotlight,
+  first-comment hashtags, carousels/multi-file posts, IG collaborators/location),
+  **profile-level** analytics (follower growth — only per-post metrics are
+  pulled), and a live SPA push on webhook receipt (the DB is instant; an open
+  Publish tab reflects it on its next fetch/auto-poll). Meta/TikTok *ad* review is
+  unrelated — that's the paid side (Meta Marketing API), already partly synced.
 - **Metrics are manual.** The `source` column already distinguishes
   `manual` from `api` so a later integration can backfill without rewriting
   history.
