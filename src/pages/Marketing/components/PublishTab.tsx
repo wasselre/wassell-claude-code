@@ -22,20 +22,36 @@
  * you, and «تعليمه كمنشور» confirms with the post link through the same
  * publication_save the desktop modal uses. Desktop is unchanged.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import {
   MosAccount, MosAsset, MosPublication, PLATFORM_LABELS, PUB_STATUS_LABELS,
-  fetchAssets, savePublication,
+  fetchAssets, savePublication, publishPublication, syncPublication, pullMetrics,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from '../MarketingWorkspace';
-import { Field, Modal, Pill } from './kit';
+import { Field, Modal, Pill, type Tone } from './kit';
 import { IconPlus } from './icons';
 import { dateTimeShort, isoDateTimeLocal, num, shortDate, toArabicDigits } from '../lib/format';
 import { useAssetUrls } from '../lib/assetUrls';
 import '../styles/mobile-m3.css';
 
 const PLATFORMS = ['instagram', 'tiktok', 'snapchat', 'x', 'youtube', 'website'] as const;
+
+/** The platforms we can post to automatically via bundle.social. */
+const AUTO_PLATFORMS = new Set(['instagram', 'tiktok', 'snapchat']);
+
+/** bundle.social's fine-grained status → a bilingual chip label + Pill tone. */
+function bundleStatusChip(s: string | null): { ar: string; en: string; tone: Tone } | null {
+  switch (s) {
+    case 'SCHEDULED': return { ar: 'مجدول عبر API', en: 'Scheduled via API', tone: 'go' };
+    case 'PROCESSING': return { ar: 'يُنشر الآن…', en: 'Publishing…', tone: 'now' };
+    case 'RETRYING': return { ar: 'إعادة المحاولة…', en: 'Retrying…', tone: 'now' };
+    case 'REVIEW': return { ar: 'قيد مراجعة المنصة', en: 'Under review', tone: 'wait' };
+    case 'POSTED': return { ar: 'نُشر تلقائيًا', en: 'Auto-published', tone: 'live' };
+    case 'ERROR': return { ar: 'فشل النشر التلقائي', en: 'Auto-publish failed', tone: 'wait' };
+    default: return null;
+  }
+}
 
 /** The platforms' own colours — the mockup's header dots and account badges. */
 const PLATFORM_COLOR: Record<string, string> = {
@@ -182,6 +198,71 @@ export default function PublishTab({
     }
   };
 
+  /* ── organic posting via bundle.social ───────────────────────────── */
+  const [apiBusyId, setApiBusyId] = useState<string | null>(null);
+
+  /** Post/schedule this row for real on the connected platform. */
+  const publishViaApi = useCallback(async (pub: MosPublication): Promise<void> => {
+    setApiBusyId(pub.id);
+    try {
+      const res = await publishPublication(pub.id);
+      onChange(res.publications);
+      addToast(isAr ? 'أُرسل للنشر عبر المنصة' : 'Handed to the platform to publish', 'success');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setApiBusyId(null);
+    }
+  }, [addToast, isAr, onChange]);
+
+  /** Reconcile one row's status with bundle.social (POSTED → published + link). */
+  const refreshViaApi = useCallback(async (pub: MosPublication, silent = false): Promise<void> => {
+    if (!silent) setApiBusyId(pub.id);
+    try {
+      const res = await syncPublication(pub.id);
+      onChange(res.publications);
+    } catch (e) {
+      if (!silent) addToast(e instanceof Error ? e.message : String(e), 'error');
+      else console.error('[marketing] auto status refresh failed', e);
+    } finally {
+      if (!silent) setApiBusyId(null);
+    }
+  }, [addToast, onChange]);
+
+  /** Pull the latest platform numbers for one published bundle post. */
+  const pullNumbersFor = useCallback(async (pub: MosPublication, silent = false): Promise<void> => {
+    if (!silent) setApiBusyId(pub.id);
+    try {
+      const res = await pullMetrics(pub.id);
+      onChange(res.publications);
+    } catch (e) {
+      if (!silent) addToast(e instanceof Error ? e.message : String(e), 'error');
+      else console.error('[marketing] auto metrics pull failed', e);
+    } finally {
+      if (!silent) setApiBusyId(null);
+    }
+  }, [addToast, onChange]);
+
+  // On tab open, once per mount: flip any non-terminal bundle post that finished
+  // publishing in the background, and pull fresh numbers for published ones — so
+  // the card shows the latest status AND performance without a manual click (the
+  // daily cron does the same server-side; this makes it immediate on open).
+  const polledRef = useRef(false);
+  useEffect(() => {
+    if (polledRef.current) return;
+    const pending = publications.filter(
+      (p) => p.bundle_post_id && p.status !== 'published'
+        && p.bundle_status !== 'POSTED' && p.bundle_status !== 'ERROR',
+    );
+    const published = publications.filter((p) => p.bundle_post_id && p.status === 'published');
+    if (pending.length === 0 && published.length === 0) return;
+    polledRef.current = true;
+    void (async () => {
+      for (const p of pending) { await refreshViaApi(p, true); }
+      for (const p of published) { await pullNumbersFor(p, true); }
+    })();
+  }, [publications, refreshViaApi, pullNumbersFor]);
+
   const used = new Set(publications.map((p) => p.platform));
   const available = PLATFORMS.filter((p) => !used.has(p));
 
@@ -300,6 +381,16 @@ export default function PublishTab({
     const captionDiffers = pub.platform !== 'instagram' && igCaption !== null
       && pub.caption !== null && pub.caption !== '' && pub.caption !== igCaption;
 
+    // Organic-posting eligibility for this card.
+    const isAuto = AUTO_PLATFORMS.has(pub.platform);
+    const connected = pub.account_connected === true;
+    const bChip = bundleStatusChip(pub.bundle_status);
+    const tiktokNeedsVideo = pub.platform === 'tiktok' && fileAsset != null && fileAsset.kind !== 'video';
+    const canAutoPost = canEdit && isAuto && connected && !pub.bundle_post_id
+      && fileAsset != null && !tiktokNeedsVideo
+      && pub.status !== 'published' && pub.status !== 'cancelled';
+    const apiBusy = apiBusyId === pub.id;
+
     const pill = pub.status === 'published'
       ? <Pill tone="live">{isAr ? PUB_STATUS_LABELS.published?.ar : PUB_STATUS_LABELS.published?.en}</Pill>
       : pub.status === 'scheduled'
@@ -340,6 +431,7 @@ export default function PublishTab({
             </span>
           )}
           <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 7, alignItems: 'center' }}>
+            {bChip && pub.status !== 'published' && <Pill tone={bChip.tone}>{isAr ? bChip.ar : bChip.en}</Pill>}
             {pill}
             {canEdit && (
               <button type="button" className="btn btn-d btn-sm" onClick={() => setEditing(pubRaw)}>
@@ -465,6 +557,23 @@ export default function PublishTab({
                 {pub.latest_captured_at && (
                   <div style={{ fontSize: 10.5, color: 'var(--mute)', marginTop: 6 }}>
                     {isAr ? 'آخر إدخال ' : 'entered '}{shortDate(pub.latest_captured_at, isAr)}
+                    {pub.latest_source === 'api' && (
+                      <span className="tag" style={{ marginInlineStart: 6 }}>
+                        {isAr ? 'من المنصة' : 'from platform'}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {pub.bundle_post_id && canEdit && (
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className="btn btn-d btn-sm"
+                      disabled={apiBusy}
+                      onClick={() => void pullNumbersFor(pubRaw)}
+                    >
+                      {apiBusy ? (isAr ? 'تحديث…' : 'Pulling…') : (isAr ? 'تحديث الأرقام' : 'Pull numbers')}
+                    </button>
                   </div>
                 )}
               </>
@@ -486,6 +595,66 @@ export default function PublishTab({
             )}
           </div>
         </div>
+        {(canAutoPost || pub.bundle_post_id || tiktokNeedsVideo) && (
+          <div
+            className="card-b"
+            style={{
+              borderTop: '1px solid var(--sand, #0001)', display: 'flex',
+              gap: 10, alignItems: 'center', flexWrap: 'wrap',
+            }}
+          >
+            {canAutoPost && (() => {
+              const willSchedule = Boolean(
+                pub.scheduled_at && new Date(pub.scheduled_at).getTime() > Date.now() + 60_000,
+              );
+              return (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-p btn-sm"
+                    disabled={apiBusy}
+                    onClick={() => void publishViaApi(pubRaw)}
+                  >
+                    {apiBusy
+                      ? (isAr ? 'جارٍ الإرسال…' : 'Sending…')
+                      : willSchedule
+                        ? (isAr ? `جدولة على ${platformLabel(pub.platform)}` : `Schedule on ${platformLabel(pub.platform)}`)
+                        : (isAr ? `انشر الآن على ${platformLabel(pub.platform)}` : `Publish now to ${platformLabel(pub.platform)}`)}
+                  </button>
+                  <span style={{ fontSize: 11, color: 'var(--mute)' }}>
+                    {willSchedule
+                      ? (isAr ? 'ينشره النظام تلقائيًا في موعده' : 'the system posts it automatically at its time')
+                      : (isAr ? 'يُنشر تلقائيًا خلال دقيقة' : 'auto-posts within a minute')}
+                  </span>
+                </>
+              );
+            })()}
+
+            {tiktokNeedsVideo && !pub.bundle_post_id && (
+              <span style={{ fontSize: 11, color: 'var(--late)' }}>
+                {isAr ? 'تيك توك يقبل الفيديو فقط — اختر ملف فيديو.' : 'TikTok accepts video only — pick a video file.'}
+              </span>
+            )}
+
+            {pub.bundle_post_id && pub.status !== 'published' && (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-d btn-sm"
+                  disabled={apiBusy}
+                  onClick={() => void refreshViaApi(pubRaw)}
+                >
+                  {apiBusy ? (isAr ? 'تحديث…' : 'Refreshing…') : (isAr ? 'تحديث الحالة' : 'Refresh status')}
+                </button>
+                {pub.bundle_status === 'ERROR' && pub.bundle_error && (
+                  <span style={{ fontSize: 11, color: 'var(--late)', overflowWrap: 'anywhere' }}>
+                    {pub.bundle_error}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
     );
   };
@@ -535,8 +704,8 @@ export default function PublishTab({
 
         <div className="notice">
           {isAr
-            ? 'النشر يدوي بقرار: لا حساب هنا ينشر تلقائيًا. عند النشر فعليًا، علّم الصف «منشور» وضع الرابط — عندها تصبح الأرقام قابلة للإدخال.'
-            : 'Publishing is manual by decision: no account here posts on its own. When you actually post, mark the row published and paste the link — that is what makes the numbers enterable.'}
+            ? 'المنصات المربوطة (انستقرام، تيك توك، سناب) تنشر تلقائيًا عبر الزر — انشر الآن أو جدول في موعده. المنصات غير المربوطة (إكس، الموقع) تبقى يدوية: علّم الصف «منشور» وضع الرابط لتُدخل الأرقام لاحقًا.'
+            : 'Connected platforms (Instagram, TikTok, Snapchat) auto-post from the button — publish now or schedule for the slot. Unconnected ones (X, website) stay manual: mark the row published and paste the link so the numbers can be entered later.'}
         </div>
       </div>
 

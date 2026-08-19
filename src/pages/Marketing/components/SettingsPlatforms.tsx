@@ -15,7 +15,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  MosAccount, PLATFORM_LABELS, fetchPublications, saveAccount,
+  MosAccount, PLATFORM_LABELS, fetchPublications, saveAccount, syncPlatforms,
 } from '@/lib/marketingOS/client';
 import { Field, Modal, PageHead, Pill, type Tone } from './kit';
 import { MetaSyncCard } from './MetaSyncCard';
@@ -214,6 +214,23 @@ export default function SettingsPlatforms({
 
   const connected = useMemo(() => accounts.filter((a) => a.is_connected).length, [accounts]);
 
+  /* Pull the LIVE connection status from bundle.social — the accounts are
+     connected in the bundle.social dashboard (its hosted OAuth flow); this
+     button reflects that truth onto the cards instead of a hand-set state. */
+  const [syncing, setSyncing] = useState(false);
+  const refreshConnections = async (): Promise<void> => {
+    setSyncing(true);
+    try {
+      const res = await syncPlatforms();
+      onAccounts(res.accounts);
+      addToast(isAr ? 'حُدِّثت حالة الربط' : 'Connection status refreshed', 'success');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   /* ── edit / add modals — metadata only, never a connection ── */
   const [editing, setEditing] = useState<MosAccount | null>(null);
   const [adding, setAdding] = useState(false);
@@ -297,15 +314,19 @@ export default function SettingsPlatforms({
       <PageHead
         title={isAr ? 'المنصات والحسابات' : 'Platforms and accounts'}
         sub={isAr
-          ? `${num(connected, true)} من ${num(accounts.length, true)} مربوطة · النشر والأداء كلاهما يدوي اليوم`
-          : `${connected} of ${accounts.length} connected · publishing and metrics are both manual today`}
+          ? `${num(connected, true)} من ${num(accounts.length, true)} مربوطة · المنصات المربوطة تنشر تلقائيًا عبر bundle.social`
+          : `${connected} of ${accounts.length} connected · connected platforms auto-post via bundle.social`}
         crumb={
           <button type="button" onClick={() => navigate('/m/settings')}>
             <Back style={{ width: 11, height: 11, verticalAlign: -1 }} /> {isAr ? 'الإعدادات' : 'Settings'}
           </button>
         }
       >
-        <span className="btn btn-d">{isAr ? 'ماذا يتطلب الربط' : 'What connecting takes'}</span>
+        {canManage && (
+          <button type="button" className="btn btn-d" onClick={() => void refreshConnections()} disabled={syncing}>
+            {syncing ? (isAr ? 'تحديث…' : 'Refreshing…') : (isAr ? 'تحديث حالة الربط' : 'Refresh connections')}
+          </button>
+        )}
         {canManage && (
           <button type="button" className="btn btn-p" onClick={openAdd}>
             <IconPlus />
@@ -400,36 +421,35 @@ export default function SettingsPlatforms({
           })}
         </div>
 
-        {/* The decision banner — transcribed verbatim from s26.html. */}
+        {/* Organic posting now runs through bundle.social for connected platforms. */}
         <div className="s26-note">
           {isAr ? (
             <>
               <div>
-                <b style={{ fontWeight: 700 }}>قرار: النشر يبقى يدويًا.</b> لن يُربط النشر التلقائي — لا الآن ولا لاحقًا.
-                «مجدول» تعني دائمًا: يُنبّه النظام <b>الكاتب</b> في وقته، فينشر بنفسه ويؤكد. هذا يحذف
-                مراجعة تطبيق ميتا وتيك توك بالكامل من نطاق العمل، وهو أثقل جزء في الربط.
+                <b style={{ fontWeight: 700 }}>النشر العضوي صار تلقائيًا.</b> الحسابات تُربط مرة واحدة من لوحة
+                bundle.social (عبر تدفّق تسجيل الدخول الخاص بها)، ثم من شاشة النشر يُنشر الملف المعتمد بضغطة —
+                الآن أو مجدولًا في موعده — إلى انستقرام وتيك توك وسناب. اضغط «تحديث حالة الربط» ليعكس النظام الحسابات
+                المتصلة فعليًا. تيك توك يقبل الفيديو فقط.
               </div>
               <div className="n-f">
-                <b style={{ fontWeight: 700 }}>ما يبقى مطلوبًا من الربط شيئان فقط:</b> سحب أرقام الأداء،
-                وتسليم عملاء الإعلانات إلى نظام العملاء. وأولوية واحدة واضحة: <b>إعلانات ميتا</b> —
-                تُلغي الإدخال اليدوي من كل شاشات الحملات وتُسلّم العملاء خلال ثوانٍ.
-                وحتى ذلك الحين تبقى الأرقام تُدخل يدويًا في شاشة ٥٠، وهو ما قررناه للنسخة الأولى.
+                <b style={{ fontWeight: 700 }}>ما يبقى يدويًا:</b> المنصات غير المربوطة (إكس، الموقع)، وسحب أرقام
+                الأداء التي تبقى إدخالًا يدويًا في شاشة الأرقام. وأولوية الربط المدفوع واضحة: <b>إعلانات ميتا</b> —
+                تُلغي الإدخال اليدوي من شاشات الحملات وتُسلّم العملاء خلال ثوانٍ.
               </div>
             </>
           ) : (
             <>
               <div>
-                <b style={{ fontWeight: 700 }}>Decision: publishing stays manual.</b> Automatic publishing will
-                not be connected — not now, not later. “Scheduled” always means: the system reminds the
-                writer at the time, and they publish and confirm themselves. This removes the Meta and
-                TikTok app review entirely from the scope, which is the heaviest part of connecting.
+                <b style={{ fontWeight: 700 }}>Organic posting is now automatic.</b> Accounts are connected once
+                from the bundle.social dashboard (its own sign-in flow); then from the Publish screen the approved
+                file posts with one tap — now or scheduled for its slot — to Instagram, TikTok and Snapchat. Hit
+                “Refresh connections” to reflect the accounts that are actually linked. TikTok accepts video only.
               </div>
               <div className="n-f">
-                <b style={{ fontWeight: 700 }}>Only two things remain wanted from connecting:</b> pulling
-                performance numbers, and delivering ad leads into the CRM. And one clear priority: Meta
-                ads — it ends manual entry across every campaign screen and delivers leads within seconds.
-                Until then the numbers keep being entered by hand on screen 50, which is what we decided
-                for the first version.
+                <b style={{ fontWeight: 700 }}>What stays manual:</b> unconnected platforms (X, website), and
+                pulling performance numbers, which are still entered by hand on the Numbers screen. The clear paid
+                priority remains <b>Meta ads</b> — it ends manual entry across the campaign screens and delivers
+                leads within seconds.
               </div>
             </>
           )}

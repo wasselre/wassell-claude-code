@@ -501,6 +501,17 @@ export interface MosPublication {
   latest_comments: number | null;
   latest_saves: number | null;
   snapshot_count: number;
+  /* Organic posting via bundle.social. `bundle_post_id` present ⇒ this
+   * publication is being posted/scheduled through the API (not manually).
+   * `bundle_status` is bundle's own fine-grained lifecycle string
+   * (SCHEDULED/PROCESSING/POSTED/RETRYING/ERROR/REVIEW), distinct from the
+   * coarse `status` above. `bundle_error` carries the platform's message on ERROR. */
+  bundle_post_id: string | null;
+  bundle_status: string | null;
+  bundle_error: string | null;
+  bundle_synced_at: string | null;
+  /** From the joined account: whether the platform can auto-post right now. */
+  account_can_publish?: boolean | null;
 }
 
 export interface MosAccount {
@@ -514,6 +525,11 @@ export interface MosAccount {
   can_read_metrics: boolean;
   /** Access-token expiry, when a real connection set one (screen 26 «تنتهي…»). */
   token_expires_at?: string | null;
+  /** The connected account on bundle.social, set by platform_sync from the live
+   *  team. Present ⇒ this platform can be auto-posted through the API. */
+  bundle_account_id?: string | null;
+  bundle_account_type?: string | null;
+  bundle_synced_at?: string | null;
 }
 
 export interface MosSnapshot {
@@ -580,6 +596,37 @@ export const savePublication = (contentId: string, publication: Record<string, u
     content_id: contentId,
     publication,
   });
+
+/**
+ * Post/schedule this publication FOR REAL via bundle.social — uploads the
+ * approved file, creates the post on the connected account, and stores the
+ * bundle post id. Returns the refreshed publication list. Requires the `publish`
+ * capability and a connected platform (instagram/tiktok/snapchat).
+ */
+export const publishPublication = (publicationId: string) =>
+  call<{ publications: MosPublication[] }>('publication_publish', { publication_id: publicationId });
+
+/** Reconcile ONE publication's status with bundle.social (POSTED → published + permalink). */
+export const syncPublication = (publicationId: string) =>
+  call<{ publications: MosPublication[] }>('publication_sync', { publication_id: publicationId });
+
+/** Pull live connection status from bundle.social onto the platform accounts. */
+export const syncPlatforms = () =>
+  call<{ accounts: MosAccount[] }>('platform_sync', {});
+
+/**
+ * Pull the latest performance numbers for ONE published bundle.social post and
+ * append an `api` metric snapshot if they changed. Returns the refreshed
+ * publications + this publication's snapshot history.
+ */
+export const pullMetrics = (publicationId: string) =>
+  call<{ publications: MosPublication[]; snapshots: MosSnapshot[]; pull_status: string }>(
+    'metrics_pull', { publication_id: publicationId },
+  );
+
+/** Pull numbers for every published bundle.social post in the 30-day window. */
+export const pullAllMetrics = () =>
+  call<{ summary: Record<string, number | string | boolean> }>('metrics_pull_all', {});
 
 export const recordMetrics = (
   publicationId: string,

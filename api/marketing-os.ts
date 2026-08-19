@@ -29,6 +29,12 @@ import { makeServiceClient } from './_lib/serviceClient.js';
 import { runMetaSync } from './_lib/marketing/metaSync.js';
 import { loadMetaConfig, MetaMarketingClient, MetaApiError } from './_lib/marketing/metaMarketingApi.js';
 import { buildCampaignPayload, buildAdSetPayload, type PushCampaign, type PushExecution } from './_lib/marketing/metaPush.js';
+import {
+  loadBundleConfig, isBundlePlatform, buildPlatformData, platformAcceptsKind,
+  uploadFromUrl, createPost, getPost, getTeam, extractPermalink, mapBundleStatus,
+  BundleApiError, BUNDLE_PLATFORM_TYPE,
+} from './_lib/marketing/bundleSocial.js';
+import { pullPublicationMetrics, runBundleMetricsSync } from './_lib/marketing/bundleMetrics.js';
 
 export const config = { runtime: 'edge' };
 
@@ -1923,6 +1929,298 @@ export default async function handler(req: Request): Promise<Response> {
         const f = dbFail(list.error);
         if (f) return f;
         return jsonOk({ publications: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Organic posting via bundle.social — the REAL publish path */
+      /* (the manual copy-paste flow stays for x/website).         */
+      /*                                                           */
+      /* One MOS publication = one platform = one bundle post. We  */
+      /* upload the APPROVED file by URL (bundle fetches it), then */
+      /* create a post scheduled at the slot (or ~now). bundle     */
+      /* handles the OAuth tokens, the platform upload, retries and*/
+      /* the review state; we track the result by bundle_post_id.  */
+      /* -------------------------------------------------------- */
+      case 'publication_publish': {
+        const cfg = loadBundleConfig();
+        if (!cfg) {
+          return jsonError(503, 'Organic posting is not configured (bundle.social credentials missing).');
+        }
+        // Side effects live on the platforms, outside RLS's reach — gate on the
+        // existing `publish` capability, same posture as the Meta write paths.
+        const gate = await requireCap(sb, 'publish');
+        if (gate) return gate;
+
+        const pubId = str(body.publication_id);
+        if (!pubId) return jsonError(400, 'publication_id is required');
+
+        const pubRes = await sb.from('mos_publication_v').select('*').eq('id', pubId).maybeSingle();
+        const pf = dbFail(pubRes.error);
+        if (pf) return pf;
+        const pub = pubRes.data as Record<string, unknown> | null;
+        if (!pub) return jsonError(404, 'publication not found');
+
+        const platform = String(pub.platform ?? '');
+        if (!isBundlePlatform(platform)) {
+          return jsonError(400, `${platform} cannot be auto-posted — publish it manually.`);
+        }
+        if (pub.account_connected !== true) {
+          return jsonError(400, `${platform} is not connected — connect it in Settings → Platforms first.`);
+        }
+        const assetId = str(pub.asset_id);
+        if (!assetId) return jsonError(400, 'This publication has no approved file to post.');
+        const caption = typeof pub.caption === 'string' ? pub.caption : '';
+
+        // Resolve the approved asset to a URL bundle can fetch (public legacy URL
+        // verbatim, or a short-lived signed URL for a file-backed asset).
+        const assetRes = await sb.from('mos_assets')
+          .select('id, url, file_id, mime_type, kind').eq('id', assetId).maybeSingle();
+        const af = dbFail(assetRes.error);
+        if (af) return af;
+        const asset = assetRes.data as
+          { id: string; url: string | null; file_id: string | null; mime_type: string | null; kind: string } | null;
+        if (!asset) return jsonError(404, 'approved file not found');
+
+        const kind = (asset.kind ?? 'photo') as 'photo' | 'video' | 'design' | 'audio' | 'document';
+        if (!platformAcceptsKind(platform, kind)) {
+          return jsonError(400, `TikTok only accepts video — this approved file is a ${kind}.`);
+        }
+
+        let publicUrl: string | null = asset.url;
+        if (!publicUrl && asset.file_id) {
+          const svc = makeServiceClient('api:marketing-os');
+          if (!svc) return jsonError(503, 'file signing is unavailable');
+          const fr = await svc.from('files')
+            .select('storage_bucket, storage_path').eq('id', asset.file_id).maybeSingle();
+          const ff = dbFail(fr.error);
+          if (ff) return ff;
+          const file = fr.data as { storage_bucket: string; storage_path: string } | null;
+          if (!file) return jsonError(404, 'approved file bytes not found');
+          const signed = await svc.storage.from(file.storage_bucket)
+            .createSignedUrl(file.storage_path, 300);
+          if (signed.error || !signed.data?.signedUrl) {
+            console.error('[marketing-os] sign approved file failed', signed.error);
+            return jsonError(500, 'could not resolve the approved file');
+          }
+          publicUrl = signed.data.signedUrl;
+        }
+        if (!publicUrl) return jsonError(400, 'Could not resolve the approved file’s URL.');
+
+        // A human-readable title on bundle's side — ref + title, or a fallback.
+        const cRes = await sb.from('mos_content_v')
+          .select('ref, title').eq('id', pub.content_id as string).maybeSingle();
+        const cRow = cRes.data as { ref: string | null; title: string | null } | null;
+        const title = [cRow?.ref, cRow?.title].filter(Boolean).join(' ').trim() || 'Wassel';
+
+        // Schedule at the slot when it is safely in the future; otherwise post
+        // ~now (bundle needs a valid future-ish postDate — a minute's lead).
+        const now = Date.now();
+        const schedMs = typeof pub.scheduled_at === 'string' ? Date.parse(pub.scheduled_at) : NaN;
+        const postDate = new Date(
+          Number.isFinite(schedMs) && schedMs > now + 60_000 ? schedMs : now + 60_000,
+        ).toISOString();
+
+        let post;
+        try {
+          const up = await uploadFromUrl(cfg, publicUrl);
+          const built = buildPlatformData(platform, { text: caption, uploadId: up.id, kind });
+          if (!built) return jsonError(400, `${platform} is not supported for auto-posting.`);
+          post = await createPost(cfg, {
+            title,
+            status: 'SCHEDULED',
+            socialAccountTypes: [built.socialAccountType],
+            postDate,
+            data: built.data,
+          });
+        } catch (e) {
+          // Fail loudly — the platform's own message reaches the user, never swallowed.
+          const msg = e instanceof BundleApiError ? e.message : (e instanceof Error ? e.message : String(e));
+          console.error('[marketing-os] bundle.social publish failed', e);
+          return jsonError(502, `bundle.social: ${msg}`);
+        }
+
+        const patch: Record<string, unknown> = {
+          status: 'scheduled',
+          scheduled_at: postDate,
+          external_id: post.id,
+          bundle_post_id: post.id,
+          bundle_status: post.status,
+          bundle_error: null,
+          bundle_synced_at: new Date().toISOString(),
+        };
+        const upd = await sb.from('mos_publications').update(patch).eq('id', pubId).select('id').maybeSingle();
+        const uf = dbFail(upd.error);
+        if (uf) return uf;
+
+        const list = await sb.from('mos_publication_v').select('*').eq('content_id', pub.content_id as string)
+          .order('scheduled_at', { ascending: true, nullsFirst: false });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ publications: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Reconcile ONE publication with bundle.social (poll). On   */
+      /* POSTED we flip our coarse status to published + store the */
+      /* permalink; ERROR is surfaced (never swallowed) but stays  */
+      /* actionable. The webhook does this automatically too — this*/
+      /* is the on-demand refresh for when no webhook is wired.    */
+      /* -------------------------------------------------------- */
+      case 'publication_sync': {
+        const cfg = loadBundleConfig();
+        if (!cfg) return jsonError(503, 'Organic posting is not configured.');
+        const pubId = str(body.publication_id);
+        if (!pubId) return jsonError(400, 'publication_id is required');
+
+        const pr = await sb.from('mos_publications')
+          .select('id, content_id, bundle_post_id, published_by_user_id').eq('id', pubId).maybeSingle();
+        const prf = dbFail(pr.error);
+        if (prf) return prf;
+        const pub = pr.data as
+          { id: string; content_id: string; bundle_post_id: string | null; published_by_user_id: string | null } | null;
+        if (!pub) return jsonError(404, 'publication not found');
+        if (!pub.bundle_post_id) return jsonError(400, 'This publication was not posted through bundle.social.');
+
+        let post;
+        try {
+          post = await getPost(cfg, pub.bundle_post_id);
+        } catch (e) {
+          const msg = e instanceof BundleApiError ? e.message : (e instanceof Error ? e.message : String(e));
+          console.error('[marketing-os] bundle.social sync failed', e);
+          return jsonError(502, `bundle.social: ${msg}`);
+        }
+
+        const coarse = mapBundleStatus(post.status);
+        const patch: Record<string, unknown> = {
+          bundle_status: post.status,
+          bundle_error: typeof post.error === 'string' ? post.error : null,
+          bundle_synced_at: new Date().toISOString(),
+        };
+        if (coarse === 'published') {
+          patch.status = 'published';
+          patch.published_at = post.postedDate ?? new Date().toISOString();
+          patch.published_by_user_id = pub.published_by_user_id
+            ?? await resolveAppUserId(sb, user.userId);
+          const link = extractPermalink(post);
+          if (link) patch.external_url = link;
+        }
+        const upd = await sb.from('mos_publications').update(patch).eq('id', pubId).select('id').maybeSingle();
+        const uf = dbFail(upd.error);
+        if (uf) return uf;
+
+        const list = await sb.from('mos_publication_v').select('*').eq('content_id', pub.content_id)
+          .order('scheduled_at', { ascending: true, nullsFirst: false });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ publications: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Pull the LIVE connection status from bundle.social's team */
+      /* and reflect it onto mos_platform_accounts, so the UI shows*/
+      /* the truth (connected + real handle) instead of a hand-set */
+      /* checkbox. Idempotent; safe to run any time.               */
+      /* -------------------------------------------------------- */
+      case 'platform_sync': {
+        const cfg = loadBundleConfig();
+        if (!cfg) return jsonError(503, 'Organic posting is not configured.');
+        const gate = await requireCap(sb, 'manage_settings');
+        if (gate) return gate;
+
+        let team;
+        try {
+          team = await getTeam(cfg);
+        } catch (e) {
+          const msg = e instanceof BundleApiError ? e.message : (e instanceof Error ? e.message : String(e));
+          console.error('[marketing-os] bundle.social team fetch failed', e);
+          return jsonError(502, `bundle.social: ${msg}`);
+        }
+
+        // External truth → service-role write (reflects bundle, not user input).
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(503, 'connection sync is unavailable');
+
+        const byType = new Map(team.socialAccounts.map((a) => [a.type, a]));
+        const accsRes = await sb.from('mos_platform_accounts')
+          .select('id, platform').is('archived_at', null);
+        const acf = dbFail(accsRes.error);
+        if (acf) return acf;
+        const stamp = new Date().toISOString();
+        for (const acc of (accsRes.data ?? []) as Array<{ id: string; platform: string }>) {
+          const type = BUNDLE_PLATFORM_TYPE[acc.platform];
+          const remote = type ? byType.get(type) : undefined;
+          const patch: Record<string, unknown> = remote
+            ? {
+                is_connected: true, can_publish: true, can_read_metrics: true,
+                handle: remote.username ?? undefined,
+                bundle_account_id: remote.id, bundle_account_type: remote.type,
+                bundle_synced_at: stamp,
+              }
+            : {
+                is_connected: false, can_publish: false, can_read_metrics: false,
+                bundle_account_id: null, bundle_account_type: null, bundle_synced_at: stamp,
+              };
+          const u = await svc.from('mos_platform_accounts').update(patch).eq('id', acc.id);
+          if (u.error) {
+            console.error('[marketing-os] platform_sync update failed', acc.platform, u.error);
+            return jsonError(500, u.error.message);
+          }
+        }
+        const list = await sb.from('mos_platform_accounts').select('*').is('archived_at', null)
+          .order('sort_order', { ascending: true });
+        const lf = dbFail(list.error);
+        if (lf) return lf;
+        return jsonOk({ accounts: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Pull performance numbers from bundle.social for ONE       */
+      /* published publication (on-demand twin of the daily cron). */
+      /* Appends an `api` snapshot only when the reading changed.   */
+      /* -------------------------------------------------------- */
+      case 'metrics_pull': {
+        const cfg = loadBundleConfig();
+        if (!cfg) return jsonError(503, 'Organic posting is not configured.');
+        const gate = await requireCap(sb, 'enter_metrics');
+        if (gate) return gate;
+        const pubId = str(body.publication_id);
+        if (!pubId) return jsonError(400, 'publication_id is required');
+
+        const pr = await sb.from('mos_publications')
+          .select('id, platform, bundle_post_id, external_url, content_id').eq('id', pubId).maybeSingle();
+        const prf = dbFail(pr.error);
+        if (prf) return prf;
+        const pub = pr.data as
+          { id: string; platform: string; bundle_post_id: string | null; external_url: string | null; content_id: string } | null;
+        if (!pub) return jsonError(404, 'publication not found');
+        if (!pub.bundle_post_id) return jsonError(400, 'This publication was not posted through bundle.social.');
+
+        const r = await pullPublicationMetrics(sb, cfg, pub);
+        if (r.status === 'error') return jsonError(502, `bundle.social: ${r.reason ?? 'analytics failed'}`);
+
+        const [list, hist] = await Promise.all([
+          sb.from('mos_publication_v').select('*').eq('content_id', pub.content_id)
+            .order('scheduled_at', { ascending: true, nullsFirst: false }),
+          sb.from('mos_metric_snapshots').select('*').eq('publication_id', pubId)
+            .order('captured_at', { ascending: true }),
+        ]);
+        const lf = dbFail(list.error) ?? dbFail(hist.error);
+        if (lf) return lf;
+        return jsonOk({ publications: list.data ?? [], snapshots: hist.data ?? [], pull_status: r.status });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Pull numbers for EVERY published bundle post in the 30-day */
+      /* window — the "refresh all from platforms" button on the    */
+      /* Numbers screen (same engine the daily cron runs).          */
+      /* -------------------------------------------------------- */
+      case 'metrics_pull_all': {
+        const cfg = loadBundleConfig();
+        if (!cfg) return jsonError(503, 'Organic posting is not configured.');
+        const gate = await requireCap(sb, 'enter_metrics');
+        if (gate) return gate;
+        const summary = await runBundleMetricsSync(sb);
+        return jsonOk({ summary });
       }
 
       /* -------------------------------------------------------- */

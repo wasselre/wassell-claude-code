@@ -14,8 +14,12 @@
  * so a gap never turns into a mystery two months later.
  *
  * Platform-specific columns: Instagram counts engagement; TikTok's middle
- * column is watch-time (stored in the snapshot's `extra`, not a core field);
- * Snapchat has no API and never will — those rows stay manual forever.
+ * column is watch-time (stored in the snapshot's `extra`, not a core field).
+ *
+ * Numbers now also arrive AUTOMATICALLY for connected platforms: the daily
+ * bundle.social cron (and the «سحب الأرقام من المنصات» button here) append `api`
+ * snapshots, so many rows are already «تم» before anyone types. Manual entry
+ * stays for unconnected platforms (X) and any figure the platform API omits.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -23,6 +27,7 @@ import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import {
   MosApiError, PLATFORM_LABELS, ROLE_LABELS, getActiveRole, recordMetrics, skipMetrics,
+  pullAllMetrics,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, LoadError, Modal, PageHead, Pill, Skeleton } from './components/kit';
@@ -210,6 +215,29 @@ export default function NumbersPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  /** Pull the latest numbers from bundle.social for every connected-platform
+   *  post, then reload — the automatic figures land as `api` snapshots and the
+   *  entered rows flip to «تم» without hand-keying. Manual rows are untouched. */
+  const [pulling, setPulling] = useState(false);
+  const pullFromPlatforms = useCallback(async () => {
+    setPulling(true);
+    try {
+      const { summary } = await pullAllMetrics();
+      const inserted = typeof summary.inserted === 'number' ? summary.inserted : 0;
+      addToast(
+        isAr
+          ? (inserted > 0 ? `حُدِّثت أرقام ${num(inserted, true)} منشورًا من المنصات` : 'لا أرقام جديدة من المنصات بعد')
+          : (inserted > 0 ? `Updated numbers for ${inserted} posts from the platforms` : 'No new platform numbers yet'),
+        'success',
+      );
+      await load();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setPulling(false);
+    }
+  }, [addToast, isAr, load]);
 
   const platforms = useMemo(() => res?.platforms ?? [], [res]);
   const allRows = useMemo(
@@ -550,6 +578,11 @@ export default function NumbersPage() {
         </div>
         {can('enter_metrics') && (
           <>
+            <button type="button" className="btn btn-d" disabled={pulling || busy} onClick={() => void pullFromPlatforms()}>
+              {pulling
+                ? (isAr ? 'جارٍ السحب…' : 'Pulling…')
+                : (isAr ? 'سحب الأرقام من المنصات' : 'Pull numbers from platforms')}
+            </button>
             <button type="button" className="btn btn-d" disabled={busy} onClick={() => void saveAll(false)}>
               {isAr ? 'حفظ ومتابعة لاحقًا' : 'Save, continue later'}
             </button>
