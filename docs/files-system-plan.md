@@ -119,7 +119,7 @@ rollback-able.
 | **B1** | Metadata foundation: title, type, owner, tags, confidentiality, status | ✅ **Live** (applied dark) |
 | **B2** | Fast server-side search, Arabic folding, filters and facets | ⚠️ **Applied dark** — 0 callers. Misses its 300 ms acceptance bar (§6.1). |
 | **B3** | Measure how record-linked access changes visibility | ✅ **Done** — D1 approved |
-| **B4** | Let users view files through records they can access, excluding restricted files | ⚠️ **Applied dark** — toggle OFF, ON path unvalidated |
+| **B4** | Let users view files through records they can access, excluding restricted files | ✅ **LIVE — toggle ON since 2026-08-19 11:09 UTC** |
 | **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ⛔ **Blocked** — needs §6.1 fixed *and* B4 ON |
 | **B6** | Manual linking/unlinking and Files panels inside records | ⏳ Not started |
 | **B7** | Upload metadata, duplicate detection, bulk actions | ⏳ Not started |
@@ -250,10 +250,33 @@ Tracked as [#32](https://github.com/wasselre/wassell-claude-code/issues/32).
 Acceptance is *"p95 < 300 ms at 7,097 files."* It is 1.5–2.9 s. Applied dark,
 zero callers, so nothing is broken — but the gate is unmet.
 
-### 6.3 B4's ON path is unvalidated
-Installed dark and verified inert (all personas byte-identical, toggle `false`,
-zero write policies touched). **Do not flip
-`file_access_settings.derived_view_enabled` until CI is green on the ON path.**
+### 6.3 B4 is LIVE — the toggle is ON (was: "do not flip")
+
+**`file_access_settings.derived_view_enabled = true` since 2026-08-19 11:09 UTC.**
+This is deliberate and verified. A parallel session reading this document raised
+a security flag because the doc still said OFF while production said ON — the
+doc was stale, not production. Recording the state so that cannot recur.
+
+Validated in CI (all 7 B4 assertions incl. the manufactured restricted-file
+boundary) and on production before/after:
+
+| user | before | after | gain | predicted |
+|---|---|---|---|---|
+| `e350f736` | 1,270 | 6,112 | +4,842 | 4,842 same-instant |
+| `ad5e1e47` | 1,284 | 6,102 | +4,818 | 4,818 |
+| `b30d0678` | 1,292 | 6,092 | +4,800 | 4,800 |
+| `ae48de5f` | 1,270 | 1,270 | 0 | 0 (no record access) |
+| deactivated | 0 | 0 | 0 | 0 |
+
+Zero write policies reference the derived branch — it stayed a view grant.
+
+**B4's reach is dynamic.** It is record-derived, so it tracks record visibility
+continuously: a day-old prediction drifted by one file overnight purely because
+654 records were updated (files and edges were unchanged). "Matches the
+prediction exactly" can only hold at a single instant on a live database.
+
+Rollback remains one statement:
+`UPDATE public.file_access_settings SET derived_view_enabled = false;`
 
 ### 6.4 Scheduled PRD sync is broken
 60/60 runs failing since 2026-08-17 on a TipTap peer-dependency conflict, so
