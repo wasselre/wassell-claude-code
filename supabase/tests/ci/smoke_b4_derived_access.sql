@@ -43,6 +43,7 @@ UPDATE public.file_access_settings SET derived_view_enabled = true;
 DO $$
 DECLARE
   r record; v_pol bigint; v_pred bigint; v_base bigint; n_checked int := 0; n_gained int := 0;
+  v_nvr bigint; v_nvf bigint; v_linked bigint;
 BEGIN
   FOR r IN SELECT u.auth_uid AS uid, u.id AS app FROM public.users u ORDER BY u.id LOOP
     -- what the policy now grants
@@ -76,11 +77,28 @@ BEGIN
                     WHERE l.file_id = f.id)
        AND NOT EXISTS (SELECT 1 FROM _vf b WHERE b.id = f.id);
 
+    -- Instrumented: when this assertion fires, the intermediate counts decide
+    -- whether the POLICY over-granted or the PREDICTION under-counted. Without
+    -- them the failure message is a mismatch with no way to attribute it, which
+    -- is how a debugging session turns into a guessing session.
+    SELECT count(*) INTO v_nvr FROM _vr;
+    SELECT count(*) INTO v_nvf FROM _vf;
+    SELECT count(DISTINCT l.file_id) INTO v_linked
+      FROM public.file_links l
+      JOIN _vr v ON v.id = l.record_id AND v.model_id = l.model_id;
+
     DROP TABLE _vf; DROP TABLE _vr;
 
     IF v_pol <> v_base + v_pred THEN
-      RAISE EXCEPTION 'B4.2 % : policy grants % but baseline % + predicted gain % = %',
-        left(r.uid::text,8), v_pol, v_base, v_pred, v_base + v_pred;
+      RAISE EXCEPTION E'B4.2 % : policy=% baseline=% predicted_gain=% (expected %)
+'
+        '   visible records=%  visible files=%  files linked to visible records=%
+'
+        '   -> if visible records is 0 the PREDICTION is broken; if it is large and
+'
+        '      linked-files is small, the POLICY is over-granting.',
+        left(r.uid::text,8), v_pol, v_base, v_pred, v_base + v_pred,
+        v_nvr, v_nvf, v_linked;
     END IF;
     n_checked := n_checked + 1;
     IF v_pred > 0 THEN n_gained := n_gained + 1; END IF;
