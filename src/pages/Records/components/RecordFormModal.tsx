@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
@@ -11,6 +11,8 @@ import SectionBlock from './SectionBlock';
 import DuplicateWarningModal from './DuplicateWarningModal';
 import { useAutoLink } from '../hooks/useAutoLink';
 import { useAutoFill } from '../hooks/useAutoFill';
+import { isSummaryModel } from '@/lib/lazyModels';
+import { supabase } from '@/lib/supabase';
 import { applyFollowupAutoStamp } from '../utils/followupAutoStamp';
 import { findDuplicateRecord, type DuplicateMatch } from '../utils/findDuplicateRecord';
 import type { AppRecord } from '@/types';
@@ -75,6 +77,44 @@ export default function RecordFormModal({
     return { ...(prefill ?? {}) };
   });
   const [saving, setSaving] = useState(false);
+
+  // SUMMARY models (e.g. market_listings) are NOT fully in the store — only a
+  // slim set lives in a separate slice, so `existingRecord` is null and the
+  // form would render EMPTY. Fetch the full row on demand from unified_records
+  // by id, exactly like RecordFormPage does, and populate the form when it
+  // lands. Gated to summary models + edit mode, so every other use is unchanged.
+  const [summaryDetail, setSummaryDetail] = useState<AppRecord | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const needsSummaryFetch = !!(model && recordId && !existingRecord && isSummaryModel(model));
+  useEffect(() => {
+    setSummaryDetail(null);
+    if (!needsSummaryFetch || !recordId || !supabase) {
+      setSummaryLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSummaryLoading(true);
+    void (async () => {
+      const { data } = await supabase
+        .from('unified_records')
+        .select('id,model_id,data,created_by_user_id,created_at,updated_at')
+        .eq('id', recordId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (data) {
+        setSummaryDetail(data as AppRecord);
+        // The form started empty (no store record); seed it with the fetched
+        // data. Safe — a summary source view opens read-first, unedited.
+        setFormData((data as AppRecord).data);
+      }
+      setSummaryLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [needsSummaryFetch, recordId]);
+
+  // The record to save against: the store copy, else the fetched summary row
+  // (so a summary edit UPDATEs rather than creating a duplicate).
+  const resolvedRecord = existingRecord ?? summaryDetail;
 
   // Run the auto-link + auto-fill effects against the same form state.
   // Both hooks no-op gracefully when the model is missing — must be called
@@ -153,10 +193,10 @@ export default function RecordFormModal({
 
     setSaving(true);
     try {
-      const id = existingRecord?.id ?? uuid();
+      const id = resolvedRecord?.id ?? uuid();
       const now = new Date().toISOString();
-      const record: AppRecord = existingRecord
-        ? { ...existingRecord, data: formData, updated_at: now }
+      const record: AppRecord = resolvedRecord
+        ? { ...resolvedRecord, data: formData, updated_at: now }
         : {
             id,
             model_id: model.id,
@@ -167,7 +207,7 @@ export default function RecordFormModal({
       const result = await saveRecord(record, {
         // Pass the loaded version so a concurrent edit on the same record
         // surfaces as a 'conflict' instead of silently overwriting.
-        expectedVersion: existingRecord?.version ?? null,
+        expectedVersion: resolvedRecord?.version ?? null,
       });
       if (result.status === 'conflict') {
         addToast(
@@ -220,6 +260,12 @@ export default function RecordFormModal({
       }
     >
       <div className="space-y-6 max-h-[calc(100vh-12rem)] overflow-y-auto pe-2">
+        {summaryLoading && !resolvedRecord && (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-charcoal/55">
+            <Loader2 size={16} className="animate-spin text-copper" />
+            {isAr ? 'جارٍ تحميل التفاصيل…' : 'Loading details…'}
+          </div>
+        )}
         {visibleSections.map((section) => (
           <SectionBlock
             key={section.id}
