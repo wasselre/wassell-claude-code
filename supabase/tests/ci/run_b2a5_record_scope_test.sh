@@ -71,7 +71,11 @@ dump() {   # $1 = phase label, $2 = relation kind (records|links)
     psql "$DBURL" -v ON_ERROR_STOP=1 -tAq > "$WORK/$2.$1.$short" <<SQL
 BEGIN;
 SET LOCAL statement_timeout='600s';
-SELECT set_config('test.uid','$uid', true);
+-- SET LOCAL, not SELECT set_config(): psql would print set_config()’s
+-- returned row into the dump file, which makes every persona look
+-- non-empty and every fingerprint unique, so both non-vacuity guards
+-- below would pass trivially. SET emits nothing.
+SET LOCAL test.uid = '$uid';
 SET LOCAL ROLE authenticated;
 $sel;
 ROLLBACK;
@@ -165,16 +169,34 @@ dump before records; dump before links
 fingerprints before records | sed 's/^/   rec  /'
 fingerprints before links   | sed 's/^/   link /'
 
-# The suite is worthless if every persona sees the same thing.
-DISTINCT_FP=$(fingerprints before records | awk '{print $2}' | sort -u | wc -l | tr -d ' ')
-if [ "$DISTINCT_FP" -lt 4 ]; then
-  echo "FAIL: only $DISTINCT_FP distinct record fingerprints — corpus does not discriminate"; exit 1
-fi
-NONZERO=$(fingerprints before records | grep -c "n=[1-9]" || true)
-if [ "$NONZERO" -lt 4 ]; then
-  echo "FAIL: only $NONZERO personas see any record"; exit 1
-fi
-echo "   OK: $DISTINCT_FP distinct fingerprints across 8 personas, $NONZERO non-empty"
+# ── NON-VACUITY ────────────────────────────────────────────────────────────
+# The suite is worthless if every persona sees the same thing, and these guards
+# are only meaningful if the dumps are clean. The first version of this script
+# used `SELECT set_config(...)` to impersonate, whose returned row landed in
+# every dump file — so all eight personas measured as non-empty (including the
+# three that must see nothing) and every fingerprint was unique because it
+# embedded the uid. Both guards below passed trivially. Hence `SET LOCAL` in
+# dump(), and hence the explicit expected counts here rather than a threshold.
+EXPECT="99999999=40000 11111111=36000 22222222=2400 33333333=500 44444444=0 55555555=0 66666666=19000 00000000=0"
+for pair in $EXPECT; do
+  who=${pair%%=*}; want=${pair##*=}
+  got=$(fingerprints before records | awk -v w="$who" '$1==w {sub(/^n=/,"",$3); print $3}')
+  if [ "$got" != "$want" ]; then
+    echo "FAIL: persona $who sees $got records, expected $want — the corpus is not the one this suite reasons about"; exit 1
+  fi
+done
+
+# Three personas MUST see nothing (no view permission / deactivated / no user
+# row). They are where a widening shows up first and unambiguously.
+ZERO=$(fingerprints before records | awk '$3=="n=0"' | wc -l | tr -d ' ')
+[ "$ZERO" -eq 3 ] || { echo "FAIL: expected exactly 3 zero-reach personas, found $ZERO"; exit 1; }
+
+# Distinct non-empty fingerprints: five different row sets, not five copies of
+# one. (The three empty personas share the empty-file hash, so they are excluded
+# rather than counted as diversity.)
+DISTINCT_FP=$(fingerprints before records | awk '$3!="n=0" {print $2}' | sort -u | wc -l | tr -d ' ')
+[ "$DISTINCT_FP" -eq 5 ] || { echo "FAIL: $DISTINCT_FP distinct non-empty fingerprints, expected 5 — corpus does not discriminate"; exit 1; }
+echo "   OK: 5 distinct non-empty row sets, 3 zero-reach personas, counts as expected"
 
 # ── APPLY ──────────────────────────────────────────────────────────────────
 echo
@@ -197,7 +219,11 @@ echo "== structural gate: the hoisted set is evaluated once, not per row"
 psql "$DBURL" -v ON_ERROR_STOP=1 -tAq > "$WORK/plan.txt" <<'SQL'
 BEGIN;
 SET LOCAL statement_timeout='600s';
-SELECT set_config('test.uid','11111111-1111-1111-1111-111111111111', true);
+-- SET LOCAL, not SELECT set_config(): psql would print set_config()’s
+-- returned row into the dump file, which makes every persona look
+-- non-empty and every fingerprint unique, so both non-vacuity guards
+-- below would pass trivially. SET emits nothing.
+SET LOCAL test.uid = '11111111-1111-1111-1111-111111111111';
 SET LOCAL ROLE authenticated;
 EXPLAIN (ANALYZE, TIMING OFF, COSTS OFF) SELECT count(*) FROM public.file_links;
 ROLLBACK;
@@ -279,13 +305,25 @@ echo "   OK: rollback and re-application both preserve every row set"
 echo
 echo "== timings (INFORMATIONAL — not a gate)"
 timeit() {  # $1 = uid, $2 = label
+  # Timed inside plpgsql, not with a LATERAL clock_timestamp() trick: the
+  # planner is free to evaluate the outer clock_timestamp() before the lateral
+  # finishes, which is why the first version of this reported a flat 0.0 ms.
   psql "$DBURL" -v ON_ERROR_STOP=1 -tAq <<SQL | grep -E "^T "
+CREATE TEMP TABLE IF NOT EXISTS _t(ms numeric); TRUNCATE _t;
+GRANT INSERT ON _t TO authenticated;
 BEGIN;
 SET LOCAL statement_timeout='600s';
-SELECT set_config('test.uid','$1', true);
+SET LOCAL test.uid = '$1';
 SET LOCAL ROLE authenticated;
-SELECT 'T $2 ' || round((EXTRACT(epoch FROM (clock_timestamp()-t.a))*1000)::numeric,1) || ' ms'
-  FROM (SELECT clock_timestamp() AS a) t, LATERAL (SELECT count(*) AS n FROM public.file_links) x;
+DO \$\$
+DECLARE t0 timestamptz; n bigint;
+BEGIN
+  t0 := clock_timestamp();
+  SELECT count(*) INTO n FROM public.file_links;
+  INSERT INTO _t VALUES (EXTRACT(epoch FROM clock_timestamp()-t0)*1000);
+END \$\$;
+RESET ROLE;
+SELECT 'T $2 ' || round(ms,1) || ' ms' FROM _t;
 ROLLBACK;
 SQL
 }
