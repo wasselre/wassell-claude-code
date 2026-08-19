@@ -17,7 +17,7 @@ import { useAppStore } from '@/stores/appStore';
 import {
   AD_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosCampaign, MosContentRow,
   MosDailyEntry, MosExecution, MosTargeting, PLATFORM_LABELS,
-  deleteAd, fetchContentList, fetchExecutionDetail, saveAd, saveDaily, saveExecution,
+  deleteAd, fetchContentList, fetchExecutionDetail, mosMetaPushStructure, saveAd, saveDaily, saveExecution,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { PURPOSE_PILL_LABELS } from './CampaignDetailPage';
@@ -115,6 +115,28 @@ export default function ExecutionDetailPage() {
     // adContent is stable per load; contentOf reads it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ads, adContent]);
+
+  const pushToMeta = async (): Promise<void> => {
+    if (!execution) return;
+    setBusy(true);
+    try {
+      const r = await mosMetaPushStructure(execution.id);
+      const sets = r.ad_sets.length;
+      const errs = r.errors.length;
+      addToast(
+        isAr
+          ? `أُنشئت الحملة و${sets} مجموعة إعلانية في ميتا (موقوفة).${errs ? ` تعذّر ${errs}.` : ''}`
+          : `Created the campaign + ${sets} ad set(s) in Meta (paused).${errs ? ` ${errs} failed.` : ''}`,
+        errs ? 'error' : 'success',
+      );
+      if (r.errors.length) console.error('[meta push] ad set errors:', r.errors);
+      await load();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const toggleExecStatus = async (): Promise<void> => {
     if (!execution) return;
@@ -250,18 +272,32 @@ export default function ExecutionDetailPage() {
                 {isAr ? 'إضافة إعلان' : 'Add an ad'}
               </button>
             )}
-            {/* Ambition, not reality: disabled until a platform connection
-                exists (settings → platforms is where that gets built). */}
-            <button
-              type="button"
-              className="btn btn-p"
-              disabled
-              title={isAr
-                ? 'معطّل حتى تُربط المنصة — الأرقام تُدخل يدويًا.'
-                : 'Disabled until the platform is connected — numbers are entered by hand.'}
-            >
-              {isAr ? 'مزامنة من المنصة' : 'Sync from platform'}
-            </button>
+            {/* Build the planned campaign + ad sets in Meta (paused). Ads are
+                added by the buyer in Meta; the hourly sync matches them back. */}
+            {platformSchema && can('manage_paid_ads') && (
+              execution.platform_campaign_id ? (
+                <button
+                  type="button"
+                  className="btn"
+                  disabled
+                  title={`${isAr ? 'مربوطة بحملة ميتا' : 'Linked to Meta campaign'} ${execution.platform_campaign_id}`}
+                >
+                  {isAr ? '✓ مربوطة بميتا' : '✓ Linked to Meta'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-p"
+                  disabled={busy}
+                  onClick={() => void pushToMeta()}
+                  title={isAr
+                    ? 'تُنشئ الحملة والمجموعات الإعلانية في ميتا (موقوفة) وتربط المعرفات تلقائيًا. الإعلانات يضيفها المشتري في ميتا.'
+                    : 'Creates the campaign + ad sets in Meta (paused) and links the ids automatically. Ads are added by the buyer in Meta.'}
+                >
+                  {isAr ? 'إنشاء في ميتا' : 'Create in Meta'}
+                </button>
+              )
+            )}
           </div>
         </div>
         <div className="tabs">

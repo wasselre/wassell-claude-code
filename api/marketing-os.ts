@@ -28,6 +28,7 @@ import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import { makeServiceClient } from './_lib/serviceClient.js';
 import { runMetaSync } from './_lib/marketing/metaSync.js';
 import { loadMetaConfig, MetaMarketingClient, MetaApiError } from './_lib/marketing/metaMarketingApi.js';
+import { buildCampaignPayload, buildAdSetPayload, type PushCampaign, type PushExecution } from './_lib/marketing/metaPush.js';
 
 export const config = { runtime: 'edge' };
 
@@ -3635,6 +3636,91 @@ export default async function handler(req: Request): Promise<Response> {
           return jsonOk({ ok: true, node_id: nodeId, result: out });
         } catch (e) {
           return jsonError(502, `Meta update failed: ${metaErr(e)}`);
+        }
+      }
+
+      case 'meta_push_structure': {
+        // Build the PLANNED execution (its campaign + ad sets) in Meta as a
+        // PAUSED skeleton, then write the returned platform ids straight back
+        // onto Wassell so the execution is linked with no manual id typing.
+        // Ads/creatives are NOT created here — Meta blocks app-made creatives
+        // while the app is in Development mode, so the buyer adds them in Meta
+        // and the hourly sync matches them back by platform id.
+        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
+        const executionId = str(body.execution_id);
+        const validateOnly = body.validate_only === true;
+        if (!executionId) return jsonError(400, 'execution_id is required');
+        const cfg = loadMetaConfig(); if (!cfg) return jsonError(400, 'Meta not configured');
+
+        const execRes = await sb.from('mos_campaign_executions')
+          .select('id, campaign_id, platform, label, budget, starts_on, ends_on, targeting, platform_settings, platform_campaign_id')
+          .eq('id', executionId).maybeSingle();
+        const ef = dbFail(execRes.error); if (ef) return ef;
+        const execRow = execRes.data as (PushExecution & { campaign_id: string; platform_campaign_id: string | null }) | null;
+        if (!execRow) return jsonError(404, 'execution not found');
+        if (execRow.platform !== 'meta' && execRow.platform !== 'instagram') {
+          return jsonError(400, 'Only Meta/Instagram executions can be pushed to Meta.');
+        }
+        if (execRow.platform_campaign_id) {
+          return jsonError(409, `This execution is already linked to Meta campaign ${execRow.platform_campaign_id}.`);
+        }
+
+        const campRes = await sb.from('mos_campaigns')
+          .select('id, ref, name, objective').eq('id', execRow.campaign_id).maybeSingle();
+        const cf = dbFail(campRes.error); if (cf) return cf;
+        const campaign = campRes.data as PushCampaign | null;
+        if (!campaign) return jsonError(404, 'campaign not found');
+
+        const setsRes = await sb.from('mos_ad_sets')
+          .select('id, name, platform_adset_id, sort_order').eq('execution_id', executionId)
+          .is('archived_at', null).order('sort_order', { ascending: true });
+        const sf = dbFail(setsRes.error); if (sf) return sf;
+        const adSets = (setsRes.data ?? []) as Array<{ id: string; name: string | null; platform_adset_id: string | null }>;
+
+        const client = new MetaMarketingClient(cfg);
+        try {
+          // 1) Campaign
+          const campaignPayload = buildCampaignPayload(campaign, execRow);
+          const campaignResult = await client.createCampaign(campaignPayload, validateOnly);
+          const metaCampaignId = campaignResult.id;
+          if (!validateOnly && metaCampaignId) {
+            const up = await sb.from('mos_campaign_executions')
+              .update({ platform_campaign_id: metaCampaignId, updated_at: new Date().toISOString() })
+              .eq('id', executionId);
+            const uf = dbFail(up.error); if (uf) return uf;
+          }
+
+          // 2) Ad sets — one per planned ad set (a single default if none planned).
+          const plan = adSets.length
+            ? adSets
+            : [{ id: null as string | null, name: execRow.label ?? 'Ad set', platform_adset_id: null }];
+          const createdSets: Array<{ wassell_ad_set_id: string | null; platform_adset_id: string; name: string }> = [];
+          const errors: Array<{ ad_set: string; error: string }> = [];
+          for (const s of plan) {
+            if (s.platform_adset_id) continue; // already linked — don't duplicate
+            try {
+              const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId, cfg.pageId);
+              const asResult = await client.createAdSet(p, validateOnly);
+              if (!validateOnly && s.id && asResult.id) {
+                const up = await sb.from('mos_ad_sets')
+                  .update({ platform_adset_id: asResult.id, updated_at: new Date().toISOString() }).eq('id', s.id);
+                if (up.error) console.error('[marketing-os] ad set link write failed:', up.error.message);
+              }
+              createdSets.push({ wassell_ad_set_id: s.id, platform_adset_id: asResult.id ?? '(validated)', name: String(p.name) });
+            } catch (e) {
+              errors.push({ ad_set: s.name ?? '(unnamed)', error: metaErr(e) });
+            }
+          }
+
+          return jsonOk({
+            ok: true,
+            validate_only: validateOnly,
+            campaign: { platform_campaign_id: metaCampaignId, name: String(campaignPayload.name) },
+            ad_sets: createdSets,
+            errors,
+          });
+        } catch (e) {
+          return jsonError(502, `Meta push failed at campaign: ${metaErr(e)}`);
         }
       }
 

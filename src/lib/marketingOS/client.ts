@@ -1980,3 +1980,22 @@ export const mosMetaUpdate = (
   nodeId: string, payload: Record<string, unknown>,
 ): Promise<{ ok: boolean; node_id: string }> =>
   call('meta_update', { node_id: nodeId, payload });
+
+export interface MetaPushResult {
+  ok: boolean;
+  validate_only: boolean;
+  campaign: { platform_campaign_id: string; name: string };
+  ad_sets: Array<{ wassell_ad_set_id: string | null; platform_adset_id: string; name: string }>;
+  errors: Array<{ ad_set: string; error: string }>;
+}
+
+/**
+ * Build this planned execution (its campaign + ad sets) in Meta as a PAUSED
+ * skeleton and link the returned platform ids back. Ads/creatives are added by
+ * the buyer in Meta and matched on sync. validateOnly = Meta dry-run (creates
+ * nothing). Gated on manage_paid_ads.
+ */
+export const mosMetaPushStructure = (
+  executionId: string, validateOnly = false,
+): Promise<MetaPushResult> =>
+  call<MetaPushResult>('meta_push_structure', { execution_id: executionId, validate_only: validateOnly });
