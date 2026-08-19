@@ -38,7 +38,7 @@ import Button from '@/components/ui/Button';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import type {
   BusinessFileFacets, BusinessFileRow, BusinessFileSort, FileDocumentTypeRow, FileViewRow,
-  LibraryFilters, LibraryGrouping, LibraryLayout, PageLinkSummary, FileRow,
+  LibraryFilters, LibraryGrouping, PageLinkSummary, FileRow,
 } from '@/types';
 import {
   LIBRARY_PAGE_SIZE, errorText, fetchPageLinks, listDocumentTypes, searchBusinessFiles,
@@ -385,7 +385,7 @@ export default function FilesLibraryPage() {
             onSort={(s: BusinessFileSort) => pushState({ sort: s })}
             grouping={grouping}
             onGrouping={(g) => pushState({ grouping: g })}
-            layout={(layout satisfies LibraryLayout)}
+            layout={layout}
             onLayout={(l) => pushState({ layout: l })}
           />
 
