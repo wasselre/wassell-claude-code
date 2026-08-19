@@ -63,11 +63,12 @@ dump() {   # $1 = phase label, $2 = relation kind (records|links)
   local uid short sel
   for uid in $PERSONAS; do
     short="${uid:0:8}"
-    if [ "$2" = records ]; then
-      sel="SELECT id::text FROM public.records ORDER BY 1"
-    else
-      sel="SELECT file_id||'|'||model_id||'|'||record_id FROM public.file_links ORDER BY 1"
-    fi
+    case "$2" in
+      records) sel="SELECT id::text FROM public.records ORDER BY 1" ;;
+      links)   sel="SELECT file_id||'|'||model_id||'|'||record_id FROM public.file_links ORDER BY 1" ;;
+      derived) sel="SELECT file_id::text FROM public.wassell_my_record_derived_file_ids() ORDER BY 1" ;;
+      *) echo "dump: unknown kind $2" >&2; exit 1 ;;
+    esac
     psql "$DBURL" -v ON_ERROR_STOP=1 -tAq > "$WORK/$2.$1.$short" <<SQL
 BEGIN;
 SET LOCAL statement_timeout='600s';
@@ -331,5 +332,87 @@ for uid in 99999999-9999-9999-9999-999999999999 11111111-1111-1111-1111-11111111
   timeit "$uid" "${uid:0:8}" | sed 's/^/   /'
 done
 
+# ═══════════════════════════════════════════════════════════════════════════
+# B2A.6 — the SECOND caller of wassell_can_view_record
+#
+# B2A.5 hoisted the scope class into the records_view POLICY. B4's
+# wassell_my_record_derived_file_ids() calls wassell_can_view_record DIRECTLY,
+# so it got none of that — and both files_select and file_links_select invoke it
+# once per statement. Same lemma, different call site, so it is validated here
+# rather than in a suite of its own.
+# ═══════════════════════════════════════════════════════════════════════════
 echo
-echo "B2A.5 record scope fast path: ALL CHECKS PASSED"
+echo "== B2A.6: B4's record-derived call site"
+# Not piped straight into grep: with `set -o pipefail` a grep that matches
+# nothing would abort the run, and `|| true` would swallow psql's own failure.
+psql "$DBURL" -v ON_ERROR_STOP=1 -q -f "$ROOT/supabase/tests/ci/fixture_b2a6_derived_access.sql" \
+  > "$WORK/b2a6_fixture.log" 2>&1
+grep -E "NOTICE|ERROR" "$WORK/b2a6_fixture.log" | sed 's/^/   /' || true
+
+dump d_before derived
+fingerprints d_before derived | sed 's/^/   derived /'
+
+# Same non-vacuity bar as the record sets: the personas must differ here too,
+# or B2A.6 is being validated against a corpus that cannot show a change.
+D_DISTINCT=$(fingerprints d_before derived | awk '$3!="n=0" {print $2}' | sort -u | wc -l | tr -d ' ')
+[ "$D_DISTINCT" -ge 3 ] || { echo "FAIL: only $D_DISTINCT distinct non-empty derived sets — call site does not discriminate"; exit 1; }
+
+echo "   applying B2A.6"
+run "$ROOT/supabase/migrations/2026-08-19_02_derived_file_ids_fast_path.sql"
+dump d_after derived
+compare d_before d_after derived || { echo "B2A.6 FAILED the equivalence bar"; exit 1; }
+echo "   OK: derived file-id set byte-identical for every persona, +0 / -0"
+
+# The kill switch must still kill. A B4 toggle that no longer disables the
+# feature is worse than a slow one.
+echo "   kill switch:"
+q "UPDATE public.file_access_settings SET derived_view_enabled = false;" >/dev/null
+dump d_off derived
+OFFTOTAL=$(fingerprints d_off derived | awk '{sub(/^n=/,"",$3); s+=$3} END {print s+0}')
+[ "$OFFTOTAL" -eq 0 ] || { echo "   FAIL: derived_view_enabled=false still yields $OFFTOTAL file ids"; exit 1; }
+q "UPDATE public.file_access_settings SET derived_view_enabled = true;" >/dev/null
+dump d_back derived
+compare d_after d_back derived || { echo "   FAIL: re-enabling did not restore the derived sets"; exit 1; }
+echo "   OK: OFF yields nothing for every persona; ON restores exactly"
+
+# Negative controls. The first must WIDEN (orphan edges leak), the second must
+# NARROW (NOT IN against a NULL-bearing set yields nothing) — so this pair
+# cannot be satisfied by a mutant that simply does nothing.
+echo "   negative controls:"
+run "$ROOT/supabase/tests/ci/mutant_b2a6_branch1_skips_existence.sql"
+dump d_mut1 derived
+W=0
+for uid in $PERSONAS; do
+  s="${uid:0:8}"
+  n=$(comm -13 <(sort "$WORK/derived.d_after.$s") <(sort "$WORK/derived.d_mut1.$s") | wc -l | tr -d ' ')
+  W=$((W+n))
+done
+[ "$W" -gt 0 ] || { echo "   FAIL: dropping branch 1's existence join leaked nothing — orphan edges untested"; exit 1; }
+echo "   OK   branch1_skips_existence: $W orphan file id(s) leaked"
+run "$ROOT/supabase/migrations/2026-08-19_02_derived_file_ids_fast_path.sql"
+
+run "$ROOT/supabase/tests/ci/mutant_b2a6_null_in_allm.sql"
+dump d_mut2 derived
+N=0
+for uid in $PERSONAS; do
+  s="${uid:0:8}"
+  n=$(comm -23 <(sort "$WORK/derived.d_after.$s") <(sort "$WORK/derived.d_mut2.$s") | wc -l | tr -d ' ')
+  N=$((N+n))
+done
+[ "$N" -gt 0 ] || { echo "   FAIL: a NULL in the hoisted set changed nothing — the IS NOT NULL guard is untested"; exit 1; }
+echo "   OK   null_in_allm: $N file id(s) silently LOST — the guard is load-bearing"
+run "$ROOT/supabase/migrations/2026-08-19_02_derived_file_ids_fast_path.sql"
+dump d_restored derived
+compare d_after d_restored derived || { echo "   FAIL: restore after mutants diverged"; exit 1; }
+
+echo "   rollback + re-apply:"
+run "$ROOT/supabase/rollback/2026-08-19_02_derived_file_ids_fast_path_down.sql"
+dump d_rb derived
+compare d_before d_rb derived || { echo "   FAIL: B2A.6 rollback did not restore the pre-migration derived sets"; exit 1; }
+run "$ROOT/supabase/migrations/2026-08-19_02_derived_file_ids_fast_path.sql"
+dump d_re derived
+compare d_after d_re derived || { echo "   FAIL: B2A.6 re-apply did not return to the post-migration state"; exit 1; }
+echo "   OK: rollback and re-application both preserve every derived set"
+
+echo
+echo "B2A.5 + B2A.6 record scope fast path: ALL CHECKS PASSED"
