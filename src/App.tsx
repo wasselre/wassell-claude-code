@@ -67,6 +67,7 @@ import MyTasksPage from '@/pages/Sales/MyTasksPage';
 import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage';
 import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
 import MarketIntelligencePage from '@/pages/MarketIntelligence/MarketIntelligencePage';
+import MarketAutomationPage from '@/pages/MarketAutomation/MarketAutomationPage';
 import MarketingIntelligencePage from '@/pages/MarketingIntelligence/MarketingIntelligencePage';
 // ── The Marketing WORKSPACE ────────────────────────────────────────────
 // A second workspace, not a page inside the Sales one: it mounts OUTSIDE
@@ -354,6 +355,7 @@ export default function App() {
           <Route path="/sales/process" element={<RequirePageAccess pageId="sales_process"><SalesProcessStudioPage /></RequirePageAccess>} />
           <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
           <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
+          <Route path="/market-automation" element={<MarketAutomationPage />} />
           <Route path="/marketing-intelligence" element={<RequirePageAccess pageId="marketing_intelligence"><MarketingIntelligencePage /></RequirePageAccess>} />
           {/* The old in-Sales marketing page is gone. Anyone with a bookmark
               (or a profile whose sidebar still points here) lands in the new

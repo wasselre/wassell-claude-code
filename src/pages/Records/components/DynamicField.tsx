@@ -13,6 +13,7 @@ import PhoneInput from './PhoneInput';
 import DynamicCell from './DynamicCell';
 import AutoGrowTextarea from './AutoGrowTextarea';
 import NotesField from './NotesField';
+import ScrapedExtrasField from './ScrapedExtrasField';
 import RangeField from './RangeField';
 import TableField from './TableField';
 import DateTimePicker from './DateTimePicker';
@@ -249,6 +250,9 @@ export default function DynamicField({
         );
 
       case 'notes':
+        // scraped_extras is a structured {raw_label, details} array (the extracted
+        // details catch-all), not comment entries — render its own read-only grid.
+        if (field.name === 'scraped_extras') return <ScrapedExtrasField value={value} />;
         return <NotesField value={value} onChange={onChange} />;
 
       case 'range':
