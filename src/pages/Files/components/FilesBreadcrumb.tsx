@@ -1,7 +1,8 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, ChevronLeft, Home } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { filesLibraryEnabled } from '@/lib/files/libraryUrl';
 import type { FolderRow } from '@/types';
 
 interface Props {
@@ -15,8 +16,13 @@ interface Props {
 
 export default function FilesBreadcrumb({ folders, currentFolderId, sharedRoot = false }: Props) {
   const { t } = useTranslation();
+  const location = useLocation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const Chevron = isAr ? ChevronLeft : ChevronRight;
+  // With the B5 Library on, `/files` is the Library — so the folder root crumb
+  // has to point at the Legacy folders tab instead, or climbing out of a
+  // folder silently leaves the folder browser altogether.
+  const foldersRoot = filesLibraryEnabled(location.search) ? '/files/folders' : '/files';
 
   // Walk the chain root → leaf. Cap at 10 to avoid pathological loops.
   const chain: FolderRow[] = [];
@@ -27,8 +33,12 @@ export default function FilesBreadcrumb({ folders, currentFolderId, sharedRoot =
     cursor = cursor.parent_folder_id ? folders.find((f) => f.id === cursor!.parent_folder_id) ?? null : null;
   }
 
-  const rootLabel = sharedRoot ? t('files.breadcrumb.shared_root') : t('files.breadcrumb.root');
-  const rootHref = sharedRoot ? '/files/shared' : '/files';
+  const rootLabel = sharedRoot
+    ? t('files.breadcrumb.shared_root')
+    : foldersRoot === '/files/folders'
+      ? t('files.tabs.legacy_folders')
+      : t('files.breadcrumb.root');
+  const rootHref = sharedRoot ? '/files/shared' : foldersRoot;
 
   return (
     <nav className="flex items-center gap-1 text-sm flex-wrap" aria-label="breadcrumb">

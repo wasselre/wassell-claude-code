@@ -179,6 +179,37 @@ jobs:
       - name: Authz helper scoping — direct-RPC abuse, reach unchanged
         run: bash supabase/tests/ci/run_helper_scoping_test.sh
 
+  b5-file-views:
+    # Designated validator for
+    # supabase/migrations/2026-08-19_10_file_views.sql (Phase 3 · B5 — saved
+    # views + the file_document_types read grant). The db-migrations job globs
+    # specific date prefixes and would never execute it, so it gets its own job,
+    # the same way B1 and B2A do.
+    #
+    # The interesting assertions are the OWNERSHIP ones, and they only mean
+    # something under a real `authenticated` role with JWT claims — inside a DO
+    # block the invoking superuser bypasses RLS entirely and every one of them
+    # would pass while testing nothing. The smoke does both, and the runner
+    # refuses to report success on a fixture with fewer than two users.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: B5 — saved views, ownership under RLS, idempotency, rollback
+        run: bash supabase/tests/ci/run_b5_file_views_test.sh
+
   b2a4-authz:
     # Designated validator for
     # supabase/migrations/2026-08-18_02_link_authz_denormalized.sql (B2A.4).

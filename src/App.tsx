@@ -102,6 +102,7 @@ const ProcessJourneyPage = lazy(() => import('@/pages/SalesStudio/ProcessJourney
 const ExperimentsPage = lazy(() => import('@/pages/SalesStudio/ExperimentsPage'));
 const ExperimentDetailPage = lazy(() => import('@/pages/SalesStudio/ExperimentDetailPage'));
 const FilesPage = lazy(() => import('@/pages/Files/FilesPage'));
+const FilesRoot = lazy(() => import('@/pages/Files/FilesRoot'));
 const DocumentEditorPage = lazy(() => import('@/pages/Documents/DocumentEditorPage'));
 const PublicShareFilePage = lazy(() => import('@/pages/PublicShare/PublicShareFilePage'));
 const RateVisitPage = lazy(() => import('@/pages/PublicRate/RateVisitPage'));
@@ -340,13 +341,21 @@ export default function App() {
           }
         >
           <Route path="/" element={<HomePage />} />
-          <Route path="/files" element={<FilesPage />} />
+          {/* Phase 3 · B5. /files is the Business Files Library when the flag
+              is on and the folder-first page when it is off — FilesRoot is the
+              whole of that switch, and the batch's rollback boundary. */}
+          <Route path="/files" element={<FilesRoot />} />
           <Route path="/files/shared" element={<FilesPage forceShared />} />
           {/* Document editor — full-page, lives at /files/doc/:fileId so the
               breadcrumb back-arrow stays inside the Files hierarchy. Must
               come BEFORE /files/:folderId so the literal "doc" segment
               doesn't get matched as a folder id. */}
           <Route path="/files/doc/:fileId" element={<DocumentEditorPage />} />
+          {/* Legacy folders root. Also a literal segment, so it must precede
+              /files/:folderId — otherwise "folders" is read as a folder id. */}
+          <Route path="/files/folders" element={<FilesPage />} />
+          {/* Unchanged, so every existing /files/<uuid> deep link — bookmarks,
+              links pasted in WhatsApp, the breadcrumb — keeps working. */}
           <Route path="/files/:folderId" element={<FilesPage />} />
           {/* Sales Operations pages — per-profile access via profile.page_access
               (see src/lib/customPages.ts). Defaults preserve prior behavior:

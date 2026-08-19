@@ -1515,6 +1515,21 @@ export type {
   SharedFileResponse,
   WasselDocumentRow,
   DocApprovalStatus,
+  // Phase 3 · B5 — the Business Files Library
+  FileStatus,
+  FileConfidentiality,
+  FileOrigin,
+  FileClass,
+  BusinessFileSort,
+  FileDocumentTypeRow,
+  BusinessFileRow,
+  BusinessFileFacets,
+  BusinessFilesSearchResult,
+  LibraryFilters,
+  LibraryGrouping,
+  LibraryLayout,
+  FileViewRow,
+  PageLinkSummary,
 } from './files';
 
 export type ActivityLogStatus = 'success' | 'error' | 'warning' | 'info';

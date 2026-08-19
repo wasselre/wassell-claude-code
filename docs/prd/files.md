@@ -1,7 +1,7 @@
 # PRD: Files System (Drive-style file library)
 
 **Status:** Live
-**Last updated:** 2026-08-18 (**Phase 3 · B2A.4 — file authorization performance, and one authority for both policies.** `file_links` gains two denormalized columns, `uploaded_by_user_id` and `folder_id`, copied from the file and kept current by `tg_file_links_fill_authz` (BEFORE INSERT/UPDATE OF file_id on the edge) and `tg_files_push_authz` (AFTER UPDATE OF those two columns on `files`). The second trigger is necessary because Phase 2's `files_sync_file_links` deliberately exits early unless `model_id`/`record_id` change — which a folder move is not. With the inputs on the row, `file_links_select` no longer reaches into `files` at all: measured on production-shaped CI, the worst authorization facet went **7,133 ms → 98 ms**, and timings are now flat across callers (90–98 ms whether the caller can see 0 or 7,018 edges) because cost no longer scales with reach. **An earlier set-based attempt (B2A.3) was built, measured and rejected**: materialising the set of visible files costs a full scan of `files`, which amortises over an aggregate (3.6× faster) but is paid repeatedly by point lookups (**59× slower**); it was never applied anywhere. **This also closes a real gap** — `files_select` was corrected by B2A.2 (2026-08-17) to carry the identity invariant at the top, but `file_links_select` still routed through `wassell_can_access_file` → the pre-B2A.2 `wassell_can_access_file_row`, so the two tables were governed by two different authorities. Both policies are now generated from **one predicate string** in the migration, differing only in which column names the file, and CI asserts they still reduce to the same 590-character predicate. Reach is unchanged: every persona's edge set is byte-identical before and after (**+0 / −0**), verified on CI and by per-user fingerprints on production. Because denormalized authorization can go stale — which would not show a wrong number but **grant access that was revoked** — CI asserts the invariant at rest, under a folder move, under an owner change, on fresh insert, and end-to-end: a folder-granted caller must LOSE a file's edges when it leaves their folder and regain them when it returns. Two negative controls (each half of the rule removed separately) must make fingerprints diverge, or the suite is not testing that half. Rollback: `supabase/rollback/2026-08-18_02_link_authz_denormalized_down.sql` — note it is NOT reach-neutral on `file_links`, since it restores the older uncorrected authority.)
+**Last updated:** 2026-08-19 (**Phase 3 · B5 — the Business Files Library.** `/files` becomes a metadata-driven library over the whole canonical store, behind a feature flag; folders move to a **Legacy folders** tab and are otherwise untouched. Behind it: `file_views` (saved queries), the `file_document_types` read grant B1 deliberately deferred, and the Phase 1 **"Used in"** panel promoted from flag-gated to primary with `VITE_FEATURE_FILE_LINKS` retired. See the "Business Files Library" section below. Prior entry: **Phase 3 · B2A.4 — file authorization performance, and one authority for both policies.** `file_links` gains two denormalized columns, `uploaded_by_user_id` and `folder_id`, copied from the file and kept current by `tg_file_links_fill_authz` (BEFORE INSERT/UPDATE OF file_id on the edge) and `tg_files_push_authz` (AFTER UPDATE OF those two columns on `files`). The second trigger is necessary because Phase 2's `files_sync_file_links` deliberately exits early unless `model_id`/`record_id` change — which a folder move is not. With the inputs on the row, `file_links_select` no longer reaches into `files` at all: measured on production-shaped CI, the worst authorization facet went **7,133 ms → 98 ms**, and timings are now flat across callers (90–98 ms whether the caller can see 0 or 7,018 edges) because cost no longer scales with reach. **An earlier set-based attempt (B2A.3) was built, measured and rejected**: materialising the set of visible files costs a full scan of `files`, which amortises over an aggregate (3.6× faster) but is paid repeatedly by point lookups (**59× slower**); it was never applied anywhere. **This also closes a real gap** — `files_select` was corrected by B2A.2 (2026-08-17) to carry the identity invariant at the top, but `file_links_select` still routed through `wassell_can_access_file` → the pre-B2A.2 `wassell_can_access_file_row`, so the two tables were governed by two different authorities. Both policies are now generated from **one predicate string** in the migration, differing only in which column names the file, and CI asserts they still reduce to the same 590-character predicate. Reach is unchanged: every persona's edge set is byte-identical before and after (**+0 / −0**), verified on CI and by per-user fingerprints on production. Because denormalized authorization can go stale — which would not show a wrong number but **grant access that was revoked** — CI asserts the invariant at rest, under a folder move, under an owner change, on fresh insert, and end-to-end: a folder-granted caller must LOSE a file's edges when it leaves their folder and regain them when it returns. Two negative controls (each half of the rule removed separately) must make fingerprints diverge, or the suite is not testing that half. Rollback: `supabase/rollback/2026-08-18_02_link_authz_denormalized_down.sql` — note it is NOT reach-neutral on `file_links`, since it restores the older uncorrected authority.)
 
 **Prior Phase 3 batches, for the record:** B1 (2026-08-16) added the business-file metadata foundation, shipped dark — see `supabase/migrations/2026-08-16_01_business_file_metadata.sql`. B2A (2026-08-16) hoisted per-caller authorization values into InitPlans. B2A.2 (2026-08-17) rebuilt `files_select` on caller-scoped grant sets and restored the identity invariant to the policy's top level, after B2A.1 briefly widened reach in production and was rolled back. A follow-up on 2026-08-17 caller-scoped the three authorization helpers, which had accepted a target user and were therefore callable directly via PostgREST. B2 (business-file search) remains unmerged on PR #21.
 
@@ -176,6 +176,168 @@ The SPA polls the same endpoint (no `start`) until the latest job reads `done`/`
 
 **Capacity reality (measured live 2026-06-11):** gs needs ~95 s of CPU for a 19 MB brochure. Fly `shared-cpu-1x` machines run that in ~2m50s when their burst credits are fresh but throttle to 1/16 vCPU once drained (>9 min → timeout — the first two test runs both landed on the same drained machine while four fresh ones sat idle). Mitigation shipped: a timed-out job is REQUEUED (`pdf_compress_requeue`, ≤3 attempts) so a different machine claims it, and the throttled machine sits out two poll intervals so it doesn't re-claim its own requeue. Sustained heavy bulk (dozens of big brochures back-to-back) will still drain the whole fleet's credits and slow down — that's a machine-scaling (billing) decision, same posture as the office-preview limit.
 
+## The Business Files Library (Phase 3 · B5, added 2026-08-19 — **behind a feature flag**)
+
+`/files` becomes a **Library**: a metadata-driven view over the whole canonical
+store, with a filter bar, grouping, grid and list layouts, a detail panel that
+edits metadata, and saved views. Folders are **not removed** — they move to a
+**Legacy folders** tab and behave exactly as before, including the folder-cascade
+permission path that three grants depend on.
+
+**In plain terms:** before this, finding a file meant knowing its filename or
+which folder somebody put it in — and 93% of files are in no folder at all. Now
+you can ask for "floor plans, on projects, added this month, that nobody owns"
+and get an answer. The folders still work; they are just no longer the only way in.
+
+### The flag, and the rollback
+
+`filesLibraryEnabled()` (`src/lib/files/libraryUrl.ts`) reads, most specific first:
+
+1. `?library=1` / `?library=0` in the URL — applies immediately AND is remembered
+   in localStorage, so one person can turn the Library on or off **without a deploy**.
+2. the remembered value from a previous use of (1);
+3. `VITE_FEATURE_FILES_LIBRARY=1` — the environment-wide default.
+
+**Default OFF.** `FilesRoot` is the entire switch: flag off and `/files` renders
+the folder-first `FilesPage` unchanged. Verified live: with `?library=0` the tabs
+revert to the original two, the views rail disappears and the folder UI returns.
+
+### Routes
+
+| route | flag ON | flag OFF |
+|---|---|---|
+| `/files` | the Library | the folder-first page |
+| `/files/folders` | folder-first page (Legacy tab root) | — |
+| `/files/:folderId` | folder-first page | folder-first page |
+| `/files/shared` | Shared with me | Shared with me |
+
+`/files/:folderId` is untouched, so every existing deep link keeps working. The
+breadcrumb's root crumb points at `/files/folders` when the Library is on —
+without that, climbing out of a folder would silently leave the folder browser.
+
+### Key behaviors
+
+- **One round trip per query.** `business_files_search` (B2) returns the page,
+  the total AND the facet counts together, so the filter bar costs nothing extra.
+  It is SECURITY INVOKER, so **two people running the same query correctly get
+  different totals** — RLS is the only authority on reach.
+- **Empty and broken are different screens.** A failed search renders a red card
+  naming the failure with a Retry button, **keeps the previous results on
+  screen**, and says so ("what you see below is an earlier result"). It never
+  renders the empty state. This is deliberate: the Project Finder once shipped a
+  504 that looked like "no matches" and it went unnoticed for weeks.
+- **Free text is debounced (400 ms); nothing else is.** `business_files_search`
+  measures 350–1,100 ms on production, so a call per keystroke would put eight in
+  flight for one word. Facets, sorts and paging fire immediately — they are
+  deliberate single actions.
+- **Stale answers are dropped, not rendered.** Every request carries a sequence
+  number; a slow early response that lands after a fast later one is discarded.
+- **The URL is the query.** Filters, free text, grouping, sort, layout and page
+  are all URL-encoded (`?type=floor_plan,brochure&group=document_type`), so any
+  filtered state is a shareable link and Back works. Unknown parameters are
+  ignored; an unknown sort falls back to the default rather than being passed
+  through, because the RPC RAISES on one — a stale bookmark must not be a broken
+  page.
+- **An empty array is not "no filter".** The RPC tests key presence, so
+  `{tags: []}` means *match nothing*. `pruneFilters` and the URL decoder both
+  drop empty values, and removing the last value of a facet deletes the key.
+- **Facets hide dead options.** A filter with no matching files is not rendered
+  at all — a filter that can only produce an empty screen is a trap, not a filter.
+- **Grouping is page-local, and says so.** Pagination happens in the database (60
+  per page); grouping happens over those 60 rows. A section header therefore
+  reads "Floor plan — 18 of 873": the first number is this page, the second is
+  the facet total for the whole result. Clicking the header applies the bucket as
+  a filter, which is the full-result answer.
+- **Badges, in priority order:** unlinked → expired → status → restricted → type.
+  `duplicate` is deliberately **not** a per-row badge: `checksum_sha256` is NULL
+  for every pre-B7 file, so the badge would mark the few files that have one and
+  miss every real duplicate. It stays a facet, where the partial coverage is
+  visible rather than implied.
+- **"Unlinked" means unlinked *to you*.** Both halves of a link are RLS-gated, so
+  a file can carry edges the caller cannot see.
+- **The detail panel edits a draft, not the row.** One Save writes title,
+  document type, description, tags, status, owner, confidentiality and validity
+  together. `origin`, `file_class` and `checksum_sha256` are shown or omitted but
+  never editable — they are set by the write path. `archived_at` is derived from
+  `status` by B1's trigger and is never sent.
+- **Most files are visible but not editable, and the panel says so.**
+  `files_update` gates on `wassell_can_access_file(id,'edit')`, which does **not**
+  include B4's record-derived branch (B4 is a view grant; no write policy
+  references it). Since B4 moved three users from ~1,280 to ~6,100 visible files,
+  read-only is now the common case. The panel resolves the caller's effective
+  role and disables the form, **and** `updateFileMetadata` checks the returned
+  row count — a refused UPDATE comes back from PostgREST as HTTP 200 with an
+  empty array, which is exactly the shape of a silent data loss.
+- **Saved views.** `file_views` holds a saved *query* — no membership, so it can
+  never drift. Private by default; a **shared** view is visible to everyone and
+  editable only by its author. Saving over a name you already used updates that
+  view (atomic `ON CONFLICT` in `file_views_save`, not a client read-then-write).
+- **The six system views are code constants, not rows** (`src/lib/files/views.ts`):
+  Unlinked files · Recently added (30 days) · My files · Project pack ·
+  Marketing library · Expired. They need both `label_ar` and `label_en`, two of
+  them are not constant ("My files" filters on the caller), and a row is a thing
+  that can fail to load — the Library's own navigation must not depend on a fetch
+  that can come back empty. "My files" is hidden entirely when the session has no
+  bound user, rather than silently resolving to *everyone's* files.
+- **"Used in" is now primary.** The Phase 1 projection panel is no longer
+  flag-gated (`VITE_FEATURE_FILE_LINKS` retired) and was restyled — while dark it
+  rendered with `.notice`/`.btn`/`.tag` classes that do not exist in the app's
+  stylesheet. It is still read-only observability and grants nothing.
+
+### Data touched
+
+- **New:** `file_views` (`id, name, owner_user_id, filters jsonb, q, grouping,
+  sort, layout, visibility, pinned, sort_order, timestamps`), RLS: read = own OR
+  shared, write = own only. `file_views_save(...)` RPC (SECURITY INVOKER,
+  save-or-update by name). Migration
+  `supabase/migrations/2026-08-19_10_file_views.sql`; rollback beside it.
+- **Changed:** `file_document_types` gains a SELECT policy (`active` rows only) +
+  a `SELECT` grant to `authenticated`. B1 shipped it deny-all and said "B5 adds
+  the read policy when the Library UI actually needs it" — this is that moment.
+  Writes stay closed: every value is referenced by an FK.
+- **Unchanged:** no authorization branch, no policy on `files` or `file_links`,
+  no folder behaviour, no `file_links` row. CI asserts the projection is byte-
+  identical across the apply, and that the `files`/`file_links` policy text is
+  unchanged.
+
+### Key files
+
+| File | What it does |
+|---|---|
+| `supabase/migrations/2026-08-19_10_file_views.sql` | `file_views` + RLS + `file_views_save`; the `file_document_types` read grant. |
+| `supabase/tests/ci/run_b5_file_views_test.sh` + `smoke_b5_file_views.sql` | Designated validator — ownership under a real `authenticated` role, constraints, idempotency, rollback. |
+| `src/lib/files/library.ts` | `searchBusinessFiles`, `fetchPageLinks`, `listDocumentTypes`, `updateFileMetadata` (row-count guard), `errorText`, `pruneFilters`. |
+| `src/lib/files/views.ts` | The six SYSTEM views + `file_views` CRUD. |
+| `src/lib/files/libraryUrl.ts` | The feature flag and the URL codec. |
+| `src/pages/Files/FilesRoot.tsx` | The `/files` switch — the rollback boundary. |
+| `src/pages/Files/FilesLibraryPage.tsx` | The Library: query state, debounce, sequence guard, the three terminal states. |
+| `src/pages/Files/library/*` | Filter bar, chips, results (grouping + both layouts + paging), tile, row, badges, detail panel, save-view modal, label resolution. |
+| `src/pages/Files/components/FilesTabs.tsx` | Library / Legacy folders / Shared when the flag is on; the original two when it is off. |
+| `src/pages/Files/components/UsedInPanel.tsx` | The promoted, restyled "Used in" panel. |
+
+### Known limitations, stated rather than hidden
+
+- **"Expiring soon" shipped as "Expired".** The spec asked for `valid_until`
+  within 30 days; `business_files_search` has no such filter — its date bounds
+  are on `created_at` and its one validity filter means ALREADY expired. Rather
+  than label a view with a window it does not apply, it is named for what it
+  returns. The 30-day version needs a `valid_until_before` filter, which is a B2
+  change. Production currently has **zero** files with any `valid_until`, so the
+  two only diverge once somebody dates a contract.
+- **No total size in the header band.** The RPC returns per-page sizes only;
+  summing the page would print a number that changes as you paginate. The band
+  shows the result count, distinct document types and distinct linked models
+  instead — all computed over the whole filtered set.
+- **`business_files_search` is still over its own budget** — 350–1,100 ms against
+  B2's 300 ms bar (measured on production 2026-08-19 across seven real users; the
+  user with the LEAST reach is the slowest, so the residue is fixed cost, not
+  reach). That is B2's acceptance gate, not B5's, and the remaining lever is
+  B2's own: the policy helper is recomputed once per internal query even though
+  it is caller-constant.
+- **Grouping by month has no server-side drill-down**, because the RPC's date
+  filter is a range on `created_at` and the section header would have to invent
+  one. The other three groupings drill down.
+
 ## "Used in" — file relationship projection (added 2026-08-10, **shipped dark**; synchronised 2026-08-12)
 
 The system knows, in four different and mutually-disagreeing places, which business records use a given file: schema `image` / `multi_image` / `attachment` field values, the legacy `files.record_id` column, `document_links` rows, and `mos_assets.project_id`. Nothing ever presented that as one answer, so "where is this file actually used?" was unanswerable — which is what makes deleting or replacing a file risky.
@@ -236,7 +398,7 @@ Interactive saves are unaffected — every application path writes one record pe
   - All four frozen models are correctly excluded, now measured rather than assumed: `market_listings`' `main_image_url` / `image_urls` / `video_urls` are **100% external Aqar URLs** across a 2,183-value sample, and the other three declare no file-bearing field.
   - **170 canonical file references live in UNDECLARED keys** — `chat_templates.project_image_file_ids` (161 across 39 records) and `all_projects.image_url` (9 across 10 records). Neither is a field in `models.schema` at all, so a sweep over *declared* fields cannot see them; the `unscanned` reconciliation category, which walks the actual JSON keys of every record, found them on its first production run. They are **reported, not projected** — projecting undeclared keys needs a role vocabulary and a decision about whether schema-less keys belong in the graph, which is a scope call.
   - Reconciliation reports any future occurrence of this under `unscanned` rather than skipping it.
-- **Feature-flagged OFF.** The panel renders nothing unless `VITE_FEATURE_FILE_LINKS=1`. It shows business meaning (record + role), never provenance, and deep-links only when the target model has a real route.
+- **Was feature-flagged OFF; PROMOTED TO PRIMARY by Phase 3 · B5 (2026-08-19).** `VITE_FEATURE_FILE_LINKS` is retired and the panel renders for everyone, in the Library's detail panel and in the file preview. It still shows business meaning (record + role), never provenance, and deep-links only when the target model has a real route. The flag existed because Phase 1 shipped a SNAPSHOT that could drift; Phase 2 removed that reason by converging the projection inside the writing transaction.
 
 Deliberately **not** in either phase: renditions, version identity/grouping, permission-derived record access, folders-as-collections, manual linking, and search changes. Phase 2 adds no authorization branch, no write grant and no relationship-derived access — the authorization surface is asserted byte-identical before and after by `supabase/tests/ci/authz_equivalence_file_link_sync.sh`. `files.id` remains the identity of the current canonical file object and this projection claims nothing beyond that.
 

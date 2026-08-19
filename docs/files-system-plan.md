@@ -1,6 +1,6 @@
 # Wassell File Management — the whole plan
 
-**Status:** living document · **Last updated:** 2026-08-19
+**Status:** living document · **Last updated:** 2026-08-19 (B5 shipped)
 
 This is the governing plan for the Files system across **all five phases (0–4)**.
 Until now it existed only as `phase3-business-files-spec.md` in an untracked
@@ -120,7 +120,7 @@ rollback-able.
 | **B2** | Fast server-side search, Arabic folding, filters and facets | ⚠️ **Applied dark** — 0 callers. 6,933 ms → 395 ms, but still misses the 300 ms bar (§6.1). |
 | **B3** | Measure how record-linked access changes visibility | ✅ **Done** — D1 approved |
 | **B4** | Let users view files through records they can access, excluding restricted files | ✅ **LIVE — toggle ON since 2026-08-19 11:09 UTC** |
-| **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ⛔ **Blocked** — needs §6.1 fixed *and* B4 ON |
+| **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ✅ **Built — shipped behind a flag, default OFF** (§4.1) |
 | **B6** | Manual linking/unlinking and Files panels inside records | ⏳ Not started |
 | **B7** | Upload metadata, duplicate detection, bulk actions | ⏳ Not started |
 | **B8** | Move the remaining 317 Marketing assets onto the canonical file system | ⏳ Not started |
@@ -163,15 +163,58 @@ authorization cost. Recorded here so the sequence makes sense later:
 **The lesson worth keeping:** B2A.3 materialised the *answer*; B2A.4
 materialised the *inputs*. That distinction is the whole difference.
 
-### Why B5 is blocked
+### 4.1 B5 — built, and why it was safe to build now
 
-B5 is next in sequence and cannot usefully start:
+B5 was blocked on two things and both cleared before it started:
 
-1. It consumes `business_files_search`, which misses its budget (§5).
-2. Its content depends on **B4 being ON**. The spec's own justification for D1:
-   *"Without it the Library is empty for 9 of 11 users."*
+1. **B4 is ON** (§6.3), so the Library is not empty. Verified in the browser:
+   the three record-derived users see 6,092–6,112 files, matching §5 exactly.
+2. **§6.1 is largely resolved** — 6,933 ms → 350–1,100 ms. Still over B2's own
+   300 ms bar, but that is **B2's acceptance gate, not B5's**, and B5's bar
+   (lists, filters, groups, paginates; seeded views return sensible rows;
+   folders browsable; "Used in" correct; no console errors; RTL correct) does
+   not depend on it. What B5 owes the budget is not making it worse: free text
+   is debounced 400 ms, every page is one round trip, and thumbnails and
+   per-page link lookups are one batched request each.
 
-Starting B5 now builds a page that is **slow and mostly empty**.
+**Shipped behind a flag, default OFF** — `?library=1` / `?library=0` per person
+(remembered, no deploy needed) over `VITE_FEATURE_FILES_LIBRARY` per
+environment. The rollback boundary is one component, `FilesRoot`, and it was
+exercised: flag off returns the folder-first page byte-for-byte.
+
+**Three bugs the browser pass found that no test would have:**
+
+1. Arabic printed **English**. i18next resolves six plural categories for
+   Arabic and does NOT fall back to `_other` within the language — a missing
+   `_many` falls through to `fallbackLng`. "7542 files" on an Arabic page.
+2. The error card rendered **`[object Object]`**. supabase-js resolves failures
+   as a plain `PostgrestError`, not an `Error`, so the idiomatic
+   `e instanceof Error ? e.message : String(e)` produces literally that. The
+   same idiom is used ~7 more times across `src/pages/Files/**` and
+   `src/lib/files/client.ts` — **pre-existing, not fixed here**, and worth a
+   sweep.
+3. The detail panel went **read-only after the first successful save**. The
+   state reset keyed on the file OBJECT (which a save replaces) while the role
+   fetch keyed on the file ID (unchanged), so the role was cleared and never
+   refilled.
+
+All three are the same shape: **a wrong answer that looks like a right one.**
+None would have been caught by a green build.
+
+### What B5 did NOT do
+
+- No authorization change. No branch in `wassell_can_access_file`, no policy on
+  `files` or `file_links`, no `file_links` row touched. CI asserts the
+  projection is byte-identical across the apply and that the `files` /
+  `file_links` policy text is unchanged.
+- No folder change. B9 still owns freezing creation; nothing is deleted.
+- **"Expiring soon" shipped as "Expired"** — `business_files_search` has no
+  `valid_until_before` filter and its date bounds are on `created_at`. The view
+  is named for what it returns rather than for a window it cannot apply. Adding
+  the real one is a B2 change. Production has zero files with any `valid_until`,
+  so the two only diverge once somebody dates a contract.
+- **No total-bytes figure** in the header band: the RPC returns per-page sizes
+  only, and summing the page prints a number that changes as you paginate.
 
 ---
 

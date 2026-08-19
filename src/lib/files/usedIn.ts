@@ -1,11 +1,15 @@
 /**
- * Client for the Phase 1 read-only "Used in" panel.
+ * Client for the read-only "Used in" panel.
  *
- * FEATURE-FLAGGED AND OFF BY DEFAULT. The projection it reads is an
- * observability layer: it grants nothing, and no production surface should show
- * it until the backfill has been verified against production data.
+ * Shipped dark in Phase 1 behind VITE_FEATURE_FILE_LINKS; **that flag was
+ * retired by Phase 3 · B5**, which promotes the panel to a primary surface of
+ * the Business Files Library. The projection it reads is still an
+ * observability layer — it grants nothing, adds no write path, and every row it
+ * returns has already passed both the file gate and the record gate server-side.
  *
- * Enable per environment with `VITE_FEATURE_FILE_LINKS=1`.
+ * The flag existed because the projection was a SNAPSHOT that could drift.
+ * Phase 2 removed that reason: the four source triggers converge the graph
+ * inside the writing transaction, so drift is 0 at rest by construction.
  */
 import { supabase } from '@/lib/supabase';
 
@@ -26,11 +30,6 @@ export interface UsedInResult {
   links: UsedInLink[];
   /** Reserved. Always 0 until product approves exposing restricted-use counts. */
   hiddenCount: number;
-}
-
-/** The panel ships dark. One env var turns it on, per environment. */
-export function fileLinksEnabled(): boolean {
-  return (import.meta.env.VITE_FEATURE_FILE_LINKS as string | undefined) === '1';
 }
 
 async function authHeader(): Promise<Record<string, string>> {

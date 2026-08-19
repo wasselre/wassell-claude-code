@@ -2,7 +2,7 @@
  * Tests for the "Used in" panel's render-determining logic.
  *
  * These cover everything that decides WHAT the panel puts on screen: the
- * feature gate, the grouping that turns N link rows into N' record rows, the
+ * grouping that turns N link rows into N' record rows, the
  * bilingual role labels, and the fail-loudly contract on transport errors.
  *
  * Pixel-level render evidence needs a browser; this sandbox has none and the
@@ -10,7 +10,7 @@
  * against a deployed preview, not here.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { groupByRecord, recordKey, fetchUsedIn, fileLinksEnabled, UsedInLink } from '../usedIn';
+import { groupByRecord, recordKey, fetchUsedIn, UsedInLink } from '../usedIn';
 import { roleLabel, FILE_LINK_ROLE_LABELS } from '../linkRoles';
 
 const link = (over: Partial<UsedInLink>): UsedInLink => ({
@@ -21,22 +21,9 @@ const link = (over: Partial<UsedInLink>): UsedInLink => ({
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-describe('fileLinksEnabled — the panel ships dark', () => {
-  it('is OFF when the flag is unset', () => {
-    vi.stubEnv('VITE_FEATURE_FILE_LINKS', '');
-    expect(fileLinksEnabled()).toBe(false);
-  });
-  it('is OFF for any value other than exactly "1"', () => {
-    for (const v of ['0', 'true', 'yes', 'on']) {
-      vi.stubEnv('VITE_FEATURE_FILE_LINKS', v);
-      expect(fileLinksEnabled()).toBe(false);
-    }
-  });
-  it('is ON only for "1"', () => {
-    vi.stubEnv('VITE_FEATURE_FILE_LINKS', '1');
-    expect(fileLinksEnabled()).toBe(true);
-  });
-});
+// The VITE_FEATURE_FILE_LINKS gate that used to be tested here was RETIRED by
+// Phase 3 · B5, which promotes the panel to a primary Library surface. Its
+// replacement — the Library's own flag — is covered in libraryUrl.test.ts.
 
 describe('groupByRecord — one record reads as ONE row', () => {
   it('collapses several roles on the same record into one row', () => {
