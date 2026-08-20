@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **4** (2 base, 2 non-base)
-- Fields: **25**
+- Fields: **26**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -36,6 +36,7 @@
 | `client_stage` | Client Stage / مرحلة العميل | Dropdown | no | half | yes | 10 options |
 | `client_sources` | Client Sources / مصادر العميل | Multi-select | no | half | yes | 9 options · multi |
 | `notes` | Notes / الملاحظات | Notes | no | full | no |  |
+| `purchase_objective` | Purchase Objective / هدف الشراء | Multi-select | no | half | yes | 2 options · multi |
 
 **Field details:**
 
@@ -88,6 +89,9 @@
   - API value `عرض سعر` → "Quotation" / "عرض سعر"
   - API value `تمويل` → "Financing" / "تمويل"
   - API value `الإفراغ` → "Title Transfer" / "الإفراغ"
+- **Purchase Objective / هدف الشراء** (`purchase_objective`, type `multiselect`) — multi-value. Options:
+  - API value `residential` → "Residential" / "سكن" · color `#3B82F6`
+  - API value `investment` → "Investment" / "إستثمار" · color `#10B981`
 
 ### 2. Client Preferences / تفضيلات العميل  _(base, color #C09B5F)_
 
