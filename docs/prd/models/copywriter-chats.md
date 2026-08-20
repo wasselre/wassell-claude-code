@@ -8,7 +8,7 @@
 **Last updated (from DB):** 2026-08-20
 **Model id:** `09ba91d8-692f-4aed-a557-4af5888c81be`
 **Storage:** unified records (JSONB)
-**Group:** (ungrouped)
+**Group:** Designs
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `pen-line`   ·   **Color:** `#B8734F`
 
@@ -20,9 +20,9 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: Title (`title`)
-- Subtitle: Last Message (`last_message_at`)
-- Badge: Status (`status`)
+- Title: `df7b207c-45af-4540-a6af-1e1e118382f4` (unknown field)
+- Subtitle: `12e205b4-5f46-41c0-9593-da0a251c60aa` (unknown field)
+- Badge: `1ea6e9aa-dcb6-4f7f-b28f-6b024f6ae392` (unknown field)
 
 ## Sections & fields
 

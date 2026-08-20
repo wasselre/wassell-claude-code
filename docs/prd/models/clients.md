@@ -8,7 +8,7 @@
 **Last updated (from DB):** 2026-08-20
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
-**Group:** (ungrouped)
+**Group:** New Group
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `users`   ·   **Color:** `#B8734F`
 
@@ -20,8 +20,10 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: Client Name (`client_name`)
-- Badge: Client Status (`client_status`)
+- Title: `db72d355-0dfc-43f4-a1d4-7f0df74a7645` (unknown field)
+- Subtitle: `224049d8-7f33-4bed-87bb-11ed17aed3f4` (unknown field)
+- Badge: `965d318b-3f1f-4095-a984-565b957277a8` (unknown field)
+- Shown: `8ea1877b-4d3b-4423-8b67-607158bc0b3f` (unknown field)
 
 ## Sections & fields
 

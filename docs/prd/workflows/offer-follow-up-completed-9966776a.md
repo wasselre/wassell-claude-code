@@ -19,21 +19,21 @@
 _Match: ALL must pass (AND)_
 - Follow-up Type (`followup_type`) equals offer_follow_up
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Offer Accepted" (`offer_accepted`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Offer Accepted" (`offer_accepted`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value حجز
 - Client Status (`client_status`) ← static value بانتظار دفعة الحجز
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value reservation_payment_follow_up
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d @10:00`
-- `followup_status` (unknown field) ← static value open
+- Status (`followup_status`) ← static value open
 
 ### Branch 2: ELSE IF — Waiting Decision
 
@@ -41,20 +41,20 @@ Create a **Follow-ups / المتابعات** record with:
 _Match: ALL must pass (AND)_
 - Follow-up Type (`followup_type`) equals offer_follow_up
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Waiting Decision" (`waiting_decision`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Waiting Decision" (`waiting_decision`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Status (`client_status`) ← static value بانتظار القرار
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value offer_follow_up
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+2d @10:00`
-- `followup_status` (unknown field) ← static value open
+- Status (`followup_status`) ← static value open
 
 ### Branch 3: ELSE IF — Needs Financing Info
 
@@ -62,20 +62,20 @@ Create a **Follow-ups / المتابعات** record with:
 _Match: ALL must pass (AND)_
 - Follow-up Type (`followup_type`) equals offer_follow_up
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Needs Financing Info" (`needs_financing_info`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Needs Financing Info" (`needs_financing_info`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Status (`client_status`) ← static value يحتاج معلومات تمويل
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value offer_follow_up
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+2d @10:00`
-- `followup_status` (unknown field) ← static value open
+- Status (`followup_status`) ← static value open
 
 ### Branch 4: ELSE IF — Offer Rejected
 
@@ -83,15 +83,15 @@ Create a **Follow-ups / المتابعات** record with:
 _Match: ALL must pass (AND)_
 - Follow-up Type (`followup_type`) equals offer_follow_up
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Offer Rejected" (`offer_rejected`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Offer Rejected" (`offer_rejected`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value خاسر
 - Client Status (`client_status`) ← static value تم رفض العرض
-- `lost_reason` (unknown field) ← the trigger record's `lost_reason` (unknown field)
+- `lost_reason` (unknown field) ← the trigger record's Lost Reason (`lost_reason`)
 
 ### Branch 5: ELSE IF — No Answer
 
@@ -99,16 +99,16 @@ Update **Clients / العملاء** records where `id` (unknown field) = the tri
 _Match: ALL must pass (AND)_
 - Follow-up Type (`followup_type`) equals offer_follow_up
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value offer_follow_up
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d`
-- `followup_status` (unknown field) ← static value open
+- Status (`followup_status`) ← static value open
 
 ### Branch 6: ELSE IF — Wrong Time
 
@@ -116,17 +116,17 @@ Create a **Follow-ups / المتابعات** record with:
 _Match: ALL must pass (AND)_
 - Follow-up Type (`followup_type`) equals offer_follow_up
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Recontact Later" (`recontact_later`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Recontact Later To Reschedule" (`recontact_later`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Status (`client_status`) ← static value إعادة تواصل لاحقًا
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value offer_follow_up
-- Scheduled Follow-up (`scheduled_datetime`) ← trigger field `reschedule_contact_date` (unknown field) offset by `+0d`
-- `followup_status` (unknown field) ← static value open
+- Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by `+0d`
+- Status (`followup_status`) ← static value open

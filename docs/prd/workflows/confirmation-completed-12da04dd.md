@@ -17,10 +17,10 @@
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals appointment_confirmation_call
+- Follow-up Type (`followup_type`) equals "Appointment Confirmation Call" (`appointment_confirmation_call`)
 - Appointment (`appointment_id`) is not empty
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Attendance Confirmed" (`attendance_confirmed`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Attendance Confirmed" (`attendance_confirmed`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
@@ -29,7 +29,7 @@ Update **Appointments / المواعيد** records where `id` (unknown field) = 
 - Appointment Status (`appointment_status`) ← static value confirmed
 
 **Action 2 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value موعد زيارة
 - Client Status (`client_status`) ← static value تم تأكيد الحضور
 
@@ -37,10 +37,10 @@ Update **Clients / العملاء** records where `id` (unknown field) = the tri
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals appointment_confirmation_call
+- Follow-up Type (`followup_type`) equals "Appointment Confirmation Call" (`appointment_confirmation_call`)
 - Appointment (`appointment_id`) is not empty
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
@@ -58,38 +58,38 @@ Send a WhatsApp message:
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals appointment_confirmation_call
+- Follow-up Type (`followup_type`) equals "Appointment Confirmation Call" (`appointment_confirmation_call`)
 - Appointment (`appointment_id`) is not empty
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Rescheduled" (`rescheduled`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Rescheduled" (`rescheduled`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
 Update **Appointments / المواعيد** records where `id` (unknown field) = the trigger record's Appointment (`appointment_id`), setting:
 - Appointment Status (`appointment_status`) ← static value rescheduled
-- Appointment Date (`appointment_date`) ← the trigger record's `new_appointment_datetime` (unknown field)
+- Appointment Date (`appointment_date`) ← the trigger record's New Appointment Time (`new_appointment_datetime`)
 
 **Action 2 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Status (`client_status`) ← static value تمت إعادة الجدولة
 
 **Action 3 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value appointment_confirmation_call
 - Appointment (`appointment_id`) ← the trigger record's Appointment (`appointment_id`)
-- Scheduled Follow-up (`scheduled_datetime`) ← trigger field `new_appointment_datetime` (unknown field) offset by `-1d @10:00`
-- `followup_status` (unknown field) ← static value open
+- Scheduled Follow-up (`scheduled_datetime`) ← trigger field New Appointment Time (`new_appointment_datetime`) offset by `-1d @10:00`
+- Status (`followup_status`) ← static value open
 
 ### Branch 4: ELSE IF — Cancelled — Rebook
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals appointment_confirmation_call
+- Follow-up Type (`followup_type`) equals "Appointment Confirmation Call" (`appointment_confirmation_call`)
 - Appointment (`appointment_id`) is not empty
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Cancelled — Rebook" (`appointment_cancelled_rebook`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Cancelled — Rebook" (`appointment_cancelled_rebook`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
@@ -98,25 +98,25 @@ Update **Appointments / المواعيد** records where `id` (unknown field) = 
 - Appointment Status (`appointment_status`) ← static value cancelled
 
 **Action 2 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Status (`client_status`) ← static value تم إلغاء الموعد
 
 **Action 3 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value appointment_booking_call
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+0d`
-- `followup_status` (unknown field) ← static value open
-- `followup_number` (unknown field) ← static value 1
+- Status (`followup_status`) ← static value open
+- Follow-up Number (`followup_number`) ← static value 1
 
 ### Branch 5: ELSE IF — Cancelled — Lost
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals appointment_confirmation_call
+- Follow-up Type (`followup_type`) equals "Appointment Confirmation Call" (`appointment_confirmation_call`)
 - Appointment (`appointment_id`) is not empty
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Cancelled — Lost" (`appointment_cancelled_lost`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Cancelled — Lost" (`appointment_cancelled_lost`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
@@ -125,7 +125,7 @@ Update **Appointments / المواعيد** records where `id` (unknown field) = 
 - Appointment Status (`appointment_status`) ← static value cancelled
 
 **Action 2 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value غير مؤهل
 - Client Status (`client_status`) ← static value تم إلغاء الموعد
 
@@ -133,38 +133,38 @@ Update **Clients / العملاء** records where `id` (unknown field) = the tri
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals appointment_confirmation_call
+- Follow-up Type (`followup_type`) equals "Appointment Confirmation Call" (`appointment_confirmation_call`)
 - Appointment (`appointment_id`) is not empty
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Recontact Later" (`recontact_later`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Recontact Later To Reschedule" (`recontact_later`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Status (`client_status`) ← static value إعادة تواصل لاحقًا
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value appointment_confirmation_call
 - Appointment (`appointment_id`) ← the trigger record's Appointment (`appointment_id`)
-- Scheduled Follow-up (`scheduled_datetime`) ← trigger field `reschedule_contact_date` (unknown field) offset by `+0d`
-- `followup_status` (unknown field) ← static value open
+- Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by `+0d`
+- Status (`followup_status`) ← static value open
 
 ### Branch 7: ELSE IF — Not Interested
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals appointment_confirmation_call
+- Follow-up Type (`followup_type`) equals "Appointment Confirmation Call" (`appointment_confirmation_call`)
 - Appointment (`appointment_id`) is not empty
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Not Interested" (`not_interested`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Not Interested" (`not_interested`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value غير مؤهل
 - Client Status (`client_status`) ← static value غير مهتم
-- `lost_reason` (unknown field) ← the trigger record's `lost_reason` (unknown field)
+- `lost_reason` (unknown field) ← the trigger record's Lost Reason (`lost_reason`)

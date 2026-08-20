@@ -20,8 +20,13 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: Project Name (`project_name`)
-- Badge: Phase (`phase`)
+- Title: `02b21215-927e-4611-b8bc-1bdbe7424d9a` (unknown field)
+- Badge: `22f55ec2-dba8-4d28-b97d-e2be4df2b60f` (unknown field)
+
+## Maps view
+- Location URL field: `0cf73ff9-fb05-452f-9d5b-30d2d9c3c4b2::project_location` (unknown field)
+- Pin label field: `c7771238-7b89-45e8-8fd6-2cc3f6fd1d51` (unknown field)
+- Click action: popup
 
 ## Sections & fields
 

@@ -39,7 +39,7 @@ Send a WhatsApp message:
 
 **Action 3 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client (`client_id`)
 - Follow-up Type (`followup_type`) ← static value appointment_confirmation_call
 - Appointment (`appointment_id`) ← the trigger record's id
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Appointment Date (`appointment_date`) offset by `-1d @10:00`
@@ -47,7 +47,7 @@ Create a **Follow-ups / المتابعات** record with:
 
 **Action 4 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client (`client_id`)
 - Follow-up Type (`followup_type`) ← static value appointment_confirmation_call
 - Appointment (`appointment_id`) ← the trigger record's id
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Appointment Date (`appointment_date`) offset by `+0d @10:00`

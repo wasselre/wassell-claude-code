@@ -17,25 +17,25 @@
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals appointment_booking_call, whatsapp_follow_up
-- Call Result (`call_result`) equals unanswered_request · _only when it newly becomes true_
+- Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`), "WhatsApp Follow-Up" (`whatsapp_follow_up`)
+- Outcome (`call_result`) equals "Unanswered Request" (`unanswered_request`) · _only when it newly becomes true_
 - Actual Follow-up (`actual_datetime`) is not empty
 
 **Actions (run in order):**
 
 **Action 1 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value whatsapp_follow_up
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d`
-- `followup_status` (unknown field) ← static value open
-- `whatsapp_attempt_number` (unknown field) ← static value 1
-- `escalation_reason` (unknown field) ← static value call_no_answer_recontact
+- Status (`followup_status`) ← static value open
+- WhatsApp Attempt # (`whatsapp_attempt_number`) ← static value 1
+- Escalation Reason (`escalation_reason`) ← static value call_no_answer_recontact
 - Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)
-- `previous_followup_id` (unknown field) ← the trigger record's id
+- Previous Follow-up (`previous_followup_id`) ← the trigger record's id
 
 **Action 2 — Update Record**
-Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value unanswered_request
 
@@ -43,45 +43,45 @@ Update **Clients / العملاء** records where `client_id` (unknown field) = 
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals appointment_booking_call
-- `escalation_reason` (unknown field) equals whatsapp_no_response_5d
+- Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`)
+- Escalation Reason (`escalation_reason`) equals "No reply in 5 days" (`whatsapp_no_response_5d`)
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value whatsapp_follow_up
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d`
-- `followup_status` (unknown field) ← static value open
-- `whatsapp_attempt_number` (unknown field) ← static value 1
-- `escalation_reason` (unknown field) ← static value call_no_answer_recontact
+- Status (`followup_status`) ← static value open
+- WhatsApp Attempt # (`whatsapp_attempt_number`) ← static value 1
+- Escalation Reason (`escalation_reason`) ← static value call_no_answer_recontact
 - Sales Rep (`sales_rep`) ← the current user
-- `previous_followup_id` (unknown field) ← the trigger record's id
+- Previous Follow-up (`previous_followup_id`) ← the trigger record's id
 
 ### Branch 3: ELSE IF — لم يتم الرد
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Call Result (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
 - Actual Follow-up (`actual_datetime`) is not empty
-- `followup_number` (unknown field) less than 10
-- Follow-up Type (`followup_type`) equals appointment_booking_call
+- Follow-up Number (`followup_number`) less than 10
+- Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`)
 
 **Actions (run in order):**
 
 **Action 1 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Sales Rep (`sales_rep`) ← the current user
 - Follow-up Type (`followup_type`) ← static value appointment_booking_call
-- `followup_number` (unknown field) ← formula `{followup_number} + 1`
+- Follow-up Number (`followup_number`) ← formula `{followup_number} + 1`
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Actual Follow-up (`actual_datetime`) offset by `+1d`
 
 **Action 2 — Update Record**
-Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value لا يوجد رد
 
@@ -89,22 +89,22 @@ Update **Clients / العملاء** records where `client_id` (unknown field) = 
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Call Result (`call_result`) equals "Interested" (`interested`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Interested" (`interested`) · _only when it newly becomes true_
 - Actual Follow-up (`actual_datetime`) is not empty
-- Follow-up Type (`followup_type`) equals appointment_booking_call
+- Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`)
 
 **Actions (run in order):**
 
 **Action 1 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Sales Rep (`sales_rep`) ← the current user
 - Follow-up Type (`followup_type`) ← static value whatsapp_follow_up
-- `followup_number` (unknown field) ← formula `{followup_number} + 1`
+- Follow-up Number (`followup_number`) ← formula `{followup_number} + 1`
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Actual Follow-up (`actual_datetime`) offset by `+1d`
 
 **Action 2 — Update Record**
-Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value مهتم
 
@@ -112,13 +112,13 @@ Update **Clients / العملاء** records where `client_id` (unknown field) = 
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Call Result (`call_result`) equals "Not Interested" (`not_interested`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Not Interested" (`not_interested`) · _only when it newly becomes true_
 - Actual Follow-up (`actual_datetime`) is not empty
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value غير مؤهل
 - Client Status (`client_status`) ← static value غير مهتم
 
@@ -126,21 +126,21 @@ Update **Clients / العملاء** records where `client_id` (unknown field) = 
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Call Result (`call_result`) equals "Recontact Later" (`recontact_later`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Recontact Later To Reschedule" (`recontact_later`) · _only when it newly becomes true_
 - Actual Follow-up (`actual_datetime`) is not empty
-- Follow-up Type (`followup_type`) equals appointment_booking_call
+- Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`)
 
 **Actions (run in order):**
 
 **Action 1 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Sales Rep (`sales_rep`) ← the current user
 - Follow-up Type (`followup_type`) ← static value appointment_booking_call
-- `followup_number` (unknown field) ← formula `{followup_number} + 1`
-- Scheduled Follow-up (`scheduled_datetime`) ← trigger field `reschedule_contact_date` (unknown field) offset by ``
+- Follow-up Number (`followup_number`) ← formula `{followup_number} + 1`
+- Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by ``
 
 **Action 2 — Update Record**
-Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value إعادة تواصل لاحقًا

@@ -17,38 +17,38 @@
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals whatsapp_follow_up
+- Follow-up Type (`followup_type`) equals "WhatsApp Follow-Up" (`whatsapp_follow_up`)
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Interested" (`interested`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Interested" (`interested`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Status (`client_status`) ← static value مهتم
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value whatsapp_follow_up
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+5d`
-- `followup_status` (unknown field) ← static value open
-- `whatsapp_attempt_number` (unknown field) ← static value 1
+- Status (`followup_status`) ← static value open
+- WhatsApp Attempt # (`whatsapp_attempt_number`) ← static value 1
 - Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)
-- `previous_followup_id` (unknown field) ← the trigger record's id
+- Previous Follow-up (`previous_followup_id`) ← the trigger record's id
 
 ### Branch 2: ELSE IF — Request Offer
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals whatsapp_follow_up
+- Follow-up Type (`followup_type`) equals "WhatsApp Follow-Up" (`whatsapp_follow_up`)
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Request Offer" (`request_offer`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Request Offer" (`request_offer`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value عرض سعر
 - Client Status (`client_status`) ← static value تم طلب عرض سعر
 
@@ -56,62 +56,62 @@ Update **Clients / العملاء** records where `id` (unknown field) = the tri
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals whatsapp_follow_up
+- Follow-up Type (`followup_type`) equals "WhatsApp Follow-Up" (`whatsapp_follow_up`)
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Recontact Later" (`recontact_later`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Recontact Later To Reschedule" (`recontact_later`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Status (`client_status`) ← static value إعادة تواصل لاحقًا
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value whatsapp_follow_up
-- Scheduled Follow-up (`scheduled_datetime`) ← trigger field `reschedule_contact_date` (unknown field) offset by `+0d`
-- `followup_status` (unknown field) ← static value open
-- `whatsapp_attempt_number` (unknown field) ← static value 1
+- Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by `+0d`
+- Status (`followup_status`) ← static value open
+- WhatsApp Attempt # (`whatsapp_attempt_number`) ← static value 1
 - Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)
-- `previous_followup_id` (unknown field) ← the trigger record's id
+- Previous Follow-up (`previous_followup_id`) ← the trigger record's id
 
 ### Branch 4: ELSE IF — Not Interested
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals whatsapp_follow_up
+- Follow-up Type (`followup_type`) equals "WhatsApp Follow-Up" (`whatsapp_follow_up`)
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "Not Interested" (`not_interested`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals "Not Interested" (`not_interested`) · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value غير مؤهل
 - Client Status (`client_status`) ← static value غير مهتم
-- `lost_reason` (unknown field) ← the trigger record's `lost_reason` (unknown field)
+- `lost_reason` (unknown field) ← the trigger record's Lost Reason (`lost_reason`)
 
 ### Branch 5: ELSE IF — No Message Sent
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals whatsapp_follow_up
+- Follow-up Type (`followup_type`) equals "WhatsApp Follow-Up" (`whatsapp_follow_up`)
 - Actual Follow-up (`actual_datetime`) is not empty
-- Call Result (`call_result`) equals "No Message Sent" (`no_message_sent`) · _only when it newly becomes true_
+- Outcome (`call_result`) equals no_message_sent · _only when it newly becomes true_
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client (`client_id`), setting:
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Status (`client_status`) ← static value إعادة تواصل لاحقًا
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value whatsapp_follow_up
-- Scheduled Follow-up (`scheduled_datetime`) ← trigger field `reschedule_contact_date` (unknown field) offset by `+0d`
-- `followup_status` (unknown field) ← static value open
-- `whatsapp_attempt_number` (unknown field) ← static value 1
+- Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by `+0d`
+- Status (`followup_status`) ← static value open
+- WhatsApp Attempt # (`whatsapp_attempt_number`) ← static value 1
 - Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)
-- `previous_followup_id` (unknown field) ← the trigger record's id
+- Previous Follow-up (`previous_followup_id`) ← the trigger record's id

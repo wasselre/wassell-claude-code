@@ -8,13 +8,13 @@
 **Last updated (from DB):** 2026-08-20
 **Model id:** `372ed642-3753-40b4-9dd7-e8390f91b1f8`
 **Storage:** unified records (JSONB)
-**Group:** (ungrouped)
+**Group:** New Group
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `map-pin`   ·   **Color:** `#B8734F`
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **9**
+- Fields: **13**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -29,22 +29,26 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `client_id` | Client / العميل | Lookup | yes | half | yes | → Clients |
+| `client_id` | Client / العميل | Lookup | no | half | yes | → Clients |
 | `phone` | Phone / رقم الجوال | Phone | no | half | yes |  |
 | `name` | Name / الاسم | Text | no | half | yes |  |
 | `scheduled_datetime` | Scheduled Date & Time / موعد الزيارة | Date & time | no | half | yes |  |
 | `project_id` | Project / المشروع | Lookup | no | half | yes | → Our Projects |
 | `units` | Units / الوحدات | unit_picker | no | half | yes |  |
 | `sales_representative` | Sales Representative / ممثل المبيعات | Assignee | no | half | yes | any user |
-| `visit_notes` | Visit Notes / ملاحظات الزيارة | Notes | no | full | yes |  |
+| `visit_notes` | Visit Notes / ملاحظات الزيارة | Notes | no | half | yes |  |
 | `source_followup_id` | Source Follow-up / المتابعة المصدر | Lookup | no | half | no | → Follow-ups |
+| `rating_token` | Rating Token / رمز التقييم | Text | no | full | no |  |
+| `visit_rating` | Visit Rating / تقييم الزيارة | Number | no | half | yes |  |
+| `rated_at` | Rated At / تاريخ التقييم | Date & time | no | half | no |  |
+| `visit_result` | Visit Result / نتيجة الزيارة | Dropdown | no | half | yes | 4 options |
 
 **Field details:**
 
 - **Client / العميل** (`client_id`, type `lookup`):
   - target model: Clients
   - shows field: `client_id`
-  - multiple: no
+  - multiple: no · max in dropdown: 20
 - **Phone / رقم الجوال** (`phone`, type `phone`):
   - auto-links Client (`client_id`) by matching `phone_number` (creates if missing)
   - auto-fills from Client (`client_id`) → `phone_number`
@@ -53,11 +57,16 @@
   - auto-fills from Client (`client_id`) → `client_name`
 - **Project / المشروع** (`project_id`, type `lookup`):
   - target model: Our Projects
-  - shows field: `project_name`
-  - multiple: no
+  - shows field: `27ae1692-c5dd-4ee7-85e2-8b9272b05afc::project_name`
+  - multiple: no · max in dropdown: 20
 - **Sales Representative / ممثل المبيعات** (`sales_representative`, type `assignee`):
   - eligible users: any active user
 - **Source Follow-up / المتابعة المصدر** (`source_followup_id`, type `lookup`):
   - target model: Follow-ups
   - shows field: `scheduled_datetime`
   - multiple: no · max in dropdown: 20
+- **Visit Result / نتيجة الزيارة** (`visit_result`, type `dropdown`) — options:
+  - API value `interested` → "Interested" / "مهتم" · color `#10B981`
+  - API value `considering` → "Considering" / "يفكّر" · color `#C09B5F`
+  - API value `not_interested` → "Not interested" / "غير مهتم" · color `#8E4E3A`
+  - API value `reserved` → "Reserved" / "حجز" · color `#3B82F6`

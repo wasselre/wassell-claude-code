@@ -8,7 +8,7 @@
 **Last updated (from DB):** 2026-08-20
 **Model id:** `1ef36cc7-a5bb-4fdc-b3ef-9fc965c2b2d4`
 **Storage:** unified records (JSONB)
-**Group:** (ungrouped)
+**Group:** New Group
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `phone-call`   ·   **Color:** `#B8734F`
 
@@ -20,9 +20,9 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: Customer Phone (`customer_phone`)
-- Subtitle: Status (`status`)
-- Badge: Direction (`direction`)
+- Title: `258dd89f-eb5a-4785-bab3-74c4a7576322` (unknown field)
+- Subtitle: `be95c210-2935-454a-bef2-8265be22cdd2` (unknown field)
+- Badge: `da2c1393-84bb-45f9-adff-d203fe1df330` (unknown field)
 
 ## Sections & fields
 

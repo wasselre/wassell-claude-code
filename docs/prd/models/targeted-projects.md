@@ -20,8 +20,8 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: Project Name (`project_name`)
-- Badge: Priority (`priority`)
+- Title: `98b841c9-93d9-474d-b101-9b38268e8fa6` (unknown field)
+- Badge: `a88ebe04-76b7-4316-9560-93a82199f640` (unknown field)
 
 ## Sections & fields
 

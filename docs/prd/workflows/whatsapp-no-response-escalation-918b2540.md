@@ -17,52 +17,52 @@
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals whatsapp_follow_up
-- `whatsapp_state` (unknown field) equals message_sent_waiting_response
-- `whatsapp_attempt_number` (unknown field) equals 2
+- Follow-up Type (`followup_type`) equals "WhatsApp Follow-Up" (`whatsapp_follow_up`)
+- WhatsApp State (`whatsapp_state`) equals "Awaiting Reply" (`message_sent_waiting_response`)
+- WhatsApp Attempt # (`whatsapp_attempt_number`) equals 2
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Follow-ups / المتابعات** records where `id` (unknown field) = the trigger record's `source_followup_id` (unknown field), setting:
-- Call Result (`call_result`) ← static value no_response
-- `whatsapp_state` (unknown field) ← static value no_response_expired
-- `followup_status` (unknown field) ← static value completed
+Update **Follow-ups / المتابعات** records where `id` (unknown field) = the trigger record's Source Follow-up (`source_followup_id`), setting:
+- Outcome (`call_result`) ← static value no_response
+- WhatsApp State (`whatsapp_state`) ← static value no_response_expired
+- Status (`followup_status`) ← static value completed
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value appointment_booking_call
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+0d`
-- `followup_status` (unknown field) ← static value open
-- `followup_number` (unknown field) ← static value 1
-- `escalation_reason` (unknown field) ← static value whatsapp_no_response_5d
+- Status (`followup_status`) ← static value open
+- Follow-up Number (`followup_number`) ← static value 1
+- Escalation Reason (`escalation_reason`) ← static value whatsapp_no_response_5d
 - Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)
-- `previous_followup_id` (unknown field) ← the trigger record's id
+- Previous Follow-up (`previous_followup_id`) ← the trigger record's id
 
 ### Branch 2: ELSE IF — No Response (24h) → WhatsApp #2
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals whatsapp_follow_up
-- `whatsapp_state` (unknown field) equals message_sent_waiting_response
+- Follow-up Type (`followup_type`) equals "WhatsApp Follow-Up" (`whatsapp_follow_up`)
+- WhatsApp State (`whatsapp_state`) equals "Awaiting Reply" (`message_sent_waiting_response`)
 
 **Actions (run in order):**
 
 **Action 1 — Update Record**
-Update **Follow-ups / المتابعات** records where `id` (unknown field) = the trigger record's `source_followup_id` (unknown field), setting:
-- Call Result (`call_result`) ← static value no_response
-- `whatsapp_state` (unknown field) ← static value no_response_expired
-- `followup_status` (unknown field) ← static value completed
+Update **Follow-ups / المتابعات** records where `id` (unknown field) = the trigger record's Source Follow-up (`source_followup_id`), setting:
+- Outcome (`call_result`) ← static value no_response
+- WhatsApp State (`whatsapp_state`) ← static value no_response_expired
+- Status (`followup_status`) ← static value completed
 
 **Action 2 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
-- Client (`client_id`) ← the trigger record's Client (`client_id`)
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Follow-up Type (`followup_type`) ← static value whatsapp_follow_up
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+0d`
-- `followup_status` (unknown field) ← static value open
-- `whatsapp_attempt_number` (unknown field) ← static value 2
-- `first_whatsapp_sent_at` (unknown field) ← the trigger record's `first_whatsapp_sent_at` (unknown field)
-- `escalation_reason` (unknown field) ← static value whatsapp_no_response_24h
+- Status (`followup_status`) ← static value open
+- WhatsApp Attempt # (`whatsapp_attempt_number`) ← static value 2
+- First WhatsApp Sent (`first_whatsapp_sent_at`) ← the trigger record's First WhatsApp Sent (`first_whatsapp_sent_at`)
+- Escalation Reason (`escalation_reason`) ← static value whatsapp_no_response_24h
 - Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)
-- `previous_followup_id` (unknown field) ← the trigger record's id
+- Previous Follow-up (`previous_followup_id`) ← the trigger record's id

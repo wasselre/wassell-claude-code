@@ -8,7 +8,7 @@
 **Last updated (from DB):** 2026-08-20
 **Model id:** `4a70d8f1-2a6a-4ea7-b7ef-45c6e6af732b`
 **Storage:** unified records (JSONB)
-**Group:** (ungrouped)
+**Group:** New Group
 **System model:** yes   ·   **Custom UI:** yes (bespoke page — the generic record form/table is bypassed)
 **Icon:** `message-square`   ·   **Color:** `#25D366`
 
@@ -20,8 +20,8 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: Name (`name`)
-- Subtitle: Language (`language`)
+- Title: `513afce3-762f-4a75-ad67-f8e04571c972` (unknown field)
+- Subtitle: `11758e40-cf71-47a0-a186-f31686fe98e5` (unknown field)
 
 ## Sections & fields
 

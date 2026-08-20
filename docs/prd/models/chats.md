@@ -8,7 +8,7 @@
 **Last updated (from DB):** 2026-08-20
 **Model id:** `7e6c23b5-5492-413a-bc34-d928086f6e7e`
 **Storage:** unified records (JSONB)
-**Group:** (ungrouped)
+**Group:** New Group
 **System model:** yes   ·   **Custom UI:** yes (bespoke page — the generic record form/table is bypassed)
 **Icon:** `message-circle`   ·   **Color:** `#25D366`
 
@@ -20,9 +20,9 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: Name (`name`)
-- Subtitle: Phone (`phone`)
-- Badge: Status (`status`)
+- Title: `eae19fba-a52a-4b47-8bac-2e7d87c2c8be` (unknown field)
+- Subtitle: `80a58552-6647-44c9-9c95-69fe0a771e4b` (unknown field)
+- Badge: `5ea3e89a-2de9-4cfc-afc2-609e1aec90e3` (unknown field)
 
 ## Sections & fields
 
@@ -42,8 +42,8 @@
 | `last_message_at` | Last Message / آخر رسالة | Date & time | no | third | yes |  |
 | `last_message_preview` | Preview / معاينة | Text | no | full | yes |  |
 | `client_link` | Linked Client / العميل المرتبط | Lookup | no | half | yes | → Clients |
-| `last_message_flow` | Last Message Flow / اتجاه آخر رسالة | Dropdown | no | third | no | 2 options |
 | `client_owner` | Sales Consultant / مستشار المبيعات | Assignee | no | half | no | any user |
+| `last_message_flow` | Last Message Flow / اتجاه آخر رسالة | Dropdown | no | third | no | 2 options |
 | `last_read_at` | Last Read At / آخر قراءة | Date & time | no | third | no |  |
 
 **Field details:**
@@ -64,8 +64,8 @@
   - target model: Clients
   - shows field: `name`
   - multiple: no
+- **Sales Consultant / مستشار المبيعات** (`client_owner`, type `assignee`):
+  - eligible users: any active user
 - **Last Message Flow / اتجاه آخر رسالة** (`last_message_flow`, type `dropdown`) — options:
   - API value `in` → "Inbound" / "وارد" · color `#10B981`
   - API value `out` → "Outbound" / "صادر" · color `#B8734F`
-- **Sales Consultant / مستشار المبيعات** (`client_owner`, type `assignee`):
-  - eligible users: any active user

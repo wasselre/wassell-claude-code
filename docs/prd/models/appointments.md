@@ -8,13 +8,13 @@
 **Last updated (from DB):** 2026-08-20
 **Model id:** `b032a675-6237-4436-9783-a1a253855f74`
 **Storage:** unified records (JSONB)
-**Group:** (ungrouped)
+**Group:** New Group
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `calendar-check`   ·   **Color:** `#10B981`
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **8**
+- Fields: **10**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -33,11 +33,13 @@
 | `phone_number` | Client Phone / رقم جوال العميل | Phone | no | half | yes |  |
 | `client_id` | Client / العميل | Lookup | yes | half | yes | → Clients |
 | `client_name` | Client Name / اسم العميل | Text | no | half | no |  |
+| `app_id` | Appointment ID / معرف الموعد | Auto ID | no | half | yes | م ع### |
 | `appointment_date` | Appointment Date / تاريخ الموعد | Date & time | yes | half | yes |  |
 | `project_id` | Project / المشروع | Lookup | no | half | yes | → All Projects |
 | `sales_rep` | Sales Rep / مندوب المبيعات | Assignee | no | half | yes | any user |
 | `appointment_status` | Appointment Status / حالة الموعد | Dropdown | no | half | yes | 6 options |
 | `notes` | Notes / ملاحظات | Text area | no | full | no |  |
+| `source_followup_id` | Source Follow-up / المتابعة المصدر | Lookup | no | half | no | → Follow-ups |
 
 **Field details:**
 
@@ -47,14 +49,16 @@
   - default country code `+966`
 - **Client / العميل** (`client_id`, type `lookup`):
   - target model: Clients
-  - shows field: `client_name`
-  - multiple: no
+  - shows field: `client_id`
+  - multiple: no · max in dropdown: 20
 - **Client Name / اسم العميل** (`client_name`, type `text`):
   - auto-fills from Client (`client_id`) → `client_name`
+- **Appointment ID / معرف الموعد** (`app_id`, type `auto_id`):
+  - format: `م ع000` · starts at 1
 - **Project / المشروع** (`project_id`, type `lookup`):
   - target model: All Projects
   - shows field: `project_name`
-  - multiple: no
+  - multiple: no · max in dropdown: 20
 - **Sales Rep / مندوب المبيعات** (`sales_rep`, type `assignee`):
   - eligible users: any active user
 - **Appointment Status / حالة الموعد** (`appointment_status`, type `dropdown`) — options:
@@ -64,3 +68,7 @@
   - API value `completed` → "Completed" / "منتهي" · color `#8B5CF6`
   - API value `no_show` → "No-show" / "لم يحضر" · color `#EF4444`
   - API value `cancelled` → "Cancelled" / "ملغي" · color `#6B7280`
+- **Source Follow-up / المتابعة المصدر** (`source_followup_id`, type `lookup`):
+  - target model: Follow-ups
+  - shows field: `scheduled_datetime`
+  - multiple: no

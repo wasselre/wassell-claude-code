@@ -13,48 +13,228 @@
 **Icon:** `home`   ·   **Color:** `#8E4E3A`
 
 ## Overview
-- Sections: **1** (1 base, 0 non-base)
-- Fields: **9**
+- Sections: **8** (1 base, 7 non-base)
+- Fields: **48**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
 
 ## Card view
-- Title: Unit Name (`unit_name`)
+- Title: Unit Code (`unit_code`)
 - Subtitle: Project (`project_id`)
 - Badge: Unit Status (`unit_status`)
 
 ## Sections & fields
 
-### 1. Basic / الأساسية  _(base, color #8E4E3A)_
+### 1. Unit Identity / هوية الوحدة  _(base, color #8E4E3A)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `unit_name` | Unit Name / اسم الوحدة | Text | yes | half | yes |  |
-| `project_id` | Project / المشروع | Lookup | yes | half | yes | → All Projects |
-| `unit_type` | Unit Type / نوع الوحدة | Dropdown | no | half | yes | 7 options |
-| `unit_status` | Unit Status / حالة الوحدة | Dropdown | no | half | yes | 3 options |
-| `unit_area` | Unit Area (m²) / مساحة الوحدة | Number | no | half | yes |  |
-| `total_price` | Total Price / إجمالي السعر | Currency | no | half | yes |  |
-| `bedrooms` | Bedrooms / عدد غرف النوم | Number | no | half | yes |  |
-| `bathrooms` | Bathrooms / عدد دورات المياه | Number | no | half | yes |  |
-| `notes` | Notes / ملاحظات | Text area | no | full | no |  |
+| `project_id` | Project / اسم المشروع | Lookup | no | half | yes | → All Projects |
+| `developer_id` | Developer / المطور | Lookup | no | half | yes | → Developers |
+| `unit_code` | Unit Code / كود الوحدة | Auto ID | no | half | yes | U-#### |
+| `unit_number` | Unit Number / رقم الوحدة في المشروع | Number | no | half | no |  |
+| `unit_model` | Unit Model / نموذج الوحدة | Text | no | half | no |  |
+| `building_number` | Building Number / رقم العمارة | Text | no | half | no |  |
+| `block` | Block / البلك | Text | no | half | yes |  |
+| `developer_unit_code` | Developer Unit Code / رمز الوحدة لدى المطور | Text | no | half | yes |  |
 
 **Field details:**
 
-- **Project / المشروع** (`project_id`, type `lookup`):
+- **Project / اسم المشروع** (`project_id`, type `lookup`):
   - target model: All Projects
   - shows field: `project_name`
   - multiple: no
+- **Developer / المطور** (`developer_id`, type `lookup`):
+  - target model: Developers
+  - shows field: `name`
+  - multiple: no
+- **Unit Code / كود الوحدة** (`unit_code`, type `auto_id`):
+  - format: `U-0000` · starts at 1
+
+### 2. Availability & Pricing / التوفر والسعر  _(color #B8734F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `unit_status` | Unit Status / حالة الوحدة | Dropdown | no | half | yes | 4 options |
+| `total_price` | Total Price / إجمالي السعر | Currency | no | half | yes |  |
+| `project_opening_date` | Project Opening Date / موعد افتتاح المشروع | Date | no | half | no |  |
+| `payment_plans` | Payment Plans / خطط السداد | Table | no | full | no | 7 columns |
+
+**Field details:**
+
+- **Unit Status / حالة الوحدة** (`unit_status`, type `dropdown`) — options:
+  - API value `under_construction` → "Under Construction" / "تحت الإنشاء" · color `#F59E0B`
+  - API value `available` → "Available" / "متاحة" · color `#10B981`
+  - API value `reserved` → "Reserved" / "محجوزة" · color `#3B82F6`
+  - API value `sold` → "Sold" / "مباعة" · color `#8B5CF6`
+- **Payment Plans / خطط السداد** (`payment_plans`, type `table`) — columns:
+  - `plan` "Plan" (text)
+  - `down` "Down %" (number)
+  - `before_handover` "Before Handover %" (number)
+  - `on_handover` "On Handover %" (number)
+  - `after_handover` "After Handover %" (number)
+  - `price` "Price (AED)" (number)
+  - `price_sar` "Price (SAR)" (number)
+
+### 3. Layout / التصميم الداخلي  _(color #C09B5F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `unit_type` | Unit Type / نوع الوحدة | Dropdown | no | half | yes | 6 options |
+| `bedrooms` | Bedrooms / غرف النوم | Number | no | half | no |  |
+| `bathrooms` | Bathrooms / عدد الحمامات | Number | no | half | no |  |
+| `floor` | Floor / الطابق | Dropdown | no | half | yes | 28 options |
+| `unit_components` | Unit Components / مكونات الوحدة | Multi-select | no | full | no | 29 options · multi |
+| `facade` | Facade / الواجهة | Multi-select | no | half | no | 9 options · multi |
+| `elevator_status` | Elevator Status / حالة المصعد | Dropdown | no | half | no | 3 options |
+| `parking_space` | Parking Space / موقف السيارة | Multi-select | no | half | yes | 3 options · multi |
+| `view` | View / الإطلالة | Text | no | half | yes |  |
+
+**Field details:**
+
 - **Unit Type / نوع الوحدة** (`unit_type`, type `dropdown`) — options:
-  - API value `فيلا` → "Villa" / "فيلا"
   - API value `شقة` → "Apartment" / "شقة"
   - API value `دور` → "Floor" / "دور"
-  - API value `دبلكس` → "Duplex" / "دبلكس"
+  - API value `فيلا` → "Villa" / "فيلا"
   - API value `تاون هاوس` → "Townhouse" / "تاون هاوس"
-  - API value `استوديو` → "Studio" / "استوديو"
-  - API value `ملحق` → "Annex" / "ملحق"
-- **Unit Status / حالة الوحدة** (`unit_status`, type `dropdown`) — options:
-  - API value `available` → "Available" / "متاحة" · color `#10B981`
-  - API value `reserved` → "Reserved" / "محجوزة" · color `#F59E0B`
-  - API value `sold` → "Sold" / "مباعة" · color `#8B5CF6`
+  - API value `دبلكس` → "Duplex" / "دبلكس" · color `#8E4E3A`
+  - API value `بنتهاوس` → "Penthouse" / "بنتهاوس" · color `#C09B5F`
+- **Floor / الطابق** (`floor`, type `dropdown`) — options:
+  - API value `ارضي` → "Ground" / "ارضي"
+  - API value `اول` → "1st" / "اول"
+  - API value `ثاني` → "2nd" / "ثاني"
+  - API value `ثالث` → "3rd" / "ثالث"
+  - API value `1` → "1" / "1"
+  - API value `2` → "2" / "2"
+  - API value `3` → "3" / "3"
+  - API value `4` → "4" / "4"
+  - API value `5` → "5" / "5"
+  - API value `6` → "6" / "6"
+  - API value `7` → "7" / "7"
+  - API value `8` → "8" / "8"
+  - API value `9` → "9" / "9"
+  - API value `10` → "10" / "10"
+  - API value `11` → "11" / "11"
+  - API value `12` → "12" / "12"
+  - API value `13` → "13" / "13"
+  - API value `14` → "14" / "14"
+  - API value `15` → "15" / "15"
+  - API value `16` → "16" / "16"
+  - API value `17` → "17" / "17"
+  - API value `18` → "18" / "18"
+  - API value `19` → "19" / "19"
+  - API value `20` → "20" / "20"
+  - API value `21` → "21" / "21"
+  - API value `22` → "22" / "22"
+  - API value `23` → "23" / "23"
+  - API value `الروف` → "الروف" / "الروف"
+- **Unit Components / مكونات الوحدة** (`unit_components`, type `multiselect`) — multi-value. Options:
+  - API value `صالة جلوس` → "Living Room" / "صالة جلوس"
+  - API value `مجلس` → "Majlis" / "مجلس"
+  - API value `غرفة سائق` → "Driver Room" / "غرفة سائق"
+  - API value `صالة طعام` → "Dining Room" / "صالة طعام"
+  - API value `غرفة خادمة` → "Maid Room" / "غرفة خادمة"
+  - API value `بلكونة` → "Balcony" / "بلكونة"
+  - API value `غرفة خدمات` → "Utility Room" / "غرفة خدمات"
+  - API value `فناء خارجي` → "Outdoor Yard" / "فناء خارجي"
+  - API value `غرفة غسيل` → "Laundry Room" / "غرفة غسيل"
+  - API value `مطبخ` → "Kitchen" / "مطبخ"
+  - API value `ملابس` → "Walk-in Closet" / "ملابس"
+  - API value `سطح` → "Rooftop" / "سطح"
+  - API value `مستودع` → "مستودع" / "مستودع" · color `#F59E0B`
+  - API value `تراس` → "تراس" / "تراس" · color `#EF4444`
+  - API value `مصعد` → "مصعد" / "مصعد" · color `#8B5CF6`
+  - API value `حديقة` → "حديقة" / "حديقة" · color `#EC4899`
+  - API value `غرفة-نوم-رييسية` → "غرفة نوم رئيسية" / "غرفة نوم رئيسية" · color `#06B6D4`
+  - API value `فتحة-سماوية` → "فتحة سماوية" / "فتحة سماوية" · color `#84CC16`
+  - API value `مطبخ-مجهز-مسبقا` → "مطبخ مُجهَّز مسبقاً" / "مطبخ مُجهَّز مسبقاً" · color `#F97316`
+  - API value `بيت-ذكي` → "بيت ذكي" / "بيت ذكي" · color `#6366F1`
+  - API value `تكييف-مخفي-مجهز-مسبقا` → "تكييف مخفي مُجهَّز مسبقاً" / "تكييف مخفي مُجهَّز مسبقاً" · color `#3B82F6`
+  - API value `حمام-ضيوف` → "حمام ضيوف" / "حمام ضيوف" · color `#10B981`
+  - API value `حمام-رييسي` → "حمام رئيسي" / "حمام رئيسي" · color `#F59E0B`
+  - API value `حمام-غرفة-النوم-الرييسية` → "حمام غرفة النوم الرئيسية" / "حمام غرفة النوم الرئيسية" · color `#EF4444`
+  - API value `مدخل-خاص` → "مدخل خاص" / "مدخل خاص" · color `#8B5CF6`
+  - API value `مدخل-جانبي` → "مدخل جانبي" / "مدخل جانبي" · color `#EC4899`
+  - API value `سيب-خاص` → "Private utility yard" / "سيب خاص" · color `#9CA3AF`
+  - API value `مؤثثة` → "Furnished" / "مؤثثة" · color `#C09B5F`
+  - API value `مكنسة-مركزية` → "Central Vacuum" / "مكنسة مركزية" · color `#C09B5F`
+- **Facade / الواجهة** (`facade`, type `multiselect`) — multi-value. Options:
+  - API value `امامية` → "Front" / "امامية"
+  - API value `خلفية` → "Back" / "خلفية"
+  - API value `خارجية` → "External" / "خارجية"
+  - API value `داخلية` → "Internal" / "داخلية"
+  - API value `شمالية` → "Northern" / "شمالية"
+  - API value `جنوبية` → "Southern" / "جنوبية"
+  - API value `شرقية` → "Eastern" / "شرقية"
+  - API value `غربية` → "Western" / "غربية"
+  - API value `جانبية` → "جانبية" / "جانبية" · color `#F97316`
+- **Elevator Status / حالة المصعد** (`elevator_status`, type `dropdown`) — options:
+  - API value `مؤسس` → "Prepared" / "مؤسس"
+  - API value `لا يوجد` → "None" / "لا يوجد"
+  - API value `جاهز` → "Ready" / "جاهز"
+- **Parking Space / موقف السيارة** (`parking_space`, type `multiselect`) — multi-value. Options:
+  - API value `external` → "External" / "خارجي" · color `#3B82F6`
+  - API value `basement` → "Basement" / "قبو" · color `#10B981`
+  - API value `internal` → "Internal" / "داخلي" · color `#F59E0B`
+
+### 4. Areas / المساحات  _(color #8E4E3A)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `unit_area` | Unit Area (m²) / مساحة الوحدة | Number | no | half | yes |  |
+| `private_area` | Private Area / المساحة الخاصة | Number | no | half | no |  |
+| `total_area` | Total Area / إجمالي المساحة | Number | no | half | no |  |
+| `yard_area` | Yard Area / مساحة الفناء | Number | no | half | no |  |
+| `deed_area` | Deed Area / مساحة الصك | Number | no | half | no |  |
+| `balcony_area` | Balcony Area (m²) / مساحة الشرفة (م²) | Number | no | half | yes |  |
+| `terrace_area` | Terrace Area (m²) / مساحة التراس (م²) | Number | no | half | yes |  |
+
+### 5. Location / الموقع  _(color #B8734F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `project_location` | Project location / موقع المشروع | Mirror | no | half | no | computed mirror |
+| `location_url` | Location URL / الموقع | Mirror | no | full | no | computed mirror |
+| `street_width` | Street Width / حجم الشارع | Text | no | half | yes |  |
+
+**Field details:**
+
+- **Project location / موقع المشروع** (`project_location`, type `mirror`) — read-only; shows `location` from the record linked via Project (`project_id`).
+- **Location URL / الموقع** (`location_url`, type `mirror`) — read-only; shows `project_location` from the record linked via Project (`project_id`).
+
+### 6. Media & Documents / الوسائط والمستندات  _(color #C09B5F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `unit_plan` | Plan / المخطط | Image | no | half | yes |  |
+| `unit_brochure` | Unit Brochure / بروشور الوحدة | URL | no | full | no |  |
+| `project_brochure` | Project Brochure / بروشور المشروع | Mirror | no | full | no | computed mirror |
+
+**Field details:**
+
+- **Project Brochure / بروشور المشروع** (`project_brochure`, type `mirror`) — read-only; shows `brochure_link` from the record linked via Project (`project_id`).
+
+### 7. Notes / ملاحظات  _(color #8E4E3A)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `notes` | Notes / ملاحظات | Text area | no | full | no |  |
+
+### 8. Source Data (raw) / بيانات المصدر (خام)  _(color #6B7280)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `source_currency` | Source Currency / عملة المصدر | Text | no | half | no |  |
+| `source_price` | Source Price / السعر الأصلي | Number | no | half | no |  |
+| `source_fx_rate` | FX Rate Applied / سعر الصرف المطبق | Number | no | half | no |  |
+| `source_area_unit` | Source Area Unit / وحدة المساحة الأصلية | Text | no | half | no |  |
+| `source_total_area` | Source Total Area / المساحة الإجمالية الأصلية | Number | no | half | no |  |
+| `source_net_area` | Source Net Area / المساحة الصافية الأصلية | Number | no | half | no |  |
+| `source_terrace_area` | Source Terrace Area / مساحة التراس الأصلية | Number | no | half | no |  |
+| `source_balcony_area` | Source Balcony Area / مساحة الشرفة الأصلية | Number | no | half | no |  |
+| `source_floor` | Source Floor (raw) / الطابق كما ورد بالمصدر | Text | no | half | no |  |
+| `source_unit_type` | Source Unit Type (raw) / نوع الوحدة كما ورد بالمصدر | Text | no | half | no |  |
+| `source_file` | Source File / ملف المصدر | Text | no | half | no |  |
+| `source_synced_at` | Last Synced From Source / آخر مزامنة من المصدر | Date & time | no | half | no |  |
+| `source_view` | Source View (raw) / الإطلالة كما وردت بالمصدر | Text | no | half | no |  |
