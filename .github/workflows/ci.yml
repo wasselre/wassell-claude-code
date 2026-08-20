@@ -210,6 +210,37 @@ jobs:
       - name: B5 — saved views, ownership under RLS, idempotency, rollback
         run: bash supabase/tests/ci/run_b5_file_views_test.sh
 
+  b6-manual-links:
+    # Designated validator for Phase 3 · B6 —
+    #   supabase/migrations/2026-08-19_11_manual_link_write_surface.sql
+    #   supabase/migrations/2026-08-19_12_manual_link_role.sql
+    # The db-migrations job globs specific date prefixes and would execute
+    # neither, so they get their own job, the same way B1 and B5 do.
+    #
+    # The load-bearing assertion is that the role change is a NO-OP on existing
+    # data: it compares a fingerprint of the WHOLE live-source derivation —
+    # keyed by source AND role, because a count would not notice a role moving
+    # — before and after, for the global function AND its scoped twin, and
+    # requires the two to still equal each other (Phase 2's own invariant).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: B6 — manual links, grant hardening, role fix, rollback
+        run: bash supabase/tests/ci/run_b6_manual_links_test.sh
+
   b2a4-authz:
     # Designated validator for
     # supabase/migrations/2026-08-18_02_link_authz_denormalized.sql (B2A.4).
