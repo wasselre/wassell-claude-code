@@ -6,7 +6,7 @@
 import { useMemo, useState } from 'react';
 import { X, AlertTriangle } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import { decideField, exampleList, type Disposition, type FieldStatus } from '@/lib/marketAutomation/client';
+import { decideField, exampleList, coercePreview, type CoerceClass, type Disposition, type FieldStatus } from '@/lib/marketAutomation/client';
 
 const OPTIONS: { id: Disposition; ar: string; en: string; hint_ar: string; hint_en: string }[] = [
   { id: 'mapped_existing_field', ar: 'مطابقة لحقل قائم', en: 'Map to existing field', hint_ar: 'نفس معنى حقل موجود في وصل', hint_en: 'Same meaning as an existing Wassell column' },
@@ -19,10 +19,11 @@ const OPTIONS: { id: Disposition; ar: string; en: string; hint_ar: string; hint_
 const NEEDS_REASON = new Set<Disposition>(['mapped_existing_field', 'candidate_new_field', 'review_required']);
 
 export default function DecisionPanel({
-  field, targetFields, isAr, onClose, onSaved,
+  field, targetFields, targetTypes, isAr, onClose, onSaved,
 }: {
   field: FieldStatus;
   targetFields: string[];
+  targetTypes: Record<string, CoerceClass>;
   isAr: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -108,6 +109,24 @@ export default function DecisionPanel({
                 <div className="flex items-start gap-1.5 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-2 text-[12px]">
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   {isAr ? `تحذير: نوع البيانات "${field.raw_data_type}" لا يبدو رقميًا لكن العمود المستهدف رقمي.` : `Warning: observed type "${field.raw_data_type}" isn't numeric but this target looks numeric.`}
+                </div>
+              )}
+              {/* Live coerced preview: how real values would land in this column. */}
+              {canonical && exampleList(field.example_values, 6).length > 0 && (
+                <div className="mt-2 rounded-lg border border-sand/40 overflow-hidden">
+                  <div className="text-[10px] uppercase text-charcoal/40 px-2.5 py-1 bg-sand/5">
+                    {isAr ? `كيف ستظهر في «${canonical}»` : `How real values land in “${canonical}”`}
+                  </div>
+                  {exampleList(field.example_values, 6).map((ex, i) => {
+                    const r = coercePreview(ex, targetTypes[canonical] ?? 'text');
+                    return (
+                      <div key={i} className="flex items-center justify-between gap-2 px-2.5 py-1 text-[12px] border-t border-sand/20">
+                        <span className="font-mono text-charcoal/60 truncate max-w-[150px]">{ex}</span>
+                        <span className="text-charcoal/30">→</span>
+                        <span className={`font-mono truncate max-w-[130px] ${r.ok ? 'text-emerald-700' : 'text-rose-600'}`}>{r.out}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

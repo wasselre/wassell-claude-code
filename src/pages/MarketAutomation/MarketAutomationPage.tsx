@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { RefreshCw, Database, ListChecks, Activity, AlertTriangle, UploadCloud } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import { fetchFieldStatus, fetchTargetFields, summarize, exampleList, type FieldStatus } from '@/lib/marketAutomation/client';
+import { fetchFieldStatus, fetchTargetFields, fetchTargetFieldTypes, summarize, exampleList, type CoerceClass, type FieldStatus } from '@/lib/marketAutomation/client';
 import DecisionPanel from './components/DecisionPanel';
 import PublishControl from './components/PublishControl';
 
@@ -36,6 +36,7 @@ export default function MarketAutomationPage() {
 
   const [rows, setRows] = useState<FieldStatus[]>([]);
   const [targetFields, setTargetFields] = useState<string[]>([]);
+  const [targetTypes, setTargetTypes] = useState<Record<string, CoerceClass>>({});
   const [deciding, setDeciding] = useState<FieldStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +53,7 @@ export default function MarketAutomationPage() {
   };
   useEffect(load, []);
   useEffect(() => { fetchTargetFields().then(setTargetFields).catch(() => {}); }, []);
+  useEffect(() => { fetchTargetFieldTypes().then(setTargetTypes).catch(() => {}); }, []);
 
   const platforms = useMemo(() => Array.from(new Set(rows.map((r) => r.platform))).sort(), [rows]);
   const scoped = useMemo(() => (platform === 'all' ? rows : rows.filter((r) => r.platform === platform)), [rows, platform]);
@@ -129,7 +131,7 @@ export default function MarketAutomationPage() {
       {!loading && tab === 'health' && <HealthTab summary={summary} isAr={isAr} />}
 
       {deciding && (
-        <DecisionPanel field={deciding} targetFields={targetFields} isAr={isAr}
+        <DecisionPanel field={deciding} targetFields={targetFields} targetTypes={targetTypes} isAr={isAr}
           onClose={() => setDeciding(null)} onSaved={load} />
       )}
     </div>

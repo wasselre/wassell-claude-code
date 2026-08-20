@@ -9,14 +9,21 @@
  * the release backfills the live column from staging and flips the ledger.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, Lock, UploadCloud, PlusCircle } from 'lucide-react';
-import { fetchPublishLedger, setPublishStatus, publishField, exampleList, type FieldStatus, type PublishLedgerRow } from '@/lib/marketAutomation/client';
+import { AlertTriangle, Check, Lock, UploadCloud, PlusCircle, Eye } from 'lucide-react';
+import { fetchPublishLedger, setPublishStatus, publishField, exampleList, fetchStagedSample, type FieldStatus, type PublishLedgerRow, type StagedSample } from '@/lib/marketAutomation/client';
 
 export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; isAr: boolean }) {
   const [ledger, setLedger] = useState<PublishLedgerRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{ platform: string; field: string; diff: number } | null>(null);
+  const [preview, setPreview] = useState<{ field: string; rows: StagedSample[] } | null>(null);
+
+  const loadSample = async (field: string) => {
+    setError(null);
+    try { setPreview({ field, rows: await fetchStagedSample(field, 8) }); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
 
   const reload = () => fetchPublishLedger().then(setLedger).catch((e) => setError(e instanceof Error ? e.message : String(e)));
   useEffect(() => { reload(); }, []);
@@ -181,14 +188,20 @@ export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; is
                       </div>
                     </td>
                     <td className="px-3 py-2">
-                      <button
-                        onClick={() => onToggle(f.platform, f.field)}
-                        disabled={busy === key}
-                        className={`inline-flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-full transition-colors ${st === 'released' ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'} ${busy === key ? 'opacity-50' : ''}`}
-                        title={isAr ? 'اضغط للتبديل' : 'Click to toggle'}
-                      >
-                        {st === 'released' ? <><Check className="w-3 h-3" />{isAr ? 'مُصدَر' : 'Released'}</> : <><Lock className="w-3 h-3" />{isAr ? 'محجوز' : 'Held'}</>}
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => onToggle(f.platform, f.field)}
+                          disabled={busy === key}
+                          className={`inline-flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-full transition-colors ${st === 'released' ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'} ${busy === key ? 'opacity-50' : ''}`}
+                          title={isAr ? 'اضغط للتبديل' : 'Click to toggle'}
+                        >
+                          {st === 'released' ? <><Check className="w-3 h-3" />{isAr ? 'مُصدَر' : 'Released'}</> : <><Lock className="w-3 h-3" />{isAr ? 'محجوز' : 'Held'}</>}
+                        </button>
+                        {st === 'held' && (
+                          <button onClick={() => loadSample(f.field)} title={isAr ? 'معاينة القيم المُخزَّنة' : 'Preview staged values'}
+                            className="text-charcoal/35 hover:text-copper p-1"><Eye className="w-3.5 h-3.5" /></button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-[11px] text-charcoal/45 whitespace-nowrap">
                       {l?.released_at ? (grandfathered ? (isAr ? 'موروث' : 'grandfathered') : new Date(l.released_at).toLocaleDateString()) : '—'}
@@ -199,6 +212,37 @@ export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; is
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Staged-values preview: real values waiting in staging + their current live value. */}
+      {preview && (
+        <div className="border border-copper/30 bg-copper/5 rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-copper/20">
+            <div className="text-[13px] text-charcoal">
+              {isAr ? `القيم المُخزَّنة لـ ` : `Staged values for `}<span className="font-mono">{preview.field}</span>
+              {preview.rows.length === 0 && <span className="text-charcoal/45"> — {isAr ? 'لا قيم مُخزَّنة بعد (تظهر بعد أول مسح)' : 'none yet (appear after the next scrape)'}</span>}
+            </div>
+            <button onClick={() => setPreview(null)} className="text-charcoal/40 hover:text-charcoal text-[12px]">{isAr ? 'إغلاق' : 'Close'}</button>
+          </div>
+          {preview.rows.length > 0 && (
+            <table className="w-full text-sm">
+              <thead className="text-[10px] uppercase text-charcoal/40">
+                <tr>
+                  <th className="text-start font-medium px-4 py-1">{isAr ? 'قيمة مُخزَّنة (ستصبح حية)' : 'staged (would go live)'}</th>
+                  <th className="text-start font-medium px-4 py-1">{isAr ? 'القيمة الحية الحالية' : 'current live'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.rows.map((r, i) => (
+                  <tr key={i} className="border-t border-copper/15">
+                    <td className="px-4 py-1 font-mono text-[12px] text-emerald-700 truncate max-w-[240px]">{r.staged ?? '∅'}</td>
+                    <td className="px-4 py-1 font-mono text-[12px] text-charcoal/50 truncate max-w-[240px]">{r.live ?? '∅'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </div>

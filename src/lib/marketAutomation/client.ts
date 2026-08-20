@@ -172,11 +172,55 @@ export async function publishField(
 
 /** The market_listings field slugs — the target columns for "map to existing". */
 export async function fetchTargetFields(): Promise<string[]> {
-  if (!supabase) return [];
+  return Object.keys(await fetchTargetFieldTypes()).sort();
+}
+
+/** Map of market_listings field slug → coercion class (how a raw value lands). */
+export type CoerceClass = 'numeric' | 'boolean' | 'timestamp' | 'text' | 'json';
+export async function fetchTargetFieldTypes(): Promise<Record<string, CoerceClass>> {
+  if (!supabase) return {};
   const { data, error } = await supabase.from('models').select('schema').eq('name', 'market_listings').maybeSingle();
   if (error) throw new Error(error.message);
-  const schema = (data?.schema ?? {}) as { sections?: { fields?: { name?: string }[] }[] };
-  const out: string[] = [];
-  for (const sec of schema.sections ?? []) for (const f of sec.fields ?? []) if (f.name) out.push(f.name);
-  return [...new Set(out)].sort();
+  const schema = (data?.schema ?? {}) as { sections?: { fields?: { name?: string; type?: string }[] }[] };
+  const out: Record<string, CoerceClass> = {};
+  const cls = (t?: string): CoerceClass =>
+    t === 'number' || t === 'currency' || t === 'formula' ? 'numeric'
+      : t === 'checkbox' ? 'boolean'
+      : t === 'date' || t === 'datetime' ? 'timestamp'
+      : t === 'multiselect' || t === 'table' || t === 'notes' || t === 'multi_image' || t === 'multi_video' ? 'json'
+      : 'text';
+  for (const sec of schema.sections ?? []) for (const f of sec.fields ?? []) if (f.name) out[f.name] = cls(f.type);
+  return out;
+}
+
+/** Mirror of the DB coercions (try_numeric/boolean/timestamptz) for the live preview.
+ *  Returns { ok, out } — ok=false means a non-empty value would land as NULL (a
+ *  type mismatch the operator should see before mapping). */
+export function coercePreview(raw: string, cls: CoerceClass): { ok: boolean; out: string } {
+  const s = (raw ?? '').trim();
+  if (s === '') return { ok: true, out: '∅' };
+  if (cls === 'numeric') {
+    const n = Number(s.replace(/[^\d.-]/g, ''));
+    return Number.isFinite(n) && /\d/.test(s) ? { ok: true, out: String(n) } : { ok: false, out: '✗ (blank)' };
+  }
+  if (cls === 'boolean') {
+    const t = s.toLowerCase();
+    if (['true', 't', '1', 'yes'].includes(t)) return { ok: true, out: 'true' };
+    if (['false', 'f', '0', 'no'].includes(t)) return { ok: true, out: 'false' };
+    return { ok: false, out: '✗ (blank)' };
+  }
+  if (cls === 'timestamp') {
+    const d = Date.parse(s);
+    return Number.isFinite(d) ? { ok: true, out: new Date(d).toISOString().slice(0, 10) } : { ok: false, out: '✗ (blank)' };
+  }
+  return { ok: true, out: s.slice(0, 60) };
+}
+
+/** Sample real staged values for a held field + their current live value. */
+export interface StagedSample { staged: string | null; live: string | null }
+export async function fetchStagedSample(canonical_field: string, limit = 8): Promise<StagedSample[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.rpc('market_listing_staging_sample', { p_canonical_field: canonical_field, p_limit: limit });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as StagedSample[];
 }
