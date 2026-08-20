@@ -7,6 +7,7 @@ import { markActivity } from '@/lib/perf/freezeDetector';
 import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildColoredPinIcon, buildClusterIcon } from '@/lib/locationUtils';
 import type { FinderMatch, FinderSource } from '@/lib/matching/projectFinder';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 /**
  * MAP view for the Project Finder results — the alternative to the card list.
@@ -54,6 +55,7 @@ interface Plotted { match: FinderMatch; lat: number; lng: number }
 
 export default function FinderMapView({ matches, isAr, onOpenDetails, renderSelectedCard, heightClass = 'h-[70vh]' }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
+  const isMobile = useIsMobile();
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
   const keyMissing = !isMapsKeyConfigured();
 
@@ -251,11 +253,11 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
             streetViewControl: false,
             fullscreenControl: true,
             clickableIcons: false,
-            // One-finger pan on touch devices. The default ('cooperative')
-            // demands two fingers and shows a "use two fingers" banner, so a
-            // one-finger drag scrolls the surrounding modal instead of the map —
-            // which reads as "the map doesn't work" on a phone.
-            gestureHandling: 'greedy',
+            // MOBILE-ONLY one-finger pan: the default demands two fingers, so a
+            // one-finger drag scrolls the surrounding modal instead of the map
+            // ("the map doesn't work" on a phone). On the laptop keep the
+            // original default ('auto' → cooperative), so desktop is unchanged.
+            gestureHandling: isMobile ? 'greedy' : 'auto',
           }}
         />
 

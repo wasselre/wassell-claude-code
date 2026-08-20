@@ -10,6 +10,7 @@ import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import ProjectDetailPage from '@/pages/Projects/ProjectDetailPage';
 import { optionSourceUrl } from '@/lib/matching/clientOptions';
 import type { ClientOptionSourceType } from '@/lib/matching/clientOptions';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 /**
  * Client Options POPUP — the client's unified options list (ClientOptionsTab)
@@ -38,6 +39,7 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
     [clientsModel, records, clientId],
   );
   const canEdit = useCanEditRecord(clientsModel, client);
+  const isMobile = useIsMobile();
 
   const [mode, setMode] = useState<'options' | 'finder' | 'browse'>('options');
   // A drilled-into option's SOURCE record (project / unit / market listing),
@@ -51,6 +53,14 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
       sourceView.sourceType === 'market_listing' ? 'market_listings' : sourceView.sourceType === 'unit' ? 'units' : 'all_projects';
     return models.find((m) => m.name === name)?.id ?? null;
   }, [sourceView, models]);
+
+  // MOBILE-ONLY: drilling into a source stays in this popup. On the laptop we
+  // keep the original new-tab "View source" link (onOpenSource left undefined,
+  // so ClientOptionsTab + the finder fall back to their `target="_blank"` /
+  // window.open behaviour).
+  const onOpenSource = isMobile
+    ? (sourceType: ClientOptionSourceType, sourceId: string) => setSourceView({ sourceType, sourceId })
+    : undefined;
 
   const clientName = useMemo(() => {
     const d = client?.data as Record<string, unknown> | undefined;
@@ -130,7 +140,7 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
                   isAr={isAr}
                   canEdit={canEdit}
                   onFindMore={() => setMode('finder')}
-                  onOpenSource={(sourceType, sourceId) => setSourceView({ sourceType, sourceId })}
+                  onOpenSource={onOpenSource}
                 />
               ) : (
                 <div className="rounded-2xl border border-sand/30 bg-white p-6 text-sm text-charcoal/55">
@@ -159,7 +169,7 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
                 // 2026-07-19).
                 editPrefsFirst
                 onDone={() => setMode('options')}
-                onOpenSource={(sourceType, sourceId) => setSourceView({ sourceType, sourceId })}
+                onOpenSource={onOpenSource}
               />
             )}
           </div>

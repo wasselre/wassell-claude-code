@@ -6,6 +6,7 @@ import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
+import { useIsMobile } from '@/hooks/useIsMobile';
 // Heavy, only-when-opened overlays are lazy-loaded so the chats chunk stays
 // lean — the Project Finder (Google Maps), the client 360 cockpit, the
 // projects/units browser and the record form load on demand, not with the
@@ -48,6 +49,7 @@ function firstId(v: unknown): string | null {
  */
 export default function ChatDetail({ recordId }: { recordId: string }) {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const isAr = useAppStore((s) => s.language === 'ar');
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
@@ -250,16 +252,27 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   }
 
   // Open a record as an IN-CHAT popup instead of navigating away. The linked
-  // CLIENT opens the full 360 cockpit; a matched CONTACT / ADVERTISER (no
-  // bespoke page) opens the generic record overlay. Null when unavailable.
-  const openClientProfile = clientLinkId ? () => setShowClient360(true) : null;
+  // MOBILE-ONLY: opening a record stays in the chat as an overlay (client → the
+  // full 360 cockpit; contact / advertiser → the generic record overlay). On
+  // the LAPTOP we keep the original behaviour — the client opens in a new tab
+  // and contact / advertiser navigate to their record page — so desktop is
+  // unchanged from before.
+  const openClientProfile = clientLinkId
+    ? isMobile
+      ? () => setShowClient360(true)
+      : () => window.open(`/model/clients/${clientLinkId}`, '_blank', 'noopener')
+    : null;
   const openContactRecord =
     matchedContact && contactsModel
-      ? () => setRecordPopup({ modelId: contactsModel.id, recordId: matchedContact.id, href: `/model/contacts/${matchedContact.id}` })
+      ? isMobile
+        ? () => setRecordPopup({ modelId: contactsModel.id, recordId: matchedContact.id, href: `/model/contacts/${matchedContact.id}` })
+        : () => navigate(`/model/contacts/${matchedContact.id}`)
       : null;
   const openAdvertiserRecord =
     matchedAdvertiser && advertisersModel
-      ? () => setRecordPopup({ modelId: advertisersModel.id, recordId: matchedAdvertiser.id, href: `/model/advertisers/${matchedAdvertiser.id}` })
+      ? isMobile
+        ? () => setRecordPopup({ modelId: advertisersModel.id, recordId: matchedAdvertiser.id, href: `/model/advertisers/${matchedAdvertiser.id}` })
+        : () => navigate(`/model/advertisers/${matchedAdvertiser.id}`)
       : null;
 
   // Props shared by the CRM-actions cluster, rendered inline on desktop and
