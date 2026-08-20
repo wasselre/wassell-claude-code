@@ -24,6 +24,9 @@ import { calcFinancing, clamp } from '@/lib/financing/calc';
 
 const DEFAULT_PRICE = 750_000;
 const PRICE_MIN = 100_000;
+/** Hard ceiling. Without it the 1.3× slider max compounds on every typed
+ *  price and the calculator happily quotes a 723-billion-riyal apartment. */
+const PRICE_MAX = 20_000_000;
 /** Bayut caps its price slider at 1.3× the listing price; same idea here. */
 const PRICE_SLIDER_MULTIPLIER = 1.3;
 
@@ -86,7 +89,7 @@ function FinancingDonut({ interestShare, totalPayable, isAr }: {
   );
 }
 
-function SliderRow({ label, suffix, badge, value, display, min, max, step, onValue, isAr }: {
+function SliderRow({ label, suffix, badge, value, display, min, max, inputMax, step, onValue, isAr }: {
   label: string;
   suffix: string;
   badge?: string;
@@ -94,6 +97,8 @@ function SliderRow({ label, suffix, badge, value, display, min, max, step, onVal
   display: string;
   min: number;
   max: number;
+  /** Typed values may exceed the slider range up to this cap (defaults to max). */
+  inputMax?: number;
   step: number;
   onValue: (n: number) => void;
   isAr: boolean;
@@ -116,8 +121,13 @@ function SliderRow({ label, suffix, badge, value, display, min, max, step, onVal
             onChange={(e) => setDraft(e.target.value)}
             onBlur={() => {
               if (draft === null) return;
-              const n = Number(draft.replace(/[^\d.]/g, ''));
-              onValue(clamp(n, min, max));
+              // The field renders Arabic-Indic digits under ar-SA formatting —
+              // fold ٠-٩ / ۰-۹ to Latin before stripping separators.
+              const latin = draft
+                .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+                .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+              const n = Number(latin.replace(/[^\d.]/g, ''));
+              onValue(clamp(n, min, inputMax ?? max));
               setDraft(null);
             }}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
@@ -152,7 +162,9 @@ export default function FinancingPage() {
   const [firstHome, setFirstHome] = useState(true);
 
   const priceParam = Number(params.get('price'));
-  const initialPrice = Number.isFinite(priceParam) && priceParam >= PRICE_MIN ? priceParam : DEFAULT_PRICE;
+  const initialPrice = Number.isFinite(priceParam) && priceParam >= PRICE_MIN
+    ? clamp(priceParam, PRICE_MIN, PRICE_MAX)
+    : DEFAULT_PRICE;
   const [price, setPrice] = useState(initialPrice);
   const [term, setTerm] = useState(DEFAULT_TERM_YEARS);
 
@@ -182,7 +194,10 @@ export default function FinancingPage() {
     [price, downPayment, minDown, maxDown, term, rate],
   );
   const downPct = price > 0 ? Math.round((result.downPaymentAmount / price) * 100) : 0;
-  const priceSliderMax = Math.max(2_000_000, Math.ceil((price * PRICE_SLIDER_MULTIPLIER) / 50_000) * 50_000);
+  const priceSliderMax = Math.min(
+    PRICE_MAX,
+    Math.max(2_000_000, Math.ceil((price * PRICE_SLIDER_MULTIPLIER) / 50_000) * 50_000),
+  );
 
   const copySummary = async () => {
     const bankName = bank ? (isAr ? bank.name_ar : bank.name_en) : '';
@@ -279,8 +294,9 @@ export default function FinancingPage() {
               display={fmt(price, isAr)}
               min={PRICE_MIN}
               max={priceSliderMax}
+              inputMax={PRICE_MAX}
               step={10_000}
-              onValue={setPrice}
+              onValue={(n) => setPrice(clamp(n, PRICE_MIN, PRICE_MAX))}
               isAr={isAr}
             />
 
