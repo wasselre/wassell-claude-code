@@ -16,6 +16,8 @@ import {
 import { auditProject } from '@/lib/projects/projectAi';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
+import RecordFilesPanel from '@/pages/Records/components/RecordFilesPanel';
+import { recordFilesEnabled } from '@/lib/files/flags';
 import UnitsInventory from './components/UnitsInventory';
 import MatchClientModal from './components/MatchClientModal';
 import PaymentPlansTabPane from '@/pages/Records/components/PaymentPlansTabPane';
@@ -540,6 +542,23 @@ function MediaTab({ view, record, model, isAr }: { view: ProjectView; record: im
         <div className="card p-6 text-center text-charcoal/40 text-sm">
           {dash}. <button className="text-copper underline" onClick={() => window.open(`/model/${model.name}/${record.id}?generic=1`, '_self')}>{isAr ? 'إدارة الملفات في النموذج' : 'Manage files in the form'}</button>
         </div>
+      )}
+
+      {/* Phase 3 · B6. Everything ABOVE this line renders the project's media
+        * from RECORD FIELDS — the hero image, the gallery array, the brochure
+        * URLs. The panel below renders the file GRAPH: every file linked to
+        * this project by any mechanism, including the ones no field mentions.
+        *
+        * The two overlap deliberately and are not deduplicated. A gallery image
+        * appears above as a picture and below as a linked file with its role,
+        * because they answer different questions — "what does this project look
+        * like" and "what is attached to it, and can I unlink it".
+        *
+        * Mounted here rather than on the generic form because all_projects
+        * renders THIS page; the generic form is reachable only via ?generic=1
+        * and nobody navigates that way. */}
+      {recordFilesEnabled() && (
+        <RecordFilesPanel modelId={record.model_id} recordId={record.id} />
       )}
     </div>
   );

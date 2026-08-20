@@ -252,12 +252,27 @@ real regression risk. Generated PDFs already appear in the new panel anyway,
 because the generator writes a `document_links` row and arrives through the
 projection like everything else.
 
-**Known gap, not yet closed:** the panel mounts in the generic `RecordFormPage`,
-but `all_projects`, `our_projects`, `clients` and `followups` render CUSTOM
-detail pages that bypass it. On those the panel is reachable only via
-`?generic=1`. That covers units, tasks, offers and reservations from the spec's
-list but misses projects and clients, which are the two that matter most. It is
-a mounting job, not a design change.
+**Mounted on the custom detail pages too** (2026-08-20). The generic
+`RecordFormPage` covers units, tasks, offers and reservations, but
+`all_projects`, `our_projects`, `clients` and `followups` render CUSTOM pages
+that bypass it — so the panel was initially reachable on projects and clients
+only via `?generic=1`, which is to say not at all. It now mounts on the
+project's **Media** tab and the client's **Related** tab. Verified on both:
+a project shows its 12 files without `?generic=1`, a client shows 3.
+
+Deliberately NOT deduplicated against what those tabs already render. A gallery
+image appears in the Media tab as a picture AND in the panel as a linked file
+with its role, because they answer different questions — "what does this project
+look like" versus "what is attached to it, and can I unlink it".
+
+**One label bug the mount exposed:** the client panel rendered a section heading
+of `ATTACHMENT3` — the raw slug, uppercased by the heading style, on an Arabic
+page. `attachment` is Phase 1's reserved role-NEUTRAL sentinel (the legacy
+`files.record_id` column proves an association and refuses to invent a role for
+it) and it is deliberately absent from `file_document_types`; 564 edges carry
+it. Adding it to the vocabulary would have been the wrong fix — it would then be
+offered in the "link as" picker as though a person could choose it. Given
+bilingual labels in the resolver instead, alongside the `unmapped` sentinel.
 
 ### What B5 did NOT do
 

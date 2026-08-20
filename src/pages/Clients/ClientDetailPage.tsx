@@ -9,6 +9,8 @@ import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import WhatsAppHistoryPanel from '@/pages/Records/components/WhatsAppHistoryPanel';
 import CallHistoryPanel from '@/pages/Records/components/CallHistoryPanel';
 import RelatedRecordsPanel from '@/pages/Records/components/RelatedRecordsPanel';
+import RecordFilesPanel from '@/pages/Records/components/RecordFilesPanel';
+import { recordFilesEnabled } from '@/lib/files/flags';
 import {
   resolveClientView,
   isGenericMode,
@@ -216,7 +218,25 @@ export default function ClientDetailPage({ clientId, onClose }: { clientId?: str
         {activeTab === 'timeline' && <TimelineTab view={view} ctx={ctx} isAr={isAr} />}
         {activeTab === 'whatsapp' && <WhatsAppHistoryPanel clientId={client.id} chrome="card" />}
         {activeTab === 'calls' && <CallHistoryPanel phones={phones} chrome="card" />}
-        {activeTab === 'related' && <RelatedRecordsPanel recordId={client.id} targetModelName="clients" />}
+        {activeTab === 'related' && (
+          <div className="space-y-4">
+            <RelatedRecordsPanel recordId={client.id} targetModelName="clients" />
+            {/* Phase 3 · B6. Files belong on "Related" rather than in a tab of
+              * their own: to a salesperson a contract or an ID scan IS a
+              * related thing, and a client rarely has enough files to earn its
+              * own tab. Mounted here because clients render THIS page, not the
+              * generic form the panel otherwise lives on.
+              *
+              * Client files are the ones most likely to be `restricted`
+              * (contracts, ID documents), and that is handled entirely by RLS —
+              * a restricted file is invisible through the record-derived branch,
+              * so it simply does not appear for someone without an explicit
+              * grant. The panel needs no confidentiality logic of its own. */}
+            {recordFilesEnabled() && (
+              <RecordFilesPanel modelId={client.model_id} recordId={client.id} />
+            )}
+          </div>
+        )}
         {activeTab === 'notes' && (
           <SalesNotesTab view={view} client={client} clientsModel={clientsModel} ctx={ctx} isAr={isAr} canEdit={canEdit} />
         )}

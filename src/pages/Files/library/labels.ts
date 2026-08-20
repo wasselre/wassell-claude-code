@@ -20,14 +20,39 @@
 import type { TFunction } from 'i18next';
 import type { AppModel, FileDocumentTypeRow, User } from '@/types';
 
+/**
+ * Two roles are NOT document types and never appear in `file_document_types`:
+ *
+ *   attachment — the reserved role-NEUTRAL sentinel. The legacy
+ *                `files.record_id` column proves a file is *associated* with a
+ *                record and nothing more, so Phase 1 refuses to invent a role
+ *                for it. 564 edges carry it on production.
+ *   unmapped   — an unrecognised (model, field) pair, named explicitly rather
+ *                than swallowed, so reconciliation can report it.
+ *
+ * Both reach the UI as `file_links.role` and both need words. Without these the
+ * panel printed the raw slug — and, under the section heading's `uppercase`,
+ * rendered "ATTACHMENT" on an Arabic page. Adding them to the vocabulary table
+ * instead would be wrong: they would then be offered in the "link as" picker as
+ * though a person could choose them, which is exactly what they are not.
+ */
+const ROLE_SENTINELS: Record<string, { ar: string; en: string }> = {
+  attachment: { ar: 'مرفق بالسجل', en: 'Attached to the record' },
+  unmapped: { ar: 'حقل غير معرّف', en: 'Unrecognised field' },
+};
+
 export function documentTypeLabel(
   value: string,
   types: FileDocumentTypeRow[],
   isAr: boolean,
 ): string {
   const row = types.find((t) => t.value === value);
-  if (!row) return value;
-  return isAr ? row.label_ar : row.label_en;
+  if (row) return isAr ? row.label_ar : row.label_en;
+  const sentinel = ROLE_SENTINELS[value];
+  if (sentinel) return isAr ? sentinel.ar : sentinel.en;
+  // A genuinely unknown value renders as itself — ugly, but true, and it names
+  // the thing a reader needs in order to go and look it up.
+  return value;
 }
 
 export function statusLabel(value: string, t: TFunction): string {
