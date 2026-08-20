@@ -596,6 +596,15 @@ const resources = {
       'files.upload.failed': 'فشل الرفع',
       'files.upload.too_large': 'الملف كبير جداً ({{size}} ميجابايت). الحد الأقصى 500 ميجابايت.',
       'files.upload.unsupported_type': 'نوع الملف غير مدعوم',
+      // Files · B7 duplicate-on-upload
+      'files.dupe.title': 'هذا الملف موجود لديك بالفعل',
+      'files.dupe.subtitle': '«{{name}}» ({{size}}) مطابق تماماً لملف موجود.',
+      'files.dupe.already_have': 'الملف الموجود',
+      'files.dupe.and_more': 'و{{count}} نسخة أخرى مطابقة',
+      'files.dupe.explain': 'الربط بالملف الموجود لا ينسخ شيئاً — الملف نفسه يمكن أن يرتبط بعدة سجلات ومجلدات. أما الاحتفاظ بنسخة فينشئ ملفاً ثانياً بنفس المحتوى.',
+      'files.dupe.apply_to_rest': 'طبّق هذا الاختيار على بقية الملفات ({{count}})',
+      'files.dupe.keep_copy': 'احتفظ بنسخة',
+      'files.dupe.use_existing': 'استخدم الملف الموجود',
       // Files System · Phase 3 · B5 — the Business Files Library
       'files.tabs.library': 'المكتبة',
       'files.tabs.legacy_folders': 'المجلدات القديمة',
@@ -1722,6 +1731,15 @@ const resources = {
       'files.upload.failed': 'Upload failed',
       'files.upload.too_large': 'File too large ({{size}} MB). Max is 500 MB.',
       'files.upload.unsupported_type': 'Unsupported file type',
+      // Files · B7 duplicate-on-upload
+      'files.dupe.title': 'You already have this file',
+      'files.dupe.subtitle': '“{{name}}” ({{size}}) is byte-identical to a file already here.',
+      'files.dupe.already_have': 'The existing file',
+      'files.dupe.and_more': 'and {{count}} more identical copies',
+      'files.dupe.explain': 'Using the existing file copies nothing — one file can be linked to many records and folders. Keeping a copy creates a second file with the same contents.',
+      'files.dupe.apply_to_rest': 'Apply this choice to the remaining {{count}} file(s)',
+      'files.dupe.keep_copy': 'Keep a copy',
+      'files.dupe.use_existing': 'Use the existing file',
       // Files System · Phase 3 · B5 — the Business Files Library
       'files.tabs.library': 'Library',
       'files.tabs.legacy_folders': 'Legacy folders',

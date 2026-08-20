@@ -8,12 +8,30 @@ import {
   uploadTree,
 } from '@/lib/files/client';
 import type { FileRow, FolderRow } from '@/types';
+import type { DuplicateDecision } from '@/lib/files/client';
+import DuplicateUploadModal from './DuplicateUploadModal';
 import { useAppStore } from '@/stores/appStore';
 
 interface Props {
   folderId: string | null;
   enabled: boolean;
   onUploaded: (rows: FileRow[], folders: FolderRow[]) => void;
+}
+
+/**
+ * B7. One duplicate decision awaiting the user.
+ *
+ * Uploads run three at a time, so three workers can hit a duplicate at once.
+ * They are serialised through a single pending prompt and a promise chain:
+ * asking three questions on top of each other is how people learn to click the
+ * first button without reading it.
+ */
+interface PendingDuplicate {
+  name: string;
+  size: number;
+  matches: FileRow[];
+  remaining: number;
+  resolve: (d: DuplicateDecision) => void;
 }
 
 interface UploadingItem {
@@ -38,6 +56,35 @@ export default function UploadDropzone({ folderId, enabled, onUploaded }: Props)
   const addToast = useAppStore((s) => s.addToast);
   const [dragging, setDragging] = useState(false);
   const [items, setItems] = useState<UploadingItem[]>([]);
+
+  // ── B7: duplicate prompts ───────────────────────────────────────────────
+  const [pendingDupe, setPendingDupe] = useState<PendingDuplicate | null>(null);
+  /** Set once the user ticks "apply to the rest"; cleared at the start of each
+   *  new batch so a decision never leaks from one drop into the next. */
+  const batchDecisionRef = useRef<DuplicateDecision | null>(null);
+  /** Serialises prompts: each request waits for the previous one to resolve,
+   *  so three concurrent workers ask one question at a time. */
+  const promptChainRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  const askDuplicate = useCallback(
+    (matches: FileRow[], file: File, remaining: number): Promise<DuplicateDecision> => {
+      const run = promptChainRef.current.then(() => {
+        // Re-checked INSIDE the chain, not before it: an earlier prompt may
+        // have set it while this one was queued, which is the whole point of
+        // "apply to the rest".
+        if (batchDecisionRef.current) return batchDecisionRef.current;
+        return new Promise<DuplicateDecision>((resolve) => {
+          setPendingDupe({
+            name: file.name, size: file.size, matches, remaining,
+            resolve: (d) => { setPendingDupe(null); resolve(d); },
+          });
+        });
+      });
+      promptChainRef.current = run.catch(() => undefined);
+      return run;
+    },
+    [],
+  );
   const dragCounter = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -67,6 +114,9 @@ export default function UploadDropzone({ folderId, enabled, onUploaded }: Props)
       }));
       setItems((prev) => [...prev, ...tickets]);
 
+      // A new drop is a new decision. Carrying "apply to the rest" across
+      // batches would silently discard files the user never saw a prompt for.
+      batchDecisionRef.current = null;
       const successRows: FileRow[] = [];
       const concurrency = 3;
       let cursor = 0;
@@ -79,7 +129,10 @@ export default function UploadDropzone({ folderId, enabled, onUploaded }: Props)
           if (!ticket || !file) return;
           setItems((prev) => prev.map((it) => (it.id === ticket.id ? { ...it, status: 'uploading' } : it)));
           try {
-            const row = await uploadFile(file, { folderId });
+            const row = await uploadFile(file, {
+              folderId,
+              onDuplicate: (matches, f) => askDuplicate(matches, f, files.length - ix - 1),
+            });
             successRows.push(row);
             setItems((prev) => prev.map((it) => (it.id === ticket.id ? { ...it, status: 'done' } : it)));
           } catch (err) {
@@ -97,7 +150,7 @@ export default function UploadDropzone({ folderId, enabled, onUploaded }: Props)
         setItems((prev) => prev.filter((it) => it.status === 'error'));
       }, 1500);
     },
-    [enabled, folderId, onUploaded, addToast, t],
+    [enabled, folderId, onUploaded, addToast, t, askDuplicate],
   );
 
   // Tree upload — used by directory drop AND directory picker. We render a
@@ -165,7 +218,7 @@ export default function UploadDropzone({ folderId, enabled, onUploaded }: Props)
         }, 1800);
       }
     },
-    [enabled, folderId, onUploaded, addToast, t],
+    [enabled, folderId, onUploaded, addToast, t, askDuplicate],
   );
 
   // Page-wide drag listeners. We accept BOTH files and directories.
@@ -249,6 +302,18 @@ export default function UploadDropzone({ folderId, enabled, onUploaded }: Props)
 
   return (
     <>
+      <DuplicateUploadModal
+        open={pendingDupe !== null}
+        incomingName={pendingDupe?.name ?? ''}
+        incomingSize={pendingDupe?.size ?? 0}
+        matches={pendingDupe?.matches ?? []}
+        remaining={pendingDupe?.remaining ?? 0}
+        onDecide={(decision, applyToRest) => {
+          if (applyToRest) batchDecisionRef.current = decision;
+          pendingDupe?.resolve(decision);
+        }}
+      />
+    <>
       <input ref={fileInputRef} type="file" multiple onChange={onFlatPicked} className="hidden" />
       <input
         ref={folderInputRef}
@@ -310,6 +375,7 @@ export default function UploadDropzone({ folderId, enabled, onUploaded }: Props)
           ))}
         </div>
       )}
+    </>
     </>
   );
 }

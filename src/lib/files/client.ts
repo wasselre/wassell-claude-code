@@ -131,6 +131,10 @@ async function authHeader(): Promise<Record<string, string>> {
 
 // ─── Upload ─────────────────────────────────────────────────────────────
 
+/** What to do when an upload turns out to be byte-identical to a file the
+ *  caller can already see. */
+export type DuplicateDecision = 'link' | 'keep';
+
 export interface UploadOpts {
   folderId?: string | null;
   modelId?: string | null;
@@ -146,6 +150,18 @@ export interface UploadOpts {
   onProgress?: (fraction: number) => void;
   /** Abort an in-flight upload (only honoured on the onProgress/XHR path). */
   signal?: AbortSignal;
+  /**
+   * B7. Called when the bytes just uploaded match an existing file. Return
+   * 'link' to discard the new copy and use the existing row, 'keep' to create
+   * the copy anyway.
+   *
+   * OPTIONAL, and its absence means 'keep' — so every existing caller keeps
+   * today's behaviour exactly. Only the Files intake opts in; a record-field
+   * upload or a marketing intake silently keeping a copy is the same thing it
+   * did yesterday, and changing that quietly across six call sites is how a
+   * dedup feature turns into a data-loss report.
+   */
+  onDuplicate?: (matches: FileRow[], file: File) => Promise<DuplicateDecision>;
 }
 
 /**
@@ -323,6 +339,38 @@ export async function uploadFile(file: File, opts: UploadOpts = {}): Promise<Fil
     throw surfaceError('upload', new Error('No current app user — cannot insert files row'));
   }
 
+  // ── B7: duplicate detection ───────────────────────────────────────────
+  // The digest is read back from Storage AFTER the object lands, because the
+  // digest is the backend's and not ours — which is what lets a brand-new
+  // upload be compared against files that predate B7.
+  //
+  // The cost of that ordering, stated plainly: the bytes are already uploaded
+  // before we know they were redundant. For this corpus (largest file 43 MB,
+  // typical well under 2 MB) that is a fair trade for one hashing authority
+  // and no 43 MB ArrayBuffer in browser memory. If a duplicate IS chosen away,
+  // the object we just wrote is removed, so nothing is left orphaned.
+  const contentEtag = await readStorageEtag(storagePath);
+  if (contentEtag && opts.onDuplicate) {
+    let matches: FileRow[] = [];
+    try {
+      matches = await findDuplicatesByEtag(contentEtag, file.size);
+    } catch {
+      // findDuplicatesByEtag toasted. A failed duplicate CHECK must never fail
+      // the upload — the bytes are already stored and the worst case is one
+      // redundant copy, which is the status quo.
+      matches = [];
+    }
+    if (matches.length > 0 && (await opts.onDuplicate(matches, file)) === 'link') {
+      void supabase.storage.from(FILES_BUCKET).remove([storagePath]);
+      // The EXISTING row, deliberately. "Link the existing file instead" means
+      // one file, not a second copy — so the caller receives the file that was
+      // already there, wherever it already lives. It is NOT moved into the
+      // current folder: that would mutate somebody else's file's location to
+      // satisfy this upload.
+      return matches[0]!;
+    }
+  }
+
   const { data: row, error: insErr } = await supabase
     .from('files')
     .insert({
@@ -337,9 +385,7 @@ export async function uploadFile(file: File, opts: UploadOpts = {}): Promise<Fil
       storage_bucket: FILES_BUCKET,
       storage_path: storagePath,
       kind,
-      // B7. Read back from Storage AFTER the object lands, because the digest
-      // is the backend's, not ours. null is fine and means "not dedup-able".
-      content_etag: await readStorageEtag(storagePath),
+      content_etag: contentEtag,
     })
     .select('*')
     .single();

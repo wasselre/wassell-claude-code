@@ -302,6 +302,27 @@ Verified: the filter goes **0 → 2,975**, matching a raw SQL count exactly, whi
 an ordinary search returns byte-identical rows and `updated_at` is untouched
 across all 7,547 distinct values.
 
+**Re-uploading identical bytes now offers the link** (spec §10's acceptance
+item). Verified on production end-to-end: uploading a file, then uploading
+byte-identical bytes, produced the prompt naming the existing match; choosing
+"use the existing" left **one file row and one storage object** — the redundant
+copy's bytes removed, no orphan. The test file was then deleted, leaving the
+corpus at exactly 7,542.
+
+Three deliberate choices in that flow:
+
+- **The hook is OPT-IN.** `uploadFile` gained an optional `onDuplicate`
+  callback and its absence means "keep", so all six existing callers — record
+  fields, marketing intake, chat templates, the Drive picker, tree upload —
+  behave exactly as they did. Silently changing dedup behaviour across six call
+  sites is how a dedup feature becomes a data-loss report.
+- **Detection happens AFTER the bytes land**, because the digest is the storage
+  backend's. The cost is uploading something you may discard; for a corpus
+  whose largest file is 43 MB that is a fair trade for one hashing authority.
+- **Prompts are serialised** through a promise chain, with "apply to the rest".
+  Uploads run three at a time, and asking three questions on top of each other
+  is how people learn to click the first button without reading it.
+
 **Why not SHA-256 in the browser.** WebCrypto omits MD5, so a browser could hash
 a NEW upload but never produce a key comparable to the 7,417 files already here
 — two dedup keys and a permanent seam between "before B7" and "after". Letting
