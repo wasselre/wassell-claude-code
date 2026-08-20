@@ -960,7 +960,11 @@ export default function CampaignDetailPage() {
                       ? isAr ? `اليوم ${num(days.elapsed, true)} من ${num(days.total, true)}` : `Day ${days.elapsed} of ${days.total}`
                       : statusPill.text}
                   </Pill>
-                  <span className="tag tag-t">{isAr ? 'أرقام مُدخلة يدويًا' : 'numbers entered by hand'}</span>
+                  <span className="tag tag-t">
+                    {executions.some((x) => x.platform_campaign_id)
+                      ? isAr ? 'أرقام من ميتا' : 'numbers from Meta'
+                      : isAr ? 'أرقام مُدخلة يدويًا' : 'numbers entered by hand'}
+                  </span>
                 </>
               ) : tab === 'executions' ? (
                 <>
@@ -2618,16 +2622,32 @@ function ExecutionModal({
         <Field label={isAr ? 'اسم المجموعة' : 'Ad set name'}>
           <input className="inp" value={label} onChange={(e) => setLabel(e.target.value)} />
         </Field>
-        <Field label={isAr ? 'الحالة' : 'Status'}>
-          <select
-            className="inp"
-            value={status}
-            onChange={(e) => setStatus(e.target.value as MosExecution['status'])}
-          >
-            {Object.keys(EXEC_STATUS_LABELS).map((k) => (
-              <option key={k} value={k}>{isAr ? EXEC_STATUS_LABELS[k]?.ar : EXEC_STATUS_LABELS[k]?.en}</option>
-            ))}
-          </select>
+        <Field
+          label={isAr ? 'الحالة' : 'Status'}
+          hint={platformCampaignId.trim()
+            ? isAr ? 'تأتي من ميتا وتُحدَّث تلقائيًا' : 'comes from Meta, updated automatically'
+            : undefined}
+        >
+          {platformCampaignId.trim() ? (
+            // Synced to Meta: status is driven by the hourly sync, so editing it
+            // here would just be overwritten. Show it read-only.
+            <div className="inp" style={{ display: 'flex', alignItems: 'center', color: 'var(--mute)' }}>
+              {(isAr ? EXEC_STATUS_LABELS[status]?.ar : EXEC_STATUS_LABELS[status]?.en) ?? status}
+              <span className="tag" style={{ marginInlineStart: 'auto', fontSize: 10 }}>
+                {isAr ? 'من ميتا' : 'from Meta'}
+              </span>
+            </div>
+          ) : (
+            <select
+              className="inp"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as MosExecution['status'])}
+            >
+              {Object.keys(EXEC_STATUS_LABELS).map((k) => (
+                <option key={k} value={k}>{isAr ? EXEC_STATUS_LABELS[k]?.ar : EXEC_STATUS_LABELS[k]?.en}</option>
+              ))}
+            </select>
+          )}
         </Field>
       </div>
 

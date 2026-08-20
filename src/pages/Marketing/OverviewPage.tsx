@@ -494,7 +494,8 @@ function WeekList({ data, isAr }: { data: MosOverview; isAr: boolean }) {
   );
 }
 
-/** The hand-entered «الإعلانات المدفوعة» card — same DOM on both layouts. */
+/** The «الإعلانات المدفوعة» paid-ads card — same DOM on both layouts. Numbers
+ *  may be Meta-synced or hand-entered, so it no longer claims a single source. */
 function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
   const budget = (data.campaigns ?? []).reduce((a, c) => a + (c.budget_total ?? 0), 0);
   const spent = (data.campaigns ?? []).reduce((a, c) => a + (c.total_spend ?? 0), 0);
@@ -509,7 +510,6 @@ function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
             ? `الإعلانات المدفوعة — ${monthOf(data.week_start, true)}`
             : `Paid ads — ${monthOf(data.week_start, false)}`}
         </h4>
-        <span className="tag tag-t">{isAr ? 'مُدخلة يدويًا' : 'entered by hand'}</span>
       </div>
       <div className="card-b" style={{ display: 'grid', gap: 11 }}>
         <div>
