@@ -32,7 +32,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, FolderSearch, Loader2 } from 'lucide-react';
+import { AlertTriangle, FolderSearch, Loader2, Upload } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import ConfirmModal from '@/components/ui/ConfirmModal';
@@ -60,6 +60,8 @@ import SaveViewModal from './library/SaveViewModal';
 import LibraryBulkBar from './library/LibraryBulkBar';
 import BulkEditModal from './library/BulkEditModal';
 import BulkLinkModal from './library/BulkLinkModal';
+import PostUploadStrip from './library/PostUploadStrip';
+import UploadDropzone from './components/UploadDropzone';
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -286,6 +288,8 @@ export default function FilesLibraryPage() {
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkLinkOpen, setBulkLinkOpen] = useState(false);
+  /** Files from the most recent upload, driving the post-upload strip. */
+  const [justUploaded, setJustUploaded] = useState<FileRow[]>([]);
   const [bulkBusy, setBulkBusy] = useState(false);
 
   // A page change or a new query invalidates the selection: keeping ids from a
@@ -397,6 +401,18 @@ export default function FilesLibraryPage() {
           <h1 className="text-2xl font-bold text-charcoal mb-3">{t('files.title')}</h1>
           <FilesTabs />
         </div>
+        {/* The Library shipped with no upload affordance at all: with the flag
+            on, the only way to add a file was to switch to the Legacy folders
+            tab. Uploads here are FOLDERLESS by design (folderId null) — the
+            Library organises by metadata, and dropping a file into a hidden
+            "current folder" would be the folder model creeping back in. */}
+        <Button
+          className="!px-4 !py-2.5"
+          onClick={() => window.dispatchEvent(new Event('files:open-picker'))}
+        >
+          <Upload size={16} aria-hidden />
+          {t('files.upload.button')}
+        </Button>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6 items-start">
@@ -450,6 +466,15 @@ export default function FilesLibraryPage() {
             <p className="text-xs text-charcoal/45" dir="auto">
               {sysView ? (isAr ? sysView.hint_ar : sysView.hint_en) : savedView?.name}
             </p>
+          )}
+
+          {justUploaded.length > 0 && (
+            <PostUploadStrip
+              files={justUploaded}
+              types={types}
+              onDismiss={() => setJustUploaded([])}
+              onApplied={() => { setJustUploaded([]); setReloadKey((k) => k + 1); }}
+            />
           )}
 
           <LibraryFilterBar
@@ -563,6 +588,16 @@ export default function FilesLibraryPage() {
           </div>
         </div>
       </div>
+
+      <UploadDropzone
+        folderId={null}
+        enabled
+        onUploaded={(rows) => {
+          if (rows.length === 0) return;
+          setJustUploaded(rows);
+          setReloadKey((k) => k + 1);
+        }}
+      />
 
       <LibraryBulkBar
         count={selectedIds.size}

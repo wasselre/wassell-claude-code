@@ -1,6 +1,6 @@
 # Wassell File Management — the whole plan
 
-**Status:** living document · **Last updated:** 2026-08-20 (B6 built; B7 in progress)
+**Status:** living document · **Last updated:** 2026-08-20 (B6 and B7 built)
 
 This is the governing plan for the Files system across **all five phases (0–4)**.
 Until now it existed only as `phase3-business-files-spec.md` in an untracked
@@ -122,7 +122,7 @@ rollback-able.
 | **B4** | Let users view files through records they can access, excluding restricted files | ✅ **LIVE — toggle ON since 2026-08-19 11:09 UTC** |
 | **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ✅ **Built — shipped behind a flag, default OFF** (§4.1) |
 | **B6** | Manual linking/unlinking and Files panels inside records | ✅ **Built — flag default OFF; acceptance bar fully met once the `units` schema was restored (§6.5)** (§4.2) |
-| **B7** | Upload metadata, duplicate detection, bulk actions | 🟡 **In progress** — bulk select/edit and duplicate detection live (§4.3); upload strip + bulk link/unlink remain |
+| **B7** | Upload metadata, duplicate detection, bulk actions | ✅ **Built — behind the Library flag, default OFF** (§4.3) |
 | **B8** | Move the remaining 317 Marketing assets onto the canonical file system | ⏳ Not started |
 | **B9** | Convert folder names into metadata, freeze folder creation, retain Legacy folders | ⏳ Not started |
 
@@ -347,6 +347,26 @@ record produced 3 manual links, 3 converged edges, and **an empty dirty-target
 table at rest** — the acceptance item. Unlinking removed all three and the
 edges converged away, leaving `document_links` at its original 10 and reconcile
 drift at 0.
+
+**The post-upload strip, and the upload path the Library did not have.** Spec
+§10 asks for "a single inline strip, NOT a modal: title (pre-filled), type
+(inferred), project or record, tags. Dismissible." A modal makes metadata
+compulsory in practice — it blocks the screen, so the fastest way past it is to
+fill it with anything. The strip lets a person ignore it; skipping leaves the
+file `active` and unlinked, where the Unlinked view finds it. The backlog is
+nagged, not gated.
+
+Building it exposed a gap: **the Library had no upload affordance at all.**
+With the flag on, the only way to add a file was to switch to the Legacy
+folders tab. It now has an Upload button and the dropzone, uploading
+FOLDERLESS by design (`folderId` null) — dropping into a hidden "current
+folder" would be the folder model creeping back into the page built to replace
+it.
+
+Verified on production, then cleaned up: uploading one file showed the strip
+with the title pre-filled from the original name, type defaulting to "keep the
+inferred type", tags, and a link-to-record picker. Applying wrote all of it —
+renamed title, `brochure`, both tags, digest recorded, `folder_id` null.
 
 **Why not SHA-256 in the browser.** WebCrypto omits MD5, so a browser could hash
 a NEW upload but never produce a key comparable to the 7,417 files already here
