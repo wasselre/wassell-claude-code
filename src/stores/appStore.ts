@@ -1817,12 +1817,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     // --- Groups ---
     // Load groups with cascading fallback: Supabase → localStorage → SEED.
     const supabaseGroups = await groupsP;
+    const cachedGroups = loadLocal<ModelGroup[]>('wassell_groups');
+    const hadCachedGroups = (cachedGroups?.length ?? 0) > 0;
     let groups: ModelGroup[];
     if (supabaseGroups && supabaseGroups.length > 0) {
       groups = supabaseGroups;
     } else {
-      const localGroups = loadLocal<ModelGroup[]>('wassell_groups');
-      groups = localGroups && localGroups.length > 0 ? localGroups : SEED_GROUPS;
+      groups = hadCachedGroups ? cachedGroups! : SEED_GROUPS;
     }
 
     // Union with SEED_GROUPS by id — catches returning users whose stored
@@ -1840,7 +1841,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Backfill any missing groups, and AWAIT — models depend on these existing
     // in Supabase before their FK-bearing rows can land.
-    if (supabaseGroups !== null) {
+    //
+    // Guard against a raced/RLS-glitched EMPTY read (see the Models block below
+    // for the full rationale): an empty array is NOT null, and re-upserting seed
+    // folders on an established client would overwrite live sidebar-folder names
+    // and order. Only backfill on a non-empty read, or a genuine fresh install
+    // (no server rows AND no local cache).
+    if (supabaseGroups !== null && (supabaseGroups.length > 0 || !hadCachedGroups)) {
       const existingGroupIds = new Set(supabaseGroups.map((g) => g.id));
       const missingGroups = groups.filter((g) => !existingGroupIds.has(g.id));
       if (missingGroups.length > 0) {
@@ -1857,14 +1864,33 @@ export const useAppStore = create<AppState>((set, get) => ({
     // backfill any system models missing from Supabase (matched by `name`,
     // which is UNIQUE in the schema) so subsequent loads see the full set.
     const supabaseModels = await modelsP;
+    const cachedModels = loadLocal<AppModel[]>('wassell_models');
+    const hadCachedModels = (cachedModels?.length ?? 0) > 0;
     let models: AppModel[];
     if (supabaseModels && supabaseModels.length > 0) {
       models = supabaseModels;
     } else {
-      const localModels = loadLocal<AppModel[]>('wassell_models');
-      models = localModels && localModels.length > 0 ? localModels : SEED_MODELS;
+      models = hadCachedModels ? cachedModels! : SEED_MODELS;
     }
-    if (supabaseModels !== null) {
+    // Backfill system models missing from Supabase (matched by `name`, UNIQUE).
+    //
+    // Guard against a raced/RLS-glitched EMPTY read. `models` reads are scoped to
+    // the `authenticated` role, so a fetch that outruns the session token returns
+    // ZERO rows — an empty ARRAY, not null, not an error. Treating that empty
+    // result as "every seed model is missing" re-upserts the entire SEED_MODELS
+    // set, OVERWRITING live, in-app-customized schemas with the code baseline and
+    // dropping any Builder-added field. That is exactly the 2026-08-20 06:42Z
+    // incident: 24 system models reverted to seed, and the clients `location`
+    // cascade field (added in-app the day before) was lost. Records were untouched,
+    // but every dropped field's values went invisible until the schema was restored.
+    // Same failure mode the users backfill was hardened against in 4208b7a7 — that
+    // fix guarded `users` but left this models path (and the groups path above)
+    // exposed.
+    //
+    // Only backfill when the server read was non-empty, OR this is a genuine fresh
+    // install (no server rows AND no local cache). An established client that already
+    // has models cached must NEVER re-seed on an empty read.
+    if (supabaseModels !== null && (supabaseModels.length > 0 || !hadCachedModels)) {
       const existingNames = new Set(supabaseModels.map((m) => m.name));
       const missing = SEED_MODELS.filter((m) => !existingNames.has(m.name));
       if (missing.length > 0) {
