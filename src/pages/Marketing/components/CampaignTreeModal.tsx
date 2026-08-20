@@ -29,6 +29,7 @@ import {
 import { useWorkspace } from '../MarketingWorkspace';
 import { LoadError, Modal, Pill, Skeleton } from './kit';
 import { IconPlus, IconTrash } from './icons';
+import ContentPicker, { PickedAsset, ContentPickerValue } from './ContentPicker';
 
 /** One ad row in local (controlled) state. `key` is local-only. */
 interface AdRow {
@@ -37,11 +38,14 @@ interface AdRow {
   label: string;
   platformAdId: string;
   contentId: string;
+  /** A library/uploaded asset chosen as the creative (creative.asset_*). Exactly
+   *  one of contentId / asset is active at a time. */
+  asset: PickedAsset | null;
   status: string;
   /** The ad's caption (creative.message). */
   caption: string;
   /** The rest of the ad's creative jsonb (format/CTA/…) preserved verbatim so a
-   *  caption edit here never clobbers fields set in the per-ad AdModal. */
+   *  caption/asset edit here never clobbers fields set in the per-ad AdModal. */
   creativeExtra: Record<string, unknown>;
 }
 
@@ -108,14 +112,27 @@ export default function CampaignTreeModal({
   const toAdRow = useCallback((a: CampaignTree['ads'][number]): AdRow => {
     const cr = (a.creative ?? {}) as Record<string, unknown>;
     const caption = typeof cr.message === 'string' ? cr.message : '';
+    const asset: PickedAsset | null = typeof cr.asset_id === 'string'
+      ? {
+          id: cr.asset_id,
+          title: typeof cr.asset_title === 'string' ? cr.asset_title : cr.asset_id,
+          url: typeof cr.asset_url === 'string' ? cr.asset_url : null,
+          thumb: typeof cr.asset_thumb === 'string' ? cr.asset_thumb : null,
+        }
+      : null;
     const creativeExtra = { ...cr };
     delete creativeExtra.message;
+    delete creativeExtra.asset_id;
+    delete creativeExtra.asset_title;
+    delete creativeExtra.asset_url;
+    delete creativeExtra.asset_thumb;
     return {
       key: newKey(),
       id: a.id,
       label: a.label ?? '',
       platformAdId: a.platform_ad_id ?? '',
       contentId: a.content_id ?? '',
+      asset,
       status: a.status ?? 'waiting',
       caption,
       creativeExtra,
@@ -163,8 +180,8 @@ export default function CampaignTreeModal({
   /* ── ad-set + ad mutations ─────────────────────────────────────── */
 
   const blankAd = (): AdRow => ({
-    key: newKey(), label: '', platformAdId: '', contentId: '', status: 'waiting',
-    caption: '', creativeExtra: {},
+    key: newKey(), label: '', platformAdId: '', contentId: '', asset: null,
+    status: 'waiting', caption: '', creativeExtra: {},
   });
 
   const addAdSet = (): void => setAdSets((cur) => [
@@ -259,12 +276,19 @@ export default function CampaignTreeModal({
           sort_order: i,
           ads: s.ads.map((a) => {
             const cap = a.caption.trim();
-            // Merge caption back into the preserved creative jsonb; only send
-            // `creative` when there is something to store (so we never write an
-            // empty object over a null).
-            const creative = cap || Object.keys(a.creativeExtra).length > 0
-              ? { ...a.creativeExtra, ...(cap ? { message: cap } : {}) }
-              : undefined;
+            // Fold caption + the chosen library asset back into the preserved
+            // creative jsonb; only send `creative` when there's something to
+            // store (so we never write an empty object over a null).
+            const assetKeys = a.asset
+              ? {
+                  asset_id: a.asset.id,
+                  asset_title: a.asset.title,
+                  ...(a.asset.url ? { asset_url: a.asset.url } : {}),
+                  ...(a.asset.thumb ? { asset_thumb: a.asset.thumb } : {}),
+                }
+              : {};
+            const merged = { ...a.creativeExtra, ...(cap ? { message: cap } : {}), ...assetKeys };
+            const creative = Object.keys(merged).length > 0 ? merged : undefined;
             return {
               ...(a.id ? { id: a.id } : {}),
               label: a.label.trim(),
@@ -506,7 +530,7 @@ export default function CampaignTreeModal({
                       <div
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: 'minmax(110px,1fr) 170px 34px',
+                          gridTemplateColumns: 'minmax(110px,1fr) 34px',
                           gap: 8, alignItems: 'end',
                         }}
                       >
@@ -518,16 +542,6 @@ export default function CampaignTreeModal({
                             onChange={(e) => patchAd(s.key, a.key, { label: e.target.value })}
                           />
                         </label>
-                        <label style={{ display: 'grid', gap: 3 }}>
-                          <span className="lbl">{isAr ? 'المحتوى' : 'Content'}</span>
-                          <select
-                            className="inp"
-                            value={a.contentId}
-                            onChange={(e) => patchAd(s.key, a.key, { contentId: e.target.value })}
-                          >
-                            {contentOptions}
-                          </select>
-                        </label>
                         <button
                           type="button"
                           className="btn btn-d btn-sm"
@@ -536,6 +550,16 @@ export default function CampaignTreeModal({
                         >
                           <IconTrash />
                         </button>
+                      </div>
+                      <div style={{ display: 'grid', gap: 3 }}>
+                        <span className="lbl">{isAr ? 'المحتوى — من القائمة أو المكتبة أو رفع جديد' : 'Content — from the list, the library, or upload'}</span>
+                        <ContentPicker
+                          value={{ contentId: a.contentId, asset: a.asset }}
+                          contentOptions={content}
+                          isAr={isAr}
+                          onChange={(v: ContentPickerValue) =>
+                            patchAd(s.key, a.key, { contentId: v.contentId, asset: v.asset })}
+                        />
                       </div>
                       <label style={{ display: 'grid', gap: 3 }}>
                         <span className="lbl">{isAr ? 'النص الإعلاني (الكابشن)' : 'Caption'}</span>

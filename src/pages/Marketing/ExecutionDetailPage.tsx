@@ -384,7 +384,9 @@ export default function ExecutionDetailPage() {
                               >
                                 <td className="id">{c?.ref ?? '—'}</td>
                                 <td>
-                                  <div className="ttl">{c?.title ?? ad.label ?? (isAr ? 'بلا محتوى' : 'No content')}</div>
+                                  <div className="ttl">{c?.title
+                                    ?? (typeof ad.creative?.asset_title === 'string' ? ad.creative.asset_title : undefined)
+                                    ?? ad.label ?? (isAr ? 'بلا محتوى' : 'No content')}</div>
                                   <div
                                     style={{
                                       fontSize: 11,
