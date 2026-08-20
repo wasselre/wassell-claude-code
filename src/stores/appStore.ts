@@ -1974,12 +1974,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     // models/groups. Users FK into profiles via `profile_id`, so we AWAIT
     // the profile backfill before moving on to users below.
     const supabaseProfiles = await profilesP;
+    const cachedProfiles = loadLocal<Profile[]>('wassell_profiles');
+    const hadCachedProfiles = (cachedProfiles?.length ?? 0) > 0;
     let profiles: Profile[];
     if (supabaseProfiles && supabaseProfiles.length > 0) {
       profiles = supabaseProfiles;
     } else {
-      const localProfiles = loadLocal<Profile[]>('wassell_profiles');
-      profiles = localProfiles && localProfiles.length > 0 ? localProfiles : SEED_PROFILES;
+      profiles = hadCachedProfiles ? cachedProfiles! : SEED_PROFILES;
     }
 
     // Backfill is_system / is_admin for existing localStorage installs upgraded
@@ -2011,7 +2012,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     // instead of inserting, which also keeps the app from tripping the DB-level
     // `profiles_system_label_uniq` guard. Scoped to is_system so user-created
     // same-label profiles (e.g. several "New Profile" rows) are never collapsed.
-    if (supabaseProfiles !== null) {
+    //
+    // Empty-read guard (same failure mode as models/groups/users — see the
+    // Models block above): an EMPTY array is not proof of an empty table; a
+    // fetch that outruns the session token returns zero rows under RLS. On
+    // such a read every cached/seed profile looks "missing" and gets re-upserted
+    // by its (pinned/cached) id — overwriting live model_permissions with the
+    // seed baseline. Only backfill on a non-empty read or a true fresh install.
+    if (supabaseProfiles !== null && (supabaseProfiles.length > 0 || !hadCachedProfiles)) {
       const existingProfileIds = new Set(supabaseProfiles.map((p) => p.id));
       const existingSystemProfileLabels = new Set(
         supabaseProfiles
@@ -2038,12 +2046,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     // --- Roles ---
     // Cascading fallback: Supabase → localStorage → SEED.
     const supabaseRoles = await rolesP;
+    const cachedRoles = loadLocal<Role[]>('wassell_roles');
+    const hadCachedRoles = (cachedRoles?.length ?? 0) > 0;
     let roles: Role[];
     if (supabaseRoles && supabaseRoles.length > 0) {
       roles = supabaseRoles;
     } else {
-      const localRoles = loadLocal<Role[]>('wassell_roles');
-      roles = localRoles && localRoles.length > 0 ? localRoles : SEED_ROLES;
+      roles = hadCachedRoles ? cachedRoles! : SEED_ROLES;
     }
     // Backfill + migrate legacy `field_definitions` flat list → `schema.sections`.
     // Legacy shape: { field_definitions: [...] }. New shape: { schema: { sections: [{ fields: [...] }] } }.
@@ -2106,7 +2115,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Same id-AND-label dedupe as profiles above: skip a system seed whose label
     // already exists under a drifted id (restore/branch), so we adopt it rather
     // than re-inserting a duplicate and tripping `roles_system_label_uniq`.
-    if (supabaseRoles !== null) {
+    // Empty-read guard: same rationale as profiles above.
+    if (supabaseRoles !== null && (supabaseRoles.length > 0 || !hadCachedRoles)) {
       const existingRoleIds = new Set(supabaseRoles.map((r) => r.id));
       const existingSystemRoleLabels = new Set(
         supabaseRoles
