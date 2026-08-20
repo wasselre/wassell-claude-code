@@ -1,6 +1,6 @@
 # Wassell File Management — the whole plan
 
-**Status:** living document · **Last updated:** 2026-08-20 (B6 and B7 built)
+**Status:** living document · **Last updated:** 2026-08-20 (B6, B7, B8 built)
 
 This is the governing plan for the Files system across **all five phases (0–4)**.
 Until now it existed only as `phase3-business-files-spec.md` in an untracked
@@ -123,7 +123,7 @@ rollback-able.
 | **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ✅ **Built — shipped behind a flag, default OFF** (§4.1) |
 | **B6** | Manual linking/unlinking and Files panels inside records | ✅ **Built — flag default OFF; acceptance bar fully met once the `units` schema was restored (§6.5)** (§4.2) |
 | **B7** | Upload metadata, duplicate detection, bulk actions | ✅ **Built — behind the Library flag, default OFF** (§4.3) |
-| **B8** | Move the remaining 317 Marketing assets onto the canonical file system | ⏳ Not started |
+| **B8** | Move the remaining Marketing assets onto the canonical file system | ✅ **173 canonicalised on prod; 143 are non-file references (§4.4)** |
 | **B9** | Convert folder names into metadata, freeze folder creation, retain Legacy folders | ⏳ Not started |
 
 **Plus one branch that is in no spec but IS live on production:**
@@ -443,6 +443,55 @@ load-bearing ones.
 ---
 
 ## 6. Open problems
+
+### 4.4 B8 — Marketing convergence, and the "317" that was really 173
+
+The spec's "317 URL-only assets" is one number covering three unrelated things.
+Measured on production 2026-08-20 before touching anything:
+
+| the 317 url-only assets | count | can it be canonicalised? |
+|---|---|---|
+| bytes in our own `marketing-assets` bucket | 179 | **yes — server-side copy** |
+| youtube.com links | 117 | no — a video REFERENCE, not a file |
+| drive.google.com links | 16 | no — access-gated share URLs |
+| genuinely fetchable external | 4 | later — needs a download |
+| no url at all | 1 | nothing to move |
+
+Of the 179, exactly 178 objects still exist (1 dangling url). **173 were
+canonicalised**; the other 5 are 4 audio files (not in the marketing-mime
+allowlist) and the dangling one.
+
+**Server-side copy, no download.** Both buckets are Supabase Storage, so the
+bytes move via the storage copy API (verified: cross-bucket copy returns 200) —
+no browser, no 43 MB ArrayBuffer, and no third-party egress. The last point is
+not incidental: the repo has a scar from Aqar 403-ing Fly's datacenter IPs, and
+a B8 that downloaded the 137 external URLs would have re-learned it. The 117
+YouTube references are the right thing to leave as URLs anyway — you cannot
+canonicalise a video you do not host.
+
+**How it ran.** `scripts/canonicalise-marketing-assets.mjs`, operator-run and
+idempotent: per asset it copies the object to `<auth_uid>/<file_id>.<ext>` (the
+path the storage RLS requires), inserts a `files` row with
+`origin='marketing_intake'` and the digest from the SOURCE object's eTag, then
+points `mos_assets.file_id` at it and nulls the legacy `url`/`thumb_url`/
+`file_path`. Each step checks "already done" first, so a crash is recovered by
+re-running. The source object is left in place — storage does not cascade, and
+pruning 1.5 GB of now-duplicated bytes is a separate, deliberate decision once
+the Marketing view is confirmed reading `file_id`.
+
+**No app code changed.** `resolveAssetUrl` (`src/pages/Marketing/lib/assetUrls.ts`)
+already returns `asset.url` for legacy assets and signs `file_id` for canonical
+ones — so the 173 moved assets route straight through the canonical branch and
+render via signed URLs. Verified end to end on one asset first: the owner sees
+the new `files` row under RLS, `wassell_can_access_file(...,'view')` is true,
+and `mos_assets` reach is unchanged (owner still sees all 1,587). Then the
+batch: 173 done, 4 skipped, 0 failed, reconcile drift 0.
+
+**Where it landed:** canonical 1,270 → 1,444; url-only 317 → 143 (5 in-bucket
+remnants + 133 external references + a handful of edge cases). A file name was
+derived from the marketing `title` ("جزيل — فيديو 3") for the 163 assets whose
+`original_name` was null, since a uuid would have been a worse handle than the
+context the asset already carried.
 
 ### 6.1 Per-row record-visibility cost — LARGELY RESOLVED (2026-08-19)
 
