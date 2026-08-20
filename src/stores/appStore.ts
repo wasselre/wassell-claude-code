@@ -2111,7 +2111,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     saveLocal('wassell_users', users);
     // Backfill missing users to Supabase, each gated on its profile being
     // present (helper checks pendingWrites; profiles already landed).
-    if (supabaseUsers !== null) {
+    //
+    // Guard on a NON-EMPTY server read. An empty result is ambiguous: it can
+    // be a transient unauthenticated/raced fetch (RLS `users_read` is scoped
+    // to the `authenticated` role, so a request that outruns the session
+    // token returns ZERO rows, not an error) rather than a genuinely empty
+    // table. Treating "empty" as "every local user is missing" re-uploads the
+    // local cache — or SEED_USERS, whose admin row carries the placeholder
+    // `admin@wassel.sa` — and REVERTS legitimate server-side edits: an
+    // admin-changed email silently snapped back to the seed address on the
+    // next page load, un-recognizing the user (incident 2026-08-20). A
+    // truly-fresh install seeds the admin via the bootstrap/adopt path below,
+    // not here, so gating on length>0 loses nothing.
+    if (supabaseUsers !== null && supabaseUsers.length > 0) {
       const existingUserIds = new Set(supabaseUsers.map((u) => u.id));
       for (const u of users) {
         if (!existingUserIds.has(u.id)) {
@@ -2250,7 +2262,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     if (authConfigured && authEmail) {
       const needle = authEmail.toLowerCase();
-      const match = users.find((u) => (u.email ?? '').toLowerCase() === needle);
+      // Resolve identity by the IMMUTABLE auth_uid first (bound once via the
+      // bind_my_auth_uid RPC), falling back to email only for rows not yet
+      // bound (freshly-invited users whose auth_uid is still NULL). Matching
+      // by email ALONE was fragile: if the app-user row's email column ever
+      // drifts from the auth account's login email — a changed login address,
+      // or a seed row keeping its `admin@wassel.sa` placeholder — the user
+      // became "unrecognized" despite a correctly-bound auth_uid. auth_uid
+      // never drifts, so it is the reliable key (incident 2026-08-20).
+      const match =
+        (authUid ? users.find((u) => u.auth_uid === authUid) : undefined) ??
+        users.find((u) => (u.email ?? '').toLowerCase() === needle);
       if (match) {
         // Deactivation enforcement at sign-in. RLS already gates the data
         // (helpers require is_active = true), but a deactivated user could
