@@ -1143,7 +1143,6 @@ export default function CampaignDetailPage() {
                         </div>
                       )}
                     </ReadField>
-                    <ReadField label={isAr ? 'يُقاس بـ' : 'Measured by'}>{item.measured_by ?? '—'}</ReadField>
                     <ReadField label={isAr ? 'الجمهور' : 'Audience'}>
                       {item.audience ?? '—'}
                       {item.audience_details && item.audience_details.trim() !== '' && (
@@ -1151,24 +1150,6 @@ export default function CampaignDetailPage() {
                           {item.audience_details}
                         </div>
                       )}
-                    </ReadField>
-                    <ReadField label={isAr ? 'العرض' : 'Offer'}>{item.offer ?? '—'}</ReadField>
-                    <ReadField label={isAr ? 'الوجهة' : 'Destination'}>
-                      {item.destination_url ? (
-                        /^https?:\/\//.test(item.destination_url) ? (
-                          <a
-                            className="ltr"
-                            style={{ color: 'var(--copper)' }}
-                            href={item.destination_url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {item.destination_url.replace(/^https?:\/\//, '')}
-                          </a>
-                        ) : (
-                          <span className="ltr" style={{ color: 'var(--copper)' }}>{item.destination_url}</span>
-                        )
-                      ) : '—'}
                     </ReadField>
                     <ReadField label={isAr ? 'معيار النجاح' : 'Success criterion'}>{successText}</ReadField>
                   </div>
@@ -2438,10 +2419,7 @@ function BriefModal({
   const addToast = useAppStore((s) => s.addToast);
   const [goal, setGoal] = useState(campaign.goal ?? campaign.name ?? '');
   const [goalIds, setGoalIds] = useState<string[]>(campaign.goal_ids ?? []);
-  const [measuredBy, setMeasuredBy] = useState(campaign.measured_by ?? '');
   const [audienceId, setAudienceId] = useState<string | null>(campaign.audience_id ?? null);
-  const [offer, setOffer] = useState(campaign.offer ?? '');
-  const [destination, setDestination] = useState(campaign.destination_url ?? '');
   const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(campaign.success_measures));
   const [busy, setBusy] = useState(false);
 
@@ -2467,12 +2445,9 @@ function BriefModal({
         goal: goal.trim(),
         name: goal.trim(),
         goal_ids: goalIds,
-        measured_by: measuredBy.trim() || null,
         // The saved audience is the source of truth; the server snapshots its name
         // into the `audience` text column. Sending null clears the link.
         audience_id: audienceId,
-        offer: offer.trim() || null,
-        destination_url: destination.trim() || null,
         success_measures: draftsToMeasures(measures),
       });
       addToast(isAr ? 'حُفظ الموجز.' : 'Brief saved.', 'success');
@@ -2511,12 +2486,6 @@ function BriefModal({
       >
         <GoalMultiSelect value={goalIds} onChange={setGoalIds} isAr={isAr} />
       </Field>
-      <Field
-        label={isAr ? 'يُقاس بـ' : 'Measured by'}
-        hint={isAr ? 'العملاء المؤهلون · من نظام العملاء، لا من المنصة' : undefined}
-      >
-        <input className="inp" value={measuredBy} onChange={(e) => setMeasuredBy(e.target.value)} />
-      </Field>
       <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />
       <Field label={isAr ? 'الجمهور' : 'Audience'}>
         <AudiencePicker
@@ -2524,17 +2493,6 @@ function BriefModal({
           legacyText={campaign.audience ?? null}
           onChange={setAudienceId}
           isAr={isAr}
-        />
-      </Field>
-      <Field label={isAr ? 'العرض' : 'Offer'}>
-        <input className="inp" value={offer} onChange={(e) => setOffer(e.target.value)} />
-      </Field>
-      <Field label={isAr ? 'الوجهة' : 'Destination'}>
-        <input
-          className="inp ltr"
-          value={destination}
-          placeholder="wassel.re/project?id=…"
-          onChange={(e) => setDestination(e.target.value)}
         />
       </Field>
     </Modal>
