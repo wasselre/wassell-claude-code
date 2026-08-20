@@ -12,16 +12,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  CAMPAIGN_STATUS_LABELS, EXEC_PURPOSE_LABELS, MosCampaign, MosGoal,
+  CAMPAIGN_STATUS_LABELS, MosCampaign, MosGoal,
   PLATFORM_LABELS, ROLE_LABELS,
   createContent, fetchCampaigns, fetchGoals,
-  saveCampaign, savePublication, successMeasureSuffix,
+  saveCampaign, saveCampaignTree, saveExecution, savePublication, successMeasureSuffix,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
-import { IconCampaigns, IconCheck, IconMetrics, IconPlus } from './components/icons';
+import { IconCampaigns, IconMetrics, IconPlus } from './components/icons';
 import ProjectMultiSelect from './components/ProjectMultiSelect';
 import GoalMultiSelect from './components/GoalMultiSelect';
+import CampaignExecutionsBuilder, {
+  ExecDraft, execDraftComplete, execPlanBudget,
+} from './components/CampaignExecutionsBuilder';
 import CampaignContentBuilder, { type ContentDraft } from './components/CampaignContentBuilder';
 import SuccessMeasuresEditor, {
   MeasureDraft, measuresToDrafts, draftsToMeasures, hasMeasureTarget,
@@ -677,14 +680,6 @@ function duration(c: MosCampaign, isAr: boolean): string {
  * the old sheet lacked it. Nothing here spends money — executions are created
  * as drafts until someone launches them on the platform itself.
  */
-const SPLIT_PLATFORMS = ['meta', 'tiktok', 'google', 'snapchat', 'x'] as const;
-
-interface SplitRow {
-  on: boolean;
-  purpose: string;
-  budget: string;
-}
-
 export function CampaignModal({
   campaign, isAr, onClose, onSaved,
 }: {
@@ -709,23 +704,17 @@ export function CampaignModal({
   const [budget, setBudget] = useState(campaign?.budget_total?.toString() ?? '');
   const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(campaign?.success_measures));
   const [status, setStatus] = useState<MosCampaign['status']>(campaign?.status ?? 'planning');
-  const [split, setSplit] = useState<Record<string, SplitRow>>(() =>
-    Object.fromEntries(SPLIT_PLATFORMS.map((p) => [
-      p,
-      { on: p === 'meta', purpose: 'sales', budget: '' },
-    ])),
-  );
+  // Paid + new: fully-configured executions (plan → ad sets → ads) that must be
+  // complete before the parent can be created. They are written after the
+  // campaign row, in one flow.
+  const [execDrafts, setExecDrafts] = useState<ExecDraft[]>([]);
   const [busy, setBusy] = useState(false);
 
   const totalBudget = budget.trim() === '' ? null : Number(budget);
-  const allocated = Object.values(split)
-    .filter((r) => r.on && r.budget.trim() !== '')
-    .reduce((a, r) => a + (Number(r.budget) || 0), 0);
-  const unallocated = totalBudget === null ? null : totalBudget - allocated;
-  const chosen = SPLIT_PLATFORMS.filter((p) => split[p]?.on);
-
-  const patchSplit = (p: string, patch: Partial<SplitRow>): void =>
-    setSplit((cur) => ({ ...cur, [p]: { ...(cur[p] ?? { on: false, purpose: 'sales', budget: '' }), ...patch } }));
+  // Create is gated for a new paid campaign: at least one execution, and every
+  // execution fully configured.
+  const execGateOk = kind !== 'paid' || !isNew
+    || (execDrafts.length > 0 && execDrafts.every(execDraftComplete));
 
   const submit = async (): Promise<void> => {
     if (!goal.trim()) {
@@ -758,20 +747,18 @@ export function CampaignModal({
       addToast(isAr ? 'أعطِ كل محتوى عنوانًا مبدئيًا.' : 'Give every content piece a working title.', 'error');
       return;
     }
+    // A new paid campaign must ship with at least one FULLY-configured execution
+    // (platform plan → ad set → ad). The button is already disabled, but guard.
+    if (isNew && kind === 'paid' && !execGateOk) {
+      addToast(
+        isAr ? 'أضف حملة إعلانية واحدة على الأقل واملأ إعداداتها (المنصة، المجموعة، الإعلان).'
+          : 'Add at least one ad campaign and fill its settings (platform, ad set, ad).',
+        'error',
+      );
+      return;
+    }
     setBusy(true);
     try {
-      const executions = isNew && kind === 'paid'
-        ? chosen.map((p) => {
-            const row = split[p];
-            const purpose = EXEC_PURPOSE_LABELS[row?.purpose ?? ''];
-            return {
-              platform: p,
-              label: purpose ? (isAr ? purpose.ar : purpose.en) : null,
-              budget: row && row.budget.trim() !== '' ? Number(row.budget) : null,
-            };
-          })
-        : undefined;
-
       const res = await saveCampaign(
         {
           id: campaign?.id,
@@ -793,8 +780,67 @@ export function CampaignModal({
           // success_threshold) from success_measures[0].
           success_measures: draftsToMeasures(measures),
         },
-        executions,
+        // Executions are now created richly below (plan + ad sets + ads), not as
+        // lite platform rows here.
+        undefined,
       );
+
+      // Paid + new: create each configured execution, then its ad-set/ad tree,
+      // so ONE Create writes the whole campaign → executions → ad sets → ads.
+      // A failure on one execution is surfaced but never rolls back the campaign.
+      let execOk = 0;
+      let execFail = 0;
+      if (isNew && kind === 'paid' && res.item?.id) {
+        for (const d of execDrafts) {
+          try {
+            const execRes = await saveExecution(res.item.id, {
+              platform: d.platform,
+              status: 'draft',
+              budget: execPlanBudget(d),
+              platform_settings: d.settings,
+            });
+            const execId = execRes.saved_id;
+            if (execId) {
+              await saveCampaignTree({
+                execution_id: execId,
+                ad_sets: d.adSets.map((s, i) => ({
+                  name: s.name.trim(),
+                  sort_order: i,
+                  ads: s.ads.map((a) => {
+                    const cap = a.caption.trim();
+                    const assetKeys = a.asset
+                      ? {
+                          asset_id: a.asset.id,
+                          asset_title: a.asset.title,
+                          ...(a.asset.url ? { asset_url: a.asset.url } : {}),
+                          ...(a.asset.thumb ? { asset_thumb: a.asset.thumb } : {}),
+                        }
+                      : {};
+                    const merged = { ...(cap ? { message: cap } : {}), ...assetKeys };
+                    return {
+                      label: a.label.trim(),
+                      content_id: a.contentId || null,
+                      status: 'waiting',
+                      ...(Object.keys(merged).length > 0 ? { creative: merged } : {}),
+                    };
+                  }),
+                })),
+              });
+            }
+            execOk += 1;
+          } catch (err) {
+            execFail += 1;
+            console.error('[mos] execution create failed', err);
+          }
+        }
+        if (execFail > 0) {
+          addToast(
+            isAr ? `تعذّر إنشاء ${num(execFail, true)} حملة إعلانية — أكملها من صفحة الحملة.`
+              : `${execFail} ad campaign(s) failed — finish them from the campaign page.`,
+            'error',
+          );
+        }
+      }
       // Bulk content: create each planned piece linked to the just-created
       // campaign, so ONE save spins up the campaign AND its production line.
       // Mirrors the single-create path — content_create opens the first task,
@@ -826,9 +872,8 @@ export function CampaignModal({
       }
 
       if (isNew) {
-        const execCount = executions?.length ?? 0;
         const clauses: string[] = [];
-        if (execCount > 0) clauses.push(isAr ? `${num(execCount, true)} حملات إعلانية` : `${execCount} draft ad campaigns`);
+        if (execOk > 0) clauses.push(isAr ? `${num(execOk, true)} حملات إعلانية` : `${execOk} ad campaigns`);
         if (contentOk > 0) clauses.push(isAr ? `${num(contentOk, true)} محتوى` : `${contentOk} content ${contentOk === 1 ? 'piece' : 'pieces'}`);
         const tail = clauses.length > 0 ? (isAr ? ` مع ${clauses.join(' و')}` : ` with ${clauses.join(' and ')}`) : '';
         const failTail = contentFail > 0 ? (isAr ? ` (تعذّر إنشاء ${num(contentFail, true)})` : ` (${contentFail} failed)`) : '';
@@ -859,14 +904,18 @@ export function CampaignModal({
       footer={
         <>
           <span className="note">
-            {isAr
-              ? 'لا شيء ينفق مالًا هنا. الحملات الإعلانية مسودات حتى يطلقها أحد على المنصة نفسها.'
-              : 'Nothing here spends money. Ad campaigns stay drafts until someone launches them on the platform itself.'}
+            {isNew && kind === 'paid' && !execGateOk
+              ? (isAr
+                  ? 'أكمل إعدادات كل حملة إعلانية (المنصة، المجموعة، الإعلان) لتفعيل الإنشاء.'
+                  : 'Finish every ad campaign’s settings (platform, ad set, ad) to enable Create.')
+              : isAr
+                ? 'لا شيء ينفق مالًا هنا. الحملات الإعلانية مسودات حتى يطلقها أحد على المنصة نفسها.'
+                : 'Nothing here spends money. Ad campaigns stay drafts until someone launches them on the platform itself.'}
           </span>
           <button type="button" className="btn" onClick={onClose} disabled={busy}>
             {isAr ? 'إلغاء' : 'Cancel'}
           </button>
-          <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy}>
+          <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy || !execGateOk}>
             {busy
               ? (isAr ? 'جارٍ الإنشاء…' : 'Working…')
               : isNew ? (isAr ? 'إنشاء الحملة' : 'Create campaign') : (isAr ? 'حفظ' : 'Save')}
@@ -964,98 +1013,7 @@ export function CampaignModal({
       </div>
 
       {kind === 'paid' && isNew && (
-        <div>
-          <div className="lbl" style={{ marginBottom: 7 }}>
-            {isAr ? 'الحملات الإعلانية التي ستُنشأ' : 'The ad campaigns this will create'}
-          </div>
-          <div style={{ border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden' }}>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th style={{ width: 38 }} />
-                  <th>{isAr ? 'المنصة' : 'Platform'}</th>
-                  <th style={{ width: 130 }}>{isAr ? 'الهدف' : 'Objective'}</th>
-                  <th className="num" style={{ width: 122 }}>{isAr ? 'حصة الميزانية' : 'Budget share'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {SPLIT_PLATFORMS.map((p) => {
-                  const row = split[p];
-                  if (!row) return null;
-                  return (
-                    <tr key={p} style={row.on ? undefined : { opacity: 0.55 }}>
-                      <td>
-                        <button
-                          type="button"
-                          className={`pill ${row.on ? 'p-go' : 'p-idle'}`}
-                          style={{ padding: '3px 6px', cursor: 'pointer' }}
-                          onClick={() => patchSplit(p, { on: !row.on })}
-                          aria-label={isAr ? `تفعيل ${PLATFORM_LABELS[p]?.ar ?? p}` : `Toggle ${PLATFORM_LABELS[p]?.en ?? p}`}
-                        >
-                          {row.on ? <IconCheck style={{ width: 11, height: 11 }} /> : '○'}
-                        </button>
-                      </td>
-                      <td>{(isAr ? PLATFORM_LABELS[p]?.ar : PLATFORM_LABELS[p]?.en) ?? p}</td>
-                      <td>
-                        {row.on ? (
-                          <select
-                            className="inp"
-                            style={{ padding: '4px 8px', fontSize: 12 }}
-                            value={row.purpose}
-                            onChange={(e) => patchSplit(p, { purpose: e.target.value })}
-                          >
-                            {Object.keys(EXEC_PURPOSE_LABELS).map((k) => (
-                              <option key={k} value={k}>
-                                {isAr ? EXEC_PURPOSE_LABELS[k]?.ar : EXEC_PURPOSE_LABELS[k]?.en}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span style={{ color: 'var(--mute)' }}>—</span>
-                        )}
-                      </td>
-                      <td className="num">
-                        {row.on ? (
-                          <input
-                            className="inp"
-                            style={{ padding: '4px 8px', fontSize: 12, textAlign: 'end' }}
-                            inputMode="numeric"
-                            value={row.budget}
-                            onChange={(e) => patchSplit(p, { budget: e.target.value })}
-                          />
-                        ) : (
-                          <span style={{ color: 'var(--mute)' }}>—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {/* The remainder is shown in the warning tone rather than accepted
-              silently — the design's whole point for this table. */}
-          {totalBudget !== null && (
-            <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 11, color: 'var(--mute)', flexWrap: 'wrap' }}>
-              <span>
-                {isAr ? 'موزّع ' : 'Allocated '}
-                <b style={{ color: 'var(--ink)' }}>{num(allocated, isAr)}</b>
-                {isAr ? ` من ${num(totalBudget, true)}` : ` of ${num(totalBudget, false)}`}
-              </span>
-              {unallocated !== null && unallocated !== 0 && (
-                <span style={{ color: unallocated > 0 ? 'var(--wait)' : 'var(--late)', fontWeight: 700 }}>
-                  {unallocated > 0
-                    ? isAr
-                      ? `${num(unallocated, true)} ريال غير موزّعة`
-                      : `${num(unallocated, false)} SAR unallocated`
-                    : isAr
-                      ? `تجاوز بمقدار ${num(Math.abs(unallocated), true)} ريال`
-                      : `over by ${num(Math.abs(unallocated), false)} SAR`}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
+        <CampaignExecutionsBuilder drafts={execDrafts} onChange={setExecDrafts} isAr={isAr} />
       )}
 
       <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />
@@ -1105,11 +1063,11 @@ export function CampaignModal({
           <b style={{ color: 'var(--ink)' }}>{isAr ? 'عند الإنشاء' : 'On create'}</b>
           {isAr ? ' — حملة برقم ' : ' — a campaign numbered '}
           <b style={{ color: 'var(--ink)' }} className="ltr">C-</b>
-          {kind === 'paid' && chosen.length > 0 && (
+          {kind === 'paid' && isNew && execDrafts.length > 0 && (
             <>
               {isAr
-                ? `، و${num(chosen.length, true)} حملات إعلانية كمسودات`
-                : `, and ${chosen.length} draft ad campaigns`}
+                ? `، و${num(execDrafts.length, true)} حملات إعلانية بمجموعاتها وإعلاناتها`
+                : `, and ${execDrafts.length} ad campaigns with their ad sets & ads`}
             </>
           )}
           {isAr
