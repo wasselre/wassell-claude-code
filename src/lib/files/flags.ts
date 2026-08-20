@@ -61,10 +61,18 @@ export function readFileFlag(
  * regardless of which panel is on screen.
  */
 export function recordFilesEnabled(search?: string): boolean {
-  return readFileFlag(
-    'recordfiles',
-    'wassell_record_files',
-    import.meta.env.VITE_FEATURE_RECORD_FILES as string | undefined,
-    search,
-  );
+  // ACTIVATED FOR EVERYONE — 2026-08-20, alongside the Library. A record page
+  // now shows the unified RecordFilesPanel (files from every mechanism, grouped
+  // by role) instead of the Phase 1 "Linked documents" list, so the two
+  // surfaces agree: the file system is the Library everywhere.
+  //
+  // Same three-level rollback as filesLibraryEnabled, preserved intact:
+  //   - ?recordfiles=0 turns it off for one person (?recordfiles=1 opts back in)
+  //   - VITE_FEATURE_RECORD_FILES=0 is the environment kill switch
+  //   - reverting this commit restores the old Linked-documents list
+  //
+  // The env var is now an explicit OFF switch, not the ON switch: absent (the
+  // production state), the default is ON; only the literal '0' turns it off.
+  const env = import.meta.env.VITE_FEATURE_RECORD_FILES as string | undefined;
+  return readFileFlag('recordfiles', 'wassell_record_files', env === '0' ? '0' : '1', search);
 }
