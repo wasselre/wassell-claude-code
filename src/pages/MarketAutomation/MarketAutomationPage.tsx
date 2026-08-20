@@ -8,12 +8,13 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { RefreshCw, Database, ListChecks, Activity, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Database, ListChecks, Activity, AlertTriangle, UploadCloud } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { fetchFieldStatus, fetchTargetFields, summarize, exampleList, type FieldStatus } from '@/lib/marketAutomation/client';
 import DecisionPanel from './components/DecisionPanel';
+import PublishControl from './components/PublishControl';
 
-type Tab = 'raw' | 'decisions' | 'health';
+type Tab = 'raw' | 'decisions' | 'health' | 'publish';
 
 const STATUS_META: Record<string, { ar: string; en: string; cls: string }> = {
   mapped_existing_field: { ar: 'مطابق لحقل قائم', en: 'Mapped', cls: 'bg-emerald-100 text-emerald-800' },
@@ -60,6 +61,7 @@ export default function MarketAutomationPage() {
   const tabs: { id: Tab; ar: string; en: string; icon: typeof Database }[] = [
     { id: 'raw', ar: 'البيانات الخام', en: 'Raw Evidence', icon: Database },
     { id: 'decisions', ar: 'قرارات الحقول', en: 'Field Decisions', icon: ListChecks },
+    { id: 'publish', ar: 'الإصدار', en: 'Publish', icon: UploadCloud },
     { id: 'health', ar: 'صحة البيانات', en: 'Data Health', icon: Activity },
   ];
 
@@ -121,6 +123,8 @@ export default function MarketAutomationPage() {
       {!loading && (tab === 'raw' || tab === 'decisions') && (
         <FieldTable rows={tab === 'decisions' ? queue : scoped} isAr={isAr} emptyDecisions={tab === 'decisions'} onDecide={setDeciding} />
       )}
+
+      {!loading && tab === 'publish' && <PublishControl rows={scoped} isAr={isAr} />}
 
       {!loading && tab === 'health' && <HealthTab summary={summary} isAr={isAr} />}
 

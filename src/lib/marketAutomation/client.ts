@@ -113,6 +113,43 @@ export async function decideField(input: DecisionInput): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/** One publish-ledger row — whether a canonical_field is released to the live table. */
+export interface PublishLedgerRow {
+  platform: string;
+  canonical_field: string;
+  status: 'held' | 'released';
+  released_at: string | null;
+  released_by: string | null;
+  reason: string | null;
+}
+
+/** The publish allowlist: which canonical_fields are released per platform. */
+export async function fetchPublishLedger(): Promise<PublishLedgerRow[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('market_listing_publish_ledger')
+    .select('platform,canonical_field,status,released_at,released_by,reason');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as PublishLedgerRow[];
+}
+
+/** Release or hold one canonical_field for a platform (the publish gate toggle). */
+export async function setPublishStatus(
+  platform: string,
+  canonical_field: string,
+  status: 'held' | 'released',
+  reason?: string | null,
+): Promise<void> {
+  if (!supabase) throw new Error('offline — no Supabase connection');
+  const { error } = await supabase.rpc('market_listing_publish_set', {
+    p_platform: platform,
+    p_canonical_field: canonical_field,
+    p_status: status,
+    p_reason: reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
 /** The market_listings field slugs — the target columns for "map to existing". */
 export async function fetchTargetFields(): Promise<string[]> {
   if (!supabase) return [];
