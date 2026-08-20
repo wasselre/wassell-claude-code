@@ -214,3 +214,30 @@ export const FILE_KINDS: FilePreviewKind[] = [
 export const FILE_CLASSES: FileClass[] = ['business', 'system'];
 export const LIBRARY_SORTS = SORTS;
 export const LIBRARY_GROUPINGS = GROUPINGS;
+
+/**
+ * Phase 3 · B9 — the same folder-name → document_type classifier the backfill
+ * migration used (b9_folder_name_to_type). Kept in lockstep with the SQL: a
+ * folder whose name is a TYPE word ("صور", "فيديو") was captured as the files'
+ * document_type and deliberately NOT as a tag, so the Legacy-folder banner must
+ * offer the TYPE filter for those and the TAG filter for project folders. A
+ * banner that always linked to ?tag= would land on zero results for every
+ * type-word folder — which is exactly what it did before this existed.
+ */
+export function folderNameToDocType(name: string): string | null {
+  const n = name.trim();
+  if (/صور|الصور|معرض|gallery|صوره/.test(n)) return 'gallery_image';
+  if (/فيديو|video|مقطع/.test(n)) return 'video';
+  if (/دور|مخطط|floor|plan|طابق/.test(n)) return 'floor_plan';
+  if (/بروش|brochure|كتيب/.test(n)) return 'brochure';
+  if (/علامة|هوية|brand|شعار|logo/.test(n)) return 'reference';
+  if (/محتوى|محتوي|تسويق|marketing|اعلان|إعلان/.test(n)) return 'marketing_asset';
+  return null;
+}
+
+/** The Library query that is the metadata equivalent of a Legacy folder:
+ *  its type filter if the name is a type-word, otherwise its name as a tag. */
+export function equivalentViewSearch(folderName: string): string {
+  const t = folderNameToDocType(folderName);
+  return t ? `?type=${encodeURIComponent(t)}` : `?tag=${encodeURIComponent(folderName)}`;
+}

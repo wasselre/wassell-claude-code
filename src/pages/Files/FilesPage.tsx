@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { FilePlus, FolderPlus, FolderUp, Loader2, Search, Upload, X } from 'lucide-react';
+import { Archive, FilePlus, FolderUp, Loader2, Search, Upload, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { FileRow, FilePermissionRole, FolderRow, PdfCompressResponse } from '@/types';
 import {
@@ -23,6 +23,7 @@ import {
   type DriveSearchResult,
 } from '@/lib/files/client';
 import { formatBytes } from '@/lib/files/format';
+import { equivalentViewSearch, filesLibraryEnabled } from '@/lib/files/libraryUrl';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import FilesTabs from './components/FilesTabs';
 import NewDocumentModal from './components/NewDocumentModal';
@@ -34,7 +35,6 @@ import FilePreviewModal from './components/FilePreviewModal';
 import ShareLinkModal from './components/ShareLinkModal';
 import PermissionsPanel, { type PermissionTarget } from './components/PermissionsPanel';
 import MoveToFolderModal from './components/MoveToFolderModal';
-import CreateFolderModal from './components/CreateFolderModal';
 import BulkActionBar from './components/BulkActionBar';
 import BulkMoveModal from './components/BulkMoveModal';
 import { clickMode, useFilesSelection, type SelectableItem } from './useFilesSelection';
@@ -83,6 +83,7 @@ export default function FilesPage({ forceShared = false }: Props) {
   const addToast = useAppStore((s) => s.addToast);
   const currentUserId = useAppStore((s) => s.currentUserId);
   const navigate = useNavigate();
+  const location = useLocation();
   const { folderId: folderIdParam } = useParams();
 
   const view: View = forceShared ? 'shared' : folderIdParam ? 'folder' : 'mine';
@@ -116,7 +117,6 @@ export default function FilesPage({ forceShared = false }: Props) {
   const [shareFile, setShareFile] = useState<FileRow | null>(null);
   const [permsTarget, setPermsTarget] = useState<PermissionTarget | null>(null);
   const [moveFile, setMoveFile] = useState<FileRow | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<FolderRow | null>(null);
   const [renameValue, setRenameValue] = useState('');
   /** Inline file-rename modal — mirrors the folder rename flow above so a
@@ -130,6 +130,10 @@ export default function FilesPage({ forceShared = false }: Props) {
   const [compressingIds, setCompressingIds] = useState<Set<string>>(new Set());
 
   const currentFolderId = view === 'folder' ? folderIdParam ?? null : null;
+  const currentFolderName = useMemo(
+    () => folderCache.find((f) => f.id === currentFolderId)?.name ?? null,
+    [folderCache, currentFolderId],
+  );
 
   // When a search is active, the grids render the (global) search results
   // instead of the current folder's contents. All the per-view machinery
@@ -683,9 +687,6 @@ export default function FilesPage({ forceShared = false }: Props) {
     }
   }, [compressibleSelected, compressingIds, markCompressing, selection, addToast, t, isAr, reload]);
 
-  // ─── Existing folder names for create dedupe ────────────────────────
-  const existingNames = useMemo(() => folders.map((f) => f.name), [folders]);
-
   // ─── Upload enabled? ────────────────────────────────────────────────
   // In "Shared with me" root we have no destination folder, so picker is off.
   const uploadEnabled = view !== 'shared';
@@ -733,13 +734,9 @@ export default function FilesPage({ forceShared = false }: Props) {
                 <FilePlus size={16} />
                 {t('files.new_doc.button')}
               </button>
-              <button
-                onClick={() => setCreateOpen(true)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-sand/40 text-charcoal hover:bg-cream font-bold text-sm transition-colors"
-              >
-                <FolderPlus size={16} />
-                {t('files.new_folder.button')}
-              </button>
+              {/* B9: folder creation is frozen at the database. The button is
+                  gone rather than left to produce a raw error; existing folders
+                  stay fully browsable and manageable. */}
               <button
                 onClick={() => window.dispatchEvent(new Event('files:open-folder-picker'))}
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-sand/40 text-charcoal hover:bg-cream font-bold text-sm transition-colors"
@@ -790,6 +787,27 @@ export default function FilesPage({ forceShared = false }: Props) {
       {view === 'folder' && !searchActive && (
         <div className="mb-4">
           <FilesBreadcrumb folders={folderCache} currentFolderId={currentFolderId} />
+        </div>
+      )}
+
+      {/* B9: the "here is the equivalent view" banner. Inside a Legacy folder,
+          point at the metadata query that replaces it — the folder's own name
+          is now a tag on its files (see the folder-backfill migration), so the
+          Library filtered to that tag is the same set, minus the folder. Shown
+          only when the Library flag is on (there is somewhere to send them). */}
+      {view === 'folder' && !searchActive && currentFolderName && filesLibraryEnabled(location.search) && (
+        <div className="mb-4 p-3 rounded-xl bg-copper/5 border border-copper/25 flex items-center justify-between gap-3 flex-wrap">
+          <p className="flex items-center gap-2 text-xs text-charcoal/70">
+            <Archive size={14} className="text-copper shrink-0" aria-hidden />
+            {t('files.legacy.banner', { name: currentFolderName })}
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate(`/files${equivalentViewSearch(currentFolderName)}`)}
+            className="px-3 py-1.5 rounded-lg bg-copper text-white text-xs font-bold hover:bg-terracotta whitespace-nowrap"
+          >
+            {t('files.legacy.open_view')}
+          </button>
         </div>
       )}
 
@@ -968,16 +986,6 @@ export default function FilesPage({ forceShared = false }: Props) {
         onCreated={(row) => {
           setNewDocOpen(false);
           navigate(`/files/doc/${row.id}`);
-        }}
-      />
-      <CreateFolderModal
-        open={createOpen}
-        parentFolderId={currentFolderId}
-        existingNames={existingNames}
-        onClose={() => setCreateOpen(false)}
-        onCreated={(folder) => {
-          setFolders((prev) => [folder, ...prev]);
-          setFolderCache((cache) => mergeUniqueById(cache, [folder]));
         }}
       />
       <FilePreviewModal

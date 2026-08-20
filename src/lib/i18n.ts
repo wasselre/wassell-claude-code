@@ -619,6 +619,8 @@ const resources = {
       // Files System · Phase 3 · B5 — the Business Files Library
       'files.tabs.library': 'المكتبة',
       'files.tabs.legacy_folders': 'المجلدات القديمة',
+      'files.legacy.banner': 'هذا المجلد «{{name}}» أصبح وسماً على ملفاته. المكتبة المُصفّاة بهذا الوسم تعرض نفس الملفات.',
+      'files.legacy.open_view': 'افتح العرض المكافئ',
       'files.library.views': 'العروض',
       'files.library.all_files': 'كل الملفات',
       'files.library.saved_views': 'عروض محفوظة',
@@ -1775,6 +1777,8 @@ const resources = {
       // Files System · Phase 3 · B5 — the Business Files Library
       'files.tabs.library': 'Library',
       'files.tabs.legacy_folders': 'Legacy folders',
+      'files.legacy.banner': 'This folder “{{name}}” is now a tag on its files. The Library filtered to that tag shows the same set.',
+      'files.legacy.open_view': 'Open the equivalent view',
       'files.library.views': 'Views',
       'files.library.all_files': 'All files',
       'files.library.saved_views': 'Saved views',

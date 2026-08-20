@@ -1,6 +1,6 @@
 # Wassell File Management — the whole plan
 
-**Status:** living document · **Last updated:** 2026-08-20 (B6, B7, B8 built)
+**Status:** living document · **Last updated:** 2026-08-20 (Phase 3 complete: B1–B9)
 
 This is the governing plan for the Files system across **all five phases (0–4)**.
 Until now it existed only as `phase3-business-files-spec.md` in an untracked
@@ -70,7 +70,7 @@ carries nine implementation batches. (An earlier draft of this file claimed
 | **0 — Canonical storage** | Store each business file once in the private canonical store; keep backend/system files separate. | ✅ Done |
 | **1 — Relationship graph** | Connect files to projects, units, clients, tasks, marketing assets. | ✅ Done |
 | **2 — Live synchronization** | Keep those relationships accurate automatically whenever records change. | ✅ Done |
-| **3 — Business Files Library** | Deliver the folderless, metadata-driven experience. | 🟡 In progress |
+| **3 — Business Files Library** | Deliver the folderless, metadata-driven experience. | ✅ Done (B1–B9) |
 | **4 — Folder retirement** | Once saved views prove themselves, retire legacy folders and folder-based permissions. | ⏳ Not started |
 
 Phase 4 is conditional by design — the spec commits to retirement *"conditional
@@ -124,7 +124,7 @@ rollback-able.
 | **B6** | Manual linking/unlinking and Files panels inside records | ✅ **Built — flag default OFF; acceptance bar fully met once the `units` schema was restored (§6.5)** (§4.2) |
 | **B7** | Upload metadata, duplicate detection, bulk actions | ✅ **Built — behind the Library flag, default OFF** (§4.3) |
 | **B8** | Move the remaining Marketing assets onto the canonical file system | ✅ **173 canonicalised on prod; 143 are non-file references (§4.4)** |
-| **B9** | Convert folder names into metadata, freeze folder creation, retain Legacy folders | ⏳ Not started |
+| **B9** | Convert folder names into metadata, freeze folder creation, retain Legacy folders | ✅ **Applied on prod — folders frozen, 446 files tagged, nothing deleted (§4.5)** |
 
 **Plus one branch that is in no spec but IS live on production:**
 
@@ -492,6 +492,52 @@ remnants + 133 external references + a handful of edge cases). A file name was
 derived from the marketing `title` ("جزيل — فيديو 3") for the 163 assets whose
 `original_name` was null, since a uuid would have been a worse handle than the
 context the asset already carried.
+
+### 4.5 B9 — folder names become metadata, folders freeze, Phase 3 closes
+
+The last batch of Phase 3, and it DELETES NOTHING: 102 folders stay browsable
+under Legacy folders, the 3 folder-cascade grants keep working, every foldered
+file keeps its folder_id. Applied on production 2026-08-20.
+
+**What the backfill did**, measured and verified in a rolled-back transaction
+before applying:
+
+- **446 foldered files gained tags** from their folder ancestry — project names
+  ("الماجدية 2" on 177 files, "مينا 52" on 59), floor labels, developer names.
+  Additive and de-duplicated: a file's existing tags are never replaced. Two
+  generic organisational parents (المشاريع on 343, مشاريع تحت الإدراج on 103)
+  are on an explicit stop-list — they describe nothing and would have been pure
+  noise.
+- **15 files upgraded document_type** from the generic 'other' to what their
+  folder names them (floor_plan, brochure, ...). ONLY 'other' is touched: a
+  file already typed gallery_image inside a folder called فيديو keeps its type,
+  because an explicit type is a stronger claim than a folder name. 93 → 78
+  'other' among foldered files.
+
+**The freeze is a database trigger, not a revoked grant.** `folders_block_
+creation` refuses an INSERT from any browser JWT (service_role passes through,
+so migrations/seed/workers still work) — the same JWT-role check as
+`models_guard_schema_shrink`. Browsing, renaming and deleting folders all stay
+allowed; only creation is frozen. Verified live: a browser JWT is blocked with
+P0001, service_role is not.
+
+**The "equivalent view" banner, and the bug it exposed.** Inside a Legacy
+folder the Library shows a banner offering the metadata query that replaces it.
+The first version always linked to `?tag=<folder name>` — and for a TYPE-word
+folder ("صور") that lands on ZERO results, because صور was captured as the
+files' document_type and deliberately excluded from tags. Caught in the browser.
+The banner now uses the SAME classifier the backfill did (`folderNameToDocType`,
+kept in lockstep with the SQL): a type-word folder links to `?type=gallery_image`
+(2,723 files), a project folder to `?tag=مينا 52` (59 files). The equivalence is
+real, not decorative.
+
+**The New Folder button is gone** from the folder page rather than left to
+produce a raw trigger error, and the dead CreateFolderModal chain was removed
+with it.
+
+With B9 applied, **Phase 3 is complete (B1–B9)**. Phase 4 — actually retiring
+folders — is now a decision with its own evidence, not a build: it needs the
+saved views in real use for a quarter, and every folder empty of unique reach.
 
 ### 6.1 Per-row record-visibility cost — LARGELY RESOLVED (2026-08-19)
 
