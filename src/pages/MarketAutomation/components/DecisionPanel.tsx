@@ -19,11 +19,12 @@ const OPTIONS: { id: Disposition; ar: string; en: string; hint_ar: string; hint_
 const NEEDS_REASON = new Set<Disposition>(['mapped_existing_field', 'candidate_new_field', 'review_required']);
 
 export default function DecisionPanel({
-  field, targetFields, targetTypes, isAr, onClose, onSaved,
+  field, targetFields, targetTypes, targetLabels, isAr, onClose, onSaved,
 }: {
   field: FieldStatus;
   targetFields: string[];
   targetTypes: Record<string, CoerceClass>;
+  targetLabels: Record<string, { ar: string; en: string }>;
   isAr: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -134,7 +135,10 @@ export default function DecisionPanel({
               <label className="text-[12px] text-charcoal/60 block mb-1">{isAr ? 'الحقل المستهدف في وصل' : 'Target Wassell column'}</label>
               <select value={canonical} onChange={(e) => setCanonical(e.target.value)} className="form-input">
                 <option value="">{isAr ? '— اختر —' : '— choose —'}</option>
-                {targetFields.map((f) => <option key={f} value={f}>{f}</option>)}
+                {targetFields.map((f) => {
+                  const lbl = targetLabels[f];
+                  return <option key={f} value={f}>{lbl?.ar ? `${lbl.ar} — ${f}` : f}</option>;
+                })}
               </select>
               {typeMismatch && (
                 <div className="flex items-start gap-1.5 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-2 text-[12px]">

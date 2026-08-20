@@ -133,7 +133,7 @@ export default function MarketAutomationPage() {
       {!loading && tab === 'health' && <HealthTab summary={summary} isAr={isAr} />}
 
       {deciding && (
-        <DecisionPanel field={deciding} targetFields={targetFields} targetTypes={targetTypes} isAr={isAr}
+        <DecisionPanel field={deciding} targetFields={targetFields} targetTypes={targetTypes} targetLabels={labels} isAr={isAr}
           onClose={() => setDeciding(null)} onSaved={load} />
       )}
     </div>
