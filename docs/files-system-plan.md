@@ -121,7 +121,7 @@ rollback-able.
 | **B3** | Measure how record-linked access changes visibility | ✅ **Done** — D1 approved |
 | **B4** | Let users view files through records they can access, excluding restricted files | ✅ **LIVE — toggle ON since 2026-08-19 11:09 UTC** |
 | **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ✅ **Built — shipped behind a flag, default OFF** (§4.1) |
-| **B6** | Manual linking/unlinking and Files panels inside records | ✅ **Built — shipped behind a flag, default OFF** (§4.2) |
+| **B6** | Manual linking/unlinking and Files panels inside records | ✅ **Built — flag default OFF; acceptance bar fully met once the `units` schema was restored (§6.5)** (§4.2) |
 | **B7** | Upload metadata, duplicate detection, bulk actions | 🟡 **In progress** — bulk select/edit and duplicate detection live (§4.3); upload strip + bulk link/unlink remain |
 | **B8** | Move the remaining 317 Marketing assets onto the canonical file system | ⏳ Not started |
 | **B9** | Convert folder names into metadata, freeze folder creation, retain Legacy folders | ⏳ Not started |
@@ -463,6 +463,66 @@ prediction exactly" can only hold at a single instant on a live database.
 
 Rollback remains one statement:
 `UPDATE public.file_access_settings SET derived_view_enabled = false;`
+
+### 6.5 The `units` schema was flattened, and the runbook would have made it worse — RESOLVED (2026-08-20)
+
+Recorded because it was found from inside a Files batch, because the fix
+changed a Phase 2 assumption, and because the trap it exposed is still the
+first thing to check if reconcile ever reports drift again.
+
+**What happened.** On 2026-08-20 at 06:43:17 UTC — 26 seconds after a sign-in —
+24 model rows were rewritten in a four-second burst. `units` went from **47
+declared fields to 9**, byte-identical to its definition in
+`src/data/seedModels.ts`. Nothing else lost fields; a per-model diff of the
+generated PRDs put `all_projects` at +1 and `market_listings` at +13 (ordinary
+growth) against `units` at **-38**.
+
+**The data was never in danger.** All 48 keys stayed in `records.data`
+(`unit_code` on 7,826 rows, `unit_plan` on 5,706), and the record form seeds
+itself from the whole row and writes `{ ...formData }` back, so ordinary saves
+preserved undeclared keys. What broke was visibility: users saw 9 of 47 fields.
+
+**Root cause.** `supabaseLoad` returns `null` when a query ERRORS but `[]` when
+it succeeds and returns nothing — an RLS-empty read on a boot where the user is
+not yet bound. The backfill guard only tested for `null`, so an empty read was
+read as "none of these models exist" and all 26 seed models were upserted over
+the live ones.
+
+**The trap, which was the dangerous part.** `file_links_reconcile()` reported
+5,706 orphan edges and 787 reclassified, and the PRD's own runbook says a
+non-zero value means "run `file_links_resync_all()`". Measured at the time, on
+one representative target of each class in a rolled-back transaction:
+
+| edge class | count | what the documented repair would have done |
+|---|---|---|
+| floor-plan edges with only a field source | **4,919** | **deleted outright** |
+| floor-plan edges with an attachment backup | 787 | role degraded to `attachment` |
+
+So following the runbook literally would have destroyed 4,919 floor-plan
+relationships. Ordinary saves were NOT doing this — verified twice — because
+the Phase 2 trigger only marks a target dirty when a *declared candidate field*
+moves, and `units` declared none. The damage was latent, not ongoing. (My first
+instinct was the opposite and was wrong; the measurement is what corrected it.)
+
+**Resolution.** Another session restored the schema at 10:04:49 UTC: `units` is
+back to **48 fields across 8 sections** with `unit_plan` declared as `image`,
+and 5,706 records carry a value — exactly the orphan count, which is what made
+the diagnosis conclusive. Reconcile is now **0 on all four counters**, with the
+graph intact at 9,856 edges / 11,166 sources and an empty dirty set.
+
+**The root cause is closed at the DATABASE, not just in the client.** A new
+`models_guard_schema_shrink` trigger refuses two fingerprints from any caller
+carrying a browser JWT (service_role passes through): a `created_at` rewrite,
+which is the seed-upsert signature, and any field-count SHRINK on an
+`is_system` model. Schema changes to system models now have to come through a
+migration. That is the right layer — the client guard can be missed again by a
+stale bundle, and this cannot.
+
+**Two things to carry forward.** `file_links_resync_all()` converges in BOTH
+directions and will delete any edge the live derivation cannot currently see —
+so before running it, confirm the schema is intact rather than assuming drift
+means the projection is wrong. And a reconcile that reports drift is a question,
+not an instruction: here the projection was right and the *schema* was wrong.
 
 ### 6.4 Scheduled PRD sync is broken
 60/60 runs failing since 2026-08-17 on a TipTap peer-dependency conflict, so
