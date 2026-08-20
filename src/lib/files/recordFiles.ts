@@ -30,10 +30,16 @@
  */
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
+import { errorText } from './library';
 import type { BusinessFileRow } from '@/types';
 
 function surfaceError(scope: string, err: unknown): Error {
-  const msg = err instanceof Error ? err.message : String(err);
+  // errorText, NOT `String(err)`. Everything that reaches here from supabase-js
+  // is a plain PostgrestError, not an Error, and String() renders it as the
+  // literal "[object Object]". B5 diagnosed exactly this and wrote the helper;
+  // this file then repeated the original mistake, which is why the helper is
+  // imported rather than the pattern retyped.
+  const msg = errorText(err);
   console.error(`[record-files] ${scope} failed:`, err);
   try {
     useAppStore.getState().addToast(`${scope}: ${msg}`, 'error');

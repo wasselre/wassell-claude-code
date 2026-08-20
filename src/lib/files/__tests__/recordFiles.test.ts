@@ -21,6 +21,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { classifyEdge, groupByRole, originOf, type RecordFileEntry } from '../recordFiles';
+import { errorText } from '../library';
 
 const FIELD = 'field:units:3cb3b31d-0000-0000-0000-000000000001:unit_plan:0:cf37d76f-0000-0000-0000-000000000002';
 const ATTACH = 'attachment:cf37d76f-0000-0000-0000-000000000002:units:3cb3b31d-0000-0000-0000-000000000001';
@@ -134,5 +135,35 @@ describe('groupByRole — the panel sections', () => {
 
   it('returns nothing for no entries', () => {
     expect(groupByRole([])).toEqual([]);
+  });
+});
+
+describe('errorText — a failed call must read as a sentence, not [object Object]', () => {
+  // This is a REGRESSION test in the literal sense: B5 diagnosed the bug and
+  // wrote the helper, and B6 then reproduced the original pattern in three
+  // places. supabase-js resolves failures as a plain PostgrestError, NOT an
+  // Error, so `String(err)` renders the words "[object Object]" into the panel
+  // where the reason should be.
+  it('renders a PostgrestError as its message, details, hint and code', () => {
+    const pgErr = {
+      message: 'new row violates row-level security policy for table "document_links"',
+      details: null, hint: null, code: '42501',
+    };
+    const out = errorText(pgErr);
+    expect(out).not.toContain('[object Object]');
+    expect(out).toContain('row-level security');
+    expect(out).toContain('42501');
+  });
+
+  it('still prefers a real Error message', () => {
+    expect(errorText(new Error('plain failure'))).toBe('plain failure');
+  });
+
+  it('never returns the empty string for an object with nothing useful', () => {
+    // An empty message would render as "The files could not be loaded — " with
+    // a dangling dash, which reads as a rendering bug rather than an error.
+    const out = errorText({ weird: true });
+    expect(out.trim()).not.toBe('');
+    expect(out).not.toContain('[object Object]');
   });
 });

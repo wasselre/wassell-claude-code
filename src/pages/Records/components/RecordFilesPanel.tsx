@@ -37,7 +37,7 @@ import ConfirmModal from '@/components/ui/ConfirmModal';
 import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import { signDownloadUrl } from '@/lib/files/client';
-import { listDocumentTypes } from '@/lib/files/library';
+import { errorText, listDocumentTypes } from '@/lib/files/library';
 import {
   detachFileFromRecord, groupByRole, listRecordFiles, type RecordFileEntry,
 } from '@/lib/files/recordFiles';
@@ -69,7 +69,7 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
     } catch (e) {
       // A record whose files could not load must NOT render as a record with
       // no files. Separate state, separate screen, with a retry.
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorText(e));
       setEntries([]);
     }
   }, [modelId, recordId]);

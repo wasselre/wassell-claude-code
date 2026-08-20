@@ -17,7 +17,7 @@ import { AlertTriangle, Check, Link2, Loader2, Lock, Search, X } from 'lucide-re
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
-import { searchBusinessFiles } from '@/lib/files/library';
+import { errorText, searchBusinessFiles } from '@/lib/files/library';
 import { effectiveFileRoles, roleSatisfies } from '@/lib/files/client';
 import { attachFileToRecord } from '@/lib/files/recordFiles';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
@@ -96,7 +96,7 @@ export default function AttachExistingFileModal({
       }
     } catch (e) {
       // Never an empty list for a failed search — see the Library's header.
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorText(e));
     } finally {
       setLoading(false);
     }
