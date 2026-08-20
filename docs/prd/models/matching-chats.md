@@ -20,9 +20,9 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: Title (`title`)
-- Subtitle: Last Message (`last_message_at`)
-- Badge: Status (`status`)
+- Title: `f3d990c7-3149-4a94-a410-50b4e89bd1c3` (unknown field)
+- Subtitle: `8217068b-61fc-4c98-b40d-fac8e07f4c45` (unknown field)
+- Badge: `82e90ea7-b36f-4793-ad92-3caa715327b1` (unknown field)
 
 ## Sections & fields
 

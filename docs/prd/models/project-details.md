@@ -5,7 +5,7 @@
 # Model: Project Details / تفاصيل المشاريع  `project_details`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-08-20
 **Model id:** `1194e916-78c5-4542-9035-23f15e968739`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

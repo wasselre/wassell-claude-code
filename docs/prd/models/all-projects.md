@@ -21,9 +21,7 @@
 
 ## Card view
 - Title: Project Name (`project_name`)
-- Subtitle: Location (`location`)
-- Badge: Project Status (`project_status`)
-- Shown: Developer (`developer`), Unit Types (`unit_types`), Available Units (`available_units`), Price Range (`price_range`)
+- Badge: `95d2ba80-86f4-4b49-ab67-ed1a028fb2eb` (unknown field)
 
 ## Maps view
 - Location URL field: Project Location (`project_location`)

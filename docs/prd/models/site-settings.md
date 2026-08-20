@@ -5,7 +5,7 @@
 # Model: Website Settings / إعدادات الموقع  `site_settings`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-15
+**Last updated (from DB):** 2026-08-20
 **Model id:** `0fcb55a5-f7e7-452f-90db-d05c728798c2`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

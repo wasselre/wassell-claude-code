@@ -20,8 +20,8 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: Title (`title`)
-- Badge: Status (`status`)
+- Title: `c5341877-b961-487e-af33-65b3c3e4f785` (unknown field)
+- Badge: `1753e59d-83bc-4537-be66-8d98b7c1db2e` (unknown field)
 
 ## Sections & fields
 
