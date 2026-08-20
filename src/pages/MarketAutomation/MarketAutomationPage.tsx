@@ -158,9 +158,9 @@ function FieldTable({ rows, isAr, labels, emptyDecisions, onDecide }: { rows: Fi
           {rows.map((r) => {
             const m = statusMeta(r.authoritative_status);
             const wLbl = r.canonical_field ? labels[r.canonical_field] : undefined;
-            // Arabic meaning of the platform field: the mapped field's Arabic label,
-            // else the catalog's own Arabic source_label.
-            const platAr = wLbl?.ar ?? r.source_label ?? null;
+            // Arabic name of the platform field: the field's own curated Arabic name
+            // (source_label), else the mapped Wassell field's Arabic label.
+            const platAr = r.source_label ?? wLbl?.ar ?? null;
             return (
               <tr key={r.platform + r.source_path} onClick={() => onDecide(r)}
                 title={isAr ? 'اضغط لاتخاذ قرار' : 'Click to decide'}
