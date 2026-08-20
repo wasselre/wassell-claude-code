@@ -96,8 +96,8 @@ Every listing flows through the same conveyor, portal after portal:
 | 2 | **Adapt** | Match raw → CRM fields, apply field rules, route platform-specific/ignored | `aqar-scraper/src/sync/crmClient.ts`; [adapter-playbook](./adapter-playbook.md) | ✅ built (Aqar) |
 | 3 | **App compute** | Derived values (price/m², counts, signals, rollups) via triggers | DB triggers on `market_listings` | ✅ built |
 | 4 | **Govern (Gate A)** | Catalog every field, store mappings & gaps, hold evidence, RLS | [`gate-a.md`](./gate-a.md); tables below | ✅ built |
-| 5 | **Cockpit** | Operator sees raw/mapped/health and rules on field meaning | [`automation-section-spec.md`](./automation-section-spec.md); `/market-automation` | ⏳ Phases 1–2 live; Phase 3 pending |
-| 6 | **Publish** | Promote ruled fields to the live `market_listings` columns | spec'd (automation §6, §9-3) | ❌ **deliberately unbuilt** (the gate) |
+| 5 | **Cockpit** | Operator sees raw/mapped/health and rules on field meaning | [`automation-section-spec.md`](./automation-section-spec.md); `/market-automation` | ✅ Decisions live (Phase 2) |
+| 6 | **Publish** | Gate ruled fields onto the live `market_listings` columns | ledger + `market_listing_write` + `market_listing_publish` (Phase 3 Inc 1–2) | ✅ enforced gate live; **Inc 3 (promote-to-column) pending** |
 | 7 | **Next portal** | Re-run 1–6 for Bayut/Wasalt/… (schema is portal-generic) | the two playbooks | ⚠️ no portal onboarded yet besides Aqar |
 | 8 | **Gate B** | Storage-object enforcement + freeze-baseline CI fixture | [`gate-a.md`](./gate-a.md) §7–8 | 🚫 deferred & blocked |
 
@@ -172,12 +172,18 @@ in Gate A is Aqar-specific.
 
 ## 7. Roadmap
 
-**Near-term (closes the loop for Aqar):**
-- Cockpit **Phase 3**: publish control + `candidate_new_field → column` promotion
-  flow (repo-side migration surfaced as "pending column").
-- Wire the adapter to consume `source_field_mappings` for the mapped/ignored classes
-  (today it consumes `reviewed_source_specific`; extend to full decision-driven
-  matching).
+**Done (Phase 3 Inc 1–2, 2026-08-19):** the enforced publish gate.
+`market_listing_publish_ledger` (allowlist, grandfathered) + `market_listing_write`
+(the one gated write — released → live, held → `market_listing_staging`) +
+`market_listing_publish` (dry-run diff + backfill-on-release). Cockpit **Publish
+tab** with hold + dry-run/release. Scraper insert + update both routed through it.
+
+**Near-term (remaining to close the loop):**
+- Cockpit **Phase 3 Inc 3**: `candidate_new_field → column` promotion (repo-side
+  migration surfaced as "pending column"), so a genuinely new field gets a real
+  column and can then be released.
+- Extend adapter decision-consumption to the ignored/technical classes (today it
+  drops via not-emitting; make it explicit + decision-driven end to end).
 
 **Mid-term (prove multi-portal):**
 - Onboard a **second portal** (Bayut or Wasalt) end-to-end via the two playbooks —
