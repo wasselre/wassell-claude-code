@@ -238,12 +238,24 @@ export function coercePreview(raw: string, cls: CoerceClass): { ok: boolean; out
   return { ok: true, out: s.slice(0, 60) };
 }
 
-/** A few real listing URLs on the source platform, to open and inspect a field in context. */
-export async function fetchSampleListingUrls(platform: string, limit = 6): Promise<string[]> {
+/** A real listing URL to open + inspect a field in context, with the field's value
+ *  when the field is mapped (one listing per distinct value). */
+export interface SampleListing { url: string; value: string | null }
+export async function fetchSampleListingUrls(
+  platform: string,
+  canonicalField?: string | null,
+  limit = 6,
+): Promise<SampleListing[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase.rpc('market_listing_sample_urls', { p_platform: platform, p_limit: limit });
+  const { data, error } = await supabase.rpc('market_listing_sample_urls', {
+    p_platform: platform,
+    p_limit: limit,
+    p_canonical_field: canonicalField ?? null,
+  });
   if (error) throw new Error(error.message);
-  return ((data ?? []) as { source_url: string }[]).map((r) => r.source_url).filter(Boolean);
+  return ((data ?? []) as { source_url: string; field_value: string | null }[])
+    .filter((r) => r.source_url)
+    .map((r) => ({ url: r.source_url, value: r.field_value }));
 }
 
 /** Sample real staged values for a held field + their current live value. */

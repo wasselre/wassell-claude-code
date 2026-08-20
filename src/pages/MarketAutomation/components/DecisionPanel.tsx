@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X, AlertTriangle, ExternalLink } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import { decideField, exampleList, coercePreview, fetchSampleListingUrls, type CoerceClass, type Disposition, type FieldStatus } from '@/lib/marketAutomation/client';
+import { decideField, exampleList, coercePreview, fetchSampleListingUrls, type SampleListing, type CoerceClass, type Disposition, type FieldStatus } from '@/lib/marketAutomation/client';
 
 const OPTIONS: { id: Disposition; ar: string; en: string; hint_ar: string; hint_en: string }[] = [
   { id: 'mapped_existing_field', ar: 'مطابقة لحقل قائم', en: 'Map to existing field', hint_ar: 'نفس معنى حقل موجود في وصل', hint_en: 'Same meaning as an existing Wassell column' },
@@ -33,9 +33,11 @@ export default function DecisionPanel({
   const [reason, setReason] = useState<string>(field.reason ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sampleUrls, setSampleUrls] = useState<string[]>([]);
+  const [sampleUrls, setSampleUrls] = useState<SampleListing[]>([]);
 
-  useEffect(() => { fetchSampleListingUrls(field.platform, 6).then(setSampleUrls).catch(() => {}); }, [field.platform]);
+  useEffect(() => {
+    fetchSampleListingUrls(field.platform, field.canonical_field, 6).then(setSampleUrls).catch(() => {});
+  }, [field.platform, field.canonical_field]);
 
   const targetCls = canonical ? targetTypes[canonical] : undefined;
   const typeMismatch = useMemo(
@@ -94,14 +96,19 @@ export default function DecisionPanel({
           {sampleUrls.length > 0 && (
             <div className="rounded-xl border border-sand/40 p-3">
               <div className="text-[12px] text-charcoal/60 mb-2">
-                {isAr ? `افتح إعلانًا حقيقيًا على ${field.platform} لرؤية الحقل في سياقه:` : `Open a real ${field.platform} listing to see the field in context:`}
+                {field.canonical_field
+                  ? (isAr ? `افتح إعلانات حقيقية على ${field.platform} تُظهر قيمًا مختلفة لهذا الحقل:` : `Open real ${field.platform} listings showing different values of this field:`)
+                  : (isAr ? `افتح إعلانًا حقيقيًا على ${field.platform} لرؤية الحقل في سياقه:` : `Open a real ${field.platform} listing to see the field in context:`)}
               </div>
               <div className="flex flex-col gap-1.5">
-                {sampleUrls.map((u, i) => (
-                  <a key={i} href={u} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-[12px] text-copper hover:text-terracotta hover:underline truncate">
+                {sampleUrls.map((s, i) => (
+                  <a key={i} href={s.url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-[12px] text-copper hover:text-terracotta hover:underline">
                     <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate" dir="ltr">{decodeURIComponent(u.replace(/^https?:\/\//, ''))}</span>
+                    {s.value != null && (
+                      <span className="shrink-0 font-mono text-[11px] bg-copper/10 text-copper rounded px-1.5 py-0.5">{s.value.slice(0, 24)}</span>
+                    )}
+                    <span className="truncate" dir="ltr">{decodeURIComponent(s.url.replace(/^https?:\/\//, ''))}</span>
                   </a>
                 ))}
               </div>
