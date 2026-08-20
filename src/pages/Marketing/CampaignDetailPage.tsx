@@ -2513,6 +2513,11 @@ function ExecutionModal({
         platformSettings = { ...(keep ?? defaultPlatformSettings(platform)) };
         platformSettings[objectiveKeyOf(schema)] = objective || null;
       }
+      // Meta/Instagram results are owned by the hourly sync — never send them
+      // from this modal, or a save would overwrite Meta's numbers with stale
+      // (or empty) manual state. Other platforms have no sync, so they carry
+      // their hand-typed numbers.
+      const meta = platform === 'meta' || platform === 'instagram';
       const res = await saveExecution(campaignId, {
         id: execution?.id,
         platform,
@@ -2522,11 +2527,13 @@ function ExecutionModal({
         purpose: purpose || null,
         platform_campaign_id: platformCampaignId.trim() || null,
         budget: n(budget),
-        spend: n(spend),
-        impressions: n(impressions),
-        clicks: n(clicks),
-        leads: n(leads),
-        qualified: n(qualified),
+        ...(meta ? {} : {
+          spend: n(spend),
+          impressions: n(impressions),
+          clicks: n(clicks),
+          leads: n(leads),
+          qualified: n(qualified),
+        }),
         ...(platformSettings ? { platform_settings: platformSettings } : {}),
       });
       addToast(isAr ? 'حُفظت الحملة الإعلانية.' : 'Ad campaign saved.', 'success');
@@ -2552,12 +2559,21 @@ function ExecutionModal({
     }
   };
 
+  // Meta/Instagram are synced from the Marketing API — their results (spend,
+  // impressions, leads…) come from Meta, not manual entry. Other platforms have
+  // no sync, so their numbers are typed here.
+  const isMetaPlatform = platform === 'meta' || platform === 'instagram';
+
   return (
     <Modal
       title={execution ? (isAr ? 'تعديل الحملة الإعلانية' : 'Edit ad campaign') : (isAr ? 'حملة إعلانية جديدة' : 'New ad campaign')}
-      sub={isAr
-        ? 'صف واحد لكل مجموعة إعلانية. الأرقام تُدخل يدويًا حتى تُربط المنصات.'
-        : 'One row per ad set. Numbers are typed in by hand until the platforms are connected.'}
+      sub={isMetaPlatform
+        ? isAr
+          ? 'خطة الحملة على ميتا. النتائج (المصروف، العملاء…) تأتي من ميتا تلقائيًا — لا تُدخل هنا.'
+          : 'The plan for this Meta campaign. Results (spend, leads…) come from Meta automatically — not typed here.'
+        : isAr
+          ? 'صف واحد لكل مجموعة إعلانية. الأرقام تُدخل يدويًا حتى تُربط المنصات.'
+          : 'One row per ad set. Numbers are typed in by hand until the platforms are connected.'}
       onClose={onClose}
       wide
       footer={
@@ -2683,26 +2699,39 @@ function ExecutionModal({
         </select>
       </Field>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 13 }}>
-        <Field label={isAr ? 'الميزانية' : 'Budget'}>
-          <input className="inp" inputMode="numeric" value={budget} onChange={(e) => setBudget(e.target.value)} />
-        </Field>
-        <Field label={isAr ? 'المصروف' : 'Spent'}>
-          <input className="inp" inputMode="numeric" value={spend} onChange={(e) => setSpend(e.target.value)} />
-        </Field>
-        <Field label={isAr ? 'الظهور' : 'Impressions'}>
-          <input className="inp" inputMode="numeric" value={impressions} onChange={(e) => setImpressions(e.target.value)} />
-        </Field>
-        <Field label={isAr ? 'النقرات' : 'Clicks'}>
-          <input className="inp" inputMode="numeric" value={clicks} onChange={(e) => setClicks(e.target.value)} />
-        </Field>
-        <Field label={isAr ? 'العملاء' : 'Leads'}>
-          <input className="inp" inputMode="numeric" value={leads} onChange={(e) => setLeads(e.target.value)} />
-        </Field>
-        <Field label={isAr ? 'المؤهلون' : 'Qualified'}>
-          <input className="inp" inputMode="numeric" value={qualified} onChange={(e) => setQualified(e.target.value)} />
-        </Field>
-      </div>
+      {isMetaPlatform ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 13, alignItems: 'center' }}>
+          <Field label={isAr ? 'الميزانية' : 'Budget'}>
+            <input className="inp" inputMode="numeric" value={budget} onChange={(e) => setBudget(e.target.value)} />
+          </Field>
+          <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.85 }}>
+            {isAr
+              ? 'النتائج — المصروف، الظهور، النقرات، العملاء، المؤهلون — تأتي من ميتا تلقائيًا بعد الربط، فلا تُدخل يدويًا هنا.'
+              : 'Results — spend, impressions, clicks, leads, qualified — come from Meta automatically once linked, so they are not typed here.'}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 13 }}>
+          <Field label={isAr ? 'الميزانية' : 'Budget'}>
+            <input className="inp" inputMode="numeric" value={budget} onChange={(e) => setBudget(e.target.value)} />
+          </Field>
+          <Field label={isAr ? 'المصروف' : 'Spent'}>
+            <input className="inp" inputMode="numeric" value={spend} onChange={(e) => setSpend(e.target.value)} />
+          </Field>
+          <Field label={isAr ? 'الظهور' : 'Impressions'}>
+            <input className="inp" inputMode="numeric" value={impressions} onChange={(e) => setImpressions(e.target.value)} />
+          </Field>
+          <Field label={isAr ? 'النقرات' : 'Clicks'}>
+            <input className="inp" inputMode="numeric" value={clicks} onChange={(e) => setClicks(e.target.value)} />
+          </Field>
+          <Field label={isAr ? 'العملاء' : 'Leads'}>
+            <input className="inp" inputMode="numeric" value={leads} onChange={(e) => setLeads(e.target.value)} />
+          </Field>
+          <Field label={isAr ? 'المؤهلون' : 'Qualified'}>
+            <input className="inp" inputMode="numeric" value={qualified} onChange={(e) => setQualified(e.target.value)} />
+          </Field>
+        </div>
+      )}
     </Modal>
   );
 }
