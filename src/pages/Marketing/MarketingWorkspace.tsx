@@ -47,6 +47,13 @@ import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import MobileTabBar from './components/MobileTabBar';
 import './mos.css';
 import './styles/rail-badges.css';
+// The m4-* responsive classes (mobile cards, .m4-mob/.m4-desk visibility) are
+// used across many marketing pages but the stylesheet was imported only by
+// CampaignsPage. After route-level code-splitting, landing directly on another
+// page (e.g. a campaign detail) loaded the classes with NO styles — so the
+// mobile-only cards leaked onto desktop as unstyled, run-together text. Import
+// it in the always-loaded workspace shell so every /m page has it.
+import './styles/mobile-m4.css';
 
 /* ------------------------------------------------------------------ */
 /* context                                                            */
