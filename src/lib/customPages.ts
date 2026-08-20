@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, ClipboardList as ClipboardListIcon } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon } from 'lucide-react';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -37,7 +37,8 @@ export type CustomPageId =
   | 'posts_content'
   | 'marketing_intelligence'
   | 'marketing_management'
-  | 'financing_calculator';
+  | 'financing_calculator'
+  | 'market_automation';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -178,6 +179,19 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Financing Calculator',
     icon: Calculator,
     default_access: 'admin',
+  },
+  {
+    // The market-ingest cockpit: raw evidence, field decisions, data health, and the
+    // publish gate for market_listings. An operational governance tool — visible to
+    // authenticated users by default (the owner + operators aren't is_admin, so an
+    // 'admin' default would hide it from them). Revoke per-profile in Settings →
+    // Profiles for reps who shouldn't see it.
+    id: 'market_automation',
+    route: '/market-automation',
+    label_ar: 'أتمتة إعلانات السوق',
+    label_en: 'Market Automation',
+    icon: DatabaseZap,
+    default_access: 'all',
   },
 ];
 

@@ -377,7 +377,7 @@ export default function App() {
           <Route path="/sales/process" element={<RequirePageAccess pageId="sales_process"><SalesProcessStudioPage /></RequirePageAccess>} />
           <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
           <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
-          <Route path="/market-automation" element={<MarketAutomationPage />} />
+          <Route path="/market-automation" element={<RequirePageAccess pageId="market_automation"><MarketAutomationPage /></RequirePageAccess>} />
           <Route path="/marketing-intelligence" element={<RequirePageAccess pageId="marketing_intelligence"><MarketingIntelligencePage /></RequirePageAccess>} />
           {/* The old in-Sales marketing page is gone. Anyone with a bookmark
               (or a profile whose sidebar still points here) lands in the new
