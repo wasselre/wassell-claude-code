@@ -35,6 +35,7 @@ export default function DecisionPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sampleUrls, setSampleUrls] = useState<SampleListing[]>([]);
+  const [tagLabel, setTagLabel] = useState<string>(field.source_label ?? '');
 
   useEffect(() => {
     fetchSampleListingUrls(field.platform, field.canonical_field, 6).then(setSampleUrls).catch(() => {});
@@ -46,9 +47,11 @@ export default function DecisionPanel({
       && field.raw_data_type != null && !['number', 'numeric', 'integer', 'float'].includes(field.raw_data_type),
     [status, targetCls, field.raw_data_type],
   );
-  // Composed target (geography cascade, lookup, multi-value, mirror): a raw scalar
-  // does not map into it — the app builds it (e.g. location from the district).
+  // Composed target (geography cascade, lookup, mirror): a raw scalar does not map
+  // into it — the app builds it (e.g. location from the district).
   const structuredWarn = status === 'mapped_existing_field' && (targetCls === 'location' || targetCls === 'structured');
+  // Multiselect collector (features/المميزات): MANY fields feed it, each adding a tag.
+  const isMulti = status === 'mapped_existing_field' && targetCls === 'multi';
 
   const valid = status !== 'mapped_existing_field' ? (!NEEDS_REASON.has(status) || reason.trim().length > 0)
     : (canonical.trim().length > 0 && reason.trim().length > 0);
@@ -59,6 +62,7 @@ export default function DecisionPanel({
       await decideField({
         platform: field.platform, source_path: field.source_path, status,
         canonical_field: status === 'mapped_existing_field' ? canonical : null,
+        transformation: isMulti ? (tagLabel.trim() || null) : null,
         reason: reason.trim() || null,
       });
       onSaved(); onClose();
@@ -154,8 +158,19 @@ export default function DecisionPanel({
                         ? '«الموقع» حقلٌ جغرافي مركّب (مدينة/منطقة/حي) يبنيه التطبيق من الحي — لا يُملأ بنصٍّ خام. غالبًا الحقل الصحيح هو listing.district لا العنوان.'
                         : '“Location” is a composed geography field (city/region/district) the app builds from the district — a raw text value does NOT map here. The right source is usually listing.district, not the address.')
                     : (isAr
-                        ? 'هذا حقلٌ مركّب (قائمة/بحث/متعدد) لا يُملأ بقيمة نصية مفردة مباشرة.'
-                        : 'This is a composed field (multi-value / lookup) — a single raw scalar does not map directly into it.')}
+                        ? 'هذا حقلٌ مركّب (بحث/مرآة) لا يُملأ بقيمة نصية مفردة مباشرة.'
+                        : 'This is a composed field (lookup / mirror) — a single raw scalar does not map directly into it.')}
+                </div>
+              )}
+              {isMulti && (
+                <div className="mt-2 space-y-1.5">
+                  <div className="flex items-start gap-1.5 text-[12px] text-charcoal/65 bg-copper/5 border border-copper/25 rounded-lg px-2.5 py-1.5">
+                    <span>{isAr
+                      ? 'حقلٌ متعدد القيم (قائمة): عدّة حقول تُوجَّه إليه، وكل حقل يُضيف وسمًا إلى القائمة عند تحقّقه. اكتب الوسم الذي يُضيفه هذا الحقل:'
+                      : 'A multi-value collector: many fields feed it, each adding a tag to the list when set. Enter the tag this field adds:'}</span>
+                  </div>
+                  <input value={tagLabel} onChange={(e) => setTagLabel(e.target.value)} className="form-input"
+                    placeholder={isAr ? 'مثال: حديقة خلفية' : 'e.g. Backyard'} />
                 </div>
               )}
               {/* Live coerced preview: how real values would land in this column. */}

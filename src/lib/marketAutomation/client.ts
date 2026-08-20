@@ -178,20 +178,25 @@ export async function fetchTargetFields(): Promise<string[]> {
 /** Map of market_listings field slug → coercion class (how a raw value lands).
  *  'location' + 'structured' are fields the app COMPOSES (geography cascade, lookups,
  *  multi-value, mirrors) — a raw scalar does NOT drop into them, so the preview flags them. */
-export type CoerceClass = 'numeric' | 'boolean' | 'timestamp' | 'text' | 'location' | 'structured';
+// 'multi'   = a multiselect list (e.g. features/المميزات) — MANY fields feed it, each
+//             adding a TAG; mapping here is valid, with a per-field tag label.
+// 'list'    = an array column (images/videos) that takes a whole array value.
+// 'location'/'structured' = composed fields a raw scalar does NOT drop into.
+export type CoerceClass = 'numeric' | 'boolean' | 'timestamp' | 'text' | 'location' | 'multi' | 'list' | 'structured';
 export async function fetchTargetFieldTypes(): Promise<Record<string, CoerceClass>> {
   if (!supabase) return {};
   const { data, error } = await supabase.from('models').select('schema').eq('name', 'market_listings').maybeSingle();
   if (error) throw new Error(error.message);
   const schema = (data?.schema ?? {}) as { sections?: { fields?: { name?: string; type?: string }[] }[] };
   const out: Record<string, CoerceClass> = {};
-  const STRUCT = ['multiselect', 'table', 'notes', 'multi_image', 'multi_video', 'lookup',
-    'section_selector', 'section_mirror', 'mirror', 'assignee'];
+  const STRUCT = ['table', 'notes', 'lookup', 'section_selector', 'section_mirror', 'mirror', 'assignee'];
   const cls = (t?: string): CoerceClass =>
     t === 'number' || t === 'currency' || t === 'formula' ? 'numeric'
       : t === 'checkbox' ? 'boolean'
       : t === 'date' || t === 'datetime' ? 'timestamp'
       : t === 'location' ? 'location'
+      : t === 'multiselect' ? 'multi'
+      : t === 'multi_image' || t === 'multi_video' ? 'list'
       : t && STRUCT.includes(t) ? 'structured'
       : 'text';
   for (const sec of schema.sections ?? []) for (const f of sec.fields ?? []) if (f.name) out[f.name] = cls(f.type);
@@ -221,6 +226,8 @@ export function coercePreview(raw: string, cls: CoerceClass): { ok: boolean; out
   // location = city/region/district from the district lookup, not from raw text).
   if (cls === 'location') return { ok: false, out: '⚠ الموقع (يُبنى من الحي)' };
   if (cls === 'structured') return { ok: false, out: '⚠ حقل مركّب' };
+  if (cls === 'multi') return { ok: true, out: '→ وسم في القائمة' };
+  if (cls === 'list') return { ok: true, out: '→ عنصر بالقائمة' };
   if (cls === 'numeric') {
     const n = Number(s.replace(/[^\d.-]/g, ''));
     return Number.isFinite(n) && /\d/.test(s) ? { ok: true, out: String(n) } : { ok: false, out: '✗ (blank)' };
