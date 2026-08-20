@@ -34,12 +34,15 @@ export default function DecisionPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const numericTarget = /(_count$|^count|price|area|latitude|longitude|bedrooms|bathrooms|_m2$|width|number|age)/i;
+  const targetCls = canonical ? targetTypes[canonical] : undefined;
   const typeMismatch = useMemo(
-    () => status === 'mapped_existing_field' && canonical && numericTarget.test(canonical)
+    () => status === 'mapped_existing_field' && targetCls === 'numeric'
       && field.raw_data_type != null && !['number', 'numeric', 'integer', 'float'].includes(field.raw_data_type),
-    [status, canonical, field.raw_data_type],
+    [status, targetCls, field.raw_data_type],
   );
+  // Composed target (geography cascade, lookup, multi-value, mirror): a raw scalar
+  // does not map into it — the app builds it (e.g. location from the district).
+  const structuredWarn = status === 'mapped_existing_field' && (targetCls === 'location' || targetCls === 'structured');
 
   const valid = status !== 'mapped_existing_field' ? (!NEEDS_REASON.has(status) || reason.trim().length > 0)
     : (canonical.trim().length > 0 && reason.trim().length > 0);
@@ -109,6 +112,18 @@ export default function DecisionPanel({
                 <div className="flex items-start gap-1.5 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-2 text-[12px]">
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   {isAr ? `تحذير: نوع البيانات "${field.raw_data_type}" لا يبدو رقميًا لكن العمود المستهدف رقمي.` : `Warning: observed type "${field.raw_data_type}" isn't numeric but this target looks numeric.`}
+                </div>
+              )}
+              {structuredWarn && (
+                <div className="flex items-start gap-1.5 text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 mt-2 text-[12px]">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  {targetCls === 'location'
+                    ? (isAr
+                        ? '«الموقع» حقلٌ جغرافي مركّب (مدينة/منطقة/حي) يبنيه التطبيق من الحي — لا يُملأ بنصٍّ خام. غالبًا الحقل الصحيح هو listing.district لا العنوان.'
+                        : '“Location” is a composed geography field (city/region/district) the app builds from the district — a raw text value does NOT map here. The right source is usually listing.district, not the address.')
+                    : (isAr
+                        ? 'هذا حقلٌ مركّب (قائمة/بحث/متعدد) لا يُملأ بقيمة نصية مفردة مباشرة.'
+                        : 'This is a composed field (multi-value / lookup) — a single raw scalar does not map directly into it.')}
                 </div>
               )}
               {/* Live coerced preview: how real values would land in this column. */}

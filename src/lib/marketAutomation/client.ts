@@ -175,19 +175,24 @@ export async function fetchTargetFields(): Promise<string[]> {
   return Object.keys(await fetchTargetFieldTypes()).sort();
 }
 
-/** Map of market_listings field slug → coercion class (how a raw value lands). */
-export type CoerceClass = 'numeric' | 'boolean' | 'timestamp' | 'text' | 'json';
+/** Map of market_listings field slug → coercion class (how a raw value lands).
+ *  'location' + 'structured' are fields the app COMPOSES (geography cascade, lookups,
+ *  multi-value, mirrors) — a raw scalar does NOT drop into them, so the preview flags them. */
+export type CoerceClass = 'numeric' | 'boolean' | 'timestamp' | 'text' | 'location' | 'structured';
 export async function fetchTargetFieldTypes(): Promise<Record<string, CoerceClass>> {
   if (!supabase) return {};
   const { data, error } = await supabase.from('models').select('schema').eq('name', 'market_listings').maybeSingle();
   if (error) throw new Error(error.message);
   const schema = (data?.schema ?? {}) as { sections?: { fields?: { name?: string; type?: string }[] }[] };
   const out: Record<string, CoerceClass> = {};
+  const STRUCT = ['multiselect', 'table', 'notes', 'multi_image', 'multi_video', 'lookup',
+    'section_selector', 'section_mirror', 'mirror', 'assignee'];
   const cls = (t?: string): CoerceClass =>
     t === 'number' || t === 'currency' || t === 'formula' ? 'numeric'
       : t === 'checkbox' ? 'boolean'
       : t === 'date' || t === 'datetime' ? 'timestamp'
-      : t === 'multiselect' || t === 'table' || t === 'notes' || t === 'multi_image' || t === 'multi_video' ? 'json'
+      : t === 'location' ? 'location'
+      : t && STRUCT.includes(t) ? 'structured'
       : 'text';
   for (const sec of schema.sections ?? []) for (const f of sec.fields ?? []) if (f.name) out[f.name] = cls(f.type);
   return out;
@@ -212,6 +217,10 @@ export async function fetchTargetLabels(): Promise<Record<string, { ar: string; 
 export function coercePreview(raw: string, cls: CoerceClass): { ok: boolean; out: string } {
   const s = (raw ?? '').trim();
   if (s === '') return { ok: true, out: '∅' };
+  // Composed fields: a raw scalar does NOT land here — the app builds them (e.g.
+  // location = city/region/district from the district lookup, not from raw text).
+  if (cls === 'location') return { ok: false, out: '⚠ الموقع (يُبنى من الحي)' };
+  if (cls === 'structured') return { ok: false, out: '⚠ حقل مركّب' };
   if (cls === 'numeric') {
     const n = Number(s.replace(/[^\d.-]/g, ''));
     return Number.isFinite(n) && /\d/.test(s) ? { ok: true, out: String(n) } : { ok: false, out: '✗ (blank)' };
