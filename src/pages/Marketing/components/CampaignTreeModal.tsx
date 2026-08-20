@@ -98,7 +98,6 @@ export default function CampaignTreeModal({
   const [busy, setBusy] = useState(false);
 
   const [tree, setTree] = useState<CampaignTree | null>(null);
-  const [platformCampaignId, setPlatformCampaignId] = useState('');
   const [adSets, setAdSets] = useState<AdSetRow[]>([]);
   /** Ads with ad_set_id === null — shown in a non-deletable "Unassigned" group. */
   const [looseAds, setLooseAds] = useState<AdRow[]>([]);
@@ -125,7 +124,6 @@ export default function CampaignTreeModal({
 
   const hydrate = useCallback((t: CampaignTree): void => {
     setTree(t);
-    setPlatformCampaignId(t.execution.platform_campaign_id ?? '');
     const sets = [...t.ad_sets].sort((a, b) => a.sort_order - b.sort_order).map<AdSetRow>((s) => ({
       key: newKey(),
       id: s.id,
@@ -252,7 +250,8 @@ export default function CampaignTreeModal({
     try {
       const t = await saveCampaignTree({
         execution_id: executionId,
-        platform_campaign_id: platformCampaignId.trim() || null,
+        // platform_campaign_id is Meta-owned (set by the push) — not sent from
+        // here, so this save never touches it.
         ad_sets: adSets.map((s, i) => ({
           ...(s.id ? { id: s.id } : {}),
           name: s.name.trim(),
@@ -356,16 +355,16 @@ export default function CampaignTreeModal({
               <b style={{ fontSize: 14 }}>{execLabel}</b>
               <Pill tone="live">{platformLabel}</Pill>
             </div>
-            <label style={{ display: 'grid', gap: 3 }}>
-              <span className="lbl">{isAr ? 'معرّف الحملة' : 'Campaign ID'}</span>
-              <input
-                className="inp ltr"
-                style={{ maxWidth: 320 }}
-                placeholder={isAr ? 'معرّف الحملة على المنصة' : 'Platform campaign id'}
-                value={platformCampaignId}
-                onChange={(e) => setPlatformCampaignId(e.target.value)}
-              />
-            </label>
+            {/* The Meta campaign id is NOT a planning input — it's created by
+                «الإنشاء في ميتا» and synced back. Show it read-only; before the
+                push it simply doesn't exist yet. */}
+            <div style={{ fontSize: 11.5, color: 'var(--mute)' }}>
+              {tree?.execution.platform_campaign_id
+                ? <>{isAr ? 'مربوطة بميتا' : 'Linked to Meta'}{' '}<span className="ltr">#{tree.execution.platform_campaign_id}</span></>
+                : (isAr
+                    ? 'تُنشأ في ميتا عند «الإنشاء في ميتا» — لا حاجة لإدخال معرّف هنا.'
+                    : 'Created in Meta on «Create in Meta» — no id to enter here.')}
+            </div>
           </div>
 
           {/* ── Unassigned (loose) ads ───────────────────────────── */}
@@ -463,25 +462,19 @@ export default function CampaignTreeModal({
               >
                 <div
                   style={{
-                    display: 'grid', gridTemplateColumns: 'minmax(140px,1fr) 200px 34px',
+                    display: 'grid', gridTemplateColumns: 'minmax(140px,1fr) 34px',
                     gap: 8, alignItems: 'end', padding: '10px 11px',
                     background: 'var(--panel, rgba(255,255,255,0.03))',
                   }}
                 >
+                  {/* The ad set's Meta id (platform_adset_id) is filled by the
+                      push, not entered here — only the name is a planning input. */}
                   <label style={{ display: 'grid', gap: 3 }}>
                     <span className="lbl">{isAr ? `اسم ${term.one_ar}` : `${term.one_en} name`}</span>
                     <input
                       className="inp"
                       value={s.name}
                       onChange={(e) => patchAdSet(s.key, { name: e.target.value })}
-                    />
-                  </label>
-                  <label style={{ display: 'grid', gap: 3 }}>
-                    <span className="lbl">{isAr ? term.id_ar : term.id_en}</span>
-                    <input
-                      className="inp ltr"
-                      value={s.platformAdsetId}
-                      onChange={(e) => patchAdSet(s.key, { platformAdsetId: e.target.value })}
                     />
                   </label>
                   <button
@@ -513,7 +506,7 @@ export default function CampaignTreeModal({
                       <div
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: 'minmax(110px,1fr) 150px 170px 34px',
+                          gridTemplateColumns: 'minmax(110px,1fr) 170px 34px',
                           gap: 8, alignItems: 'end',
                         }}
                       >
@@ -523,18 +516,6 @@ export default function CampaignTreeModal({
                             className="inp"
                             value={a.label}
                             onChange={(e) => patchAd(s.key, a.key, { label: e.target.value })}
-                          />
-                        </label>
-                        <label style={{ display: 'grid', gap: 3 }}>
-                          <span className="lbl" style={{ color: 'var(--gold)' }}>
-                            {isAr ? 'معرّف الإعلان ★' : 'Ad ID ★'}
-                          </span>
-                          <input
-                            className="inp ltr"
-                            style={dupKeys.has(a.key) ? { borderColor: 'var(--late)' } : undefined}
-                            placeholder={isAr ? 'معرّف ميتا' : 'Meta Ad ID'}
-                            value={a.platformAdId}
-                            onChange={(e) => patchAd(s.key, a.key, { platformAdId: e.target.value })}
                           />
                         </label>
                         <label style={{ display: 'grid', gap: 3 }}>
@@ -564,6 +545,22 @@ export default function CampaignTreeModal({
                           value={a.caption}
                           placeholder={isAr ? 'نص الإعلان الظاهر مع المحتوى' : 'the ad copy shown with the content'}
                           onChange={(e) => patchAd(s.key, a.key, { caption: e.target.value })}
+                        />
+                      </label>
+                      {/* Meta Ad ID — OPTIONAL, and a LATER step: it exists only
+                          after the ad is created in Meta, and it's what inbound
+                          WhatsApp attribution resolves against. Not a planning
+                          input, so it's small and clearly optional here. */}
+                      <label style={{ display: 'grid', gap: 3 }}>
+                        <span className="lbl" style={{ color: 'var(--mute)' }}>
+                          {isAr ? 'معرّف إعلان ميتا · اختياري (للنسب)' : 'Meta Ad ID · optional (attribution)'}
+                        </span>
+                        <input
+                          className="inp ltr"
+                          style={dupKeys.has(a.key) ? { borderColor: 'var(--late)' } : undefined}
+                          placeholder={isAr ? 'يُضاف بعد إنشاء الإعلان في ميتا' : 'added after the ad exists in Meta'}
+                          value={a.platformAdId}
+                          onChange={(e) => patchAd(s.key, a.key, { platformAdId: e.target.value })}
                         />
                       </label>
                     </div>
