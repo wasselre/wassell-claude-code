@@ -157,13 +157,17 @@ function FieldTable({ rows, isAr, labels, emptyDecisions, onDecide }: { rows: Fi
         <tbody>
           {rows.map((r) => {
             const m = statusMeta(r.authoritative_status);
+            const wLbl = r.canonical_field ? labels[r.canonical_field] : undefined;
+            // Arabic meaning of the platform field: the mapped field's Arabic label,
+            // else the catalog's own Arabic source_label.
+            const platAr = wLbl?.ar ?? r.source_label ?? null;
             return (
               <tr key={r.platform + r.source_path} onClick={() => onDecide(r)}
                 title={isAr ? 'اضغط لاتخاذ قرار' : 'Click to decide'}
                 className="border-b border-sand/20 last:border-0 hover:bg-copper/5 cursor-pointer">
                 <td className="px-3 py-2 align-top">
-                  <div className="font-mono text-[12px] text-charcoal">{r.source_path}</div>
-                  {r.source_label && <div className="text-[11px] text-charcoal/45">{r.source_label}</div>}
+                  {platAr && <div className="text-[13px] text-charcoal">{platAr}</div>}
+                  <div className={`font-mono ${platAr ? 'text-[11px] text-charcoal/45' : 'text-[12px] text-charcoal'}`}>{r.source_path}</div>
                 </td>
                 <td className="px-3 py-2 align-top max-w-[280px]">
                   <div className="flex flex-wrap gap-1">
@@ -179,10 +183,8 @@ function FieldTable({ rows, isAr, labels, emptyDecisions, onDecide }: { rows: Fi
                 <td className="px-3 py-2 align-top whitespace-nowrap">
                   {r.canonical_field ? (
                     <>
-                      <div className="font-mono text-[12px] text-charcoal/70">{r.canonical_field}</div>
-                      {labels[r.canonical_field] && (
-                        <div className="text-[11px] text-charcoal/45">{isAr ? labels[r.canonical_field]?.ar : labels[r.canonical_field]?.en}</div>
-                      )}
+                      <div className="text-[13px] text-charcoal">{wLbl?.ar ?? r.canonical_field}</div>
+                      {wLbl && <div className="font-mono text-[11px] text-charcoal/45">{r.canonical_field}</div>}
                     </>
                   ) : <span className="text-[12px] text-charcoal/40">—</span>}
                 </td>

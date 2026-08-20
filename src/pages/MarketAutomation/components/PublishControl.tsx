@@ -180,8 +180,8 @@ export default function PublishControl({ rows, isAr, labels }: { rows: FieldStat
                 return (
                   <tr key={key} className="border-b border-sand/20 last:border-0">
                     <td className="px-3 py-2">
-                      <div className="font-mono text-[12px] text-charcoal">{f.field}</div>
-                      {labels[f.field] && <div className="text-[11px] text-charcoal/45">{isAr ? labels[f.field]?.ar : labels[f.field]?.en}</div>}
+                      <div className="text-[13px] text-charcoal">{labels[f.field]?.ar ?? f.field}</div>
+                      {labels[f.field] && <div className="font-mono text-[11px] text-charcoal/45">{f.field}</div>}
                     </td>
                     <td className="px-3 py-2 text-[12px] text-charcoal/60">{f.platform}</td>
                     <td className="px-3 py-2 max-w-[260px]">
