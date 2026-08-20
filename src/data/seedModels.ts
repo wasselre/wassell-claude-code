@@ -740,6 +740,46 @@ const clientsModel: AppModel = {
         color: '#C09B5F',
         fields: [
           {
+            // Guided location cascade (country → region → city → district) for
+            // client preferences. Added in-app 2026-08-19; a full system-model
+            // re-seed on 2026-08-20 reverted the clients baseline and DROPPED it
+            // — record data survived in `data.location` / `data.location_items`,
+            // but the field DEFINITION was gone until it was restored by hand.
+            // It is seeded here so any future re-seed keeps it.
+            //
+            // `location_multi: true` is the CLIENTS variant: region/city stay
+            // single (1-element arrays) while the deepest level can hold many;
+            // the record form renders it via ClientLocationField (navigation
+            // capped at city — districts + drawn map areas live in the
+            // `location_items` sidecar). The geography model ids + default
+            // record ids are STABLE live literals (the geography models are
+            // created out-of-band by the geography migration, not seeded here),
+            // same posture as `preferred_market_listings` below — avoids the
+            // seed-backfill-broken-lookup hazard of per-load uuids.
+            id: uuid(),
+            name: 'location',
+            label_ar: 'الموقع',
+            label_en: 'Location',
+            type: 'location',
+            required: false,
+            order: 0,
+            section_id: clientsPrefsSectionId,
+            width: 'full',
+            show_in_table: true,
+            location_multi: true,
+            location_levels: [
+              { key: 'country', model_id: 'd15a0001-0000-4000-8000-000000000003', display_field: 'name_ar' },
+              { key: 'region', model_id: 'd15a0001-0000-4000-8000-000000000001', display_field: 'name_ar', parent_link_field: 'country_lookup' },
+              { key: 'city', model_id: 'd15a0001-0000-4000-8000-000000000002', display_field: 'display_name', parent_link_field: 'region_lookup' },
+              { key: 'district', model_id: 'd9a9db7e-b602-470c-b81b-5d6ff17048e9', display_field: 'display_name', parent_link_field: 'city_lookup' },
+            ],
+            location_default: {
+              city: '44254a38-ce40-938f-17b7-55814a44e45c',
+              region: '9c0c7a82-738d-6456-2101-b7226cc84e20',
+              country: 'd15a0003-0000-4000-8000-000000000001',
+            },
+          },
+          {
             id: uuid(),
             name: 'preferred_projects',
             label_ar: 'المشاريع المفضلة',
