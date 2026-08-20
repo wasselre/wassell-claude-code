@@ -43,6 +43,54 @@ export function formatBytes(bytes: number, isAr: boolean): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* Video duration probe                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Measure a video's duration in the browser (metadata-only load — a few
+ * hundred KB, not the whole file). Works for a local File (object URL) and a
+ * remote/signed URL alike; cross-origin is fine because we only read
+ * `duration`, never pixels.
+ *
+ * Why it exists: the publish pre-flight (platformRules.ts) enforces the
+ * platforms' duration rules — Snapchat Stories 5–60s, TikTok ≤10min, IG Reels
+ * 3s–15min — but `duration_seconds` was recorded on 0 of the library's videos
+ * as of 2026-08-20. This measures at upload (uploadCanonicalAsset) and lazily
+ * at publish time (PublishTab), persisting via asset_save so both the client
+ * checklist AND the server gate see a real number.
+ *
+ * Never throws; resolves null on any failure or after a 15s timeout — an
+ * unmeasurable video degrades to the honest "could not verify" warning.
+ */
+export function probeVideoDuration(src: File | string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const url = typeof src === 'string' ? src : URL.createObjectURL(src);
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    let done = false;
+    const finish = (v: number | null): void => {
+      if (done) return;
+      done = true;
+      if (typeof src !== 'string') URL.revokeObjectURL(url);
+      video.removeAttribute('src');
+      video.load();
+      resolve(v);
+    };
+    const timer = setTimeout(() => finish(null), 15_000);
+    video.onloadedmetadata = () => {
+      clearTimeout(timer);
+      const d = video.duration;
+      finish(Number.isFinite(d) && d > 0 ? Math.round(d * 10) / 10 : null);
+    };
+    video.onerror = () => {
+      clearTimeout(timer);
+      finish(null);
+    };
+    video.src = url;
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* HEIC → JPEG                                                        */
 /* ------------------------------------------------------------------ */
 

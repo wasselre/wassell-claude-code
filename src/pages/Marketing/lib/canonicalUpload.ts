@@ -21,6 +21,12 @@
  */
 import { MAX_FILE_BYTES, uploadFile } from '@/lib/files/client';
 import type { FileRow } from '@/types/files';
+import { probeVideoDuration } from './upload';
+
+/** A files row plus the duration measured from the local bytes (videos only). */
+export interface CanonicalFileRow extends FileRow {
+  probed_duration_seconds?: number | null;
+}
 
 /**
  * Mirror of the `wassel-files` bucket allowlist (storage.buckets.allowed_mime_types).
@@ -126,15 +132,23 @@ export interface CanonicalUploadOpts {
 export async function uploadCanonicalAsset(
   file: File,
   opts: CanonicalUploadOpts = {},
-): Promise<FileRow> {
+): Promise<CanonicalFileRow> {
   assertCanonicalUploadable(file);
-  return uploadFile(file, {
+  // Measure video runtime from the LOCAL bytes (object URL — no network) in
+  // parallel with the upload. The publish pre-flight enforces per-platform
+  // duration rules (Snapchat 5–60s, TikTok ≤10min, IG 3s–15min) and can only
+  // do that honestly if the number is recorded at intake.
+  const durationP = file.type.toLowerCase().startsWith('video/')
+    ? probeVideoDuration(file)
+    : Promise.resolve(null);
+  const row = await uploadFile(file, {
     folderId: null,
     modelId: null,
     recordId: null,
     onProgress: opts.onProgress,
     signal: opts.signal,
   });
+  return { ...row, probed_duration_seconds: await durationP };
 }
 
 /**
@@ -145,7 +159,7 @@ export async function uploadCanonicalAsset(
  * must NEVER be persisted into them (it expires in five minutes and would
  * strand the asset permanently).
  */
-export function canonicalAssetFields(row: FileRow): Record<string, unknown> {
+export function canonicalAssetFields(row: CanonicalFileRow): Record<string, unknown> {
   return {
     file_id: row.id,
     url: null,
@@ -154,5 +168,10 @@ export function canonicalAssetFields(row: FileRow): Record<string, unknown> {
     mime_type: row.mime_type,
     size_bytes: row.size_bytes,
     original_name: row.original_name,
+    // Only when actually measured — never write null over a value some other
+    // path recorded.
+    ...(typeof row.probed_duration_seconds === 'number'
+      ? { duration_seconds: row.probed_duration_seconds }
+      : {}),
   };
 }

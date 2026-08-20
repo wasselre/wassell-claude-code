@@ -20,7 +20,7 @@ import { Link } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   PLATFORM_LABELS,
-  fetchAllPublications, publishPublication, syncPublication,
+  fetchAllPublications, publishPublication, syncPublication, syncAllPublications,
   type MosPublication,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
@@ -113,6 +113,28 @@ export default function PublishingBoardPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // On open (publish-capable users): reconcile every in-flight bundle post with
+  // the platform FIRST, then re-read — so the board shows current truth, not the
+  // last synced state. The 10-min server cron does the same in the background;
+  // this makes it immediate when a human is looking. Once per mount ([] deps —
+  // the workspace bootstrap resolves capabilities before pages render, so
+  // can('publish') is stable here). Non-fatal: a sweep failure still leaves the
+  // DB view (logged, never swallowed).
+  useEffect(() => {
+    if (!can('publish')) return;
+    void (async () => {
+      try {
+        const { summary } = await syncAllPublications();
+        const touched = Number(summary.published ?? 0) + Number(summary.failed ?? 0)
+          + Number(summary.deleted ?? 0);
+        if (touched > 0) await load();
+      } catch (e) {
+        console.error('[publishing-board] status sweep on open failed', e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setBusy = (id: string, on: boolean) =>
     setBusyIds((s) => {

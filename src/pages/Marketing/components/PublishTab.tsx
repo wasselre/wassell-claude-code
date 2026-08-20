@@ -26,9 +26,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import {
   MosAccount, MosAsset, MosPublication, PLATFORM_LABELS, PUB_STATUS_LABELS,
-  fetchAssets, savePublication, publishPublication, syncPublication, pullMetrics,
+  fetchAssets, saveAsset, savePublication, publishPublication, syncPublication, pullMetrics,
 } from '@/lib/marketingOS/client';
+import { probeVideoDuration } from '../lib/upload';
 import { useWorkspace } from '../MarketingWorkspace';
+import { preflightPublish } from '@/lib/marketingOS/platformRules';
 import { Field, Modal, Pill, type Tone } from './kit';
 import { IconPlus } from './icons';
 import { dateTimeShort, isoDateTimeLocal, num, shortDate, toArabicDigits } from '../lib/format';
@@ -49,6 +51,7 @@ function bundleStatusChip(s: string | null): { ar: string; en: string; tone: Ton
     case 'REVIEW': return { ar: 'قيد مراجعة المنصة', en: 'Under review', tone: 'wait' };
     case 'POSTED': return { ar: 'نُشر تلقائيًا', en: 'Auto-published', tone: 'live' };
     case 'ERROR': return { ar: 'فشل النشر التلقائي', en: 'Auto-publish failed', tone: 'wait' };
+    case 'DELETED': return { ar: 'حُذف من المنصة', en: 'Deleted on platform', tone: 'idle' };
     default: return null;
   }
 }
@@ -370,6 +373,46 @@ export default function PublishTab({
     return null;
   };
 
+  // Lazy duration probe for legacy videos: the pre-flight enforces the
+  // platforms' duration rules (Snapchat 5–60s, TikTok ≤10min, IG 3s–15min) but
+  // `duration_seconds` was recorded on ZERO library videos as of 2026-08-20 —
+  // new uploads measure at intake (uploadCanonicalAsset), and this closes the
+  // gap for existing ones: measure from the signed URL (metadata-only load),
+  // persist via asset_save, refresh local state so the checklist re-runs with
+  // a real number. One attempt per asset per mount; unmeasurable stays an
+  // honest warning.
+  const probedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const targets = publications
+      .map((p) => fileAssetOf(p as PubRow))
+      .filter((a): a is MosAsset =>
+        a != null
+        && (a.kind === 'video' || a.kind === 'audio')
+        && a.duration_seconds == null
+        && !probedRef.current.has(a.id));
+    for (const a of targets) {
+      const url = urlFor(a);
+      if (!url) continue; // signing round-trip not done yet — next render retries
+      probedRef.current.add(a.id);
+      void (async () => {
+        const dur = await probeVideoDuration(url);
+        if (dur == null) return;
+        try {
+          await saveAsset({ id: a.id, duration_seconds: dur });
+          const patch = (all: MosAsset[]): MosAsset[] =>
+            all.map((x) => (x.id === a.id ? { ...x, duration_seconds: dur } : x));
+          setAllAssets(patch);
+          setFinalAssets(patch);
+        } catch (e) {
+          // The measured value still applies locally next mount; persisting is
+          // what makes the SERVER gate see it — so a failure is loud.
+          console.error('[marketing] persisting probed video duration failed', a.id, e);
+        }
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publications, allAssets, urlFor]);
+
   const igCaption = publications.find((p) => p.platform === 'instagram' && p.caption)?.caption ?? null;
 
   const pubCard = (pubRaw: MosPublication) => {
@@ -386,9 +429,20 @@ export default function PublishTab({
     const connected = pub.account_connected === true;
     const bChip = bundleStatusChip(pub.bundle_status);
     const tiktokNeedsVideo = pub.platform === 'tiktok' && fileAsset != null && fileAsset.kind !== 'video';
-    const canAutoPost = canEdit && isAuto && connected && !pub.bundle_post_id
+    // Retry is allowed exactly when the previous attempt is dead (ERROR, or the
+    // post was deleted on bundle's side) — mirrors the server's idempotency guard.
+    const isRetry = Boolean(pub.bundle_post_id)
+      && (pub.bundle_status === 'ERROR' || pub.bundle_status === 'DELETED');
+    const canAutoPost = canEdit && isAuto && connected && (!pub.bundle_post_id || isRetry)
       && fileAsset != null && !tiktokNeedsVideo
       && pub.status !== 'published' && pub.status !== 'cancelled';
+    // Pre-flight: the platform's own rules (size/duration/format/caption),
+    // checked from the asset's recorded metadata BEFORE the button works.
+    // Same rulebook the server enforces — this is the friendly early copy.
+    const pf = canAutoPost
+      ? preflightPublish(pub.platform, fileAsset, pub.caption ?? '')
+      : null;
+    const pfBlocked = pf !== null && !pf.ok;
     const apiBusy = apiBusyId === pub.id;
 
     const pill = pub.status === 'published'
@@ -612,23 +666,49 @@ export default function PublishTab({
                   <button
                     type="button"
                     className="btn btn-p btn-sm"
-                    disabled={apiBusy}
+                    disabled={apiBusy || pfBlocked}
                     onClick={() => void publishViaApi(pubRaw)}
                   >
                     {apiBusy
                       ? (isAr ? 'جارٍ الإرسال…' : 'Sending…')
-                      : willSchedule
-                        ? (isAr ? `جدولة على ${platformLabel(pub.platform)}` : `Schedule on ${platformLabel(pub.platform)}`)
-                        : (isAr ? `انشر الآن على ${platformLabel(pub.platform)}` : `Publish now to ${platformLabel(pub.platform)}`)}
+                      : isRetry
+                        ? (isAr ? `إعادة المحاولة على ${platformLabel(pub.platform)}` : `Retry on ${platformLabel(pub.platform)}`)
+                        : willSchedule
+                          ? (isAr ? `جدولة على ${platformLabel(pub.platform)}` : `Schedule on ${platformLabel(pub.platform)}`)
+                          : (isAr ? `انشر الآن على ${platformLabel(pub.platform)}` : `Publish now to ${platformLabel(pub.platform)}`)}
                   </button>
                   <span style={{ fontSize: 11, color: 'var(--mute)' }}>
-                    {willSchedule
-                      ? (isAr ? 'ينشره النظام تلقائيًا في موعده' : 'the system posts it automatically at its time')
-                      : (isAr ? 'يُنشر تلقائيًا خلال دقيقة' : 'auto-posts within a minute')}
+                    {pfBlocked
+                      ? (isAr ? 'أصلح المشاكل أدناه أولًا' : 'fix the issues below first')
+                      : willSchedule
+                        ? (isAr ? 'ينشره النظام تلقائيًا في موعده' : 'the system posts it automatically at its time')
+                        : (isAr ? 'يُنشر تلقائيًا خلال دقيقة' : 'auto-posts within a minute')}
                   </span>
                 </>
               );
             })()}
+
+            {/* Pre-flight: the platform's own rules checked against the file's
+                recorded metadata — a blocker (red) disables the button with the
+                exact reason; a warning (amber) means «لم نستطع التحقق» and the
+                platform will do the final check. Full width under the button. */}
+            {pf !== null && pf.issues.length > 0 && (
+              <div style={{ flexBasis: '100%', display: 'grid', gap: 3 }}>
+                {pf.issues.map((iss, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      fontSize: 11,
+                      color: iss.level === 'block' ? 'var(--late)' : 'var(--wait, #A07000)',
+                      overflowWrap: 'anywhere',
+                    }}
+                  >
+                    {iss.level === 'block' ? '✕ ' : '△ '}
+                    {isAr ? iss.ar : iss.en}
+                  </span>
+                ))}
+              </div>
+            )}
 
             {tiktokNeedsVideo && !pub.bundle_post_id && (
               <span style={{ fontSize: 11, color: 'var(--late)' }}>

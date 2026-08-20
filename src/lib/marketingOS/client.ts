@@ -617,6 +617,15 @@ export const publishPublication = (publicationId: string) =>
 export const syncPublication = (publicationId: string) =>
   call<{ publications: MosPublication[] }>('publication_sync', { publication_id: publicationId });
 
+/**
+ * Reconcile EVERY in-flight bundle post at once — the Publishing Board's
+ * refresh. Same engine the 10-min server cron runs (bundleStatusSync.ts):
+ * POSTED → published, ERROR recorded + notified, DELETED back to draft.
+ * Requires the `publish` capability.
+ */
+export const syncAllPublications = () =>
+  call<{ summary: Record<string, number | string> }>('publication_sync_all', {});
+
 /** Pull live connection status from bundle.social onto the platform accounts. */
 export const syncPlatforms = () =>
   call<{ accounts: MosAccount[] }>('platform_sync', {});

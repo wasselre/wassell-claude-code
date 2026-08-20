@@ -31,11 +31,14 @@ import { loadMetaConfig, MetaMarketingClient, MetaApiError } from './_lib/market
 import { buildCampaignPayload, buildAdSetPayload, type PushCampaign, type PushExecution } from './_lib/marketing/metaPush.js';
 import {
   loadBundleConfig, isBundlePlatform, buildPlatformData, platformAcceptsKind,
-  uploadFromUrl, createPost, getPost, getTeam, extractPermalink, mapBundleStatus,
-  BundleApiError, BUNDLE_PLATFORM_TYPE,
+  uploadFromUrl, createPost, getPost, deletePost, getTeam, extractPermalink, mapBundleStatus,
+  BundleApiError, BUNDLE_PLATFORM_TYPE, type BundlePost,
 } from './_lib/marketing/bundleSocial.js';
 import { pullPublicationMetrics, runBundleMetricsSync } from './_lib/marketing/bundleMetrics.js';
 import { runBundleAccountMetricsSync } from './_lib/marketing/bundleAccountMetrics.js';
+import { runBundleStatusSweep } from './_lib/marketing/bundleStatusSync.js';
+// Pure shared rulebook — same blessed src↔api cross-import as localizedName.ts.
+import { preflightPublish } from '../src/lib/marketingOS/platformRules.js';
 
 export const config = { runtime: 'edge' };
 
@@ -2036,6 +2039,21 @@ export default async function handler(req: Request): Promise<Response> {
         if (pub.account_connected !== true) {
           return jsonError(400, `${platform} is not connected — connect it in Settings → Platforms first.`);
         }
+
+        // ── idempotency guard ─────────────────────────────────────────
+        // A publication already handed to bundle must NOT create a second live
+        // post (double-click, retry-after-timeout, two users). Re-publishing is
+        // allowed ONLY when the previous attempt is dead (ERROR, or DELETED on
+        // bundle's side) — that is the retry path.
+        const priorPostId = typeof pub.bundle_post_id === 'string' ? pub.bundle_post_id : null;
+        const priorBundle = typeof pub.bundle_status === 'string' ? pub.bundle_status.toUpperCase() : null;
+        const retrying = priorPostId !== null && (priorBundle === 'ERROR' || priorBundle === 'DELETED');
+        if (priorPostId && !retrying) {
+          return jsonError(409,
+            'هذا النشر أُرسل للمنصة بالفعل — حدّث الحالة بدلًا من النشر مرة أخرى. / '
+            + 'Already handed to the platform — refresh its status instead of publishing again.');
+        }
+
         const assetId = str(pub.asset_id);
         if (!assetId) return jsonError(400, 'This publication has no approved file to post.');
         const caption = typeof pub.caption === 'string' ? pub.caption : '';
@@ -2043,16 +2061,30 @@ export default async function handler(req: Request): Promise<Response> {
         // Resolve the approved asset to a URL bundle can fetch (public legacy URL
         // verbatim, or a short-lived signed URL for a file-backed asset).
         const assetRes = await sb.from('mos_assets')
-          .select('id, url, file_id, mime_type, kind').eq('id', assetId).maybeSingle();
+          .select('id, url, file_id, mime_type, kind, size_bytes, duration_seconds, aspect_ratio')
+          .eq('id', assetId).maybeSingle();
         const af = dbFail(assetRes.error);
         if (af) return af;
         const asset = assetRes.data as
-          { id: string; url: string | null; file_id: string | null; mime_type: string | null; kind: string } | null;
+          { id: string; url: string | null; file_id: string | null; mime_type: string | null;
+            kind: string; size_bytes: number | null; duration_seconds: number | null;
+            aspect_ratio: string | null } | null;
         if (!asset) return jsonError(404, 'approved file not found');
 
         const kind = (asset.kind ?? 'photo') as 'photo' | 'video' | 'design' | 'audio' | 'document';
         if (!platformAcceptsKind(platform, kind)) {
           return jsonError(400, `TikTok only accepts video — this approved file is a ${kind}.`);
+        }
+
+        // ── pre-flight — the platform's own rules, checked BEFORE upload ──
+        // The SPA runs the same preflightPublish for its checklist; this is the
+        // authoritative gate (a stale client or a direct API call still cannot
+        // push a doomed post). Blockers only — warnings (unverifiable metadata)
+        // pass through: bundle validates everything at post time regardless.
+        const flight = preflightPublish(platform, asset, caption);
+        const blockers = flight.issues.filter((i) => i.level === 'block');
+        if (blockers.length > 0) {
+          return jsonError(422, blockers.map((b) => `${b.ar} / ${b.en}`).join('  •  '));
         }
 
         let publicUrl: string | null = asset.url;
@@ -2065,8 +2097,11 @@ export default async function handler(req: Request): Promise<Response> {
           if (ff) return ff;
           const file = fr.data as { storage_bucket: string; storage_path: string } | null;
           if (!file) return jsonError(404, 'approved file bytes not found');
+          // 1h TTL: bundle fetches the URL server-side right after we hand it
+          // over, but its fetch can queue — 300s left no slack (a delayed fetch
+          // would 403 and fail the post for no real reason).
           const signed = await svc.storage.from(file.storage_bucket)
-            .createSignedUrl(file.storage_path, 300);
+            .createSignedUrl(file.storage_path, 3600);
           if (signed.error || !signed.data?.signedUrl) {
             console.error('[marketing-os] sign approved file failed', signed.error);
             return jsonError(500, 'could not resolve the approved file');
@@ -2088,6 +2123,17 @@ export default async function handler(req: Request): Promise<Response> {
         const postDate = new Date(
           Number.isFinite(schedMs) && schedMs > now + 60_000 ? schedMs : now + 60_000,
         ).toISOString();
+
+        // Retry path: clear the dead attempt on bundle's side first so the
+        // dashboard doesn't accumulate ERROR corpses. Best-effort — a failed
+        // delete of an already-dead post must not block the retry (logged).
+        if (retrying && priorPostId && priorBundle === 'ERROR') {
+          try {
+            await deletePost(cfg, priorPostId);
+          } catch (e) {
+            console.error('[marketing-os] cleanup of errored bundle post failed (continuing)', priorPostId, e);
+          }
+        }
 
         let post;
         try {
@@ -2118,8 +2164,22 @@ export default async function handler(req: Request): Promise<Response> {
           bundle_synced_at: new Date().toISOString(),
         };
         const upd = await sb.from('mos_publications').update(patch).eq('id', pubId).select('id').maybeSingle();
-        const uf = dbFail(upd.error);
-        if (uf) return uf;
+        if (upd.error || !upd.data) {
+          // The live post now exists but our row doesn't know its id — that is
+          // an ORPHAN live post (and a future duplicate when the user retries).
+          // Compensate: delete the just-created bundle post, then fail honestly.
+          try {
+            await deletePost(cfg, post.id);
+            console.error('[marketing-os] publish DB write failed — bundle post rolled back', pubId, post.id, upd.error);
+            return jsonError(500, 'Saving the publish result failed — the post was rolled back. Try again.');
+          } catch (delErr) {
+            // Rollback itself failed: the post IS live but untracked. Say so
+            // loudly instead of pretending — the id is in the message + logs.
+            console.error('[marketing-os] publish DB write failed AND rollback failed — orphan live post', pubId, post.id, delErr);
+            return jsonError(500,
+              `Saving failed and rollback failed — a live post may exist untracked on bundle.social (post ${post.id}). Do not re-publish; report this.`);
+          }
+        }
 
         const list = await sb.from('mos_publication_v').select('*').eq('content_id', pub.content_id as string)
           .order('scheduled_at', { ascending: true, nullsFirst: false });
@@ -2150,28 +2210,37 @@ export default async function handler(req: Request): Promise<Response> {
         if (!pub) return jsonError(404, 'publication not found');
         if (!pub.bundle_post_id) return jsonError(400, 'This publication was not posted through bundle.social.');
 
-        let post;
+        let post: BundlePost | null = null;
+        let gone = false;
         try {
           post = await getPost(cfg, pub.bundle_post_id);
         } catch (e) {
-          const msg = e instanceof BundleApiError ? e.message : (e instanceof Error ? e.message : String(e));
-          console.error('[marketing-os] bundle.social sync failed', e);
-          return jsonError(502, `bundle.social: ${msg}`);
+          if (e instanceof BundleApiError && e.httpStatus === 404) {
+            gone = true; // deleted on bundle's side — recorded, not an error
+          } else {
+            const msg = e instanceof BundleApiError ? e.message : (e instanceof Error ? e.message : String(e));
+            console.error('[marketing-os] bundle.social sync failed', e);
+            return jsonError(502, `bundle.social: ${msg}`);
+          }
         }
 
-        const coarse = mapBundleStatus(post.status);
+        const bStatus = gone || !post ? 'DELETED' : post.status;
         const patch: Record<string, unknown> = {
-          bundle_status: post.status,
-          bundle_error: typeof post.error === 'string' ? post.error : null,
+          bundle_status: bStatus,
+          bundle_error: post && typeof post.error === 'string' ? post.error : null,
           bundle_synced_at: new Date().toISOString(),
         };
-        if (coarse === 'published') {
+        if (post && mapBundleStatus(post.status) === 'published') {
           patch.status = 'published';
           patch.published_at = post.postedDate ?? new Date().toISOString();
           patch.published_by_user_id = pub.published_by_user_id
             ?? await resolveAppUserId(sb, user.userId);
           const link = extractPermalink(post);
           if (link) patch.external_url = link;
+        } else if (bStatus === 'DELETED') {
+          // Same recipe as the status sweep: the live post no longer exists, so
+          // the row returns to editable and the publish path allows a retry.
+          patch.status = 'draft';
         }
         const upd = await sb.from('mos_publications').update(patch).eq('id', pubId).select('id').maybeSingle();
         const uf = dbFail(upd.error);
@@ -2182,6 +2251,21 @@ export default async function handler(req: Request): Promise<Response> {
         const lf = dbFail(list.error);
         if (lf) return lf;
         return jsonOk({ publications: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Reconcile EVERY in-flight bundle post at once — the       */
+      /* Publishing Board's refresh (same engine the 10-min cron   */
+      /* runs; see bundleStatusSync.ts). Gated on publish because  */
+      /* the sweep updates publication rows.                       */
+      /* -------------------------------------------------------- */
+      case 'publication_sync_all': {
+        const cfg = loadBundleConfig();
+        if (!cfg) return jsonError(503, 'Organic posting is not configured.');
+        const gate = await requireCap(sb, 'publish');
+        if (gate) return gate;
+        const summary = await runBundleStatusSweep(sb);
+        return jsonOk({ summary });
       }
 
       /* -------------------------------------------------------- */
@@ -4703,6 +4787,7 @@ export default async function handler(req: Request): Promise<Response> {
                          'thumb_url', 'shot_on', 'tags', 'note',
                          'file_path', 'mime_type', 'size_bytes', 'original_name',
                          'usage_rights', 'shoot_request_id', 'aspect_ratio',
+                         'duration_seconds',
                          'shot_by', 'rights_expiry'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
