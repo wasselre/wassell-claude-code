@@ -24,7 +24,27 @@ This runbook is the exact procedure. Do the steps in order.
 
 ---
 
-## Step 1 — Add the physical column (frozen view-chain migration)
+## Step 0 — Does the column ALREADY exist? (check first — it often does)
+
+The frozen `market_listings` was created with a **superset schema** — it already has
+columns many candidate fields map onto: `furnished`, plus the whole UAE/Bayut set
+(`emirate`, `community`, `building`, `permit_number`, `area_sqft`, `purpose`,
+`handover`, …). Check before writing any migration:
+
+```sql
+SELECT column_name FROM information_schema.columns
+WHERE table_schema='public' AND table_name='market_listings' AND column_name='<field>';
+```
+
+**If the column already exists, SKIP Step 1 entirely** — no DDL, no view-chain
+unwind, no risk. `freeze_apply_row` is dynamic (it builds its column list from the
+model schema at runtime) and `market_listings_v` already emits the column, so all you
+need is Steps 2–5 (ledger + extractor + adapter + re-map + release). This is how
+`furnished` was promoted (2026-08-19) — zero frozen-table DDL.
+
+**Only if the column does NOT exist** do Step 1.
+
+## Step 1 — Add the physical column (frozen view-chain migration) — ONLY if it doesn't exist
 
 `market_listings` is frozen, so a new column must be added AND `models.schema`
 updated AND the frozen artifacts regenerated — which requires unwinding the view
