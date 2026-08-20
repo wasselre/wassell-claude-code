@@ -33,6 +33,7 @@ import {
   PlatformSettings, defaultPlatformSettings, getPlatformSchema, objectiveKeyOf, settingsSummary,
 } from '@/lib/marketingOS/adPlatforms';
 import { Field, LoadError, Modal, Pill, ReadField, Skeleton, StatusPill, Tone } from './components/kit';
+import CampaignTreeModal from './components/CampaignTreeModal';
 import CommentThread from './components/CommentThread';
 import NewContentModal from './components/NewContentModal';
 import SuccessMeasuresEditor, {
@@ -221,6 +222,9 @@ export default function CampaignDetailPage() {
   const [briefEditing, setBriefEditing] = useState(false);
   const [execEditing, setExecEditing] = useState<MosExecution | null>(null);
   const [execAdding, setExecAdding] = useState(false);
+  // After a NEW Meta campaign is created, open its ad-sets/ads editor inline so
+  // the operator adds ad sets + ads (content + caption) without leaving the page.
+  const [treeForExec, setTreeForExec] = useState<{ id: string; platform: string } | null>(null);
   const [addingContent, setAddingContent] = useState(false);
   const [linking, setLinking] = useState(false);
   const [shift, setShift] = useState<{ from: string; to: string; amount: number | null } | null>(null);
@@ -2307,16 +2311,30 @@ export default function CampaignDetailPage() {
         <ExecutionModal
           campaignId={campaignId}
           execution={execEditing}
-          content={content}
           isAr={isAr}
           onClose={() => { setExecEditing(null); setExecAdding(false); }}
-          onSaved={(rows) => {
+          onSaved={(rows, savedId, platform) => {
+            const wasAdding = execAdding && !execEditing;
             setExecutions(rows);
             setExecEditing(null);
             setExecAdding(false);
             void enrich(rows);
             void refreshEvents();
+            // New Meta/Instagram campaign → continue straight into its ad sets
+            // + ads (content + caption) on one page.
+            if (wasAdding && savedId && (platform === 'meta' || platform === 'instagram')) {
+              setTreeForExec({ id: savedId, platform });
+            }
           }}
+        />
+      )}
+
+      {treeForExec && (
+        <CampaignTreeModal
+          executionId={treeForExec.id}
+          platform={treeForExec.platform}
+          onClose={() => setTreeForExec(null)}
+          onSaved={() => { void load(); }}
         />
       )}
 
@@ -2460,14 +2478,13 @@ function BriefModal({
 /* ------------------------------------------------------------------ */
 
 function ExecutionModal({
-  campaignId, execution, content, isAr, onClose, onSaved,
+  campaignId, execution, isAr, onClose, onSaved,
 }: {
   campaignId: string;
   execution: MosExecution | null;
-  content: MosContentRow[];
   isAr: boolean;
   onClose: () => void;
-  onSaved: (rows: MosExecution[]) => void;
+  onSaved: (rows: MosExecution[], savedId?: string | null, platform?: string) => void;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const { can } = useWorkspace();
@@ -2484,7 +2501,6 @@ function ExecutionModal({
     return '';
   });
   const [label, setLabel] = useState(execution?.label ?? '');
-  const [contentId, setContentId] = useState(execution?.content_id ?? '');
   const [status, setStatus] = useState<MosExecution['status']>(execution?.status ?? 'draft');
   const [purpose, setPurpose] = useState<string>(execution?.purpose ?? '');
   const [platformCampaignId, setPlatformCampaignId] = useState(execution?.platform_campaign_id ?? '');
@@ -2536,7 +2552,6 @@ function ExecutionModal({
         id: execution?.id,
         platform,
         label: label || null,
-        content_id: contentId || null,
         status,
         purpose: purpose || null,
         platform_campaign_id: platformCampaignId.trim() || null,
@@ -2551,7 +2566,7 @@ function ExecutionModal({
         ...(platformSettings ? { platform_settings: platformSettings } : {}),
       });
       addToast(isAr ? 'حُفظت الحملة الإعلانية.' : 'Ad campaign saved.', 'success');
-      onSaved(res.executions);
+      onSaved(res.executions, res.saved_id, platform);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
@@ -2720,15 +2735,6 @@ function ExecutionModal({
           <span className="ltr">#{platformCampaignId}</span>
         </div>
       )}
-
-      <Field label={isAr ? 'المحتوى الذي يعمل هنا' : 'The content running here'}>
-        <select className="inp" value={contentId} onChange={(e) => setContentId(e.target.value)}>
-          <option value="">{isAr ? 'غير محدد' : 'Not specified'}</option>
-          {content.map((c) => (
-            <option key={c.id} value={c.id}>{c.ref} · {c.title}</option>
-          ))}
-        </select>
-      </Field>
 
       {isMetaPlatform ? (
         <>

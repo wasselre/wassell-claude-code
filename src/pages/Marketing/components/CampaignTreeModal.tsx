@@ -38,6 +38,11 @@ interface AdRow {
   platformAdId: string;
   contentId: string;
   status: string;
+  /** The ad's caption (creative.message). */
+  caption: string;
+  /** The rest of the ad's creative jsonb (format/CTA/…) preserved verbatim so a
+   *  caption edit here never clobbers fields set in the per-ad AdModal. */
+  creativeExtra: Record<string, unknown>;
 }
 
 /** One ad-set row, holding its ads. `key` is local-only. */
@@ -101,14 +106,22 @@ export default function CampaignTreeModal({
   /** Ad `key`s whose Ad ID collides with another ad — inline error markers. */
   const [dupKeys, setDupKeys] = useState<Set<string>>(new Set());
 
-  const toAdRow = useCallback((a: CampaignTree['ads'][number]): AdRow => ({
-    key: newKey(),
-    id: a.id,
-    label: a.label ?? '',
-    platformAdId: a.platform_ad_id ?? '',
-    contentId: a.content_id ?? '',
-    status: a.status ?? 'waiting',
-  }), []);
+  const toAdRow = useCallback((a: CampaignTree['ads'][number]): AdRow => {
+    const cr = (a.creative ?? {}) as Record<string, unknown>;
+    const caption = typeof cr.message === 'string' ? cr.message : '';
+    const creativeExtra = { ...cr };
+    delete creativeExtra.message;
+    return {
+      key: newKey(),
+      id: a.id,
+      label: a.label ?? '',
+      platformAdId: a.platform_ad_id ?? '',
+      contentId: a.content_id ?? '',
+      status: a.status ?? 'waiting',
+      caption,
+      creativeExtra,
+    };
+  }, []);
 
   const hydrate = useCallback((t: CampaignTree): void => {
     setTree(t);
@@ -153,6 +166,7 @@ export default function CampaignTreeModal({
 
   const blankAd = (): AdRow => ({
     key: newKey(), label: '', platformAdId: '', contentId: '', status: 'waiting',
+    caption: '', creativeExtra: {},
   });
 
   const addAdSet = (): void => setAdSets((cur) => [
@@ -244,13 +258,23 @@ export default function CampaignTreeModal({
           name: s.name.trim(),
           platform_adset_id: s.platformAdsetId.trim() || null,
           sort_order: i,
-          ads: s.ads.map((a) => ({
-            ...(a.id ? { id: a.id } : {}),
-            label: a.label.trim(),
-            platform_ad_id: a.platformAdId.trim() || null,
-            content_id: a.contentId || null,
-            status: a.status,
-          })),
+          ads: s.ads.map((a) => {
+            const cap = a.caption.trim();
+            // Merge caption back into the preserved creative jsonb; only send
+            // `creative` when there is something to store (so we never write an
+            // empty object over a null).
+            const creative = cap || Object.keys(a.creativeExtra).length > 0
+              ? { ...a.creativeExtra, ...(cap ? { message: cap } : {}) }
+              : undefined;
+            return {
+              ...(a.id ? { id: a.id } : {}),
+              label: a.label.trim(),
+              platform_ad_id: a.platformAdId.trim() || null,
+              content_id: a.contentId || null,
+              status: a.status,
+              ...(creative ? { creative } : {}),
+            };
+          }),
         })),
       });
       hydrate(t);
@@ -286,10 +310,10 @@ export default function CampaignTreeModal({
 
   return (
     <Modal
-      title={isAr ? 'إعداد الإعلانات (متداخل)' : 'Set up ads (nested)'}
+      title={isAr ? 'المجموعات والإعلانات' : 'Ad sets & ads'}
       sub={isAr
-        ? 'حملة ← مجموعات إعلانية ← إعلانات، كلها في صفحة واحدة. يُحفظ الشجرة كاملة في كل مرة.'
-        : 'Campaign → ad sets → ads, all on one page. The whole tree is saved every time.'}
+        ? 'حملة ← مجموعات إعلانية ← إعلانات (المحتوى + الكابشن)، كلها في صفحة واحدة. يُحفظ الشجرة كاملة في كل مرة.'
+        : 'Campaign → ad sets → ads (content + caption), all on one page. The whole tree is saved every time.'}
       onClose={onClose}
       wide
       footer={
@@ -481,49 +505,67 @@ export default function CampaignTreeModal({
                     <div
                       key={a.key}
                       style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'minmax(110px,1fr) 150px 170px 34px',
-                        gap: 8, alignItems: 'end',
+                        display: 'grid', gap: 7, padding: 9, borderRadius: 8,
+                        border: '1px solid var(--line, rgba(255,255,255,0.08))',
+                        background: 'var(--paper, transparent)',
                       }}
                     >
-                      <label style={{ display: 'grid', gap: 3 }}>
-                        <span className="lbl">{isAr ? 'اسم الإعلان' : 'Ad name'}</span>
-                        <input
-                          className="inp"
-                          value={a.label}
-                          onChange={(e) => patchAd(s.key, a.key, { label: e.target.value })}
-                        />
-                      </label>
-                      <label style={{ display: 'grid', gap: 3 }}>
-                        <span className="lbl" style={{ color: 'var(--gold)' }}>
-                          {isAr ? 'معرّف الإعلان ★' : 'Ad ID ★'}
-                        </span>
-                        <input
-                          className="inp ltr"
-                          style={dupKeys.has(a.key) ? { borderColor: 'var(--late)' } : undefined}
-                          placeholder={isAr ? 'معرّف ميتا' : 'Meta Ad ID'}
-                          value={a.platformAdId}
-                          onChange={(e) => patchAd(s.key, a.key, { platformAdId: e.target.value })}
-                        />
-                      </label>
-                      <label style={{ display: 'grid', gap: 3 }}>
-                        <span className="lbl">{isAr ? 'المحتوى' : 'Content'}</span>
-                        <select
-                          className="inp"
-                          value={a.contentId}
-                          onChange={(e) => patchAd(s.key, a.key, { contentId: e.target.value })}
-                        >
-                          {contentOptions}
-                        </select>
-                      </label>
-                      <button
-                        type="button"
-                        className="btn btn-d btn-sm"
-                        title={isAr ? 'إزالة الإعلان' : 'Remove ad'}
-                        onClick={() => removeAd(s.key, a.key)}
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'minmax(110px,1fr) 150px 170px 34px',
+                          gap: 8, alignItems: 'end',
+                        }}
                       >
-                        <IconTrash />
-                      </button>
+                        <label style={{ display: 'grid', gap: 3 }}>
+                          <span className="lbl">{isAr ? 'اسم الإعلان' : 'Ad name'}</span>
+                          <input
+                            className="inp"
+                            value={a.label}
+                            onChange={(e) => patchAd(s.key, a.key, { label: e.target.value })}
+                          />
+                        </label>
+                        <label style={{ display: 'grid', gap: 3 }}>
+                          <span className="lbl" style={{ color: 'var(--gold)' }}>
+                            {isAr ? 'معرّف الإعلان ★' : 'Ad ID ★'}
+                          </span>
+                          <input
+                            className="inp ltr"
+                            style={dupKeys.has(a.key) ? { borderColor: 'var(--late)' } : undefined}
+                            placeholder={isAr ? 'معرّف ميتا' : 'Meta Ad ID'}
+                            value={a.platformAdId}
+                            onChange={(e) => patchAd(s.key, a.key, { platformAdId: e.target.value })}
+                          />
+                        </label>
+                        <label style={{ display: 'grid', gap: 3 }}>
+                          <span className="lbl">{isAr ? 'المحتوى' : 'Content'}</span>
+                          <select
+                            className="inp"
+                            value={a.contentId}
+                            onChange={(e) => patchAd(s.key, a.key, { contentId: e.target.value })}
+                          >
+                            {contentOptions}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          className="btn btn-d btn-sm"
+                          title={isAr ? 'إزالة الإعلان' : 'Remove ad'}
+                          onClick={() => removeAd(s.key, a.key)}
+                        >
+                          <IconTrash />
+                        </button>
+                      </div>
+                      <label style={{ display: 'grid', gap: 3 }}>
+                        <span className="lbl">{isAr ? 'النص الإعلاني (الكابشن)' : 'Caption'}</span>
+                        <textarea
+                          className="inp"
+                          rows={2}
+                          value={a.caption}
+                          placeholder={isAr ? 'نص الإعلان الظاهر مع المحتوى' : 'the ad copy shown with the content'}
+                          onChange={(e) => patchAd(s.key, a.key, { caption: e.target.value })}
+                        />
+                      </label>
                     </div>
                   ))}
                   {dupKeys.size > 0 && s.ads.some((a) => dupKeys.has(a.key)) && (

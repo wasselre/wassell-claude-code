@@ -261,9 +261,9 @@ export default function ExecutionDetailPage() {
               </button>
             )}
             {canEnter && (
-              <button type="button" className="btn" onClick={() => setTreeOpen(true)}>
+              <button type="button" className="btn btn-p" onClick={() => setTreeOpen(true)}>
                 <IconPlus />
-                {isAr ? 'إعداد الإعلانات' : 'Set up ads (nested)'}
+                {isAr ? 'المجموعات والإعلانات' : 'Ad sets & ads'}
               </button>
             )}
             {canEnter && (

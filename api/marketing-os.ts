@@ -3703,6 +3703,7 @@ export default async function handler(req: Request): Promise<Response> {
         if (!campaignId) return jsonError(400, 'campaign_id is required');
         const raw = (body.execution ?? {}) as Record<string, unknown>;
         const id = str(raw.id);
+        let savedId: string | null = id || null;
         const patch: Record<string, unknown> = {};
         for (const k of ['content_id', 'platform', 'account_id', 'label', 'status',
                          'starts_on', 'ends_on', 'budget', 'spend', 'impressions',
@@ -3792,6 +3793,7 @@ export default async function handler(req: Request): Promise<Response> {
           if (f) return f;
           const createdId = (ins.data as unknown as Row | null)?.id ?? null;
           if (createdId) {
+            savedId = createdId;
             const label = str(patch.label) ?? String(patch.platform);
             await logCampaignEvent(sb, {
               campaignId,
@@ -3807,7 +3809,9 @@ export default async function handler(req: Request): Promise<Response> {
           .eq('campaign_id', campaignId).order('created_at', { ascending: true });
         const lf = dbFail(list.error);
         if (lf) return lf;
-        return jsonOk({ executions: list.data ?? [] });
+        // saved_id lets the caller continue straight into the just-created
+        // execution's ad-sets/ads editor without re-finding it in the list.
+        return jsonOk({ executions: list.data ?? [], saved_id: savedId });
       }
 
       /* -------------------------------------------------------- */
@@ -3945,7 +3949,7 @@ export default async function handler(req: Request): Promise<Response> {
           sb.from('mos_ad_sets').select('id, name, platform_adset_id, status, sort_order')
             .eq('execution_id', executionId).is('archived_at', null)
             .order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
-          sb.from('mos_execution_ads').select('id, label, platform_ad_id, ad_set_id, content_id, status')
+          sb.from('mos_execution_ads').select('id, label, platform_ad_id, ad_set_id, content_id, status, creative')
             .eq('execution_id', executionId).is('archived_at', null)
             .order('created_at', { ascending: true }),
         ]);
@@ -4009,6 +4013,18 @@ export default async function handler(req: Request): Promise<Response> {
               content_id: orNull(a.content_id),
               status: str(a.status) || 'running',
             };
+            // Ad-level creative (caption/message etc.) — same jsonb column the
+            // per-ad AdModal writes. Only set when sent, and validate it.
+            if (Object.prototype.hasOwnProperty.call(a, 'creative')) {
+              const bad = flatJsonbError('creative', a.creative);
+              if (bad) {
+                return new Response(
+                  JSON.stringify({ error: bad.en, error_ar: bad.ar }),
+                  { status: 400, headers: { 'Content-Type': 'application/json' } },
+                );
+              }
+              adPatch.creative = a.creative;
+            }
             let adId = str(a.id);
             if (adId) {
               const u = await sb.from('mos_execution_ads').update(adPatch).eq('id', adId).select('id').maybeSingle();
@@ -4049,7 +4065,7 @@ export default async function handler(req: Request): Promise<Response> {
         const [execRow, setsRow, adsRow] = await Promise.all([
           sb.from('mos_campaign_executions').select('id, campaign_id, platform, label, platform_campaign_id').eq('id', executionId).maybeSingle(),
           sb.from('mos_ad_sets').select('id, name, platform_adset_id, status, sort_order').eq('execution_id', executionId).is('archived_at', null).order('sort_order', { ascending: true }),
-          sb.from('mos_execution_ads').select('id, label, platform_ad_id, ad_set_id, content_id, status').eq('execution_id', executionId).is('archived_at', null).order('created_at', { ascending: true }),
+          sb.from('mos_execution_ads').select('id, label, platform_ad_id, ad_set_id, content_id, status, creative').eq('execution_id', executionId).is('archived_at', null).order('created_at', { ascending: true }),
         ]);
         return jsonOk({ execution: execRow.data, ad_sets: setsRow.data ?? [], ads: adsRow.data ?? [] });
       }

@@ -1349,7 +1349,9 @@ export const saveCampaign = (
 });
 
 export const saveExecution = (campaignId: string, execution: Record<string, unknown>) =>
-  call<{ executions: MosExecution[] }>('execution_save', { campaign_id: campaignId, execution });
+  call<{ executions: MosExecution[]; saved_id: string | null }>(
+    'execution_save', { campaign_id: campaignId, execution },
+  );
 
 export const deleteExecution = (campaignId: string, id: string) =>
   call<{ executions: MosExecution[] }>('execution_delete', { campaign_id: campaignId, id });
@@ -1410,6 +1412,8 @@ export interface CampaignTreeAd {
   ad_set_id: string | null;
   content_id: string | null;
   status: string;
+  /** Ad-level creative (e.g. `{ message }` caption) — same jsonb the AdModal writes. */
+  creative: Record<string, unknown> | null;
 }
 
 /** The whole nested tree for one execution — the shape both tree RPCs return. */
@@ -1435,6 +1439,8 @@ export interface AdDraft {
   platform_ad_id?: string | null;
   content_id?: string | null;
   status?: string;
+  /** Ad-level creative jsonb (caption etc.). Only sent when set. */
+  creative?: Record<string, unknown> | null;
 }
 
 /** One ad set inside a save payload, carrying its ads. */
