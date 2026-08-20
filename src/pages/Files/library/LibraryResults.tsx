@@ -39,8 +39,16 @@ interface Props {
   thumbs: Record<string, string>;
   grouping: LibraryGrouping;
   layout: LibraryLayout;
+  /** The detail-panel subject. */
   selectedId: string | null;
+  /** The multi-select set. */
+  selectedIds: Set<string>;
   onOpen: (f: BusinessFileRow) => void;
+  onToggle: (f: BusinessFileRow, additive: boolean) => void;
+  /** The grid container the marquee measures against. */
+  gridRef: React.MutableRefObject<HTMLDivElement | null>;
+  onGridMouseDown: (e: React.MouseEvent<HTMLDivElement>) => void;
+  marquee: { x: number; y: number; w: number; h: number } | null;
   /** Clicking a section header narrows to that bucket — the section's page-local
    *  count becomes the whole result. */
   onDrillDown: (grouping: LibraryGrouping, key: string) => void;
@@ -109,7 +117,8 @@ function buildSections(
 
 export default function LibraryResults({
   rows, types, facets, links, linksLoading, thumbs, grouping, layout,
-  selectedId, onOpen, onDrillDown, page, pageSize, total, onPage,
+  selectedId, selectedIds, onOpen, onToggle, gridRef, onGridMouseDown, marquee,
+  onDrillDown, page, pageSize, total, onPage,
 }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -138,7 +147,23 @@ export default function LibraryResults({
   const NextIcon = isAr ? ChevronLeft : ChevronRight;
 
   return (
-    <div className="space-y-6">
+    <div
+      ref={gridRef}
+      onMouseDown={onGridMouseDown}
+      // `relative` so the rectangle can be positioned in GRID-relative space —
+      // the same space the hit-test works in, which is what keeps the box
+      // pinned to the tiles it covers while the page scrolls under it.
+      // Extra bottom padding while selecting keeps the floating bar off the
+      // last row; padding only grows the scroll area, it does not move tiles.
+      className={`space-y-6 relative select-none ${selectedIds.size > 0 ? 'pb-24' : ''}`}
+    >
+      {marquee && (
+        <div
+          aria-hidden
+          className="absolute z-20 pointer-events-none rounded-sm border border-copper/60 bg-copper/10"
+          style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
+        />
+      )}
       {sections.map((s) => (
         <section key={s.key}>
           {grouping !== 'none' && (
@@ -168,8 +193,11 @@ export default function LibraryResults({
                   file={f}
                   types={types}
                   thumbUrl={thumbs[f.id] ?? null}
-                  selected={selectedId === f.id}
+                  active={selectedId === f.id}
+                  selected={selectedIds.has(f.id)}
+                  selectionActive={selectedIds.size > 0}
                   onOpen={onOpen}
+                  onToggle={onToggle}
                 />
               ))}
             </div>
@@ -192,8 +220,11 @@ export default function LibraryResults({
                   file={f}
                   types={types}
                   links={links.get(f.id)}
-                  selected={selectedId === f.id}
+                  active={selectedId === f.id}
+                  selected={selectedIds.has(f.id)}
+                  selectionActive={selectedIds.size > 0}
                   onOpen={onOpen}
+                  onToggle={onToggle}
                 />
               ))}
             </div>

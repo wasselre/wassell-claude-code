@@ -11,7 +11,7 @@
  * a page that can show 60 images at once.
  */
 import { useTranslation } from 'react-i18next';
-import { Link2 } from 'lucide-react';
+import { Check, Link2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import type { BusinessFileRow, FileDocumentTypeRow } from '@/types';
@@ -21,11 +21,18 @@ interface Props {
   file: BusinessFileRow;
   types: FileDocumentTypeRow[];
   thumbUrl?: string | null;
+  /** Highlighted as the detail-panel subject. */
+  active: boolean;
+  /** In the multi-select set. */
   selected: boolean;
+  /** True when anything is selected — flips a plain click from "open" to
+   *  "replace the selection with this one", exactly as Drive does. */
+  selectionActive: boolean;
   onOpen: (f: BusinessFileRow) => void;
+  onToggle: (f: BusinessFileRow, additive: boolean) => void;
 }
 
-export default function LibraryFileTile({ file, types, thumbUrl, selected, onOpen }: Props) {
+export default function LibraryFileTile({ file, types, thumbUrl, active, selected, selectionActive, onOpen, onToggle }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const Icon = kindIcon[file.kind];
@@ -34,15 +41,44 @@ export default function LibraryFileTile({ file, types, thumbUrl, selected, onOpe
   return (
     <button
       type="button"
-      onClick={() => onOpen(file)}
+      // The marquee hit-tests these two attributes.
+      data-selectable-id={file.id}
+      data-selectable-kind="file"
+      onClick={(e) => {
+        // Ctrl/Cmd or Shift always means "adjust the selection". A plain click
+        // opens the file UNLESS a selection is already active, in which case it
+        // replaces the selection — the Drive behaviour, and the one that makes
+        // a mis-drag recoverable without reaching for the toolbar.
+        if (e.ctrlKey || e.metaKey || e.shiftKey) { onToggle(file, true); return; }
+        if (selectionActive) { onToggle(file, false); return; }
+        onOpen(file);
+      }}
       // `text-start` rather than text-left: the tile must read from the right
       // in Arabic, and a hard-coded side is the single most common way an RTL
       // layout breaks.
-      className={`group text-start w-full rounded-2xl border bg-white overflow-hidden transition-all hover:shadow-md focus:outline-none focus:ring-2 focus:ring-copper/30 ${
-        selected ? 'border-copper ring-2 ring-copper/25' : 'border-sand/30'
+      className={`group relative text-start w-full rounded-2xl border bg-white overflow-hidden transition-all hover:shadow-md focus:outline-none focus:ring-2 focus:ring-copper/30 ${
+        selected ? 'border-copper ring-2 ring-copper/30'
+          : active ? 'border-copper ring-2 ring-copper/15'
+          : 'border-sand/30'
       }`}
-      aria-pressed={selected}
+      aria-pressed={selected || active}
     >
+      {/* Hover-revealed until something is selected, then always visible —
+          otherwise there is no way to START a selection with the keyboard-free
+          hand, and no way to see what is already in it while scrolling. */}
+      <span
+        role="checkbox"
+        aria-checked={selected}
+        aria-label={file.title}
+        tabIndex={-1}
+        onClick={(e) => { e.stopPropagation(); onToggle(file, true); }}
+        className={`absolute top-2 start-2 z-10 w-5 h-5 rounded-md border flex items-center justify-center transition-opacity cursor-pointer ${
+          selected ? 'bg-copper border-copper opacity-100'
+                   : `bg-white/90 border-sand/60 ${selectionActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`
+        }`}
+      >
+        {selected && <Check size={12} className="text-white" aria-hidden />}
+      </span>
       <div className={`relative h-32 flex items-center justify-center ${accent.bg}`}>
         {thumbUrl ? (
           <img

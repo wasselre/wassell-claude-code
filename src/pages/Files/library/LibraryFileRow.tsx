@@ -19,11 +19,14 @@ interface Props {
   file: BusinessFileRow;
   types: FileDocumentTypeRow[];
   links: PageLinkSummary[] | undefined;
+  active: boolean;
   selected: boolean;
+  selectionActive: boolean;
   onOpen: (f: BusinessFileRow) => void;
+  onToggle: (f: BusinessFileRow, additive: boolean) => void;
 }
 
-export default function LibraryFileRow({ file, types, links, selected, onOpen }: Props) {
+export default function LibraryFileRow({ file, types, links, active, selected, selectionActive, onOpen, onToggle }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const users = useAppStore((s) => s.users);
@@ -43,11 +46,19 @@ export default function LibraryFileRow({ file, types, links, selected, onOpen }:
   return (
     <button
       type="button"
-      onClick={() => onOpen(file)}
+      data-selectable-id={file.id}
+      data-selectable-kind="file"
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) { onToggle(file, true); return; }
+        if (selectionActive) { onToggle(file, false); return; }
+        onOpen(file);
+      }}
       className={`w-full text-start grid grid-cols-[auto_minmax(0,3fr)_minmax(0,1.4fr)_minmax(0,1.6fr)_minmax(0,1.2fr)_auto] items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors hover:bg-cream focus:outline-none focus:ring-2 focus:ring-copper/30 ${
-        selected ? 'border-copper bg-copper/5' : 'border-transparent'
+        selected ? 'border-copper bg-copper/10'
+          : active ? 'border-copper/40 bg-copper/5'
+          : 'border-transparent'
       }`}
-      aria-pressed={selected}
+      aria-pressed={selected || active}
     >
       <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${accent.bg}`}>
         <Icon size={15} className={accent.fg} aria-hidden />

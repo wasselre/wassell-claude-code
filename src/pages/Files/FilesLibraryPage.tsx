@@ -47,7 +47,8 @@ import {
   deleteFileView, listFileViews, saveFileView, systemView, viewStateFromRow,
 } from '@/lib/files/views';
 import { activeFilterCount, decodeLibraryUrl, encodeLibraryUrl } from '@/lib/files/libraryUrl';
-import { getFile, signViewUrls } from '@/lib/files/client';
+import { getFile, signDownloadUrl, signViewUrls } from '@/lib/files/client';
+import { useMarqueeSelection } from './useMarqueeSelection';
 import FilesTabs from './components/FilesTabs';
 import FilePreviewModal from './components/FilePreviewModal';
 import LibraryFilterBar from './library/LibraryFilterBar';
@@ -56,6 +57,8 @@ import LibraryResults from './library/LibraryResults';
 import LibraryViewsRail from './library/LibraryViewsRail';
 import LibraryDetailPanel from './library/LibraryDetailPanel';
 import SaveViewModal from './library/SaveViewModal';
+import LibraryBulkBar from './library/LibraryBulkBar';
+import BulkEditModal from './library/BulkEditModal';
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -272,6 +275,79 @@ export default function FilesLibraryPage() {
     }
   }, [deleteTarget, loadViews, view, navigate]);
 
+  // ── Multi-select ────────────────────────────────────────────────────────
+  // Page-scoped by design: `rows` is one page of a server-side query, so
+  // "select all" can only ever mean "all 60 on screen". A cross-page selection
+  // would be a set of ids the user cannot see and cannot verify before acting
+  // on — that is a different feature (select-the-whole-query) and it needs its
+  // own confirmation, not a silent extension of this one.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  // A page change or a new query invalidates the selection: keeping ids from a
+  // slice that is no longer on screen means a bulk action hits files the user
+  // can no longer see.
+  useEffect(() => { setSelectedIds(new Set()); }, [rows]);
+
+  const toggleSelected = useCallback((f: BusinessFileRow, additive: boolean) => {
+    setSelectedIds((cur) => {
+      if (!additive) return new Set([f.id]);
+      const next = new Set(cur);
+      if (next.has(f.id)) next.delete(f.id); else next.add(f.id);
+      return next;
+    });
+  }, []);
+
+  const { marquee, onGridMouseDown } = useMarqueeSelection<Set<string>>({
+    gridRef,
+    captureBase: () => new Set(selectedIds),
+    applyHits: (hits, mode, base) => {
+      const ids = hits.map((h) => h.id);
+      if (mode === 'replace') { setSelectedIds(new Set(ids)); return; }
+      const next = new Set(base);
+      if (mode === 'add') ids.forEach((id) => next.add(id));
+      else ids.forEach((id) => next.has(id) ? next.delete(id) : next.add(id));
+      setSelectedIds(next);
+    },
+    onBackgroundClick: () => setSelectedIds(new Set()),
+    clearSelection: () => setSelectedIds(new Set()),
+    disabled: bulkBusy,
+  });
+
+  // Esc clears, Ctrl/Cmd+A selects the page. Both skip while typing, or the
+  // filter box loses its own select-all.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (e.key === 'Escape') { setSelectedIds(new Set()); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && rows.length > 0) {
+        e.preventDefault();
+        setSelectedIds(new Set(rows.map((r) => r.id)));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [rows]);
+
+  const onBulkDownload = useCallback(async () => {
+    setBulkBusy(true);
+    try {
+      // Sequential, and each download is its own signed request: the browser
+      // drops concurrent navigations to blob URLs, and a burst of parallel
+      // sign calls is exactly the pattern the compress poller was rewritten to
+      // avoid.
+      for (const id of selectedIds) {
+        try {
+          const { url } = await signDownloadUrl(id);
+          window.open(url, '_blank', 'noopener');
+        } catch { /* signDownloadUrl toasted; keep going for the rest */ }
+      }
+    } finally { setBulkBusy(false); }
+  }, [selectedIds]);
+
   // ── Detail panel + full preview ─────────────────────────────────────────
   const [selected, setSelected] = useState<BusinessFileRow | null>(null);
   const [previewRow, setPreviewRow] = useState<FileRow | null>(null);
@@ -456,7 +532,12 @@ export default function FilesLibraryPage() {
                     grouping={grouping}
                     layout={layout}
                     selectedId={selected?.id ?? null}
+                    selectedIds={selectedIds}
                     onOpen={setSelected}
+                    onToggle={toggleSelected}
+                    gridRef={gridRef}
+                    onGridMouseDown={onGridMouseDown}
+                    marquee={marquee}
                     onDrillDown={onDrillDown}
                     page={page}
                     pageSize={LIBRARY_PAGE_SIZE}
@@ -480,6 +561,22 @@ export default function FilesLibraryPage() {
           </div>
         </div>
       </div>
+
+      <LibraryBulkBar
+        count={selectedIds.size}
+        busy={bulkBusy}
+        onEdit={() => setBulkEditOpen(true)}
+        onDownload={() => void onBulkDownload()}
+        onClear={() => setSelectedIds(new Set())}
+      />
+
+      <BulkEditModal
+        open={bulkEditOpen}
+        fileIds={[...selectedIds]}
+        types={types}
+        onClose={() => setBulkEditOpen(false)}
+        onApplied={() => { setReloadKey((k) => k + 1); setSelectedIds(new Set()); }}
+      />
 
       <SaveViewModal
         open={saveOpen}
