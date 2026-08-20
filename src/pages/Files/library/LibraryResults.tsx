@@ -157,10 +157,17 @@ export default function LibraryResults({
       // last row; padding only grows the scroll area, it does not move tiles.
       className={`space-y-6 relative select-none ${selectedIds.size > 0 ? 'pb-24' : ''}`}
     >
-      {marquee && (
+      {/* The >2px guard stops a zero-size box flashing on the frame the drag
+          crosses the threshold. */}
+      {marquee && (marquee.w > 2 || marquee.h > 2) && (
         <div
           aria-hidden
-          className="absolute z-20 pointer-events-none rounded-sm border border-copper/60 bg-copper/10"
+          // !mt-0 is load-bearing. This container is `space-y-6`, which injects
+          // margin-top onto every non-first child — and as a later child the
+          // overlay would inherit 24px and render BELOW where `top: marquee.y`
+          // puts it, so the visible box would disagree with the hit-test by a
+          // row. Carried over from FilesPage, which learned it the hard way.
+          className="absolute z-20 pointer-events-none rounded-sm border border-copper/60 bg-copper/10 !mt-0"
           style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
         />
       )}

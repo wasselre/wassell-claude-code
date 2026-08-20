@@ -38,6 +38,7 @@ import CreateFolderModal from './components/CreateFolderModal';
 import BulkActionBar from './components/BulkActionBar';
 import BulkMoveModal from './components/BulkMoveModal';
 import { clickMode, useFilesSelection, type SelectableItem } from './useFilesSelection';
+import { useMarqueeSelection } from './useMarqueeSelection';
 
 type View = 'mine' | 'shared' | 'folder';
 
@@ -152,146 +153,50 @@ export default function FilesPage({ forceShared = false }: Props) {
   }, [view, currentFolderId]);
 
   // ─── Marquee (rubber-band) selection — Google Drive style ───────────
-  // Drag-threshold model: mousedown anywhere in the grid (including on top
-  // of a card) starts TRACKING. If the cursor moves more than DRAG_THRESHOLD
-  // pixels before mouseup we promote to a marquee originating at the mousedown
-  // point. Otherwise it's a normal click and the card's onClick runs.
-  // This fixes the previous "can only start from above a card" + "must drag
-  // to the far edge" issues — now any mousedown + drag in the grid area
-  // starts a real rectangle, with cards-as-target supported.
+  //
+  // The implementation moved to useMarqueeSelection so the Library shares the
+  // EXACT behaviour rather than a second copy of it. Everything subtle about it
+  // — the drag-vs-click threshold, grid-relative coordinates, the edge
+  // auto-scroll rAF loop, the post-drag click suppressor — now lives in one
+  // place and is fixed in one place.
+  //
+  // This page keeps folders and files in two separate sets so bulk actions can
+  // address them independently, and the hook does not care: it captures an
+  // opaque `base` at mousedown and hands it straight back, so the pair survives
+  // a drag without the hook ever knowing what a folder is.
   const gridRef = useRef<HTMLDivElement | null>(null);
-  const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
-  /** Latest selection from the hook — held in a ref so the window-level
-   *  mousemove/mouseup handlers (attached once) read fresh helpers without
-   *  re-attaching on every render. */
+  /** Latest selection helpers, in a ref so the hook's callbacks always read
+   *  fresh ones without the hook re-subscribing on every render. */
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
 
-  /** Mousedown bookkeeping. dragStartRef is non-null while the user holds
-   *  the button down; draggingRef flips true once we cross the threshold.
-   *  justFinishedDragRef stays true for a tick after mouseup so the upcoming
-   *  click event on the card under the cursor is suppressed (otherwise a
-   *  drag that ends on a card would open its preview). */
-  const dragStartRef = useRef<{
-    /** Anchor stored in GRID-RELATIVE coords (clientX/Y minus the grid's
-     *  viewport top-left), NOT viewport coords. Grid-relative space scrolls
-     *  with the content, so the anchor stays pinned to the tile the user
-     *  started on even after the page auto-scrolls far down. Storing it in
-     *  viewport space was what made the box drift onto the wrong tiles when
-     *  the page scrolled mid-drag. */
-    gx: number;
-    gy: number;
-    mode: 'replace' | 'add' | 'toggle';
-    /** True when the mousedown landed on a card (vs blank grid area). Used
-     *  to decide click-vs-clear behavior on a no-drag mouseup. */
-    onCard: boolean;
-    baseFolders: Set<string>;
-    baseFiles: Set<string>;
-  } | null>(null);
-  const draggingRef = useRef(false);
-  const justFinishedDragRef = useRef(false);
-  const DRAG_THRESHOLD = 5; // px — typical drag-vs-click threshold
-
-  /** Latest pointer position in VIEWPORT coords, updated on every mousemove.
-   *  The auto-scroll rAF loop and the scroll listener re-run the marquee math
-   *  from this when there's no fresh mouse event (mouse held still at the edge
-   *  while the page keeps scrolling). */
-  const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  /** Auto-scroll state: current velocity (px/frame, signed) + the live rAF id.
-   *  vel !== 0 means the cursor is in a top/bottom edge band and the page
-   *  should keep scrolling even if the mouse stops moving. */
-  const autoScrollRef = useRef<{ vel: number; raf: number | null }>({ vel: 0, raf: null });
-  const EDGE_BAND = 64; // px from the top/bottom viewport edge that triggers auto-scroll
-  const MAX_SCROLL_SPEED = 20; // px/frame at the very edge (ramps with proximity)
-
-  /** Hit-test every [data-selectable-id] under the grid container against the
-   *  current rectangle. `rect` is in GRID-RELATIVE coords; element bboxes
-   *  (viewport, from getBoundingClientRect) are converted to the same space
-   *  using the grid's current box, so the comparison is consistent regardless
-   *  of how far the page has scrolled. Returns the items whose bbox intersects. */
-  const hitTest = useCallback((rect: { x: number; y: number; w: number; h: number }): SelectableItem[] => {
-    const root = gridRef.current;
-    if (!root) return [];
-    const gridBox = root.getBoundingClientRect();
-    const nodes = root.querySelectorAll<HTMLElement>('[data-selectable-id]');
-    const hits: SelectableItem[] = [];
-    const rL = rect.x;
-    const rT = rect.y;
-    const rR = rect.x + rect.w;
-    const rB = rect.y + rect.h;
-    nodes.forEach((el) => {
-      const b = el.getBoundingClientRect();
-      const left = b.left - gridBox.left;
-      const right = b.right - gridBox.left;
-      const top = b.top - gridBox.top;
-      const bottom = b.bottom - gridBox.top;
-      const intersects = !(right < rL || left > rR || bottom < rT || top > rB);
-      if (intersects) {
-        const id = el.getAttribute('data-selectable-id');
-        const kind = el.getAttribute('data-selectable-kind') as 'folder' | 'file' | null;
-        if (id && (kind === 'folder' || kind === 'file')) {
-          hits.push({ kind, id });
-        }
-      }
-    });
-    return hits;
-  }, []);
-
-  const onGridMouseDown = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return; // left button only
-    const target = e.target as HTMLElement | null;
-    if (!target) return;
-    // Skip if mousedown is on an interactive element (button, link, input,
-    // role=button, or an explicit opt-out). Cards ARE allowed — the threshold
-    // model differentiates click-on-card from drag-from-card.
-    if (target.closest('button, a, input, textarea, [role="button"], [data-no-marquee]')) {
-      return;
-    }
-    const mode: 'replace' | 'add' | 'toggle' = e.shiftKey
-      ? 'add'
-      : e.ctrlKey || e.metaKey
-      ? 'toggle'
-      : 'replace';
-    const cur = selectionRef.current;
-    const onCard = !!target.closest('[data-selectable-id]');
-    // Anchor in grid-relative coords so it survives auto-scroll (see ref docs).
-    const gridBox = gridRef.current?.getBoundingClientRect();
-    dragStartRef.current = {
-      gx: e.clientX - (gridBox?.left ?? 0),
-      gy: e.clientY - (gridBox?.top ?? 0),
-      mode,
-      onCard,
-      baseFolders: new Set(cur.selectedFolderIds),
-      baseFiles: new Set(cur.selectedFileIds),
-    };
-    lastPointerRef.current = { x: e.clientX, y: e.clientY };
-    draggingRef.current = false;
-    // Don't pre-clear or pre-render the marquee — the click might never
-    // become a drag. We wait until the threshold is crossed.
-  }, []);
-
-  // Attach window-level mousemove / mouseup ONCE — refs let us read latest
-  // selection methods without re-attaching on every render (which the old
-  // [marquee, selection] deps did, churning each frame).
-  useEffect(() => {
-    const applyMarqueeSelection = (
-      hits: SelectableItem[],
-      mode: 'replace' | 'add' | 'toggle',
-      base: { folders: Set<string>; files: Set<string> },
-    ) => {
+  const { marquee, onGridMouseDown, swallowClickAfterDrag } = useMarqueeSelection<{
+    folders: Set<string>;
+    files: Set<string>;
+  }>({
+    gridRef,
+    captureBase: () => ({
+      folders: new Set(selectionRef.current.selectedFolderIds),
+      files: new Set(selectionRef.current.selectedFileIds),
+    }),
+    applyHits: (hits, mode, base) => {
       const sel = selectionRef.current;
+      // The hook is generic over `kind: string`; this page only has two.
+      const items = hits.filter(
+        (h): h is SelectableItem => h.kind === 'folder' || h.kind === 'file',
+      );
       if (mode === 'replace') {
-        sel.replace(hits);
+        sel.replace(items);
         return;
       }
       const fo = new Set(base.folders);
       const fi = new Set(base.files);
       if (mode === 'add') {
-        hits.forEach((h) => (h.kind === 'folder' ? fo.add(h.id) : fi.add(h.id)));
+        items.forEach((h) => (h.kind === 'folder' ? fo : fi).add(h.id));
       } else {
         // toggle — symmetric difference of base and hits
-        hits.forEach((h) => {
+        items.forEach((h) => {
           const set = h.kind === 'folder' ? fo : fi;
           if (set.has(h.id)) set.delete(h.id);
           else set.add(h.id);
@@ -301,146 +206,25 @@ export default function FilesPage({ forceShared = false }: Props) {
         ...Array.from(fo).map((id) => ({ kind: 'folder' as const, id })),
         ...Array.from(fi).map((id) => ({ kind: 'file' as const, id })),
       ]);
-    };
-
-    /** Build the marquee rect from a viewport pointer + the current scroll
-     *  position, then update the overlay + selection. Works in grid-relative
-     *  space (see hitTest / dragStartRef docs) so it stays correct no matter
-     *  how far the page has scrolled. Called from mousemove, the auto-scroll
-     *  rAF tick, and the scroll listener. */
-    const computeAndApply = (clientX: number, clientY: number) => {
-      const start = dragStartRef.current;
-      if (!start) return;
-      const root = gridRef.current;
-      if (!root) return;
-      const gridBox = root.getBoundingClientRect();
-      const curGX = clientX - gridBox.left;
-      const curGY = clientY - gridBox.top;
-      const dx = curGX - start.gx;
-      const dy = curGY - start.gy;
-      if (!draggingRef.current) {
-        // Below threshold → still pending click vs drag.
-        if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
-        // First crossing — commit to a drag and clear if replace mode.
-        draggingRef.current = true;
-        if (start.mode === 'replace') {
-          selectionRef.current.clear();
-        }
-      }
-      const rect = {
-        x: Math.min(start.gx, curGX),
-        y: Math.min(start.gy, curGY),
-        w: Math.abs(dx),
-        h: Math.abs(dy),
-      };
-      setMarquee(rect);
-      const hits = hitTest(rect);
-      applyMarqueeSelection(hits, start.mode, {
-        folders: start.baseFolders,
-        files: start.baseFiles,
-      });
-    };
-
-    // ── Edge auto-scroll ────────────────────────────────────────────────
-    // While dragging, if the cursor enters the top/bottom edge band the page
-    // scrolls on a rAF loop so the marquee can reach content past the fold —
-    // and keeps scrolling even when the mouse is held still at the edge.
-    const tick = () => {
-      const st = autoScrollRef.current;
-      if (st.vel === 0 || !dragStartRef.current) {
-        st.raf = null;
-        return;
-      }
-      window.scrollBy(0, st.vel);
-      const p = lastPointerRef.current;
-      computeAndApply(p.x, p.y); // re-evaluate against the new scroll position
-      st.raf = requestAnimationFrame(tick);
-    };
-    const updateAutoScroll = (clientY: number) => {
-      const vh = window.innerHeight;
-      let vel = 0;
-      if (clientY > vh - EDGE_BAND) {
-        const intensity = Math.min(1, (clientY - (vh - EDGE_BAND)) / EDGE_BAND);
-        vel = Math.max(1, Math.round(intensity * MAX_SCROLL_SPEED));
-      } else if (clientY < EDGE_BAND) {
-        const intensity = Math.min(1, (EDGE_BAND - clientY) / EDGE_BAND);
-        vel = -Math.max(1, Math.round(intensity * MAX_SCROLL_SPEED));
-      }
-      autoScrollRef.current.vel = vel;
-      if (vel !== 0 && autoScrollRef.current.raf == null) {
-        autoScrollRef.current.raf = requestAnimationFrame(tick);
-      }
-    };
-    const stopAutoScroll = () => {
-      autoScrollRef.current.vel = 0;
-      if (autoScrollRef.current.raf != null) {
-        cancelAnimationFrame(autoScrollRef.current.raf);
-        autoScrollRef.current.raf = null;
-      }
-    };
-
-    const onMove = (e: MouseEvent) => {
-      if (!dragStartRef.current) return;
-      lastPointerRef.current = { x: e.clientX, y: e.clientY };
-      computeAndApply(e.clientX, e.clientY);
-      // Only arm auto-scroll once we're actually dragging (past threshold), so
-      // a click that happens to land in the edge band doesn't scroll the page.
-      if (draggingRef.current) updateAutoScroll(e.clientY);
-    };
-
-    // Manual wheel/trackpad scroll mid-drag (cursor not in an edge band, so
-    // auto-scroll isn't running): recompute from the last pointer so the box
-    // still tracks the content under the cursor.
-    const onScroll = () => {
-      if (!dragStartRef.current || !draggingRef.current) return;
-      if (autoScrollRef.current.vel !== 0) return; // tick already handles it
-      const p = lastPointerRef.current;
-      computeAndApply(p.x, p.y);
-    };
-
-    const onUp = () => {
-      const wasDragging = draggingRef.current;
-      const start = dragStartRef.current;
-      dragStartRef.current = null;
-      draggingRef.current = false;
-      stopAutoScroll();
-      setMarquee(null);
-      if (wasDragging) {
-        // Suppress the upcoming click on whatever card we dragged off of,
-        // so the drag doesn't double as a preview-open. 150ms is enough
-        // for the synthetic click to dispatch and be swallowed.
-        justFinishedDragRef.current = true;
-        window.setTimeout(() => {
-          justFinishedDragRef.current = false;
-        }, 150);
-      } else if (start && !start.onCard) {
-        // Mousedown on blank grid area, no drag → "click on background",
-        // clear the selection. (If mousedown was ON a card we DON'T clear
-        // here — the card's onClick fires next and handles selection.)
-        const sel = selectionRef.current;
-        if (sel.totalSelected > 0) sel.clear();
-      }
-    };
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      window.removeEventListener('scroll', onScroll);
-      stopAutoScroll();
-    };
-  }, [hitTest]);
+    },
+    // Mousedown on blank grid area with no drag = "click on background".
+    // (A mousedown ON a card does NOT clear here — the card's own onClick
+    // fires next and owns that decision.)
+    onBackgroundClick: () => {
+      const sel = selectionRef.current;
+      if (sel.totalSelected > 0) sel.clear();
+    },
+    clearSelection: () => selectionRef.current.clear(),
+  });
 
   /** Wrap selection.onItemClick so a card's click that came from the END of
    *  a drag (not a real click) gets suppressed before opening preview. */
   const onCardClick = useCallback(
     (item: SelectableItem, e: ReactMouseEvent): boolean => {
-      if (justFinishedDragRef.current) return true; // consumed → suppress
+      if (swallowClickAfterDrag()) return true; // click came from the end of a drag
       return selection.onItemClick(item, clickMode(e));
     },
-    [selection],
+    [selection, swallowClickAfterDrag],
   );
 
   // Load contents whenever the view or folder id changes.
