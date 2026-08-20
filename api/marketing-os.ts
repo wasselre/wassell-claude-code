@@ -35,6 +35,7 @@ import {
   BundleApiError, BUNDLE_PLATFORM_TYPE,
 } from './_lib/marketing/bundleSocial.js';
 import { pullPublicationMetrics, runBundleMetricsSync } from './_lib/marketing/bundleMetrics.js';
+import { runBundleAccountMetricsSync } from './_lib/marketing/bundleAccountMetrics.js';
 
 export const config = { runtime: 'edge' };
 
@@ -368,7 +369,10 @@ const MOS_ROLE_KEYS = ['ceo', 'marketing_manager', 'ops_supervisor', 'writer', '
 /** Every surface the shell can route to, in the matrix's stable order. */
 const SURFACES = [
   'overview', 'mywork', 'team', 'content', 'calendar', 'library',
-  'shoots', 'goals', 'campaigns', 'numbers', 'settings', 'roles',
+  'shoots', 'goals', 'campaigns', 'numbers',
+  // Organic cockpit: Platform Pulse ('organic') + Publishing Board ('publishing').
+  'organic', 'publishing',
+  'settings', 'roles',
 ] as const;
 type SurfaceKey = (typeof SURFACES)[number];
 type SurfaceLevel = 'full' | 'read' | 'hidden';
@@ -1902,6 +1906,36 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ publications: pubs.data ?? [], accounts: accounts.data ?? [] });
       }
 
+      /* -------------------------------------------------------- */
+      /* Platform Pulse cockpit — per-account growth headline +    */
+      /* the growth series + recent published posts, in one trip.  */
+      /* Read-only; RLS ('read') on the underlying view/table gates */
+      /* visibility exactly like publication_list.                 */
+      /* -------------------------------------------------------- */
+      case 'organic_pulse': {
+        const trendSince = new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10);
+        const postCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
+        const [pulse, trends, pubs] = await Promise.all([
+          sb.from('mos_account_pulse_v').select('*'),
+          sb.from('mos_account_metric_snapshots')
+            .select('account_id, captured_on, followers, reach, views, post_count')
+            .gte('captured_on', trendSince)
+            .order('captured_on', { ascending: true }),
+          sb.from('mos_publication_v').select('*')
+            .eq('status', 'published')
+            .gte('published_at', postCutoff)
+            .order('published_at', { ascending: false })
+            .limit(200),
+        ]);
+        const f = dbFail(pulse.error) ?? dbFail(trends.error) ?? dbFail(pubs.error);
+        if (f) return f;
+        return jsonOk({
+          pulse: pulse.data ?? [],
+          trends: trends.data ?? [],
+          publications: pubs.data ?? [],
+        });
+      }
+
       case 'publication_save': {
         const contentId = str(body.content_id);
         if (!contentId) return jsonError(400, 'content_id is required');
@@ -2237,6 +2271,21 @@ export default async function handler(req: Request): Promise<Response> {
         const gate = await requireCap(sb, 'enter_metrics');
         if (gate) return gate;
         const summary = await runBundleMetricsSync(sb);
+        return jsonOk({ summary });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Snapshot profile numbers (followers/reach/…) for every    */
+      /* connected account — the Platform Pulse "refresh" button    */
+      /* (same engine the daily cron runs). Fills the growth history */
+      /* bundle.social deletes after 30 days.                       */
+      /* -------------------------------------------------------- */
+      case 'account_metrics_pull_all': {
+        const cfg = loadBundleConfig();
+        if (!cfg) return jsonError(503, 'Organic posting is not configured.');
+        const gate = await requireCap(sb, 'enter_metrics');
+        if (gate) return gate;
+        const summary = await runBundleAccountMetricsSync(sb);
         return jsonOk({ summary });
       }
 

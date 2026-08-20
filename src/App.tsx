@@ -93,6 +93,8 @@ const MarketingUploadPage = lazy(() => import('@/pages/Marketing/UploadPage'));
 const MarketingLibraryPage = lazy(() => import('@/pages/Marketing/LibraryPage'));
 const MarketingShootsPage = lazy(() => import('@/pages/Marketing/ShootsPage'));
 const MarketingNumbersPage = lazy(() => import('@/pages/Marketing/NumbersPage'));
+const MarketingOrganicPulsePage = lazy(() => import('@/pages/Marketing/OrganicPulsePage'));
+const MarketingPublishingBoardPage = lazy(() => import('@/pages/Marketing/PublishingBoardPage'));
 import MarketingSettingsPage, { SettingsSectionPage } from '@/pages/Marketing/SettingsPage';
 const ProjectFinderPage = lazy(() => import('@/pages/ProjectFinder/ProjectFinderPage'));
 const FinancingPage = lazy(() => import('@/pages/Financing/FinancingPage'));
@@ -494,6 +496,8 @@ export default function App() {
               from ever being read as a campaign id. */}
           <Route path="/m/campaigns/:campaignId/exec/:executionId" element={<MarketingExecutionDetailPage />} />
           <Route path="/m/numbers" element={<MarketingNumbersPage />} />
+          <Route path="/m/organic" element={<MarketingOrganicPulsePage />} />
+          <Route path="/m/publishing" element={<MarketingPublishingBoardPage />} />
           <Route path="/m/settings" element={<MarketingSettingsPage />} />
           <Route path="/m/settings/:section" element={<SettingsSectionPage />} />
           {/* A wrong /m/* path lands on the workspace's own front door rather

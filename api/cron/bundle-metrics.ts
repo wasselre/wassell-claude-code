@@ -19,6 +19,7 @@
  */
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { runBundleMetricsSync } from '../_lib/marketing/bundleMetrics.js';
+import { runBundleAccountMetricsSync } from '../_lib/marketing/bundleAccountMetrics.js';
 
 export const config = { runtime: 'edge' };
 
@@ -40,8 +41,15 @@ export default async function handler(req: Request): Promise<Response> {
   const sent = bearer || url.searchParams.get('secret') || '';
   if (sent !== expected) return json({ error: 'unauthorized' }, 401);
 
-  const result = await runBundleMetricsSync(getServiceSupabase());
+  const sb = getServiceSupabase();
+  // Two independent pulls: per-POST numbers (Numbers screen) and per-ACCOUNT
+  // profile numbers (Platform Pulse growth history). Settled separately so one
+  // failing never blocks the other; both are self-disabling when bundle is unset.
+  const [posts, accounts] = await Promise.all([
+    runBundleMetricsSync(sb),
+    runBundleAccountMetricsSync(sb),
+  ]);
   // Always 200 — a bundle hiccup must not make Vercel mark the cron failed; the
   // structured result carries the counts/skip for inspection.
-  return json({ ...result, duration_ms: Date.now() - startedAt }, 200);
+  return json({ ...posts, accounts, duration_ms: Date.now() - startedAt }, 200);
 }

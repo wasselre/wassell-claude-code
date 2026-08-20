@@ -100,6 +100,15 @@ export const IconGoals = (p: P) => (
   </svg>
 );
 
+/** Platform Pulse — a rising growth line with an end point (audience growth). */
+export const IconPulse = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M3 17l5-6 3 3 5-8" />
+    <circle cx="19" cy="6" r="1.6" fill="currentColor" stroke="none" />
+    <path d="M3 21h18" />
+  </svg>
+);
+
 export const IconRoles = (p: P) => (
   <svg {...base} {...p}>
     <path d="M12 3l7 3v5.5c0 4.2-2.9 7.7-7 8.5-4.1-.8-7-4.3-7-8.5V6l7-3z" />

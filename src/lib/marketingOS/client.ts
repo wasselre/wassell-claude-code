@@ -29,7 +29,10 @@ export type MosPathRole = 'ceo' | 'marketing_manager' | 'ops_supervisor' | 'writ
 /** Every surface the shell can route to. Absence from surface_access = hidden. */
 export type SurfaceKey =
   | 'overview' | 'mywork' | 'team' | 'content' | 'calendar' | 'library'
-  | 'shoots' | 'goals' | 'campaigns' | 'numbers' | 'settings' | 'roles';
+  | 'shoots' | 'goals' | 'campaigns' | 'numbers' | 'settings' | 'roles'
+  // Organic cockpit: 'organic' = Platform Pulse dashboard, 'publishing' = the
+  // cross-platform Publishing Board.
+  | 'organic' | 'publishing';
 
 export type SurfaceLevel = 'full' | 'read' | 'hidden';
 
@@ -627,6 +630,71 @@ export const pullMetrics = (publicationId: string) =>
 /** Pull numbers for every published bundle.social post in the 30-day window. */
 export const pullAllMetrics = () =>
   call<{ summary: Record<string, number | string | boolean> }>('metrics_pull_all', {});
+
+/* ------------------------------------------------------------------ */
+/* Organic cockpit — Platform Pulse (account growth) + Publishing Board */
+/* ------------------------------------------------------------------ */
+
+/** One connected account's headline growth numbers (from mos_account_pulse_v). */
+export interface MosAccountPulse {
+  account_id: string;
+  platform: string;
+  handle: string | null;
+  label_ar: string;
+  label_en: string;
+  is_connected: boolean;
+  can_read_metrics: boolean;
+  bundle_account_id: string | null;
+  latest_captured_at: string | null;
+  followers: number | null;
+  following: number | null;
+  post_count: number | null;
+  reach_30d: number | null;
+  impressions_30d: number | null;
+  views_30d: number | null;
+  followers_delta_7d: number | null;
+  followers_delta_30d: number | null;
+  posts_7d: number;
+  posts_30d: number;
+  engagement_30d: number;
+}
+
+/** One dated point in an account's growth series (from mos_account_metric_snapshots). */
+export interface MosAccountTrendPoint {
+  account_id: string;
+  captured_on: string;
+  followers: number | null;
+  reach: number | null;
+  views: number | null;
+  post_count: number | null;
+}
+
+/**
+ * The Platform Pulse cockpit in one round trip: per-account headline numbers,
+ * the last ~60 days of growth points, and recent published posts (for the
+ * best-posts panel). Empty until the first daily snapshot / refresh lands.
+ */
+export const fetchOrganicPulse = () =>
+  call<{
+    pulse: MosAccountPulse[];
+    trends: MosAccountTrendPoint[];
+    publications: MosPublication[];
+  }>('organic_pulse', {});
+
+/**
+ * Snapshot profile numbers (followers/reach/…) for every connected account NOW —
+ * the Pulse "refresh" button. Same engine the daily cron runs; fills the growth
+ * history bundle.social deletes after 30 days.
+ */
+export const pullAccountMetrics = () =>
+  call<{ summary: Record<string, number | string | boolean> }>('account_metrics_pull_all', {});
+
+/**
+ * Every publication across all content, newest schedule first — the Publishing
+ * Board's cross-platform queue. Reuses `publication_list` with no content id.
+ */
+export const fetchAllPublications = (limit = 500) =>
+  call<{ publications: MosPublication[]; accounts: MosAccount[] }>('publication_list', { limit });
 
 export const recordMetrics = (
   publicationId: string,

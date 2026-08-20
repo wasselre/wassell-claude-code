@@ -296,6 +296,105 @@ export function analyticsToSnapshot(item: BundleAnalyticsItem, platformType: str
 }
 
 /* ------------------------------------------------------------------ */
+/* analytics — account (profile) level metrics                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One profile-level analytics reading for a connected account. bundle unifies
+ * the names across platforms; a field is 0 (not null) when the platform API
+ * doesn't provide it. `followers` is the headline growth signal — bundle keeps
+ * only 30 days of these, which is exactly why we snapshot them daily on our end.
+ */
+export interface BundleAccountAnalyticsItem {
+  impressions: number | null;
+  impressionsUnique: number | null;
+  views: number | null;
+  viewsUnique: number | null;
+  likes: number | null;
+  comments: number | null;
+  postCount: number | null;
+  followers: number | null;
+  following: number | null;
+  forced?: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface BundleAccountAnalytics {
+  socialAccount?: { id?: string; type?: string; username?: string | null } | null;
+  items: BundleAccountAnalyticsItem[];
+}
+
+/**
+ * Parsed, normalized profile metrics for ONE connected account. The READ
+ * endpoint (not force-refresh), keyed by teamId + platformType — so it works
+ * regardless of whether our mos_platform_accounts row has been platform_synced
+ * yet. NOT subject to the teams×5/day force limit; bundle auto-refreshes ~24h.
+ */
+export const getSocialAccountAnalytics = (
+  cfg: BundleConfig, platformType: string,
+): Promise<BundleAccountAnalytics> =>
+  bundleFetch<BundleAccountAnalytics>(
+    cfg, 'GET',
+    `/analytics/social-account?teamId=${encodeURIComponent(cfg.teamId)}&platformType=${encodeURIComponent(platformType)}`,
+  );
+
+/** Force an immediate account-analytics refresh (teams×5/day — use sparingly). */
+export const forceSocialAccountAnalytics = (
+  cfg: BundleConfig, platformType: string,
+): Promise<unknown> =>
+  bundleFetch<unknown>(cfg, 'POST', '/analytics/social-account/force', {
+    teamId: cfg.teamId, platformType,
+  });
+
+/** The most recent reading in an account-analytics response (by updated/created). */
+export function latestAccountAnalytics(a: BundleAccountAnalytics): BundleAccountAnalyticsItem | null {
+  const items = a.items ?? [];
+  if (items.length === 0) return null;
+  return [...items].sort((x, y) => {
+    const tx = Date.parse(x.updatedAt ?? x.createdAt ?? '') || 0;
+    const ty = Date.parse(y.updatedAt ?? y.createdAt ?? '') || 0;
+    return ty - tx;
+  })[0] ?? null;
+}
+
+/**
+ * Map a bundle account reading onto our account-snapshot columns. `reach` is
+ * bundle's impressionsUnique (unique accounts reached). Platform-only fields
+ * ride in `extra`. Integers are floored; a missing metric stays null (not 0) so
+ * the growth chart can tell "no data" from "genuinely zero".
+ */
+export function accountAnalyticsToSnapshot(item: BundleAccountAnalyticsItem, platformType: string): {
+  followers: number | null;
+  following: number | null;
+  post_count: number | null;
+  impressions: number | null;
+  reach: number | null;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  extra: Record<string, unknown>;
+} {
+  const n = (v: number | null | undefined): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.floor(v) : null;
+  return {
+    followers: n(item.followers),
+    following: n(item.following),
+    post_count: n(item.postCount),
+    impressions: n(item.impressions),
+    reach: n(item.impressionsUnique),
+    views: n(item.views),
+    likes: n(item.likes),
+    comments: n(item.comments),
+    extra: {
+      source: 'bundle.social',
+      platform: platformType,
+      views_unique: n(item.viewsUnique),
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* per-platform post `data` builder                                    */
 /* ------------------------------------------------------------------ */
 

@@ -38,8 +38,8 @@ import {
 import { initial, num } from './lib/format';
 import {
   IconCalendar, IconCampaigns, IconContent, IconGoals, IconLibrary, IconMenu,
-  IconMetrics, IconMyWork, IconOverview, IconSearch, IconSettings, IconShoot,
-  IconTeam,
+  IconMetrics, IconMyWork, IconOverview, IconPulse, IconSearch, IconSend,
+  IconSettings, IconShoot, IconTeam,
 } from './components/icons';
 import NotificationBell from './components/NotificationBell';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
@@ -153,11 +153,18 @@ const NAV: NavGroup[] = [
     ],
   },
   {
-    ar: 'الإنفاق', en: 'Spend',
+    ar: 'المدفوعة', en: 'Paid',
     items: [
       { to: '/m/goals', ar: 'الأهداف', en: 'Goals', Icon: IconGoals, surface: 'goals' },
       { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns, badge: 'campaigns', surface: 'campaigns' },
       { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', Icon: IconMetrics, surface: 'numbers' },
+    ],
+  },
+  {
+    ar: 'العضوية', en: 'Organic',
+    items: [
+      { to: '/m/organic', ar: 'نبض المنصات', en: 'Platform pulse', Icon: IconPulse, surface: 'organic' },
+      { to: '/m/publishing', ar: 'لوحة النشر', en: 'Publishing board', Icon: IconSend, surface: 'publishing' },
     ],
   },
   {

@@ -41,11 +41,18 @@ const SURFACE_GROUPS: Array<{ ar: string; en: string; keys: Array<{ key: Surface
     ],
   },
   {
-    ar: 'الإنفاق', en: 'Spend',
+    ar: 'المدفوعة', en: 'Paid',
     keys: [
       { key: 'goals', ar: 'الأهداف', en: 'Goals' },
       { key: 'campaigns', ar: 'الحملات', en: 'Campaigns' },
       { key: 'numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers' },
+    ],
+  },
+  {
+    ar: 'العضوية', en: 'Organic',
+    keys: [
+      { key: 'organic', ar: 'نبض المنصات', en: 'Platform pulse' },
+      { key: 'publishing', ar: 'لوحة النشر', en: 'Publishing board' },
     ],
   },
   {
