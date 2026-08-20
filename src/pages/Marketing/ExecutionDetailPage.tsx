@@ -15,9 +15,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  AD_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosCampaign, MosContentRow,
-  MosDailyEntry, MosExecution, MosTargeting, PLATFORM_LABELS,
-  deleteAd, fetchContentList, fetchExecutionDetail, mosMetaPushStructure, saveAd, saveDaily, saveExecution,
+  AD_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosAdSet, MosCampaign, MosContentRow,
+  MosExecution, MosTargeting, PLATFORM_LABELS,
+  deleteAd, fetchContentList, fetchExecutionDetail, mosMetaPushStructure, saveAd, saveExecution,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { PURPOSE_PILL_LABELS } from './CampaignDetailPage';
@@ -30,7 +30,7 @@ import { Empty, Field, LoadError, Modal, Pill, ReadField, Skeleton } from './com
 import { IconBack, IconForward, IconPlus } from './components/icons';
 import { isoDate, num, shortDate, whole } from './lib/format';
 
-type Tab = 'ads' | 'targeting' | 'lead_form' | 'daily';
+type Tab = 'ads' | 'targeting';
 
 const AD_TONE: Record<string, 'now' | 'wait' | 'idle' | 'late'> = {
   running: 'now',
@@ -56,11 +56,10 @@ export default function ExecutionDetailPage() {
   const [campaign, setCampaign] = useState<MosCampaign | null>(null);
   const [ads, setAds] = useState<MosAd[]>([]);
   const [adContent, setAdContent] = useState<MosContentRow[]>([]);
-  const [daily, setDaily] = useState<MosDailyEntry[]>([]);
-  // s40's «إدخال أرقام اليوم» deep-links straight to the daily tab.
+  const [adSets, setAdSets] = useState<MosAdSet[]>([]);
   const [tab, setTab] = useState<Tab>(() => {
     const t = searchParams.get('tab');
-    return t === 'targeting' || t === 'lead_form' || t === 'daily' ? t : 'ads';
+    return t === 'targeting' ? t : 'ads';
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +78,7 @@ export default function ExecutionDetailPage() {
       setCampaign(res.campaign);
       setAds(res.ads);
       setAdContent(res.ad_content);
-      setDaily(res.daily);
+      setAdSets(res.ad_sets);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -183,7 +182,6 @@ export default function ExecutionDetailPage() {
   // Removing an ad is a delete — its own gate, split from enter_metrics.
   const canDelete = can('delete_records');
   const targeting: MosTargeting = execution.targeting ?? {};
-  const leadFields = Array.isArray(execution.lead_form_fields) ? execution.lead_form_fields : [];
 
   // Structured platforms (meta/instagram/snapchat/tiktok) get the real
   // Ads-Manager fields; the rest keep the free-text targeting brief.
@@ -191,15 +189,16 @@ export default function ExecutionDetailPage() {
   const platformSettings = (execution.platform_settings ?? null) as PlatformSettings | null;
   const summaryParts = settingsSummary(execution.platform, platformSettings, isAr);
 
-  // The mockup's tab row carries no counts — just the four names.
   const tabs: Array<{ key: Tab; ar: string; en: string }> = [
     { key: 'ads', ar: 'الإعلانات', en: 'Ads' },
     platformSchema
       ? { key: 'targeting', ar: 'إعدادات المنصة', en: 'Platform settings' }
       : { key: 'targeting', ar: 'الاستهداف', en: 'Targeting' },
-    { key: 'lead_form', ar: 'نموذج العملاء', en: 'Lead form' },
-    { key: 'daily', ar: 'يوميًا', en: 'Daily' },
   ];
+
+  // Map ad_set_id -> name, so the ads table can show which ad set each ad is in.
+  const adSetName = (id: string | null): string | null =>
+    id ? adSets.find((s) => s.id === id)?.name ?? null : null;
 
   const purposeLabel = execution.purpose && PURPOSE_PILL_LABELS[execution.purpose]
     ? isAr ? PURPOSE_PILL_LABELS[execution.purpose]?.ar : PURPOSE_PILL_LABELS[execution.purpose]?.en
@@ -317,9 +316,13 @@ export default function ExecutionDetailPage() {
                 <div className="card-h">
                   <h4>{isAr ? 'الإعلانات في هذه الحملة الإعلانية' : 'The ads in this ad campaign'}</h4>
                   <span className="r">
-                    {isAr
-                      ? `${num(ads.length, true)} إعلانات · كل واحد سجل محتوى`
-                      : `${ads.length} ads · each one is a content record`}
+                    {adSets.length > 0
+                      ? isAr
+                        ? `${num(ads.length, true)} إعلان · ${num(adSets.length, true)} مجموعة إعلانية`
+                        : `${ads.length} ads · ${adSets.length} ad set${adSets.length === 1 ? '' : 's'}`
+                      : isAr
+                        ? `${num(ads.length, true)} إعلانات · كل واحد سجل محتوى`
+                        : `${ads.length} ads · each one is a content record`}
                   </span>
                 </div>
                 {ads.length === 0 ? (
@@ -346,6 +349,9 @@ export default function ExecutionDetailPage() {
                           <tr>
                             <th style={{ width: 62 }}>{isAr ? 'المحتوى' : 'Content'}</th>
                             <th>{isAr ? 'الإعلان' : 'Ad'}</th>
+                            {adSets.length > 0 && (
+                              <th style={{ width: 150 }}>{isAr ? 'المجموعة الإعلانية' : 'Ad set'}</th>
+                            )}
                             <th className="num" style={{ width: 84 }}>{isAr ? 'الإنفاق' : 'Spend'}</th>
                             <th className="num" style={{ width: 70 }}>{isAr ? 'النقرات' : 'Clicks'}</th>
                             <th className="num" style={{ width: 64 }}>{isAr ? 'عملاء' : 'Leads'}</th>
@@ -399,6 +405,11 @@ export default function ExecutionDetailPage() {
                                           : ad.note ?? ''}
                                   </div>
                                 </td>
+                                {adSets.length > 0 && (
+                                  <td style={{ fontSize: 12, color: 'var(--mute)' }}>
+                                    {adSetName(ad.ad_set_id) ?? '—'}
+                                  </td>
+                                )}
                                 <td className="num">{num(whole(ad.spend), isAr)}</td>
                                 <td className="num">{num(ad.clicks, isAr)}</td>
                                 <td className="num">{num(ad.leads, isAr)}</td>
@@ -590,24 +601,6 @@ export default function ExecutionDetailPage() {
               </div>
             )}
 
-            {tab === 'lead_form' && (
-              <LeadFormEditor
-                execution={execution}
-                canEdit={canEnter}
-                isAr={isAr}
-                onSaved={(fields) => setExecution({ ...execution, lead_form_fields: fields })}
-              />
-            )}
-
-            {tab === 'daily' && (
-              <DailyTab
-                execution={execution}
-                daily={daily}
-                canEdit={canEnter}
-                isAr={isAr}
-                onChange={setDaily}
-              />
-            )}
           </div>
 
           {/* The side panels from the frame — always visible on desktop. */}
@@ -662,25 +655,6 @@ export default function ExecutionDetailPage() {
                     <ReadField label={isAr ? 'الميزانية اليومية' : 'Daily budget'}>{targeting.daily_budget || '—'}</ReadField>
                   </>
                 )}
-              </div>
-            </div>
-
-            <div className="card">
-              <div className="card-h">
-                <h4>{isAr ? 'نموذج العملاء' : 'Lead form'}</h4>
-                <span className="r">
-                  {isAr ? `${num(leadFields.length, true)} حقول` : `${leadFields.length} fields`}
-                </span>
-              </div>
-              <div className="card-b" style={{ fontSize: 12, lineHeight: 1.95, color: 'var(--ink-2)' }}>
-                {leadFields.length > 0
-                  ? leadFields.join(' · ')
-                  : isAr ? 'لم تُحدَّد حقول بعد.' : 'No fields defined yet.'}
-                <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line-soft)', color: 'var(--mute)' }}>
-                  {isAr
-                    ? 'العملاء يصلون كسجلات في نظام العملاء وعليهم ختم الحملة والإعلان. هذا الختم هو ما يجعل تكلفة المؤهل قابلة للحساب أصلًا.'
-                    : 'Leads land as records in the clients system stamped with the campaign and the ad. That stamp is what makes cost-per-qualified computable at all.'}
-                </div>
               </div>
             </div>
 
@@ -1042,186 +1016,6 @@ function TargetingEditor({
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-function LeadFormEditor({
-  execution, canEdit, isAr, onSaved,
-}: {
-  execution: MosExecution;
-  canEdit: boolean;
-  isAr: boolean;
-  onSaved: (fields: string[]) => void;
-}) {
-  const addToast = useAppStore((s) => s.addToast);
-  const initial = Array.isArray(execution.lead_form_fields) ? execution.lead_form_fields : [];
-  const [text, setText] = useState(initial.join('\n'));
-  const [busy, setBusy] = useState(false);
-
-  const save = async (): Promise<void> => {
-    const fields = text.split('\n').map((l) => l.trim()).filter(Boolean);
-    setBusy(true);
-    try {
-      await saveExecution(execution.campaign_id, { id: execution.id, lead_form_fields: fields });
-      onSaved(fields);
-      addToast(isAr ? 'حُفظ نموذج العملاء.' : 'Lead form saved.', 'success');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="card">
-      <div className="card-h">
-        <h4>{isAr ? 'نموذج العملاء' : 'Lead form'}</h4>
-        <span className="r">{isAr ? 'حقل في كل سطر' : 'one field per line'}</span>
-      </div>
-      <div className="card-b" style={{ display: 'grid', gap: 12 }}>
-        <textarea
-          className="inp"
-          rows={8}
-          value={text}
-          disabled={!canEdit}
-          placeholder={isAr
-            ? 'الاسم\nالجوال\nنطاق الميزانية\nنوع الوحدة المفضّل\nالتوقيت\nالتمويل\nالموافقة'
-            : 'Name\nPhone\nBudget range\nPreferred unit type\nTiming\nFinancing\nConsent'}
-          onChange={(e) => setText(e.target.value)}
-        />
-        {canEdit && (
-          <div>
-            <button type="button" className="btn btn-p" onClick={() => void save()} disabled={busy}>
-              {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'حفظ النموذج' : 'Save form'}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* the daily tab — dated pacing entries                               */
-/* ------------------------------------------------------------------ */
-
-function DailyTab({
-  execution, daily, canEdit, isAr, onChange,
-}: {
-  execution: MosExecution;
-  daily: MosDailyEntry[];
-  canEdit: boolean;
-  isAr: boolean;
-  onChange: (rows: MosDailyEntry[]) => void;
-}) {
-  const addToast = useAppStore((s) => s.addToast);
-  const [day, setDay] = useState(isoDate(new Date().toISOString()));
-  const [spend, setSpend] = useState('');
-  const [leads, setLeads] = useState('');
-  const [qualified, setQualified] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const n = (s: string): number | null => (s.trim() === '' ? null : Number(s));
-
-  const submit = async (): Promise<void> => {
-    if (!day) return;
-    setBusy(true);
-    try {
-      const res = await saveDaily(execution.id, {
-        day,
-        spend: n(spend),
-        leads: n(leads),
-        qualified: n(qualified),
-      });
-      onChange(res.daily);
-      setSpend('');
-      setLeads('');
-      setQualified('');
-      addToast(isAr ? 'سُجِّل اليوم.' : 'Day recorded.', 'success');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      {canEdit && (
-        <div className="card">
-          <div className="card-h">
-            <h4>{isAr ? 'تسجيل يوم' : 'Record a day'}</h4>
-            <span className="r">
-              {isAr ? 'إعادة إدخال يومٍ تُصحّحه، لا تكرّره' : 're-entering a day corrects it, never duplicates it'}
-            </span>
-          </div>
-          <div className="card-b m4-daily">
-            <Field label={isAr ? 'اليوم' : 'Day'}>
-              <input type="date" className="inp ltr" value={day} onChange={(e) => setDay(e.target.value)} />
-            </Field>
-            <Field label={isAr ? 'الإنفاق' : 'Spend'}>
-              <input className="inp" inputMode="numeric" value={spend} onChange={(e) => setSpend(e.target.value)} />
-            </Field>
-            <Field label={isAr ? 'العملاء' : 'Leads'}>
-              <input className="inp" inputMode="numeric" value={leads} onChange={(e) => setLeads(e.target.value)} />
-            </Field>
-            <Field label={isAr ? 'المؤهلون' : 'Qualified'}>
-              <input className="inp" inputMode="numeric" value={qualified} onChange={(e) => setQualified(e.target.value)} />
-            </Field>
-            <div>
-              <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy}>
-                {busy ? (isAr ? 'جارٍ…' : 'Saving…') : isAr ? 'تسجيل' : 'Record'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="card">
-        <div className="card-h">
-          <h4>{isAr ? 'اليوميات' : 'The days'}</h4>
-          <span className="r">
-            {isAr ? `${num(daily.length, true)} يومًا مسجلًا` : `${daily.length} days recorded`}
-          </span>
-        </div>
-        {daily.length === 0 ? (
-          <p style={{ padding: 22, textAlign: 'center', fontSize: 12.5, color: 'var(--mute)' }}>
-            {isAr
-              ? 'لا أيام مسجلة. الإيقاع اليومي هو ما يكشف احتراق الميزانية قبل نهاية الشهر.'
-              : 'No days recorded. Daily pacing is what catches a budget burning out before month-end.'}
-          </p>
-        ) : (
-          <div className="tbl-wrap">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>{isAr ? 'اليوم' : 'Day'}</th>
-                  <th className="num">{isAr ? 'الإنفاق' : 'Spend'}</th>
-                  <th className="num">{isAr ? 'العملاء' : 'Leads'}</th>
-                  <th className="num">{isAr ? 'المؤهلون' : 'Qualified'}</th>
-                  <th className="num">{isAr ? 'تكلفة المؤهل' : 'Cost/qual.'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {daily.map((d) => (
-                  <tr key={d.id}>
-                    <td>{shortDate(d.day, isAr)}</td>
-                    <td className="num">{num(whole(d.spend), isAr)}</td>
-                    <td className="num">{num(d.leads, isAr)}</td>
-                    <td className="num">{num(d.qualified, isAr)}</td>
-                    <td className="num">
-                      {d.spend !== null && d.qualified !== null && d.qualified > 0
-                        ? num(Math.round(d.spend / d.qualified), isAr)
-                        : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
     </div>
   );
 }

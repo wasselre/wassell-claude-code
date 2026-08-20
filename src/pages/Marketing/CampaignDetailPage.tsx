@@ -223,7 +223,6 @@ export default function CampaignDetailPage() {
   const [addingContent, setAddingContent] = useState(false);
   const [linking, setLinking] = useState(false);
   const [shift, setShift] = useState<{ from: string; to: string; amount: number | null } | null>(null);
-  const [pickDaily, setPickDaily] = useState(false);
   const [busy, setBusy] = useState(false);
 
   /** The ads + daily entries live one layer down — fan out per execution. */
@@ -927,14 +926,6 @@ export default function CampaignDetailPage() {
     ? contentStats
     : contentStats.filter((s) => s.platforms.includes(platFilter));
 
-  const openDailyEntry = (): void => {
-    if (executions.length === 1 && executions[0]) {
-      navigate(`/m/campaigns/${item.id}/exec/${executions[0].id}?tab=daily`);
-      return;
-    }
-    setPickDaily(true);
-  };
-
   /* ── render ──────────────────────────────────────────────────────── */
 
   return (
@@ -1039,16 +1030,6 @@ export default function CampaignDetailPage() {
                 <button type="button" className="btn btn-d" onClick={exportCsv}>
                   {isAr ? 'تصدير' : 'Export'}
                 </button>
-                {can('enter_metrics') && (
-                  <button
-                    type="button"
-                    className="btn btn-p"
-                    disabled={executions.length === 0}
-                    onClick={openDailyEntry}
-                  >
-                    {isAr ? 'إدخال أرقام اليوم' : 'Enter today’s numbers'}
-                  </button>
-                )}
               </>
             ) : (
               <>
@@ -2361,36 +2342,6 @@ export default function CampaignDetailPage() {
         />
       )}
 
-      {pickDaily && (
-        <Modal
-          title={isAr ? 'إدخال أرقام اليوم' : 'Enter today’s numbers'}
-          sub={isAr
-            ? 'الأرقام اليومية تعيش على الحملة الإعلانية — اختر أيها تخصّه أرقام اليوم.'
-            : 'Daily numbers live on the ad campaign — pick the one today’s numbers belong to.'}
-          onClose={() => setPickDaily(false)}
-        >
-          <div className="cd-picklist">
-            {executions.map((x) => (
-              <button
-                key={x.id}
-                type="button"
-                className="cd-pickrow"
-                onClick={() => {
-                  setPickDaily(false);
-                  navigate(`/m/campaigns/${item.id}/exec/${x.id}?tab=daily`);
-                }}
-              >
-                <span className="cd-dot" style={{ background: PLATFORM_DOT[x.platform] ?? 'var(--copper)' }} />
-                <b>{pname(x.platform)}</b>
-                {x.label && <span style={{ color: 'var(--mute)' }}>{x.label}</span>}
-                <span style={{ marginInlineStart: 'auto', fontSize: 11.5, color: 'var(--mute)' }}>
-                  {num(whole(x.spend), isAr)} / {num(whole(x.budget), isAr)}
-                </span>
-              </button>
-            ))}
-          </div>
-        </Modal>
-      )}
 
       {addingContent && (
         <NewContentModal

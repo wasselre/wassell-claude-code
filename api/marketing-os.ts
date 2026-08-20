@@ -3690,14 +3690,18 @@ export default async function handler(req: Request): Promise<Response> {
         if (!exec.data) return jsonError(404, 'execution not found');
         const row = exec.data as unknown as Row;
 
-        const [campaign, ads, daily] = await Promise.all([
+        const [campaign, ads, daily, adSets] = await Promise.all([
           sb.from('mos_campaign_v').select('*').eq('id', row.campaign_id as string).maybeSingle(),
           sb.from('mos_execution_ads').select('*').eq('execution_id', id)
             .order('created_at', { ascending: true }),
           sb.from('mos_execution_daily').select('*').eq('execution_id', id)
             .order('day', { ascending: false }).limit(90),
+          // The ad-set level (synced from Meta or planned) so the execution page
+          // can group its ads by ad set instead of showing them flat.
+          sb.from('mos_ad_sets').select('*').eq('execution_id', id)
+            .is('archived_at', null).order('sort_order', { ascending: true }),
         ]);
-        const f = dbFail(campaign.error) ?? dbFail(ads.error) ?? dbFail(daily.error);
+        const f = dbFail(campaign.error) ?? dbFail(ads.error) ?? dbFail(daily.error) ?? dbFail(adSets.error);
         if (f) return f;
 
         // Each ad points at a content record — fetch the referenced rows so the
@@ -3722,6 +3726,7 @@ export default async function handler(req: Request): Promise<Response> {
           ads: ads.data ?? [],
           ad_content: adContent,
           daily: daily.data ?? [],
+          ad_sets: adSets.data ?? [],
         });
       }
 

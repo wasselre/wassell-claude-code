@@ -1321,6 +1321,16 @@ export const saveExecution = (campaignId: string, execution: Record<string, unkn
 export const deleteExecution = (campaignId: string, id: string) =>
   call<{ executions: MosExecution[] }>('execution_delete', { campaign_id: campaignId, id });
 
+/** An ad set — the middle level between an execution (= platform campaign) and
+ *  its ads. Synced from Meta (`platform_adset_id`) or planned in the tree. */
+export interface MosAdSet {
+  id: string;
+  name: string | null;
+  platform_adset_id: string | null;
+  status: string | null;
+  sort_order: number | null;
+}
+
 export const fetchExecutionDetail = (id: string) =>
   call<{
     execution: MosExecution;
@@ -1328,6 +1338,7 @@ export const fetchExecutionDetail = (id: string) =>
     ads: MosAd[];
     ad_content: MosContentRow[];
     daily: MosDailyEntry[];
+    ad_sets: MosAdSet[];
   }>('execution_detail', { id });
 
 export const saveAd = (executionId: string, ad: Record<string, unknown>) =>
