@@ -71,7 +71,16 @@ function statusChip(p: MosPublication): { ar: string; en: string; tone: Tone } {
   }
 }
 
-const FILTERS: Array<{ key: Bucket | 'all'; ar: string; en: string }> = [
+/**
+ * 'active' (the default) is everything EXCEPT drafts — the board opens on what's
+ * actually moving so a backlog of captionless draft slots doesn't bury the rows
+ * that need a human. Drafts stay one click away under the مسودة chip, and 'all'
+ * still shows the true total.
+ */
+type Filter = Bucket | 'all' | 'active';
+
+const FILTERS: Array<{ key: Filter; ar: string; en: string }> = [
+  { key: 'active',     ar: 'النشِط', en: 'Active' },
   { key: 'all',        ar: 'الكل', en: 'All' },
   { key: 'attention',  ar: 'يحتاج انتباه', en: 'Needs attention' },
   { key: 'inflight',   ar: 'قيد النشر', en: 'In flight' },
@@ -86,7 +95,7 @@ export default function PublishingBoardPage() {
   const [pubs, setPubs] = useState<MosPublication[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Bucket | 'all'>('all');
+  const [filter, setFilter] = useState<Filter>('active');
   /** Publication ids with an action in flight, so their buttons disable. */
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
 
@@ -152,7 +161,11 @@ export default function PublishingBoardPage() {
     const when = (p: MosPublication) =>
       Date.parse(p.published_at ?? p.scheduled_at ?? '') || 0;
     return pubs
-      .filter((p) => filter === 'all' || bucketOf(p) === filter)
+      .filter((p) => {
+        if (filter === 'all') return true;
+        if (filter === 'active') return bucketOf(p) !== 'draft';
+        return bucketOf(p) === filter;
+      })
       .sort((a, b) => {
         const ra = rank[bucketOf(a)];
         const rb = rank[bucketOf(b)];
@@ -205,7 +218,9 @@ export default function PublishingBoardPage() {
             {/* filter segmented control with live counts */}
             <div className="seg" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
               {FILTERS.map((f) => {
-                const n = f.key === 'all' ? pubs.length : counts[f.key];
+                const n = f.key === 'all' ? pubs.length
+                  : f.key === 'active' ? (pubs.length - counts.draft)
+                  : counts[f.key];
                 return (
                   <button
                     key={f.key}
@@ -220,7 +235,7 @@ export default function PublishingBoardPage() {
               })}
             </div>
 
-            {counts.attention > 0 && filter === 'all' && (
+            {counts.attention > 0 && (filter === 'all' || filter === 'active') && (
               <div className="notice bad" style={{ marginBottom: 14 }} role="alert">
                 {isAr
                   ? `${num(counts.attention, true)} عملية نشر متعثّرة تحتاج إجراء — في أعلى القائمة.`
@@ -228,6 +243,17 @@ export default function PublishingBoardPage() {
               </div>
             )}
 
+            {rows.length === 0 ? (
+              <div className="card">
+                <div className="card-b" style={{ fontSize: 13, color: 'var(--mute)', padding: '18px 16px', lineHeight: 1.9 }}>
+                  {filter === 'active'
+                    ? (isAr
+                        ? `لا شيء قيد النشر الآن. لديك ${num(counts.draft, true)} مسودة بلا نص أو موعد — افتحها من تبويب «مسودة» أعلاه لكتابتها وجدولتها.`
+                        : `Nothing in flight right now. You have ${counts.draft} draft(s) with no caption or date — open the «Draft» tab above to write and schedule them.`)
+                    : (isAr ? 'لا صفوف في هذا التصنيف.' : 'No rows in this filter.')}
+                </div>
+              </div>
+            ) : (
             <div className="card">
               <div className="tbl-wrap">
                 <table className="tbl">
@@ -301,6 +327,7 @@ export default function PublishingBoardPage() {
                 </table>
               </div>
             </div>
+            )}
           </>
         )}
       </div>
