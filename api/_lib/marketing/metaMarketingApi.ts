@@ -214,6 +214,17 @@ export class MetaMarketingClient {
   }
 
   /**
+   * Saved Audiences the buyer built in Ads Manager — the Option-B source for an
+   * ad set's targeting. Each carries its full `targeting` spec, which we cache
+   * on the linked Wassel audience and send verbatim as the ad set targeting.
+   */
+  async listSavedAudiences(): Promise<MetaSavedAudience[]> {
+    return this.getAll<MetaSavedAudience>(`${this.act}/saved_audiences`, {
+      fields: 'id,name,targeting,approximate_count_lower_bound,approximate_count_upper_bound',
+    });
+  }
+
+  /**
    * Insights for the whole account at a given level, one row per entity.
    * level: 'campaign' | 'adset' | 'ad'. date_preset defaults to lifetime.
    */
@@ -320,6 +331,14 @@ export interface MetaAd {
   creative?: { id: string; name?: string; object_story_id?: string };
   created_time?: string;
   updated_time?: string;
+}
+
+export interface MetaSavedAudience {
+  id: string;
+  name: string;
+  targeting?: Record<string, unknown>;
+  approximate_count_lower_bound?: number;
+  approximate_count_upper_bound?: number;
 }
 
 export type MetaInsightLevel = 'campaign' | 'adset' | 'ad';

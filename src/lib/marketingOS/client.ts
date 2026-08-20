@@ -798,6 +798,19 @@ export interface MosAudience {
   is_active: boolean;
   created_at: string;
   archived_at: string | null;
+  /** Option B: the Meta Saved Audience this is linked to, + its cached targeting
+   *  spec (pushed as the ad set targeting). Null when not linked. */
+  meta_saved_audience_id?: string | null;
+  meta_targeting?: Record<string, unknown> | null;
+}
+
+/** A Meta Saved Audience the buyer built in Ads Manager (for Option-B linking). */
+export interface MetaSavedAudienceOption {
+  id: string;
+  name: string;
+  targeting: Record<string, unknown> | null;
+  approx_lower: number | null;
+  approx_upper: number | null;
 }
 
 export interface MosCampaign {
@@ -2093,6 +2106,10 @@ export const mosMetaSync = (): Promise<MetaSyncResult> => call<MetaSyncResult>('
 /** Flip the sync kill switch (manage_paid_ads). */
 export const mosMetaToggle = (enabled: boolean): Promise<{ ok: boolean; is_enabled: boolean }> =>
   call('meta_toggle', { enabled });
+
+/** List the Meta Saved Audiences the buyer built in Ads Manager (manage_paid_ads). */
+export const mosMetaSavedAudiences = (): Promise<{ audiences: MetaSavedAudienceOption[] }> =>
+  call('meta_saved_audiences');
 
 /** Link a synced Meta execution to a real project campaign + force re-resolve. */
 export const mosMetaLinkExecution = (

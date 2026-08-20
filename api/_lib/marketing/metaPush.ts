@@ -128,7 +128,10 @@ function buildTargeting(execution: PushExecution): Json {
   const countries = (Array.isArray(ps?.countries) && ps?.countries.length ? ps?.countries
     : Array.isArray(t?.countries) && (t?.countries as unknown[]).length ? t?.countries
     : ['SA']) as unknown[];
-  const targeting: Json = { geo_locations: { countries } };
+  // Meta requires acknowledging Advantage+ audience whenever detailed targeting
+  // is set (age/gender/interests): advantage_audience 0 = respect the audience as
+  // a hard constraint, 1 = let Meta expand it. Default 0.
+  const targeting: Json = { geo_locations: { countries }, targeting_automation: { advantage_audience: 0 } };
   const ageMin = numOr(ps?.age_min, 0);
   const ageMax = numOr(ps?.age_max, 0);
   if (ageMin) targeting.age_min = Math.round(ageMin);
@@ -148,6 +151,10 @@ export function buildAdSetPayload(
   adSet: PushAdSet,
   metaCampaignId: string,
   pageId: string | null,
+  /** Option B: targeting spec from the campaign's linked Meta Saved Audience.
+   *  When present it is sent verbatim as the ad set targeting; else we fall back
+   *  to the execution's own targeting / KSA default. */
+  audienceTargeting: Json | null = null,
 ): Json {
   const ps = execution.platform_settings ?? null;
   const objective = resolveObjective(campaign, ps);
@@ -163,7 +170,11 @@ export function buildAdSetPayload(
     status: 'PAUSED',
     billing_event: str(ps?.billing_event) ?? defaults.billing_event,
     optimization_goal: str(ps?.optimization_goal) ?? defaults.optimization_goal,
-    targeting: buildTargeting(execution),
+    // A linked Meta Saved Audience's spec wins; ensure the Advantage+ flag is set
+    // (the saved audience may already carry its own — spreading it lets it win).
+    targeting: audienceTargeting
+      ? { targeting_automation: { advantage_audience: 0 }, ...audienceTargeting }
+      : buildTargeting(execution),
     bid_strategy: str(ps?.bid_strategy) ?? 'LOWEST_COST_WITHOUT_CAP',
   };
 

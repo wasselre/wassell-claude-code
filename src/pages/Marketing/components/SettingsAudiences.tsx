@@ -12,7 +12,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
-import { MosAudience, fetchAudiences, saveAudience } from '@/lib/marketingOS/client';
+import {
+  MetaSavedAudienceOption, MosAudience, fetchAudiences, mosMetaSavedAudiences, saveAudience,
+} from '@/lib/marketingOS/client';
 import { Field, LoadError, PageHead, Skeleton } from './kit';
 import { IconBack, IconForward } from './icons';
 import { num } from '../lib/format';
@@ -34,8 +36,15 @@ export default function SettingsAudiences({
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [dName, setDName] = useState('');
   const [dDetails, setDDetails] = useState('');
+  const [dMetaId, setDMetaId] = useState('');
   const [busy, setBusy] = useState(false);
   const [loadedFor, setLoadedFor] = useState<string | 'new' | null>(null);
+
+  // Option B: the Meta Saved Audiences a Wassel audience can be linked to.
+  // Loaded lazily on first editor open; self-disables (empty picker) when Meta
+  // isn't configured or the caller lacks manage_paid_ads.
+  const [metaAudiences, setMetaAudiences] = useState<MetaSavedAudienceOption[]>([]);
+  const [metaLoaded, setMetaLoaded] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,6 +61,23 @@ export default function SettingsAudiences({
 
   useEffect(() => { void load(); }, [load]);
 
+  // Fetch Meta Saved Audiences once, when the editor is first opened.
+  useEffect(() => {
+    if (editingId === null || metaLoaded) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await mosMetaSavedAudiences();
+        if (!cancelled) setMetaAudiences(res.audiences);
+      } catch {
+        // Expected self-disable path: Meta not configured, or the caller lacks
+        // manage_paid_ads. The picker renders a "create one in Meta" note instead.
+      }
+      if (!cancelled) setMetaLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, [editingId, metaLoaded]);
+
   const editing = editingId && editingId !== 'new' ? audiences.find((a) => a.id === editingId) ?? null : null;
 
   // Load the draft when the edited audience changes (render-guard, atomic with the click).
@@ -59,6 +85,7 @@ export default function SettingsAudiences({
     setLoadedFor(editingId);
     setDName(editing?.name ?? '');
     setDDetails(editing?.details ?? '');
+    setDMetaId(editing?.meta_saved_audience_id ?? '');
   }
 
   const save = async (): Promise<void> => {
@@ -72,6 +99,16 @@ export default function SettingsAudiences({
         name: dName.trim(),
         details: dDetails.trim() || null,
       };
+      // Only touch the Meta link when the saved-audience list actually loaded —
+      // otherwise a save would blank an existing link the user never saw.
+      if (metaLoaded) {
+        const selected = metaAudiences.find((m) => m.id === dMetaId) ?? null;
+        payload.meta_saved_audience_id = dMetaId || null;
+        payload.meta_targeting = dMetaId
+          ? selected?.targeting
+            ?? (dMetaId === (editing?.meta_saved_audience_id ?? '') ? editing?.meta_targeting ?? null : null)
+          : null;
+      }
       if (editing) {
         payload.id = editing.id;
       } else {
@@ -146,7 +183,14 @@ export default function SettingsAudiences({
                 <tbody>
                   {audiences.map((a) => (
                     <tr key={a.id} style={a.is_active ? undefined : { opacity: 0.55 }}>
-                      <td className="ttl">{a.name}</td>
+                      <td className="ttl">
+                        {a.name}
+                        {a.meta_saved_audience_id && (
+                          <span className="tag" style={{ marginInlineStart: 6, fontSize: 10 }}>
+                            {isAr ? 'ميتا' : 'Meta'}
+                          </span>
+                        )}
+                      </td>
                       <td style={{ fontSize: 11.5, color: 'var(--mute)', maxWidth: 420 }}>
                         {a.details && a.details.trim() !== ''
                           ? (a.details.length > 140 ? `${a.details.slice(0, 140)}…` : a.details)
@@ -196,6 +240,29 @@ export default function SettingsAudiences({
                   onChange={(e) => setDDetails(e.target.value)}
                 />
               </Field>
+              {metaLoaded && (
+                <Field
+                  label={isAr ? 'جمهور ميتا (اختياري)' : 'Meta audience (optional)'}
+                  hint={isAr
+                    ? 'عند «الإنشاء في ميتا» يُرسَل استهداف هذا الجمهور للمجموعة الإعلانية'
+                    : 'on "Create in Meta", this audience’s targeting is sent to the ad set'}
+                >
+                  {metaAudiences.length > 0 ? (
+                    <select className="inp" value={dMetaId} onChange={(e) => setDMetaId(e.target.value)}>
+                      <option value="">{isAr ? 'بدون ربط — استهداف افتراضي (السعودية)' : 'Not linked — default targeting (KSA)'}</option>
+                      {metaAudiences.map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.85 }}>
+                      {isAr
+                        ? 'لا توجد جماهير محفوظة في ميتا بعد. أنشئ «Saved Audience» في مدير إعلانات ميتا لتظهر هنا وتُربط.'
+                        : 'No Saved Audiences in Meta yet. Create one in Ads Manager to link it here.'}
+                    </div>
+                  )}
+                </Field>
+              )}
               <div style={{ display: 'flex', gap: 10 }}>
                 <button type="button" className="btn btn-p" onClick={() => void save()} disabled={busy || !canManage}>
                   {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'حفظ' : 'Save'}

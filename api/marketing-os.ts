@@ -3937,6 +3937,27 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ configured: true, ad_account_id: cfg.adAccountId, state: state.data ?? null });
       }
 
+      case 'meta_saved_audiences': {
+        // Option B: list the Saved Audiences the buyer built in Ads Manager so a
+        // Wassel audience can be linked to one. Read of Meta data → manage_paid_ads.
+        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
+        const cfg = loadMetaConfig(); if (!cfg) return jsonError(400, 'Meta not configured');
+        try {
+          const audiences = await new MetaMarketingClient(cfg).listSavedAudiences();
+          return jsonOk({
+            audiences: audiences.map((a) => ({
+              id: a.id,
+              name: a.name,
+              targeting: a.targeting ?? null,
+              approx_lower: a.approximate_count_lower_bound ?? null,
+              approx_upper: a.approximate_count_upper_bound ?? null,
+            })),
+          });
+        } catch (e) {
+          return jsonError(502, `Meta saved audiences failed: ${metaErr(e)}`);
+        }
+      }
+
       case 'meta_sync': {
         const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
         const svc = makeServiceClient('api:meta-sync');
@@ -4060,10 +4081,22 @@ export default async function handler(req: Request): Promise<Response> {
         }
 
         const campRes = await sb.from('mos_campaigns')
-          .select('id, ref, name, objective').eq('id', execRow.campaign_id).maybeSingle();
+          .select('id, ref, name, objective, audience_id').eq('id', execRow.campaign_id).maybeSingle();
         const cf = dbFail(campRes.error); if (cf) return cf;
-        const campaign = campRes.data as PushCampaign | null;
+        const campaign = campRes.data as (PushCampaign & { audience_id: string | null }) | null;
         if (!campaign) return jsonError(404, 'campaign not found');
+
+        // Option B: if the campaign's audience is linked to a Meta Saved Audience,
+        // push its cached targeting spec as the ad set targeting (else metaPush
+        // falls back to the KSA default and the buyer refines in Meta).
+        let audienceTargeting: Record<string, unknown> | null = null;
+        if (campaign.audience_id) {
+          const audRes = await sb.from('mos_audiences')
+            .select('meta_targeting').eq('id', campaign.audience_id).maybeSingle();
+          const af = dbFail(audRes.error); if (af) return af;
+          const t = (audRes.data as { meta_targeting?: unknown } | null)?.meta_targeting;
+          if (t && typeof t === 'object') audienceTargeting = t as Record<string, unknown>;
+        }
 
         const setsRes = await sb.from('mos_ad_sets')
           .select('id, name, platform_adset_id, sort_order').eq('execution_id', executionId)
@@ -4093,7 +4126,7 @@ export default async function handler(req: Request): Promise<Response> {
           for (const s of plan) {
             if (s.platform_adset_id) continue; // already linked — don't duplicate
             try {
-              const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId, cfg.pageId);
+              const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId, cfg.pageId, audienceTargeting);
               const asResult = await client.createAdSet(p, validateOnly);
               if (!validateOnly && s.id && asResult.id) {
                 const up = await sb.from('mos_ad_sets')
@@ -5638,7 +5671,10 @@ export default async function handler(req: Request): Promise<Response> {
         const raw = (body.audience ?? {}) as Record<string, unknown>;
         const id = str(raw.id);
         const patch: Record<string, unknown> = {};
-        for (const k of ['name', 'details', 'sort_order', 'is_active'] as const) {
+        for (const k of ['name', 'details', 'sort_order', 'is_active',
+                         // Option-B Meta link: the Saved Audience id + its cached
+                         // targeting spec (pushed as the ad set targeting).
+                         'meta_saved_audience_id', 'meta_targeting'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
         // `name` is the identity shown everywhere — never let it be blanked.
