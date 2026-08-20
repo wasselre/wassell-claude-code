@@ -90,7 +90,6 @@ const MarketingGoalsPage = lazy(() => import('@/pages/Marketing/GoalsPage'));
 const MarketingCampaignDetailPage = lazy(() => import('@/pages/Marketing/CampaignDetailPage'));
 const MarketingExecutionDetailPage = lazy(() => import('@/pages/Marketing/ExecutionDetailPage'));
 const MarketingUploadPage = lazy(() => import('@/pages/Marketing/UploadPage'));
-const MarketingLibraryPage = lazy(() => import('@/pages/Marketing/LibraryPage'));
 const MarketingShootsPage = lazy(() => import('@/pages/Marketing/ShootsPage'));
 const MarketingNumbersPage = lazy(() => import('@/pages/Marketing/NumbersPage'));
 const MarketingOrganicPulsePage = lazy(() => import('@/pages/Marketing/OrganicPulsePage'));
@@ -105,6 +104,8 @@ const ExperimentsPage = lazy(() => import('@/pages/SalesStudio/ExperimentsPage')
 const ExperimentDetailPage = lazy(() => import('@/pages/SalesStudio/ExperimentDetailPage'));
 const FilesPage = lazy(() => import('@/pages/Files/FilesPage'));
 const FilesRoot = lazy(() => import('@/pages/Files/FilesRoot'));
+import { encodeLibraryUrl } from '@/lib/files/libraryUrl';
+import { systemView } from '@/lib/files/views';
 const DocumentEditorPage = lazy(() => import('@/pages/Documents/DocumentEditorPage'));
 const PublicShareFilePage = lazy(() => import('@/pages/PublicShare/PublicShareFilePage'));
 const RateVisitPage = lazy(() => import('@/pages/PublicRate/RateVisitPage'));
@@ -157,6 +158,34 @@ function RecordBootLoading() {
       <span className="text-sm">{isAr ? 'جارٍ تحميل السجل…' : 'Loading record…'}</span>
     </div>
   );
+}
+
+/**
+ * Phase 3 · B8 follow-up (2026-08-20) — the Marketing Library GRID is retired
+ * in favour of the canonical Files Library.
+ *
+ * The marketing assets were already one shared `files` row each (B8), so this
+ * changes only which UI you land in, not the data. `/m/library` now redirects
+ * to the Files Library's own Marketing view (origin = marketing_intake), which
+ * B5 built for exactly this. The upload, "unused assets" and per-asset detail
+ * screens under /m/library/* are KEPT and still match their own routes — only
+ * the bare grid route redirects.
+ *
+ * The target is COMPUTED from systemView('marketing').build() rather than a
+ * hardcoded query string, so it can never drift from what the Library's own
+ * rail produces: a direct landing on ?view=marketing alone would NOT apply the
+ * origin filter (build() runs only on a rail click), so the full encoded state
+ * has to be carried here.
+ *
+ * Reversible: delete this component and restore
+ *   <Route path="/m/library" element={<MarketingLibraryRedirect />} />
+ */
+function MarketingLibraryRedirect() {
+  const v = systemView('marketing');
+  const search = v
+    ? encodeLibraryUrl({ ...v.build(null), page: 1, view: 'marketing' })
+    : '?view=marketing';
+  return <Navigate to={`/files${search}`} replace />;
 }
 
 function RecordDetailDispatcher() {
@@ -482,7 +511,7 @@ export default function App() {
           <Route path="/m/content" element={<MarketingContentListPage />} />
           <Route path="/m/content/:contentId" element={<MarketingContentDetailPage />} />
           <Route path="/m/calendar" element={<MarketingCalendarPage />} />
-          <Route path="/m/library" element={<MarketingLibraryPage />} />
+          <Route path="/m/library" element={<MarketingLibraryRedirect />} />
           <Route path="/m/library/upload" element={<MarketingUploadPage />} />
           <Route path="/m/library/unused" element={<MarketingLibraryUnusedPage />} />
           <Route path="/m/library/:assetId" element={<MarketingAssetDetailPage />} />

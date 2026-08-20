@@ -123,7 +123,7 @@ rollback-able.
 | **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ✅ **LIVE — activated for everyone 2026-08-20** (§4.1) |
 | **B6** | Manual linking/unlinking and Files panels inside records | ✅ **Built — flag default OFF; acceptance bar fully met once the `units` schema was restored (§6.5)** (§4.2) |
 | **B7** | Upload metadata, duplicate detection, bulk actions | ✅ **Built — behind the Library flag, default OFF** (§4.3) |
-| **B8** | Move the remaining Marketing assets onto the canonical file system | ✅ **173 canonicalised on prod; 143 are non-file references (§4.4)** |
+| **B8** | Move the remaining Marketing assets onto the canonical file system | ✅ **Assets canonicalised; Marketing GRID retired → /files Marketing view 2026-08-20 (§4.4)** |
 | **B9** | Convert folder names into metadata, freeze folder creation, retain Legacy folders | ✅ **Applied on prod — folders frozen, 446 files tagged, nothing deleted (§4.5)** |
 
 **Plus one branch that is in no spec but IS live on production:**
