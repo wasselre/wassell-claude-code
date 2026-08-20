@@ -2654,7 +2654,10 @@ function ExecutionModal({
             </Field>
           );
         })()}
-        <Field label={isAr ? 'اسم المجموعة' : 'Ad set name'}>
+        <Field
+          label={isAr ? 'اسم الحملة الإعلانية' : 'Ad campaign name'}
+          hint={isAr ? 'اسمها عندك — لا يؤثّر على المطابقة مع ميتا' : 'your own label — does not affect Meta matching'}
+        >
           <input className="inp" value={label} onChange={(e) => setLabel(e.target.value)} />
         </Field>
         <Field
