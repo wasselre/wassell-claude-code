@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ROLE_LABELS, type SurfaceKey } from '@/lib/marketingOS/client';
 import { useWorkspace } from '../MarketingWorkspace';
+import { marketingLibraryHref } from '@/lib/files/libraryUrl';
 import { initial, roleAvatarClass } from '../lib/format';
 import '../styles/mobile-shell.css';
 
@@ -136,7 +137,7 @@ const SHEET_GROUPS: SheetGroup[] = [
     items: [
       { to: '/m/search', ar: 'البحث', en: 'Search', surface: 'search', icon: iconSearch },
       { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', surface: 'calendar', icon: iconCalendar },
-      { to: '/m/library', ar: 'مكتبة المواد', en: 'Asset library', surface: 'library', icon: iconLibrary },
+      { to: marketingLibraryHref(), ar: 'مكتبة المواد', en: 'Asset library', surface: 'library', icon: iconLibrary },
     ],
   },
   {

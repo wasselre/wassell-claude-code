@@ -18,6 +18,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { marketingLibraryHref } from '@/lib/files/libraryUrl';
 import { useAppStore } from '@/stores/appStore';
 import {
   MosRole, MosShootItemDetail, MosShootRequest, ROLE_LABELS, SHOOT_STATUS_LABELS,
@@ -188,7 +189,7 @@ export default function ShootRequestPage() {
         title={request?.title ?? (isAr ? 'طلب تصوير' : 'Shoot request')}
         crumb={
           <>
-            <button type="button" onClick={() => navigate('/m/library')}>
+            <button type="button" onClick={() => navigate(marketingLibraryHref())}>
               {isAr ? 'مكتبة المواد' : 'Asset library'}
             </button>
             <span className="sep">/</span>

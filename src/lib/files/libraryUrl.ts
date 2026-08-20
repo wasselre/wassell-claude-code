@@ -26,6 +26,7 @@ import type {
   LibraryLayout,
 } from '@/types';
 import type { LibraryViewState } from './views';
+import { systemView } from './views';
 import { readFileFlag } from './flags';
 
 // ─── Feature flag ─────────────────────────────────────────────────────────
@@ -70,6 +71,26 @@ export function filesLibraryEnabled(search?: string): boolean {
     return readFileFlag('library', FLAG_STORAGE_KEY, '0', search);
   }
   return readFileFlag('library', FLAG_STORAGE_KEY, '1', search);
+}
+
+/**
+ * The `/files` URL that IS the retired Marketing Library.
+ *
+ * The marketing grid at `/m/library` was retired (2026-08-20) in favour of the
+ * unified Library; that route now redirects here, and every in-app entry point
+ * that used to open it (the marketing rail, the mobile tab, "back to library"
+ * buttons) links here DIRECTLY so there is no double-hop through the redirect.
+ *
+ * Computed from the `marketing` system view — the same source the redirect in
+ * `App.tsx` uses — so the two can never drift into pointing at different slices.
+ * Resolves to `/files?view=marketing&origin=marketing_intake`.
+ */
+export function marketingLibraryHref(): string {
+  const v = systemView('marketing');
+  const search = v
+    ? encodeLibraryUrl({ ...v.build(null), page: 1, view: 'marketing' })
+    : '?view=marketing';
+  return `/files${search}`;
 }
 
 // ─── URL codec ────────────────────────────────────────────────────────────

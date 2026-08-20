@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { marketingLibraryHref } from '@/lib/files/libraryUrl';
 import { useAppStore } from '@/stores/appStore';
 import {
   ASSET_KIND_LABELS, MosAsset, bulkAssets, fetchAssets, fetchUnusedAssets,
@@ -195,7 +196,7 @@ export default function LibraryUnusedPage() {
         title={isAr ? 'المواد غير المستخدمة' : 'Unused material'}
         crumb={
           <>
-            <button type="button" onClick={() => navigate('/m/library')}>
+            <button type="button" onClick={() => navigate(marketingLibraryHref())}>
               {isAr ? 'مكتبة المواد' : 'Asset library'}
             </button>
             <span className="sep">/</span>

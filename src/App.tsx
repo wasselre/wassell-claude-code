@@ -104,8 +104,7 @@ const ExperimentsPage = lazy(() => import('@/pages/SalesStudio/ExperimentsPage')
 const ExperimentDetailPage = lazy(() => import('@/pages/SalesStudio/ExperimentDetailPage'));
 const FilesPage = lazy(() => import('@/pages/Files/FilesPage'));
 const FilesRoot = lazy(() => import('@/pages/Files/FilesRoot'));
-import { encodeLibraryUrl } from '@/lib/files/libraryUrl';
-import { systemView } from '@/lib/files/views';
+import { marketingLibraryHref } from '@/lib/files/libraryUrl';
 const DocumentEditorPage = lazy(() => import('@/pages/Documents/DocumentEditorPage'));
 const PublicShareFilePage = lazy(() => import('@/pages/PublicShare/PublicShareFilePage'));
 const RateVisitPage = lazy(() => import('@/pages/PublicRate/RateVisitPage'));
@@ -181,11 +180,7 @@ function RecordBootLoading() {
  *   <Route path="/m/library" element={<MarketingLibraryRedirect />} />
  */
 function MarketingLibraryRedirect() {
-  const v = systemView('marketing');
-  const search = v
-    ? encodeLibraryUrl({ ...v.build(null), page: 1, view: 'marketing' })
-    : '?view=marketing';
-  return <Navigate to={`/files${search}`} replace />;
+  return <Navigate to={marketingLibraryHref()} replace />;
 }
 
 function RecordDetailDispatcher() {

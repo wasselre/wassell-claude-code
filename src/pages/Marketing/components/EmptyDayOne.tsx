@@ -19,6 +19,7 @@
 // MOUNT: OverviewPage zero-state — wired by orchestrator
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { marketingLibraryHref } from '@/lib/files/libraryUrl';
 import {
   MosAccount, MosAsset, WorkflowDef, fetchAssets, fetchBootstrap,
 } from '@/lib/marketingOS/client';
@@ -180,7 +181,7 @@ export default function EmptyDayOne() {
           ? 'لا مشاريع بعد — تُسحب تلقائيًا من نظام العملاء'
           : 'No projects yet — they arrive from the CRM automatically',
       action: isAr ? 'عرض' : 'View',
-      onAction: () => navigate('/m/library'),
+      onAction: () => navigate(marketingLibraryHref()),
     },
     {
       key: 'assets',
@@ -196,7 +197,7 @@ export default function EmptyDayOne() {
           : 'One project’s photos and clips are enough — don’t wait for a complete archive',
       action: assetsOk ? (isAr ? 'المكتبة' : 'Library') : (isAr ? 'رفع' : 'Upload'),
       primary: !assetsOk,
-      onAction: () => navigate(assetsOk ? '/m/library' : '/m/library/upload'),
+      onAction: () => navigate(assetsOk ? marketingLibraryHref() : '/m/library/upload'),
     },
     {
       key: 'platform',
@@ -286,7 +287,7 @@ export default function EmptyDayOne() {
                 ? <>عندك {num(assets.length, true)} صورة ومقطعًا{topProject ? ` لـ${projectName(topProject.id)}` : ''} جاهزة في المكتبة. أسرع طريق لأول منشور أن تبدأ منها بدل البدء من فكرة تحتاج تصويرًا.</>
                 : <>You already have {assets.length} photos and clips{topProject ? ` for ${projectName(topProject.id)}` : ''} in the library. The fastest first post starts from them, not from an idea that needs a shoot.</>}
               <div style={{ marginTop: 11 }}>
-                <button type="button" className="btn btn-p btn-sm" onClick={() => navigate('/m/library')}>
+                <button type="button" className="btn btn-p btn-sm" onClick={() => navigate(marketingLibraryHref())}>
                   {topProject
                     ? isAr ? `تصفّح مواد ${projectName(topProject.id)}` : `Browse ${projectName(topProject.id)} material`
                     : isAr ? 'تصفّح المكتبة' : 'Browse the library'}

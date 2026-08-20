@@ -45,6 +45,7 @@ import NotificationBell from './components/NotificationBell';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import MobileTabBar from './components/MobileTabBar';
+import { marketingLibraryHref } from '@/lib/files/libraryUrl';
 import './mos.css';
 import './styles/rail-badges.css';
 // The m4-* responsive classes (mobile cards, .m4-mob/.m4-desk visibility) are
@@ -180,7 +181,7 @@ const NAV: NavGroup[] = [
       { to: '/m/content', ar: 'المحتوى', en: 'Content', Icon: IconContent, badge: 'content', surface: 'content' },
       { to: '/m/search', ar: 'البحث', en: 'Search', Icon: IconSearch, surface: 'search' },
       { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', Icon: IconCalendar, surface: 'calendar' },
-      { to: '/m/library', ar: 'مكتبة المواد', en: 'Asset library', Icon: IconLibrary, surface: 'library' },
+      { to: marketingLibraryHref(), ar: 'مكتبة المواد', en: 'Asset library', Icon: IconLibrary, surface: 'library' },
       { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', Icon: IconShoot, surface: 'shoots' },
     ],
   },

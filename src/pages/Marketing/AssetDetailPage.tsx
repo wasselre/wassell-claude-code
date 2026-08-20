@@ -26,6 +26,7 @@ import { daysFromNow, num, shortDate, toArabicDigits } from './lib/format';
 import { formatBytes } from './lib/upload';
 import { useAssetUrls, useLatchedUrl } from './lib/assetUrls';
 import { signDownloadUrl } from '@/lib/files/client';
+import { marketingLibraryHref } from '@/lib/files/libraryUrl';
 import './styles/pages-remaining.css';
 
 /**
@@ -220,7 +221,7 @@ export default function AssetDetailPage() {
           : 'Archived — out of search and the library, always recoverable.',
         'success',
       );
-      navigate('/m/library');
+      navigate(marketingLibraryHref());
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
@@ -238,7 +239,7 @@ export default function AssetDetailPage() {
     try {
       await deleteAsset(asset.id);
       addToast(isAr ? 'حُذفت المادة.' : 'Asset deleted.', 'success');
-      navigate('/m/library');
+      navigate(marketingLibraryHref());
     } catch (e) {
       if (e instanceof MosApiError && e.status === 409 && e.payload.error === 'in_use') {
         const list = Array.isArray(e.payload.used_in) ? (e.payload.used_in as MosAssetUsage[]) : usedIn;
@@ -281,7 +282,7 @@ export default function AssetDetailPage() {
         title={asset?.title ?? (isAr ? 'تفاصيل المادة' : 'Asset detail')}
         crumb={
           <>
-            <button type="button" onClick={() => navigate('/m/library')}>
+            <button type="button" onClick={() => navigate(marketingLibraryHref())}>
               {isAr ? 'مكتبة المواد' : 'Asset library'}
             </button>
             {asset?.project_id && (

@@ -14,6 +14,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { marketingLibraryHref } from '@/lib/files/libraryUrl';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import {
@@ -363,7 +364,7 @@ export default function UploadPage() {
         title={isAr ? 'إضافة إلى المكتبة' : 'Add to the library'}
         crumb={
           <>
-            <button type="button" onClick={() => navigate('/m/library')}>
+            <button type="button" onClick={() => navigate(marketingLibraryHref())}>
               <Back style={{ width: 11, height: 11, verticalAlign: -1 }} /> {isAr ? 'مكتبة المواد' : 'Asset library'}
             </button>
             <span className="sep">/</span>
@@ -378,7 +379,7 @@ export default function UploadPage() {
             ? 'صور، فيديو، صوت، PDF، ملفات تصميم — كل شيء'
             : 'Photos, video, audio, PDFs, design files — everything'}
       >
-        <button type="button" className="btn btn-d" onClick={() => (running ? cancel() : navigate('/m/library'))}>
+        <button type="button" className="btn btn-d" onClick={() => (running ? cancel() : navigate(marketingLibraryHref()))}>
           {isAr ? 'إلغاء' : 'Cancel'}
         </button>
         <button
@@ -620,7 +621,7 @@ export default function UploadPage() {
 
             {doneCount > 0 && !running && (
               <div style={{ marginTop: 13, display: 'flex', gap: 8 }}>
-                <button type="button" className="btn" onClick={() => navigate('/m/library')}>
+                <button type="button" className="btn" onClick={() => navigate(marketingLibraryHref())}>
                   <IconLibrary />
                   {isAr ? 'فتح المكتبة' : 'Open the library'}
                 </button>
