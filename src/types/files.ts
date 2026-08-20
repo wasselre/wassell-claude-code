@@ -47,6 +47,11 @@ export interface FileRow {
   preview_storage_path: string | null;
   preview_error: string | null;
   preview_generated_at: string | null;
+  /** B7. Content digest reported by Storage (MD5 for single-part uploads);
+   *  the duplicate-detection key, always paired with size_bytes. NULL for
+   *  multipart uploads and for anything Storage could not report — which
+   *  means "not dedup-able", not "unique". */
+  content_etag: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -240,6 +245,9 @@ export interface BusinessFileRow {
   /** Edges in `file_links` the CALLER can see. Zero means "unlinked to me",
    *  which is not necessarily "unlinked" — both halves of a link are RLS-gated. */
   link_count: number;
+  /** Present only when business_files_search is asked for it; the Library's
+   *  duplicate filter keys off it server-side. */
+  content_etag?: string | null;
 }
 
 /** Facet counts, computed over the WHOLE filtered set rather than the page, so

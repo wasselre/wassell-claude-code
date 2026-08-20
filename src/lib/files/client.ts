@@ -214,6 +214,71 @@ function putObjectWithProgress(
  * don't accumulate garbage. The orphan-cleanup is the only narrow documented
  * silence — see CLAUDE.md "Silent Failures".
  */
+/**
+ * Phase 3 · B7 — the content digest for an object we just uploaded.
+ *
+ * Supabase Storage computes an eTag per object and, for an ordinary
+ * single-part upload, that eTag IS the MD5 of the content. Reading it back is
+ * one indexed lookup and costs nothing — which is why duplicate detection uses
+ * the STORAGE BACKEND as its single hashing authority rather than hashing in
+ * the browser.
+ *
+ * That choice is what lets a brand-new upload be compared against the 7,417
+ * files that existed before B7: their digests were backfilled from the very
+ * same field. Hashing in the browser would have meant SHA-256 (WebCrypto has
+ * no MD5), i.e. a key incomparable with every file already here.
+ *
+ * Returns null when the digest is unusable, and null simply means "not
+ * dedup-able", never an error:
+ *   - a multipart upload's eTag carries a `-<parts>` suffix and is a hash OF
+ *     HASHES, comparable only to another upload with identical part boundaries
+ *   - the list call can fail or race; a missing digest must never fail an
+ *     upload that has already succeeded
+ */
+async function readStorageEtag(storagePath: string): Promise<string | null> {
+  if (!supabase) return null;
+  const slash = storagePath.lastIndexOf('/');
+  const prefix = slash >= 0 ? storagePath.slice(0, slash) : '';
+  const name = slash >= 0 ? storagePath.slice(slash + 1) : storagePath;
+  try {
+    const { data, error } = await supabase.storage
+      .from(FILES_BUCKET)
+      .list(prefix, { search: name, limit: 1 });
+    if (error || !data || data.length === 0) return null;
+    const meta = data[0]?.metadata as { eTag?: unknown } | null | undefined;
+    const raw = typeof meta?.eTag === 'string' ? meta.eTag.replace(/"/g, '') : null;
+    return raw && /^[0-9a-f]{32}$/.test(raw) ? raw : null;
+  } catch (err) {
+    // Never fail an upload over a digest. The file is already stored; losing
+    // its dedup key costs a future duplicate warning, not the file.
+    console.warn('[files] could not read the storage eTag for', storagePath, err);
+    return null;
+  }
+}
+
+/**
+ * Files that are byte-identical to this one, by the storage digest AND size.
+ *
+ * RLS-filtered, so it can only ever surface a duplicate the caller may already
+ * see — "you already have this" must never become a way to learn that a file
+ * you cannot access exists.
+ */
+export async function findDuplicatesByEtag(
+  contentEtag: string,
+  sizeBytes: number,
+  excludeFileId?: string,
+): Promise<FileRow[]> {
+  if (!supabase || !contentEtag) return [];
+  let q = supabase.from('files').select('*')
+    .eq('content_etag', contentEtag)
+    .eq('size_bytes', sizeBytes)
+    .eq('file_class', 'business');
+  if (excludeFileId) q = q.neq('id', excludeFileId);
+  const { data, error } = await q.limit(10);
+  if (error) throw surfaceError('duplicate check', error);
+  return (data ?? []) as FileRow[];
+}
+
 export async function uploadFile(file: File, opts: UploadOpts = {}): Promise<FileRow> {
   if (!supabase) throw surfaceError('upload', new Error('Supabase not configured'));
   if (file.size > MAX_FILE_BYTES) {
@@ -272,6 +337,9 @@ export async function uploadFile(file: File, opts: UploadOpts = {}): Promise<Fil
       storage_bucket: FILES_BUCKET,
       storage_path: storagePath,
       kind,
+      // B7. Read back from Storage AFTER the object lands, because the digest
+      // is the backend's, not ours. null is fine and means "not dedup-able".
+      content_etag: await readStorageEtag(storagePath),
     })
     .select('*')
     .single();

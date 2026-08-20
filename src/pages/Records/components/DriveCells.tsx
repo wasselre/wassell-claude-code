@@ -56,6 +56,9 @@ export function ImageCell({ fileId, isAr }: { fileId: string; isAr: boolean }) {
               preview_storage_path: null,
               preview_error: null,
               preview_generated_at: null,
+              // Synthesised from a legacy record value, not a stored row:
+              // there is no object behind it, so there is no digest.
+              content_etag: null,
               created_at: '',
               updated_at: '',
             });
@@ -152,6 +155,9 @@ export function MultiImageCell({ fileIds, isAr }: { fileIds: string[]; isAr: boo
               preview_storage_path: null,
               preview_error: null,
               preview_generated_at: null,
+              // Synthesised from a legacy record value, not a stored row:
+              // there is no object behind it, so there is no digest.
+              content_etag: null,
               created_at: '',
               updated_at: '',
             });

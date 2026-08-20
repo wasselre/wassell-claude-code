@@ -1,6 +1,6 @@
 # Wassell File Management — the whole plan
 
-**Status:** living document · **Last updated:** 2026-08-20 (B6 built)
+**Status:** living document · **Last updated:** 2026-08-20 (B6 built; B7 in progress)
 
 This is the governing plan for the Files system across **all five phases (0–4)**.
 Until now it existed only as `phase3-business-files-spec.md` in an untracked
@@ -122,7 +122,7 @@ rollback-able.
 | **B4** | Let users view files through records they can access, excluding restricted files | ✅ **LIVE — toggle ON since 2026-08-19 11:09 UTC** |
 | **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ✅ **Built — shipped behind a flag, default OFF** (§4.1) |
 | **B6** | Manual linking/unlinking and Files panels inside records | ✅ **Built — shipped behind a flag, default OFF** (§4.2) |
-| **B7** | Upload metadata, duplicate detection, bulk actions | ⏳ Not started |
+| **B7** | Upload metadata, duplicate detection, bulk actions | 🟡 **In progress** — bulk select/edit and duplicate detection live (§4.3); upload strip + bulk link/unlink remain |
 | **B8** | Move the remaining 317 Marketing assets onto the canonical file system | ⏳ Not started |
 | **B9** | Convert folder names into metadata, freeze folder creation, retain Legacy folders | ⏳ Not started |
 
@@ -273,6 +273,58 @@ it) and it is deliberately absent from `file_document_types`; 564 edges carry
 it. Adding it to the vocabulary would have been the wrong fix — it would then be
 offered in the "link as" picker as though a person could choose it. Given
 bilingual labels in the resolver instead, alongside the `unmapped` sentinel.
+
+### 4.3 B7 — duplicate detection, and the digest that was already here
+
+**The Library's duplicate filter has always answered zero.** It keys off
+`checksum_sha256`, which B1 left NULL on purpose: back-computing it means
+downloading 6.6 GB. A control that can never do anything is worse than an
+absent one — it reads as "there are no duplicates here".
+
+**Supabase Storage had already computed one.** `storage.objects.metadata` holds
+an eTag per object, and for a single-part upload that eTag IS the MD5 of the
+content. Measured on production:
+
+| | |
+|---|---|
+| objects in `wassel-files` | 8,414 |
+| plain 32-hex content MD5 | 8,298 (98.6%) |
+| multipart eTags (`<hash>-<parts>`) | 116 — not a content digest |
+| business files matched to a digest | **7,417 of 7,542 (98.3%)** |
+| duplicate groups | **1,392** |
+| files sitting in a duplicate group | **2,975** |
+| redundant copies | **1,583** |
+| storage wasted by them | **922 MB — 14% of the corpus** |
+
+`files.content_etag` is backfilled from that, and `business_files_search`'s
+duplicate filter and health facet now key off it (paired with `size_bytes`).
+Verified: the filter goes **0 → 2,975**, matching a raw SQL count exactly, while
+an ordinary search returns byte-identical rows and `updated_at` is untouched
+across all 7,547 distinct values.
+
+**Why not SHA-256 in the browser.** WebCrypto omits MD5, so a browser could hash
+a NEW upload but never produce a key comparable to the 7,417 files already here
+— two dedup keys and a permanent seam between "before B7" and "after". Letting
+the storage backend be the single hashing authority removes the seam and keeps
+43 MB files out of browser memory. `uploadFile` reads the digest back after the
+object lands; a null digest means "not dedup-able", never an error.
+
+**This is not a security control.** MD5 is not collision-resistant against an
+adversary; it answers "did someone upload this twice". It is paired with
+`size_bytes` everywhere — measured: no digest in the corpus spans two different
+sizes, so the pairing currently disambiguates nothing and is pure insurance.
+
+**The bug worth remembering.** The first version rewrote the RPC with
+`replace()` and multi-line string literals. Two of three silently did nothing
+and the migration reported success: **this repo's .sql files are CRLF**, so a
+multi-line literal contains `
+` while `pg_get_functiondef` returns `
+`.
+The single-LINE replacement matched; the multi-line ones could not. Nothing
+raised, because the guard only asked whether the text had changed AT ALL — and
+it had, thanks to the one that worked. Now: regex on `\s+`, and every step
+guarded separately, because one end-guard cannot tell "three of three" from
+"one of three".
 
 ### What B5 did NOT do
 
