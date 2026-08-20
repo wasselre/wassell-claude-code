@@ -1,121 +1,95 @@
-# PRD: Financing Calculator (حاسبة التمويل العقاري)
+# PRD: Financing Calculator (حاسبة التمويل)
 
-**Status:** Live — V2 (simplified)
-**Last updated:** 2026-08-30
-**Related PRDs:** [clients.md](clients.md), [sales-process.md](sales-process.md), [access-control.md](access-control.md)
+**Status:** Live — V3 (Bayut-style)
+**Last updated:** 2026-08-20
+**Related PRDs:** [clients.md](clients.md), [access-control.md](access-control.md)
 
 ## What it is (in plain English)
 
-An indicative prequalification tool. A rep opens it from a client, answers a
-four-step form, and gets an estimate: roughly what the customer can afford,
-roughly what a property would cost per month, which of six Saudi bank products
-may fit based on published criteria, and what cash is needed at closing. The
-scenario saves under the client, can be attached to a project or unit, and can
-be converted into the existing `financing` case.
+A simple installment estimator, deliberately duplicated from bayut.sa's
+listing-page "حاسبة التمويل". Pick a bank, set the property price, the down
+payment and the repayment period, and see the estimated monthly installment,
+the total financing amount and the total amount due — instantly, with all math
+done in the browser.
 
-It is **not** a bank underwriting platform, a SIMAH replacement, a regulatory
-archive, or a mortgage-data warehouse. V1 drifted into being all four; V2 is the
-correction.
+The previous V2 prequalification engine (four-step wizard, income/obligation
+capacity, SAMA DBR ceilings, product matching, saved scenarios, consent gate,
+admin screens — ~3,900 lines) was **deleted on user decision (2026-08-20):
+too complicated**. Its data tables remain in the database untouched but no
+code reads them.
 
 ## Why it exists
 
-Reps were quoting payments from memory, with no record of what was said and no
-check against the customer's real debt burden — while the SAMA rules that decide
-affordability are public and precise.
+Reps want a fast "roughly what would this cost per month" answer to quote in
+a WhatsApp conversation. Bayut's calculator is the reference UX the user asked
+to copy.
 
 ## Key behaviors
 
-- **Four steps, ~20 fields.** Customer → income & obligations → property &
-  support → financing.
-- **An exact payment requires an exact rate.** Only a published *contractual*
-  rate or a rep-entered *bank quotation* produces a monthly payment. A
-  "starting from" figure or a representative example produces
-  **"exact calculation requires a bank quotation"** instead of a number.
-- **Five match statuses, no eligibility claims:** meets published criteria ·
-  does not meet published criteria · requires bank review · pricing unavailable ·
-  rate stale.
-- **Unknown ⇒ requires bank review.** Unpublished criteria, approved-employer
-  requirements, project approval and SIMAH status all route here.
-- **`approved` does not exist** — absent from the type union and from the DB CHECK.
-- **Credit cards are charged on the LIMIT**, not the balance (SAMA Art. 13a).
-- **Unverified other income counts zero**, not a reduced share.
-- **Retirees are held to 25%**, employees to 33.33% of gross salary.
-- **Income ≥ SAR 25,000 returns `requires_bank_review`** — SAMA Art. 17 leaves
-  the real-estate ceiling to the bank, so the engine does not invent a ratio.
-- **Every rate shows its official source URL and verification date.** Rates
-  older than 120 days, or explicitly marked, read as stale.
-- **Consent is required before conversion**, enforced server-side (409).
-- **Completed scenarios are frozen** — a DB trigger refuses to rewrite a
-  `result_snapshot` once `completed_at` is set. Recalculating means duplicating.
-- **The snapshot carries the rule values used**, so a historical result stays
-  readable without a version graph.
-- **A product the customer fails on published criteria shows NO figures.** A row
-  reading "does not meet published criteria — SAR 2,199/mo" invites a rep to
-  quote the 2,199.
-- **The cash shortfall is stated.** When the cash needed at closing exceeds the
-  stated available down payment, the gap is shown on the stat and in the caveats
-  rather than left for the rep to subtract.
-- **An unpriced product's financing amount is labelled not-capacity-tested.**
-  Without a rate there is no way to convert a monthly ceiling into a principal,
-  so that figure reflects only the down payment and the LTV ceiling and is not
-  comparable to a priced product's amount.
+- **Ten lenders** with a per-tenure (5–25 years) **flat annual rate** each,
+  loaded from `financing_banks`; a built-in copy of the same matrix serves as
+  the offline fallback. Rates were scraped verbatim from bayut.sa
+  `GET /api/banks` on 2026-08-20 (including FAB's 16-year anomaly; Riyad Bank
+  publishes no rates there and is seeded at Bayut's 3.60% fallback).
+- **Flat-rate math, identical to Bayut** (their bundle module 90319):
+  `loan = price − downPayment`; `total = loan + loan × rate × years`;
+  `monthly = total / (12 × years)`. This is simple interest, NOT
+  reducing-balance amortization — a 3.8% flat rate costs about the same as a
+  ~6.5% APR. The flat rate is printed next to the result so the basis is
+  visible.
+- **Down-payment floors:** Saudi + first home → **10%** minimum; Saudi
+  non-first-home and non-Saudi → **30%**; maximum 80%. Changing the floor
+  resets the down payment to the new minimum (Bayut behavior).
+  **Deliberate divergence:** Bayut's own "هل تمتلك عقار؟" toggle is wired
+  backwards (owning property gets the 10% concession). We ask "هل هذا أول
+  عقار تتملكه؟" and wire it per SAMA: first home → 10%.
+- **Term** 5–25 years (default 15). **Price** free-typed, slider capped at
+  1.3× the current price (Bayut's multiplier), minimum 100,000.
+- **Donut** shows interest vs financing value; details card shows monthly
+  installment, total financing amount and the applied flat rate.
+- **Copy summary** puts a bilingual WhatsApp-ready recap on the clipboard
+  (replaces Bayut's "تقديم طلب" lead form, which has no meaning inside a CRM).
+- `?price=` query param prefills the price; legacy `?client=` links still open
+  the page (the param is ignored).
 
 ## User flows
 
-1. **Main path:** Client 360 → financing action → four steps → Calculate →
-   results with capacity, comparison, upfront cash, caveats.
-2. **Affordability only:** leave the property price blank.
-3. **With a quotation:** enter the rate the bank quoted plus which bank; that
-   product then prices exactly while the others still say "quotation required".
-4. **Convert:** record consent → convert → creates a `financing` record via the
-   existing `record_save` RPC.
+1. Rep opens **حاسبة التمويل** from the sidebar (or a client's quick action).
+2. Picks nationality / first-home, a bank, adjusts price, down payment, term.
+3. Reads the monthly figure; optionally **نسخ الملخص** and pastes into
+   WhatsApp.
 
 ## Data touched
 
-- **Reads/writes:** `financing_products`, `financing_rates`, `financing_rules`,
-  `financing_scenarios`
-- **Writes on conversion:** `records` (the existing `financing` model, via
-  `record_save`)
-- **Deprecated, read-only, not read by the app:** the 36 `fin_*` V1 tables —
-  see `docs/financing/CLEANUP-PLAN.md`
+- `financing_banks` (read-only from the SPA; RLS: authenticated SELECT, no
+  write policies — rates are edited via SQL/Claude, no admin UI).
+- Nothing else. The page stores no customer data, saves nothing, and calls no
+  API endpoint.
+- Legacy tables kept but orphaned: `financing_products`, `financing_rates`,
+  `financing_rules`, `financing_scenarios` (V2) and the deprecated `fin_*`
+  set (V1). Drop requires an explicit user decision.
 
 ## Key files
 
-| File | What it does |
+| File | Role |
 |---|---|
-| `src/lib/financing/types.ts` | Domain types; `approved` is absent |
-| `src/lib/financing/capacity.ts` | Qualifying income, obligations, DBR ceilings |
-| `src/lib/financing/payment.ts` | Fixed-rate amortisation + upfront cash |
-| `src/lib/financing/matching.ts` | Five-status matcher, rate resolution, staleness |
-| `src/lib/financing/engine.ts` | Thin orchestrator; freezes the rules used |
-| `src/lib/financing/money.ts` | Deterministic rounding |
-| `src/lib/financing/client.ts` | SPA client + bilingual labels |
-| `api/financing.ts` | One action-dispatch endpoint on the caller's JWT |
-| `src/pages/Financing/FinancingPage.tsx` | Scenarios, wizard, results, admin |
-| `supabase/migrations/2026-08-30_0{1,2,3}_*.sql` | V2 schema, data migration, V1 deprecation |
-| `scripts/verify-financing-v2.mjs` | 26 live checks against production |
+| `src/pages/Financing/FinancingPage.tsx` | The whole UI (one component) |
+| `src/lib/financing/banks.ts` | Bank/rate types, DB loader, built-in default matrix |
+| `src/lib/financing/calc.ts` | The flat-rate formula (Bayut module 90319 duplicate) |
+| `src/lib/financing/__tests__/financing.test.ts` | Bayut-parity fixtures (live-measured numbers) |
+| `supabase/migrations/2026-08-20_financing_bayut_style.sql` | `financing_banks` + seed |
+| `src/lib/customPages.ts` | Page registration (`financing_calculator`, `/financing`, opt-in per profile) |
 
-## Access control
+## Access
 
-`financing_calculator` is a custom page, `default_access: 'admin'` — opt-in per
-profile, because it reads salary and debt data. RLS is the real gate: reference
-data is readable by any authenticated user and writable only by admins; a
-scenario is visible only to its owner, assignee, creator, or an admin.
+Registered as custom page `financing_calculator`, default access `admin`,
+granted per profile in Settings (unchanged from V2). The page itself holds no
+sensitive data.
 
-This application is single-tenant — there is no organizations table — so the
-"organization model" here is users + profiles + `wassell_is_admin`.
+## Known limitations (deliberate)
 
-## Not supported (by design)
-
-Balloon, step-up, self-construction schedules, staged/off-plan disbursement,
-undocumented Ijarah, and variable products without a benchmark all return
-"exact calculation requires a bank quotation". There is no APR engine: APR is
-displayed as the bank publishes it.
-
-## Known limitations
-
-No SIMAH access. Bank project-approval and approved-employer lists are not
-public. Most Saudi banks do not publish a contractual profit rate — of the six
-seeded products, four carry a published pricing figure and only one is an exact
-contractual rate. Sakani/REDF subsidy amounts are not published and are stored
-as NULL rather than estimated.
+- Flat-rate quotes understate the true APR-equivalent cost — same as Bayut.
+- No affordability/DBR check, no eligibility matching, no scenario history:
+  all removed by design.
+- Rates are hand-maintained numbers, not bank feeds; update them in
+  `financing_banks` when they drift.

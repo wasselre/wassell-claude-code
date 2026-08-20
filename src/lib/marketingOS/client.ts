@@ -1,7 +1,7 @@
 /**
  * Typed SPA client for /api/marketing-os.
  *
- * Same two-file shape as every other bespoke module (see src/lib/financing/client.ts):
+ * Same two-file shape as every other bespoke module (see src/lib/marketing/client.ts):
  * a thin `call<T>` transport plus one typed wrapper per action. Components never
  * touch `supabase` directly and never build a fetch by hand.
  */

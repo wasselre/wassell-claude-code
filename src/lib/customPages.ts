@@ -169,10 +169,9 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     default_access: 'admin',
   },
   {
-    // The financing calculator reads customer salary, debt and card limits —
-    // the most sensitive data the app holds. Opt-in per profile rather than
-    // open by default, so a rep sees it only once someone decides they should.
-    // (The `fin_*` RLS policies are the real gate; this controls the surface.)
+    // Bayut-style flat-rate calculator (2026-08-20 rebuild) — holds no customer
+    // data, just published bank rates. Kept opt-in per profile so enabling it
+    // for a rep remains a deliberate decision.
     id: 'financing_calculator',
     route: '/financing',
     label_ar: 'حاسبة التمويل',

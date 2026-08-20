@@ -12,7 +12,6 @@
     "backfill:reels": "node scripts/backfill-reel-analysis.mjs",
     "typecheck:api": "tsc --noEmit -p tsconfig.api.json",
     "study-runner": "node scripts/claude-study-runner.mjs",
-    "financing:verify": "node scripts/verify-financing-v2.mjs",
     "test": "vitest run"
   },
   "dependencies": {
