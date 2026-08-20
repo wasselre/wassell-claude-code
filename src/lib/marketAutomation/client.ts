@@ -193,6 +193,19 @@ export async function fetchTargetFieldTypes(): Promise<Record<string, CoerceClas
   return out;
 }
 
+/** market_listings field slug → its bilingual UI label (for readable field tables). */
+export async function fetchTargetLabels(): Promise<Record<string, { ar: string; en: string }>> {
+  if (!supabase) return {};
+  const { data, error } = await supabase.from('models').select('schema').eq('name', 'market_listings').maybeSingle();
+  if (error) throw new Error(error.message);
+  const schema = (data?.schema ?? {}) as { sections?: { fields?: { name?: string; label_ar?: string; label_en?: string }[] }[] };
+  const out: Record<string, { ar: string; en: string }> = {};
+  for (const sec of schema.sections ?? []) for (const f of sec.fields ?? []) {
+    if (f.name) out[f.name] = { ar: f.label_ar ?? f.name, en: f.label_en ?? f.name };
+  }
+  return out;
+}
+
 /** Mirror of the DB coercions (try_numeric/boolean/timestamptz) for the live preview.
  *  Returns { ok, out } — ok=false means a non-empty value would land as NULL (a
  *  type mismatch the operator should see before mapping). */

@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, Lock, UploadCloud, PlusCircle, Eye } from 'lucide-react';
 import { fetchPublishLedger, setPublishStatus, publishField, exampleList, fetchStagedSample, type FieldStatus, type PublishLedgerRow, type StagedSample } from '@/lib/marketAutomation/client';
 
-export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; isAr: boolean }) {
+export default function PublishControl({ rows, isAr, labels }: { rows: FieldStatus[]; isAr: boolean; labels: Record<string, { ar: string; en: string }> }) {
   const [ledger, setLedger] = useState<PublishLedgerRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -179,7 +179,10 @@ export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; is
                 const grandfathered = l?.released_by === 'system:grandfather';
                 return (
                   <tr key={key} className="border-b border-sand/20 last:border-0">
-                    <td className="px-3 py-2 font-mono text-[12px] text-charcoal">{f.field}</td>
+                    <td className="px-3 py-2">
+                      <div className="font-mono text-[12px] text-charcoal">{f.field}</div>
+                      {labels[f.field] && <div className="text-[11px] text-charcoal/45">{isAr ? labels[f.field]?.ar : labels[f.field]?.en}</div>}
+                    </td>
                     <td className="px-3 py-2 text-[12px] text-charcoal/60">{f.platform}</td>
                     <td className="px-3 py-2 max-w-[260px]">
                       <div className="flex flex-wrap gap-1">

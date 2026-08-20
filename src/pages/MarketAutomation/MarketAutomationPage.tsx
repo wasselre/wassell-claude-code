@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { RefreshCw, Database, ListChecks, Activity, AlertTriangle, UploadCloud } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import { fetchFieldStatus, fetchTargetFields, fetchTargetFieldTypes, summarize, exampleList, type CoerceClass, type FieldStatus } from '@/lib/marketAutomation/client';
+import { fetchFieldStatus, fetchTargetFields, fetchTargetFieldTypes, fetchTargetLabels, summarize, exampleList, type CoerceClass, type FieldStatus } from '@/lib/marketAutomation/client';
 import DecisionPanel from './components/DecisionPanel';
 import PublishControl from './components/PublishControl';
 
@@ -37,6 +37,7 @@ export default function MarketAutomationPage() {
   const [rows, setRows] = useState<FieldStatus[]>([]);
   const [targetFields, setTargetFields] = useState<string[]>([]);
   const [targetTypes, setTargetTypes] = useState<Record<string, CoerceClass>>({});
+  const [labels, setLabels] = useState<Record<string, { ar: string; en: string }>>({});
   const [deciding, setDeciding] = useState<FieldStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +55,7 @@ export default function MarketAutomationPage() {
   useEffect(load, []);
   useEffect(() => { fetchTargetFields().then(setTargetFields).catch(() => {}); }, []);
   useEffect(() => { fetchTargetFieldTypes().then(setTargetTypes).catch(() => {}); }, []);
+  useEffect(() => { fetchTargetLabels().then(setLabels).catch(() => {}); }, []);
 
   const platforms = useMemo(() => Array.from(new Set(rows.map((r) => r.platform))).sort(), [rows]);
   const scoped = useMemo(() => (platform === 'all' ? rows : rows.filter((r) => r.platform === platform)), [rows, platform]);
@@ -123,10 +125,10 @@ export default function MarketAutomationPage() {
       {loading && <div className="text-charcoal/40 py-10 text-center">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>}
 
       {!loading && (tab === 'raw' || tab === 'decisions') && (
-        <FieldTable rows={tab === 'decisions' ? queue : scoped} isAr={isAr} emptyDecisions={tab === 'decisions'} onDecide={setDeciding} />
+        <FieldTable rows={tab === 'decisions' ? queue : scoped} isAr={isAr} labels={labels} emptyDecisions={tab === 'decisions'} onDecide={setDeciding} />
       )}
 
-      {!loading && tab === 'publish' && <PublishControl rows={scoped} isAr={isAr} />}
+      {!loading && tab === 'publish' && <PublishControl rows={scoped} isAr={isAr} labels={labels} />}
 
       {!loading && tab === 'health' && <HealthTab summary={summary} isAr={isAr} />}
 
@@ -138,7 +140,7 @@ export default function MarketAutomationPage() {
   );
 }
 
-function FieldTable({ rows, isAr, emptyDecisions, onDecide }: { rows: FieldStatus[]; isAr: boolean; emptyDecisions?: boolean; onDecide: (f: FieldStatus) => void }) {
+function FieldTable({ rows, isAr, labels, emptyDecisions, onDecide }: { rows: FieldStatus[]; isAr: boolean; labels: Record<string, { ar: string; en: string }>; emptyDecisions?: boolean; onDecide: (f: FieldStatus) => void }) {
   if (rows.length === 0) {
     return <div className="text-charcoal/40 py-10 text-center">{emptyDecisions ? (isAr ? 'لا حقول بانتظار قرار — كل شيء تمت مراجعته.' : 'No fields awaiting a decision — all reviewed.') : (isAr ? 'لا توجد حقول بعد. شغّل المستخرِج على عيّنة أولاً.' : 'No fields yet. Run the extractor over a sample first.')}</div>;
   }
@@ -174,7 +176,16 @@ function FieldTable({ rows, isAr, emptyDecisions, onDecide }: { rows: FieldStatu
                 <td className="px-3 py-2 align-top text-[12px] text-charcoal/50 whitespace-nowrap">{r.page_section ?? '—'}</td>
                 <td className="px-3 py-2 align-top text-[12px] text-charcoal/50">{r.occurrence_count ?? '—'}</td>
                 <td className="px-3 py-2 align-top"><span className={`text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap ${m.cls}`}>{isAr ? m.ar : m.en}</span></td>
-                <td className="px-3 py-2 align-top text-[12px] font-mono text-charcoal/70 whitespace-nowrap">{r.canonical_field ?? '—'}</td>
+                <td className="px-3 py-2 align-top whitespace-nowrap">
+                  {r.canonical_field ? (
+                    <>
+                      <div className="font-mono text-[12px] text-charcoal/70">{r.canonical_field}</div>
+                      {labels[r.canonical_field] && (
+                        <div className="text-[11px] text-charcoal/45">{isAr ? labels[r.canonical_field]?.ar : labels[r.canonical_field]?.en}</div>
+                      )}
+                    </>
+                  ) : <span className="text-[12px] text-charcoal/40">—</span>}
+                </td>
               </tr>
             );
           })}
