@@ -743,14 +743,15 @@ export default function PublishTab({
         <div className="cd2-gold-note">
           {isAr ? (
             <>
-              <b style={{ fontWeight: 700 }}>قبل ربط المنصة، «مجدول» تعني تذكيرًا</b> — يُنبّه النظام
-              من ينشر عند الموعد، فينشر يدويًا ويؤكد. الشاشة صادقة في ذلك بدل الإيحاء بنشر تلقائي غير موجود.
+              <b style={{ fontWeight: 700 }}>على منصة مربوطة، «مجدول» يعني نشرًا حقيقيًا</b> — يُنشر المنشور
+              في موعده تلقائيًا عبر bundle.social (انستقرام / تيك توك / سناب شات). أما المنصة غير المربوطة
+              (إكس) فـ«مجدول» فيها تذكيرٌ يَنشر عنده المسؤول يدويًا ويؤكد.
             </>
           ) : (
             <>
-              <b style={{ fontWeight: 700 }}>Until a platform is connected, “scheduled” means a reminder</b>{' '}
-              — the system nudges whoever posts at the slot, they post manually and confirm. The screen is
-              honest about that instead of implying an automation that does not exist.
+              <b style={{ fontWeight: 700 }}>On a connected platform, “scheduled” really posts</b>{' '}
+              — the post goes out at its slot automatically via bundle.social (Instagram / TikTok / Snapchat).
+              On an unconnected one (X), “scheduled” is a reminder for whoever posts it by hand and confirms.
             </>
           )}
         </div>
