@@ -20,9 +20,9 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: `0afb728b-9f63-4e67-88b3-522dda0713c8` (unknown field)
-- Subtitle: `e59f0f56-b368-4e5e-a1b1-c3a0406f9ce9` (unknown field)
-- Badge: `cef83943-aede-4d03-a3b2-3c9b4b85dc75` (unknown field)
+- Title: Title (`title`)
+- Subtitle: Brief (`brief`)
+- Badge: Status (`status`)
 
 ## Sections & fields
 

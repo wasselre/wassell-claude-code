@@ -9,17 +9,17 @@
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [Advertisers](advertisers.md) | `advertisers` | JSONB | — | 1 | 10 | no | 2026-07-01 |
-| [AI Agent](ai-chats.md) | `ai_chats` | JSONB | New Group | 1 | 5 | yes | 2026-08-20 |
+| [AI Agent](ai-chats.md) | `ai_chats` | JSONB | — | 1 | 5 | yes | 2026-08-20 |
 | [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 66 | no | 2026-08-20 |
 | [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 10 | no | 2026-08-20 |
-| [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 13 | yes | 2026-08-20 |
-| [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 15 | yes | 2026-08-20 |
+| [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | — | 1 | 13 | yes | 2026-08-20 |
+| [Chats](chats.md) | `chats` | JSONB | — | 1 | 15 | yes | 2026-08-20 |
 | [Cities](cities.md) | `cities` | frozen `cities` | Geography | 1 | 12 | no | 2026-07-30 |
 | [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-08-20 |
 | [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 26 | no | 2026-08-20 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-08-20 |
 | [Contacts](contacts.md) | `contacts` | JSONB | — | 1 | 6 | no | 2026-08-10 |
-| [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | Designs | 1 | 6 | no | 2026-08-20 |
+| [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | — | 1 | 6 | no | 2026-08-20 |
 | [Countries](countries.md) | `countries` | JSONB | Geography | 1 | 5 | no | 2026-06-28 |
 | [Data Migration](data-migration.md) | `data_migration` | JSONB | — | 1 | 5 | yes | 2026-08-20 |
 | [Decks](decks.md) | `decks` | JSONB | — | 1 | 11 | yes | 2026-08-20 |
@@ -37,7 +37,7 @@
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
 | [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 1 | 18 | no | 2026-08-20 |
 | [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | New Group | 1 | 8 | no | 2026-06-17 |
-| [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | New Group | 2 | 16 | no | 2026-08-20 |
+| [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | — | 2 | 16 | no | 2026-08-20 |
 | [Post Batches](posts-batches.md) | `posts_batches` | JSONB | — | 1 | 13 | no | 2026-07-26 |
 | [Posts Content](posts-content.md) | `posts_content` | JSONB | — | 4 | 30 | no | 2026-07-26 |
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-06-08 |

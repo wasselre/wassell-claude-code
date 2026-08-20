@@ -8,7 +8,7 @@
 **Last updated (from DB):** 2026-08-20
 **Model id:** `ca95e4eb-da23-47fa-9f77-3149ba5fa37c`
 **Storage:** unified records (JSONB)
-**Group:** New Group
+**Group:** (ungrouped)
 **System model:** yes   ·   **Custom UI:** yes (bespoke page — the generic record form/table is bypassed)
 **Icon:** `sparkles`   ·   **Color:** `#7C3AED`
 
@@ -20,9 +20,9 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: `34a26cc5-1539-4d68-bd42-e9468b081e5d` (unknown field)
-- Subtitle: `b912a23a-7db4-407e-a14b-5e4aaa402df2` (unknown field)
-- Badge: `c534b9c4-4c6d-4ddc-90e3-aaa88b163c26` (unknown field)
+- Title: Title (`title`)
+- Subtitle: Last Message (`last_message_at`)
+- Badge: Status (`status`)
 
 ## Sections & fields
 
