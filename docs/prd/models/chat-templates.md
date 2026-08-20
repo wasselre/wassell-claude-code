@@ -5,7 +5,7 @@
 # Model: Chat Templates / قوالب الرسائل  `chat_templates`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `4a70d8f1-2a6a-4ea7-b7ef-45c6e6af732b`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

@@ -5,7 +5,7 @@
 # Model: Units / الوحدات  `units`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `7ca3014d-f658-418e-9c53-2d279c97f009`
 **Storage:** unified records (JSONB)
 **Group:** Projects

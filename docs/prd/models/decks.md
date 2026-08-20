@@ -5,7 +5,7 @@
 # Model: Decks / العروض التقديمية  `decks`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `b5593ffd-c79c-4847-87fb-4621e47d29d9`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

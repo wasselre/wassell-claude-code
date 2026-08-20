@@ -5,7 +5,7 @@
 # Model: Client Property Options / خيارات العميل العقارية  `client_property_options`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `e00d8df8-905c-4fb7-a117-3aefa6fd5603`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

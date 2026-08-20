@@ -5,7 +5,7 @@
 # Model: Chats / المحادثات  `chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `7e6c23b5-5492-413a-bc34-d928086f6e7e`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

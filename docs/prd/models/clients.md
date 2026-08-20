@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **4** (2 base, 2 non-base)
-- Fields: **24**
+- Fields: **25**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -93,6 +93,7 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
+| `location` | Location / الموقع | location | no | full | yes |  |
 | `preferred_projects` | Preferred Projects / المشاريع المفضلة | Lookup | no | half | no | → All Projects · multi |
 | `preferred_units` | Preferred Units / الوحدات المفضلة | Lookup | no | half | no | → Units · multi |
 | `preferred_direction` | Preferred Direction / الإتجاه المفضل | Multi-select | no | half | no | 8 options · multi |

@@ -5,7 +5,7 @@
 # Model: Follow-ups / المتابعات  `followups`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -49,10 +49,10 @@
 - **Sales Rep / مندوب المبيعات** (`sales_rep`, type `assignee`):
   - eligible users: any active user
 - **Follow-up Type / نوع المتابعة** (`followup_type`, type `section_selector`) — its options are the model's non-base sections; selecting them shows those sections (base sections always show).
-  - `e857a9a8-f881-450d-8533-f6e79a38a0bc` → "Call" (custom, non-section)
-  - `f12881c4-14ec-4bf9-99e6-cfbc589dbc18` → "Appointment Confirmation" (custom, non-section)
-  - `f49427a9-52b0-4cd3-bee9-bc2488a61688` → "Post-Visit Follow-Up" (custom, non-section)
-  - `dafe07f3-5293-4aba-8c35-99de6042f994` → "WhatsApp Follow-Up" (custom, non-section)
+  - `b9981ce0-c0eb-4a93-a5c2-e14c00a68912` → "Call" (custom, non-section)
+  - `40b04307-4b94-4ff7-8077-f01f5e31cd37` → "Appointment Confirmation" (custom, non-section)
+  - `5cefb767-966e-40a2-9e36-56313110c37a` → "Post-Visit Follow-Up" (custom, non-section)
+  - `d4231858-322f-4104-9e4a-8e065245ca84` → "WhatsApp Follow-Up" (custom, non-section)
 
 ### 2. Client Preferences / تفضيلات العميل  _(base, mirrored, color #C09B5F)_
 

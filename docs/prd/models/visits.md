@@ -5,7 +5,7 @@
 # Model: Visits / الزيارات  `visits`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `372ed642-3753-40b4-9dd7-e8390f91b1f8`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

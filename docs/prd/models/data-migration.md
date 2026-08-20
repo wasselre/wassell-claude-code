@@ -5,7 +5,7 @@
 # Model: Data Migration / ترحيل البيانات  `data_migration`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `d1aa4823-e020-494d-9ec1-ae9dc6caf426`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

@@ -5,7 +5,7 @@
 # Model: Phone Calls / المكالمات  `phone_calls`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `1ef36cc7-a5bb-4fdc-b3ef-9fc965c2b2d4`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

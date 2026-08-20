@@ -5,7 +5,7 @@
 # Model: Copywriter / كاتب المحتوى  `copywriter_chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `09ba91d8-692f-4aed-a557-4af5888c81be`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

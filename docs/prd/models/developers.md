@@ -5,7 +5,7 @@
 # Model: Developers / المطورون  `developers`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `11bade2c-7da9-4d00-b045-eaab37153da2`
 **Storage:** unified records (JSONB)
 **Group:** Projects

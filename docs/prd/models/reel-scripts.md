@@ -5,7 +5,7 @@
 # Model: Reels / الريلز  `reel_scripts`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `7c0ffee1-5cab-4b0a-9d3e-12ab34cd56ef`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

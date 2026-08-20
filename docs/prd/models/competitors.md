@@ -5,7 +5,7 @@
 # Model: Competitors / مكتبة المنافسين  `competitors`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `484b5157-ed8c-4013-9dd7-442476a7f9ff`
 **Storage:** unified records (JSONB)
 **Group:** Designs

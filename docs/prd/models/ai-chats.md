@@ -5,7 +5,7 @@
 # Model: AI Agent / المساعد الذكي  `ai_chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `ca95e4eb-da23-47fa-9f77-3149ba5fa37c`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)

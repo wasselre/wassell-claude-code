@@ -5,7 +5,7 @@
 # Model: Marketing Operations / عمليات التسويق  `marketing_operations`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `58e92e8d-b7c6-48ef-b9c4-41987e522075`
 **Storage:** unified records (JSONB)
 **Group:** Designs

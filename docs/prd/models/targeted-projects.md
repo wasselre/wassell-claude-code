@@ -5,7 +5,7 @@
 # Model: Targeted Projects / المشاريع المستهدفة  `targeted_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `8550651a-8d65-4e4d-a842-c800be336f78`
 **Storage:** unified records (JSONB)
 **Group:** Projects

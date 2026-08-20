@@ -5,7 +5,7 @@
 # Model: Prompt Library / مكتبة التعليمات  `prompt_snippets`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-19
+**Last updated (from DB):** 2026-08-20
 **Model id:** `fd5bab91-50a8-41e9-a733-bce2592559f3`
 **Storage:** unified records (JSONB)
 **Group:** Designs

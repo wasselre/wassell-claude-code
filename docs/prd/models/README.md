@@ -9,41 +9,41 @@
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [Advertisers](advertisers.md) | `advertisers` | JSONB | — | 1 | 10 | no | 2026-07-01 |
-| [AI Agent](ai-chats.md) | `ai_chats` | JSONB | — | 1 | 5 | yes | 2026-08-19 |
+| [AI Agent](ai-chats.md) | `ai_chats` | JSONB | — | 1 | 5 | yes | 2026-08-20 |
 | [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 66 | no | 2026-08-16 |
-| [Appointments](appointments.md) | `appointments` | JSONB | — | 1 | 8 | no | 2026-08-19 |
-| [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | — | 1 | 13 | yes | 2026-08-19 |
-| [Chats](chats.md) | `chats` | JSONB | — | 1 | 15 | yes | 2026-08-19 |
+| [Appointments](appointments.md) | `appointments` | JSONB | — | 1 | 8 | no | 2026-08-20 |
+| [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | — | 1 | 13 | yes | 2026-08-20 |
+| [Chats](chats.md) | `chats` | JSONB | — | 1 | 15 | yes | 2026-08-20 |
 | [Cities](cities.md) | `cities` | frozen `cities` | Geography | 1 | 12 | no | 2026-07-30 |
-| [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-08-19 |
-| [Clients](clients.md) | `clients` | JSONB | — | 4 | 24 | no | 2026-08-19 |
-| [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-08-19 |
+| [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-08-20 |
+| [Clients](clients.md) | `clients` | JSONB | — | 4 | 25 | no | 2026-08-20 |
+| [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-08-20 |
 | [Contacts](contacts.md) | `contacts` | JSONB | — | 1 | 6 | no | 2026-08-10 |
-| [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | — | 1 | 6 | no | 2026-08-19 |
+| [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | — | 1 | 6 | no | 2026-08-20 |
 | [Countries](countries.md) | `countries` | JSONB | Geography | 1 | 5 | no | 2026-06-28 |
-| [Data Migration](data-migration.md) | `data_migration` | JSONB | — | 1 | 5 | yes | 2026-08-19 |
-| [Decks](decks.md) | `decks` | JSONB | — | 1 | 11 | yes | 2026-08-19 |
-| [Templates Library](design-templates.md) | `design_templates` | JSONB | Designs | 1 | 7 | yes | 2026-08-19 |
+| [Data Migration](data-migration.md) | `data_migration` | JSONB | — | 1 | 5 | yes | 2026-08-20 |
+| [Decks](decks.md) | `decks` | JSONB | — | 1 | 11 | yes | 2026-08-20 |
+| [Templates Library](design-templates.md) | `design_templates` | JSONB | Designs | 1 | 7 | yes | 2026-08-20 |
 | [Developer Knowledge](developer-knowledge.md) | `developer_knowledge` | JSONB | Projects | 1 | 9 | no | 2026-07-30 |
-| [Developers](developers.md) | `developers` | JSONB | Projects | 1 | 5 | no | 2026-08-19 |
+| [Developers](developers.md) | `developers` | JSONB | Projects | 1 | 5 | no | 2026-08-20 |
 | [Districts](districts.md) | `districts` | frozen `districts` | Geography | 1 | 28 | no | 2026-07-30 |
 | [Financing](financing.md) | `financing` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
-| [Follow-ups](followups.md) | `followups` | JSONB | — | 6 | 18 | no | 2026-08-19 |
-| [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-08-19 |
-| [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-08-19 |
+| [Follow-ups](followups.md) | `followups` | JSONB | — | 6 | 18 | no | 2026-08-20 |
+| [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-08-20 |
+| [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
 | [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 83 | no | 2026-08-07 |
-| [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 17 | yes | 2026-08-19 |
-| [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-08-19 |
+| [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 17 | yes | 2026-08-20 |
+| [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-08-20 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
-| [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 1 | 18 | no | 2026-08-19 |
+| [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 1 | 18 | no | 2026-08-20 |
 | [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | New Group | 1 | 8 | no | 2026-06-17 |
-| [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | — | 2 | 16 | no | 2026-08-19 |
+| [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | — | 2 | 16 | no | 2026-08-20 |
 | [Post Batches](posts-batches.md) | `posts_batches` | JSONB | — | 1 | 13 | no | 2026-07-26 |
 | [Posts Content](posts-content.md) | `posts_content` | JSONB | — | 4 | 30 | no | 2026-07-26 |
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-06-08 |
-| [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-08-19 |
+| [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
 | [Real Estate Offices](real-estate-offices.md) | `real_estate_offices` | JSONB | Unresponded Requests | 1 | 6 | no | 2026-07-30 |
-| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-08-19 |
+| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-08-20 |
 | [Regions](regions.md) | `regions` | frozen `regions` | Geography | 1 | 8 | no | 2026-07-30 |
 | [Reservations](reservations.md) | `reservations` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
 | [Sales Correction Tasks](sales-correction-tasks.md) | `sales_correction_tasks` | JSONB | Sales Valuation | 1 | 12 | no | 2026-06-23 |
@@ -52,8 +52,8 @@
 | [Sales Valuation Queue](sales-valuation-reviews.md) | `sales_valuation_reviews` | JSONB | Sales Valuation | 5 | 34 | no | 2026-06-28 |
 | [Sales Valuation Settings](sales-valuation-settings.md) | `sales_valuation_settings` | JSONB | Sales Valuation | 1 | 13 | no | 2026-06-28 |
 | [Website Settings](site-settings.md) | `site_settings` | JSONB | — | 15 | 223 | yes | 2026-06-15 |
-| [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 1 | 7 | no | 2026-08-19 |
+| [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 1 | 7 | no | 2026-08-20 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 2 | 7 | no | 2026-07-31 |
-| [Units](units.md) | `units` | JSONB | Projects | 1 | 9 | no | 2026-08-19 |
-| [Visits](visits.md) | `visits` | JSONB | — | 1 | 9 | no | 2026-08-19 |
+| [Units](units.md) | `units` | JSONB | Projects | 1 | 9 | no | 2026-08-20 |
+| [Visits](visits.md) | `visits` | JSONB | — | 1 | 9 | no | 2026-08-20 |
