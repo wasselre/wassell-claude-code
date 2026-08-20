@@ -787,6 +787,15 @@ export interface MosCampaign {
    * that return an MosCampaign (detail/search/overview), which don't need it.
    */
   platforms?: string[];
+  /**
+   * LIVE status derived server-side from the campaign's executions' real
+   * platform state (`campaign_list` / `campaign_detail`): 'active' if any
+   * execution is running, 'paused' if it has synced executions but none running,
+   * null when nothing is synced or the manual status is done/cancelled. Prefer
+   * `live_status ?? status` when showing the status pill, so a hand-set
+   * "planning" campaign whose ads are live on Meta stops reading as planning.
+   */
+  live_status?: 'active' | 'paused' | null;
 }
 
 /**

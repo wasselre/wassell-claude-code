@@ -91,6 +91,23 @@ function metaErr(e: unknown): string {
 /* helpers                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A campaign's LIVE status, derived from its executions' real platform state.
+ * `manualStatus` is the hand-set lifecycle; a deliberate `done`/`cancelled`
+ * is never overridden. Otherwise a running execution → 'active', a synced-but-
+ * not-running one → 'paused', nothing synced → null (fall back to manual).
+ */
+function deriveLiveStatus(
+  manualStatus: string | undefined,
+  live: { running: boolean; synced: boolean } | undefined,
+): 'active' | 'paused' | null {
+  if (manualStatus === 'done' || manualStatus === 'cancelled') return null;
+  if (!live) return null;
+  if (live.running) return 'active';
+  if (live.synced) return 'paused';
+  return null;
+}
+
 /** Clamp any client-supplied limit. No list here is ever unbounded. */
 const cap = (n: unknown, def: number, max: number): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(max, Math.max(1, Math.floor(n))) : def;
@@ -3084,6 +3101,10 @@ export default async function handler(req: Request): Promise<Response> {
       case 'campaign_list': {
         const rows = await sb.from('mos_campaign_v').select('*')
           .is('archived_at', null)
+          // Hide the Meta-sync HOLDER pseudo-campaign ("Meta — synced"). It is an
+          // internal inbox the sync parks freshly-pulled Meta campaigns under, not
+          // a real campaign, and it read as a stray "active" row in the list.
+          .not('ref', 'like', 'meta-sync:%')
           .order('starts_on', { ascending: false, nullsFirst: false })
           .limit(cap(body.limit, 200, 500));
         const f = dbFail(rows.error);
@@ -3107,18 +3128,28 @@ export default async function handler(req: Request): Promise<Response> {
         // client with one full `campaign_detail` per row plus a `publication_list`,
         // an N+1 that saturated the browser's connection limit and the DB and
         // froze the whole workspace on mobile (the "entering Campaigns hangs" bug).
-        const listRows = (rows.data ?? []) as Array<{ id: string; kind?: string }>;
+        const listRows = (rows.data ?? []) as Array<{ id: string; kind?: string; status?: string }>;
         const ids = listRows.map((c) => c.id);
         const platformsByCampaign = new Map<string, Set<string>>();
+        // Live status derived from a campaign's executions (real platform state),
+        // so a hand-set "planning" campaign whose ads are actually running on Meta
+        // stops reading as planning. running > paused > null.
+        const liveByCampaign = new Map<string, { running: boolean; synced: boolean }>();
         if (ids.length > 0) {
           const [execRows, contentRows] = await Promise.all([
-            sb.from('mos_campaign_executions').select('campaign_id, platform').in('campaign_id', ids),
+            sb.from('mos_campaign_executions').select('campaign_id, platform, status, platform_campaign_id').in('campaign_id', ids),
             sb.from('mos_content_v').select('id, campaign_id').in('campaign_id', ids).is('archived_at', null),
           ]);
           const ef = dbFail(execRows.error) ?? dbFail(contentRows.error);
           if (ef) return ef;
           const execByCampaign = new Map<string, Set<string>>();
-          for (const r of (execRows.data ?? []) as Array<{ campaign_id: string; platform: string | null }>) {
+          for (const r of (execRows.data ?? []) as Array<{ campaign_id: string; platform: string | null; status: string | null; platform_campaign_id: string | null }>) {
+            // Live-status accumulation: any execution counts (a synced Meta
+            // campaign has a platform_campaign_id and a running/paused status).
+            const live = liveByCampaign.get(r.campaign_id) ?? { running: false, synced: false };
+            if (r.status === 'running') live.running = true;
+            if (r.platform_campaign_id) live.synced = true;
+            liveByCampaign.set(r.campaign_id, live);
             if (!r.platform) continue;
             const s = execByCampaign.get(r.campaign_id) ?? new Set<string>();
             s.add(r.platform);
@@ -3158,6 +3189,7 @@ export default async function handler(req: Request): Promise<Response> {
           ...c,
           goal_ids: byCampaign.get(c.id) ?? [],
           platforms: Array.from(platformsByCampaign.get(c.id) ?? []),
+          live_status: deriveLiveStatus(c.status, liveByCampaign.get(c.id)),
         }));
         return jsonOk({ campaigns });
       }
@@ -3190,8 +3222,18 @@ export default async function handler(req: Request): Promise<Response> {
           .map((l) => l.mos_goals)
           .filter((g): g is Record<string, unknown> => g !== null && typeof g === 'object');
         const goalIds = ((goalLinks.data ?? []) as Array<{ goal_id: string }>).map((l) => l.goal_id);
+        const detailLive = { running: false, synced: false };
+        for (const e of (execs.data ?? []) as Array<{ status?: string | null; platform_campaign_id?: string | null }>) {
+          if (e.status === 'running') detailLive.running = true;
+          if (e.platform_campaign_id) detailLive.synced = true;
+        }
+        const itemRow = item.row as Record<string, unknown>;
         return jsonOk({
-          item: { ...(item.row as Record<string, unknown>), goal_ids: goalIds },
+          item: {
+            ...itemRow,
+            goal_ids: goalIds,
+            live_status: deriveLiveStatus(itemRow.status as string | undefined, detailLive),
+          },
           executions: execs.data ?? [],
           content: content.data ?? [],
           comments: comments.data ?? [],

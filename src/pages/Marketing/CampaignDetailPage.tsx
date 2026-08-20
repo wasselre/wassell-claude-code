@@ -42,7 +42,7 @@ import AudiencePicker from './components/AudiencePicker';
 import GoalMultiSelect from './components/GoalMultiSelect';
 import ProjectLink from './components/ProjectLink';
 import { IconBack, IconForward } from './components/icons';
-import { money, monthOf, num, shortDate } from './lib/format';
+import { money, monthOf, num, shortDate, whole } from './lib/format';
 import { measureActual, pickVolumeMeasure } from './lib/measure';
 import './styles/campaign-detail.css';
 
@@ -748,7 +748,11 @@ export default function CampaignDetailPage() {
   };
   const inProduction = content.filter((c) => c.status_key !== 'done').length;
 
-  const statusPill = item.status === 'active' && days
+  // The status shown reflects reality: live_status (derived from the executions'
+  // real platform state) wins over the hand-set lifecycle, so a "planning"
+  // campaign whose Meta ads are actually running reads as active.
+  const effStatus = item.live_status ?? item.status;
+  const statusPill = effStatus === 'active' && days
     ? {
         tone: 'now' as Tone,
         text: isAr
@@ -756,9 +760,9 @@ export default function CampaignDetailPage() {
           : `Live · day ${days.elapsed} of ${days.total}`,
       }
     : {
-        tone: (item.status === 'active' ? 'now' : item.status === 'done' ? 'live' : 'idle') as Tone,
-        text: (isAr ? CAMPAIGN_STATUS_LABELS[item.status]?.ar : CAMPAIGN_STATUS_LABELS[item.status]?.en)
-          ?? item.status,
+        tone: (effStatus === 'active' ? 'now' : effStatus === 'done' ? 'live' : 'idle') as Tone,
+        text: (isAr ? CAMPAIGN_STATUS_LABELS[effStatus]?.ar : CAMPAIGN_STATUS_LABELS[effStatus]?.en)
+          ?? effStatus,
       };
 
   const crumbTail: Record<Tab, { ar: string; en: string } | null> = {
@@ -1339,11 +1343,11 @@ export default function CampaignDetailPage() {
                                       : <><b>{num(Math.max(0, remaining), false)}</b> SAR remain</>
                                     : x.budget !== null
                                       ? isAr
-                                        ? <>صُرف <b>{num(x.spend, true)}</b> من {num(x.budget, true)}</>
-                                        : <><b>{num(x.spend, false)}</b> of {num(x.budget, false)} spent</>
+                                        ? <>صُرف <b>{num(whole(x.spend), true)}</b> من {num(whole(x.budget), true)}</>
+                                        : <><b>{num(whole(x.spend), false)}</b> of {num(whole(x.budget), false)} spent</>
                                       : isAr
-                                        ? <>صُرف <b>{num(x.spend, true)}</b> ريال</>
-                                        : <><b>{num(x.spend, false)}</b> SAR spent</>}
+                                        ? <>صُرف <b>{num(whole(x.spend), true)}</b> ريال</>
+                                        : <><b>{num(whole(x.spend), false)}</b> SAR spent</>}
                                 </span>
                                 <span>{isAr ? `${num(x.leads, true)} عميلًا` : `${num(x.leads, false)} leads`}</span>
                                 <span>{isAr ? `${num(x.qualified, true)} مؤهلًا` : `${num(x.qualified, false)} qualified`}</span>
@@ -1634,8 +1638,8 @@ export default function CampaignDetailPage() {
                       border: 'var(--line)',
                       mute: true,
                       body: isAr
-                        ? <>{purposeLabel ? <>غرضه {purposeLabel}، فالمؤهلون لم يكونوا المقصد — لكن </> : null}{num(x.spend, true)} ريال لم تنتج شيئًا قابلًا للقياس.</>
-                        : <>{purposeLabel ? <>Its purpose is {purposeLabel.toLowerCase()}, so qualified were never the point — but </> : null}{num(x.spend, false)} SAR produced nothing measurable.</>,
+                        ? <>{purposeLabel ? <>غرضه {purposeLabel}، فالمؤهلون لم يكونوا المقصد — لكن </> : null}{num(whole(x.spend), true)} ريال لم تنتج شيئًا قابلًا للقياس.</>
+                        : <>{purposeLabel ? <>Its purpose is {purposeLabel.toLowerCase()}, so qualified were never the point — but </> : null}{num(whole(x.spend), false)} SAR produced nothing measurable.</>,
                     };
                   } else if (s.isBestCpq) {
                     const budgets = execStats
@@ -1678,8 +1682,13 @@ export default function CampaignDetailPage() {
                           return sp.length > 0 ? <span className="tag">{sp.slice(0, 2).join(' · ')}</span> : null;
                         })()}
                         {x.platform_campaign_id && (
-                          <span className="ltr cd-platform-id" style={{ fontSize: 11, color: 'var(--mute)' }}>
-                            {x.platform_campaign_id}
+                          <span
+                            className="cd-platform-id"
+                            style={{ fontSize: 11, color: 'var(--mute)' }}
+                            title={isAr ? 'معرّف الحملة على ميتا' : 'Meta campaign id'}
+                          >
+                            {isAr ? 'حملة ميتا' : 'Meta campaign'}{' '}
+                            <span className="ltr">#{x.platform_campaign_id}</span>
                           </span>
                         )}
                         <span style={{ marginInlineStart: 'auto' }}>
@@ -1702,10 +1711,10 @@ export default function CampaignDetailPage() {
                         <div>
                           <div className="lbl">{isAr ? 'وتيرة الصرف' : 'Spend pace'}</div>
                           <div className="cd-vs-line" style={{ marginTop: 4 }}>
-                            <span className="cd-pacenum">{num(x.spend, isAr)}</span>
+                            <span className="cd-pacenum">{money(x.spend, isAr)}</span>
                             <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
                               {x.budget !== null
-                                ? isAr ? `من ${num(x.budget, true)}` : `of ${num(x.budget, false)}`
+                                ? isAr ? `من ${num(whole(x.budget), true)}` : `of ${num(whole(x.budget), false)}`
                                 : isAr ? 'بلا ميزانية' : 'no budget'}
                             </span>
                           </div>
@@ -2394,7 +2403,7 @@ export default function CampaignDetailPage() {
                 <b>{pname(x.platform)}</b>
                 {x.label && <span style={{ color: 'var(--mute)' }}>{x.label}</span>}
                 <span style={{ marginInlineStart: 'auto', fontSize: 11.5, color: 'var(--mute)' }}>
-                  {num(x.spend, isAr)} / {num(x.budget, isAr)}
+                  {num(whole(x.spend), isAr)} / {num(whole(x.budget), isAr)}
                 </span>
               </button>
             ))}
@@ -2791,7 +2800,7 @@ function BudgetShiftModal({
   const [busy, setBusy] = useState(false);
 
   const optionLabel = (x: MosExecution): string =>
-    `${pname(x.platform)}${x.label ? ` — ${x.label}` : ''} · ${num(x.spend, isAr)} / ${num(x.budget, isAr)}`;
+    `${pname(x.platform)}${x.label ? ` — ${x.label}` : ''} · ${num(whole(x.spend), isAr)} / ${num(whole(x.budget), isAr)}`;
 
   const submit = async (): Promise<void> => {
     const value = Number(amount);

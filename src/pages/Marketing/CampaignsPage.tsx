@@ -26,7 +26,7 @@ import CampaignContentBuilder, { type ContentDraft } from './components/Campaign
 import SuccessMeasuresEditor, {
   MeasureDraft, measuresToDrafts, draftsToMeasures, hasMeasureTarget,
 } from './components/SuccessMeasuresEditor';
-import { money, num, shortDate } from './lib/format';
+import { money, num, shortDate, whole } from './lib/format';
 import { measureActual, pickMainMeasure } from './lib/measure';
 import './styles/mobile-m4.css';
 
@@ -141,7 +141,7 @@ function verdictCardOf(c: MosCampaign, isAr: boolean): VerdictCard {
   if (main && target !== null && main.source !== 'none' && spend > 0 && (actual === null || actual === 0)) {
     return {
       big: measureValue(actual, main.unit, isAr),
-      sub: isAr ? `على ${num(spend, true)} ريال` : `on ${num(spend, false)} SAR`,
+      sub: isAr ? `على ${num(whole(spend), true)} ريال` : `on ${num(whole(spend), false)} SAR`,
       meterPct: budget > 0 ? Math.min(100, Math.round((spend / budget) * 100)) : 100,
       meterColor: 'var(--late)',
       verdict: isAr ? 'تحتاج قرارًا' : 'Needs a decision',
@@ -508,7 +508,7 @@ export default function CampaignsPage() {
                     </thead>
                     <tbody>
                       {filtered.map((c) => {
-                        const st = TABLE_STATUS[c.status] ?? FALLBACK_STATUS;
+                        const st = TABLE_STATUS[c.live_status ?? c.status] ?? FALLBACK_STATUS;
                         const dimmed = c.status === 'done' || c.status === 'cancelled';
                         const planning = c.status === 'planning';
                         const organic = c.kind === 'organic';
@@ -561,7 +561,7 @@ export default function CampaignsPage() {
                                   : planning ? (isAr ? 'لاحقًا' : 'later') : '—'}
                             </td>
                             <td className="num" style={organic || c.total_spend === null ? { color: 'var(--mute)' } : undefined}>
-                              {organic ? '—' : num(c.total_spend, isAr)}
+                              {organic ? '—' : num(whole(c.total_spend), isAr)}
                             </td>
                             <td className="num" style={planning || c.total_leads === null ? { color: 'var(--mute)' } : undefined}>
                               {planning ? '—' : num(c.total_leads, isAr)}

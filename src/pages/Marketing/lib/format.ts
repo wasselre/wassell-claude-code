@@ -21,6 +21,16 @@ export function num(v: number | null | undefined, isAr: boolean): string {
   return isAr ? toArabicDigits(s) : s;
 }
 
+/**
+ * Round a value to a whole number for display, preserving null/undefined.
+ * Spend from Meta insights carries halalas (e.g. 782.38 SAR); rendered raw with
+ * the Arabic decimal mark it misreads as "782,038". Money is shown in whole
+ * riyals across the marketing surfaces, so round before `num()`.
+ */
+export function whole(v: number | null | undefined): number | null {
+  return v === null || v === undefined || !Number.isFinite(v) ? null : Math.round(v);
+}
+
 /** Money. SAR is written ر.س in Arabic and SAR in English. */
 export function money(v: number | null | undefined, isAr: boolean): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return '—';

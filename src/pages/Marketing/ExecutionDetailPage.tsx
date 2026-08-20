@@ -28,7 +28,7 @@ import { PlatformFieldsGrid, PlatformSettingsForm } from './components/PlatformS
 import CampaignTreeModal from './components/CampaignTreeModal';
 import { Empty, Field, LoadError, Modal, Pill, ReadField, Skeleton } from './components/kit';
 import { IconBack, IconForward, IconPlus } from './components/icons';
-import { isoDate, num, shortDate } from './lib/format';
+import { isoDate, num, shortDate, whole } from './lib/format';
 
 type Tab = 'ads' | 'targeting' | 'lead_form' | 'daily';
 
@@ -399,7 +399,7 @@ export default function ExecutionDetailPage() {
                                           : ad.note ?? ''}
                                   </div>
                                 </td>
-                                <td className="num">{num(ad.spend, isAr)}</td>
+                                <td className="num">{num(whole(ad.spend), isAr)}</td>
                                 <td className="num">{num(ad.clicks, isAr)}</td>
                                 <td className="num">{num(ad.leads, isAr)}</td>
                                 <td className="num">{num(ad.qualified, isAr)}</td>
@@ -502,8 +502,8 @@ export default function ExecutionDetailPage() {
                               <div className="m4-vstats">
                                 <span>
                                   {isAr
-                                    ? <>صُرف <b>{num(ad.spend, true)}</b></>
-                                    : <><b>{num(ad.spend, false)}</b> spent</>}
+                                    ? <>صُرف <b>{num(whole(ad.spend), true)}</b></>
+                                    : <><b>{num(whole(ad.spend), false)}</b> spent</>}
                                 </span>
                                 <span>{isAr ? `${num(ad.clicks, true)} نقرة` : `${num(ad.clicks, false)} clicks`}</span>
                                 <span>{isAr ? `${num(ad.leads, true)} عميلًا` : `${num(ad.leads, false)} leads`}</span>
@@ -1207,7 +1207,7 @@ function DailyTab({
                 {daily.map((d) => (
                   <tr key={d.id}>
                     <td>{shortDate(d.day, isAr)}</td>
-                    <td className="num">{num(d.spend, isAr)}</td>
+                    <td className="num">{num(whole(d.spend), isAr)}</td>
                     <td className="num">{num(d.leads, isAr)}</td>
                     <td className="num">{num(d.qualified, isAr)}</td>
                     <td className="num">
