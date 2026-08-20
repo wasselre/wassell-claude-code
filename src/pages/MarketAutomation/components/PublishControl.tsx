@@ -9,8 +9,8 @@
  * the release backfills the live column from staging and flips the ledger.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, Lock, UploadCloud } from 'lucide-react';
-import { fetchPublishLedger, setPublishStatus, publishField, type FieldStatus, type PublishLedgerRow } from '@/lib/marketAutomation/client';
+import { AlertTriangle, Check, Lock, UploadCloud, PlusCircle } from 'lucide-react';
+import { fetchPublishLedger, setPublishStatus, publishField, exampleList, type FieldStatus, type PublishLedgerRow } from '@/lib/marketAutomation/client';
 
 export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; isAr: boolean }) {
   const [ledger, setLedger] = useState<PublishLedgerRow[]>([]);
@@ -42,6 +42,12 @@ export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; is
   const ledgerOf = (platform: string, field: string) => ledger.find((l) => l.platform === platform && l.canonical_field === field);
   const statusOf = (platform: string, field: string): 'held' | 'released' => ledgerOf(platform, field)?.status ?? 'held';
 
+  // Candidate-new fields awaiting a real column (a reviewed repo-side promotion).
+  const pending = useMemo(
+    () => rows.filter((r) => r.authoritative_status === 'candidate_new_field'),
+    [rows],
+  );
+
   // HOLD is immediate (ledger flip). RELEASE runs a dry-run first, then confirms.
   const onToggle = async (platform: string, field: string) => {
     setError(null);
@@ -72,6 +78,49 @@ export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; is
 
   return (
     <div className="space-y-4">
+      {/* Pending columns: candidate-new fields awaiting a reviewed repo-side promotion. */}
+      {pending.length > 0 && (
+        <div className="border border-amber-200 bg-amber-50/50 rounded-xl overflow-hidden">
+          <div className="flex items-start gap-2 px-4 py-3 text-[13px] text-amber-900 border-b border-amber-200/60">
+            <PlusCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <div>
+              <b>{isAr ? `أعمدة مُعلَّقة (${pending.length})` : `Pending columns (${pending.length})`}</b>
+              {' — '}
+              {isAr
+                ? 'حقول رُشِّحت كـ«حقل جديد» وتنتظر عمودًا حقيقيًا. الترقية عملية مُراجَعة في المستودع (هجرة على الجدول المجمّد + تعديل المستخرِج/المحوِّل)، ثم تُصدَر كأي حقل. راجع docs/market-ingest/column-promotion.md.'
+                : 'Fields ruled “new field”, awaiting a real column. Promotion is a reviewed repo-side action (a frozen-table migration + an extractor/adapter change), then it’s released like any field. See docs/market-ingest/column-promotion.md.'}
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-[11px] uppercase text-amber-800/50">
+                <tr>
+                  {[isAr ? 'المسار' : 'source path', isAr ? 'العمود المقترح' : 'proposed column', isAr ? 'النوع' : 'type', isAr ? 'أمثلة' : 'examples'].map((h) => (
+                    <th key={h} className="text-start font-medium px-3 py-1.5 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pending.map((r) => (
+                  <tr key={r.platform + r.source_path} className="border-t border-amber-200/40">
+                    <td className="px-3 py-1.5 font-mono text-[12px] text-charcoal/80">{r.source_path}</td>
+                    <td className="px-3 py-1.5 font-mono text-[12px] text-amber-900">{r.source_path.split('.').pop()}</td>
+                    <td className="px-3 py-1.5 text-[12px] text-charcoal/55">{r.raw_data_type ?? '—'}</td>
+                    <td className="px-3 py-1.5">
+                      <div className="flex flex-wrap gap-1">
+                        {exampleList(r.example_values, 3).map((ex, i) => (
+                          <span key={i} className="bg-white/70 border border-amber-200 text-charcoal/60 text-[11px] px-1.5 py-0.5 rounded truncate max-w-[120px]">{ex}</span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-start gap-2 text-[13px] text-charcoal/60 bg-sand/5 border border-sand/40 rounded-xl px-4 py-3">
         <Lock className="w-4 h-4 mt-0.5 shrink-0 text-copper" />
         <div>
