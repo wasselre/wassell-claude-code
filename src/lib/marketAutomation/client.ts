@@ -150,6 +150,26 @@ export async function setPublishStatus(
   if (error) throw new Error(error.message);
 }
 
+/**
+ * The publisher: dry-run returns how many rows would change (staged value differs
+ * from live); release (dryRun=false) backfills the live column from staging, flips
+ * the ledger to released, and clears staging for the field. Returns the diff count.
+ */
+export async function publishField(
+  platform: string,
+  canonical_field: string,
+  dryRun: boolean,
+): Promise<number> {
+  if (!supabase) throw new Error('offline — no Supabase connection');
+  const { data, error } = await supabase.rpc('market_listing_publish', {
+    p_platform: platform,
+    p_canonical_field: canonical_field,
+    p_dry_run: dryRun,
+  });
+  if (error) throw new Error(error.message);
+  return (data as number) ?? 0;
+}
+
 /** The market_listings field slugs — the target columns for "map to existing". */
 export async function fetchTargetFields(): Promise<string[]> {
   if (!supabase) return [];

@@ -1,22 +1,22 @@
 /**
- * Publish control (Phase 3, Increment 1) — the release allowlist. Each mapped
- * canonical_field is either `released` (flows to the live market_listings column)
- * or `held` (gated). Grandfathered fields — those already live before the gate —
- * are seeded `released`. Toggling writes the ledger via market_listing_publish_set.
+ * Publish control (Phase 3) — the enforced release gate. Each mapped canonical_field
+ * is `released` (flows to the live market_listings column) or `held` (its scraped
+ * values wait in staging). Grandfathered fields are seeded `released`.
  *
- * Increment 1 is the control plane + authority. Enforcement (the adapter/merge
- * honoring `held`), the dry-run diff, and backfill-on-release land in Increment 2
- * (market_listing_publish). Until then a release/hold records intent; the
- * grandfathered fields keep flowing exactly as before.
+ * HOLD flips the ledger (market_listing_publish_set) — future scrapes stage that
+ * field instead of writing it live. RELEASE runs the publisher
+ * (market_listing_publish): a dry-run first shows how many rows would change, then
+ * the release backfills the live column from staging and flips the ledger.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, Lock } from 'lucide-react';
-import { fetchPublishLedger, setPublishStatus, type FieldStatus, type PublishLedgerRow } from '@/lib/marketAutomation/client';
+import { AlertTriangle, Check, Lock, UploadCloud } from 'lucide-react';
+import { fetchPublishLedger, setPublishStatus, publishField, type FieldStatus, type PublishLedgerRow } from '@/lib/marketAutomation/client';
 
 export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; isAr: boolean }) {
   const [ledger, setLedger] = useState<PublishLedgerRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{ platform: string; field: string; diff: number } | null>(null);
 
   const reload = () => fetchPublishLedger().then(setLedger).catch((e) => setError(e instanceof Error ? e.message : String(e)));
   useEffect(() => { reload(); }, []);
@@ -42,17 +42,30 @@ export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; is
   const ledgerOf = (platform: string, field: string) => ledger.find((l) => l.platform === platform && l.canonical_field === field);
   const statusOf = (platform: string, field: string): 'held' | 'released' => ledgerOf(platform, field)?.status ?? 'held';
 
-  const toggle = async (platform: string, field: string) => {
-    const next = statusOf(platform, field) === 'released' ? 'held' : 'released';
-    setBusy(`${platform}::${field}`); setError(null);
-    try {
-      await setPublishStatus(platform, field, next, next === 'held' ? 'held via cockpit' : 'released via cockpit');
-      await reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
+  // HOLD is immediate (ledger flip). RELEASE runs a dry-run first, then confirms.
+  const onToggle = async (platform: string, field: string) => {
+    setError(null);
+    const key = `${platform}::${field}`;
+    if (statusOf(platform, field) === 'released') {
+      setBusy(key);
+      try { await setPublishStatus(platform, field, 'held', 'held via cockpit'); await reload(); }
+      catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+      finally { setBusy(null); }
+    } else {
+      setBusy(key);
+      try { const diff = await publishField(platform, field, true); setConfirm({ platform, field, diff }); }
+      catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+      finally { setBusy(null); }
     }
+  };
+
+  const doRelease = async () => {
+    if (!confirm) return;
+    const key = `${confirm.platform}::${confirm.field}`;
+    setBusy(key); setError(null);
+    try { await publishField(confirm.platform, confirm.field, false); setConfirm(null); await reload(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
   };
 
   const releasedCount = fields.filter((f) => statusOf(f.platform, f.field) === 'released').length;
@@ -63,13 +76,30 @@ export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; is
         <Lock className="w-4 h-4 mt-0.5 shrink-0 text-copper" />
         <div>
           {isAr
-            ? 'قائمة الإصدار: الحقول «مُصدَرة» تتدفق إلى جدول الإعلانات المباشر؛ «محجوزة» مُوقفة عند البوابة. الحقول المتدفقة سابقًا مُصدَرة تلقائيًا. (الإنفاذ الكامل — الفرق التجريبي وإعادة التعبئة — يأتي في الخطوة التالية.)'
-            : 'Release allowlist: “released” fields flow to the live listings table; “held” fields are gated. Fields that were already live are auto-released. (Full enforcement — dry-run diff + backfill — comes in the next increment.)'}
+            ? 'بوابة الإصدار: الحقول «مُصدَرة» تتدفق إلى جدول الإعلانات المباشر؛ «محجوزة» تُخزَّن قيمها مؤقتًا حتى الإصدار. «حجز» يوقف الحقل فورًا؛ «إصدار» يعرض عدد الصفوف المتأثرة ثم يعيد تعبئتها.'
+            : 'Release gate: “released” fields flow to the live listings table; “held” fields have their scraped values staged until you release. Hold stops a field immediately; Release shows how many rows it affects, then backfills them.'}
           <div className="mt-1 text-charcoal/45">
             {releasedCount}/{fields.length} {isAr ? 'مُصدَرة' : 'released'}
           </div>
         </div>
       </div>
+
+      {confirm && (
+        <div className="flex items-center justify-between gap-3 bg-copper/5 border border-copper/30 rounded-xl px-4 py-3">
+          <div className="text-[13px] text-charcoal">
+            <span className="font-mono">{confirm.field}</span> —{' '}
+            {isAr ? `سيُعاد تعبئة ${confirm.diff} صفًّا إلى الجدول المباشر.` : `${confirm.diff} row(s) will be backfilled to the live table.`}
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button onClick={doRelease} disabled={busy !== null}
+              className="inline-flex items-center gap-1.5 text-[12px] bg-copper text-white px-3 py-1.5 rounded-lg hover:bg-terracotta disabled:opacity-50">
+              <UploadCloud className="w-3.5 h-3.5" />{isAr ? 'إصدار' : 'Release'}
+            </button>
+            <button onClick={() => setConfirm(null)} disabled={busy !== null}
+              className="text-[12px] text-charcoal/60 px-3 py-1.5 rounded-lg hover:bg-sand/10">{isAr ? 'إلغاء' : 'Cancel'}</button>
+          </div>
+        </div>
+      )}
 
       {error && <div className="flex items-center gap-2 text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-sm"><AlertTriangle className="w-4 h-4" />{error}</div>}
 
@@ -103,7 +133,7 @@ export default function PublishControl({ rows, isAr }: { rows: FieldStatus[]; is
                     </td>
                     <td className="px-3 py-2">
                       <button
-                        onClick={() => toggle(f.platform, f.field)}
+                        onClick={() => onToggle(f.platform, f.field)}
                         disabled={busy === key}
                         className={`inline-flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-full transition-colors ${st === 'released' ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'} ${busy === key ? 'opacity-50' : ''}`}
                         title={isAr ? 'اضغط للتبديل' : 'Click to toggle'}
