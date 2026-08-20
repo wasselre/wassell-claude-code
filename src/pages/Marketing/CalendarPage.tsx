@@ -25,7 +25,7 @@ import { useWorkspace } from './MarketingWorkspace';
 import { LoadError, PageHead, Skeleton } from './components/kit';
 import NewContentModal from './components/NewContentModal';
 import { IconBack, IconForward, IconPlus } from './components/icons';
-import { num, shortDate, toArabicDigits } from './lib/format';
+import { num, shortDate, toArabicDigits, whole } from './lib/format';
 
 /**
  * The shell's phone breakpoint (mobile-shell.css). No shared matchMedia hook
@@ -257,7 +257,7 @@ export default function CalendarPage() {
         const budget = c.budget_total ?? 0;
         const spend = c.total_spend ?? 0;
         pct = budget > 0 ? Math.min(100, Math.round((spend / budget) * 100)) : 0;
-        right = `${num(c.total_spend ?? 0, isAr)} / ${num(c.budget_total, isAr)} ${isAr ? 'ريال' : 'SAR'}`;
+        right = `${num(whole(c.total_spend ?? 0), isAr)} / ${num(whole(c.budget_total), isAr)} ${isAr ? 'ريال' : 'SAR'}`;
       } else {
         // No per-campaign publish counter exists in the API, so the organic
         // bar shows how much of the campaign's window has elapsed — never a

@@ -294,8 +294,11 @@ export default function CampaignsPage() {
           return s !== null && e !== null && s <= mEnd && e >= mStart;
         })
       : rows;
-    const spent = scoped.reduce((a, c) => a + (c.total_spend ?? 0), 0);
-    const budget = scoped.reduce((a, c) => a + (c.budget_total ?? 0), 0);
+    // Round money to whole riyals — spend from Meta insights carries halalas
+    // (e.g. 1264.22), and the Stat card renders this value raw, so the decimal
+    // misread as "1,264022" (the "spend this month" bug).
+    const spent = Math.round(scoped.reduce((a, c) => a + (c.total_spend ?? 0), 0));
+    const budget = Math.round(scoped.reduce((a, c) => a + (c.budget_total ?? 0), 0));
     const leads = scoped.reduce((a, c) => a + (c.total_leads ?? 0), 0);
     const qualified = scoped.reduce((a, c) => a + (c.total_qualified ?? 0), 0);
     const target = (metric: string): number | null => {
