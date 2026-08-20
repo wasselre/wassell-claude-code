@@ -266,6 +266,30 @@ export class MetaMarketingClient {
     return this.updateNode(id, { status });
   }
 
+  /** Delete a node (campaign/adset/ad). Deleting a campaign cascades to its ad
+   *  sets in Meta — used to roll back a partially-built push. */
+  async deleteNode(id: string): Promise<{ success: boolean }> {
+    const auth = await this.authParams();
+    const qs = new URLSearchParams(auth);
+    const res = await fetch(`${this.base}/${id.replace(/^\//, '')}?${qs.toString()}`, { method: 'DELETE' });
+    const text = await res.text();
+    let json: unknown = {};
+    try { json = text ? JSON.parse(text) : {}; } catch { /* Graph returns {"success":true}; tolerate empty. */ }
+    if (!res.ok || (json as { error?: unknown }).error) {
+      const e = (json as { error?: Record<string, unknown> }).error ?? {};
+      throw new MetaApiError(
+        String(e.message ?? `Graph DELETE ${id} failed (${res.status})`),
+        typeof e.code === 'number' ? e.code : null,
+        typeof e.error_subcode === 'number' ? e.error_subcode : null,
+        typeof e.type === 'string' ? e.type : null,
+        typeof e.fbtrace_id === 'string' ? e.fbtrace_id : null,
+        res.status,
+        json,
+      );
+    }
+    return { success: true };
+  }
+
   private withValidate(input: Record<string, unknown>, validateOnly: boolean): Record<string, unknown> {
     return validateOnly ? { ...input, execution_options: ['validate_only'] } : input;
   }

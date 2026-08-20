@@ -119,16 +119,16 @@ export default function ExecutionDetailPage() {
     if (!execution) return;
     setBusy(true);
     try {
+      // All-or-nothing on the server: a rejected ad set rolls the whole push back
+      // and throws with Meta's reason, so reaching here means full success.
       const r = await mosMetaPushStructure(execution.id);
       const sets = r.ad_sets.length;
-      const errs = r.errors.length;
       addToast(
         isAr
-          ? `أُنشئت الحملة و${sets} مجموعة إعلانية في ميتا (موقوفة).${errs ? ` تعذّر ${errs}.` : ''}`
-          : `Created the campaign + ${sets} ad set(s) in Meta (paused).${errs ? ` ${errs} failed.` : ''}`,
-        errs ? 'error' : 'success',
+          ? `أُنشئت الحملة و${sets} مجموعة إعلانية في ميتا (موقوفة).`
+          : `Created the campaign + ${sets} ad set(s) in Meta (paused).`,
+        'success',
       );
-      if (r.errors.length) console.error('[meta push] ad set errors:', r.errors);
       await load();
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');

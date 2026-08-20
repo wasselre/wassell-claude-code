@@ -4256,16 +4256,13 @@ export default async function handler(req: Request): Promise<Response> {
 
         const client = new MetaMarketingClient(cfg);
         try {
-          // 1) Campaign
+          // 1) Campaign. We do NOT write platform_campaign_id yet — the execution
+          //    is only "linked" once the WHOLE skeleton (campaign + every ad set)
+          //    succeeds. Writing it here is what left a failed push showing a
+          //    false "linked to Meta" badge over a half-built campaign.
           const campaignPayload = buildCampaignPayload(campaign, execRow);
           const campaignResult = await client.createCampaign(campaignPayload, validateOnly);
           const metaCampaignId = campaignResult.id;
-          if (!validateOnly && metaCampaignId) {
-            const up = await sb.from('mos_campaign_executions')
-              .update({ platform_campaign_id: metaCampaignId, updated_at: new Date().toISOString() })
-              .eq('id', executionId);
-            const uf = dbFail(up.error); if (uf) return uf;
-          }
 
           // 2) Ad sets — one per planned ad set (a single default if none planned).
           const plan = adSets.length
@@ -4278,14 +4275,43 @@ export default async function handler(req: Request): Promise<Response> {
             try {
               const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId, cfg.pageId, audienceTargeting);
               const asResult = await client.createAdSet(p, validateOnly);
-              if (!validateOnly && s.id && asResult.id) {
-                const up = await sb.from('mos_ad_sets')
-                  .update({ platform_adset_id: asResult.id, updated_at: new Date().toISOString() }).eq('id', s.id);
-                if (up.error) console.error('[marketing-os] ad set link write failed:', up.error.message);
-              }
               createdSets.push({ wassell_ad_set_id: s.id, platform_adset_id: asResult.id ?? '(validated)', name: String(p.name) });
             } catch (e) {
               errors.push({ ad_set: s.name ?? '(unnamed)', error: metaErr(e) });
+            }
+          }
+
+          // 3a) ANY ad set failed → all-or-nothing: undo the campaign in Meta
+          //     (deleting a campaign cascades its ad sets) and link NOTHING. The
+          //     buyer gets the real Meta rejection so they can fix the plan.
+          if (errors.length > 0) {
+            if (!validateOnly && metaCampaignId) {
+              try { await client.deleteNode(metaCampaignId); }
+              catch (delErr) { console.error('[marketing-os] rollback delete failed:', metaErr(delErr)); }
+            }
+            const first = errors[0];
+            return new Response(
+              JSON.stringify({
+                error: `Meta rejected the ad set "${first?.ad_set}": ${first?.error}. Nothing was created — fix the plan and try again.`,
+                error_ar: `رفضت ميتا المجموعة الإعلانية «${first?.ad_set}»: ${first?.error}. لم يُنشأ شيء — صحّح الخطة وأعد المحاولة.`,
+              }),
+              { status: 422, headers: { 'Content-Type': 'application/json' } },
+            );
+          }
+
+          // 3b) All succeeded → NOW persist the links (campaign + each ad set).
+          if (!validateOnly && metaCampaignId) {
+            const up = await sb.from('mos_campaign_executions')
+              .update({ platform_campaign_id: metaCampaignId, updated_at: new Date().toISOString() })
+              .eq('id', executionId);
+            const uf = dbFail(up.error); if (uf) return uf;
+            for (const c of createdSets) {
+              if (c.wassell_ad_set_id && c.platform_adset_id && c.platform_adset_id !== '(validated)') {
+                const su = await sb.from('mos_ad_sets')
+                  .update({ platform_adset_id: c.platform_adset_id, updated_at: new Date().toISOString() })
+                  .eq('id', c.wassell_ad_set_id);
+                if (su.error) console.error('[marketing-os] ad set link write failed:', su.error.message);
+              }
             }
           }
 
