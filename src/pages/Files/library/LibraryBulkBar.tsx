@@ -7,18 +7,19 @@
  * and makes the marquee hit-test disagree with what the user sees.
  */
 import { useTranslation } from 'react-i18next';
-import { Download, Loader2, Pencil, X } from 'lucide-react';
+import { Download, Link2, Loader2, Pencil, X } from 'lucide-react';
 import Button from '@/components/ui/Button';
 
 interface Props {
   count: number;
   busy: boolean;
   onEdit: () => void;
+  onLink: () => void;
   onDownload: () => void;
   onClear: () => void;
 }
 
-export default function LibraryBulkBar({ count, busy, onEdit, onDownload, onClear }: Props) {
+export default function LibraryBulkBar({ count, busy, onEdit, onLink, onDownload, onClear }: Props) {
   const { t } = useTranslation();
   if (count === 0) return null;
 
@@ -39,6 +40,10 @@ export default function LibraryBulkBar({ count, busy, onEdit, onDownload, onClea
       <Button variant="secondary" className="!px-3 !py-1.5 text-xs" disabled={busy} onClick={onEdit}>
         {busy ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <Pencil size={13} aria-hidden />}
         {t('files.bulk.edit')}
+      </Button>
+      <Button variant="secondary" className="!px-3 !py-1.5 text-xs" disabled={busy} onClick={onLink}>
+        <Link2 size={13} aria-hidden />
+        {t('files.bulk.link')}
       </Button>
       <Button variant="secondary" className="!px-3 !py-1.5 text-xs" disabled={busy} onClick={onDownload}>
         <Download size={13} aria-hidden />

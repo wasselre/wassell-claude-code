@@ -59,6 +59,7 @@ import LibraryDetailPanel from './library/LibraryDetailPanel';
 import SaveViewModal from './library/SaveViewModal';
 import LibraryBulkBar from './library/LibraryBulkBar';
 import BulkEditModal from './library/BulkEditModal';
+import BulkLinkModal from './library/BulkLinkModal';
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -284,6 +285,7 @@ export default function FilesLibraryPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkLinkOpen, setBulkLinkOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
 
   // A page change or a new query invalidates the selection: keeping ids from a
@@ -566,8 +568,17 @@ export default function FilesLibraryPage() {
         count={selectedIds.size}
         busy={bulkBusy}
         onEdit={() => setBulkEditOpen(true)}
+        onLink={() => setBulkLinkOpen(true)}
         onDownload={() => void onBulkDownload()}
         onClear={() => setSelectedIds(new Set())}
+      />
+
+      <BulkLinkModal
+        open={bulkLinkOpen}
+        fileIds={[...selectedIds]}
+        types={types}
+        onClose={() => setBulkLinkOpen(false)}
+        onApplied={() => { setReloadKey((k) => k + 1); }}
       />
 
       <BulkEditModal

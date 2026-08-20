@@ -323,6 +323,31 @@ Three deliberate choices in that flow:
   Uploads run three at a time, and asking three questions on top of each other
   is how people learn to click the first button without reading it.
 
+**Bulk link/unlink — and where the spec's own rule had to be overruled.**
+Spec §10 says "a 500-file bulk link must be 500 transactions", and gives its
+reason: a transaction dirtying more than ~100 TARGETS takes the Phase 2
+projection lock exclusively. That reason does not describe this operation —
+linking N files to ONE record dirties ONE target, whatever N is. Measured on
+production for 200 files onto one record, rolled back:
+
+| approach | time | dirty targets | edges |
+|---|---|---|---|
+| one statement | **346 ms** (106 insert + 240 drain) | 1 | 201 |
+| row-per-transaction | **32,815 ms** | 1 each | 201 |
+
+**94.8× slower for an identical result**, because each separate transaction
+drains the dirty set and every drain reconverges the WHOLE target. So bulk
+operations batch by DISTINCT TARGET, not by row — following the reason rather
+than the letter, which is recorded in the code so the next reader does not
+"fix" it back. The rule still governs anything that genuinely spans many
+targets; such an operation must chunk below ~100.
+
+Verified through the UI on production, then cleaned up: 3 files linked to one
+record produced 3 manual links, 3 converged edges, and **an empty dirty-target
+table at rest** — the acceptance item. Unlinking removed all three and the
+edges converged away, leaving `document_links` at its original 10 and reconcile
+drift at 0.
+
 **Why not SHA-256 in the browser.** WebCrypto omits MD5, so a browser could hash
 a NEW upload but never produce a key comparable to the 7,417 files already here
 — two dedup keys and a permanent seam between "before B7" and "after". Letting
