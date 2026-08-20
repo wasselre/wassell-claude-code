@@ -186,6 +186,7 @@ export default function ExecutionDetailPage() {
   // Structured platforms (meta/instagram/snapchat/tiktok) get the real
   // Ads-Manager fields; the rest keep the free-text targeting brief.
   const platformSchema = getPlatformSchema(execution.platform);
+  const isMetaExec = execution.platform === 'meta' || execution.platform === 'instagram';
   const platformSettings = (execution.platform_settings ?? null) as PlatformSettings | null;
   const summaryParts = settingsSummary(execution.platform, platformSettings, isAr);
 
@@ -590,14 +591,30 @@ export default function ExecutionDetailPage() {
                     onSaved={(s) => setExecution({ ...execution, platform_settings: s })}
                   />
                 )}
-                {/* The free-text brief survives as notes — and stays the whole
-                    tab on platforms without a structured schema. */}
-                <TargetingEditor
-                  execution={execution}
-                  canEdit={canEnter}
-                  isAr={isAr}
-                  onSaved={(t) => setExecution({ ...execution, targeting: t })}
-                />
+                {/* Meta/Instagram get their audience from the campaign's linked
+                    Saved Audience (edited on the campaign page), so the legacy
+                    free-text targeting brief would only duplicate/contradict it.
+                    Non-schema platforms (google/x/youtube) keep the free-text
+                    brief as their only targeting surface. */}
+                {isMetaExec ? (
+                  <div className="card">
+                    <div className="card-h">
+                      <h4>{isAr ? 'الجمهور' : 'Audience'}</h4>
+                    </div>
+                    <div className="card-b" style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.9 }}>
+                      {isAr
+                        ? 'الجمهور على ميتا يأتي من الجمهور المحفوظ المرتبط بالحملة — يُختار في صفحة الحملة، ويُدفع إلى المجموعات الإعلانية عند «الإنشاء في ميتا». لا يُكتب هنا كنص حر.'
+                        : 'The Meta audience comes from the Saved Audience linked on the campaign — set on the campaign page and pushed to the ad sets on «Create in Meta». It is not typed here as free text.'}
+                    </div>
+                  </div>
+                ) : !platformSchema ? (
+                  <TargetingEditor
+                    execution={execution}
+                    canEdit={canEnter}
+                    isAr={isAr}
+                    onSaved={(t) => setExecution({ ...execution, targeting: t })}
+                  />
+                ) : null}
               </div>
             )}
 
@@ -682,6 +699,7 @@ export default function ExecutionDetailPage() {
         <AdModal
           executionId={execution.id}
           ad={editingAd}
+          adSets={adSets}
           campaignId={execution.campaign_id}
           platform={execution.platform}
           isAr={isAr}
@@ -789,10 +807,11 @@ function OnPlatformCard({
 /* ------------------------------------------------------------------ */
 
 function AdModal({
-  executionId, ad, campaignId, platform, isAr, onClose, onSaved,
+  executionId, ad, adSets, campaignId, platform, isAr, onClose, onSaved,
 }: {
   executionId: string;
   ad: MosAd | null;
+  adSets: MosAdSet[];
   campaignId: string;
   platform: string;
   isAr: boolean;
@@ -801,7 +820,12 @@ function AdModal({
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const { can } = useWorkspace();
+  // Meta/Instagram results (status + spend/clicks/leads/qualified) come from
+  // the hourly sync — typing them here would just be overwritten, so those
+  // fields go read-only and are excluded from the save patch.
+  const isMeta = platform === 'meta' || platform === 'instagram';
   const [contentId, setContentId] = useState(ad?.content_id ?? '');
+  const [adSetId, setAdSetId] = useState(ad?.ad_set_id ?? '');
   const [status, setStatus] = useState<MosAd['status']>(ad?.status ?? 'waiting');
   const [spend, setSpend] = useState(ad?.spend?.toString() ?? '');
   const [clicks, setClicks] = useState(ad?.clicks?.toString() ?? '');
@@ -840,11 +864,16 @@ function AdModal({
       const res = await saveAd(executionId, {
         id: ad?.id,
         content_id: contentId || null,
-        status,
-        spend: n(spend),
-        clicks: n(clicks),
-        leads: n(leads),
-        qualified: n(qualified),
+        ad_set_id: adSetId || null,
+        // For Meta the status + result metrics are synced — never write them
+        // from this modal (empty would wipe Meta's real numbers).
+        ...(isMeta ? {} : {
+          status,
+          spend: n(spend),
+          clicks: n(clicks),
+          leads: n(leads),
+          qualified: n(qualified),
+        }),
         ...(adSchema ? { creative } : {}),
       });
       addToast(isAr ? 'حُفظ الإعلان.' : 'Ad saved.', 'success');
@@ -873,9 +902,13 @@ function AdModal({
   return (
     <Modal
       title={ad ? (isAr ? 'تعديل الإعلان' : 'Edit ad') : (isAr ? 'إضافة إعلان' : 'Add an ad')}
-      sub={isAr
-        ? 'الإعلان إشارة إلى سجل محتوى، لا ملف مرفوع. الأرقام تُدخل يدويًا حتى تُربط المنصة.'
-        : 'An ad references a content record, never an uploaded file. Numbers are entered by hand until the platform is connected.'}
+      sub={isMeta
+        ? isAr
+          ? 'الإعلان إشارة إلى سجل محتوى. الحالة والأرقام تأتي من ميتا تلقائيًا — لا تُدخل هنا.'
+          : 'An ad references a content record. Status and numbers come from Meta automatically — not entered here.'
+        : isAr
+          ? 'الإعلان إشارة إلى سجل محتوى، لا ملف مرفوع. الأرقام تُدخل يدويًا حتى تُربط المنصة.'
+          : 'An ad references a content record, never an uploaded file. Numbers are entered by hand until the platform is connected.'}
       onClose={onClose}
       wide={Boolean(adSchema)}
       footer={
@@ -885,9 +918,11 @@ function AdModal({
               {isAr ? 'حذف' : 'Delete'}
             </button>
           )}
-          <span className="note">
-            {isAr ? 'اترك أي خانة فارغة إن لم تُقس — الفارغ ليس صفرًا.' : 'Leave a box empty if it was not measured — empty is not zero.'}
-          </span>
+          {!isMeta && (
+            <span className="note">
+              {isAr ? 'اترك أي خانة فارغة إن لم تُقس — الفارغ ليس صفرًا.' : 'Leave a box empty if it was not measured — empty is not zero.'}
+            </span>
+          )}
           <button type="button" className="btn" onClick={onClose} disabled={busy}>
             {isAr ? 'إلغاء' : 'Cancel'}
           </button>
@@ -905,35 +940,70 @@ function AdModal({
           ))}
         </select>
       </Field>
-      <Field label={isAr ? 'الحالة' : 'Status'}>
-        <div className="seg" style={{ width: '100%' }}>
-          {(['waiting', 'running', 'watch', 'paused'] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              className={status === s ? 'on' : ''}
-              style={{ flex: 1, textAlign: 'center' }}
-              onClick={() => setStatus(s)}
-            >
-              {isAr ? AD_STATUS_LABELS[s]?.ar : AD_STATUS_LABELS[s]?.en}
-            </button>
-          ))}
+      {adSets.length > 0 && (
+        <Field
+          label={isAr ? 'المجموعة الإعلانية' : 'Ad set'}
+          hint={isAr ? 'أي مجموعة يعمل تحتها هذا الإعلان' : 'which ad set this ad runs under'}
+        >
+          <select className="inp" value={adSetId} onChange={(e) => setAdSetId(e.target.value)}>
+            <option value="">{isAr ? 'غير محدَّدة' : 'Unassigned'}</option>
+            {adSets.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {isMeta ? (
+        <Field
+          label={isAr ? 'الحالة' : 'Status'}
+          hint={isAr ? 'تأتي من ميتا وتُحدَّث تلقائيًا' : 'comes from Meta, updated automatically'}
+        >
+          <div className="inp" style={{ display: 'flex', alignItems: 'center', color: 'var(--mute)' }}>
+            {(isAr ? AD_STATUS_LABELS[status]?.ar : AD_STATUS_LABELS[status]?.en) ?? status}
+            <span className="tag" style={{ marginInlineStart: 'auto', fontSize: 10 }}>
+              {isAr ? 'من ميتا' : 'from Meta'}
+            </span>
+          </div>
+        </Field>
+      ) : (
+        <Field label={isAr ? 'الحالة' : 'Status'}>
+          <div className="seg" style={{ width: '100%' }}>
+            {(['waiting', 'running', 'watch', 'paused'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={status === s ? 'on' : ''}
+                style={{ flex: 1, textAlign: 'center' }}
+                onClick={() => setStatus(s)}
+              >
+                {isAr ? AD_STATUS_LABELS[s]?.ar : AD_STATUS_LABELS[s]?.en}
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
+      {isMeta ? (
+        <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.85 }}>
+          {isAr
+            ? 'النتائج — الإنفاق، النقرات، العملاء، المؤهلون — تأتي من ميتا تلقائيًا، فلا تُدخل هنا.'
+            : 'Results — spend, clicks, leads, qualified — come from Meta automatically, not entered here.'}
         </div>
-      </Field>
-      <div className="m4-adnum">
-        <Field label={isAr ? 'الإنفاق' : 'Spend'}>
-          <input className="inp" inputMode="numeric" value={spend} onChange={(e) => setSpend(e.target.value)} />
-        </Field>
-        <Field label={isAr ? 'النقرات' : 'Clicks'}>
-          <input className="inp" inputMode="numeric" value={clicks} onChange={(e) => setClicks(e.target.value)} />
-        </Field>
-        <Field label={isAr ? 'العملاء' : 'Leads'}>
-          <input className="inp" inputMode="numeric" value={leads} onChange={(e) => setLeads(e.target.value)} />
-        </Field>
-        <Field label={isAr ? 'المؤهلون' : 'Qualified'}>
-          <input className="inp" inputMode="numeric" value={qualified} onChange={(e) => setQualified(e.target.value)} />
-        </Field>
-      </div>
+      ) : (
+        <div className="m4-adnum">
+          <Field label={isAr ? 'الإنفاق' : 'Spend'}>
+            <input className="inp" inputMode="numeric" value={spend} onChange={(e) => setSpend(e.target.value)} />
+          </Field>
+          <Field label={isAr ? 'النقرات' : 'Clicks'}>
+            <input className="inp" inputMode="numeric" value={clicks} onChange={(e) => setClicks(e.target.value)} />
+          </Field>
+          <Field label={isAr ? 'العملاء' : 'Leads'}>
+            <input className="inp" inputMode="numeric" value={leads} onChange={(e) => setLeads(e.target.value)} />
+          </Field>
+          <Field label={isAr ? 'المؤهلون' : 'Qualified'}>
+            <input className="inp" inputMode="numeric" value={qualified} onChange={(e) => setQualified(e.target.value)} />
+          </Field>
+        </div>
+      )}
       {adSchema && (
         <div style={{ marginTop: 16 }}>
           <PlatformFieldsGrid
