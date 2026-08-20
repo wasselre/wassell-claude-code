@@ -582,6 +582,20 @@ The Marketing workspace (`/m`) permission model has TWO axes, both editable in *
 ## Pre-Built System Models
 These are defined in `src/data/seedModels.ts` and loaded on first run.
 They are editable in the Builder but cannot be deleted (is_system: true).
+
+**Client-side seeding is RETIRED (2026-08-20) — never re-add it.** When Supabase
+is reachable, the SERVER IS AUTHORITATIVE for model definitions: the browser
+never writes seed-derived models/groups/profiles/roles to Supabase. The old
+boot backfills caused the 2026-08-20 re-seed wipe incidents (a raced empty RLS
+read made every seed look "missing" → the whole SEED_MODELS baseline overwrote
+live schemas; fired ≥3×, once from a stale pre-fix tab — which is also why a DB
+trigger, `models_guard_schema_shrink`, now refuses browser-JWT writes that
+shrink an is_system model's field count). `seedModels.ts` is a STALE baseline
+that powers OFFLINE mode only — do not treat it as a description of the live
+schemas; query the live DB or `docs/prd/models/`. New system models ship as
+migrations (or Claude via MCP), never as seed backfills. The schema-maintenance
+chain (schemaMigrations runMigrations/heals/refreshSystemModels/prune) runs in
+offline mode only.
 1. `clients` — Clients model (3 sections)
 2. `followups` — Follow-Ups model (5 sections, uses section_selector)
 3. `all_projects` — All Projects (group: Projects)

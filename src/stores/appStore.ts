@@ -1826,11 +1826,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       groups = hadCachedGroups ? cachedGroups! : SEED_GROUPS;
     }
 
-    // Union with SEED_GROUPS by id — catches returning users whose stored
-    // groups predate a newly-added seed group (e.g. the Marketing group
-    // added in phase 3A). Without this, models that reference the new
-    // group's id fail Postgres's models_group_id_fkey on insert.
-    {
+    // Union with SEED_GROUPS by id — OFFLINE MODE ONLY (supabaseGroups === null,
+    // i.e. Supabase not configured/unreachable). When the server is reachable it
+    // is AUTHORITATIVE for sidebar folders: injecting seed groups in-memory would
+    // show phantom folders that don't exist server-side, and the old server
+    // backfill this union used to feed was the write half of the 2026-08-20
+    // re-seed wipe incident. Fresh Supabase installs seed server-side (SQL),
+    // never from the browser.
+    if (supabaseGroups === null) {
       const existingGroupIds = new Set(groups.map((g) => g.id));
       const seedExtras = SEED_GROUPS.filter((g) => !existingGroupIds.has(g.id));
       if (seedExtras.length > 0) {
@@ -1839,25 +1842,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     saveLocal('wassell_groups', groups);
 
-    // Backfill any missing groups, and AWAIT — models depend on these existing
-    // in Supabase before their FK-bearing rows can land.
-    //
-    // Guard against a raced/RLS-glitched EMPTY read (see the Models block below
-    // for the full rationale): an empty array is NOT null, and re-upserting seed
-    // folders on an established client would overwrite live sidebar-folder names
-    // and order. Only backfill on a non-empty read, or a genuine fresh install
-    // (no server rows AND no local cache).
-    if (supabaseGroups !== null && (supabaseGroups.length > 0 || !hadCachedGroups)) {
-      const existingGroupIds = new Set(supabaseGroups.map((g) => g.id));
-      const missingGroups = groups.filter((g) => !existingGroupIds.has(g.id));
-      if (missingGroups.length > 0) {
-        await Promise.all(
-          missingGroups.map((g) =>
-            supabaseUpsert('model_groups', g),
-          ),
-        );
-      }
-    }
+    // (2026-08-20) The SEED_GROUPS → Supabase backfill that lived here was
+    // REMOVED as part of retiring client-side seeding. The browser never
+    // writes seed-derived model_groups to the server anymore. See the Models
+    // block below for the full incident rationale.
 
     // --- Models ---
     // Three cascading sources: Supabase → localStorage → SEED. After loading,
@@ -1872,42 +1860,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else {
       models = hadCachedModels ? cachedModels! : SEED_MODELS;
     }
-    // Backfill system models missing from Supabase (matched by `name`, UNIQUE).
+    // ── CLIENT-SIDE SEEDING OF SYSTEM MODELS IS RETIRED (2026-08-20) ──
     //
-    // Guard against a raced/RLS-glitched EMPTY read. `models` reads are scoped to
-    // the `authenticated` role, so a fetch that outruns the session token returns
-    // ZERO rows — an empty ARRAY, not null, not an error. Treating that empty
-    // result as "every seed model is missing" re-upserts the entire SEED_MODELS
-    // set, OVERWRITING live, in-app-customized schemas with the code baseline and
-    // dropping any Builder-added field. That is exactly the 2026-08-20 06:42Z
-    // incident: 24 system models reverted to seed, and the clients `location`
-    // cascade field (added in-app the day before) was lost. Records were untouched,
-    // but every dropped field's values went invisible until the schema was restored.
-    // Same failure mode the users backfill was hardened against in 4208b7a7 — that
-    // fix guarded `users` but left this models path (and the groups path above)
-    // exposed.
+    // The SEED_MODELS → Supabase backfill that lived here was the root cause of
+    // the 2026-08-20 model-wipe incidents: an RLS-scoped read that outruns the
+    // session token returns an EMPTY ARRAY (not null, not an error), every seed
+    // model then looked "missing", and the whole SEED_MODELS baseline was
+    // upserted over the live schemas — destroying months of in-app field
+    // additions on 24 system models (units 48→9 fields, followups 44→18, …).
+    // It fired at least three times, the last from a STALE TAB running a
+    // pre-guard bundle, which is why a client-side guard alone is not enough
+    // (a DB trigger, models_guard_schema_shrink, now also blocks shrink-writes).
     //
-    // Only backfill when the server read was non-empty, OR this is a genuine fresh
-    // install (no server rows AND no local cache). An established client that already
-    // has models cached must NEVER re-seed on an empty read.
-    if (supabaseModels !== null && (supabaseModels.length > 0 || !hadCachedModels)) {
-      const existingNames = new Set(supabaseModels.map((m) => m.name));
-      const missing = SEED_MODELS.filter((m) => !existingNames.has(m.name));
-      if (missing.length > 0) {
-        // Avoid in-memory duplicates: only add seeds whose name isn't already
-        // in the merged `models` array (e.g. from localStorage fallback).
-        const currentNames = new Set(models.map((m) => m.name));
-        const toAdd = missing.filter((m) => !currentNames.has(m.name));
-        models = [...models, ...toAdd];
-        // Await the upserts — if the user navigates or reloads immediately, we
-        // want the writes to land. Groups already exist (above), so no FK trap.
-        await Promise.all(
-          missing.map((m) =>
-            supabaseUpsert('models', m),
-          ),
-        );
-      }
-    }
+    // New doctrine:
+    //   * When Supabase is reachable, the SERVER IS AUTHORITATIVE for model
+    //     definitions. The browser NEVER writes seed-derived models, groups,
+    //     profiles, or roles to the server.
+    //   * SEED_MODELS still powers pure OFFLINE mode (no Supabase configured)
+    //     via the load-fallback above, in-memory + localStorage only.
+    //   * A fresh Supabase project is seeded SERVER-SIDE (SQL seed/migration,
+    //     or Claude via MCP) — never from a browser boot.
+    //   * New system models ship as migrations, not seed backfills.
     saveLocal('wassell_models', models);
 
     // ─── Phase D.2: chrome-critical loads first ──────────────
@@ -2004,44 +1977,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       profiles = profiles.map((p, i) => (i === promoteIdx ? { ...p, is_admin: true, is_system: true } : p));
     }
     saveLocal('wassell_profiles', profiles);
-    // Backfill missing profiles to Supabase and AWAIT — users FK into profiles.
-    // Dedupe by id AND (for system seeds) by label: a DB restore/branch/backup-copy
-    // can leave a seed under a DRIFTED id, and id-only matching would then re-insert
-    // the seed as a label duplicate (this happened on prod — see the 2026-06-16
-    // dedup migration). When a same-label system row already exists we ADOPT it
-    // instead of inserting, which also keeps the app from tripping the DB-level
-    // `profiles_system_label_uniq` guard. Scoped to is_system so user-created
-    // same-label profiles (e.g. several "New Profile" rows) are never collapsed.
-    //
-    // Empty-read guard (same failure mode as models/groups/users — see the
-    // Models block above): an EMPTY array is not proof of an empty table; a
-    // fetch that outruns the session token returns zero rows under RLS. On
-    // such a read every cached/seed profile looks "missing" and gets re-upserted
-    // by its (pinned/cached) id — overwriting live model_permissions with the
-    // seed baseline. Only backfill on a non-empty read or a true fresh install.
-    if (supabaseProfiles !== null && (supabaseProfiles.length > 0 || !hadCachedProfiles)) {
-      const existingProfileIds = new Set(supabaseProfiles.map((p) => p.id));
-      const existingSystemProfileLabels = new Set(
-        supabaseProfiles
-          .filter((p) => p.is_system)
-          .map((p) => (p.label_en ?? '').trim().toLowerCase())
-          .filter(Boolean),
-      );
-      const missingProfiles = profiles.filter((p) => {
-        if (existingProfileIds.has(p.id)) return false;
-        if (p.is_system && existingSystemProfileLabels.has((p.label_en ?? '').trim().toLowerCase())) {
-          return false; // adopt the existing same-label seed; don't duplicate it
-        }
-        return true;
-      });
-      if (missingProfiles.length > 0) {
-        await Promise.all(
-          missingProfiles.map((p) =>
-            supabaseUpsert('profiles', p),
-          ),
-        );
-      }
-    }
+    // (2026-08-20) The SEED_PROFILES → Supabase backfill that lived here was
+    // REMOVED as part of retiring client-side seeding (see the Models block
+    // above). Profiles carry model_permissions — the sales permission engine —
+    // and a raced empty read would have re-upserted seed baselines over them.
+    // The server is authoritative; fresh installs seed server-side.
 
     // --- Roles ---
     // Cascading fallback: Supabase → localStorage → SEED.
@@ -2111,28 +2051,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     });
     saveLocal('wassell_roles', roles);
-    // Backfill missing roles to Supabase. No FK dependents — fire-and-forget OK.
-    // Same id-AND-label dedupe as profiles above: skip a system seed whose label
-    // already exists under a drifted id (restore/branch), so we adopt it rather
-    // than re-inserting a duplicate and tripping `roles_system_label_uniq`.
-    // Empty-read guard: same rationale as profiles above.
-    if (supabaseRoles !== null && (supabaseRoles.length > 0 || !hadCachedRoles)) {
-      const existingRoleIds = new Set(supabaseRoles.map((r) => r.id));
-      const existingSystemRoleLabels = new Set(
-        supabaseRoles
-          .filter((r) => r.is_system)
-          .map((r) => (r.label_en ?? '').trim().toLowerCase())
-          .filter(Boolean),
-      );
-      for (const r of roles) {
-        if (existingRoleIds.has(r.id)) continue;
-        if (r.is_system && existingSystemRoleLabels.has((r.label_en ?? '').trim().toLowerCase())) {
-          continue; // adopt the existing same-label seed; don't duplicate it
-        }
-        supabaseUpsert('roles', r);
-      }
-    }
-
+    // (2026-08-20) The SEED_ROLES → Supabase backfill that lived here was
+    // REMOVED as part of retiring client-side seeding (see the Models block
+    // above). The server is authoritative; fresh installs seed server-side.
     // --- Users ---
     // Cascading fallback: Supabase → localStorage → SEED. Profiles are already
     // in Supabase (we awaited them above), so user FK writes are safe.
@@ -2428,112 +2349,133 @@ export const useAppStore = create<AppState>((set, get) => ({
     whiteboards = loadedWhiteboards ?? loadLocal<Whiteboard[]>('wassell_whiteboards') ?? [];
     saveLocal('wassell_whiteboards', whiteboards);
 
-    // Run pending schema migrations (keeps system models in sync with seedModels.ts
-    // even for returning users who already have localStorage state).
-    const migrated = runMigrations({ models, records, workflows, dashboards, views, groups });
-    models = migrated.models;
-    groups = migrated.groups;
-
-    // Always-run heal — not gated by schema version. Re-attaches orphaned project
-    // system models to the Projects group and re-seeds the group if it was deleted.
-    // Idempotent: no-op when data is already consistent.
-    const healed = healSystemModelGroups({ models, groups });
-    if (healed.changed) {
-      models = healed.models;
-      groups = healed.groups;
-      saveLocal('wassell_groups', groups);
-    }
-
-    // Always-run heal for the Clients schema — catches users whose version marker
-    // was bumped past the clients rebuild before the rebuild landed. Idempotent.
-    let migratedRecords = migrated.records;
-    const healedClients = healClientsSchema({ models, records: migratedRecords });
-    if (healedClients.changed) {
-      models = healedClients.models;
-      migratedRecords = healedClients.records;
-    }
-
-    // Always-run heal for the Decks schema — appends seed fields missing
-    // from the persisted shape (added 2026-05-10 to roll out the new
-    // `size` field without forcing a hand-migration on every install).
-    // Idempotent.
-    const healedDecks = healDecksSchema({ models, records: migratedRecords });
-    if (healedDecks.changed) {
-      models = healedDecks.models;
-      migratedRecords = healedDecks.records;
-    }
-
-    // Always-run heal for maps_config. Backfills default on any model missing
-    // it (covers version-drift past 10 without running migration_9_to_10).
-    const healedMaps = healMapsConfigForModels(models);
-    if (healedMaps.changed) models = healedMaps.models;
-
-    // Always-run heal for displayed_child_models — propagates the seed's
-    // embedded-child declarations (e.g. all_projects → units) onto existing
-    // system models so the reference-dependency resolver can surface child
-    // modules. refreshSystemModels only inserts, never updates, so an existing
-    // install needs this backfill.
-    const healedChildren = healDisplayedChildModels(models);
-    if (healedChildren.changed) models = healedChildren.models;
-
-    // Always-run heal — backfills any `is_system` model from SEED_MODELS that's
-    // MISSING from this install (e.g. a returning user whose stored models
-    // predate a newly-added system model like `ai_chats`). Despite the name, it
-    // does NOT overwrite existing system models — Builder edits to existing
-    // is_system models persist across reloads. To push a structural change to
-    // existing installs, add a versioned migration in schemaMigrations.ts.
-    const refreshed = refreshSystemModels({
-      models,
-      records: migratedRecords,
-      workflows: migrated.workflows,
-      dashboards: migrated.dashboards,
-      views: migrated.views,
-      groups,
-    });
-    models = refreshed.models;
-
-    // Counterpart to refreshSystemModels: drops is_system models listed in
-    // the explicit RETIRED_SYSTEM_MODEL_NAMES set (currently the old
-    // marketing pipeline's reels / posts / research_questions, retired
-    // 2026-05-09 in favor of the template-driven design generator).
+    // ── Schema maintenance (migrations + heals + seed refresh + prune) — OFFLINE ONLY ──
     //
-    // The pruner returns the retired ids; we fan out `supabaseDelete` for
-    // each one so the cleanup propagates from local cache to Supabase. This
-    // is the load-bearing piece — without the supabaseDelete fan-out, a
-    // stale browser session could re-upsert the row from a queued pending
-    // write or HMR cycle, and the ghost comes back across every install
-    // that loads after.
-    const pruned = pruneRemovedSystemModels({
-      models,
-      records: migratedRecords,
-      workflows: refreshed.workflows,
-      dashboards: refreshed.dashboards,
-      views: refreshed.views,
-      groups: refreshed.groups,
-    });
-    models = pruned.models;
-    migratedRecords = pruned.records;
-    let prunedWorkflows = pruned.workflows;
-    let prunedViews = pruned.views;
+    // (2026-08-20) This entire chain used to run on every boot and derives its
+    // target state from seedModels.ts. With Supabase reachable the SERVER IS
+    // AUTHORITATIVE: the live schemas are managed by migrations (and were
+    // hand-restored after the re-seed wipes), while seedModels.ts is a STALE
+    // baseline — letting these heals decorate the in-memory copy risks a later
+    // user save silently persisting seed-derived schema back to the server.
+    // Every heal was verified to be a no-op against the live DB before gating
+    // (maps_config: 0 missing; decks `size`: present; clients markers: present;
+    // displayed_child_models: PERSISTED server-side in the
+    // persist_displayed_child_models migration, 2026-08-20). Offline installs
+    // (no Supabase) still get the full chain — their only source is the seeds.
+    let migratedRecords = records;
+    let prunedWorkflows = workflows;
+    let prunedViews = views;
+    let migratedDashboards = dashboards;
+    if (supabaseModels === null) {
+      // Run pending schema migrations (keeps system models in sync with seedModels.ts
+      // even for returning users who already have localStorage state).
+      const migrated = runMigrations({ models, records, workflows, dashboards, views, groups });
+      models = migrated.models;
+      groups = migrated.groups;
+      migratedDashboards = migrated.dashboards;
 
-    if (pruned.retiredModelIds.length > 0) {
-      // Fire-and-forget delete via the standard helper. Each call goes
-      // through `supabaseDelete` which (a) tries the wire request, (b)
-      // queues on failure for replay on next sign-in, (c) toasts on
-      // hard failures. Running these sequentially lets the FK cascade
-      // (records → models) play out cleanly. Records under retired
-      // models also get deleted to keep the records table tight.
-      void Promise.all(
-        pruned.retiredModelIds.flatMap((modelId) => [
-          // Records first, then the model. Postgres CASCADE would handle
-          // this server-side, but explicitly deleting also clears the
-          // pending-write queue for any orphans.
-          ...((migratedRecords[modelId] ?? []).map((r) =>
-            supabaseDelete('records', r.id),
-          ) as Promise<void>[]),
-          supabaseDelete('models', modelId),
-        ]),
-      ).catch(() => { /* errors already toasted by supabaseDelete */ });
+      // Always-run heal — not gated by schema version. Re-attaches orphaned project
+      // system models to the Projects group and re-seeds the group if it was deleted.
+      // Idempotent: no-op when data is already consistent.
+      const healed = healSystemModelGroups({ models, groups });
+      if (healed.changed) {
+        models = healed.models;
+        groups = healed.groups;
+        saveLocal('wassell_groups', groups);
+      }
+
+      // Always-run heal for the Clients schema — catches users whose version marker
+      // was bumped past the clients rebuild before the rebuild landed. Idempotent.
+      migratedRecords = migrated.records;
+      const healedClients = healClientsSchema({ models, records: migratedRecords });
+      if (healedClients.changed) {
+        models = healedClients.models;
+        migratedRecords = healedClients.records;
+      }
+
+      // Always-run heal for the Decks schema — appends seed fields missing
+      // from the persisted shape (added 2026-05-10 to roll out the new
+      // `size` field without forcing a hand-migration on every install).
+      // Idempotent.
+      const healedDecks = healDecksSchema({ models, records: migratedRecords });
+      if (healedDecks.changed) {
+        models = healedDecks.models;
+        migratedRecords = healedDecks.records;
+      }
+
+      // Always-run heal for maps_config. Backfills default on any model missing
+      // it (covers version-drift past 10 without running migration_9_to_10).
+      const healedMaps = healMapsConfigForModels(models);
+      if (healedMaps.changed) models = healedMaps.models;
+
+      // Always-run heal for displayed_child_models — propagates the seed's
+      // embedded-child declarations (e.g. all_projects → units) onto existing
+      // system models so the reference-dependency resolver can surface child
+      // modules. refreshSystemModels only inserts, never updates, so an existing
+      // install needs this backfill.
+      const healedChildren = healDisplayedChildModels(models);
+      if (healedChildren.changed) models = healedChildren.models;
+
+      // Always-run heal — backfills any `is_system` model from SEED_MODELS that's
+      // MISSING from this install (e.g. a returning user whose stored models
+      // predate a newly-added system model like `ai_chats`). Despite the name, it
+      // does NOT overwrite existing system models — Builder edits to existing
+      // is_system models persist across reloads. To push a structural change to
+      // existing installs, add a versioned migration in schemaMigrations.ts.
+      const refreshed = refreshSystemModels({
+        models,
+        records: migratedRecords,
+        workflows: migrated.workflows,
+        dashboards: migratedDashboards,
+        views: migrated.views,
+        groups,
+      });
+      models = refreshed.models;
+
+      // Counterpart to refreshSystemModels: drops is_system models listed in
+      // the explicit RETIRED_SYSTEM_MODEL_NAMES set (currently the old
+      // marketing pipeline's reels / posts / research_questions, retired
+      // 2026-05-09 in favor of the template-driven design generator).
+      //
+      // The pruner returns the retired ids; we fan out `supabaseDelete` for
+      // each one so the cleanup propagates from local cache to Supabase. This
+      // is the load-bearing piece — without the supabaseDelete fan-out, a
+      // stale browser session could re-upsert the row from a queued pending
+      // write or HMR cycle, and the ghost comes back across every install
+      // that loads after.
+      const pruned = pruneRemovedSystemModels({
+        models,
+        records: migratedRecords,
+        workflows: refreshed.workflows,
+        dashboards: refreshed.dashboards,
+        views: refreshed.views,
+        groups: refreshed.groups,
+      });
+      models = pruned.models;
+      migratedRecords = pruned.records;
+      prunedWorkflows = pruned.workflows;
+      prunedViews = pruned.views;
+
+      if (pruned.retiredModelIds.length > 0) {
+        // Fire-and-forget delete via the standard helper. Each call goes
+        // through `supabaseDelete` which (a) tries the wire request, (b)
+        // queues on failure for replay on next sign-in, (c) toasts on
+        // hard failures. Running these sequentially lets the FK cascade
+        // (records → models) play out cleanly. Records under retired
+        // models also get deleted to keep the records table tight.
+        void Promise.all(
+          pruned.retiredModelIds.flatMap((modelId) => [
+            // Records first, then the model. Postgres CASCADE would handle
+            // this server-side, but explicitly deleting also clears the
+            // pending-write queue for any orphans.
+            ...((migratedRecords[modelId] ?? []).map((r) =>
+              supabaseDelete('records', r.id),
+            ) as Promise<void>[]),
+            supabaseDelete('models', modelId),
+          ]),
+        ).catch(() => { /* errors already toasted by supabaseDelete */ });
+      }
+
     }
 
     saveLocal('wassell_models', models);
@@ -2613,7 +2555,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       workflowGroups,
       workflowRuns,
       activityLog,
-      dashboards: migrated.dashboards,
+      dashboards: migratedDashboards,
       views: prunedViews,
       profiles,
       roles,
