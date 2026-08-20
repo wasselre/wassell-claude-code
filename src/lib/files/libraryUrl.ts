@@ -26,6 +26,7 @@ import type {
   LibraryLayout,
 } from '@/types';
 import type { LibraryViewState } from './views';
+import { readFileFlag } from './flags';
 
 // ─── Feature flag ─────────────────────────────────────────────────────────
 
@@ -47,28 +48,12 @@ const FLAG_STORAGE_KEY = 'wassell_files_library';
  * enabled it keeps the folder-first page exactly as it is today.
  */
 export function filesLibraryEnabled(search?: string): boolean {
-  if (typeof window !== 'undefined') {
-    const params = new URLSearchParams(search ?? window.location.search);
-    const override = params.get('library');
-    if (override === '1' || override === '0') {
-      try {
-        window.localStorage.setItem(FLAG_STORAGE_KEY, override);
-      } catch (err) {
-        // Private mode / quota. The override still applies to THIS page load;
-        // it just will not survive a reload. Worth a console line, never worth
-        // failing the page over.
-        console.warn('[library] could not persist the feature-flag override', err);
-      }
-      return override === '1';
-    }
-    try {
-      const stored = window.localStorage.getItem(FLAG_STORAGE_KEY);
-      if (stored === '1' || stored === '0') return stored === '1';
-    } catch (err) {
-      console.warn('[library] could not read the feature-flag override', err);
-    }
-  }
-  return (import.meta.env.VITE_FEATURE_FILES_LIBRARY as string | undefined) === '1';
+  return readFileFlag(
+    'library',
+    FLAG_STORAGE_KEY,
+    import.meta.env.VITE_FEATURE_FILES_LIBRARY as string | undefined,
+    search,
+  );
 }
 
 // ─── URL codec ────────────────────────────────────────────────────────────

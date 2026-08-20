@@ -36,6 +36,8 @@ import SectionBlock from './components/SectionBlock';
 import RecordFormModal from './components/RecordFormModal';
 import LinkedDocumentsPanel from './components/LinkedDocumentsPanel';
 import RecordDocumentsPanel from './components/RecordDocumentsPanel';
+import RecordFilesPanel from './components/RecordFilesPanel';
+import { recordFilesEnabled } from '@/lib/files/flags';
 import ListingMessagePanel from './components/ListingMessagePanel';
 import ContactAdvertiserPanel from './components/ContactAdvertiserPanel';
 import RelatedRecordsPanel from './components/RelatedRecordsPanel';
@@ -1586,11 +1588,23 @@ export default function RecordFormPage() {
       </div>
       )}
 
-      {/* Documents linked to this record via document↔record relationships.
-        * Renders nothing when there are none — zero visual change for
-        * records without documents. */}
+      {/* Files on this record.
+        *
+        * Phase 3 · B6 replaces the Phase 1 "Linked documents" list with the
+        * unified RecordFilesPanel, which reads the file_links PROJECTION —
+        * so it shows files arriving from a record field, the legacy attachment
+        * column, a manual link and a marketing asset in ONE list, grouped by
+        * what each file is to this record.
+        *
+        * Behind a flag, and the flag IS the batch's rollback boundary: off
+        * returns the record form to exactly the list it renders today. Links
+        * already written stay valid and keep syncing either way — they live in
+        * `document_links` and Phase 2 converges them regardless of which panel
+        * is on screen. */}
       {model && existingRecord?.id && (
-        <LinkedDocumentsPanel modelId={model.id} recordId={existingRecord.id} />
+        recordFilesEnabled()
+          ? <RecordFilesPanel modelId={model.id} recordId={existingRecord.id} />
+          : <LinkedDocumentsPanel modelId={model.id} recordId={existingRecord.id} />
       )}
 
       {/* Generate branded PDFs from bound document templates (reservations,

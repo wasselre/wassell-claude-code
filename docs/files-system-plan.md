@@ -1,6 +1,6 @@
 # Wassell File Management — the whole plan
 
-**Status:** living document · **Last updated:** 2026-08-19 (B5 shipped)
+**Status:** living document · **Last updated:** 2026-08-20 (B6 built)
 
 This is the governing plan for the Files system across **all five phases (0–4)**.
 Until now it existed only as `phase3-business-files-spec.md` in an untracked
@@ -112,7 +112,7 @@ which is exactly why B2A.4 needed its own trigger.
 Turns the substrate into the product. Nine batches, each independently
 rollback-able.
 
-### Status as of 2026-08-19
+### Status as of 2026-08-20
 
 | batch | deliverable | state |
 |---|---|---|
@@ -121,7 +121,7 @@ rollback-able.
 | **B3** | Measure how record-linked access changes visibility | ✅ **Done** — D1 approved |
 | **B4** | Let users view files through records they can access, excluding restricted files | ✅ **LIVE — toggle ON since 2026-08-19 11:09 UTC** |
 | **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ✅ **Built — shipped behind a flag, default OFF** (§4.1) |
-| **B6** | Manual linking/unlinking and Files panels inside records | ⏳ Not started |
+| **B6** | Manual linking/unlinking and Files panels inside records | ✅ **Built — shipped behind a flag, default OFF** (§4.2) |
 | **B7** | Upload metadata, duplicate detection, bulk actions | ⏳ Not started |
 | **B8** | Move the remaining 317 Marketing assets onto the canonical file system | ⏳ Not started |
 | **B9** | Convert folder names into metadata, freeze folder creation, retain Legacy folders | ⏳ Not started |
@@ -200,6 +200,64 @@ exercised: flag off returns the folder-first page byte-for-byte.
 
 All three are the same shape: **a wrong answer that looks like a right one.**
 None would have been caught by a green build.
+
+### 4.2 B6 — manual linking and the record panel
+
+`RecordFilesPanel` replaces the Phase 1 "Linked documents" list on the record
+form. It reads the **projection**, not `document_links`, so a record's files
+arrive from all four mechanisms in one list, grouped by what each file IS to
+that record. Behind `?recordfiles=1` / `VITE_FEATURE_RECORD_FILES`, default OFF.
+
+**Verified on production, 2026-08-20**, with a link created and removed leaving
+`document_links` back at exactly its original 10 rows:
+
+- a project with 12 edges rendered 12 files in 3 role groups, matching the
+  database exactly; derived rows carried their source field (`من حقل
+  project_images`) and **no** Unlink button
+- attaching one file took the record 12 → 13 edges with `file_rows = 1` — one
+  file, nothing copied — and exactly **one** Unlink button appeared
+- unlinking took it back to 12
+
+**Three things the browser found that no test would have.**
+
+1. **The picker offered files the user cannot link.** Linking needs EDIT on the
+   file; the search returns everything VIEWABLE, and after B4 those sets diverge
+   enormously. A real non-admin saw 25 Link buttons, every one of which answers
+   42501. Now resolved per row via `effectiveFileRoles` and rendered as a
+   disabled "no rights" label — measured after the fix: 0 buttons, 25 labels.
+2. **`document_links.role` was write-only.** B1 added it for "the document type
+   asserted by the person who made the manual link"; the projection hardcoded
+   `supporting_document` and never read it. Attaching as "brochure" produced a
+   `brochure` row and a `supporting_document` edge. Fixed in
+   `2026-08-19_12_manual_link_role.sql` — see below.
+3. **`document_links` granted TRUNCATE to `anon` and `authenticated`**, and
+   **TRUNCATE is not subject to row-level security**. The table's three careful
+   per-row policies did not stand between that grant and an empty table; what
+   stopped it was PostgREST never emitting TRUNCATE — middleware, not the
+   database. Revoked in `2026-08-19_11_manual_link_write_surface.sql`.
+   **`records`, `files` and `folders` measure the same way and were NOT
+   touched** — re-granting the CRM's core tables needs its own change with its
+   own verification.
+
+**The role fix was proved a no-op before it was applied**: the whole live-source
+derivation is byte-identical across all 11,166 sources before and after, for
+both the global function and its scoped twin, and the two still agree with each
+other (Phase 2's equality invariant). All 10 existing links carry `role = NULL`,
+so the coalesce cannot move a row that exists today.
+
+**Deliberate scope call:** B6 replaces `LinkedDocumentsPanel`, NOT
+`RecordDocumentsPanel`. The latter is document *generation* — template picker,
+job queue, send-to-customer — and folding it in is cosmetic reorganisation with
+real regression risk. Generated PDFs already appear in the new panel anyway,
+because the generator writes a `document_links` row and arrives through the
+projection like everything else.
+
+**Known gap, not yet closed:** the panel mounts in the generic `RecordFormPage`,
+but `all_projects`, `our_projects`, `clients` and `followups` render CUSTOM
+detail pages that bypass it. On those the panel is reachable only via
+`?generic=1`. That covers units, tasks, offers and reservations from the spec's
+list but misses projects and clients, which are the two that matter most. It is
+a mounting job, not a design change.
 
 ### What B5 did NOT do
 
