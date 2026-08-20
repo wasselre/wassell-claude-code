@@ -117,7 +117,7 @@ rollback-able.
 | batch | deliverable | state |
 |---|---|---|
 | **B1** | Metadata foundation: title, type, owner, tags, confidentiality, status | ✅ **Live** (applied dark) |
-| **B2** | Fast server-side search, Arabic folding, filters and facets | ⚠️ **Applied dark** — 0 callers. 6,933 ms → 395 ms, but still misses the 300 ms bar (§6.1). |
+| **B2** | Fast server-side search, Arabic folding, filters and facets | ⚠️ **Live, and now CALLED** — B5 is its first consumer (behind B5's flag). 6,933 ms → 350–1,100 ms, still misses the 300 ms bar (§6.1, §6.2). |
 | **B3** | Measure how record-linked access changes visibility | ✅ **Done** — D1 approved |
 | **B4** | Let users view files through records they can access, excluding restricted files | ✅ **LIVE — toggle ON since 2026-08-19 11:09 UTC** |
 | **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ✅ **Built — shipped behind a flag, default OFF** (§4.1) |
@@ -290,9 +290,26 @@ Residue is now thin rather than concentrated: `linked_model` facet 121 ms (was
 the helper is invoked once per internal query (~24 ms each), recomputing a
 caller-constant set. That is a B2 optimisation, not another authorization fix.
 
-### 6.2 B2 is applied but not accepted
-Acceptance is *"p95 < 300 ms at 7,097 files."* It is 1.5–2.9 s. Applied dark,
-zero callers, so nothing is broken — but the gate is unmet.
+### 6.2 B2 is applied, now called, and still not accepted
+Acceptance is *"p95 < 300 ms at 7,097 files."* Re-measured on production
+2026-08-19 as the `authenticated` role, per user, 4 runs each: **350–1,100 ms**
+(admin 346–600, the three record-derived users 481–617, the no-record-access
+user 991–1,085). The gate is unmet by 1.2–3.6×.
+
+**This is no longer a dark object.** B5 is its first caller, so from the moment
+anyone turns the Library flag on, this latency is what a user waits for. Two
+mitigations are in B5 rather than in B2: the free-text box is debounced 400 ms
+(one query per pause, not one per keystroke) and responses are sequence-guarded
+so a slow early answer cannot overwrite a fast later one.
+
+**The most useful measurement is the counter-intuitive one:** the user who can
+see the FEWEST files (1,270) is the SLOWEST (≈1,020 ms), and the admin who can
+see all 7,542 is the fastest (≈460 ms). Cost is therefore dominated by a fixed
+per-call overhead, not by how many rows come back — which is consistent with
+the helper being recomputed once per internal query while being
+caller-constant, and inconsistent with any remaining per-row authorization
+theory. Whoever picks this up should start there and should NOT reach for
+another authorization change.
 
 ### 6.3 B4 is LIVE — the toggle is ON (was: "do not flip")
 
