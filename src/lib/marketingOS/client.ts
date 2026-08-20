@@ -944,6 +944,10 @@ export interface MosAd {
   qualified: number | null;
   note: string | null;
   created_at: string;
+  /** External Meta/TikTok/… Ad ID (the key an inbound lead resolves against). */
+  platform_ad_id?: string | null;
+  /** The ad set this ad belongs to (null = loose, directly under the execution). */
+  ad_set_id?: string | null;
   /** Ad-level platform creative — format, copy, CTA, destination. */
   creative?: Record<string, string | string[] | number | boolean | null> | null;
 }

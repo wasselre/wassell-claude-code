@@ -3,12 +3,17 @@
  *
  * One API serves both apps — an "Instagram campaign" is the same Meta
  * campaign with placements narrowed to Instagram positions, which is why the
- * app's `instagram` platform resolves to THIS schema (with an Instagram-only
- * placement preset, see index.ts).
+ * app's `instagram` platform resolves to THIS schema.
  *
- * Field names + enums: docs/reference/ad-platforms/meta.md (ODAX era,
- * v25–v26). Deprecated values and app/shopping sub-trees are deliberately
- * absent — this form covers what a real-estate marketer actually sets.
+ * DELIBERATELY MINIMAL (operator decision 2026-08-20): only the fields a Wassel
+ * media buyer actually plans. Everything else Meta needs (special ad
+ * categories, bidding, billing, placements, demographics, page/pixel ids) is
+ * defaulted by the push builder (`api/_lib/marketing/metaPush.ts`), not asked
+ * here. Campaign + ad-set NAMES are auto-generated as reference codes on push,
+ * so they are not form fields. AUDIENCE comes from the campaign's own audience
+ * field (the brief's AudiencePicker), not from platform settings.
+ *
+ * Field names + enums: docs/reference/ad-platforms/meta.md (ODAX era, v25–v26).
  */
 import { PlatformSchema } from './types';
 
@@ -26,9 +31,9 @@ export const metaSchema: PlatformSchema = {
 
   sections: [
     {
-      key: 'objective',
-      ar: 'الهدف الإعلاني',
-      en: 'Objective',
+      key: 'campaign',
+      ar: 'الحملة',
+      en: 'Campaign',
       fields: [
         {
           key: 'objective',
@@ -46,63 +51,12 @@ export const metaSchema: PlatformSchema = {
           ],
         },
         {
-          key: 'destination_type',
-          control: 'select',
-          ar: 'وجهة التحويل',
-          en: 'Conversion location',
-          hint_ar: 'أين يذهب من ينقر — موقع، نموذج فوري، محادثة…',
-          hint_en: 'where a click lands — website, instant form, a chat…',
-          options: [
-            { value: 'WEBSITE', ar: 'الموقع الإلكتروني', en: 'Website' },
-            { value: 'ON_AD', ar: 'نموذج فوري على الإعلان', en: 'Instant form (on ad)' },
-            { value: 'MESSENGER', ar: 'ماسنجر', en: 'Messenger' },
-            { value: 'WHATSAPP', ar: 'واتساب', en: 'WhatsApp' },
-            { value: 'INSTAGRAM_DIRECT', ar: 'رسائل إنستغرام', en: 'Instagram Direct' },
-            { value: 'INSTAGRAM_PROFILE', ar: 'حساب إنستغرام', en: 'Instagram profile' },
-            { value: 'FACEBOOK_PAGE', ar: 'صفحة فيسبوك', en: 'Facebook page' },
-            { value: 'APP', ar: 'التطبيق', en: 'App' },
-          ],
-        },
-        {
-          key: 'special_ad_categories',
-          control: 'multiselect',
-          ar: 'الفئات الإعلانية الخاصة',
-          en: 'Special ad categories',
-          hint_ar: 'إلزامية على ميتا — تُترك فارغة لإعلانات السعودية؛ «الإسكان» تنظيم أمريكي/كندي',
-          hint_en: 'mandatory on Meta — leave empty for KSA ads; HOUSING is a US/CA regulation',
-          options: [
-            { value: 'HOUSING', ar: 'الإسكان', en: 'Housing' },
-            { value: 'EMPLOYMENT', ar: 'التوظيف', en: 'Employment' },
-            { value: 'CREDIT', ar: 'الائتمان', en: 'Credit' },
-            { value: 'FINANCIAL_PRODUCTS_SERVICES', ar: 'منتجات مالية', en: 'Financial products' },
-            { value: 'ISSUES_ELECTIONS_POLITICS', ar: 'قضايا وسياسة', en: 'Issues & politics' },
-          ],
-        },
-        {
-          key: 'buying_type',
-          control: 'select',
-          ar: 'نوع الشراء',
-          en: 'Buying type',
-          options: [
-            { value: 'AUCTION', ar: 'مزاد', en: 'Auction' },
-            { value: 'RESERVED', ar: 'محجوز (وصول وتكرار)', en: 'Reserved (reach & frequency)' },
-          ],
-        },
-      ],
-    },
-
-    {
-      key: 'budget_bidding',
-      ar: 'الميزانية والمزايدة',
-      en: 'Budget & bidding',
-      fields: [
-        {
           key: 'advantage_campaign_budget',
           control: 'toggle',
-          ar: 'ميزانية الحملة الذكية (CBO)',
-          en: 'Advantage campaign budget (CBO)',
-          hint_ar: 'الميزانية على مستوى الحملة وتتوزع آليًا على المجموعات',
-          hint_en: 'budget sits at the campaign level, auto-split across ad sets',
+          ar: 'الميزانية على مستوى الحملة (CBO)',
+          en: 'Budget at the campaign level (CBO)',
+          hint_ar: 'مُفعّل: ميزانية واحدة للحملة تتوزّع آليًا · مُطفأ: الميزانية على المجموعة',
+          hint_en: 'on: one campaign budget auto-split across ad sets · off: budget sits on the ad set',
         },
         {
           key: 'budget_mode',
@@ -128,41 +82,37 @@ export const metaSchema: PlatformSchema = {
           en: 'Lifetime budget (SAR)',
           visibleWhen: { key: 'budget_mode', anyOf: ['LIFETIME'] },
         },
+      ],
+    },
+
+    {
+      key: 'adset',
+      ar: 'المجموعة الإعلانية',
+      en: 'Ad set',
+      fields: [
         {
-          key: 'bid_strategy',
+          key: 'destination_type',
           control: 'select',
-          ar: 'استراتيجية المزايدة',
-          en: 'Bid strategy',
+          ar: 'وجهة التحويل',
+          en: 'Conversion location',
+          hint_ar: 'أين يذهب من ينقر',
+          hint_en: 'where a click lands',
           options: [
-            { value: 'LOWEST_COST_WITHOUT_CAP', ar: 'أعلى حجم (بلا سقف)', en: 'Highest volume (no cap)' },
-            { value: 'COST_CAP', ar: 'سقف التكلفة', en: 'Cost cap' },
-            { value: 'LOWEST_COST_WITH_BID_CAP', ar: 'سقف المزايدة', en: 'Bid cap' },
-            { value: 'LOWEST_COST_WITH_MIN_ROAS', ar: 'حد أدنى للعائد (ROAS)', en: 'Minimum ROAS' },
+            { value: 'WEBSITE', ar: 'الموقع الإلكتروني', en: 'Website' },
+            { value: 'ON_AD', ar: 'نموذج فوري على الإعلان', en: 'Instant form (on ad)' },
+            { value: 'MESSENGER', ar: 'ماسنجر', en: 'Messenger' },
+            { value: 'WHATSAPP', ar: 'واتساب', en: 'WhatsApp' },
+            { value: 'INSTAGRAM_DIRECT', ar: 'رسائل إنستغرام', en: 'Instagram Direct' },
+            { value: 'FACEBOOK_PAGE', ar: 'صفحة فيسبوك', en: 'Facebook page' },
           ],
-        },
-        {
-          key: 'bid_amount',
-          control: 'money',
-          ar: 'قيمة السقف (ريال)',
-          en: 'Cap amount (SAR)',
-          visibleWhen: { key: 'bid_strategy', anyOf: ['COST_CAP', 'LOWEST_COST_WITH_BID_CAP'] },
-        },
-        {
-          key: 'roas_average_floor',
-          control: 'number',
-          ar: 'أرضية العائد (×10000)',
-          en: 'ROAS floor (×10000)',
-          hint_ar: '10000 = عائد 1.0',
-          hint_en: '10000 = 1.0× ROAS',
-          visibleWhen: { key: 'bid_strategy', anyOf: ['LOWEST_COST_WITH_MIN_ROAS'] },
         },
         {
           key: 'optimization_goal',
           control: 'select',
           ar: 'هدف التحسين',
-          en: 'Optimization goal',
-          hint_ar: 'تتغير الخيارات حسب هدف الحملة — نفس قاعدة مدير الإعلانات',
-          hint_en: 'options follow the campaign objective — the Ads Manager matrix',
+          en: 'Conversion goal',
+          hint_ar: 'تتغير الخيارات حسب هدف الحملة',
+          hint_en: 'options follow the campaign objective',
           options: [
             { value: 'LEAD_GENERATION', ar: 'نماذج العملاء', en: 'Leads (instant forms)' },
             { value: 'QUALITY_LEAD', ar: 'عملاء بجودة أعلى', en: 'Conversion leads' },
@@ -183,27 +133,6 @@ export const metaSchema: PlatformSchema = {
             { value: 'APP_INSTALLS', ar: 'تنزيلات التطبيق', en: 'App installs' },
           ],
         },
-        {
-          key: 'billing_event',
-          control: 'select',
-          ar: 'حدث الفوترة',
-          en: 'Billing event',
-          hint_ar: 'الظهور هو المعتاد لكل شيء تقريبًا',
-          hint_en: 'impressions is the norm for almost everything',
-          options: [
-            { value: 'IMPRESSIONS', ar: 'الظهور', en: 'Impressions' },
-            { value: 'LINK_CLICKS', ar: 'نقرات الرابط', en: 'Link clicks' },
-            { value: 'THRUPLAY', ar: 'مشاهدات ThruPlay', en: 'ThruPlay' },
-          ],
-        },
-      ],
-    },
-
-    {
-      key: 'schedule',
-      ar: 'الجدولة',
-      en: 'Schedule',
-      fields: [
         { key: 'start_time', control: 'date', ar: 'تاريخ البدء', en: 'Start date', ltr: true },
         {
           key: 'end_time',
@@ -216,289 +145,15 @@ export const metaSchema: PlatformSchema = {
         },
       ],
     },
-
-    {
-      key: 'targeting',
-      ar: 'الاستهداف',
-      en: 'Targeting',
-      fields: [
-        {
-          key: 'countries',
-          control: 'tags',
-          ar: 'الدول (رمز ISO)',
-          en: 'Countries (ISO code)',
-          ltr: true,
-          placeholder: 'SA',
-          hint_ar: 'SA للسعودية، AE للإمارات…',
-          hint_en: 'SA, AE…',
-        },
-        {
-          key: 'cities',
-          control: 'tags',
-          ar: 'المدن',
-          en: 'Cities',
-          hint_ar: 'الرياض، جدة… (تُحل إلى معرفات ميتا عند الربط)',
-          hint_en: 'Riyadh, Jeddah… (resolved to Meta keys when connected)',
-        },
-        {
-          key: 'custom_locations',
-          control: 'tags',
-          ar: 'نقاط دائرية (خط عرض,خط طول,نصف قطر كم)',
-          en: 'Radius pins (lat,lng,radius km)',
-          ltr: true,
-          placeholder: '24.77,46.73,15',
-        },
-        { key: 'age_min', control: 'number', ar: 'العمر من', en: 'Age from', min: 13, max: 65 },
-        { key: 'age_max', control: 'number', ar: 'العمر إلى', en: 'Age to', min: 13, max: 65, hint_ar: '65 تعني +65', hint_en: '65 means 65+' },
-        {
-          key: 'genders',
-          control: 'select',
-          ar: 'الجنس',
-          en: 'Gender',
-          options: [
-            { value: '', ar: 'الجميع', en: 'All' },
-            { value: '1', ar: 'رجال', en: 'Men' },
-            { value: '2', ar: 'نساء', en: 'Women' },
-          ],
-        },
-        {
-          key: 'locales',
-          control: 'tags',
-          ar: 'اللغات',
-          en: 'Languages',
-          placeholder: 'العربية، English',
-        },
-        {
-          key: 'interests',
-          control: 'tags',
-          ar: 'الاهتمامات',
-          en: 'Interests',
-          hint_ar: 'عقارات، استثمار، تحسين المنزل…',
-          hint_en: 'real estate, investing, home improvement…',
-        },
-        {
-          key: 'custom_audiences',
-          control: 'tags',
-          ar: 'جماهير مخصصة (تضمين)',
-          en: 'Custom audiences (include)',
-          ltr: true,
-          hint_ar: 'معرفات الجماهير — تشمل الجماهير المشابهة',
-          hint_en: 'audience ids — lookalikes included',
-        },
-        {
-          key: 'excluded_custom_audiences',
-          control: 'tags',
-          ar: 'جماهير مخصصة (استبعاد)',
-          en: 'Custom audiences (exclude)',
-          ltr: true,
-        },
-        {
-          key: 'advantage_audience',
-          control: 'toggle',
-          ar: 'جمهور Advantage+‎',
-          en: 'Advantage+ audience',
-          hint_ar: 'مدخلاتك تصبح اقتراحات لا قيودًا صارمة',
-          hint_en: 'your inputs become suggestions, not hard constraints',
-        },
-      ],
-    },
-
-    {
-      key: 'placements',
-      ar: 'مواضع الظهور',
-      en: 'Placements',
-      fields: [
-        {
-          key: 'placement_mode',
-          control: 'select',
-          ar: 'اختيار المواضع',
-          en: 'Placement selection',
-          options: [
-            { value: 'AUTOMATIC', ar: 'تلقائي (Advantage+)', en: 'Automatic (Advantage+)' },
-            { value: 'MANUAL', ar: 'يدوي', en: 'Manual' },
-          ],
-        },
-        {
-          key: 'publisher_platforms',
-          control: 'multiselect',
-          ar: 'المنصات',
-          en: 'Platforms',
-          visibleWhen: { key: 'placement_mode', anyOf: ['MANUAL'] },
-          options: [
-            { value: 'facebook', ar: 'فيسبوك', en: 'Facebook' },
-            { value: 'instagram', ar: 'إنستغرام', en: 'Instagram' },
-            { value: 'messenger', ar: 'ماسنجر', en: 'Messenger' },
-            { value: 'audience_network', ar: 'شبكة الجمهور', en: 'Audience Network' },
-            { value: 'threads', ar: 'ثريدز', en: 'Threads' },
-          ],
-        },
-        {
-          key: 'instagram_positions',
-          control: 'multiselect',
-          ar: 'مواضع إنستغرام',
-          en: 'Instagram positions',
-          visibleWhen: { key: 'placement_mode', anyOf: ['MANUAL'] },
-          options: [
-            { value: 'stream', ar: 'الرئيسية (Feed)', en: 'Feed' },
-            { value: 'story', ar: 'ستوري', en: 'Stories' },
-            { value: 'reels', ar: 'ريلز', en: 'Reels' },
-            { value: 'explore', ar: 'استكشاف', en: 'Explore' },
-            { value: 'explore_home', ar: 'صفحة الاستكشاف', en: 'Explore home' },
-            { value: 'profile_feed', ar: 'موجز الحساب', en: 'Profile feed' },
-            { value: 'profile_reels', ar: 'ريلز الحساب', en: 'Profile reels' },
-            { value: 'ig_search', ar: 'نتائج البحث', en: 'Search results' },
-          ],
-        },
-        {
-          key: 'facebook_positions',
-          control: 'multiselect',
-          ar: 'مواضع فيسبوك',
-          en: 'Facebook positions',
-          visibleWhen: { key: 'placement_mode', anyOf: ['MANUAL'] },
-          options: [
-            { value: 'feed', ar: 'الرئيسية', en: 'Feed' },
-            { value: 'story', ar: 'ستوري', en: 'Stories' },
-            { value: 'facebook_reels', ar: 'ريلز', en: 'Reels' },
-            { value: 'video_feeds', ar: 'موجز الفيديو', en: 'Video feeds' },
-            { value: 'instream_video', ar: 'داخل الفيديو', en: 'In-stream video' },
-            { value: 'marketplace', ar: 'ماركت بليس', en: 'Marketplace' },
-            { value: 'search', ar: 'نتائج البحث', en: 'Search results' },
-            { value: 'right_hand_column', ar: 'العمود الجانبي', en: 'Right column' },
-          ],
-        },
-        {
-          key: 'device_platforms',
-          control: 'multiselect',
-          ar: 'الأجهزة',
-          en: 'Devices',
-          options: [
-            { value: 'mobile', ar: 'جوال', en: 'Mobile' },
-            { value: 'desktop', ar: 'حاسوب', en: 'Desktop' },
-          ],
-        },
-      ],
-    },
-
-    {
-      key: 'destination',
-      ar: 'الوجهة والتتبع',
-      en: 'Destination & tracking',
-      fields: [
-        {
-          key: 'page_id',
-          control: 'text',
-          ar: 'معرف صفحة فيسبوك',
-          en: 'Facebook page id',
-          ltr: true,
-          hint_ar: 'كل إعلان على ميتا يصدر عن صفحة',
-          hint_en: 'every Meta ad runs from a page',
-        },
-        { key: 'instagram_user_id', control: 'text', ar: 'معرف حساب إنستغرام', en: 'Instagram account id', ltr: true },
-        {
-          key: 'pixel_id',
-          control: 'text',
-          ar: 'معرف البكسل',
-          en: 'Pixel id',
-          ltr: true,
-          visibleWhen: { key: 'optimization_goal', anyOf: ['OFFSITE_CONVERSIONS', 'VALUE', 'QUALITY_LEAD', 'LANDING_PAGE_VIEWS'] },
-        },
-        {
-          key: 'custom_event_type',
-          control: 'select',
-          ar: 'حدث التحويل',
-          en: 'Conversion event',
-          visibleWhen: { key: 'optimization_goal', anyOf: ['OFFSITE_CONVERSIONS', 'VALUE', 'QUALITY_LEAD'] },
-          options: [
-            { value: 'LEAD', ar: 'عميل محتمل', en: 'Lead' },
-            { value: 'CONTACT', ar: 'تواصل', en: 'Contact' },
-            { value: 'SCHEDULE', ar: 'حجز موعد', en: 'Schedule' },
-            { value: 'COMPLETE_REGISTRATION', ar: 'إكمال تسجيل', en: 'Complete registration' },
-            { value: 'SUBMIT_APPLICATION', ar: 'تقديم طلب', en: 'Submit application' },
-            { value: 'PURCHASE', ar: 'شراء', en: 'Purchase' },
-            { value: 'OTHER', ar: 'آخر', en: 'Other' },
-          ],
-        },
-        {
-          key: 'whatsapp_number',
-          control: 'text',
-          ar: 'رقم واتساب',
-          en: 'WhatsApp number',
-          ltr: true,
-          visibleWhen: { key: 'destination_type', anyOf: ['WHATSAPP'] },
-        },
-      ],
-    },
   ],
 
   adSections: [
     {
       key: 'creative',
-      ar: 'الإعلان على المنصة',
-      en: 'On-platform creative',
+      ar: 'الإعلان',
+      en: 'Ad',
       fields: [
-        {
-          key: 'format',
-          control: 'select',
-          ar: 'صيغة الإعلان',
-          en: 'Ad format',
-          options: [
-            { value: 'SINGLE_IMAGE', ar: 'صورة واحدة', en: 'Single image' },
-            { value: 'SINGLE_VIDEO', ar: 'فيديو واحد', en: 'Single video' },
-            { value: 'CAROUSEL', ar: 'كاروسيل (2–10)', en: 'Carousel (2–10)' },
-            { value: 'COLLECTION', ar: 'مجموعة', en: 'Collection' },
-          ],
-        },
-        { key: 'message', control: 'textarea', ar: 'النص الأساسي', en: 'Primary text' },
-        { key: 'name', control: 'text', ar: 'العنوان', en: 'Headline' },
-        { key: 'description', control: 'text', ar: 'الوصف', en: 'Description' },
-        {
-          key: 'call_to_action',
-          control: 'select',
-          ar: 'زر الإجراء',
-          en: 'Call to action',
-          options: [
-            { value: 'LEARN_MORE', ar: 'اعرف المزيد', en: 'Learn more' },
-            { value: 'SIGN_UP', ar: 'سجّل', en: 'Sign up' },
-            { value: 'CONTACT_US', ar: 'تواصل معنا', en: 'Contact us' },
-            { value: 'GET_QUOTE', ar: 'اطلب عرض سعر', en: 'Get quote' },
-            { value: 'APPLY_NOW', ar: 'قدّم الآن', en: 'Apply now' },
-            { value: 'BOOK_NOW', ar: 'احجز الآن', en: 'Book now' },
-            { value: 'CALL_NOW', ar: 'اتصل الآن', en: 'Call now' },
-            { value: 'WHATSAPP_MESSAGE', ar: 'رسالة واتساب', en: 'WhatsApp message' },
-            { value: 'MESSAGE_PAGE', ar: 'أرسل رسالة', en: 'Send message' },
-            { value: 'GET_DIRECTIONS', ar: 'الاتجاهات', en: 'Get directions' },
-            { value: 'DOWNLOAD', ar: 'تنزيل', en: 'Download' },
-            { value: 'SHOP_NOW', ar: 'تسوّق الآن', en: 'Shop now' },
-            { value: 'SUBSCRIBE', ar: 'اشترك', en: 'Subscribe' },
-            { value: 'GET_OFFER', ar: 'احصل على العرض', en: 'Get offer' },
-            { value: 'NO_BUTTON', ar: 'بلا زر', en: 'No button' },
-          ],
-        },
-        { key: 'link', control: 'text', ar: 'رابط الوجهة', en: 'Destination URL', ltr: true, placeholder: 'https://…' },
-        {
-          key: 'lead_gen_form_id',
-          control: 'text',
-          ar: 'معرف النموذج الفوري',
-          en: 'Instant form id',
-          ltr: true,
-          hint_ar: 'لإعلانات النماذج — يوضع على زر الإجراء',
-          hint_en: 'for lead ads — carried on the CTA',
-        },
-        {
-          key: 'object_story_id',
-          control: 'text',
-          ar: 'معرف منشور موجود (تعزيز)',
-          en: 'Existing post id (boost)',
-          ltr: true,
-        },
-        {
-          key: 'url_tags',
-          control: 'text',
-          ar: 'وسوم UTM',
-          en: 'URL tags (UTM)',
-          ltr: true,
-          placeholder: 'utm_source=facebook&utm_campaign=…',
-        },
+        { key: 'message', control: 'textarea', ar: 'النص الإعلاني (الكابشن)', en: 'Caption' },
       ],
     },
   ],

@@ -28,7 +28,7 @@ import { PlatformFieldsGrid, PlatformSettingsForm } from './components/PlatformS
 import CampaignTreeModal from './components/CampaignTreeModal';
 import { Empty, Field, LoadError, Modal, Pill, ReadField, Skeleton } from './components/kit';
 import { IconBack, IconForward, IconPlus } from './components/icons';
-import { isoDate, num, shortDate, whole } from './lib/format';
+import { num, whole } from './lib/format';
 
 type Tab = 'ads' | 'targeting';
 
@@ -197,7 +197,7 @@ export default function ExecutionDetailPage() {
   ];
 
   // Map ad_set_id -> name, so the ads table can show which ad set each ad is in.
-  const adSetName = (id: string | null): string | null =>
+  const adSetName = (id: string | null | undefined): string | null =>
     id ? adSets.find((s) => s.id === id)?.name ?? null : null;
 
   const purposeLabel = execution.purpose && PURPOSE_PILL_LABELS[execution.purpose]
