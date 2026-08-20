@@ -1,6 +1,6 @@
 # Wassell File Management — the whole plan
 
-**Status:** living document · **Last updated:** 2026-08-20 (Phase 3 complete: B1–B9)
+**Status:** living document · **Last updated:** 2026-08-20 (Phase 3 complete; Library ACTIVATED)
 
 This is the governing plan for the Files system across **all five phases (0–4)**.
 Until now it existed only as `phase3-business-files-spec.md` in an untracked
@@ -120,7 +120,7 @@ rollback-able.
 | **B2** | Fast server-side search, Arabic folding, filters and facets | ⚠️ **Live, and now CALLED** — B5 is its first consumer (behind B5's flag). 6,933 ms → 350–1,100 ms, still misses the 300 ms bar (§6.1, §6.2). |
 | **B3** | Measure how record-linked access changes visibility | ✅ **Done** — D1 approved |
 | **B4** | Let users view files through records they can access, excluding restricted files | ✅ **LIVE — toggle ON since 2026-08-19 11:09 UTC** |
-| **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ✅ **Built — shipped behind a flag, default OFF** (§4.1) |
+| **B5** | Global Files Library, saved views, grouping, grid/list, metadata editing | ✅ **LIVE — activated for everyone 2026-08-20** (§4.1) |
 | **B6** | Manual linking/unlinking and Files panels inside records | ✅ **Built — flag default OFF; acceptance bar fully met once the `units` schema was restored (§6.5)** (§4.2) |
 | **B7** | Upload metadata, duplicate detection, bulk actions | ✅ **Built — behind the Library flag, default OFF** (§4.3) |
 | **B8** | Move the remaining Marketing assets onto the canonical file system | ✅ **173 canonicalised on prod; 143 are non-file references (§4.4)** |

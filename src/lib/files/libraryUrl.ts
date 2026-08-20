@@ -48,12 +48,28 @@ const FLAG_STORAGE_KEY = 'wassell_files_library';
  * enabled it keeps the folder-first page exactly as it is today.
  */
 export function filesLibraryEnabled(search?: string): boolean {
-  return readFileFlag(
-    'library',
-    FLAG_STORAGE_KEY,
-    import.meta.env.VITE_FEATURE_FILES_LIBRARY as string | undefined,
-    search,
-  );
+  // ACTIVATED FOR EVERYONE — 2026-08-20. Phase 3 (B1–B9) is complete and the
+  // Library is now the default `/files`.
+  //
+  // The rollback boundary the whole batch was built around is preserved intact,
+  // at three levels of granularity:
+  //   - `?library=0` in the URL turns it off for one person, instantly, and is
+  //     remembered — the per-user escape hatch.
+  //   - `VITE_FEATURE_FILES_LIBRARY=0` set in the environment turns it off for
+  //     everyone at the next build, without a code change — the kill switch.
+  //   - reverting this one commit restores the folder-first default.
+  //
+  // So the env var flips meaning: it is now an explicit OFF switch, not the ON
+  // switch. Absent (the production state — the compiled bundle defaulted to
+  // false because it was never set), it defaults ON. Only the literal '0' turns
+  // it off.
+  const env = import.meta.env.VITE_FEATURE_FILES_LIBRARY as string | undefined;
+  if (env === '0') {
+    // Environment kill switch: honour it, but a per-user ?library=1 can still
+    // opt back in, so route through readFileFlag rather than short-circuiting.
+    return readFileFlag('library', FLAG_STORAGE_KEY, '0', search);
+  }
+  return readFileFlag('library', FLAG_STORAGE_KEY, '1', search);
 }
 
 // ─── URL codec ────────────────────────────────────────────────────────────

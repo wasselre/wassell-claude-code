@@ -186,39 +186,43 @@ describe('filesLibraryEnabled — the rollback boundary', () => {
   });
   afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-  it('is OFF when nothing has opted in', () => {
+  // ACTIVATED 2026-08-20 — the default is now ON. These assert the new
+  // contract AND that all three rollback levers still work.
+
+  it('is ON by default when nothing has opted out', () => {
     vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', '');
-    expect(filesLibraryEnabled('')).toBe(false);
-  });
-
-  it('is OFF for any env value other than exactly "1"', () => {
-    for (const v of ['0', 'true', 'yes', 'on']) {
-      vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', v);
-      expect(filesLibraryEnabled('')).toBe(false);
-    }
-  });
-
-  it('is ON for the env value "1"', () => {
-    vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', '1');
     expect(filesLibraryEnabled('')).toBe(true);
   });
 
-  it('?library=1 turns it on and is remembered', () => {
-    vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', '');
-    expect(filesLibraryEnabled('?library=1')).toBe(true);
-    expect(store.wassell_files_library).toBe('1');
-    expect(filesLibraryEnabled('')).toBe(true);       // now from storage
+  it('is ON for any env value except the literal "0"', () => {
+    for (const v of ['', '1', 'true', 'yes', 'on']) {
+      vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', v);
+      expect(filesLibraryEnabled('')).toBe(true);
+    }
   });
 
-  it('?library=0 turns it OFF even when the environment has it on', () => {
-    // This is the instant, no-deploy rollback. It has to beat the env var.
-    vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', '1');
-    expect(filesLibraryEnabled('?library=0')).toBe(false);
+  it('VITE_FEATURE_FILES_LIBRARY=0 is the environment kill switch', () => {
+    // Turns it off for everyone at the next build, without a code change.
+    vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', '0');
     expect(filesLibraryEnabled('')).toBe(false);
   });
 
+  it('?library=0 turns it OFF for one person and is remembered', () => {
+    // The per-user rollback, the spec's rollback boundary. Beats the ON default.
+    vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', '');
+    expect(filesLibraryEnabled('?library=0')).toBe(false);
+    expect(store.wassell_files_library).toBe('0');
+    expect(filesLibraryEnabled('')).toBe(false);      // now from storage
+  });
+
+  it('?library=1 opts a person back in even under the env kill switch', () => {
+    vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', '0');
+    expect(filesLibraryEnabled('?library=1')).toBe(true);
+    expect(filesLibraryEnabled('')).toBe(true);        // remembered
+  });
+
   it('survives a localStorage that throws', () => {
-    vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', '1');
+    vi.stubEnv('VITE_FEATURE_FILES_LIBRARY', '');
     vi.stubGlobal('window', {
       location: { search: '' },
       localStorage: {
@@ -226,8 +230,8 @@ describe('filesLibraryEnabled — the rollback boundary', () => {
         setItem: () => { throw new Error('private mode'); },
       },
     });
-    // A storage failure must degrade to the environment default, never crash
-    // the route that decides which page to render.
+    // A storage failure must degrade to the default (now ON), never crash the
+    // route that decides which page to render — and ?library=0 still wins.
     expect(filesLibraryEnabled('')).toBe(true);
     expect(filesLibraryEnabled('?library=0')).toBe(false);
   });
