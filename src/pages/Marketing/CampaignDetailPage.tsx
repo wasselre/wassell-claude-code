@@ -40,6 +40,7 @@ import SuccessMeasuresEditor, {
 } from './components/SuccessMeasuresEditor';
 import AudiencePicker from './components/AudiencePicker';
 import GoalMultiSelect from './components/GoalMultiSelect';
+import { PlatformFieldsGrid } from './components/PlatformSettingsForm';
 import ProjectLink from './components/ProjectLink';
 import { IconBack, IconForward } from './components/icons';
 import { money, monthOf, num, shortDate, whole } from './lib/format';
@@ -2487,6 +2488,13 @@ function ExecutionModal({
   const [status, setStatus] = useState<MosExecution['status']>(execution?.status ?? 'draft');
   const [purpose, setPurpose] = useState<string>(execution?.purpose ?? '');
   const [platformCampaignId, setPlatformCampaignId] = useState(execution?.platform_campaign_id ?? '');
+  // The full platform-settings plan (objective, budget, conversion, dates) —
+  // the ONE place a Meta/Instagram execution is planned. Rendered inline below
+  // via PlatformFieldsGrid so there is no separate settings tab to hunt for.
+  const [settingsDraft, setSettingsDraft] = useState<PlatformSettings>(
+    (execution?.platform_settings as PlatformSettings | null)
+      ?? defaultPlatformSettings(execution?.platform ?? 'meta'),
+  );
   const [budget, setBudget] = useState(execution?.budget?.toString() ?? '');
   const [spend, setSpend] = useState(execution?.spend?.toString() ?? '');
   const [impressions, setImpressions] = useState(execution?.impressions?.toString() ?? '');
@@ -2501,23 +2509,29 @@ function ExecutionModal({
   const submit = async (): Promise<void> => {
     setBusy(true);
     try {
-      // Merge the objective into the stored settings without clobbering what
-      // the detail-page form already captured; a fresh execution gets the
-      // platform's seed defaults (e.g. Instagram-only placements).
+      const meta = platform === 'meta' || platform === 'instagram';
       const schema = getPlatformSchema(platform);
       let platformSettings: PlatformSettings | undefined;
-      if (schema) {
+      if (meta) {
+        // The embedded plan grid IS the platform settings — save it as-is.
+        platformSettings = settingsDraft;
+      } else if (schema) {
+        // Non-Meta structured platforms set only the objective here; the rest of
+        // the form lives on the detail page. Merge without clobbering it.
         const keep = execution && execution.platform === platform
           ? (execution.platform_settings as PlatformSettings | null) ?? null
           : null;
         platformSettings = { ...(keep ?? defaultPlatformSettings(platform)) };
         platformSettings[objectiveKeyOf(schema)] = objective || null;
       }
-      // Meta/Instagram results are owned by the hourly sync — never send them
-      // from this modal, or a save would overwrite Meta's numbers with stale
-      // (or empty) manual state. Other platforms have no sync, so they carry
-      // their hand-typed numbers.
-      const meta = platform === 'meta' || platform === 'instagram';
+      // For Meta, mirror the plan's budget onto the execution.budget column (what
+      // lists show); results (spend/leads/…) are owned by the hourly sync and are
+      // never sent from this modal. Non-Meta platforms carry their typed numbers.
+      const planBudget = ((): number | null => {
+        const key = settingsDraft.budget_mode === 'LIFETIME' ? 'lifetime_budget' : 'daily_budget';
+        const v = settingsDraft[key];
+        return typeof v === 'number' ? v : null;
+      })();
       const res = await saveExecution(campaignId, {
         id: execution?.id,
         platform,
@@ -2526,7 +2540,7 @@ function ExecutionModal({
         status,
         purpose: purpose || null,
         platform_campaign_id: platformCampaignId.trim() || null,
-        budget: n(budget),
+        budget: meta ? planBudget : n(budget),
         ...(meta ? {} : {
           spend: n(spend),
           impressions: n(impressions),
@@ -2563,6 +2577,7 @@ function ExecutionModal({
   // impressions, leads…) come from Meta, not manual entry. Other platforms have
   // no sync, so their numbers are typed here.
   const isMetaPlatform = platform === 'meta' || platform === 'instagram';
+  const planSchema = getPlatformSchema(platform);
 
   return (
     <Modal
@@ -2605,6 +2620,7 @@ function ExecutionModal({
               // The objective enum belongs to the platform — a Meta value is
               // meaningless on TikTok, so a platform switch clears it.
               setObjective('');
+              setSettingsDraft(defaultPlatformSettings(e.target.value));
             }}
           >
             {PLATFORMS.map((p) => (
@@ -2615,6 +2631,9 @@ function ExecutionModal({
           </select>
         </Field>
         {(() => {
+          // Meta/Instagram plan the objective in the embedded plan grid below —
+          // no separate dropdown here (that was the duplication).
+          if (platform === 'meta' || platform === 'instagram') return null;
           const sch = getPlatformSchema(platform);
           if (!sch) return null;
           const objField = sch.sections
@@ -2640,12 +2659,12 @@ function ExecutionModal({
         </Field>
         <Field
           label={isAr ? 'الحالة' : 'Status'}
-          hint={platformCampaignId.trim()
+          hint={isMetaPlatform || platformCampaignId.trim()
             ? isAr ? 'تأتي من ميتا وتُحدَّث تلقائيًا' : 'comes from Meta, updated automatically'
             : undefined}
         >
-          {platformCampaignId.trim() ? (
-            // Synced to Meta: status is driven by the hourly sync, so editing it
+          {isMetaPlatform || platformCampaignId.trim() ? (
+            // Meta-owned: status is driven by the hourly sync, so editing it
             // here would just be overwritten. Show it read-only.
             <div className="inp" style={{ display: 'flex', alignItems: 'center', color: 'var(--mute)' }}>
               {(isAr ? EXEC_STATUS_LABELS[status]?.ar : EXEC_STATUS_LABELS[status]?.en) ?? status}
@@ -2667,28 +2686,37 @@ function ExecutionModal({
         </Field>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
-        <Field label={isAr ? 'الغرض' : 'Purpose'}>
-          <select className="inp" value={purpose} onChange={(e) => setPurpose(e.target.value)}>
-            <option value="">{isAr ? 'غير محدد' : 'Not specified'}</option>
-            {Object.keys(PURPOSE_PILL_LABELS).map((k) => (
-              <option key={k} value={k}>
-                {isAr ? PURPOSE_PILL_LABELS[k]?.ar : PURPOSE_PILL_LABELS[k]?.en}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field
-          label={isAr ? 'رقم الحملة على المنصة' : 'Platform campaign id'}
-          hint={isAr ? 'ما يتيح سحب الأرقام آليًا لاحقًا' : undefined}
-        >
-          <input
-            className="inp ltr"
-            value={platformCampaignId}
-            onChange={(e) => setPlatformCampaignId(e.target.value)}
-          />
-        </Field>
-      </div>
+      {!isMetaPlatform && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+          <Field label={isAr ? 'الغرض' : 'Purpose'}>
+            <select className="inp" value={purpose} onChange={(e) => setPurpose(e.target.value)}>
+              <option value="">{isAr ? 'غير محدد' : 'Not specified'}</option>
+              {Object.keys(PURPOSE_PILL_LABELS).map((k) => (
+                <option key={k} value={k}>
+                  {isAr ? PURPOSE_PILL_LABELS[k]?.ar : PURPOSE_PILL_LABELS[k]?.en}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field
+            label={isAr ? 'رقم الحملة على المنصة' : 'Platform campaign id'}
+            hint={isAr ? 'ما يتيح سحب الأرقام آليًا لاحقًا' : undefined}
+          >
+            <input
+              className="inp ltr"
+              value={platformCampaignId}
+              onChange={(e) => setPlatformCampaignId(e.target.value)}
+            />
+          </Field>
+        </div>
+      )}
+
+      {isMetaPlatform && platformCampaignId.trim() && (
+        <div style={{ fontSize: 11.5, color: 'var(--mute)' }}>
+          {isAr ? 'مربوطة بحملة ميتا' : 'Linked to Meta campaign'}{' '}
+          <span className="ltr">#{platformCampaignId}</span>
+        </div>
+      )}
 
       <Field label={isAr ? 'المحتوى الذي يعمل هنا' : 'The content running here'}>
         <select className="inp" value={contentId} onChange={(e) => setContentId(e.target.value)}>
@@ -2700,16 +2728,23 @@ function ExecutionModal({
       </Field>
 
       {isMetaPlatform ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 13, alignItems: 'center' }}>
-          <Field label={isAr ? 'الميزانية' : 'Budget'}>
-            <input className="inp" inputMode="numeric" value={budget} onChange={(e) => setBudget(e.target.value)} />
-          </Field>
+        <>
+          {planSchema && (
+            <PlatformFieldsGrid
+              schema={planSchema}
+              sections={planSchema.sections}
+              draft={settingsDraft}
+              disabled={busy}
+              isAr={isAr}
+              onChange={setSettingsDraft}
+            />
+          )}
           <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.85 }}>
             {isAr
-              ? 'النتائج — المصروف، الظهور، النقرات، العملاء، المؤهلون — تأتي من ميتا تلقائيًا بعد الربط، فلا تُدخل يدويًا هنا.'
-              : 'Results — spend, impressions, clicks, leads, qualified — come from Meta automatically once linked, so they are not typed here.'}
+              ? 'النتائج — المصروف، الظهور، النقرات، العملاء، المؤهلون — تأتي من ميتا تلقائيًا بعد «الإنشاء في ميتا»، فلا تُدخل يدويًا.'
+              : 'Results — spend, impressions, clicks, leads, qualified — come from Meta automatically after «Create in Meta», not typed here.'}
           </div>
-        </div>
+        </>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 13 }}>
           <Field label={isAr ? 'الميزانية' : 'Budget'}>
