@@ -238,6 +238,14 @@ export function coercePreview(raw: string, cls: CoerceClass): { ok: boolean; out
   return { ok: true, out: s.slice(0, 60) };
 }
 
+/** A few real listing URLs on the source platform, to open and inspect a field in context. */
+export async function fetchSampleListingUrls(platform: string, limit = 6): Promise<string[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.rpc('market_listing_sample_urls', { p_platform: platform, p_limit: limit });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as { source_url: string }[]).map((r) => r.source_url).filter(Boolean);
+}
+
 /** Sample real staged values for a held field + their current live value. */
 export interface StagedSample { staged: string | null; live: string | null }
 export async function fetchStagedSample(canonical_field: string, limit = 8): Promise<StagedSample[]> {

@@ -3,10 +3,10 @@
  * source_field_decide RPC (upserts the mapping + resolves the gap). The publisher
  * is a separate gated step, so a decision here never auto-flows to market_listings.
  */
-import { useMemo, useState } from 'react';
-import { X, AlertTriangle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { X, AlertTriangle, ExternalLink } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import { decideField, exampleList, coercePreview, type CoerceClass, type Disposition, type FieldStatus } from '@/lib/marketAutomation/client';
+import { decideField, exampleList, coercePreview, fetchSampleListingUrls, type CoerceClass, type Disposition, type FieldStatus } from '@/lib/marketAutomation/client';
 
 const OPTIONS: { id: Disposition; ar: string; en: string; hint_ar: string; hint_en: string }[] = [
   { id: 'mapped_existing_field', ar: 'مطابقة لحقل قائم', en: 'Map to existing field', hint_ar: 'نفس معنى حقل موجود في وصل', hint_en: 'Same meaning as an existing Wassell column' },
@@ -33,6 +33,9 @@ export default function DecisionPanel({
   const [reason, setReason] = useState<string>(field.reason ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sampleUrls, setSampleUrls] = useState<string[]>([]);
+
+  useEffect(() => { fetchSampleListingUrls(field.platform, 6).then(setSampleUrls).catch(() => {}); }, [field.platform]);
 
   const targetCls = canonical ? targetTypes[canonical] : undefined;
   const typeMismatch = useMemo(
@@ -86,6 +89,24 @@ export default function DecisionPanel({
               {isAr ? 'النوع' : 'type'}: <b>{field.raw_data_type ?? '—'}</b> · {isAr ? 'ظهر في' : 'seen in'} {field.occurrence_count ?? 0} · {field.page_section ?? '—'}
             </div>
           </div>
+
+          {/* Open a real listing on the source platform to see the field in context. */}
+          {sampleUrls.length > 0 && (
+            <div className="rounded-xl border border-sand/40 p-3">
+              <div className="text-[12px] text-charcoal/60 mb-2">
+                {isAr ? `افتح إعلانًا حقيقيًا على ${field.platform} لرؤية الحقل في سياقه:` : `Open a real ${field.platform} listing to see the field in context:`}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {sampleUrls.map((u, i) => (
+                  <a key={i} href={u} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-[12px] text-copper hover:text-terracotta hover:underline truncate">
+                    <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate" dir="ltr">{decodeURIComponent(u.replace(/^https?:\/\//, ''))}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* disposition */}
           <div className="space-y-2">
