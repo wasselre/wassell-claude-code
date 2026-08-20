@@ -72,12 +72,32 @@ const fmtDur = (s: number): string => {
 const fmtMB = (b: number): string => `${Math.round(b / MB)}MB`;
 
 /**
- * Run every knowable rule for posting `asset` + `caption` to `platform`.
- * Platforms outside the bundle trio return ok with no issues (manual path).
+ * Single-file pre-flight — delegates to the set engine. Kept as the stable
+ * entry point for callers that model one file per publication.
  */
 export function preflightPublish(
   platform: string,
   asset: PublishAssetMeta | null,
+  caption: string | null | undefined,
+): PreflightResult {
+  return preflightPublishSet(platform, asset ? [asset] : [], caption);
+}
+
+/**
+ * Run every knowable rule for posting a SET of files + `caption` to `platform`.
+ * The set is the carousel order. Platforms outside the bundle trio return ok
+ * with no issues (manual path).
+ *
+ * Shape rules (mirror buildPlatformData — keep in sync):
+ *   instagram  1 video → REEL; anything else → POST (carousel 1–10, mixed
+ *              images+videos allowed).
+ *   tiktok     exactly 1 video → VIDEO; 1–10 images → Photo Mode (JPG/JPEG/
+ *              WebP ONLY — PNG is rejected — ≤20MB each); mixing blocked.
+ *   snapchat   exactly 1 file (image or MP4 video).
+ */
+export function preflightPublishSet(
+  platform: string,
+  assets: PublishAssetMeta[],
   caption: string | null | undefined,
 ): PreflightResult {
   const captionMax = CAPTION_MAX[platform] ?? 0;
@@ -108,125 +128,152 @@ export function preflightPublish(
     }
   }
 
-  /* ── file ────────────────────────────────────────────────────────── */
-  if (!asset) {
+  /* ── set shape ───────────────────────────────────────────────────── */
+  if (assets.length === 0) {
     block('لا ملف معتمد مرتبط بهذا النشر.', 'No approved file is attached to this publication.');
     return { ok: false, issues: [...blocks, ...warns], captionMax };
   }
+  const videos = assets.filter((a) => isVideoKind(a.kind));
+  const images = assets.filter((a) => !isVideoKind(a.kind));
+  const n = assets.length;
 
-  const video = isVideoKind(asset.kind);
-  const size = typeof asset.size_bytes === 'number' && asset.size_bytes > 0 ? asset.size_bytes : null;
-  const dur = typeof asset.duration_seconds === 'number' && asset.duration_seconds > 0
-    ? asset.duration_seconds : null;
-  const mime = (asset.mime_type ?? '').toLowerCase();
-
-  // Universal: bundle fetches the file by URL — 1 GB ceiling regardless of platform.
-  if (size !== null && size > FROM_URL_MAX_BYTES) {
-    block(
-      `الملف ${fmtMB(size)} — سقف الرفع 1GB.`,
-      `The file is ${fmtMB(size)} — the upload ceiling is 1GB.`,
-    );
+  if (platform === 'instagram' && n > 10) {
+    block(`كاروسيل انستقرام يقبل ١٠ ملفات كحد أقصى — المحدد ${n}.`,
+      `Instagram carousels max out at 10 files — ${n} selected.`);
   }
-
-  if (platform === 'instagram') {
-    if (video) {
-      // REEL: 3s–15min, ≤45Mbps bitrate, ≤1920px wide.
-      if (dur !== null) {
-        if (dur < 3) block('الفيديو أقصر من ٣ ثوانٍ — حد الريلز الأدنى.', 'Video is under 3s — the Reels minimum.');
-        if (dur > 900) {
-          block(
-            `الفيديو ${fmtDur(dur)} — حد الريلز ١٥ دقيقة.`,
-            `Video is ${fmtDur(dur)} — the Reels ceiling is 15 minutes.`,
-          );
-        }
-        if (size !== null && (size * 8) / dur > 45_000_000) {
-          block(
-            'جودة الفيديو (البترريت) أعلى من حد انستقرام 45Mbps — اضغطه أولًا.',
-            'Video bitrate exceeds Instagram’s 45Mbps cap — compress it first.',
-          );
-        }
-      } else {
-        warn(
-          'لم نتحقق من مدة الفيديو (غير مسجلة) — انستقرام يشترط ٣ث–١٥د وسيرفض خارجها.',
-          'Video duration is not recorded — Instagram requires 3s–15min and will reject outside it.',
-        );
-      }
-    } else {
-      // Feed POST image: ≤8MB. Aspect is handled for us (autoFitImage letterboxes).
-      if (size !== null && size > 8 * MB) {
-        block(
-          `الصورة ${fmtMB(size)} — حد انستقرام 8MB. اضغطها أولًا.`,
-          `Image is ${fmtMB(size)} — Instagram’s cap is 8MB. Compress it first.`,
-        );
-      }
-      if (mime && !/^image\/(jpe?g|png|webp)/.test(mime)) {
-        block(
-          `صيغة الصورة (${mime}) غير مقبولة — JPG أو PNG أو WebP.`,
-          `Image format (${mime}) is not accepted — use JPG, PNG or WebP.`,
-        );
-      }
-    }
-  }
-
   if (platform === 'tiktok') {
-    if (!video) {
-      // Photo Mode exists on TikTok but our pipeline is single-file video-only.
-      block('تيك توك (في نظامنا) يقبل الفيديو فقط — اختر ملف فيديو.', 'TikTok (in our pipeline) accepts video only — pick a video file.');
-    } else {
-      if (size !== null && size > 1 * GB) {
-        block(`الفيديو ${fmtMB(size)} — حد تيك توك 1GB.`, `Video is ${fmtMB(size)} — TikTok’s cap is 1GB.`);
-      }
-      if (dur !== null && dur > 600) {
-        block(
-          `الفيديو ${fmtDur(dur)} — حد تيك توك ١٠ دقائق.`,
-          `Video is ${fmtDur(dur)} — TikTok’s ceiling is 10 minutes.`,
-        );
-      }
-      if (dur === null) {
-        warn(
-          'لم نتحقق من مدة الفيديو (غير مسجلة) — حد تيك توك ١٠ دقائق.',
-          'Video duration is not recorded — TikTok’s ceiling is 10 minutes.',
-        );
-      }
+    if (videos.length > 0 && images.length > 0) {
+      block('تيك توك لا يخلط الصور والفيديو في منشور واحد — فيديو واحد أو صور فقط.',
+        'TikTok can’t mix images and video in one post — one video OR images only.');
+    } else if (videos.length > 1) {
+      block('تيك توك يقبل فيديو واحدًا فقط في المنشور.', 'TikTok accepts exactly one video per post.');
+    } else if (images.length > 10) {
+      block(`وضع الصور في تيك توك يقبل ١٠ صور كحد أقصى — المحدد ${images.length}.`,
+        `TikTok Photo Mode maxes out at 10 images — ${images.length} selected.`);
     }
   }
+  if (platform === 'snapchat' && n > 1) {
+    block(`ستوري سناب يقبل ملفًا واحدًا فقط — المحدد ${n}.`,
+      `Snapchat Stories take exactly one file — ${n} selected.`);
+  }
 
-  if (platform === 'snapchat') {
-    // STORY: exactly 1 image or MP4 video, ≤100MB, video 5–60s. The strictest
-    // of the three — long real-estate videos and long captions both die here.
-    if (size !== null && size > 100 * MB) {
-      block(`الملف ${fmtMB(size)} — حد سناب شات 100MB.`, `File is ${fmtMB(size)} — Snapchat’s cap is 100MB.`);
+  // Is this IG set a Reel (single video) or a feed post/carousel?
+  const igIsReel = platform === 'instagram' && n === 1 && videos.length === 1;
+
+  /* ── per-file rules ──────────────────────────────────────────────── */
+  let anySizeUnknown = false;
+  assets.forEach((asset, idx) => {
+    const video = isVideoKind(asset.kind);
+    const size = typeof asset.size_bytes === 'number' && asset.size_bytes > 0 ? asset.size_bytes : null;
+    const dur = typeof asset.duration_seconds === 'number' && asset.duration_seconds > 0
+      ? asset.duration_seconds : null;
+    const mime = (asset.mime_type ?? '').toLowerCase();
+    // «الملف ٣:» prefix only when there is more than one file to point at.
+    const at = n > 1 ? `الملف ${idx + 1}: ` : '';
+    const atEn = n > 1 ? `File ${idx + 1}: ` : '';
+    if (size === null) anySizeUnknown = true;
+
+    // Universal: bundle fetches by URL — 1 GB ceiling regardless of platform.
+    if (size !== null && size > FROM_URL_MAX_BYTES) {
+      block(`${at}الملف ${fmtMB(size)} — سقف الرفع 1GB.`,
+        `${atEn}the file is ${fmtMB(size)} — the upload ceiling is 1GB.`);
     }
-    if (video) {
-      if (mime && mime !== 'video/mp4') {
-        block(
-          `سناب شات يقبل فيديو MP4 فقط — هذا الملف ${mime}.`,
-          `Snapchat accepts MP4 video only — this file is ${mime}.`,
-        );
-      }
-      if (dur !== null) {
-        if (dur < 5) block('الفيديو أقصر من ٥ ثوانٍ — حد ستوري سناب الأدنى.', 'Video is under 5s — the Snapchat Story minimum.');
-        if (dur > 60) {
-          block(
-            `الفيديو ${fmtDur(dur)} — ستوري سناب يقبل ٦٠ ثانية كحد أقصى. قصّه أو انشره يدويًا.`,
-            `Video is ${fmtDur(dur)} — Snapchat Stories max out at 60s. Trim it or post manually.`,
-          );
+
+    if (platform === 'instagram') {
+      if (video) {
+        // Reel or carousel video item: 3s–15min, ≤45Mbps bitrate.
+        if (dur !== null) {
+          if (dur < 3) block(`${at}الفيديو أقصر من ٣ ثوانٍ — حد انستقرام الأدنى.`, `${atEn}video is under 3s — Instagram’s minimum.`);
+          if (dur > 900) {
+            block(`${at}الفيديو ${fmtDur(dur)} — حد انستقرام ١٥ دقيقة.`,
+              `${atEn}video is ${fmtDur(dur)} — Instagram’s ceiling is 15 minutes.`);
+          }
+          if (size !== null && (size * 8) / dur > 45_000_000) {
+            block(`${at}جودة الفيديو (البترريت) أعلى من حد انستقرام 45Mbps — اضغطه أولًا.`,
+              `${atEn}video bitrate exceeds Instagram’s 45Mbps cap — compress it first.`);
+          }
+        } else {
+          warn(`${at}لم نتحقق من مدة الفيديو (غير مسجلة) — انستقرام يشترط ٣ث–١٥د وسيرفض خارجها.`,
+            `${atEn}video duration is not recorded — Instagram requires 3s–15min and will reject outside it.`);
         }
       } else {
-        warn(
-          'لم نتحقق من مدة الفيديو (غير مسجلة) — ستوري سناب يقبل ٥–٦٠ ثانية فقط.',
-          'Video duration is not recorded — Snapchat Stories accept 5–60s only.',
-        );
+        // Feed POST image: ≤8MB. Aspect is handled for us (autoFitImage letterboxes).
+        if (size !== null && size > 8 * MB) {
+          block(`${at}الصورة ${fmtMB(size)} — حد انستقرام 8MB. اضغطها أولًا.`,
+            `${atEn}image is ${fmtMB(size)} — Instagram’s cap is 8MB. Compress it first.`);
+        }
+        if (mime && !/^image\/(jpe?g|png|webp)/.test(mime)) {
+          block(`${at}صيغة الصورة (${mime}) غير مقبولة — JPG أو PNG أو WebP.`,
+            `${atEn}image format (${mime}) is not accepted — use JPG, PNG or WebP.`);
+        }
       }
     }
+
+    if (platform === 'tiktok') {
+      if (video) {
+        if (size !== null && size > 1 * GB) {
+          block(`${at}الفيديو ${fmtMB(size)} — حد تيك توك 1GB.`, `${atEn}video is ${fmtMB(size)} — TikTok’s cap is 1GB.`);
+        }
+        if (dur !== null && dur > 600) {
+          block(`${at}الفيديو ${fmtDur(dur)} — حد تيك توك ١٠ دقائق.`,
+            `${atEn}video is ${fmtDur(dur)} — TikTok’s ceiling is 10 minutes.`);
+        }
+        if (dur === null) {
+          warn(`${at}لم نتحقق من مدة الفيديو (غير مسجلة) — حد تيك توك ١٠ دقائق.`,
+            `${atEn}video duration is not recorded — TikTok’s ceiling is 10 minutes.`);
+        }
+      } else {
+        // Photo Mode: JPG/JPEG/WebP ONLY (PNG rejected), ≤20MB each.
+        if (mime && !/^image\/(jpe?g|webp)/.test(mime)) {
+          block(`${at}وضع الصور في تيك توك يقبل JPG وWebP فقط — هذا الملف ${mime || 'غير معروف'}. PNG مرفوض؛ حوّلها أولًا.`,
+            `${atEn}TikTok Photo Mode accepts JPG/WebP only — this file is ${mime || 'unknown'}. PNG is rejected; convert it first.`);
+        }
+        if (!mime) {
+          warn(`${at}صيغة الصورة غير مسجلة — تيك توك يقبل JPG وWebP فقط وسيرفض غيرها.`,
+            `${atEn}image format is not recorded — TikTok accepts JPG/WebP only and will reject others.`);
+        }
+        if (size !== null && size > 20 * MB) {
+          block(`${at}الصورة ${fmtMB(size)} — حد تيك توك 20MB للصورة.`,
+            `${atEn}image is ${fmtMB(size)} — TikTok’s per-image cap is 20MB.`);
+        }
+      }
+    }
+
+    if (platform === 'snapchat') {
+      // STORY: ≤100MB, video must be MP4 and 5–60s. The strictest of the three.
+      if (size !== null && size > 100 * MB) {
+        block(`${at}الملف ${fmtMB(size)} — حد سناب شات 100MB.`, `${atEn}file is ${fmtMB(size)} — Snapchat’s cap is 100MB.`);
+      }
+      if (video) {
+        if (mime && mime !== 'video/mp4') {
+          block(`${at}سناب شات يقبل فيديو MP4 فقط — هذا الملف ${mime}.`,
+            `${atEn}Snapchat accepts MP4 video only — this file is ${mime}.`);
+        }
+        if (dur !== null) {
+          if (dur < 5) block(`${at}الفيديو أقصر من ٥ ثوانٍ — حد ستوري سناب الأدنى.`, `${atEn}video is under 5s — the Snapchat Story minimum.`);
+          if (dur > 60) {
+            block(`${at}الفيديو ${fmtDur(dur)} — ستوري سناب يقبل ٦٠ ثانية كحد أقصى. قصّه أو انشره يدويًا.`,
+              `${atEn}video is ${fmtDur(dur)} — Snapchat Stories max out at 60s. Trim it or post manually.`);
+          }
+        } else {
+          warn(`${at}لم نتحقق من مدة الفيديو (غير مسجلة) — ستوري سناب يقبل ٥–٦٠ ثانية فقط.`,
+            `${atEn}video duration is not recorded — Snapchat Stories accept 5–60s only.`);
+        }
+      }
+    }
+  });
+
+  // A carousel that mixes in videos posts as a feed POST, not a Reel — worth
+  // saying out loud since single-video behaves differently.
+  if (platform === 'instagram' && !igIsReel && videos.length > 0 && n > 1) {
+    warn('كاروسيل يحتوي فيديو يُنشر كمنشور عادي (ليس ريلز).',
+      'A carousel containing video posts as a feed post (not a Reel).');
   }
 
   // Metadata we could not verify at all (legacy link-only assets): be honest.
-  if (size === null) {
-    warn(
-      'حجم الملف غير مسجل — ستتحقق المنصة منه عند النشر.',
-      'File size is not recorded — the platform will check it at post time.',
-    );
+  if (anySizeUnknown) {
+    warn('حجم أحد الملفات غير مسجل — ستتحقق المنصة منه عند النشر.',
+      'A file’s size is not recorded — the platform will check it at post time.');
   }
 
   return { ok: blocks.length === 0, issues: [...blocks, ...warns], captionMax };

@@ -398,55 +398,76 @@ export function accountAnalyticsToSnapshot(item: BundleAccountAnalyticsItem, pla
 /* per-platform post `data` builder                                    */
 /* ------------------------------------------------------------------ */
 
+/** One uploaded file, in carousel order, with the kind the shape rules need. */
+export interface PlatformUpload {
+  id: string;
+  kind: 'photo' | 'video' | 'design' | 'audio' | 'document';
+}
+
+const isVideoUpload = (u: PlatformUpload): boolean => u.kind === 'video' || u.kind === 'audio';
+
 /**
  * Build the platform-specific `data` block for ONE platform. Each MOS
  * publication is exactly one platform, so this returns a one-key object.
+ * `uploads` is the ORDERED file set (the carousel order).
  *
- *   photo  → Instagram POST / Snapchat STORY (TikTok is video-only — rejected earlier)
- *   video  → Instagram REEL / TikTok VIDEO / Snapchat STORY
+ *   instagram  1 video → REEL; anything else → POST (carousel 1–10, mixed
+ *              images+videos — bundle allows mixing on feed posts).
+ *   tiktok     1 video → VIDEO; images → IMAGE (Photo Mode, 1–10, autoScale).
+ *   snapchat   STORY, exactly 1 file (the set-shape rules guarantee it).
  *
- * Kept deliberately minimal — the safe, default choices. Anything richer
- * (locations, first-comment hashtags, Spotlight, privacy tuning) is a later
- * layer; v1 posts the approved file with its caption.
+ * The set SHAPE is validated upstream by preflightPublishSet in
+ * src/lib/marketingOS/platformRules.ts — keep the two in sync. Anything richer
+ * (locations, first-comment hashtags, Spotlight, music) is a later layer.
  */
 export function buildPlatformData(
   platform: string,
-  opts: { text: string; uploadId: string; kind: 'photo' | 'video' | 'design' | 'audio' | 'document' },
+  opts: { text: string; uploads: PlatformUpload[] },
 ): { socialAccountType: string; data: Record<string, unknown> } | null {
   const type = BUNDLE_PLATFORM_TYPE[platform];
-  if (!type) return null;
-  const isVideo = opts.kind === 'video' || opts.kind === 'audio';
-  const uploadIds = [opts.uploadId];
+  if (!type || opts.uploads.length === 0) return null;
+  const uploadIds = opts.uploads.map((u) => u.id);
+  const videos = opts.uploads.filter(isVideoUpload).length;
+  const hasImage = videos < opts.uploads.length;
 
   if (platform === 'instagram') {
+    // Single video = Reel (growth surface). Everything else — single image or
+    // any multi-file set — is a feed POST; bundle carries 1–10 mixed files.
+    const isReel = opts.uploads.length === 1 && videos === 1;
     return {
       socialAccountType: type,
       data: {
         INSTAGRAM: {
-          type: isVideo ? 'REEL' : 'POST',
+          type: isReel ? 'REEL' : 'POST',
           text: opts.text,
           uploadIds,
           // Feed posts reject images outside 0.8–1.91 aspect (verified live).
           // auto-fit letterboxes any shape instead of failing at post time —
           // the safe default for real-estate photos of varying dimensions.
-          ...(isVideo ? {} : { autoFitImage: true }),
+          ...(!isReel && hasImage ? { autoFitImage: true } : {}),
         },
       },
     };
   }
   if (platform === 'tiktok') {
-    // TikTok is video-only; a photo can't be pushed here (guarded by the caller).
+    // One video → VIDEO; an all-image set → Photo Mode. Mixing is blocked by
+    // the shape rules before this is ever called.
+    const photoMode = videos === 0;
     return {
       socialAccountType: type,
       data: {
         TIKTOK: {
-          type: 'VIDEO',
+          type: photoMode ? 'IMAGE' : 'VIDEO',
           text: opts.text,
           uploadIds,
           privacy: 'PUBLIC_TO_EVERYONE',
           disableComments: false,
           disableDuet: false,
           disableStitch: false,
+          // Photo Mode: let bundle down-scale oversized images server-side
+          // (real-estate photos routinely exceed TikTok's 1920×1080 canvas).
+          // No autoAddMusic — random royalty-free music is not a default.
+          ...(photoMode ? { autoScale: true } : {}),
         },
       },
     };
@@ -460,8 +481,12 @@ export function buildPlatformData(
   return null;
 }
 
-/** TikTok cannot accept a still image — the one hard platform/kind mismatch. */
+/**
+ * The coarse per-file platform/kind gate. TikTok takes video (VIDEO posts) AND
+ * photos (Photo Mode, since carousels landed) — the finer rules (JPG/WebP
+ * only, no mixing) live in preflightPublishSet.
+ */
 export function platformAcceptsKind(platform: string, kind: string): boolean {
-  if (platform === 'tiktok') return kind === 'video' || kind === 'audio';
+  if (platform === 'tiktok') return kind === 'video' || kind === 'audio' || kind === 'photo';
   return true;
 }

@@ -492,6 +492,9 @@ export interface MosPublication {
   /** The approved material this publication uses. `asset_id` (mos_assets.id) is
    *  the durable link; `file_id` is a legacy key kept for older rows. */
   asset_id: string | null;
+  /** Carousel: ORDERED approved-file ids (≤10). Null/empty ⇒ single asset_id.
+   *  asset_id is always kept = the first entry (server-enforced). */
+  asset_ids?: string[] | null;
   file_id: string | null;
   published_by_user_id: string | null;
   account_label_ar: string | null;

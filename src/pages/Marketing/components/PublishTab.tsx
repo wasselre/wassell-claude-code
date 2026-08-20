@@ -30,7 +30,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { probeVideoDuration } from '../lib/upload';
 import { useWorkspace } from '../MarketingWorkspace';
-import { preflightPublish } from '@/lib/marketingOS/platformRules';
+import { preflightPublishSet } from '@/lib/marketingOS/platformRules';
 import { Field, Modal, Pill, type Tone } from './kit';
 import { IconPlus } from './icons';
 import { dateTimeShort, isoDateTimeLocal, num, shortDate, toArabicDigits } from '../lib/format';
@@ -373,6 +373,18 @@ export default function PublishTab({
     return null;
   };
 
+  /** The publication's ORDERED file set — asset_ids (carousel) or the single
+   *  legacy link. Missing ids resolve to nothing rather than crashing. */
+  const fileAssetsOf = (pub: PubRow): MosAsset[] => {
+    if (Array.isArray(pub.asset_ids) && pub.asset_ids.length > 0) {
+      return pub.asset_ids
+        .map((aid) => allAssets.find((a) => a.id === aid))
+        .filter((a): a is MosAsset => Boolean(a));
+    }
+    const one = fileAssetOf(pub);
+    return one ? [one] : [];
+  };
+
   // Lazy duration probe for legacy videos: the pre-flight enforces the
   // platforms' duration rules (Snapchat 5–60s, TikTok ≤10min, IG 3s–15min) but
   // `duration_seconds` was recorded on ZERO library videos as of 2026-08-20 —
@@ -384,7 +396,7 @@ export default function PublishTab({
   const probedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const targets = publications
-      .map((p) => fileAssetOf(p as PubRow))
+      .flatMap((p) => fileAssetsOf(p as PubRow))
       .filter((a): a is MosAsset =>
         a != null
         && (a.kind === 'video' || a.kind === 'audio')
@@ -428,19 +440,19 @@ export default function PublishTab({
     const isAuto = AUTO_PLATFORMS.has(pub.platform);
     const connected = pub.account_connected === true;
     const bChip = bundleStatusChip(pub.bundle_status);
-    const tiktokNeedsVideo = pub.platform === 'tiktok' && fileAsset != null && fileAsset.kind !== 'video';
+    const fileAssets = fileAssetsOf(pub);
     // Retry is allowed exactly when the previous attempt is dead (ERROR, or the
     // post was deleted on bundle's side) — mirrors the server's idempotency guard.
     const isRetry = Boolean(pub.bundle_post_id)
       && (pub.bundle_status === 'ERROR' || pub.bundle_status === 'DELETED');
     const canAutoPost = canEdit && isAuto && connected && (!pub.bundle_post_id || isRetry)
-      && fileAsset != null && !tiktokNeedsVideo
+      && fileAssets.length > 0
       && pub.status !== 'published' && pub.status !== 'cancelled';
-    // Pre-flight: the platform's own rules (size/duration/format/caption),
-    // checked from the asset's recorded metadata BEFORE the button works.
-    // Same rulebook the server enforces — this is the friendly early copy.
+    // Pre-flight: the platform's own rules (set shape/size/duration/format/
+    // caption), checked from the files' recorded metadata BEFORE the button
+    // works. Same rulebook the server enforces — the friendly early copy.
     const pf = canAutoPost
-      ? preflightPublish(pub.platform, fileAsset, pub.caption ?? '')
+      ? preflightPublishSet(pub.platform, fileAssets, pub.caption ?? '')
       : null;
     const pfBlocked = pf !== null && !pf.ok;
     const apiBusy = apiBusyId === pub.id;
@@ -455,7 +467,15 @@ export default function PublishTab({
             ? <Pill tone="idle">{isAr ? 'بحاجة لموعد' : 'Needs a time'}</Pill>
             : <Pill tone="idle">{isAr ? PUB_STATUS_LABELS.draft?.ar : PUB_STATUS_LABELS.draft?.en}</Pill>;
 
-    const fileCell = fileAsset ? (
+    const fileCell = fileAssets.length > 1 ? (
+      <>
+        <span className="ltr">{fileAssets[0]?.title}</span>{' '}
+        <span className="tag" style={{ marginInlineStart: 5 }}>
+          {isAr ? `${toArabicDigits(String(fileAssets.length))} ملفات — كاروسيل` : `${fileAssets.length} files — carousel`}
+        </span>{' '}
+        <span className="ver" style={{ marginInlineStart: 5 }}>{isAr ? 'معتمدة' : 'approved'}</span>
+      </>
+    ) : fileAsset ? (
       <>
         <span className="ltr">{fileAsset.title}</span>{' '}
         <span className="ver" style={{ marginInlineStart: 5 }}>{isAr ? 'معتمد' : 'approved'}</span>
@@ -649,7 +669,7 @@ export default function PublishTab({
             )}
           </div>
         </div>
-        {(canAutoPost || pub.bundle_post_id || tiktokNeedsVideo) && (
+        {(canAutoPost || pub.bundle_post_id) && (
           <div
             className="card-b"
             style={{
@@ -708,12 +728,6 @@ export default function PublishTab({
                   </span>
                 ))}
               </div>
-            )}
-
-            {tiktokNeedsVideo && !pub.bundle_post_id && (
-              <span style={{ fontSize: 11, color: 'var(--late)' }}>
-                {isAr ? 'تيك توك يقبل الفيديو فقط — اختر ملف فيديو.' : 'TikTok accepts video only — pick a video file.'}
-              </span>
             )}
 
             {pub.bundle_post_id && pub.status !== 'published' && (
@@ -1061,16 +1075,33 @@ function PublicationModal({
   const [when, setWhen] = useState(isoDateTimeLocal(publication?.scheduled_at));
   const [caption, setCaption] = useState(publication?.caption ?? '');
   const [url, setUrl] = useState(publication?.external_url ?? '');
-  const [assetId, setAssetId] = useState(
-    // Prefer the durable asset link; fall back to the legacy file_id match for
-    // publications saved before the switch.
-    () => pubRow?.asset_id
+  // The ORDERED pick — carousel order. Seeded from asset_ids (carousel rows),
+  // else the durable single asset link, else the legacy file_id match.
+  const [pickedIds, setPickedIds] = useState<string[]>(() => {
+    if (Array.isArray(pubRow?.asset_ids) && pubRow.asset_ids.length > 0) return [...pubRow.asset_ids];
+    const one = pubRow?.asset_id
       ?? finalAssets.find((a) => a.file_id && a.file_id === pubRow?.file_id)?.id
-      ?? '',
-  );
+      ?? '';
+    return one ? [one] : [];
+  });
 
   const platformAccounts = accounts.filter((a) => a.platform === platform);
-  const picked = finalAssets.find((a) => a.id === assetId) ?? null;
+  // Carousels exist on Instagram (Posts 1-10, mixed) and TikTok (Photo Mode
+  // 1-10 images). Everything else takes exactly one file.
+  const multiCapable = platform === 'instagram' || platform === 'tiktok';
+  const pickedAssets = pickedIds
+    .map((aid) => finalAssets.find((a) => a.id === aid))
+    .filter((a): a is MosAsset => Boolean(a));
+  const picked = pickedAssets[0] ?? null;
+
+  const togglePick = (aid: string): void => {
+    setPickedIds((cur) => {
+      if (cur.includes(aid)) return cur.filter((x) => x !== aid);
+      if (!multiCapable) return [aid];
+      if (cur.length >= 10) return cur; // the platform ceiling — picker stops at 10
+      return [...cur, aid];
+    });
+  };
 
   return (
     <Modal
@@ -1104,6 +1135,8 @@ function PublicationModal({
               caption: caption || null,
               external_url: url || null,
               asset_id: picked?.id ?? null,
+              // The full ordered set; the server keeps asset_id = the first.
+              asset_ids: pickedIds,
               file_id: picked?.file_id ?? null,
             }, picked)}
           >
@@ -1118,7 +1151,15 @@ function PublicationModal({
             className="inp"
             value={platform}
             disabled={Boolean(publication)}
-            onChange={(e) => { setPlatform(e.target.value); setAccountId(''); }}
+            onChange={(e) => {
+              const next = e.target.value;
+              setPlatform(next);
+              setAccountId('');
+              // Leaving a carousel-capable platform: keep only the first pick.
+              if (next !== 'instagram' && next !== 'tiktok') {
+                setPickedIds((cur) => cur.slice(0, 1));
+              }
+            }}
           >
             {(publication ? [publication.platform] : available).map((p) => (
               <option key={p} value={p}>
@@ -1139,10 +1180,16 @@ function PublicationModal({
         </Field>
       </div>
 
-      {/* The band-4 rule, enforced: the picker lists ONLY approved files. */}
+      {/* The band-4 rule, enforced: the picker lists ONLY approved files.
+          Instagram/TikTok take an ORDERED set (carousel, up to 10 — the pick
+          order IS the carousel order); other platforms take exactly one. */}
       <Field
-        label={isAr ? 'الملف المستخدم' : 'File used'}
-        hint={isAr ? 'المعتمد فقط' : 'approved files only'}
+        label={multiCapable
+          ? (isAr ? 'الملفات المستخدمة' : 'Files used')
+          : (isAr ? 'الملف المستخدم' : 'File used')}
+        hint={multiCapable
+          ? (isAr ? 'المعتمد فقط — حتى ١٠ ملفات، ترتيب الاختيار هو ترتيب الكاروسيل' : 'approved only — up to 10, pick order = carousel order')
+          : (isAr ? 'المعتمد فقط' : 'approved files only')}
       >
         {finalAssets.length === 0 ? (
           <div className="inp" style={{ color: 'var(--mute)', fontSize: 12 }}>
@@ -1151,12 +1198,47 @@ function PublicationModal({
               : 'Nothing approved yet — only approved files can be attached to a publication.'}
           </div>
         ) : (
-          <select className="inp" value={assetId} onChange={(e) => setAssetId(e.target.value)}>
-            <option value="">{isAr ? 'بدون تحديد' : 'Not specified'}</option>
-            {finalAssets.map((a) => (
-              <option key={a.id} value={a.id}>{a.title}</option>
-            ))}
-          </select>
+          <div
+            className="inp"
+            style={{ display: 'grid', gap: 4, maxHeight: 180, overflowY: 'auto', padding: 8 }}
+          >
+            {finalAssets.map((a) => {
+              const order = pickedIds.indexOf(a.id);
+              const on = order >= 0;
+              return (
+                <label
+                  key={a.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 13,
+                    cursor: 'pointer', padding: '3px 4px', borderRadius: 6,
+                    background: on ? 'color-mix(in srgb, var(--copper) 9%, transparent)' : 'transparent',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => togglePick(a.id)}
+                  />
+                  {on && multiCapable && (
+                    <span className="tag" style={{ minWidth: 20, textAlign: 'center' }}>
+                      {toArabicDigits(String(order + 1))}
+                    </span>
+                  )}
+                  <span className="ltr" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.title}</span>
+                  <span className="ver" style={{ marginInlineStart: 'auto', flexShrink: 0 }}>
+                    {a.kind === 'video' ? (isAr ? 'فيديو' : 'video') : a.kind === 'photo' ? (isAr ? 'صورة' : 'photo') : a.kind}
+                  </span>
+                </label>
+              );
+            })}
+            {multiCapable && pickedIds.length > 1 && (
+              <span style={{ fontSize: 11, color: 'var(--mute)' }}>
+                {isAr
+                  ? `كاروسيل من ${toArabicDigits(String(pickedIds.length))} ملفات — الترتيب حسب الاختيار.`
+                  : `A ${pickedIds.length}-file carousel — ordered by pick.`}
+              </span>
+            )}
+          </div>
         )}
       </Field>
 

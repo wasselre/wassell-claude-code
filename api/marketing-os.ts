@@ -38,7 +38,7 @@ import { pullPublicationMetrics, runBundleMetricsSync } from './_lib/marketing/b
 import { runBundleAccountMetricsSync } from './_lib/marketing/bundleAccountMetrics.js';
 import { runBundleStatusSweep } from './_lib/marketing/bundleStatusSync.js';
 // Pure shared rulebook — same blessed src↔api cross-import as localizedName.ts.
-import { preflightPublish } from '../src/lib/marketingOS/platformRules.js';
+import { preflightPublishSet } from '../src/lib/marketingOS/platformRules.js';
 
 export const config = { runtime: 'edge' };
 
@@ -1972,6 +1972,17 @@ export default async function handler(req: Request): Promise<Response> {
                          'asset_id', 'file_id'] as const) {
           if (Object.prototype.hasOwnProperty.call(raw, k)) patch[k] = raw[k];
         }
+        // Carousel: the ORDERED file set. Sanitized (strings, deduped, ≤10);
+        // asset_id is kept = the FIRST file so every single-file consumer
+        // (board, metrics, the file cell) stays correct unchanged.
+        if (Object.prototype.hasOwnProperty.call(raw, 'asset_ids')) {
+          const ids = Array.isArray(raw.asset_ids)
+            ? [...new Set(raw.asset_ids.filter((x): x is string => typeof x === 'string' && x !== ''))]
+            : [];
+          if (ids.length > 10) return jsonError(400, 'A publication carries at most 10 files.');
+          patch.asset_ids = ids.length > 0 ? ids : null;
+          patch.asset_id = ids[0] ?? patch.asset_id ?? null;
+        }
 
         // Marking published stamps who and when, so "who posted this" is never a
         // guess. The DB also refuses published without a timestamp.
@@ -2054,61 +2065,77 @@ export default async function handler(req: Request): Promise<Response> {
             + 'Already handed to the platform — refresh its status instead of publishing again.');
         }
 
-        const assetId = str(pub.asset_id);
-        if (!assetId) return jsonError(400, 'This publication has no approved file to post.');
+        // The ORDERED file set: asset_ids (carousel) or the single asset_id.
+        const setIds = Array.isArray(pub.asset_ids)
+          ? (pub.asset_ids as unknown[]).filter((x): x is string => typeof x === 'string' && x !== '')
+          : [];
+        const effectiveIds = setIds.length > 0 ? setIds : [str(pub.asset_id) ?? ''].filter(Boolean);
+        if (effectiveIds.length === 0) {
+          return jsonError(400, 'This publication has no approved file to post.');
+        }
         const caption = typeof pub.caption === 'string' ? pub.caption : '';
 
-        // Resolve the approved asset to a URL bundle can fetch (public legacy URL
-        // verbatim, or a short-lived signed URL for a file-backed asset).
+        // Resolve every approved asset, PRESERVING the carousel order (the
+        // .in() result order is arbitrary — re-order by effectiveIds).
+        type AssetRow = { id: string; url: string | null; file_id: string | null;
+          mime_type: string | null; kind: string; size_bytes: number | null;
+          duration_seconds: number | null; aspect_ratio: string | null };
         const assetRes = await sb.from('mos_assets')
           .select('id, url, file_id, mime_type, kind, size_bytes, duration_seconds, aspect_ratio')
-          .eq('id', assetId).maybeSingle();
+          .in('id', effectiveIds);
         const af = dbFail(assetRes.error);
         if (af) return af;
-        const asset = assetRes.data as
-          { id: string; url: string | null; file_id: string | null; mime_type: string | null;
-            kind: string; size_bytes: number | null; duration_seconds: number | null;
-            aspect_ratio: string | null } | null;
-        if (!asset) return jsonError(404, 'approved file not found');
+        const byId = new Map(((assetRes.data ?? []) as AssetRow[]).map((a) => [a.id, a]));
+        const assets = effectiveIds.map((aid) => byId.get(aid)).filter((a): a is AssetRow => Boolean(a));
+        if (assets.length !== effectiveIds.length) {
+          return jsonError(404, 'An approved file on this publication no longer exists — re-pick the files.');
+        }
 
-        const kind = (asset.kind ?? 'photo') as 'photo' | 'video' | 'design' | 'audio' | 'document';
-        if (!platformAcceptsKind(platform, kind)) {
-          return jsonError(400, `TikTok only accepts video — this approved file is a ${kind}.`);
+        for (const a of assets) {
+          const k = (a.kind ?? 'photo');
+          if (!platformAcceptsKind(platform, k)) {
+            return jsonError(400, `${platform} cannot take a ${k} file.`);
+          }
         }
 
         // ── pre-flight — the platform's own rules, checked BEFORE upload ──
-        // The SPA runs the same preflightPublish for its checklist; this is the
-        // authoritative gate (a stale client or a direct API call still cannot
-        // push a doomed post). Blockers only — warnings (unverifiable metadata)
-        // pass through: bundle validates everything at post time regardless.
-        const flight = preflightPublish(platform, asset, caption);
+        // The SPA runs the same preflightPublishSet for its checklist; this is
+        // the authoritative gate (a stale client or a direct API call still
+        // cannot push a doomed post). Blockers only — warnings (unverifiable
+        // metadata) pass through: bundle validates everything at post time.
+        const flight = preflightPublishSet(platform, assets, caption);
         const blockers = flight.issues.filter((i) => i.level === 'block');
         if (blockers.length > 0) {
           return jsonError(422, blockers.map((b) => `${b.ar} / ${b.en}`).join('  •  '));
         }
 
-        let publicUrl: string | null = asset.url;
-        if (!publicUrl && asset.file_id) {
-          const svc = makeServiceClient('api:marketing-os');
-          if (!svc) return jsonError(503, 'file signing is unavailable');
+        // Resolve each file to a URL bundle can fetch (public legacy URL
+        // verbatim, or a 1h signed URL — bundle fetches server-side right after
+        // handoff, but its fetch can queue; 300s left no slack).
+        const svc = makeServiceClient('api:marketing-os');
+        const resolveUrl = async (a: AssetRow): Promise<string> => {
+          if (a.url) return a.url;
+          if (!a.file_id) throw new Error(`file bytes missing for asset ${a.id}`);
+          if (!svc) throw new Error('file signing is unavailable');
           const fr = await svc.from('files')
-            .select('storage_bucket, storage_path').eq('id', asset.file_id).maybeSingle();
-          const ff = dbFail(fr.error);
-          if (ff) return ff;
+            .select('storage_bucket, storage_path').eq('id', a.file_id).maybeSingle();
+          if (fr.error) throw new Error(fr.error.message);
           const file = fr.data as { storage_bucket: string; storage_path: string } | null;
-          if (!file) return jsonError(404, 'approved file bytes not found');
-          // 1h TTL: bundle fetches the URL server-side right after we hand it
-          // over, but its fetch can queue — 300s left no slack (a delayed fetch
-          // would 403 and fail the post for no real reason).
+          if (!file) throw new Error(`file row missing for asset ${a.id}`);
           const signed = await svc.storage.from(file.storage_bucket)
             .createSignedUrl(file.storage_path, 3600);
           if (signed.error || !signed.data?.signedUrl) {
-            console.error('[marketing-os] sign approved file failed', signed.error);
-            return jsonError(500, 'could not resolve the approved file');
+            throw new Error(signed.error?.message ?? 'sign failed');
           }
-          publicUrl = signed.data.signedUrl;
+          return signed.data.signedUrl;
+        };
+        let fileUrls: string[];
+        try {
+          fileUrls = await Promise.all(assets.map(resolveUrl));
+        } catch (e) {
+          console.error('[marketing-os] resolving approved files failed', e);
+          return jsonError(500, `Could not resolve the approved files: ${e instanceof Error ? e.message : String(e)}`);
         }
-        if (!publicUrl) return jsonError(400, 'Could not resolve the approved file’s URL.');
 
         // A human-readable title on bundle's side — ref + title, or a fallback.
         const cRes = await sb.from('mos_content_v')
@@ -2137,8 +2164,13 @@ export default async function handler(req: Request): Promise<Response> {
 
         let post;
         try {
-          const up = await uploadFromUrl(cfg, publicUrl);
-          const built = buildPlatformData(platform, { text: caption, uploadId: up.id, kind });
+          // Upload every file (bundle fetches each by URL), keeping order.
+          const ups = await Promise.all(fileUrls.map((u) => uploadFromUrl(cfg, u)));
+          const uploads = ups.map((up, i) => ({
+            id: up.id,
+            kind: (assets[i]?.kind ?? 'photo') as 'photo' | 'video' | 'design' | 'audio' | 'document',
+          }));
+          const built = buildPlatformData(platform, { text: caption, uploads });
           if (!built) return jsonError(400, `${platform} is not supported for auto-posting.`);
           post = await createPost(cfg, {
             title,
