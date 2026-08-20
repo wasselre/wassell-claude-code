@@ -452,6 +452,10 @@ export const createContent = (payload: Record<string, unknown>) =>
 export const updateContent = (id: string, patch: Record<string, unknown>) =>
   call<{ item: MosContentRow }>('content_update', { id, patch });
 
+/** Hard-delete one or many content items (gated delete_records). */
+export const deleteContent = (ids: string[]) =>
+  call<{ deleted: number }>('content_delete', { ids });
+
 export interface TaskAdvanceResult {
   item: MosContentRow;
   closed_task_id: string;

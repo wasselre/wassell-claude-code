@@ -14,12 +14,14 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useAppStore } from '@/stores/appStore';
 import {
   MosContentRow,
   MosRole,
   PLATFORM_LABELS,
   ROLE_LABELS,
   WorkflowDef,
+  deleteContent,
   fetchContentList,
   fetchSettings,
   isOverdue,
@@ -60,6 +62,7 @@ function WhoCell({ row, isAr }: { row: ListRow; isAr: boolean }) {
 
 export default function ContentListPage() {
   const { isAr, contentTypes, projects, people, typeLabel, projectName, can, setBadge } = useWorkspace();
+  const addToast = useAppStore((s) => s.addToast);
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
 
@@ -69,6 +72,10 @@ export default function ContentListPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [q, setQ] = useState('');
+  // Multi-select for bulk delete (table view).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const canDelete = can('delete_records');
 
   const view = params.get('view') === 'board' ? 'board' : 'table';
   const typeParam = params.get('type') ?? '';
@@ -98,6 +105,7 @@ export default function ContentListPage() {
       setRows(res.content as ListRow[]);
       setWorkflows(settings.workflows);
       setBadge('content', res.content.length);
+      setSelected(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -129,6 +137,43 @@ export default function ContentListPage() {
     }
     return list;
   }, [rows, typeParam, statusSel, platformSel, projectId, campaignId, roleKey, term]);
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
+  const toggleAll = (): void => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) filtered.forEach((r) => next.delete(r.id));
+      else filtered.forEach((r) => next.add(r.id));
+      return next;
+    });
+  };
+  const toggleOne = (id: string): void => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const bulkDelete = async (): Promise<void> => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    const ok = window.confirm(isAr
+      ? `حذف ${ids.length} عنصرًا نهائيًا؟ لا يمكن التراجع.`
+      : `Permanently delete ${ids.length} item(s)? This cannot be undone.`);
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      const res = await deleteContent(ids);
+      addToast(isAr ? `حُذف ${num(res.deleted, true)} عنصرًا.` : `Deleted ${res.deleted} item(s).`, 'success');
+      setSelected(new Set());
+      await load();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const inProduction = rows.filter((r) => r.status_key !== 'done' && r.status_key !== 'draft').length;
   const published = rows.filter((r) => r.status_key === 'done').length;
@@ -449,12 +494,47 @@ export default function ContentListPage() {
           </Empty>
         )}
 
+        {view === 'table' && canDelete && selected.size > 0 && (
+          <div
+            className="card"
+            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', marginBottom: 12 }}
+          >
+            <span style={{ fontWeight: 700 }}>
+              {isAr ? `${num(selected.size, true)} محدد` : `${selected.size} selected`}
+            </span>
+            <button type="button" className="btn btn-sm" onClick={() => setSelected(new Set())} disabled={deleting}>
+              {isAr ? 'إلغاء التحديد' : 'Clear'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-d"
+              style={{ marginInlineStart: 'auto' }}
+              onClick={() => void bulkDelete()}
+              disabled={deleting}
+            >
+              {deleting
+                ? isAr ? 'جارٍ الحذف…' : 'Deleting…'
+                : isAr ? `حذف (${num(selected.size, true)})` : `Delete (${selected.size})`}
+            </button>
+          </div>
+        )}
+
         {!loading && view === 'table' && filtered.length > 0 && (
           <div className="card">
             <div className="tbl-wrap">
               <table className="tbl">
                 <thead>
                   <tr>
+                    {canDelete && (
+                      <th style={{ width: 36 }}>
+                        <input
+                          type="checkbox"
+                          checked={allFilteredSelected}
+                          onChange={toggleAll}
+                          aria-label={isAr ? 'تحديد الكل' : 'Select all'}
+                        />
+                      </th>
+                    )}
                     <th style={{ width: 64 }}>{isAr ? 'الرقم' : 'ID'}</th>
                     <th style={{ width: 78 }}>{isAr ? 'النوع' : 'Type'}</th>
                     <th>{isAr ? 'العنوان' : 'Title'}</th>
@@ -468,7 +548,22 @@ export default function ContentListPage() {
                 </thead>
                 <tbody>
                   {filtered.map((r) => (
-                    <tr key={r.id} className="click" onClick={() => navigate(`/m/content/${r.id}`)}>
+                    <tr
+                      key={r.id}
+                      className="click"
+                      style={selected.has(r.id) ? { background: 'color-mix(in srgb, var(--copper) 9%, transparent)' } : undefined}
+                      onClick={() => navigate(`/m/content/${r.id}`)}
+                    >
+                      {canDelete && (
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selected.has(r.id)}
+                            onChange={() => toggleOne(r.id)}
+                            aria-label={isAr ? 'تحديد العنصر' : 'Select item'}
+                          />
+                        </td>
+                      )}
                       <td className="id">{r.ref ?? '—'}</td>
                       <td><KindCell typeKey={r.content_type_key} label={typeLabel(r.content_type_key)} /></td>
                       <td className="ttl">{r.title}</td>

@@ -1463,6 +1463,24 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ item: full.data });
       }
 
+      case 'content_delete': {
+        // Hard-delete one or many content items. Children cascade or SET NULL
+        // (scenes/versions/comments/publications/asset_links cascade; executions/
+        // ads/tasks unlink). Gated on delete_records for a clean 403; the DELETE
+        // RLS policy on mos_content re-enforces it per row (scope-limited).
+        const gate = await requireCap(sb, 'delete_records'); if (gate) return gate;
+        const single = str(body.id);
+        const ids = Array.isArray(body.ids)
+          ? (body.ids as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [];
+        const all = single ? [single, ...ids] : ids;
+        if (all.length === 0) return jsonError(400, 'id or ids is required');
+        const del = await sb.from('mos_content').delete().in('id', all).select('id');
+        const delFail = dbFail(del.error);
+        if (delFail) return delFail;
+        return jsonOk({ deleted: (del.data ?? []).length });
+      }
+
       /* -------------------------------------------------------- */
       /* Advance the role path — the transition itself is SQL      */
       /* -------------------------------------------------------- */
