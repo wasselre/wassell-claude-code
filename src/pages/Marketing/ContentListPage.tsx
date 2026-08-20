@@ -27,7 +27,7 @@ import {
   isOverdue,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, KindCell, LoadError, PageHead, Skeleton, StatusPill } from './components/kit';
+import { Empty, KindCell, LoadError, Modal, PageHead, Skeleton, StatusPill } from './components/kit';
 import NewContentModal from './components/NewContentModal';
 import { IconPlus, IconSearch } from './components/icons';
 import { daysAgo, initial, num, roleAvatarClass, shortDate } from './lib/format';
@@ -75,6 +75,7 @@ export default function ContentListPage() {
   // Multi-select for bulk delete (table view).
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const canDelete = can('delete_records');
 
   const view = params.get('view') === 'board' ? 'board' : 'table';
@@ -158,15 +159,12 @@ export default function ContentListPage() {
   const bulkDelete = async (): Promise<void> => {
     const ids = [...selected];
     if (ids.length === 0) return;
-    const ok = window.confirm(isAr
-      ? `حذف ${ids.length} عنصرًا نهائيًا؟ لا يمكن التراجع.`
-      : `Permanently delete ${ids.length} item(s)? This cannot be undone.`);
-    if (!ok) return;
     setDeleting(true);
     try {
       const res = await deleteContent(ids);
       addToast(isAr ? `حُذف ${num(res.deleted, true)} عنصرًا.` : `Deleted ${res.deleted} item(s).`, 'success');
       setSelected(new Set());
+      setConfirmOpen(false);
       await load();
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
@@ -509,12 +507,10 @@ export default function ContentListPage() {
               type="button"
               className="btn btn-d"
               style={{ marginInlineStart: 'auto' }}
-              onClick={() => void bulkDelete()}
+              onClick={() => setConfirmOpen(true)}
               disabled={deleting}
             >
-              {deleting
-                ? isAr ? 'جارٍ الحذف…' : 'Deleting…'
-                : isAr ? `حذف (${num(selected.size, true)})` : `Delete (${selected.size})`}
+              {isAr ? `حذف (${num(selected.size, true)})` : `Delete (${selected.size})`}
             </button>
           </div>
         )}
@@ -666,6 +662,34 @@ export default function ContentListPage() {
       </div>
 
       {creating && <NewContentModal onClose={() => setCreating(false)} />}
+
+      {confirmOpen && (
+        <Modal
+          title={isAr ? 'حذف المحتوى' : 'Delete content'}
+          sub={isAr
+            ? `سيُحذف ${num(selected.size, true)} عنصرًا نهائيًا — لا يمكن التراجع.`
+            : `${selected.size} item(s) will be permanently deleted — this cannot be undone.`}
+          onClose={() => { if (!deleting) setConfirmOpen(false); }}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setConfirmOpen(false)} disabled={deleting}>
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button type="button" className="btn btn-d" onClick={() => void bulkDelete()} disabled={deleting}>
+                {deleting
+                  ? isAr ? 'جارٍ الحذف…' : 'Deleting…'
+                  : isAr ? `حذف ${num(selected.size, true)}` : `Delete ${selected.size}`}
+              </button>
+            </>
+          }
+        >
+          <div style={{ fontSize: 13, lineHeight: 1.9, color: 'var(--ink-2)' }}>
+            {isAr
+              ? 'تُحذف العناصر المحددة ومعها مشاهدها ونسخها وتعليقاتها ومنشوراتها.'
+              : 'The selected items are removed, along with their scenes, versions, comments and publications.'}
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
