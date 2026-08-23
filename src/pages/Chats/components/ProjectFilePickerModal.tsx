@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { X, Loader2, Image as ImageIcon, Video, FileText, Check, FolderOpen, Play, Eye, ExternalLink } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { listRecordFiles } from '@/lib/files/recordFiles';
@@ -8,6 +8,9 @@ import Button from '@/components/ui/Button';
 import {
   buildPickerItems, orderSelectedRefs, type PickerGroup, type PickerItem,
 } from '@/pages/Chats/lib/projectFilePicker';
+
+// pdf.js (~1 MB) loads only when a PDF is opened — keeps it out of the main bundle.
+const PdfViewer = lazy(() => import('@/components/ui/PdfViewer'));
 
 /**
  * ProjectFilePickerModal — choose which of a project's linked files get sent to
@@ -337,7 +340,13 @@ function FilePreviewLightbox({
         ) : item.group === 'video' ? (
           <video src={url} controls autoPlay playsInline className="max-w-[92vw] max-h-[80vh] rounded-lg bg-black" />
         ) : isPdf ? (
-          <iframe src={url} title={item.name} className="w-[92vw] h-[80vh] rounded-lg bg-white" />
+          <Suspense fallback={(
+            <div className="flex items-center gap-2 text-white/80 text-sm py-10">
+              <Loader2 size={18} className="animate-spin" /> {L('جارٍ تحميل عارض PDF…', 'Loading PDF viewer…')}
+            </div>
+          )}>
+            <PdfViewer url={url} isAr={isAr} />
+          </Suspense>
         ) : (
           <a
             href={url}
