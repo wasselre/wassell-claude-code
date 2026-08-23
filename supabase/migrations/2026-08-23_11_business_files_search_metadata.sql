@@ -157,17 +157,13 @@ BEGIN
           (SELECT owner_user_id k, count(*) n FROM base GROUP BY 1) x), '{}'::jsonb),
       'tag', coalesce((SELECT jsonb_object_agg(k, n) FROM
           (SELECT t k, count(*) n FROM base b2, unnest(b2.tags) t GROUP BY 1) x), '{}'::jsonb),
-      'asset_nature', coalesce((SELECT jsonb_object_agg(k, n) FROM
-          (SELECT asset_nature k, count(*) n FROM base WHERE asset_nature IS NOT NULL GROUP BY 1) x), '{}'::jsonb),
-      'acquisition_source', coalesce((SELECT jsonb_object_agg(k, n) FROM
-          (SELECT acquisition_source k, count(*) n FROM base WHERE acquisition_source IS NOT NULL GROUP BY 1) x), '{}'::jsonb),
-      'usage_rights', coalesce((SELECT jsonb_object_agg(k, n) FROM
-          (SELECT usage_rights k, count(*) n FROM base WHERE usage_rights IS NOT NULL GROUP BY 1) x), '{}'::jsonb),
-      'production_state', coalesce((SELECT jsonb_object_agg(k, n) FROM
-          (SELECT production_state k, count(*) n FROM base WHERE production_state IS NOT NULL GROUP BY 1) x), '{}'::jsonb),
-      'subject', coalesce((SELECT jsonb_object_agg(k, n) FROM
-          (SELECT fs.subject k, count(DISTINCT fs.file_id) n
-             FROM base bs JOIN public.file_subjects fs ON fs.file_id = bs.id GROUP BY 1) x), '{}'::jsonb),
+      -- NOTE: facets for the new axes (asset_nature / acquisition_source /
+      -- usage_rights / production_state / subject) are intentionally NOT computed
+      -- here. Each facet re-scans the RLS-gated `base` CTE, and adding five more
+      -- passes tipped the unfiltered all-files query over the statement timeout
+      -- (live incident 2026-08-23). Filtering on these axes still works (the
+      -- WHERE clauses above + URL params); the filter-bar dropdowns for them
+      -- stay empty until a single-pass facet rewrite lands (the B2 optimization).
       'linked_model', coalesce((SELECT jsonb_object_agg(k, n) FROM
           (SELECT m.name k, count(DISTINCT l.file_id) n
              FROM base b3
