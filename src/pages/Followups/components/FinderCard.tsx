@@ -286,8 +286,10 @@ export default function FinderCard({
           {item.deal && <DealPill deal={item.deal} isAr={isAr} />}
         </div>
 
-        {/* Deterministic explanation */}
-        {item.explanation && <div className="text-sm text-charcoal/90">{item.explanation}</div>}
+        {/* Deterministic explanation — HIDDEN for now (2026-08-23): the sentence
+            just restates the badges + specs grid below (location/distance, price,
+            availability), so it was noise, not value. The server still computes
+            item.explanation; re-render this line to bring it back. */}
 
         {/* Mismatch warnings */}
         {item.mismatch_warnings.length > 0 && (
