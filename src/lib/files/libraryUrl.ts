@@ -102,6 +102,11 @@ const LAYOUTS: LibraryLayout[] = ['grid', 'list'];
  *  encode and decode can never drift apart by editing only one of them. */
 const LIST_PARAMS = {
   type: 'document_type',
+  subject: 'subject',
+  nature: 'asset_nature',
+  source: 'acquisition_source',
+  rights: 'usage_rights',
+  pstate: 'production_state',
   status: 'status',
   kind: 'kind',
   origin: 'origin',

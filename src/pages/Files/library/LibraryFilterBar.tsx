@@ -24,6 +24,8 @@ import type {
   BusinessFileFacets,
   BusinessFileSort,
   FileDocumentTypeRow,
+  FileVocabDimension,
+  FileVocabRow,
   LibraryFilters,
   LibraryGrouping,
   LibraryLayout,
@@ -42,6 +44,8 @@ interface Props {
   onFilters: (next: LibraryFilters) => void;
   facets: BusinessFileFacets | null;
   types: FileDocumentTypeRow[];
+  /** Data-driven picklists for the metadata axes (asset_nature, …). */
+  vocab: FileVocabRow[];
   sort: BusinessFileSort;
   onSort: (s: BusinessFileSort) => void;
   grouping: LibraryGrouping;
@@ -134,7 +138,7 @@ function FacetMenu({
 }
 
 export default function LibraryFilterBar({
-  searchInput, onSearchInput, filters, onFilters, facets, types,
+  searchInput, onSearchInput, filters, onFilters, facets, types, vocab,
   sort, onSort, grouping, onGrouping, layout, onLayout,
 }: Props) {
   const { t } = useTranslation();
@@ -142,6 +146,13 @@ export default function LibraryFilterBar({
   const users = useAppStore((s) => s.users);
   const models = useAppStore((s) => s.models);
   const [showMore, setShowMore] = useState(false);
+
+  /** value → bilingual label for a metadata axis, from the vocab; falls back to
+   *  the raw value so a since-deactivated term still reads. */
+  const vocabLabel = (dim: FileVocabDimension, v: string) => {
+    const row = vocab.find((x) => x.dimension === dim && x.value === v);
+    return row ? (isAr ? row.label_ar : row.label_en) : v;
+  };
 
   const toggleIn = (key: keyof LibraryFilters, value: string) => {
     const current = (filters[key] as string[] | undefined) ?? [];
@@ -252,6 +263,13 @@ export default function LibraryFilterBar({
           renderOption={(v) => documentTypeLabel(v, types, isAr)}
         />
         <FacetMenu
+          label={t('files.library.meta.subjects')}
+          bucket={facets?.subject ?? {}}
+          selected={filters.subject ?? []}
+          onToggle={(v) => toggleIn('subject', v)}
+          renderOption={(v) => documentTypeLabel(v, types, isAr)}
+        />
+        <FacetMenu
           label={t('files.library.filter.linked_model')}
           bucket={facets?.linked_model ?? {}}
           selected={filters.linked_model ? [filters.linked_model] : []}
@@ -351,6 +369,35 @@ export default function LibraryFilterBar({
             selected={filters.role ?? []}
             onToggle={(v) => toggleIn('role', v)}
             renderOption={(v) => documentTypeLabel(v, types, isAr)}
+          />
+          {/* Metadata Intelligence axes (Phase B) — same facet mechanism. */}
+          <FacetMenu
+            label={t('files.library.meta.asset_nature')}
+            bucket={facets?.asset_nature ?? {}}
+            selected={filters.asset_nature ?? []}
+            onToggle={(v) => toggleIn('asset_nature', v)}
+            renderOption={(v) => vocabLabel('asset_nature', v)}
+          />
+          <FacetMenu
+            label={t('files.library.meta.acquisition_source')}
+            bucket={facets?.acquisition_source ?? {}}
+            selected={filters.acquisition_source ?? []}
+            onToggle={(v) => toggleIn('acquisition_source', v)}
+            renderOption={(v) => vocabLabel('acquisition_source', v)}
+          />
+          <FacetMenu
+            label={t('files.library.meta.usage_rights')}
+            bucket={facets?.usage_rights ?? {}}
+            selected={filters.usage_rights ?? []}
+            onToggle={(v) => toggleIn('usage_rights', v)}
+            renderOption={(v) => vocabLabel('usage_rights', v)}
+          />
+          <FacetMenu
+            label={t('files.library.meta.production_state')}
+            bucket={facets?.production_state ?? {}}
+            selected={filters.production_state ?? []}
+            onToggle={(v) => toggleIn('production_state', v)}
+            renderOption={(v) => vocabLabel('production_state', v)}
           />
           <button
             type="button"

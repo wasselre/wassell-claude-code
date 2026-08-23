@@ -20,16 +20,16 @@
  * everything just uploaded. TITLE is per-file, because a shared title across
  * twelve files is never what anyone means.
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, FileText, Link2, Loader2, Sparkles } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
-import { bulkLinkToRecord, bulkUpdateMetadata } from '@/lib/files/bulkEdit';
-import { errorText, updateFileMetadata } from '@/lib/files/library';
+import { bulkLinkToRecord, bulkUpdateMetadata, type BulkPatch } from '@/lib/files/bulkEdit';
+import { errorText, listFileVocabularies, updateFileMetadata } from '@/lib/files/library';
 import { linkableModels, recordTitle } from '@/lib/documents/links';
-import type { FileDocumentTypeRow, FileRow } from '@/types';
+import type { FileDocumentTypeRow, FileRow, FileVocabDimension, FileVocabRow } from '@/types';
 
 interface Props {
   files: FileRow[];
@@ -57,6 +57,26 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
   const [modelId, setModelId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Metadata Intelligence axes — shared across the batch, like the type. '' keeps
+  // whatever the file already has (nothing, for a fresh upload).
+  const [axes, setAxes] = useState<Record<FileVocabDimension, string>>({
+    asset_nature: '', acquisition_source: '', usage_rights: '', production_state: '',
+  });
+  const [vocab, setVocab] = useState<FileVocabRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await listFileVocabularies();
+        if (!cancelled) setVocab(rows);
+      } catch { /* toasted; the axis selects simply stay empty */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const vocabFor = (dim: FileVocabDimension) =>
+    vocab.filter((v) => v.dimension === dim
+      && (v.applies_to_kinds.length === 0 || files.some((f) => v.applies_to_kinds.includes(f.kind))));
+  const anyAxis = Object.values(axes).some(Boolean);
 
   // Per-file titles, keyed by id, seeded from what we SHOW (derived name) so
   // "did the user change it" compares against the shown value, not FileRow —
@@ -98,21 +118,25 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
     [files, titles, initialTitles],
   );
 
-  const nothingToDo = !docType && tags.length === 0 && !recordId && changedTitles.length === 0;
+  const nothingToDo = !docType && !anyAxis && tags.length === 0 && !recordId && changedTitles.length === 0;
 
   const apply = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
       const ids = files.map((f) => f.id);
-      if (docType || tags.length > 0) {
-        await bulkUpdateMetadata(ids, docType ? { document_type: docType } : {});
-        if (tags.length > 0) {
-          // Reuses the bulk tag path so "add" is set arithmetic, not a
-          // replacement — an upload dialog must not wipe tags a trigger set.
-          const { bulkEditTags } = await import('@/lib/files/bulkEdit');
-          await bulkEditTags(ids, tags, []);
-        }
+      const metaPatch: Omit<BulkPatch, 'addTags' | 'removeTags'> = {};
+      if (docType) metaPatch.document_type = docType;
+      if (axes.asset_nature) metaPatch.asset_nature = axes.asset_nature;
+      if (axes.acquisition_source) metaPatch.acquisition_source = axes.acquisition_source;
+      if (axes.usage_rights) metaPatch.usage_rights = axes.usage_rights;
+      if (axes.production_state) metaPatch.production_state = axes.production_state;
+      if (Object.keys(metaPatch).length > 0) await bulkUpdateMetadata(ids, metaPatch);
+      if (tags.length > 0) {
+        // Reuses the bulk tag path so "add" is set arithmetic, not a
+        // replacement — an upload dialog must not wipe tags a trigger set.
+        const { bulkEditTags } = await import('@/lib/files/bulkEdit');
+        await bulkEditTags(ids, tags, []);
       }
       for (const f of changedTitles) {
         await updateFileMetadata(f.id, { title: (titles[f.id] ?? '').trim() });
@@ -126,7 +150,7 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
     } finally {
       setBusy(false);
     }
-  }, [files, docType, tags, changedTitles, titles, recordId, effModel, onApplied]);
+  }, [files, docType, axes, tags, changedTitles, titles, recordId, effModel, onApplied]);
 
   const field = 'w-full px-3 py-2 rounded-lg bg-white border border-sand/40 text-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-copper/30';
   const label = 'block text-[11px] font-bold text-charcoal/60 mb-1';
@@ -166,6 +190,30 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
               placeholder={t('files.library.meta.tags_placeholder')}
             />
           </div>
+        </div>
+
+        {/* Metadata Intelligence axes — optional, shared across the batch. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {([
+            ['asset_nature', 'files.library.meta.asset_nature'],
+            ['acquisition_source', 'files.library.meta.acquisition_source'],
+            ['usage_rights', 'files.library.meta.usage_rights'],
+            ['production_state', 'files.library.meta.production_state'],
+          ] as Array<[FileVocabDimension, string]>).map(([dim, key]) => (
+            <div key={dim}>
+              <label className={label}>{t(key)}</label>
+              <select
+                className={field}
+                value={axes[dim]}
+                onChange={(e) => setAxes((prev) => ({ ...prev, [dim]: e.target.value }))}
+              >
+                <option value="">{t('files.library.meta.unset')}</option>
+                {vocabFor(dim).map((o) => (
+                  <option key={o.value} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>
+                ))}
+              </select>
+            </div>
+          ))}
         </div>
 
         {/* Link-to — model + record, shared across the batch. */}

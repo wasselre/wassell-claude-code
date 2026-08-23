@@ -38,10 +38,11 @@ import Button from '@/components/ui/Button';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import type {
   BusinessFileFacets, BusinessFileRow, BusinessFileSort, FileDocumentTypeRow, FileViewRow,
-  LibraryFilters, LibraryGrouping, PageLinkSummary, FileRow,
+  FileVocabRow, LibraryFilters, LibraryGrouping, PageLinkSummary, FileRow,
 } from '@/types';
 import {
-  LIBRARY_PAGE_SIZE, errorText, fetchPageLinks, listDocumentTypes, searchBusinessFiles,
+  LIBRARY_PAGE_SIZE, errorText, fetchPageLinks, listDocumentTypes, listFileVocabularies,
+  searchBusinessFiles,
 } from '@/lib/files/library';
 import {
   deleteFileView, listFileViews, saveFileView, systemView, viewStateFromRow,
@@ -180,6 +181,21 @@ export default function FilesLibraryPage({ basePath = '/files', defaultView = nu
         // listDocumentTypes toasted. Labels fall back to the raw slug, which
         // is ugly but true — far better than a Library that refuses to render
         // because a lookup table did not load.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ── Metadata-axis vocabularies (asset_nature, …) for the filter bar ──────
+  const [vocab, setVocab] = useState<FileVocabRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await listFileVocabularies();
+        if (!cancelled) setVocab(list);
+      } catch {
+        // listFileVocabularies toasted; axis facets fall back to raw values.
       }
     })();
     return () => { cancelled = true; };
@@ -509,6 +525,7 @@ export default function FilesLibraryPage({ basePath = '/files', defaultView = nu
             onFilters={(next) => pushState({ filters: next, view: null })}
             facets={facets}
             types={types}
+            vocab={vocab}
             sort={sort}
             onSort={(s: BusinessFileSort) => pushState({ sort: s })}
             grouping={grouping}
