@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Loader2, Image as ImageIcon, Video, FileText, Check, FolderOpen } from 'lucide-react';
+import { X, Loader2, Image as ImageIcon, Video, FileText, Check, FolderOpen, Play, Eye, ExternalLink } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { listRecordFiles } from '@/lib/files/recordFiles';
-import { signViewUrls } from '@/lib/files/client';
+import { signViewUrls, signViewUrl } from '@/lib/files/client';
 import { directVideoUrls } from '@/lib/matching/sendToClient';
 import Button from '@/components/ui/Button';
 import {
@@ -54,6 +54,7 @@ export default function ProjectFilePickerModal({
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<PickerItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [preview, setPreview] = useState<PickerItem | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,40 +184,54 @@ export default function ProjectFilePickerModal({
                       {its.map((it) => {
                         const on = selected.has(it.ref);
                         return (
-                          <button
+                          <div
                             key={it.ref}
-                            type="button"
-                            onClick={() => toggle(it.ref)}
-                            className={`relative flex flex-col rounded-lg border text-start overflow-hidden transition-colors ${
+                            className={`relative flex flex-col rounded-lg border overflow-hidden transition-colors ${
                               on ? 'border-copper ring-1 ring-copper/40 bg-copper/5' : 'border-sand/40 hover:border-sand'
                             }`}
-                            aria-pressed={on}
                           >
-                            {/* Checkbox badge */}
-                            <span
-                              className={`absolute top-1.5 ${isAr ? 'start-1.5' : 'end-1.5'} z-10 w-5 h-5 rounded-md flex items-center justify-center shadow-sm ${
-                                on ? 'bg-copper text-white' : 'bg-white/90 text-transparent border border-sand'
+                            {/* Checkbox badge — toggles selection only. */}
+                            <button
+                              type="button"
+                              onClick={() => toggle(it.ref)}
+                              aria-pressed={on}
+                              aria-label={on ? L('إلغاء التحديد', 'Deselect') : L('تحديد', 'Select')}
+                              className={`absolute top-1.5 ${isAr ? 'start-1.5' : 'end-1.5'} z-10 w-6 h-6 rounded-md flex items-center justify-center shadow-sm transition-colors ${
+                                on ? 'bg-copper text-white' : 'bg-white/90 text-transparent border border-sand hover:border-copper'
                               }`}
                             >
-                              <Check size={13} />
-                            </span>
-                            {/* Preview */}
-                            <div className="w-full h-24 bg-charcoal/5 flex items-center justify-center">
-                              {it.group === 'photo' && it.thumb ? (
-                                <img src={it.thumb} alt={it.name} className="w-full h-full object-cover" />
-                              ) : it.group === 'photo' ? (
-                                <ImageIcon size={24} className="text-charcoal/40" />
-                              ) : it.group === 'video' ? (
-                                <Video size={24} className="text-charcoal/40" />
-                              ) : (
-                                <FileText size={24} className="text-charcoal/40" />
-                              )}
-                            </div>
-                            <div className="px-2 py-1.5">
-                              <div className="text-[11px] text-charcoal/70 truncate" title={it.name}>{it.name}</div>
-                              {it.isUrl && <div className="text-[9px] text-charcoal/40">{L('رابط فيديو', 'video link')}</div>}
-                            </div>
-                          </button>
+                              <Check size={14} />
+                            </button>
+                            {/* Preview area — click to OPEN/VIEW the file. */}
+                            <button
+                              type="button"
+                              onClick={() => setPreview(it)}
+                              className="group w-full text-start"
+                              title={L('عرض', 'View')}
+                            >
+                              <div className="relative w-full h-24 bg-charcoal/5 flex items-center justify-center">
+                                {it.group === 'photo' && it.thumb ? (
+                                  <img src={it.thumb} alt={it.name} className="w-full h-full object-cover" />
+                                ) : it.group === 'photo' ? (
+                                  <ImageIcon size={24} className="text-charcoal/40" />
+                                ) : it.group === 'video' ? (
+                                  <Video size={24} className="text-charcoal/40" />
+                                ) : (
+                                  <FileText size={24} className="text-charcoal/40" />
+                                )}
+                                {/* View overlay hint */}
+                                <div className="absolute inset-0 flex items-center justify-center bg-charcoal/0 group-hover:bg-charcoal/30 transition-colors">
+                                  <span className="opacity-0 group-hover:opacity-100 transition-opacity w-9 h-9 rounded-full bg-white/90 text-charcoal flex items-center justify-center shadow">
+                                    {it.group === 'video' ? <Play size={16} className="ms-0.5" fill="currentColor" /> : <Eye size={16} />}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="px-2 py-1.5">
+                                <div className="text-[11px] text-charcoal/70 truncate" title={it.name}>{it.name}</div>
+                                {it.isUrl && <div className="text-[9px] text-charcoal/40">{L('رابط فيديو', 'video link')}</div>}
+                              </div>
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -242,6 +257,98 @@ export default function ProjectFilePickerModal({
             </Button>
           </div>
         </div>
+      </div>
+
+      {/* Preview lightbox — plays videos, shows images, opens PDFs/documents. */}
+      {preview && (
+        <FilePreviewLightbox item={preview} isAr={isAr} onClose={() => setPreview(null)} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Full-screen preview of one picker item. Resolves a viewable URL on open — a
+ * signed URL for a private CRM file, or the raw URL for an external video — then
+ * renders it by kind: image inline, video with controls, PDF/doc in a frame with
+ * an "open in new tab" fallback.
+ */
+function FilePreviewLightbox({
+  item,
+  isAr,
+  onClose,
+}: {
+  item: PickerItem;
+  isAr: boolean;
+  onClose: () => void;
+}) {
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+  const [url, setUrl] = useState<string | null>(item.isUrl ? item.ref : null);
+  const [mime, setMime] = useState<string>('');
+  const [loading, setLoading] = useState(!item.isUrl);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (item.isUrl) return; // external URL is already viewable
+    let cancelled = false;
+    setLoading(true);
+    setErr(null);
+    signViewUrl(item.ref)
+      .then((r) => { if (!cancelled) { setUrl(r.url); setMime(r.mime_type || ''); } })
+      .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [item]);
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const isPdf = item.group === 'document' && (mime.includes('pdf') || /\.pdf($|\?)/i.test(item.name));
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-4"
+      onClick={onClose}
+      dir={isAr ? 'rtl' : 'ltr'}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute top-4 end-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center"
+        aria-label={L('إغلاق', 'Close')}
+      >
+        <X size={20} />
+      </button>
+
+      <div className="max-w-[92vw] max-h-[86vh] flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
+        {loading ? (
+          <div className="flex items-center gap-2 text-white/80 text-sm py-10">
+            <Loader2 size={18} className="animate-spin" /> {L('جارٍ التحميل…', 'Loading…')}
+          </div>
+        ) : err ? (
+          <div className="text-sm text-white bg-red-600/80 rounded-lg px-4 py-3 max-w-md text-center">{err}</div>
+        ) : !url ? (
+          <div className="text-sm text-white/70 py-10">{L('تعذّر فتح الملف', 'Could not open the file')}</div>
+        ) : item.group === 'photo' ? (
+          <img src={url} alt={item.name} className="max-w-[92vw] max-h-[80vh] object-contain rounded-lg" />
+        ) : item.group === 'video' ? (
+          <video src={url} controls autoPlay playsInline className="max-w-[92vw] max-h-[80vh] rounded-lg bg-black" />
+        ) : isPdf ? (
+          <iframe src={url} title={item.name} className="w-[92vw] h-[80vh] rounded-lg bg-white" />
+        ) : (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 bg-white text-charcoal rounded-lg px-5 py-3 text-sm font-medium hover:bg-cream"
+          >
+            <ExternalLink size={16} /> {L('فتح الملف في نافذة جديدة', 'Open the file in a new tab')}
+          </a>
+        )}
+        <div className="text-white/70 text-xs truncate max-w-[92vw]" dir="auto">{item.name}</div>
       </div>
     </div>
   );
