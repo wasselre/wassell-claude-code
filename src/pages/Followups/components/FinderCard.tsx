@@ -115,28 +115,32 @@ function DealPill({ deal, isAr }: { deal: DealBadge; isAr: boolean }) {
 function DeliveryPill({ facts, source, isAr }: { facts: Record<string, unknown>; source: FinderSource; isAr: boolean }) {
   const { kind, handoverDate } = resolveDeliveryStatus(facts);
   if (kind === 'unknown' && source === 'market_listings') return null;
+  const L = (ar: string, en: string) => (isAr ? ar : en);
   const handover = kind === 'off_plan' ? formatHandoverMonth(handoverDate, isAr) : null;
   const cls: Record<DeliveryKind, string> = {
     ready: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     off_plan: 'border-copper/40 bg-copper/10 text-terracotta',
-    unknown: 'border-sand/60 bg-cream/50 text-charcoal/55',
+    unknown: 'border-sand/60 bg-cream/50 text-charcoal/50',
   };
   const Icon = kind === 'ready' ? KeyRound : kind === 'off_plan' ? HardHat : HelpCircle;
   const title = kind === 'off_plan' && handoverDate
-    ? (isAr ? `تاريخ التسليم المتوقع: ${handoverDate}` : `Expected handover date: ${handoverDate}`)
-    : (isAr ? 'حالة التسليم' : 'Delivery status');
+    ? L(`تاريخ التسليم المتوقع: ${handoverDate}`, `Expected handover date: ${handoverDate}`)
+    : L('حالة التسليم', 'Delivery status');
+  // Always SELF-LABELED — a bare "غير محدد" reads as a contextless "undetermined
+  // what?" to the rep. Unknown → "حالة التسليم غير محددة"; off-plan with no date →
+  // "موعد التسليم يُحدَّد لاحقًا" (normal for a project still under construction).
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${cls[kind]}`}
       title={title}
     >
       <Icon size={11} className="shrink-0" />
-      {deliveryLabel(kind, isAr)}
+      {kind === 'unknown' ? L('حالة التسليم غير محددة', 'Delivery status unknown') : deliveryLabel(kind, isAr)}
       {kind === 'off_plan' && (
         <span className="font-semibold">
           {handover
-            ? (isAr ? `· التسليم ${handover}` : `· handover ${handover}`)
-            : (isAr ? '· تاريخ التسليم غير محدد' : '· handover date not set')}
+            ? L(`· التسليم ${handover}`, `· handover ${handover}`)
+            : L('· موعد التسليم يُحدَّد لاحقًا', '· handover date TBD')}
         </span>
       )}
     </span>
@@ -299,12 +303,12 @@ export default function FinderCard({
 
         {/* Specs grid */}
         <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-lg bg-cream/30 p-2.5 text-xs">
-          <Spec icon={<Wallet size={12} />} label={L('السعر', 'Price')} value={price} isAr={isAr} />
-          <Spec icon={<PackageCheck size={12} />} label={L('وحدات متاحة', 'Available')} value={avail != null ? String(avail) : null} isAr={isAr} />
-          <Spec icon={<Building2 size={12} />} label={L('النوع', 'Type')} value={unitTypes || null} isAr={isAr} />
-          <Spec icon={<Ruler size={12} />} label={L('المساحة', 'Area')} value={area} isAr={isAr} />
-          <Spec icon={<BedDouble size={12} />} label={L('الغرف', 'Bedrooms')} value={beds} isAr={isAr} />
-          <Spec icon={<Bath size={12} />} label={L('دورات المياه', 'Bathrooms')} value={baths} isAr={isAr} />
+          <Spec icon={<Wallet size={12} />} label={L('السعر', 'Price')} value={price} />
+          <Spec icon={<PackageCheck size={12} />} label={L('وحدات متاحة', 'Available')} value={avail != null ? String(avail) : null} />
+          <Spec icon={<Building2 size={12} />} label={L('النوع', 'Type')} value={unitTypes || null} />
+          <Spec icon={<Ruler size={12} />} label={L('المساحة', 'Area')} value={area} />
+          <Spec icon={<BedDouble size={12} />} label={L('الغرف', 'Bedrooms')} value={beds} />
+          <Spec icon={<Bath size={12} />} label={L('دورات المياه', 'Bathrooms')} value={baths} />
         </div>
 
         {/* Data gaps */}
@@ -425,14 +429,18 @@ function StatusSelect({
   );
 }
 
-function Spec({ icon, label, value, isAr }: { icon: React.ReactNode; label: string; value: string | null; isAr: boolean }) {
-  const L = (ar: string, en: string) => (isAr ? ar : en);
+function Spec({ icon, label, value }: { icon: React.ReactNode; label: string; value: string | null }) {
+  // Missing value → a quiet em-dash, NOT the words "not available". With the label
+  // right above it ("السعر —") the rep instantly reads "no price" — no confusing
+  // "undetermined what?" moment.
   return (
     <div className="flex items-start gap-1.5">
-      <span className="mt-0.5 shrink-0 text-copper">{icon}</span>
+      <span className={`mt-0.5 shrink-0 ${value ? 'text-copper' : 'text-charcoal/25'}`}>{icon}</span>
       <div className="min-w-0">
         <div className="text-charcoal/50">{label}</div>
-        {value ? <div className="break-words font-medium text-charcoal/90">{value}</div> : <div className="italic text-charcoal/40">{L('غير متوفر', 'n/a')}</div>}
+        {value
+          ? <div className="break-words font-medium text-charcoal/90">{value}</div>
+          : <div className="text-charcoal/30" aria-label="—">—</div>}
       </div>
     </div>
   );
