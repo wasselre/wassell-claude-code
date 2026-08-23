@@ -2067,3 +2067,75 @@
 /* Screen 38 — the «عند الإرسال» consequence panel, transcribed from the mockup. */
 .mos-scrim .s38-cons{background:var(--sand-2);border:1px solid var(--line);
   border-radius:8px;padding:11px 13px;font-size:11.5px;color:var(--mute);line-height:1.9}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Embedded Files Library — theme bridge (added 2026-08-23)
+ *
+ * `/m/library` renders the shared Files Library (a Sales-CRM component) inside
+ * the marketing shell. That component is styled with the CRM's Tailwind palette
+ * (bg-white / bg-cream / text-charcoal / border-sand / copper), which are LITERAL
+ * hex and so ignore the marketing dark theme — light cards landed on the dark
+ * shell (operator report, 2026-08-23).
+ *
+ * These rules remap those CRM utilities to MOS's OWN tokens, scoped under
+ * `.mos-root`. Two things make this safe and self-maintaining:
+ *   1. No marketing page uses these CRM classes (verified: 0 hits), so the only
+ *      thing inside `.mos-root` they can touch is the embedded library.
+ *   2. They map to var(--paper/--ink/--line/--copper), which already flip between
+ *      MOS light and dark — so the library follows the marketing theme in both.
+ * `.mos-root .x` (0,2,0) outranks Tailwind's `.x` (0,1,0), so no !important.
+ * The Files page at /files is untouched — it keeps the CRM look outside .mos-root.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/* Surfaces: white / cream cards → MOS paper + secondary surface */
+.mos-root .bg-white,
+.mos-root .bg-white\/90,
+.mos-root .bg-white\/95 { background-color: var(--paper); }
+.mos-root .bg-cream,
+.mos-root .bg-cream\/70,
+.mos-root .bg-cream\/60 { background-color: var(--sand-2); }
+.mos-root .bg-sand\/40 { background-color: var(--line); }
+.mos-root .hover\:bg-cream:hover,
+.mos-root .hover\:bg-cream\/60:hover,
+.mos-root .hover\:bg-white:hover { background-color: var(--sand-2); }
+
+/* Text: charcoal (+ opacities) → ink / ink-2 / mute */
+.mos-root .text-charcoal,
+.mos-root .text-charcoal\/80 { color: var(--ink); }
+.mos-root .text-charcoal\/70,
+.mos-root .text-charcoal\/60,
+.mos-root .text-charcoal\/55,
+.mos-root .text-charcoal\/50 { color: var(--ink-2); }
+.mos-root .text-charcoal\/45,
+.mos-root .text-charcoal\/40,
+.mos-root .text-charcoal\/35,
+.mos-root .text-charcoal\/30,
+.mos-root .text-charcoal\/25 { color: var(--mute); }
+/* .text-charcoal\/0 is a deliberate transparent (hover-reveal) — left as is;
+   its group-hover target resolves to the /40 → mute rule above. */
+.mos-root .group:hover .group-hover\:text-charcoal\/40 { color: var(--mute); }
+
+/* Borders: sand → line */
+.mos-root .border-sand\/30,
+.mos-root .border-sand\/40,
+.mos-root .border-sand\/60 { border-color: var(--line); }
+
+/* Copper accents → MOS copper (tone-matched to the theme) */
+.mos-root .text-copper,
+.mos-root .text-copper\/60,
+.mos-root .hover\:\!text-copper:hover { color: var(--copper); }
+.mos-root .bg-copper { background-color: var(--copper); }
+.mos-root .bg-copper\/5,
+.mos-root .bg-copper\/10,
+.mos-root .bg-copper\/20,
+.mos-root .hover\:bg-copper\/10:hover { background-color: color-mix(in srgb, var(--copper) 14%, transparent); }
+.mos-root .border-copper,
+.mos-root .border-copper\/60,
+.mos-root .border-copper\/40,
+.mos-root .border-copper\/30,
+.mos-root .border-copper\/25,
+.mos-root .border-copper\/20,
+.mos-root .hover\:border-copper\/30:hover { border-color: color-mix(in srgb, var(--copper) 55%, transparent); }
+.mos-root .ring-copper\/30,
+.mos-root .ring-copper\/15,
+.mos-root .focus\:ring-copper\/30:focus { --tw-ring-color: color-mix(in srgb, var(--copper) 35%, transparent); }
