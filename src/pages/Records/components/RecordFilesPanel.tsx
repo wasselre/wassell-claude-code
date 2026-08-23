@@ -36,13 +36,14 @@ import Button from '@/components/ui/Button';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
-import { signDownloadUrl } from '@/lib/files/client';
+import { getFile, signDownloadUrl, signViewUrls } from '@/lib/files/client';
 import { errorText, listDocumentTypes } from '@/lib/files/library';
 import {
   detachFileFromRecord, groupByRole, listRecordFiles, type RecordFileEntry,
 } from '@/lib/files/recordFiles';
-import type { FileDocumentTypeRow } from '@/types';
+import type { FileDocumentTypeRow, FileRow } from '@/types';
 import { documentTypeLabel } from '@/pages/Files/library/labels';
+import FilePreviewModal from '@/pages/Files/components/FilePreviewModal';
 import AttachExistingFileModal from './AttachExistingFileModal';
 
 interface Props {
@@ -61,6 +62,11 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
   const [attachOpen, setAttachOpen] = useState(false);
   const [detachTarget, setDetachTarget] = useState<RecordFileEntry | null>(null);
   const [detaching, setDetaching] = useState(false);
+  // Signed thumbnails for the image files in the panel (one batch request, the
+  // same pattern the Library uses) and the row currently open in the full
+  // preview modal.
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [previewRow, setPreviewRow] = useState<FileRow | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -88,6 +94,40 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  // Thumbnails: one batch sign for the image files on show, exactly as the
+  // Library page does — a tile never signs its own URL. Ids are de-duplicated
+  // because the same file legitimately appears under more than one role. A
+  // failure is silent (signViewUrls surfaces it): a thumbnail is decoration and
+  // the tile falls back to its kind icon.
+  useEffect(() => {
+    const imageIds = [
+      ...new Set((entries ?? []).filter((e) => e.file.kind === 'image').map((e) => e.file.id)),
+    ];
+    if (imageIds.length === 0) { setThumbs({}); return; }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const map = await signViewUrls(imageIds);
+        if (!cancelled) setThumbs(map);
+      } catch {
+        if (!cancelled) setThumbs({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [entries]);
+
+  const openPreview = useCallback(async (fileId: string) => {
+    try {
+      // FilePreviewModal needs the full storage row (mime, preview cache); the
+      // record-files payload deliberately omits those, so one row is fetched on
+      // demand rather than widening every entry.
+      const row = await getFile(fileId);
+      if (row) setPreviewRow(row);
+    } catch {
+      // getFile toasted.
+    }
   }, []);
 
   const onDetach = useCallback(async () => {
@@ -171,6 +211,7 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
                 {g.entries.map((e) => {
                   const Icon = kindIcon[e.file.kind];
                   const accent = kindAccent[e.file.kind];
+                  const thumb = thumbs[e.file.id];
                   return (
                     <div
                       key={e.link_id}
@@ -179,14 +220,28 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
                       <button
                         type="button"
                         onClick={() => {
+                          // A doc opens its editor; everything else opens the
+                          // full previewer — images, PDFs, video, audio and
+                          // office files all render inline there, so a record
+                          // reads like the Library rather than forcing a
+                          // download to see what a file is.
                           if (e.file.kind === 'wassel_doc') navigate(`/files/doc/${e.file.id}`);
-                          else void download(e.file.id);
+                          else void openPreview(e.file.id);
                         }}
                         className="flex items-center gap-2.5 min-w-0 flex-1 text-start"
                       >
-                        <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${accent.bg}`}>
-                          <Icon size={15} className={accent.fg} aria-hidden />
-                        </span>
+                        {thumb ? (
+                          <img
+                            src={thumb}
+                            alt=""
+                            loading="lazy"
+                            className="w-11 h-11 rounded-lg object-cover shrink-0 border border-sand/30"
+                          />
+                        ) : (
+                          <span className={`w-11 h-11 rounded-lg flex items-center justify-center shrink-0 ${accent.bg}`}>
+                            <Icon size={18} className={accent.fg} aria-hidden />
+                          </span>
+                        )}
                         <span className="min-w-0">
                           <span
                             className="block text-sm font-bold text-charcoal truncate"
@@ -278,6 +333,23 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
         cancelLabel={t('common.cancel')}
         onConfirm={() => void onDetach()}
         onClose={() => setDetachTarget(null)}
+      />
+
+      {/* The same full-screen previewer the Files Library uses. Read-only from a
+          record: canEdit/canDelete are false so it hides share/permissions/
+          delete and never mutates links — it only shows the file (image, PDF,
+          video, audio, office) with download. A rename (owner-only) refreshes
+          the panel so the row settles. */}
+      <FilePreviewModal
+        file={previewRow}
+        open={Boolean(previewRow)}
+        canEdit={false}
+        canDelete={false}
+        onClose={() => setPreviewRow(null)}
+        onShare={() => {}}
+        onPermissions={() => {}}
+        onDelete={() => {}}
+        onRenamed={() => { void load(); }}
       />
     </div>
   );
