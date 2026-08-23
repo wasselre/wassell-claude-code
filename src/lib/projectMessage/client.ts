@@ -35,8 +35,12 @@ export async function generateProjectMessageAi(
     body: JSON.stringify({ project_id: projectId, ...(provider ? { provider } : {}) }),
   });
   if (!res.ok) {
-    const b = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(b?.error ?? `AI message generation failed (${res.status})`);
+    // Never surface an EMPTY message: a non-JSON body (edge/CDN error page) or an
+    // HTTP/2 response (empty statusText) must still yield a readable error, or the
+    // UI paints a blank red box. Fall back to the status code.
+    const b = (await res.json().catch(() => null)) as { error?: unknown } | null;
+    const serverMsg = typeof b?.error === 'string' ? b.error.trim() : '';
+    throw new Error(serverMsg || `AI message generation failed (HTTP ${res.status})`);
   }
   const j = (await res.json()) as { body_ar?: string; body_en?: string; facts?: Record<string, unknown>; generated_by?: string };
   return { body_ar: j.body_ar ?? '', body_en: j.body_en ?? '', facts: j.facts, generated_by: j.generated_by };

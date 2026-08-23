@@ -34,7 +34,9 @@ import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import { getServiceClient } from '../_lib/files.js';
 import { resolveLocalizedName, type LocalizedName } from '../../src/lib/geo/localizedName.js';
 
-export const config = { runtime: 'nodejs', maxDuration: 60 };
+// Kimi on a large project record runs long (~40s measured); give headroom so a
+// bigger record can't hit the timeout cliff. Well under Vercel Pro's 300s max.
+export const config = { runtime: 'nodejs', maxDuration: 120 };
 
 interface RequestBody {
   project_id?: string;
@@ -167,16 +169,25 @@ function assertFactsIntact(args: {
   checkEn(districtGeo, 'district');
   checkEn(cityGeo, 'city');
 
-  // Invented-number guard: every ≥6-digit run in the bodies (separators
-  // stripped) must appear verbatim in the record OR the facts block. Small
-  // numbers (rooms, areas) are ignored; this targets fabricated prices. The
-  // facts JSON is included so the website-link UUID and the resolved
-  // available-price never read as "invented".
-  const recNums = new Set((`${JSON.stringify(recordData)}${JSON.stringify(facts)}`.match(/\d{4,}/g) ?? []));
+  // Invented-price guard: every ≥6-digit run in the bodies must correspond to a
+  // number present in the record OR the facts block — in RAW **or ROUNDED** form,
+  // because a model legitimately rounds/reformats a price (e.g. a stored
+  // 2,654,867.8 becomes "2,654,868"). Small numbers (rooms, areas) are ignored;
+  // this targets a hallucinated price, which is far from any real figure.
+  // Arabic-Indic digits are folded to Western first, and thousands separators
+  // (Western + Arabic) are stripped on BOTH sides so "2,654,868" == "2654868".
+  const toWestern = (s: string) => s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+  const allowedNums = new Set<string>();
+  for (const tok of toWestern(`${JSON.stringify(recordData)}${JSON.stringify(facts)}`).match(/\d[\d,٬.]*/g) ?? []) {
+    const digits = tok.replace(/[,٬.]/g, '');
+    if (digits.length >= 4) allowedNums.add(digits);
+    const n = Number(tok.replace(/[,٬]/g, ''));
+    if (Number.isFinite(n)) { allowedNums.add(String(Math.round(n))); allowedNums.add(String(Math.trunc(n))); }
+  }
   for (const [lang, body] of [['ar', bodyAr], ['en', bodyEn]] as const) {
-    const stripped = body.replace(/[,٬٬]/g, '');
+    const stripped = toWestern(body).replace(/[,٬]/g, '');
     for (const m of stripped.match(/\d{6,}/g) ?? []) {
-      if (!recNums.has(m)) { violations.push(`body_${lang} contains a number not in the record data: ${m}`); break; }
+      if (!allowedNums.has(m)) { violations.push(`body_${lang} contains a number not in the record data: ${m}`); break; }
     }
   }
 

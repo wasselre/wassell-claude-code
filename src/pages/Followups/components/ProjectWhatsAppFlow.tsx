@@ -112,7 +112,8 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       setGeneratedBy(generated_by ?? null);
       setPhase('preview');
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg.trim() || L('تعذّر توليد الرسالة — حاول مجددًا', 'Could not generate the message — try again'));
       setPhase('error');
     }
   }

@@ -265,11 +265,19 @@ async function main() {
     if (facts.city_en && out.body_en && !out.body_en.includes(facts.city_en)) flags.push('EN missing city');
     if (facts.district_en && out.body_en && !out.body_en.includes(facts.district_en)) flags.push('EN missing district');
     if (facts.city_ar && out.body_en && out.body_en.includes(facts.city_ar)) flags.push('EN leaks AR city');
-    // invented big number (>= 6 digits) not present anywhere in the record JSON
-    const recNums = new Set((JSON.stringify(recordData).match(/\d{4,}/g) ?? []).map((s) => s));
+    // invented big number (>= 6 digits) not in the record/facts — raw OR rounded
+    // (mirrors the endpoint's assertFactsIntact tolerance for reformatted prices)
+    const toWestern = (s) => s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+    const allowedNums = new Set();
+    for (const tok of toWestern(`${JSON.stringify(recordData)}${JSON.stringify(facts)}`).match(/\d[\d,٬.]*/g) ?? []) {
+      const digits = tok.replace(/[,٬.]/g, '');
+      if (digits.length >= 4) allowedNums.add(digits);
+      const n = Number(tok.replace(/[,٬]/g, ''));
+      if (Number.isFinite(n)) { allowedNums.add(String(Math.round(n))); allowedNums.add(String(Math.trunc(n))); }
+    }
     for (const body of [out.body_ar, out.body_en]) {
-      for (const m of (body || '').replace(/[,٬]/g, '').match(/\d{6,}/g) ?? []) {
-        if (!recNums.has(m)) { flags.push(`invented number ${m}`); break; }
+      for (const m of toWestern(body || '').replace(/[,٬]/g, '').match(/\d{6,}/g) ?? []) {
+        if (!allowedNums.has(m)) { flags.push(`invented number ${m}`); break; }
       }
     }
     return flags;
