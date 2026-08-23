@@ -89,6 +89,50 @@ const strArr = (v: unknown): string[] | undefined =>
 
 const VALID_SOURCES: MatchSource[] = ['our_projects', 'all_projects', 'market_listings'];
 
+/**
+ * Area-weighted centroid (shoelace) of a CLOSED GeoJSON ring `[lng, lat][]`
+ * (first point === last). Returns `{ lat, lng }` or null for a degenerate ring
+ * (fewer than 3 vertices / zero area → fall back to the vertex average). Used to
+ * give a `drawn_area` location preference a single distance-reference point, so a
+ * client whose "wanted area" is a hand-drawn polygon still gets honest "~X km
+ * from the requested area" labels — and out-of-area matches rank by that distance.
+ */
+function polygonCentroid(ring: unknown): { lat: number; lng: number } | null {
+  if (!Array.isArray(ring)) return null;
+  const pts: Array<[number, number]> = [];
+  for (const p of ring) {
+    if (!Array.isArray(p) || p.length < 2) continue;
+    const lng = typeof p[0] === 'number' ? p[0] : Number(p[0]);
+    const lat = typeof p[1] === 'number' ? p[1] : Number(p[1]);
+    if (Number.isFinite(lng) && Number.isFinite(lat)) pts.push([lng, lat]);
+  }
+  if (pts.length < 3) {
+    if (pts.length === 0) return null;
+    const sx = pts.reduce((s, p) => s + p[0], 0);
+    const sy = pts.reduce((s, p) => s + p[1], 0);
+    return { lng: sx / pts.length, lat: sy / pts.length };
+  }
+  let area = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i]!;
+    const [x1, y1] = pts[i + 1]!;
+    const cross = x0 * y1 - x1 * y0;
+    area += cross;
+    cx += (x0 + x1) * cross;
+    cy += (y0 + y1) * cross;
+  }
+  area *= 0.5;
+  if (Math.abs(area) < 1e-12) {
+    // Degenerate (collinear) ring — use the plain vertex average.
+    const sx = pts.reduce((s, p) => s + p[0], 0);
+    const sy = pts.reduce((s, p) => s + p[1], 0);
+    return { lng: sx / pts.length, lat: sy / pts.length };
+  }
+  return { lng: cx / (6 * area), lat: cy / (6 * area) };
+}
+
 /** Clean the untrusted per-field constraint map. Unknown field names, bad modes,
  *  and out-of-range tolerances are DROPPED (the engine then falls back to that
  *  field's default) rather than trusted — this arrives from the browser. */
@@ -313,6 +357,21 @@ export default async function handler(req: Request): Promise<Response> {
         if (d && Array.isArray(d.location_items)) items = d.location_items;
       }
       if (Array.isArray(items)) {
+        // Hand-drawn areas: the polygon itself IS the wanted area but carries no
+        // named district/element, so nothing above feeds it into the distance
+        // references. Use each include polygon's centroid so out-of-area matches
+        // still get "~X km from the requested area" labels AND rank by that distance.
+        for (const it of items) {
+          if (!it || typeof it !== 'object') continue;
+          const rec = it as Record<string, unknown>;
+          if (rec.kind !== 'drawn_area' || rec.polarity === 'exclude') continue;
+          const c = polygonCentroid(rec.coordinates);
+          if (!c) continue;
+          const label = typeof rec.label === 'string' && rec.label.trim()
+            ? rec.label.trim()
+            : (locale === 'ar' ? 'المنطقة المطلوبة' : 'the requested area');
+          refPoints.push({ lat: c.lat, lng: c.lng, name: label });
+        }
         const wanted = new Map<string, string | null>(); // external_id → stashed label
         for (const it of items) {
           if (!it || typeof it !== 'object') continue;

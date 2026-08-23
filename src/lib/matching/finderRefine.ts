@@ -152,24 +152,43 @@ export interface FinderTabView {
   tabs: Record<DisplayTabKey, FinderMatch[]>;
 }
 
+/** Location-fit rank for an our_projects card (loose matching → `our_fit.location`):
+ *  in the wanted area first, then nearby, then same-city-outside, then elsewhere.
+ *  A card without our_fit (shouldn't happen for our projects) sorts last. */
+const OUR_LOCATION_RANK: Record<NonNullable<FinderMatch['our_fit']>['location'], number> = {
+  in_area: 0, nearby: 1, same_city: 2, other: 3,
+};
+const ourLocationRank = (m: FinderMatch): number =>
+  m.our_fit ? OUR_LOCATION_RANK[m.our_fit.location] : 4;
+
 /** Split the (already refined + sorted) groups into the pinned our-projects list +
  *  the three display tabs' non-portfolio matches (same_city folded into Alternatives). */
 export function buildFinderTabs(groups: Record<FinderGroupKey, FinderMatch[]>): FinderTabView {
   const isOurs = (m: FinderMatch) => m.source === 'our_projects';
   const others = (arr: FinderMatch[] | undefined) => (arr ?? []).filter((m) => !isOurs(m));
 
-  // Every our-projects match across the tiers, sorted best (highest score, then
-  // closest) first. Each project appears in exactly one tier, so no dedup needed.
+  // Every our-projects match across the tiers, sorted best-first. LOCATION FIT
+  // leads: a project INSIDE the client's wanted area beats one merely nearby beats
+  // one in the same city beats one outside it — an in-area match is better than an
+  // out-of-area one regardless of how its centroid distance compares. WITHIN a
+  // location tier we order by score, then by REAL distance (closest first, nulls
+  // last), then name. So the out-of-area projects the rep sees are ranked by how
+  // far they sit from the requested area. Each project appears in exactly one tier,
+  // so no dedup needed.
   const ourProjects = FINDER_GROUP_KEYS
     .flatMap((k) => groups[k] ?? [])
     .filter(isOurs)
     .sort((a, b) => {
+      const lr = ourLocationRank(a) - ourLocationRank(b);
+      if (lr !== 0) return lr;
       if (b.score !== a.score) return b.score - a.score;
       const da = a.distance_km, db = b.distance_km;
-      if (da == null && db == null) return 0;
-      if (da == null) return 1;
-      if (db == null) return -1;
-      return da - db;
+      if (da != null || db != null) {
+        if (da == null) return 1;
+        if (db == null) return -1;
+        if (da !== db) return da - db;
+      }
+      return a.project_name.localeCompare(b.project_name, 'ar');
     });
 
   return {
