@@ -16,6 +16,7 @@ import {
 } from '@/lib/locationUtils';
 import { isSummaryModel } from '@/lib/lazyModels';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
+import MapLayersOverlay from '@/components/map/MapLayersOverlay';
 import { useResolvedLocations, type ResolvedPin } from '@/hooks/useResolvedLocations';
 import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
@@ -258,8 +259,10 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
   const persisted = mapsViewState[model.id];
   const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
-  // Administrative context under the record pins — see useGeoBoundaryLayer.
-  useGeoBoundaryLayer(mapInstance);
+  // Administrative context under the record pins (boundaries only). Roads +
+  // landmarks are user-toggled context layers now (MapLayersOverlay), so the map
+  // opens clean. See useGeoBoundaryLayer.
+  useGeoBoundaryLayer(mapInstance, { roads: false, landmarks: false });
 
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
   const keyMissing = !isMapsKeyConfigured();
@@ -449,6 +452,7 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
           });
         }}
       >
+        <MapLayersOverlay map={mapInstance} isAr={isAr} />
         {cfg.click_action === 'popup' && selectedPin && (
           <OverlayView
             position={{ lat: selectedPin.lat, lng: selectedPin.lng }}
@@ -690,8 +694,10 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
   const persisted = mapsViewState[model.id];
   const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
-  // Administrative context under the record pins — see useGeoBoundaryLayer.
-  useGeoBoundaryLayer(mapInstance);
+  // Administrative context under the record pins (boundaries only). Roads +
+  // landmarks are user-toggled context layers now (MapLayersOverlay), so the map
+  // opens clean. See useGeoBoundaryLayer.
+  useGeoBoundaryLayer(mapInstance, { roads: false, landmarks: false });
 
   const styles = useMemo(() => resolveGeoMapStyles(cfg.map_style_json), [cfg.map_style_json]);
   const firstPoint = points[0];
@@ -983,6 +989,7 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
           setMapsViewState(model.id, { center: { lat: c.lat(), lng: c.lng() }, zoom: z, selectedId });
         }}
       >
+        <MapLayersOverlay map={mapInstance} isAr={isAr} />
         {cfg.click_action === 'popup' && selectedPin && (
           <OverlayView
             position={{ lat: selectedPin.lat, lng: selectedPin.lng }}

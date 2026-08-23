@@ -7,6 +7,7 @@ import { markActivity } from '@/lib/perf/freezeDetector';
 import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildColoredPinIcon, buildClusterIcon } from '@/lib/locationUtils';
 import type { FinderMatch, FinderSource } from '@/lib/matching/projectFinder';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
+import MapLayersOverlay from '@/components/map/MapLayersOverlay';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
 /**
@@ -61,8 +62,9 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
 
   const [map, setMap] = useState<google.maps.Map | null>(null);
   // Administrative context under the result pins — country/region/city/district by
-  // zoom, plus main roads and landmarks. See useGeoBoundaryLayer.
-  useGeoBoundaryLayer(map);
+  // zoom. Roads + landmarks are OFF here: they're now user-toggled context layers
+  // owned by MapLayersOverlay (below), so the map opens clean. See useGeoBoundaryLayer.
+  useGeoBoundaryLayer(map, { roads: false, landmarks: false });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const clustererRef = useRef<MarkerClusterer | null>(null);
   // OUR-project markers are placed on the map directly (NEVER in the clusterer) so
@@ -260,6 +262,8 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
             gestureHandling: isMobile ? 'greedy' : 'auto',
           }}
         />
+
+        <MapLayersOverlay map={map} isAr={isAr} />
 
         {/* Clicked-pin card — the SAME FinderCard as the list, full actions. */}
         {selectedMatch && renderSelectedCard && (

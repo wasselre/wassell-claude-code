@@ -5,6 +5,7 @@ import { Loader2, MapPin, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
+import MapLayersOverlay from '@/components/map/MapLayersOverlay';
 import {
   DEFAULT_MAP_CENTER, GEO_MAP_STYLE,
   buildColoredPinIcon, buildPillIcon, buildClusterIcon,
@@ -62,8 +63,10 @@ export default function ClientOptionsMapView({ options, isAr, renderCard, height
   const records = useAppStore((s) => s.records);
 
   const [map, setMap] = useState<google.maps.Map | null>(null);
-  // Administrative context under the option pins. See useGeoBoundaryLayer.
-  useGeoBoundaryLayer(map);
+  // Administrative context under the option pins (boundaries only). Roads +
+  // landmarks are user-toggled context layers now (MapLayersOverlay below), so the
+  // map opens clean. See useGeoBoundaryLayer.
+  useGeoBoundaryLayer(map, { roads: false, landmarks: false });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const clustererRef = useRef<MarkerClusterer | null>(null);
   // The MAIN option's pill marker is placed on the map directly (never in the
@@ -234,6 +237,8 @@ export default function ClientOptionsMapView({ options, isAr, renderCard, height
             clickableIcons: false,
           }}
         />
+
+        <MapLayersOverlay map={map} isAr={isAr} />
 
         {/* Clicked-pin card — the SAME option card as the list, full actions. */}
         {selectedOption && (
