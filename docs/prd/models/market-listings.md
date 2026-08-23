@@ -5,7 +5,7 @@
 # Model: Market Listings / إعلانات السوق  `market_listings`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-07
+**Last updated (from DB):** 2026-08-23
 **Model id:** `8f06bc39-4bee-42e9-9fab-77023fb89ede`
 **Storage:** frozen table `market_listings`
 **Group:** (ungrouped)
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **8** (1 base, 7 non-base)
-- Fields: **83**
+- Fields: **84**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -65,6 +65,7 @@
 | `dupe_group_id` | Property Cluster ID / معرّف العقار الموحّد | Text | no | half | no |  |
 | `dupe_role` | Duplicate Role / دور التكرار | Text | no | half | no |  |
 | `source_payload` | Raw Source Payload / البيانات الخام | Notes | no | half | no |  |
+| `offer_type` | Offer type / نوع العرض | Dropdown | no | half | yes | 2 options |
 | `developer` | Developer / المطوّر | Text | no | half | no |  |
 | `brn` | Broker BRN / رقم الوسيط | Text | no | half | no |  |
 | `zone_name` | Zone / Neighbourhood / المنطقة | Text | no | half | no |  |
@@ -114,6 +115,9 @@
   - API value `Plot` → "Plot" / "أرض" · color `#B8734F`
   - API value `Penthouse` → "Penthouse" / "بنتهاوس" · color `#B8734F`
   - API value `Compound` → "Compound" / "مجمع" · color `#B8734F`
+- **Offer type / نوع العرض** (`offer_type`, type `dropdown`) — options:
+  - API value `sale` → "Sale" / "بيع" · color `#3B82F6`
+  - API value `rent` → "Rent" / "إيجار" · color `#8E4E3A`
 
 ### 2. Property Details / تفاصيل العقار  _(color #8E4E3A)_
 
