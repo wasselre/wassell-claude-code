@@ -57,6 +57,17 @@ export function shortDate(iso: string | null | undefined, isAr: boolean): string
   return isAr ? `${day} ${month}` : `${month} ${day}`;
 }
 
+/** «١ يوليو ٢٠٢٦» / "1 Jul 2026" — a full calendar date WITH the year. */
+export function fullDate(iso: string | null | undefined, isAr: boolean): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const day = num(d.getDate(), isAr);
+  const month = (isAr ? AR_MONTHS : EN_MONTHS)[d.getMonth()] ?? '';
+  const year = num(d.getFullYear(), isAr);
+  return isAr ? `${day} ${month} ${year}` : `${month} ${day}, ${year}`;
+}
+
 export function dayName(iso: string | null | undefined, isAr: boolean): string {
   if (!iso) return '';
   const d = new Date(iso);

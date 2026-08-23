@@ -19,7 +19,7 @@ import {
 } from '@/lib/marketingOS/client';
 import RecordFilesPanel from '../../Records/components/RecordFilesPanel';
 import { LoadError, Skeleton } from './kit';
-import { money, num, shortDate } from '../lib/format';
+import { fullDate, money, num } from '../lib/format';
 
 /* ── Project marketing assets (linked files) ─────────────────────── */
 
@@ -83,7 +83,7 @@ function fieldValue(f: ProjectInfoField, isAr: boolean): string {
     case 'number':
       return num(typeof f.value === 'number' ? f.value : null, isAr);
     case 'date':
-      return shortDate(typeof f.value === 'string' ? f.value : null, isAr);
+      return fullDate(typeof f.value === 'string' ? f.value : null, isAr);
     default:
       return (isAr ? f.value_ar : f.value_en) ?? '';
   }

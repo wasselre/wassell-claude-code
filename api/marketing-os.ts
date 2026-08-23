@@ -6082,6 +6082,46 @@ export default async function handler(req: Request): Promise<Response> {
 
         const fields: ProjectInfoField[] = [];
         for (const key of PROJECT_INFO_KEYS) {
+          // `location` is a geography COMPOUND of record ids ({region,city,
+          // district}, each a single id or an array) — resolve them to localized
+          // names here (the generic builder has no DB access, so raw ids leaked).
+          if (key === 'location') {
+            const loc = data.location as Record<string, unknown> | null | undefined;
+            if (!loc || typeof loc !== 'object') continue;
+            const collect = (v: unknown): string[] =>
+              Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x !== '')
+                : (typeof v === 'string' && v ? [v] : []);
+            const districts = collect(loc.district);
+            const cities = collect(loc.city);
+            const regions = collect(loc.region);
+            const allIds = [...districts, ...cities, ...regions];
+            if (allIds.length === 0) continue;
+            const geoRes = await sb.from('unified_records').select('id, data').in('id', allIds);
+            const nameById = new Map<string, { ar: string; en: string }>();
+            for (const r of (geoRes.data ?? []) as Array<{ id: string; data: Record<string, unknown> }>) {
+              const gd = r.data ?? {};
+              const ar = (typeof gd.display_name === 'string' && gd.display_name)
+                || (typeof gd.name_ar === 'string' ? gd.name_ar : '');
+              const en = typeof gd.name_en === 'string' ? gd.name_en : '';
+              if (ar || en) nameById.set(r.id, { ar: ar || en, en: en || ar });
+            }
+            const namesFor = (ids: string[], lang: 'ar' | 'en'): string[] =>
+              ids.map((id) => nameById.get(id)?.[lang]).filter((s): s is string => !!s);
+            // Most specific first: district · city · region.
+            const arParts = [...namesFor(districts, 'ar'), ...namesFor(cities, 'ar'), ...namesFor(regions, 'ar')];
+            const enParts = [...namesFor(districts, 'en'), ...namesFor(cities, 'en'), ...namesFor(regions, 'en')];
+            if (arParts.length === 0 && enParts.length === 0) continue;
+            const locDef = fieldDefs.get('location');
+            fields.push({
+              key: 'location',
+              label_ar: locDef?.label_ar ?? 'الموقع',
+              label_en: locDef?.label_en ?? 'Location',
+              kind: 'text',
+              value_ar: arParts.join(' · '),
+              value_en: enParts.join(' · '),
+            });
+            continue;
+          }
           const built = buildProjectInfoField(key, fieldDefs.get(key), data[key]);
           if (built) fields.push(built);
         }
