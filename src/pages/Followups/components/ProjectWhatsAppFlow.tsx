@@ -1,28 +1,34 @@
 import { useEffect, useMemo, useState } from 'react';
 import { v4 as uuid } from 'uuid';
-import { X, Loader2, Sparkles, MessageCircle, RefreshCw, AlertTriangle } from 'lucide-react';
+import { X, Loader2, Sparkles, MessageCircle, RefreshCw, FileText, ArrowRight, ArrowLeft } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import { resolveProjectFacts, composeProjectMessage } from '@/lib/projectMessageFacts';
-import { findProjectTemplate, directVideoUrls } from '@/lib/matching/sendToClient';
-import { detectInputLanguage } from '@/lib/translateLabel';
-import { transliterateName } from '@/lib/transliterateName';
+import { resolveProjectFacts } from '@/lib/projectMessageFacts';
+import { generateProjectMessageAi } from '@/lib/projectMessage/client';
+import { findProjectTemplate } from '@/lib/matching/sendToClient';
 import Button from '@/components/ui/Button';
 import type { AppRecord } from '@/types';
 import StartChatModal from '@/pages/Chats/components/StartChatModal';
+import ProjectFilePickerModal from '@/pages/Chats/components/ProjectFilePickerModal';
 import { resolveClientSlugs, recordToPickedClient, type PickedClient } from '@/pages/Chats/components/ClientPicker';
 
 /**
- * "WhatsApp this project" flow — launched from a Suggested Projects card.
+ * "WhatsApp this project" flow — launched from a Suggested Projects / Finder /
+ * Client-Options card. Two rep choices, then a file picker, then the chat:
  *
- * Opens the CLIENT's chat composer pre-filled with the project's stored WhatsApp
- * message (a `chat_templates` record linked by `project_id`). If NO template
- * exists for the project, it offers to generate one — using the EXACT existing
- * deterministic process (`resolveProjectFacts` → `composeProjectMessage`, same as
- * the chat_templates "Generate project messages" tool) — lets the rep review/edit,
- * and on approval STORES it as a `chat_templates` record before opening the chat.
+ *   1. TEXT — because a project's content (price, unit mix, availability) drifts
+ *      after a template was written, the rep chooses between the SAVED template
+ *      text and a fresh AI REWRITE built from the project's CURRENT data
+ *      (`/api/templates/project-message-ai`, which sends the whole record to the
+ *      LLM and gates the output). Always offered, even when a template exists.
+ *   2. FILES — the rep picks which of the project's linked files (photos,
+ *      videos, PDFs) get sent, via ProjectFilePickerModal (everything
+ *      pre-checked). Replaces the old fixed gallery ride-along.
+ *   3. CHAT — StartChatModal opens on the client with the chosen text + the
+ *      selected media, and sends.
  *
- * Everything happens as stacked popups over the Suggested Projects modal — the rep
- * never leaves the follow-up. On send the message lands in the client's chat.
+ * If no saved template exists for the project, the AI rewrite IS the primary
+ * path; on accept it is stored as the project's `chat_templates` record so other
+ * surfaces (composer template picker) can reuse it.
  */
 
 interface Props {
@@ -35,7 +41,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Phase = 'loading' | 'ask' | 'generating' | 'preview' | 'chat' | 'error';
+type Phase = 'loading' | 'choose' | 'generating' | 'preview' | 'files' | 'chat' | 'error';
 
 export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clientRec, onClose }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
@@ -48,21 +54,24 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
   const clientsModel = useMemo(() => models.find((m) => m.name === 'clients'), [models]);
 
   const [phase, setPhase] = useState<Phase>('loading');
+  const [hasTemplate, setHasTemplate] = useState(false);
+  const [savedAr, setSavedAr] = useState('');
+  const [savedEn, setSavedEn] = useState('');
   const [bodyAr, setBodyAr] = useState('');
   const [bodyEn, setBodyEn] = useState('');
-  const [chatBody, setChatBody] = useState(''); // the body fed to the composer (current language)
-  const [imageFileIds, setImageFileIds] = useState<string[]>([]); // project gallery to ride along
-  const [missing, setMissing] = useState<string[]>([]);
+  const [chatBody, setChatBody] = useState(''); // body fed to the composer (current language)
+  const [selectedRefs, setSelectedRefs] = useState<string[]>([]);
+  const [generatedBy, setGeneratedBy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Build the recipient PickedClient from the follow-up's client record.
+  // Recipient PickedClient from the follow-up's client record.
   const pickedClient: PickedClient | null = useMemo(() => {
     if (!clientRec || !clientsModel) return null;
     return recordToPickedClient(clientRec, resolveClientSlugs(clientsModel), isAr);
   }, [clientRec, clientsModel, isAr]);
 
-  // On open: does a stored template exist for this project?
+  // On open: is there a saved template for this project?
   useEffect(() => {
     if (!chatTemplatesModel) {
       setError(L('نموذج القوالب غير متوفر', 'Templates model unavailable'));
@@ -74,44 +83,33 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       const t = existing.data as Record<string, unknown>;
       const ar = typeof t.body_ar === 'string' ? t.body_ar : '';
       const en = typeof t.body_en === 'string' ? t.body_en : '';
-      setBodyAr(ar);
-      setBodyEn(en);
-      setChatBody((isAr ? ar : en) || ar || en);
-      setImageFileIds(
-        Array.isArray(t.project_image_file_ids)
-          ? (t.project_image_file_ids as unknown[]).filter((x): x is string => typeof x === 'string' && x.length > 0)
-          : [],
-      );
-      setPhase('chat');
+      setSavedAr(ar);
+      setSavedEn(en);
+      setHasTemplate(true);
     } else {
-      setPhase('ask');
+      setHasTemplate(false);
     }
+    setPhase('choose');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Generate a message with the SAME deterministic engine the chat_templates tool
-  // uses. resolveProjectFacts reads everything from the all_projects master, so a
-  // synthetic our_projects-shaped record carrying the `project` link is enough.
-  async function generate() {
+  // ── TEXT choices ────────────────────────────────────────────────────
+  function useSaved() {
+    setBodyAr(savedAr);
+    setBodyEn(savedEn);
+    setChatBody((isAr ? savedAr : savedEn) || savedAr || savedEn);
+    setPhase('files');
+  }
+
+  async function generateAi() {
     setPhase('generating');
     setError(null);
     try {
-      const synthetic = { id: 'wa-synthetic', data: { project: projectId } } as unknown as AppRecord;
-      const facts = resolveProjectFacts(synthetic, models, records);
-      let nameEn = facts.name;
-      if (facts.name && detectInputLanguage(facts.name) === 'ar') {
-        try {
-          nameEn = await transliterateName(facts.name);
-        } catch {
-          nameEn = facts.name; // graceful — keep the Arabic name in the EN body
-        }
-      }
-      const { body_ar, body_en } = composeProjectMessage(facts, { nameEn });
+      const { body_ar, body_en, generated_by } = await generateProjectMessageAi(projectId);
       setBodyAr(body_ar);
       setBodyEn(body_en);
       setChatBody((isAr ? body_ar : body_en) || body_ar || body_en);
-      setImageFileIds(facts.imageFileIds);
-      setMissing(facts.missing);
+      setGeneratedBy(generated_by ?? null);
       setPhase('preview');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -119,67 +117,83 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
     }
   }
 
-  // Approve → store the template (so next time it's reused) → open the chat.
-  async function approveAndContinue() {
-    if (!chatTemplatesModel) return;
+  // Accept the AI text → (store a NEW template if none existed) → files step.
+  async function acceptAiText() {
     if (!chatBody.trim()) {
       addToast(L('الرسالة فارغة', 'Message is empty'), 'error');
       return;
     }
-    setSaving(true);
-    // The edited body sits in the current UI language; keep the other language's
-    // generated body so the stored template stays bilingual (language='both').
+    // The edited body is in the current UI language; keep the other language's
+    // generated body so a stored template stays bilingual.
     const ar = isAr ? chatBody : bodyAr;
     const en = isAr ? bodyEn : chatBody;
-    const now = new Date().toISOString();
-    const record: AppRecord = {
-      id: uuid(),
-      model_id: chatTemplatesModel.id,
-      data: {
-        name: projectName,
-        language: 'both',
-        tags: ['project'],
-        body_ar: ar,
-        body_en: en,
-        media_kind: '',
-        media_file_id: null,
-        media_mime: null,
-        media_size: null,
-        media_filename: null,
-        project_id: projectId,
-        project_image_file_ids: imageFileIds,
-      },
-      created_at: now,
-      updated_at: now,
-    };
-    const res = await saveRecord(record);
-    setSaving(false);
-    if (res.status === 'conflict') {
-      addToast(L('تعذّر الحفظ — حاول مجددًا', 'Could not save — try again'), 'error');
-      return;
+    setBodyAr(ar);
+    setBodyEn(en);
+
+    // Only persist a template when the project had NONE — avoids duplicates and
+    // never silently overwrites a curated template with a one-off rewrite.
+    if (!hasTemplate && chatTemplatesModel) {
+      setSaving(true);
+      // Keep the gallery on the saved template so other surfaces (composer
+      // template picker) still ride images along; the per-send file choice here
+      // is separate and lives only on this send.
+      const synthetic = { id: 'wa-synthetic', data: { project: projectId } } as unknown as AppRecord;
+      const facts = resolveProjectFacts(synthetic, models, records);
+      const now = new Date().toISOString();
+      const record: AppRecord = {
+        id: uuid(),
+        model_id: chatTemplatesModel.id,
+        data: {
+          name: projectName,
+          language: 'both',
+          tags: ['project'],
+          body_ar: ar,
+          body_en: en,
+          media_kind: '',
+          media_file_id: null,
+          media_mime: null,
+          media_size: null,
+          media_filename: null,
+          project_id: projectId,
+          project_image_file_ids: facts.imageFileIds,
+        },
+        created_at: now,
+        updated_at: now,
+      };
+      const res = await saveRecord(record);
+      setSaving(false);
+      if (res.status === 'conflict') {
+        addToast(L('تعذّر حفظ القالب — سيُرسل النص على أي حال', 'Could not save the template — sending the text anyway'), 'info');
+      } else {
+        setHasTemplate(true);
+        addToast(L('تم حفظ رسالة المشروع', 'Saved the project message'), 'success');
+      }
     }
-    addToast(L('تم حفظ رسالة المشروع', 'Saved the project message'), 'success');
-    setChatBody(isAr ? ar : en);
-    setPhase('chat');
+    setPhase('files');
   }
 
-  // Direct video FILES saved on the project (all_projects `project_videos`)
-  // ride along after the gallery — sendProjectImageMessages sends them as
-  // `video` messages by mime. HLS/page links are excluded (not uploadable).
-  const projectVideoUrls = useMemo(() => {
-    const apModel = models.find((m) => m.name === 'all_projects');
-    const ap = apModel ? (records[apModel.id] ?? []).find((r) => r.id === projectId) : null;
-    return directVideoUrls((ap?.data as Record<string, unknown> | undefined)?.project_videos);
-  }, [models, records, projectId]);
+  // ── FILE picker → chat ──────────────────────────────────────────────
+  if (phase === 'files') {
+    return (
+      <ProjectFilePickerModal
+        allProjectId={projectId}
+        projectName={projectName}
+        isAr={isAr}
+        onConfirm={(refs) => {
+          setSelectedRefs(refs);
+          setPhase('chat');
+        }}
+        onClose={onClose}
+      />
+    );
+  }
 
-  // The chat composer popup — reuses StartChatModal with the client preselected
-  // and the body prefilled. On send the message lands in the client's chat.
   if (phase === 'chat') {
     return (
       <StartChatModal
         initialClient={pickedClient}
         initialBody={chatBody}
-        initialImageFileIds={[...imageFileIds, ...projectVideoUrls]}
+        initialImageFileIds={selectedRefs}
         onClose={onClose}
         onSent={() => {
           addToast(L('تم إرسال الرسالة', 'Message sent'), 'success');
@@ -188,6 +202,8 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       />
     );
   }
+
+  const BackIcon = isAr ? ArrowRight : ArrowLeft;
 
   return (
     <div
@@ -218,37 +234,62 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
             </div>
           )}
 
-          {phase === 'ask' && (
+          {/* Choose the text source */}
+          {phase === 'choose' && (
             <div className="space-y-4">
               <p className="text-sm text-charcoal/80">
-                {L(
-                  `لا توجد رسالة واتساب محفوظة لمشروع «${projectName}». هل تريد إنشاء واحدة الآن؟`,
-                  `There's no saved WhatsApp message for "${projectName}". Generate one now?`,
-                )}
+                {hasTemplate
+                  ? L('كيف تريد نص رسالة هذا المشروع؟', 'How do you want this project’s message text?')
+                  : L(`لا توجد رسالة محفوظة لمشروع «${projectName}». أنشئ واحدة بالذكاء الاصطناعي من بيانات المشروع الحالية.`,
+                      `There's no saved message for "${projectName}". Generate one with AI from the project's current data.`)}
               </p>
-              <div className="flex justify-end gap-2">
+
+              {hasTemplate && (
+                <button
+                  type="button"
+                  onClick={useSaved}
+                  className="w-full text-start rounded-xl border border-sand/50 hover:border-copper hover:bg-copper/5 transition-colors px-4 py-3"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <FileText size={15} className="text-copper" />
+                    <span className="font-semibold text-sm text-charcoal">{L('استخدام الرسالة المحفوظة', 'Use the saved message')}</span>
+                  </div>
+                  <p className="text-xs text-charcoal/60 line-clamp-3 whitespace-pre-line" dir="auto">
+                    {(isAr ? savedAr : savedEn) || savedAr || savedEn}
+                  </p>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={generateAi}
+                className="w-full text-start rounded-xl border border-sand/50 hover:border-copper hover:bg-copper/5 transition-colors px-4 py-3"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Sparkles size={15} className="text-copper" />
+                  <span className="font-semibold text-sm text-charcoal">{L('إعادة الكتابة بالذكاء الاصطناعي', 'Rewrite with AI')}</span>
+                </div>
+                <p className="text-xs text-charcoal/60">
+                  {L('نص جديد مبني على بيانات المشروع الحالية (الأسعار والوحدات المتاحة).',
+                     'A fresh message from the project’s current data (available prices & units).')}
+                </p>
+              </button>
+
+              <div className="flex justify-end">
                 <Button variant="secondary" onClick={onClose}>{L('إلغاء', 'Cancel')}</Button>
-                <Button variant="primary" onClick={generate}>
-                  <Sparkles size={14} /> {L('نعم، أنشئ الرسالة', 'Yes, generate')}
-                </Button>
               </div>
             </div>
           )}
 
           {phase === 'generating' && (
             <div className="flex items-center justify-center gap-2 py-8 text-charcoal/50 text-sm">
-              <Loader2 size={16} className="animate-spin" /> {L('جارٍ توليد الرسالة…', 'Generating the message…')}
+              <Loader2 size={16} className="animate-spin" /> {L('جارٍ كتابة الرسالة بالذكاء الاصطناعي…', 'Writing the message with AI…')}
             </div>
           )}
 
+          {/* Review + edit the AI text */}
           {phase === 'preview' && (
             <div className="space-y-3">
-              {missing.length > 0 && (
-                <div className="flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                  <AlertTriangle size={12} className="shrink-0 mt-0.5" />
-                  <span>{L('بعض الحقول غير متوفرة وحُذفت من الرسالة. راجع النص قبل الإرسال.', 'Some fields were missing and omitted. Review the message before sending.')}</span>
-                </div>
-              )}
               <div>
                 <label className="block text-[11px] font-bold text-charcoal/40 mb-1">{L('الرسالة', 'Message')}</label>
                 <textarea
@@ -258,16 +299,23 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
                   dir="auto"
                   className="form-input w-full text-sm resize-none leading-relaxed"
                 />
+                {generatedBy && (
+                  <p className="text-[10px] text-charcoal/35 mt-1">{L('وُلّد بواسطة', 'Generated by')} {generatedBy}</p>
+                )}
               </div>
               <div className="flex items-center justify-between gap-2">
-                <button onClick={generate} className="inline-flex items-center gap-1 text-xs text-charcoal/60 hover:text-copper px-2 py-1 rounded-md hover:bg-cream">
+                <button onClick={generateAi} className="inline-flex items-center gap-1 text-xs text-charcoal/60 hover:text-copper px-2 py-1 rounded-md hover:bg-cream">
                   <RefreshCw size={13} /> {L('إعادة التوليد', 'Regenerate')}
                 </button>
                 <div className="flex gap-2">
-                  <Button variant="secondary" onClick={onClose} disabled={saving}>{L('إلغاء', 'Cancel')}</Button>
-                  <Button variant="primary" onClick={approveAndContinue} disabled={saving || !chatBody.trim()}>
-                    {saving ? <Loader2 size={14} className="animate-spin" /> : <MessageCircle size={14} />}
-                    {L('حفظ وفتح المحادثة', 'Save & open chat')}
+                  {hasTemplate && (
+                    <button onClick={() => setPhase('choose')} className="inline-flex items-center gap-1 text-xs text-charcoal/60 hover:text-copper px-2 py-1 rounded-md hover:bg-cream">
+                      <BackIcon size={13} /> {L('رجوع', 'Back')}
+                    </button>
+                  )}
+                  <Button variant="primary" onClick={acceptAiText} disabled={saving || !chatBody.trim()}>
+                    {saving ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} className={isAr ? 'rotate-180' : ''} />}
+                    {L('التالي: الملفات', 'Next: files')}
                   </Button>
                 </div>
               </div>
@@ -277,8 +325,11 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
           {phase === 'error' && (
             <div className="space-y-4">
               <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
-              <div className="flex justify-end">
-                <Button variant="secondary" onClick={onClose}>{L('إغلاق', 'Close')}</Button>
+              <div className="flex justify-end gap-2">
+                {hasTemplate && (
+                  <Button variant="secondary" onClick={useSaved}>{L('استخدام الرسالة المحفوظة', 'Use saved message')}</Button>
+                )}
+                <Button variant={hasTemplate ? 'primary' : 'secondary'} onClick={onClose}>{L('إغلاق', 'Close')}</Button>
               </div>
             </div>
           )}
