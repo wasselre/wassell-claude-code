@@ -41,15 +41,9 @@ window.addEventListener('unhandledrejection', (event) => {
     reloadOnceForStaleChunk();
   }
 });
-if (typeof window !== 'undefined') {
-  window.setTimeout(() => {
-    try {
-      sessionStorage.removeItem(CHUNK_RELOAD_KEY);
-    } catch {
-      /* ignore */
-    }
-  }, 8000);
-}
+// NOTE: the guard is intentionally NOT cleared on a timer — reloading AT MOST
+// once per browser session guarantees we can never enter a reload loop (a
+// genuinely broken deploy shows an error after one reload instead of flashing).
 
 // DEV-only debug handle so local browser-driven tests (Claude preview tooling)
 // can read/inject store state without an authenticated backend. Dead code in
