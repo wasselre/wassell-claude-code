@@ -1,9 +1,10 @@
 import {
   Building2, MapPin, Wallet, Ruler, BedDouble, Bath, PackageCheck, AlertTriangle,
   ExternalLink, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
-  CheckSquare, Square, Send, KeyRound, HardHat,
+  CheckSquare, Square, Send, KeyRound, HardHat, LayoutGrid,
 } from 'lucide-react';
 import { useState } from 'react';
+import ProjectUnitsModal from './ProjectUnitsModal';
 import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus, OurFit } from '@/lib/matching/projectFinder';
 import {
   resolveDeliveryStatus, deliveryLabel, formatHandoverMonth, type DeliveryKind,
@@ -153,8 +154,12 @@ export default function FinderCard({
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
+  const [showUnits, setShowUnits] = useState(false);
   const [imgError, setImgError] = useState(false);
   const f = item.facts;
+  // Units belong to catalog projects (our_projects / all_projects); a single
+  // market listing has none, so the "view units" affordance is projects-only.
+  const hasUnits = item.source !== 'market_listings';
   // Main image: raw URL (market listings) or files.id (projects) → resolved to a
   // renderable URL by useSignedImage (passthrough / short-lived signed view URL).
   const imgUrl = useSignedImage(typeof f.image === 'string' && f.image ? f.image : null);
@@ -347,6 +352,11 @@ export default function FinderCard({
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
           <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
 
+          {/* All units of this project in a popup (catalog projects only). */}
+          {hasUnits && (
+            <ActionBtn icon={<LayoutGrid size={12} />} label={L('الوحدات', 'Units')} onClick={() => setShowUnits(true)} />
+          )}
+
           {/* Send THIS project/listing to the connected client — the prepared
               WhatsApp message if one exists, else the creation flow, right from
               the card. Hidden on the standalone finder (no client). */}
@@ -377,6 +387,8 @@ export default function FinderCard({
           )}
         </div>
       </div>
+
+      {showUnits && <ProjectUnitsModal item={item} isAr={isAr} onClose={() => setShowUnits(false)} />}
     </div>
   );
 }

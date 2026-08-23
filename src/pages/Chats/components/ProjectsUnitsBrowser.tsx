@@ -17,6 +17,7 @@ import { recordTitle } from '@/lib/documents/links';
 import { normalizePhone } from '@/lib/phone';
 import type { ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 import Badge from '@/components/ui/Badge';
+import DualRangeSlider from '@/components/ui/DualRangeSlider';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import type { AppModel, AppRecord } from '@/types';
@@ -150,7 +151,9 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
   }, [chatWid, clientRec, clientsModel, isAr]);
 
   // ── filters ───────────────────────────────────────────────────────────────
-  const [scope, setScope] = useState<Scope>('all');
+  // Default to OUR projects — in a chat the rep is picking something of ours to
+  // send the client, so the browser opens on مشاريعنا (they can still switch scope).
+  const [scope, setScope] = useState<Scope>('ours');
   const [search, setSearch] = useState('');
   const [city, setCity] = useState('');
   const [district, setDistrict] = useState('');
@@ -170,6 +173,17 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
     [views, city],
   );
   const unitTypeField = useMemo(() => fieldByCandidates(projectsModel, ['unit_types', 'unit_type']), [projectsModel]);
+
+  // Price bounds for the range slider — spanning every visible project's range.
+  const priceBounds = useMemo(() => {
+    const all: number[] = [];
+    for (const v of views) {
+      const r = priceRangeFor(v, projectsModel);
+      if (r?.min != null && Number.isFinite(r.min)) all.push(r.min);
+      if (r?.max != null && Number.isFinite(r.max)) all.push(r.max);
+    }
+    return all.length ? { min: Math.min(...all), max: Math.max(...all) } : null;
+  }, [views, projectsModel]);
 
   const filtered = useMemo(() => {
     // Arabic-folded search (أإآ→ا, ة→ه, ى→ي, unified digits) — the SAME folding
@@ -388,22 +402,25 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
                       <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>
                     ))}
                   </select>
-                  <input
-                    className={selectCls}
-                    type="number"
-                    inputMode="numeric"
-                    value={priceMin}
-                    onChange={(e) => setPriceMin(e.target.value)}
-                    placeholder={L('سعر من', 'Price ≥')}
-                  />
-                  <input
-                    className={selectCls}
-                    type="number"
-                    inputMode="numeric"
-                    value={priceMax}
-                    onChange={(e) => setPriceMax(e.target.value)}
-                    placeholder={L('سعر إلى', 'Price ≤')}
-                  />
+                  {priceBounds && priceBounds.max > priceBounds.min ? (
+                    <div className="col-span-2 px-1 pt-1">
+                      <DualRangeSlider
+                        className="w-full"
+                        isAr={isAr}
+                        label={L('السعر (ر.س)', 'Price (SAR)')}
+                        min={priceBounds.min}
+                        max={priceBounds.max}
+                        step={5000}
+                        low={priceMin ? Number(priceMin) : priceBounds.min}
+                        high={priceMax ? Number(priceMax) : priceBounds.max}
+                        format={(n) => Math.round(n).toLocaleString('en-US')}
+                        onChange={(lo, hi) => {
+                          setPriceMin(lo <= priceBounds.min ? '' : String(Math.round(lo)));
+                          setPriceMax(hi >= priceBounds.max ? '' : String(Math.round(hi)));
+                        }}
+                      />
+                    </div>
+                  ) : null}
                   <label className="col-span-2 flex items-center gap-2 px-1 text-sm text-charcoal/70">
                     <input
                       type="checkbox"

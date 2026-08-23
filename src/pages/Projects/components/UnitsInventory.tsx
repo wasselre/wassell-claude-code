@@ -3,6 +3,7 @@ import { Download, FileText, GitCompare, Loader2, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
+import DualRangeSlider from '@/components/ui/DualRangeSlider';
 import { modelByName, fieldByCandidates, resolveProjectView, type ProjectView } from '@/lib/projects/projectView';
 import { resolveUnitView, unitsForProject, sortUnits, type UnitView, type UnitSortKey } from '@/lib/projects/unitView';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
@@ -52,7 +53,8 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
   const [status, setStatus] = useState('');
   const [type, setType] = useState('');
   const [floor, setFloor] = useState('');
-  const [bedrooms, setBedrooms] = useState('');
+  const [bedMin, setBedMin] = useState('');
+  const [bedMax, setBedMax] = useState('');
   const [priceMin, setPriceMin] = useState('');
   const [priceMax, setPriceMax] = useState('');
   const [areaMin, setAreaMin] = useState('');
@@ -72,12 +74,14 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
     const pMax = priceMax ? Number(priceMax) : null;
     const aMin = areaMin ? Number(areaMin) : null;
     const aMax = areaMax ? Number(areaMax) : null;
-    const bed = bedrooms ? Number(bedrooms) : null;
+    const bMin = bedMin ? Number(bedMin) : null;
+    const bMax = bedMax ? Number(bedMax) : null;
     const out = allUnits.filter((u) => {
       if (status && u.status?.value !== status) return false;
       if (type && u.type?.value !== type) return false;
       if (floor && u.floor?.value !== floor) return false;
-      if (bed !== null && u.bedrooms !== bed) return false;
+      if (bMin !== null && (u.bedrooms ?? Infinity) < bMin) return false;
+      if (bMax !== null && (u.bedrooms ?? 0) > bMax) return false;
       if (pMin !== null && (u.totalPrice ?? Infinity) < pMin) return false;
       if (pMax !== null && (u.totalPrice ?? 0) > pMax) return false;
       if (aMin !== null && (u.area ?? Infinity) < aMin) return false;
@@ -85,7 +89,21 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
       return true;
     });
     return sortUnits(out, sortKey);
-  }, [allUnits, status, type, floor, bedrooms, priceMin, priceMax, areaMin, areaMax, sortKey]);
+  }, [allUnits, status, type, floor, bedMin, bedMax, priceMin, priceMax, areaMin, areaMax, sortKey]);
+
+  // Bounds for the bedrooms / price / area range sliders — the project's own min↔max.
+  const bedBounds = useMemo(() => {
+    const v = allUnits.map((u) => u.bedrooms).filter((x): x is number => typeof x === 'number' && Number.isFinite(x));
+    return v.length ? { min: Math.min(...v), max: Math.max(...v) } : null;
+  }, [allUnits]);
+  const priceBounds = useMemo(() => {
+    const v = allUnits.map((u) => u.totalPrice).filter((x): x is number => typeof x === 'number' && Number.isFinite(x));
+    return v.length ? { min: Math.min(...v), max: Math.max(...v) } : null;
+  }, [allUnits]);
+  const areaBounds = useMemo(() => {
+    const v = allUnits.map((u) => u.area).filter((x): x is number => typeof x === 'number' && Number.isFinite(x));
+    return v.length ? { min: Math.min(...v), max: Math.max(...v) } : null;
+  }, [allUnits]);
 
   const selectedUnits = useMemo(() => filtered.filter((u) => selected.has(u.id)), [filtered, selected]);
   const drawerUnit = useMemo(
@@ -147,11 +165,6 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
           <option value="">{isAr ? 'كل الطوابق' : 'All floors'}</option>
           {(floorField?.options ?? []).map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
         </select>
-        <input className={`${selectCls} w-20`} type="number" value={bedrooms} onChange={(e) => setBedrooms(e.target.value)} placeholder={isAr ? 'غرف' : 'Beds'} />
-        <input className={`${selectCls} w-24`} type="number" value={priceMin} onChange={(e) => setPriceMin(e.target.value)} placeholder={isAr ? 'سعر من' : 'Price ≥'} />
-        <input className={`${selectCls} w-24`} type="number" value={priceMax} onChange={(e) => setPriceMax(e.target.value)} placeholder={isAr ? 'سعر إلى' : 'Price ≤'} />
-        <input className={`${selectCls} w-24`} type="number" value={areaMin} onChange={(e) => setAreaMin(e.target.value)} placeholder={isAr ? 'مساحة من' : 'Area ≥'} />
-        <input className={`${selectCls} w-24`} type="number" value={areaMax} onChange={(e) => setAreaMax(e.target.value)} placeholder={isAr ? 'مساحة إلى' : 'Area ≤'} />
         <select className={selectCls} value={sortKey} onChange={(e) => setSortKey(e.target.value as UnitSortKey)}>
           <option value="cheapest">{isAr ? 'الأرخص' : 'Cheapest'}</option>
           <option value="largest">{isAr ? 'الأكبر مساحة' : 'Largest'}</option>
@@ -177,6 +190,61 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
           </div>
         )}
       </div>
+
+      {/* Price / area range sliders — drag either handle; the two ends are the
+          min and the max, bounded by this project's own unit range. */}
+      {((bedBounds && bedBounds.max > bedBounds.min) || (priceBounds && priceBounds.max > priceBounds.min) || (areaBounds && areaBounds.max > areaBounds.min)) && (
+        <div className="flex flex-wrap gap-x-8 gap-y-3 rounded-lg border border-sand/40 bg-cream/20 px-3 py-2.5">
+          {bedBounds && bedBounds.max > bedBounds.min && (
+            <DualRangeSlider
+              isAr={isAr}
+              label={isAr ? 'غرف النوم' : 'Bedrooms'}
+              min={bedBounds.min}
+              max={bedBounds.max}
+              step={1}
+              low={bedMin ? Number(bedMin) : bedBounds.min}
+              high={bedMax ? Number(bedMax) : bedBounds.max}
+              format={(n) => String(Math.round(n))}
+              onChange={(lo, hi) => {
+                setBedMin(lo <= bedBounds.min ? '' : String(Math.round(lo)));
+                setBedMax(hi >= bedBounds.max ? '' : String(Math.round(hi)));
+              }}
+            />
+          )}
+          {priceBounds && priceBounds.max > priceBounds.min && (
+            <DualRangeSlider
+              isAr={isAr}
+              label={isAr ? 'السعر (ر.س)' : 'Price (SAR)'}
+              min={priceBounds.min}
+              max={priceBounds.max}
+              step={1000}
+              low={priceMin ? Number(priceMin) : priceBounds.min}
+              high={priceMax ? Number(priceMax) : priceBounds.max}
+              format={(n) => Math.round(n).toLocaleString('en-US')}
+              onChange={(lo, hi) => {
+                setPriceMin(lo <= priceBounds.min ? '' : String(Math.round(lo)));
+                setPriceMax(hi >= priceBounds.max ? '' : String(Math.round(hi)));
+              }}
+            />
+          )}
+          {areaBounds && areaBounds.max > areaBounds.min && (
+            <DualRangeSlider
+              isAr={isAr}
+              label={isAr ? 'المساحة (م²)' : 'Area (m²)'}
+              min={areaBounds.min}
+              max={areaBounds.max}
+              step={1}
+              low={areaMin ? Number(areaMin) : areaBounds.min}
+              high={areaMax ? Number(areaMax) : areaBounds.max}
+              format={(n) => Math.round(n).toLocaleString('en-US')}
+              onChange={(lo, hi) => {
+                setAreaMin(lo <= areaBounds.min ? '' : String(Math.round(lo)));
+                setAreaMax(hi >= areaBounds.max ? '' : String(Math.round(hi)));
+              }}
+            />
+          )}
+        </div>
+      )}
 
       {/* Selection action bar */}
       {selected.size > 0 && (
