@@ -19,15 +19,20 @@ const OPTIONS: { id: Disposition; ar: string; en: string; hint_ar: string; hint_
 const NEEDS_REASON = new Set<Disposition>(['mapped_existing_field', 'candidate_new_field', 'review_required']);
 
 export default function DecisionPanel({
-  field, targetFields, targetTypes, targetLabels, isAr, onClose, onSaved,
+  field, targetFields, targetTypes, targetLabels, isAr, hasNext, position, onClose, onDecided, onNext,
 }: {
   field: FieldStatus;
   targetFields: string[];
   targetTypes: Record<string, CoerceClass>;
   targetLabels: Record<string, { ar: string; en: string }>;
   isAr: boolean;
+  hasNext: boolean;
+  position: { at: number; of: number } | null;
   onClose: () => void;
-  onSaved: () => void;
+  /** Optimistic in-place update of the just-decided row (no full reload). */
+  onDecided: (patch: Partial<FieldStatus> & { platform: string; source_path: string }) => void;
+  /** Advance the drawer to the next field in the filtered list. */
+  onNext: () => void;
 }) {
   const [status, setStatus] = useState<Disposition>((field.authoritative_status as Disposition) || 'mapped_existing_field');
   const [canonical, setCanonical] = useState<string>(field.canonical_field ?? '');
@@ -56,16 +61,23 @@ export default function DecisionPanel({
   const valid = status !== 'mapped_existing_field' ? (!NEEDS_REASON.has(status) || reason.trim().length > 0)
     : (canonical.trim().length > 0 && reason.trim().length > 0);
 
-  const save = async () => {
+  const save = async (advance: boolean) => {
     setSaving(true); setError(null);
+    const canon = status === 'mapped_existing_field' ? canonical : null;
     try {
       await decideField({
         platform: field.platform, source_path: field.source_path, status,
-        canonical_field: status === 'mapped_existing_field' ? canonical : null,
+        canonical_field: canon,
         transformation: isMulti ? (tagLabel.trim() || null) : null,
         reason: reason.trim() || null,
       });
-      onSaved(); onClose();
+      onDecided({
+        platform: field.platform, source_path: field.source_path,
+        authoritative_status: status, canonical_field: canon, reason: reason.trim() || null,
+        ...(isMulti && tagLabel.trim() ? { source_label: tagLabel.trim() } : {}),
+      });
+      if (advance && hasNext) onNext();
+      else onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -78,7 +90,10 @@ export default function DecisionPanel({
       <div className="absolute inset-0 bg-charcoal/30" onClick={onClose} />
       <div className="relative w-full max-w-md bg-white h-full shadow-xl overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-sand/40 sticky top-0 bg-white">
-          <h2 className="text-sm font-semibold text-charcoal">{isAr ? 'قرار الحقل' : 'Field decision'}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-charcoal">{isAr ? 'قرار الحقل' : 'Field decision'}</h2>
+            {position && <span className="text-[11px] text-charcoal/40 tabular-nums">{position.at} / {position.of}</span>}
+          </div>
           <button onClick={onClose} className="text-charcoal/40 hover:text-charcoal"><X className="w-5 h-5" /></button>
         </div>
 
@@ -207,8 +222,19 @@ export default function DecisionPanel({
         </div>
 
         <div className="flex gap-2 px-5 py-4 border-t border-sand/40 sticky bottom-0 bg-white">
-          <Button onClick={save} disabled={!valid || saving}>{saving ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'حفظ القرار' : 'Save decision')}</Button>
-          <Button variant="secondary" onClick={onClose}>{isAr ? 'إلغاء' : 'Cancel'}</Button>
+          {hasNext ? (
+            <>
+              <Button onClick={() => save(true)} disabled={!valid || saving}>
+                {saving ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'حفظ والتالي' : 'Save & Next')}
+              </Button>
+              <Button variant="secondary" onClick={() => save(false)} disabled={!valid || saving}>{isAr ? 'حفظ وإغلاق' : 'Save & close'}</Button>
+            </>
+          ) : (
+            <Button onClick={() => save(false)} disabled={!valid || saving}>
+              {saving ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'حفظ القرار' : 'Save decision')}
+            </Button>
+          )}
+          <Button variant="ghost" onClick={onClose}>{isAr ? 'إلغاء' : 'Cancel'}</Button>
         </div>
       </div>
     </div>

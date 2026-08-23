@@ -29,6 +29,18 @@ function statusMeta(s: string | null) {
   return STATUS_META[s ?? ''] ?? { ar: 'بحاجة لقرار', en: 'Undecided', cls: 'bg-rose-100 text-rose-700' };
 }
 const isUndecided = (s: string | null) => !s || s === 'review_required';
+const keyOf = (r: FieldStatus) => `${r.platform}|${r.source_path}`;
+
+// Status filter chips (raw tab). 'all' + 'review_required' (folds null) + real statuses.
+const FILTERS: { id: string; ar: string; en: string }[] = [
+  { id: 'all', ar: 'الكل', en: 'All' },
+  { id: 'review_required', ar: 'بحاجة لقرار', en: 'Needs decision' },
+  { id: 'mapped_existing_field', ar: 'مطابقة', en: 'Mapped' },
+  { id: 'candidate_new_field', ar: 'جديدة', en: 'New' },
+  { id: 'reviewed_source_specific', ar: 'خاصة بالمنصة', en: 'Platform-specific' },
+  { id: 'intentionally_ignored', ar: 'متجاهلة', en: 'Ignored' },
+  { id: 'technical_excluded', ar: 'مستبعدة', en: 'Excluded' },
+];
 
 export default function MarketAutomationPage() {
   const { language } = useAppStore();
@@ -43,6 +55,11 @@ export default function MarketAutomationPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('raw');
   const [platform, setPlatform] = useState<string>('all');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  // Navigation snapshot for the Save & Next flow: the ordered keys the drawer walks.
+  const [navKeys, setNavKeys] = useState<string[]>([]);
+  const [navIndex, setNavIndex] = useState(-1);
 
   const load = () => {
     setLoading(true);
@@ -61,6 +78,46 @@ export default function MarketAutomationPage() {
   const scoped = useMemo(() => (platform === 'all' ? rows : rows.filter((r) => r.platform === platform)), [rows, platform]);
   const summary = useMemo(() => summarize(scoped), [scoped]);
   const queue = useMemo(() => scoped.filter((r) => isUndecided(r.authoritative_status)), [scoped]);
+
+  // Rows the table actually shows: base list (all vs needs-decision) narrowed by the
+  // search box and (on the raw tab) the status chip.
+  const visibleRows = useMemo(() => {
+    const base = tab === 'decisions' ? queue : scoped;
+    const q = search.trim().toLowerCase();
+    return base.filter((r) => {
+      if (tab === 'raw' && statusFilter !== 'all') {
+        if (statusFilter === 'review_required' ? !isUndecided(r.authoritative_status) : r.authoritative_status !== statusFilter) return false;
+      }
+      if (!q) return true;
+      const wl = r.canonical_field ? labels[r.canonical_field] : undefined;
+      return (
+        r.source_path.toLowerCase().includes(q) ||
+        (r.source_label ?? '').toLowerCase().includes(q) ||
+        (r.canonical_field ?? '').toLowerCase().includes(q) ||
+        (wl?.ar ?? '').toLowerCase().includes(q) ||
+        (wl?.en ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [tab, queue, scoped, search, statusFilter, labels]);
+
+  // Open the drawer on a row AND snapshot the current ordered list for Save & Next.
+  const openDecision = (row: FieldStatus) => {
+    const keys = visibleRows.map(keyOf);
+    setNavKeys(keys);
+    setNavIndex(keys.indexOf(keyOf(row)));
+    setDeciding(row);
+  };
+  // Optimistic in-place update after a decision — no full reload, so the table keeps
+  // its scroll position and the drawer can advance smoothly.
+  const patchRow = (patch: Partial<FieldStatus> & { platform: string; source_path: string }) =>
+    setRows((prev) => prev.map((r) => (keyOf(r) === `${patch.platform}|${patch.source_path}` ? { ...r, ...patch } : r)));
+  const hasNext = navIndex >= 0 && navIndex + 1 < navKeys.length;
+  const goNext = () => {
+    const nextKey = navKeys[navIndex + 1];
+    const next = rows.find((r) => keyOf(r) === nextKey);
+    if (next) { setNavIndex(navIndex + 1); setDeciding(next); }
+    else setDeciding(null);
+  };
 
   const tabs: { id: Tab; ar: string; en: string; icon: typeof Database }[] = [
     { id: 'raw', ar: 'البيانات الخام', en: 'Raw Evidence', icon: Database },
@@ -125,7 +182,32 @@ export default function MarketAutomationPage() {
       {loading && <div className="text-charcoal/40 py-10 text-center">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>}
 
       {!loading && (tab === 'raw' || tab === 'decisions') && (
-        <FieldTable rows={tab === 'decisions' ? queue : scoped} isAr={isAr} labels={labels} emptyDecisions={tab === 'decisions'} onDecide={setDeciding} />
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={isAr ? 'ابحث في المسار أو الاسم أو الحقل…' : 'Search path, label, or target…'}
+              className="form-input py-1.5 text-sm flex-1 min-w-[220px] max-w-sm"
+            />
+            {tab === 'raw' && (
+              <div className="flex flex-wrap gap-1">
+                {FILTERS.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setStatusFilter(f.id)}
+                    className={`text-[12px] px-2.5 py-1 rounded-full border ${statusFilter === f.id ? 'border-copper bg-copper/10 text-copper font-medium' : 'border-sand/50 text-charcoal/55 hover:bg-sand/10'}`}>
+                    {isAr ? f.ar : f.en}
+                  </button>
+                ))}
+              </div>
+            )}
+            <span className="text-[12px] text-charcoal/40 ms-auto">
+              {visibleRows.length} {isAr ? 'حقل' : 'fields'}
+            </span>
+          </div>
+          <FieldTable rows={visibleRows} isAr={isAr} labels={labels} emptyDecisions={tab === 'decisions'} onDecide={openDecision} />
+        </>
       )}
 
       {!loading && tab === 'publish' && <PublishControl rows={scoped} isAr={isAr} labels={labels} />}
@@ -133,8 +215,9 @@ export default function MarketAutomationPage() {
       {!loading && tab === 'health' && <HealthTab summary={summary} isAr={isAr} />}
 
       {deciding && (
-        <DecisionPanel field={deciding} targetFields={targetFields} targetTypes={targetTypes} targetLabels={labels} isAr={isAr}
-          onClose={() => setDeciding(null)} onSaved={load} />
+        <DecisionPanel key={keyOf(deciding)} field={deciding} targetFields={targetFields} targetTypes={targetTypes} targetLabels={labels} isAr={isAr}
+          hasNext={hasNext} position={navIndex >= 0 ? { at: navIndex + 1, of: navKeys.length } : null}
+          onClose={() => setDeciding(null)} onDecided={patchRow} onNext={goNext} />
       )}
     </div>
   );
