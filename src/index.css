@@ -13,6 +13,9 @@
   --gold: #C09B5F;
   --sidebar-width: 280px;
   --sidebar-collapsed-width: 72px;
+  /* Visual-viewport height (shrinks when the on-screen keyboard opens). JS keeps
+     it accurate (src/lib/viewportHeight.ts); this default covers first paint. */
+  --app-height: 100dvh;
 }
 
 @layer base {

@@ -4,6 +4,11 @@ import App from './App';
 import './index.css';
 import './lib/i18n';
 import { useAppStore } from './stores/appStore';
+import { installViewportHeightVar } from './lib/viewportHeight';
+
+// Keep --app-height in sync with the visual viewport (shrinks when the on-screen
+// keyboard opens) so full-screen surfaces keep their composer above the keyboard.
+installViewportHeightVar();
 
 // ── Stale-chunk recovery (needed once the app is route-code-split) ──────────
 // A failed dynamic import is almost always a stale deploy: the cached index /
