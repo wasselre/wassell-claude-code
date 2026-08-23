@@ -309,7 +309,10 @@ function FilePreviewLightbox({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const isPdf = item.group === 'document' && (mime.includes('pdf') || /\.pdf($|\?)/i.test(item.name));
+  // Route to the in-app viewer whenever we have ANY signal it's a PDF — the
+  // file's own kind (most reliable), its signed mime, or a .pdf name. A blank
+  // mime + a title-only name must NOT fall through to the browser's plugin.
+  const isPdf = item.kind === 'pdf' || mime.includes('pdf') || /\.pdf($|\?)/i.test(item.name);
 
   return (
     <div

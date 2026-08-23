@@ -11,6 +11,9 @@ export interface PickerItem {
   /** files.id for CRM files, or the raw http URL for an external video. */
   ref: string;
   group: PickerGroup;
+  /** The file's true kind — so the preview can route a PDF to the in-app viewer
+   *  reliably, even when its name is a title (no `.pdf`) and its mime is blank. */
+  kind: FilePreviewKind;
   name: string;
   isUrl: boolean;
   /** Signed thumbnail URL for image items (filled in later, best-effort). */
@@ -51,6 +54,7 @@ export function buildPickerItems(entries: RecordFileEntry[], externalVideoUrls: 
     out.push({
       ref: e.file.id,
       group: groupOfKind(e.file.kind),
+      kind: e.file.kind,
       name: e.file.title || e.file.original_name || e.file.id,
       isUrl: false,
     });
@@ -58,7 +62,7 @@ export function buildPickerItems(entries: RecordFileEntry[], externalVideoUrls: 
   for (const url of externalVideoUrls) {
     if (!url || seen.has(url)) continue;
     seen.add(url);
-    out.push({ ref: url, group: 'video', name: nameFromUrl(url), isUrl: true });
+    out.push({ ref: url, group: 'video', kind: 'video', name: nameFromUrl(url), isUrl: true });
   }
   return out;
 }
