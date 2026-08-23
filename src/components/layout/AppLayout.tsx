@@ -7,15 +7,28 @@ import GlobalChatComposer from '@/pages/Chats/components/GlobalChatComposer';
 import JobsIndicator from '@/components/JobsIndicator';
 import SalesNotifications from '@/components/SalesNotifications';
 import CallResultConfirmHost from '@/pages/Followups/components/CallResultConfirmHost';
+import { useAppStore } from '@/stores/appStore';
+import { ensurePushSubscription } from '@/lib/push/client';
 
 export default function AppLayout() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const currentUserId = useAppStore((s) => s.currentUserId);
 
   useEffect(() => {
     setMobileSidebarOpen(false);
   }, [location.pathname]);
+
+  // Self-heal the push subscription on every app open. Push services rotate /
+  // expire subscriptions every few days; without re-registering, the stored
+  // endpoint goes dead and notifications silently stop (the "worked then
+  // stopped after a few days" bug). No-op unless this device previously enabled
+  // push (intent flag) and permission is still granted.
+  useEffect(() => {
+    if (!currentUserId) return;
+    void ensurePushSubscription(currentUserId);
+  }, [currentUserId]);
 
   // Tapping a push notification focuses the existing window and posts the
   // target path here, rather than the service worker calling client.navigate()

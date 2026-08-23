@@ -22,6 +22,30 @@ import { supabase } from '@/lib/supabase';
 /** VAPID public key. Safe to ship — it is the public half of the pair. */
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
 
+// Local record of "this device's user asked for push". Set on enable, cleared
+// on disable. It is what lets `ensurePushSubscription` re-register a rotated /
+// expired subscription on app open WITHOUT re-enabling push for someone who
+// deliberately turned it off. (Browsers rotate push subscriptions every few
+// days; without re-registering, the stored endpoint goes dead and delivery
+// silently stops — the "worked then stopped after a few days" bug.)
+const PUSH_INTENT_KEY = 'wassell_push_enabled';
+function setPushIntent(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(PUSH_INTENT_KEY, '1');
+    else localStorage.removeItem(PUSH_INTENT_KEY);
+  } catch {
+    // localStorage unavailable (private mode / iOS quirk) — non-fatal; the
+    // re-subscribe path just won't self-heal, exactly the pre-fix behaviour.
+  }
+}
+function hasPushIntent(): boolean {
+  try {
+    return localStorage.getItem(PUSH_INTENT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export type PushState =
   | 'unsupported'      // browser has no push at all
   | 'needs-install'    // iOS Safari tab — must Add to Home Screen first
@@ -144,11 +168,91 @@ export async function enablePush(currentUserId: string | null): Promise<EnableRe
   );
 
   if (error) return { ok: false, state: 'granted', error: error.message };
+  // Remember the user WANTS push on this device, so a later rotation re-registers.
+  setPushIntent(true);
   return { ok: true, state: 'granted' };
+}
+
+/**
+ * Re-register this device's subscription on app open, if the user previously
+ * enabled push here. Idempotent and gesture-free (permission is already
+ * granted, so `subscribe()` needs no user gesture). Heals the "worked then
+ * stopped after a few days" case: push services rotate/expire subscriptions,
+ * and without re-subscribing the DB keeps a dead endpoint the worker eventually
+ * prunes. Re-subscribing refreshes the endpoint + keys and resets failure_count
+ * so a device that is actually fine stops being treated as dead.
+ *
+ * Guarded by the local intent flag so it NEVER re-enables push for someone who
+ * turned it off (disablePush clears the flag).
+ */
+export async function ensurePushSubscription(currentUserId: string | null): Promise<boolean> {
+  if (!supabase || !currentUserId) return false;
+  if (getPushState() !== 'granted') return false;  // permission revoked / needs-install / unsupported
+  if (!VAPID_PUBLIC_KEY) return false;
+
+  try {
+    const registration = await registerServiceWorker();
+    if (!registration) return false;
+    await navigator.serviceWorker.ready;
+
+    const existing = await registration.pushManager.getSubscription();
+    // Re-register only when the user actually wants push here: either they
+    // enabled it (intent flag) OR a live subscription is already present. The
+    // latter backfills the flag for devices subscribed BEFORE this self-heal
+    // existed, so they start self-healing too. A device with neither is left
+    // alone — we never create a subscription unprompted.
+    if (!hasPushIntent()) {
+      if (!existing) return false;
+      setPushIntent(true);
+    }
+
+    // Use the existing subscription if the browser still has one; otherwise the
+    // old one was rotated/expired away — make a fresh one.
+    const subscription =
+      existing ??
+      (await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      }));
+
+    const json = subscription.toJSON() as {
+      endpoint?: string;
+      keys?: { p256dh?: string; auth?: string };
+    };
+    if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return false;
+
+    const { data: session } = await supabase.auth.getSession();
+    const authUid = session.session?.user?.id;
+    if (!authUid) return false;
+
+    const { error } = await supabase.from('push_subscriptions').upsert(
+      {
+        user_id: currentUserId,
+        auth_uid: authUid,
+        endpoint: json.endpoint,
+        p256dh: json.keys.p256dh,
+        auth: json.keys.auth,
+        user_agent: navigator.userAgent.slice(0, 300),
+        failure_count: 0,
+      },
+      { onConflict: 'endpoint' },
+    );
+    if (error) {
+      console.error('[push] ensurePushSubscription upsert failed:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    // Never let a background re-subscribe break app boot.
+    console.error('[push] ensurePushSubscription error:', err);
+    return false;
+  }
 }
 
 /** Unregister this device. Leaves permission alone — the OS owns that. */
 export async function disablePush(): Promise<void> {
+  // Clear intent FIRST so a concurrent boot re-subscribe can't race it back on.
+  setPushIntent(false);
   if (!('serviceWorker' in navigator)) return;
   const registration = await navigator.serviceWorker.getRegistration('/');
   const subscription = await registration?.pushManager.getSubscription();
