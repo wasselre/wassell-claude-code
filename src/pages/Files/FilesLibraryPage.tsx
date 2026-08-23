@@ -65,7 +65,18 @@ import UploadDropzone from './components/UploadDropzone';
 
 const SEARCH_DEBOUNCE_MS = 400;
 
-export default function FilesLibraryPage() {
+interface FilesLibraryPageProps {
+  /** Where the page writes its URL state. `/files` when it IS the Files page;
+   *  `/m/library` when embedded inside the Marketing workspace, so opening the
+   *  library there never ejects the user out of the `/m` shell. */
+  basePath?: string;
+  /** When the page lands with NO query, open this system view instead of the
+   *  bare all-files state. The Marketing mount passes `marketing` so its library
+   *  starts scoped to marketing intake. */
+  defaultView?: string | null;
+}
+
+export default function FilesLibraryPage({ basePath = '/files', defaultView = null }: FilesLibraryPageProps = {}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -91,10 +102,24 @@ export default function FilesLibraryPage() {
       // Any change to WHAT is being asked resets to page 1. Landing on page 4
       // of a two-page result is the classic offset-pagination papercut.
       if (next.page === undefined) merged.page = 1;
-      navigate({ pathname: '/files', search: encodeLibraryUrl(merged) }, { replace });
+      navigate({ pathname: basePath, search: encodeLibraryUrl(merged) }, { replace });
     },
     [navigate, urlState],
   );
+
+  // When mounted with a default view (the Marketing embed) and NO query at all,
+  // open that system view once. After this the URL carries the view + its
+  // filters, so the guard (empty search) is false and it never loops.
+  useEffect(() => {
+    if (!defaultView) return;
+    if (location.search && location.search !== '?') return;
+    const v = systemView(defaultView);
+    if (!v) return;
+    navigate(
+      { pathname: basePath, search: encodeLibraryUrl({ ...v.build(currentUserId), page: 1, view: defaultView }) },
+      { replace: true },
+    );
+  }, [defaultView, location.search, basePath, navigate, currentUserId]);
 
   // Debounce ONLY the free text.
   useEffect(() => {
@@ -227,21 +252,21 @@ export default function FilesLibraryPage() {
 
   const openSystemView = useCallback((key: string) => {
     if (!key) {
-      navigate({ pathname: '/files', search: '' });
+      navigate({ pathname: basePath, search: '' });
       return;
     }
     const v = systemView(key);
     if (!v) return;
     const state = v.build(currentUserId);
     navigate({
-      pathname: '/files',
+      pathname: basePath,
       search: encodeLibraryUrl({ ...state, page: 1, view: key }),
     });
   }, [navigate, currentUserId]);
 
   const openSavedView = useCallback((row: FileViewRow) => {
     navigate({
-      pathname: '/files',
+      pathname: basePath,
       search: encodeLibraryUrl({ ...viewStateFromRow(row), page: 1, view: `saved:${row.id}` }),
     });
   }, [navigate]);
@@ -254,7 +279,7 @@ export default function FilesLibraryPage() {
       await loadViews();
       addToast(t('files.library.view_saved', { name: row.name }), 'success');
       navigate({
-        pathname: '/files',
+        pathname: basePath,
         search: encodeLibraryUrl({ ...urlState, view: `saved:${row.id}` }),
       }, { replace: true });
     } catch {
@@ -272,7 +297,7 @@ export default function FilesLibraryPage() {
       await deleteFileView(target.id);
       setDeleteTarget(null);
       await loadViews();
-      if (view === `saved:${target.id}`) navigate({ pathname: '/files', search: '' });
+      if (view === `saved:${target.id}`) navigate({ pathname: basePath, search: '' });
     } catch {
       // deleteFileView toasted; keep the confirm open so the user sees why.
     }
@@ -541,7 +566,7 @@ export default function FilesLibraryPage() {
                     <Button
                       variant="secondary"
                       className="mt-4 !px-4 !py-2 text-xs"
-                      onClick={() => { setSearchInput(''); navigate({ pathname: '/files', search: '' }); }}
+                      onClick={() => { setSearchInput(''); navigate({ pathname: basePath, search: '' }); }}
                     >
                       {t('files.library.clear_all')}
                     </Button>

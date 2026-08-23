@@ -26,7 +26,6 @@ import type {
   LibraryLayout,
 } from '@/types';
 import type { LibraryViewState } from './views';
-import { systemView } from './views';
 import { readFileFlag } from './flags';
 
 // ─── Feature flag ─────────────────────────────────────────────────────────
@@ -74,23 +73,20 @@ export function filesLibraryEnabled(search?: string): boolean {
 }
 
 /**
- * The `/files` URL that IS the retired Marketing Library.
+ * Where the Marketing Asset Library lives.
  *
- * The marketing grid at `/m/library` was retired (2026-08-20) in favour of the
- * unified Library; that route now redirects here, and every in-app entry point
- * that used to open it (the marketing rail, the mobile tab, "back to library"
- * buttons) links here DIRECTLY so there is no double-hop through the redirect.
- *
- * Computed from the `marketing` system view — the same source the redirect in
- * `App.tsx` uses — so the two can never drift into pointing at different slices.
- * Resolves to `/files?view=marketing&origin=marketing_intake`.
+ * The old grid at `/m/library` was retired (2026-08-20) in favour of the
+ * unified Library. Rather than send the user OUT to `/files` (which ejected
+ * them from the `/m` marketing shell into another section), `/m/library` now
+ * EMBEDS the unified Library inside Marketing — same page, mounted with
+ * `basePath="/m/library"` + `defaultView="marketing"` (see `MarketingAssetLibrary`
+ * in App.tsx). So this is just that in-shell path: the marketing rail, the
+ * mobile tab, and every "back to library" button use it and stay in Marketing.
+ * The embedded page opens on the marketing view by itself, so a bare path is
+ * all that is needed.
  */
 export function marketingLibraryHref(): string {
-  const v = systemView('marketing');
-  const search = v
-    ? encodeLibraryUrl({ ...v.build(null), page: 1, view: 'marketing' })
-    : '?view=marketing';
-  return `/files${search}`;
+  return '/m/library';
 }
 
 // ─── URL codec ────────────────────────────────────────────────────────────
