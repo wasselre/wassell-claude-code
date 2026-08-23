@@ -27,7 +27,9 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { bulkLinkToRecord, bulkUpdateMetadata, type BulkPatch } from '@/lib/files/bulkEdit';
-import { bulkAddSubjects, errorText, listFileVocabularies, updateFileMetadata } from '@/lib/files/library';
+import {
+  bulkAddSubjects, createDocumentType, errorText, listFileVocabularies, updateFileMetadata,
+} from '@/lib/files/library';
 import { linkableModels, recordTitle } from '@/lib/documents/links';
 import type { FileDocumentTypeRow, FileRow, FileVocabDimension, FileVocabRow } from '@/types';
 import ClassificationSelect from './ClassificationSelect';
@@ -187,6 +189,8 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
               disabled={false}
               isAr={isAr}
               emptyLabel={t('files.post_upload.keep_type')}
+              onCreate={(label) => createDocumentType(label)}
+              createPlaceholder={t('files.library.meta.new_classification')}
             />
           </div>
           <div>

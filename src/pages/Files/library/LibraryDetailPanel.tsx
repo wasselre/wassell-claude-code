@@ -30,7 +30,7 @@ import Button from '@/components/ui/Button';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import { effectiveFileRoles, roleSatisfies, signDownloadUrl } from '@/lib/files/client';
 import {
-  errorText, fetchFileSubjects, listFileVocabularies, saveFileSubjects,
+  createDocumentType, errorText, fetchFileSubjects, listFileVocabularies, saveFileSubjects,
   updateFileMetadata, type FileMetadataPatch,
 } from '@/lib/files/library';
 import type {
@@ -385,6 +385,8 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
             disabled={!canEdit}
             isAr={isAr}
             emptyLabel={t('files.library.meta.unset')}
+            onCreate={canEdit ? (label) => createDocumentType(label) : undefined}
+            createPlaceholder={t('files.library.meta.new_classification')}
           />
         </div>
 

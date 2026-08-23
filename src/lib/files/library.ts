@@ -285,6 +285,17 @@ export async function updateFileMetadata(
   return saved;
 }
 
+/** Create a classification (file_document_types) inline from the picker and
+ *  return it (or the existing row if the slug already exists). SECURITY DEFINER
+ *  RPC — writes to the vocab table are otherwise closed. The value is a stable
+ *  slug the server derives; the caller selects the returned row immediately. */
+export async function createDocumentType(label: string): Promise<FileDocumentTypeRow> {
+  const db = requireSupabase('create classification');
+  const { data, error } = await db.rpc('file_document_type_create', { p_label: label });
+  if (error) throw surfaceLibraryError('create classification', error);
+  return data as FileDocumentTypeRow;
+}
+
 /** The data-driven picklists for the Metadata-Intelligence scalar axes
  *  (asset_nature / acquisition_source / usage_rights / production_state). One
  *  round-trip returns all four; callers group by `dimension`. Only ACTIVE rows
