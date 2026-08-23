@@ -136,22 +136,12 @@ interface LandmarkRow {
 
 /** THE DISTRICT NAME IS THE ONLY TEXT THIS MAP OWES YOU.
  *
- *  Picker map style = the brand style MINUS Google's own district-name labels —
- *  we render every district's name ourselves at its centroid, so the basemap
- *  copy showed each name TWICE (live report 2026-07-13). Google tags Saudi
- *  district names under TWO feature classes: most are administrative.neighborhood,
- *  but several major ones (الوادي، غرناطة، النزهة…) are administrative.locality —
- *  so BOTH are hidden. The base style also COLOURS every poi label but never
- *  hides them, which buries the district mesh under a wall of shop/clinic names at
- *  district zoom (live report 2026-07-31), so POI + transit labels go silent too.
- *  Roads keep their labels — a road name orients you without competing with the
- *  district name. Only the picker hides these; other maps draw no labels of their
- *  own so they keep Google's.
- *
- *  The label suppression is the SHARED `GEO_LABEL_SUPPRESSION` (locationUtils) —
- *  the same rules every geo map uses, hidden at labels.text + labels.icon so the
- *  more-specific `labels.text.fill` colour rules in WASSEL_MAP_STYLE can't keep them
- *  visible under Google's updated styler resolution (see that export's comment). */
+ *  Picker map style = the brand style with ALL of Google's basemap text turned
+ *  off — we render every district's name ourselves at its centroid, so the
+ *  basemap copy would show each name TWICE (live report 2026-07-13). The shared
+ *  `GEO_LABEL_SUPPRESSION` (locationUtils) is now a GLOBAL label-off used by
+ *  every geo map (no Google text anywhere, per the 2026-08-23 requirement), so
+ *  this map and the rest all read the same: our names only. */
 const PICKER_MAP_STYLE: google.maps.MapTypeStyle[] = [
   ...WASSEL_MAP_STYLE,
   ...GEO_LABEL_SUPPRESSION,

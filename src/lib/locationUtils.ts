@@ -6,53 +6,62 @@ export const DEFAULT_MAP_CENTER = { lat: 24.7136, lng: 46.6753 } as const;
 export const DEFAULT_MAP_ZOOM = 11;
 
 /**
- * The official Wassel-branded Google Maps theme — soft cream geometry, chocolate
- * labels, copper highways, sand arterials. This is the canonical map look used
- * across every model's map. It becomes the DEFAULT for any model whose
- * `maps_config.map_style_json` is null/empty (see `resolveMapStyles`), so the
- * All Projects map and every other model's map render identically out of the box.
+ * The official Wassel-branded Google Maps theme — a warm, unmistakably-Wassel
+ * canvas: soft cream land, sand parks (NO Google green), gold-sand water (NO
+ * Google blue), copper highways, sand arterials, terracotta/chocolate borders.
+ * This is the canonical map look used across every model's map. It becomes the
+ * DEFAULT for any model whose `maps_config.map_style_json` is null/empty (see
+ * `resolveMapStyles`), so the All Projects map and every other model's map
+ * render identically out of the box.
+ *
+ * GEOMETRY ONLY — deliberately no label rules. The app draws its OWN place names
+ * (the useGeoBoundaryLayer overlay + the district picker), and Google's basemap
+ * text is turned OFF entirely by GEO_LABEL_SUPPRESSION (appended by every geo
+ * surface). Keeping this style label-free means there is no colour rule left for
+ * a future Google styler-resolution change to un-hide (the 2026-08-16 incident:
+ * a specific `labels.text.fill` colour rule started winning over a broad
+ * `labels` off and Google's names reappeared, doubling every name we draw).
+ * With no label colour here and a global label-off there, Google text cannot
+ * come back.
  *
  * A model can still override per-map by pasting its own style JSON in the Map
- * Builder, or paste `[]` to fall back to Google's stock theme.
+ * Builder, or paste `[]` to fall back to Google's stock theme. Label suppression
+ * is appended to custom palettes too (see resolveGeoMapStyles).
  *
- * NOTE: the `all_projects` model also carries an identical copy in its stored
- * `maps_config.map_style_json` (set before this default existed). That copy is
- * harmless — it resolves to the same styles — and is left in place. This
- * constant is the single source of truth going forward.
+ * NOTE: the `all_projects` model USED to carry an older copy in its stored
+ * `maps_config.map_style_json`. It was cleared to null (migration
+ * 2026-08-23_wassel_map_palette) so this constant is the single source of truth.
  */
 export const WASSEL_MAP_STYLE: google.maps.MapTypeStyle[] = [
-  { featureType: 'all', elementType: 'geometry', stylers: [{ color: '#F5EDE0' }] },
-  { featureType: 'all', elementType: 'labels.text.fill', stylers: [{ color: '#4A2C2A' }] },
-  { featureType: 'all', elementType: 'labels.text.stroke', stylers: [{ color: '#F5EDE0' }, { weight: 3 }] },
-  { featureType: 'all', elementType: 'labels.icon', stylers: [{ saturation: -40 }, { lightness: 10 }] },
-  { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#8E4E3A' }, { weight: 1.2 }] },
-  { featureType: 'administrative.province', elementType: 'geometry.stroke', stylers: [{ color: '#C09B5F' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#4A2C2A' }] },
-  { featureType: 'administrative.neighborhood', elementType: 'labels.text.fill', stylers: [{ color: '#8E4E3A' }] },
-  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#F5EDE0' }] },
-  { featureType: 'landscape.man_made', elementType: 'geometry', stylers: [{ color: '#F0E3D0' }] },
-  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#F5EDE0' }] },
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#E8D5B7' }] },
-  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#8E4E3A' }] },
-  { featureType: 'poi.business', elementType: 'labels.icon', stylers: [{ hue: '#B8734F' }, { saturation: -20 }] },
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#D4B896' }] },
-  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#8E4E3A' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#4A2C2A' }] },
-  { featureType: 'road', elementType: 'labels.text.stroke', stylers: [{ color: '#F5EDE0' }, { weight: 2 }] },
+  // Base canvas — warm sand-cream, a touch deeper than the page background so the
+  // map reads as its own surface.
+  { featureType: 'all', elementType: 'geometry', stylers: [{ color: '#F0E2C9' }] },
+  // Land
+  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#F0E2C9' }] },
+  { featureType: 'landscape.man_made', elementType: 'geometry', stylers: [{ color: '#E9D8BA' }] },
+  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#F0E2C9' }] },
+  // POI / parks — warm sand, NOT Google green
+  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#E4D1AC' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#D6C097' }] },
+  // Water — gold-sand, NOT blue (the brand has no blue)
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#CBA877' }] },
+  // Administrative borders — gold hairlines, terracotta provinces, chocolate country
+  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#C09B5F' }, { weight: 0.7 }] },
+  { featureType: 'administrative.province', elementType: 'geometry.stroke', stylers: [{ color: '#8E4E3A' }, { weight: 1 }] },
+  { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#4A2C2A' }, { weight: 1.4 }] },
+  // Roads — the branded backbone. Copper highways with terracotta casing carry
+  // the identity; arterials in sand/gold; local streets warm-white.
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#FBF4E6' }] },
+  { featureType: 'road.local', elementType: 'geometry', stylers: [{ color: '#FBF4E6' }] },
+  { featureType: 'road.arterial', elementType: 'geometry.fill', stylers: [{ color: '#E1C99F' }] },
+  { featureType: 'road.arterial', elementType: 'geometry.stroke', stylers: [{ color: '#C09B5F' }] },
   { featureType: 'road.highway', elementType: 'geometry.fill', stylers: [{ color: '#B8734F' }] },
   { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#8E4E3A' }] },
-  { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#FFFFFF' }] },
-  { featureType: 'road.highway', elementType: 'labels.text.stroke', stylers: [{ color: '#4A2C2A' }, { weight: 2 }] },
-  { featureType: 'road.arterial', elementType: 'geometry.fill', stylers: [{ color: '#D4B896' }] },
-  { featureType: 'road.arterial', elementType: 'geometry.stroke', stylers: [{ color: '#C09B5F' }] },
-  { featureType: 'road.local', elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
-  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#D4B896' }] },
+  { featureType: 'road.highway.controlled_access', elementType: 'geometry.fill', stylers: [{ color: '#A9633F' }] },
+  { featureType: 'road.highway.controlled_access', elementType: 'geometry.stroke', stylers: [{ color: '#4A2C2A' }] },
+  // Transit — sand beds, terracotta lines
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#D6C097' }] },
   { featureType: 'transit.line', elementType: 'geometry', stylers: [{ color: '#8E4E3A' }] },
-  { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#8E4E3A' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#C09B5F' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#4A2C2A' }] },
-  { featureType: 'water', elementType: 'labels.text.stroke', stylers: [{ color: '#F5EDE0' }, { weight: 2 }] },
 ];
 
 // localStorage key for cached server-resolved coordinates. Keyed by raw URL
@@ -277,44 +286,35 @@ export function parseMapStyleJson(raw: string | null | undefined): google.maps.M
  * `options.styles`.
  */
 /**
- * Silence the basemap's own place text, so the app's decluttered names are the only
- * labels on the map.
+ * Silence EVERY basemap label so the app's own decluttered names are the only text
+ * on the map. The user's requirement is explicit: no text from Google at all — one
+ * name per place (ours), never Google's alongside it.
  *
- * Two reasons, both learned the hard way over Dubai:
+ * This is a GLOBAL kill (no `featureType`, so it applies to every feature — roads,
+ * districts, POIs, water, provinces, the lot) at all three label branches. Reasons
+ * this beats the old per-featureType list:
  *
- *  · DOUBLING — Google labels districts under BOTH `administrative.neighborhood` and
- *    `administrative.locality`, so a map drawing its own district names showed several
- *    of them twice (live reports 2026-07-13 and 2026-07-19).
- *  · NOISE — the base style colours `poi` labels but never hides them. At district zoom
- *    Google draws a label for every shop, clinic and business in view; over Riyadh that
- *    was survivable, over Dubai it buried the map completely.
+ *  · COMPLETE — the old list enumerated administrative.neighborhood/locality + POIs +
+ *    transit and DELIBERATELY kept road labels, so Google's road names, province
+ *    names and water names still showed and collided with our own district names
+ *    (the "two names" report, 2026-08-23). A global rule leaves no gap to enumerate.
+ *  · UNBEATABLE — WASSEL_MAP_STYLE now carries NO label colour rules, so there is no
+ *    more-specific `labels.text.fill` for a Google styler-resolution change to let win
+ *    over this off (the 2026-08-16 doubling incident). Base has no label colour; this
+ *    turns every label off; nothing can un-hide them.
  *
- * Roads keep their labels deliberately: a road name orients you, it does not compete
- * with the place name.
+ * TRADE-OFF: Google's road NAMES go too (they were the one thing the old list kept).
+ * The app's overlay draws district/city names but not road names, so the map shows no
+ * street names — a deliberate choice per "no Google text". If road names are wanted
+ * back, add them to the useGeoBoundaryLayer overlay, not here.
  *
  * Append to a style array — it must come AFTER the base style to win.
- *
- * WHY three elementTypes per feature (2026-08-16): a single broad
- * `elementType:'labels', visibility:'off'` used to hide these. The unpinned Google
- * Maps JS weekly channel (now v3.65 — the same channel that removed DrawingManager)
- * changed how overlapping stylers resolve: WASSEL_MAP_STYLE COLOURS these labels via
- * the more-specific `labels.text.fill`, and that specific colour rule started winning
- * over the broad `labels` off — so Google's district + POI labels reappeared and
- * doubled the names every geo map draws itself (live report 2026-08-16, finder + picker).
- * Suppressing at `labels.text` and `labels.icon` — the same branch as the colour rule —
- * hides them regardless of Google's resolution order; the broad `labels` off stays as
- * belt-and-suspenders.
  */
-const hideMapLabels = (featureType: string): google.maps.MapTypeStyle[] => [
-  { featureType, elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType, elementType: 'labels.text', stylers: [{ visibility: 'off' }] },
-  { featureType, elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-];
 export const GEO_LABEL_SUPPRESSION: google.maps.MapTypeStyle[] = [
-  'administrative.neighborhood', 'administrative.locality',
-  'poi', 'poi.business', 'poi.park', 'poi.attraction', 'poi.place_of_worship',
-  'poi.medical', 'poi.school', 'poi.sports_complex', 'poi.government', 'transit',
-].flatMap(hideMapLabels);
+  { elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { elementType: 'labels.text', stylers: [{ visibility: 'off' }] },
+  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+];
 
 /** The standard map style for any surface that draws the geography layer. */
 export const GEO_MAP_STYLE: google.maps.MapTypeStyle[] = [...WASSEL_MAP_STYLE, ...GEO_LABEL_SUPPRESSION];
