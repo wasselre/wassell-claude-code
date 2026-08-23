@@ -40,6 +40,7 @@ import RecordFilesPanel from './components/RecordFilesPanel';
 import { recordFilesEnabled } from '@/lib/files/flags';
 import ListingMessagePanel from './components/ListingMessagePanel';
 import ContactAdvertiserPanel from './components/ContactAdvertiserPanel';
+import ClientAcquisitionPanel from './components/ClientAcquisitionPanel';
 import RelatedRecordsPanel from './components/RelatedRecordsPanel';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
 import ClientDetailsTabPane from './components/ClientDetailsTabPane';
@@ -1611,6 +1612,13 @@ export default function RecordFormPage() {
         * offers, …). Renders nothing when the model has no templates. */}
       {model && existingRecord?.id && (
         <RecordDocumentsPanel modelId={model.id} recordId={existingRecord.id} />
+      )}
+
+      {/* Marketing acquisition/source timeline — where an ad-sourced client came
+        * from, resolved live through the Ad. Renders nothing on every other model
+        * and when the client has no recorded acquisition. */}
+      {model && existingRecord?.id && (
+        <ClientAcquisitionPanel modelId={model.id} recordId={existingRecord.id} />
       )}
 
       {/* Generate a reusable WhatsApp message (AI text + text-removed photos)

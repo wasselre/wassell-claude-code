@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { ListChecks, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { normalizePhoneDigits } from '@/lib/haberchat/normalize';
 import type { AppRecord } from '@/types';
+import ClientAcquisitionPanel from '@/pages/Records/components/ClientAcquisitionPanel';
 import { buildClientTimeline, type ClientView, type ClientViewCtx, isOverdue } from '../../lib/clientView';
 import { formatRelative, formatBudget, lifecycleHealthDisplay, lifecycleHealthExplanation, nextActionTypeLabel } from '../../lib/lifecycleDisplay';
 import { Dash } from '../clientChips';
@@ -64,6 +65,7 @@ export default function OverviewTab({ view, ctx, isAr, returnTo, onOpenTimeline,
   const health = lifecycleHealthDisplay(view.lifecycleHealth);
   const recent = buildClientTimeline(ctx, view.id).slice(0, 5);
   const chat = latestChat(ctx, view.id, view.phone);
+  const clientsModelId = ctx.models.find((m) => m.name === 'clients')?.id ?? null;
   const Chevron = isAr ? ChevronLeft : ChevronRight;
 
   return (
@@ -87,6 +89,14 @@ export default function OverviewTab({ view, ctx, isAr, returnTo, onOpenTimeline,
         </div>
         <p className="text-sm leading-relaxed text-charcoal/70">{lifecycleHealthExplanation(view.lifecycleHealth, isAr)}</p>
       </Card>
+
+      {/* Marketing acquisition — where this client came from, resolved live
+        * through the Ad. Self-hides when the client has no recorded acquisition. */}
+      {clientsModelId && (
+        <div className="lg:col-span-2">
+          <ClientAcquisitionPanel modelId={clientsModelId} recordId={view.id} variant="cockpit" />
+        </div>
+      )}
 
       {/* Next action */}
       <Card

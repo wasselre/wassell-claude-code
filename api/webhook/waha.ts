@@ -241,6 +241,41 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
 
   const { isNew } = await upsertChatMessage(row);
 
+  // Ad-sourced lead → marketing acquisition capture (2026-08-23).
+  //
+  // When this opening inbound resolved to one of our paid ads, find-or-create
+  // the client by phone, tag its source Promotion (ترويج), and append a
+  // first/last-touch client_attributions row linking it to the ad — the Ad stays
+  // the hub for everything else (content / project / ad set / campaign /
+  // platform), so nothing marketing is copied onto the client.
+  //
+  // Runs BEFORE bumpConversationRecord ON PURPOSE: the client must exist and be
+  // matchable by the time bumpConversationRecord resolves the chat's client_link
+  // and calls reconcile_inbound_whatsapp — that RPC then creates the "your turn"
+  // follow-up task, so the normal sales process kicks off automatically.
+  //
+  // Fire-safe: any failure is logged and never blocks ingest (the message is
+  // already stored). Idempotent server-side (find-or-create + one row per ad),
+  // and gated on isNew so a retried webhook doesn't re-run it needlessly.
+  const resolvedAd =
+    adMeta && typeof adMeta.resolved === 'object' && adMeta.resolved !== null
+      ? (adMeta.resolved as Record<string, unknown>)
+      : null;
+  if (flow === 'in' && isNew && counterpartyPhone && resolvedAd) {
+    try {
+      const pushName = p._data?.Info?.PushName ?? null;
+      const { error } = await getServiceSupabase().rpc('mos_capture_ad_acquisition', {
+        p_phone: counterpartyPhone,
+        p_resolved: resolvedAd,
+        p_occurred_at: date,
+        p_suggested_name: pushName,
+      });
+      if (error) console.error('[waha-webhook] mos_capture_ad_acquisition failed:', error.message);
+    } catch (err) {
+      console.error('[waha-webhook] mos_capture_ad_acquisition threw:', err instanceof Error ? err.message : String(err));
+    }
+  }
+
   await bumpConversationRecord({
     chatWid,
     deviceId: session,
