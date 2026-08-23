@@ -11,7 +11,7 @@
  * server is the authority: asset_delete answers 409 { error: 'in_use' } and
  * this screen renders that answer, offering أرشفة as the working alternative.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
@@ -29,18 +29,11 @@ import { signDownloadUrl } from '@/lib/files/client';
 import { marketingLibraryHref } from '@/lib/files/libraryUrl';
 import './styles/pages-remaining.css';
 
-/**
- * iOS Safari/WebKit renders a PDF inside an `<iframe>` as a non-scrollable,
- * first-page-only frame — the file looks cut off and you can't reach the rest
- * (long-standing WebKit limitation, no CSS fixes it). On iOS we skip the iframe
- * and hand the file to the native PDF viewer (a new tab), which scrolls the
- * whole document. iPadOS 13+ masquerades as desktop Safari, so also match a
- * touch-capable "Mac".
- */
-const IS_IOS =
-  typeof navigator !== 'undefined' &&
-  (/iphone|ipad|ipod/i.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+// In-app PDF viewer (pdf.js), lazy-loaded. Renders to canvas so it scrolls the
+// whole document on every device — including iOS, where the browser's own PDF
+// <iframe> shows only the first page (the reason this screen used to hand PDFs
+// to the native viewer in a new tab).
+const PdfViewer = lazy(() => import('@/components/ui/PdfViewer'));
 
 /** mm:ss with the screen's digit shape — Arabic-Indic in Arabic («٠٠:٢٢»). */
 function mmss(seconds: number, isAr: boolean): string {
@@ -369,77 +362,29 @@ export default function AssetDetailPage() {
           <div className="grid rail-end">
             {/* ── main column ─────────────────────────────────────────── */}
             <div style={{ display: 'grid', gap: 16 }}>
-              {isPdf && viewUrl && IS_IOS ? (
-                // iOS can't scroll a PDF <iframe> (first page only). Hand the
-                // whole file to the native viewer — a big tappable card so the
-                // user can actually read past page one.
-                <a
-                  href={viewUrl}
-                  target="_blank"
-                  rel="noreferrer"
+              {isPdf && viewUrl ? (
+                // A PDF renders inline in our own full-width viewer (scrolls the
+                // whole document on every device, no browser plugin), not the
+                // dark thumbnail box — the placeholder icon was never the file.
+                <div
                   style={{
-                    display: 'grid',
-                    justifyItems: 'center',
-                    alignContent: 'center',
-                    gap: 12,
                     width: '100%',
-                    minHeight: 320,
-                    padding: 28,
-                    textAlign: 'center',
+                    height: '78vh',
+                    minHeight: 480,
                     border: '1px solid var(--line)',
                     borderRadius: 11,
-                    background: '#fff',
-                    color: 'var(--ink)',
-                    textDecoration: 'none',
+                    overflow: 'hidden',
                   }}
                 >
-                  <span
-                    style={{
-                      display: 'grid',
-                      placeItems: 'center',
-                      width: 56,
-                      height: 56,
-                      borderRadius: 14,
-                      background: 'var(--copper, #B8734F)',
-                    }}
+                  <Suspense
+                    fallback={
+                      <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: 'var(--muted)' }}>
+                        {isAr ? 'جارٍ تحميل عارض PDF…' : 'Loading PDF viewer…'}
+                      </div>
+                    }
                   >
-                    <IconLibrary style={{ width: 24, height: 24, stroke: '#fff' }} />
-                  </span>
-                  <span style={{ fontWeight: 700, fontSize: 16 }}>
-                    {isAr ? 'افتح الملف كاملاً' : 'Open the full file'}
-                  </span>
-                  <span style={{ fontSize: 13, opacity: 0.7, maxWidth: 280 }}>
-                    {isAr
-                      ? 'يفتح ملف PDF كامل في عارض النظام حيث يمكنك التمرير والتنزيل.'
-                      : 'Opens the full PDF in the system viewer, where you can scroll and download.'}
-                  </span>
-                </a>
-              ) : isPdf && viewUrl ? (
-                // A PDF renders inline in its own full-width viewer, not the
-                // dark thumbnail box — the placeholder icon was never the file.
-                <div style={{ display: 'grid', gap: 8 }}>
-                  <iframe
-                    src={`${viewUrl}#view=FitH`}
-                    title={asset.title}
-                    style={{
-                      width: '100%',
-                      height: '78vh',
-                      minHeight: 480,
-                      border: '1px solid var(--line)',
-                      borderRadius: 11,
-                      background: '#fff',
-                      display: 'block',
-                    }}
-                  />
-                  <a
-                    className="btn btn-d btn-sm"
-                    href={viewUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ justifySelf: 'start' }}
-                  >
-                    {isAr ? 'فتح في تبويب جديد' : 'Open in a new tab'}
-                  </a>
+                    <PdfViewer url={viewUrl} isAr={isAr} />
+                  </Suspense>
                 </div>
               ) : (
                 <div className="pr-preview">

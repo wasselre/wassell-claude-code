@@ -67,7 +67,7 @@ export default function PdfViewer({ url, isAr }: { url: string; isAr: boolean })
   }, []);
 
   return (
-    <div className="w-[92vw] h-[82vh] max-w-5xl bg-charcoal/95 rounded-lg overflow-hidden flex flex-col">
+    <div className="w-full h-full bg-charcoal/95 overflow-hidden flex flex-col">
       {/* Toolbar — page indicator + zoom ONLY (no download/print/save). */}
       <div className="flex items-center justify-between gap-3 px-4 py-2 bg-charcoal text-white/90 border-b border-white/10 shrink-0">
         <span className="text-xs font-medium tabular-nums">

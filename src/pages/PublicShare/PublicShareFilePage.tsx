@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
   Download,
-  ExternalLink,
   Eye,
   Loader2,
   Lock,
@@ -15,6 +14,27 @@ import { fetchSharedFile, fetchSharedFileDownload } from '@/lib/files/client';
 import type { SharedFileResponse } from '@/types';
 import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindIcon, kindLabel } from '@/lib/files/format';
+
+// In-app PDF viewer (pdf.js), lazy so its worker only loads when a shared PDF is
+// opened. Renders to canvas — scrolls the whole document on every device
+// (mobile included), unlike the browser's <iframe> plugin.
+const PdfViewer = lazy(() => import('@/components/ui/PdfViewer'));
+
+function SharePdf({ url, isAr }: { url: string; isAr: boolean }) {
+  return (
+    <div className="p-3 lg:p-4">
+      <div className="w-full h-[75vh] rounded-2xl overflow-hidden border border-sand/40">
+        <Suspense fallback={(
+          <div className="flex items-center justify-center gap-2 text-charcoal/50 text-sm h-full">
+            <Loader2 size={18} className="animate-spin" /> {isAr ? 'جارٍ تحميل عارض PDF…' : 'Loading PDF viewer…'}
+          </div>
+        )}>
+          <PdfViewer url={url} isAr={isAr} />
+        </Suspense>
+      </div>
+    </div>
+  );
+}
 
 /**
  * /share/:token — the page external customers land on.
@@ -329,26 +349,9 @@ function ReadyState({ data, onDownload, isAr }: ReadyProps) {
   );
 }
 
-/** Phone-or-narrow detector — drives the PDF preview fallback. Mobile
- *  browsers don't render multi-page PDFs in <iframe> (they show only the
- *  first page, no scroll/zoom). Below 768px we swap to an "Open PDF"
- *  card that hands off to the native viewer. */
-function useIsNarrow() {
-  const [narrow, setNarrow] = useState(() =>
-    typeof window !== 'undefined' ? window.innerWidth < 768 : false,
-  );
-  useEffect(() => {
-    const onResize = () => setNarrow(window.innerWidth < 768);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-  return narrow;
-}
-
 function SharePreviewBody({ data }: { data: SharedFileResponse }) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
-  const isNarrow = useIsNarrow();
   if (!data.url) return null;
   const mime = (data.mime_type ?? '').toLowerCase();
   const kind = data.kind ?? 'other';
@@ -365,39 +368,7 @@ function SharePreviewBody({ data }: { data: SharedFileResponse }) {
     );
   }
   if (kind === 'pdf' || mime === 'application/pdf') {
-    if (isNarrow) {
-      const PdfIcon = kindIcon.pdf;
-      return (
-        <div className="flex flex-col items-center justify-center px-6 py-12 text-center gap-5">
-          <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-copper/15 to-terracotta/10 ring-1 ring-copper/20 flex items-center justify-center">
-            <PdfIcon size={48} className="text-copper" />
-          </div>
-          <p className="text-charcoal/70 text-sm max-w-sm leading-relaxed">
-            {isAr
-              ? 'افتح ملف PDF في عارض الجهاز للحصول على كامل الصفحات والتكبير.'
-              : 'Open the PDF in your device viewer for full pages and zoom.'}
-          </p>
-          <a
-            href={data.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-copper text-white hover:bg-terracotta font-bold text-sm transition-colors shadow-md shadow-copper/20"
-          >
-            <ExternalLink size={16} />
-            {isAr ? 'فتح ملف PDF' : 'Open PDF'}
-          </a>
-        </div>
-      );
-    }
-    return (
-      <div className="p-3 lg:p-4">
-        <iframe
-          src={data.url}
-          title={data.original_name ?? 'PDF'}
-          className="w-full h-[75vh] rounded-2xl border border-sand/40 bg-white"
-        />
-      </div>
-    );
+    return <SharePdf url={data.url} isAr={isAr} />;
   }
   if (kind === 'video' || mime.startsWith('video/')) {
     return (
@@ -427,39 +398,7 @@ function SharePreviewBody({ data }: { data: SharedFileResponse }) {
   // artifact exists; cold-cache viewers fall through to the card below while
   // the warm-up conversion runs for the next visit.)
   if (data.preview_url) {
-    if (isNarrow) {
-      const DocIcon = kindIcon.document;
-      return (
-        <div className="flex flex-col items-center justify-center px-6 py-12 text-center gap-5">
-          <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-copper/15 to-terracotta/10 ring-1 ring-copper/20 flex items-center justify-center">
-            <DocIcon size={48} className="text-copper" />
-          </div>
-          <p className="text-charcoal/70 text-sm max-w-sm leading-relaxed">
-            {isAr
-              ? 'افتح المعاينة في عارض الجهاز للحصول على كامل الصفحات والتكبير.'
-              : 'Open the preview in your device viewer for full pages and zoom.'}
-          </p>
-          <a
-            href={data.preview_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-copper text-white hover:bg-terracotta font-bold text-sm transition-colors shadow-md shadow-copper/20"
-          >
-            <ExternalLink size={16} />
-            {t('files.actions.preview')}
-          </a>
-        </div>
-      );
-    }
-    return (
-      <div className="p-3 lg:p-4">
-        <iframe
-          src={data.preview_url}
-          title={data.original_name ?? 'Preview'}
-          className="w-full h-[75vh] rounded-2xl border border-sand/40 bg-white"
-        />
-      </div>
-    );
+    return <SharePdf url={data.preview_url} isAr={isAr} />;
   }
   // document / archive / other → big card
   const Icon = kindIcon[kind];

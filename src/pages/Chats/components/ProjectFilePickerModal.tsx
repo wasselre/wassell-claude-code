@@ -343,13 +343,15 @@ function FilePreviewLightbox({
         ) : item.group === 'video' ? (
           <video src={url} controls autoPlay playsInline className="max-w-[92vw] max-h-[80vh] rounded-lg bg-black" />
         ) : isPdf ? (
-          <Suspense fallback={(
-            <div className="flex items-center gap-2 text-white/80 text-sm py-10">
-              <Loader2 size={18} className="animate-spin" /> {L('جارٍ تحميل عارض PDF…', 'Loading PDF viewer…')}
-            </div>
-          )}>
-            <PdfViewer url={url} isAr={isAr} />
-          </Suspense>
+          <div className="w-[92vw] max-w-5xl h-[82vh] rounded-lg overflow-hidden">
+            <Suspense fallback={(
+              <div className="flex items-center justify-center gap-2 text-white/80 text-sm h-full">
+                <Loader2 size={18} className="animate-spin" /> {L('جارٍ تحميل عارض PDF…', 'Loading PDF viewer…')}
+              </div>
+            )}>
+              <PdfViewer url={url} isAr={isAr} />
+            </Suspense>
+          </div>
         ) : (
           <a
             href={url}

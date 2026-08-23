@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Download, ExternalLink, Link2, Loader2, Pencil, RefreshCw, Share2, Shield, X, Trash2 } from 'lucide-react';
+import { Check, Download, Link2, Loader2, Pencil, RefreshCw, Share2, Shield, X, Trash2 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { FileRow } from '@/types';
 import {
@@ -14,6 +14,25 @@ import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindIcon, kindLabel } from '@/lib/files/format';
 import FileLinksPanel from './FileLinksPanel';
 import UsedInPanel from './UsedInPanel';
+
+// In-app PDF viewer (pdf.js), lazy so its ~1 MB worker only loads on a PDF open.
+// Replaces the browser's native <iframe> plugin — same reader everywhere,
+// works on mobile (canvas), no download/print/"save to Drive".
+const PdfViewer = lazy(() => import('@/components/ui/PdfViewer'));
+
+function PdfViewerFill({ url, isAr }: { url: string; isAr: boolean }) {
+  return (
+    <div className="w-full h-full bg-charcoal/95">
+      <Suspense fallback={(
+        <div className="flex items-center justify-center gap-2 text-white/80 text-sm h-full">
+          <Loader2 size={18} className="animate-spin" /> {isAr ? 'جارٍ تحميل عارض PDF…' : 'Loading PDF viewer…'}
+        </div>
+      )}>
+        <PdfViewer url={url} isAr={isAr} />
+      </Suspense>
+    </div>
+  );
+}
 
 interface Props {
   file: FileRow | null;
@@ -31,7 +50,8 @@ interface Props {
 /**
  * Full-screen file viewer. Branches by MIME:
  *   image/*           → <img> lightbox
- *   application/pdf   → <iframe> (browsers render PDFs natively)
+ *   application/pdf   → in-app PdfViewer (pdf.js) — NOT the browser plugin
+ *   office docs       → converted to PDF, same in-app PdfViewer
  *   video/*           → <video controls>
  *   audio/*           → <audio controls>
  *   else              → metadata card + Download button
@@ -254,7 +274,6 @@ const OFFICE_POLL_TIMEOUT_MS = 150_000;
 function OfficePreview({ file, onDownload }: { file: FileRow; onDownload: () => void }) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
-  const isNarrow = useIsNarrow();
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -337,62 +356,13 @@ function OfficePreview({ file, onDownload }: { file: FileRow; onDownload: () => 
     );
   }
 
-  // ready — same narrow-screen handling as the native PDF branch.
-  if (isNarrow && pdfUrl) {
-    const Icon = kindIcon[file.kind];
-    return (
-      <div className="bg-white rounded-2xl p-8 shadow-xl flex flex-col items-center gap-4 max-w-md w-full mx-4 text-center">
-        <Icon size={56} className="text-blue-600" />
-        <div className="font-bold text-charcoal">{file.original_name}</div>
-        <p className="text-charcoal/60 text-sm">
-          {isAr
-            ? 'افتح المعاينة في عارض الجهاز للحصول على كامل الصفحات والتكبير.'
-            : 'Open the preview in your device viewer for full pages and zoom.'}
-        </p>
-        <div className="flex flex-col gap-2 w-full">
-          <a
-            href={pdfUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-copper text-white hover:bg-terracotta transition-colors font-bold"
-          >
-            <ExternalLink size={16} />
-            {t('files.actions.preview')}
-          </a>
-          <button
-            onClick={onDownload}
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white border border-sand/40 text-charcoal hover:bg-cream transition-colors font-bold"
-          >
-            <Download size={16} />
-            {t('files.actions.download')}
-          </button>
-        </div>
-      </div>
-    );
-  }
-  return pdfUrl ? (
-    <iframe src={pdfUrl} title={file.original_name} className="w-full h-full bg-white" />
-  ) : null;
-}
-
-/** Phone-or-narrow detector — see PublicShareFilePage for rationale.
- *  Mobile browsers don't render multi-page PDFs in <iframe>. */
-function useIsNarrow() {
-  const [narrow, setNarrow] = useState(() =>
-    typeof window !== 'undefined' ? window.innerWidth < 768 : false,
-  );
-  useEffect(() => {
-    const onResize = () => setNarrow(window.innerWidth < 768);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-  return narrow;
+  // ready — render the converted PDF in the same in-app viewer as native PDFs.
+  return pdfUrl ? <PdfViewerFill url={pdfUrl} isAr={isAr} /> : null;
 }
 
 function PreviewBody({ file, url, onDownload }: { file: FileRow; url: string; onDownload: () => void }) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
-  const isNarrow = useIsNarrow();
   const Icon = kindIcon[file.kind];
 
   if (file.kind === 'image') {
@@ -401,38 +371,7 @@ function PreviewBody({ file, url, onDownload }: { file: FileRow; url: string; on
     );
   }
   if (file.kind === 'pdf') {
-    if (isNarrow) {
-      return (
-        <div className="bg-white rounded-2xl p-8 shadow-xl flex flex-col items-center gap-4 max-w-md w-full mx-4 text-center">
-          <Icon size={56} className="text-rose-500" />
-          <div className="font-bold text-charcoal">{file.original_name}</div>
-          <p className="text-charcoal/60 text-sm">
-            {isAr
-              ? 'افتح ملف PDF في عارض الجهاز للحصول على كامل الصفحات والتكبير.'
-              : 'Open the PDF in your device viewer for full pages and zoom.'}
-          </p>
-          <div className="flex flex-col gap-2 w-full">
-            <a
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-copper text-white hover:bg-terracotta transition-colors font-bold"
-            >
-              <ExternalLink size={16} />
-              {isAr ? 'فتح ملف PDF' : 'Open PDF'}
-            </a>
-            <button
-              onClick={onDownload}
-              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white border border-sand/40 text-charcoal hover:bg-cream transition-colors font-bold"
-            >
-              <Download size={16} />
-              {t('files.actions.download')}
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return <iframe src={url} title={file.original_name} className="w-full h-full bg-white" />;
+    return <PdfViewerFill url={url} isAr={isAr} />;
   }
   if (file.kind === 'video') {
     return (
