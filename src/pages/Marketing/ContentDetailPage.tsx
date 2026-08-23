@@ -43,6 +43,7 @@ import { useMosText } from './lib/useMosText';
 import PublishTab from './components/PublishTab';
 import PerformanceTab from './components/PerformanceTab';
 import MaterialsTab from './components/MaterialsTab';
+import { ProjectAssetsTab, ProjectInfoTab } from './components/ProjectPanels';
 import RequestChangesModal from './components/RequestChangesModal';
 import ProjectMultiSelect from './components/ProjectMultiSelect';
 import ApprovalSheet, { useIsMobile } from './components/ApprovalSheet';
@@ -50,7 +51,7 @@ import { IconBack, IconCheck, IconForward, IconSend } from './components/icons';
 import { dateTimeShort, daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
 import './styles/mobile-m2.css';
 
-type Tab = 'overview' | 'content' | 'materials' | 'tasks' | 'publishing' | 'performance';
+type Tab = 'overview' | 'content' | 'materials' | 'project_assets' | 'project_info' | 'tasks' | 'publishing' | 'performance';
 
 /** The breadcrumb's plural type names — s06 «الفيديوهات», s08 «المنشورات». */
 const TYPE_PLURAL: Record<string, { ar: string; en: string }> = {
@@ -345,6 +346,14 @@ export default function ContentDetailPage() {
     // it's now a capability toggle, not a hardcoded role check.
     { key: 'content', ar: 'المحتوى', en: 'Content', needs: 'view_content_body' },
     { key: 'materials', ar: 'المواد', en: 'Material', badge: materialCount || undefined },
+    // The project the content runs under — its linked files + facts, so the
+    // writer has every reference in one place. Shown only when a project is known.
+    ...(linkedProjectIds.length > 0
+      ? ([
+          { key: 'project_assets' as Tab, ar: 'مواد المشروع', en: 'Project assets' },
+          { key: 'project_info' as Tab, ar: 'معلومات المشروع', en: 'Project info' },
+        ])
+      : []),
     { key: 'tasks', ar: 'المهام والاعتمادات', en: 'Tasks & approvals', badge: openTasks || undefined },
     { key: 'publishing', ar: 'النشر', en: 'Publishing', badge: openPubs || undefined },
     { key: 'performance', ar: 'الأداء', en: 'Performance' },
@@ -708,6 +717,14 @@ export default function ContentDetailPage() {
               onCount={setMaterialCount}
               approvalAssetId={item.approval_asset_id ?? null}
             />
+          )}
+
+          {activeTab === 'project_assets' && linkedProjectIds[0] && (
+            <ProjectAssetsTab projectId={linkedProjectIds[0]} isAr={isAr} />
+          )}
+
+          {activeTab === 'project_info' && linkedProjectIds[0] && (
+            <ProjectInfoTab projectId={linkedProjectIds[0]} isAr={isAr} />
           )}
 
           {activeTab === 'tasks' && (

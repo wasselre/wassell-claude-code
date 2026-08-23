@@ -1669,6 +1669,32 @@ export const saveAccount = (account: Record<string, unknown>) =>
 
 export const fetchProjects = () => call<{ projects: MosProject[] }>('projects_list');
 
+/** One resolved field for the content writer's «project info» tab. Dropdowns /
+ *  multiselect / location arrive as resolved labels (value_ar/value_en); ranges
+ *  as {min,max}; currency/number as a number; date as an ISO string; url/text as
+ *  a string — the client formats by `kind`. */
+export interface ProjectInfoField {
+  key: string;
+  label_ar: string;
+  label_en: string;
+  kind: 'text' | 'long' | 'url' | 'number' | 'currency' | 'range' | 'range_currency' | 'date';
+  value?: unknown;
+  value_ar?: string;
+  value_en?: string;
+}
+
+export interface ProjectInfo {
+  id: string;
+  our_project_id: string | null;
+  developer_name: string | null;
+  fields: ProjectInfoField[];
+}
+
+/** Curated all_projects facts + the model id (for the linked-files tab). Returns
+ *  `project: null` when the record isn't visible to the caller. */
+export const fetchProjectInfo = (projectId: string) =>
+  call<{ project: ProjectInfo | null; model_id: string }>('project_info', { project_id: projectId });
+
 /** The managed measure-type registry (active + inactive; the picker filters). */
 export const fetchMeasureTypes = () =>
   call<{ measure_types: MosMeasureType[] }>('measure_types_list');

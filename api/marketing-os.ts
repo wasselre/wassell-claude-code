@@ -362,6 +362,95 @@ function applyProjectIds(patch: Record<string, unknown>): void {
 }
 
 /* ------------------------------------------------------------------ */
+/* Project Info — resolve a curated set of all_projects fields for the */
+/* content writer's «project info» tab (labels from schema, values     */
+/* from the record; formatting stays on the client via `kind`).        */
+/* ------------------------------------------------------------------ */
+
+type SchemaFieldDef = {
+  name?: string; type?: string; label_ar?: string; label_en?: string;
+  options?: Array<{ value?: string; label_ar?: string; label_en?: string }>;
+};
+
+interface ProjectInfoField {
+  key: string;
+  label_ar: string;
+  label_en: string;
+  kind: string;
+  value?: unknown;
+  value_ar?: string;
+  value_en?: string;
+}
+
+/** Build one display field, or null to skip (empty/absent). Formatting of
+ *  numbers/ranges/dates stays on the client (Arabic digits); dropdowns and
+ *  location are resolved to labels here because that needs the schema. */
+function buildProjectInfoField(key: string, def: SchemaFieldDef | undefined, raw: unknown): ProjectInfoField | null {
+  const empty = raw === null || raw === undefined || raw === ''
+    || (Array.isArray(raw) && raw.length === 0);
+  if (empty) return null;
+  const label_ar = def?.label_ar ?? key;
+  const label_en = def?.label_en ?? key;
+  const type = def?.type ?? 'text';
+  const base = { key, label_ar, label_en };
+
+  const optLabel = (val: unknown): { ar: string; en: string } => {
+    const o = (def?.options ?? []).find((x) => x.value === val);
+    return { ar: o?.label_ar ?? String(val), en: o?.label_en ?? String(val) };
+  };
+
+  if (type === 'dropdown') {
+    const l = optLabel(raw);
+    return { ...base, kind: 'text', value_ar: l.ar, value_en: l.en };
+  }
+  if (type === 'multiselect') {
+    const arr = Array.isArray(raw) ? raw : [raw];
+    const ars = arr.map((v) => optLabel(v).ar);
+    const ens = arr.map((v) => optLabel(v).en);
+    return { ...base, kind: 'text', value_ar: ars.join('، '), value_en: ens.join(', ') };
+  }
+  if (type === 'range') {
+    const r = raw as { min?: unknown; max?: unknown };
+    const min = typeof r?.min === 'number' ? r.min : null;
+    const max = typeof r?.max === 'number' ? r.max : null;
+    if (min === null && max === null) return null;
+    return { ...base, kind: key.includes('price') ? 'range_currency' : 'range', value: { min, max } };
+  }
+  if (type === 'location') {
+    const loc = raw as Record<string, unknown>;
+    const parts = ['district', 'city', 'region'].map((k) => loc?.[k]).filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+    if (parts.length === 0) return null;
+    const s = parts.join(' · ');
+    return { ...base, kind: 'text', value_ar: s, value_en: s };
+  }
+  if (type === 'currency' || type === 'number' || type === 'formula') {
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    if (!Number.isFinite(n)) return null;
+    return { ...base, kind: type === 'currency' ? 'currency' : 'number', value: n };
+  }
+  if (type === 'date' || type === 'datetime') {
+    return { ...base, kind: 'date', value: String(raw) };
+  }
+  if (type === 'url') {
+    return { ...base, kind: 'url', value: String(raw) };
+  }
+  // text / textarea / anything else → a plain (possibly long) string.
+  const s = typeof raw === 'string' ? raw : JSON.stringify(raw);
+  return { ...base, kind: s.length > 90 ? 'long' : 'text', value_ar: s, value_en: s };
+}
+
+/** Fields shown in the content writer's «project info» tab, in reading order.
+ *  Customer-facing ranges use the AVAILABLE-only family (see rollup rules). */
+const PROJECT_INFO_KEYS = [
+  'project_name', 'project_type', 'project_status', 'construction_status',
+  'location', 'project_location',
+  'available_units', 'unit_count', 'unit_types',
+  'available_price_range', 'available_area_range', 'bedroom_range', 'avg_price_per_m2',
+  'handover_date', 'on_handover_percent', 'post_handover_months',
+  'broucher_developer', 'project_analysis',
+];
+
+/* ------------------------------------------------------------------ */
 /* the canonical engine (workflows kind='role_path' + workflow_role_   */
 /* tasks + roles 'mos_*' + surface_access)                             */
 /* ------------------------------------------------------------------ */
@@ -1410,6 +1499,20 @@ export default async function handler(req: Request): Promise<Response> {
         const insert: Record<string, unknown> = {};
         for (const k of CONTENT_EDITABLE) {
           if (Object.prototype.hasOwnProperty.call(body, k)) insert[k] = body[k];
+        }
+        // Derive the content's project from its campaign when none was given — a
+        // content piece under a campaign inherits that campaign's project(s), so
+        // the writer never re-picks it and the two can never disagree.
+        {
+          const given = insert.project_ids;
+          const hasProjects = Array.isArray(given) && given.length > 0;
+          const campId = str(insert.campaign_id);
+          if (!hasProjects && campId) {
+            const camp = await sb.from('mos_campaigns').select('project_ids').eq('id', campId).maybeSingle();
+            const cf = dbFail(camp.error); if (cf) return cf;
+            const cpids = (camp.data as { project_ids?: string[] } | null)?.project_ids;
+            if (Array.isArray(cpids) && cpids.length > 0) insert.project_ids = cpids;
+          }
         }
         applyProjectIds(insert);
         insert.title = title;
@@ -5930,6 +6033,68 @@ export default async function handler(req: Request): Promise<Response> {
         const projects = ((rows.data ?? []) as Array<{ id: string; project_name: string | null }>)
           .map((p) => ({ id: p.id, project_name: p.project_name, our_project_id: ourByMaster.get(p.id) ?? null }));
         return jsonOk({ projects });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Project info — the writer's project-facts tab. Resolves a */
+      /* curated all_projects field set (labels from schema,       */
+      /* values from the record) + the model id (so the sibling    */
+      /* «project marketing assets» tab can list linked files) +   */
+      /* the developer name + the our_projects deep-link id.       */
+      /* -------------------------------------------------------- */
+      case 'project_info': {
+        const projectId = str(body.project_id);
+        if (!projectId) return jsonError(400, 'project_id is required');
+
+        const [modelRes, recRes] = await Promise.all([
+          sb.from('models').select('id, schema').eq('name', 'all_projects').maybeSingle(),
+          sb.from('unified_records').select('id, data').eq('id', projectId).maybeSingle(),
+        ]);
+        const mf = dbFail(modelRes.error); if (mf) return mf;
+        const rf = dbFail(recRes.error); if (rf) return rf;
+        const model = modelRes.data as { id: string; schema: { sections?: Array<{ fields?: SchemaFieldDef[] }> } } | null;
+        const rec = recRes.data as { id: string; data: Record<string, unknown> } | null;
+        if (!model) return jsonError(404, 'all_projects model not found');
+        if (!rec) return jsonOk({ project: null, model_id: model.id });
+        const data = rec.data ?? {};
+
+        const fieldDefs = new Map<string, SchemaFieldDef>();
+        for (const sec of (model.schema?.sections ?? [])) {
+          for (const fdef of (sec.fields ?? [])) if (fdef.name) fieldDefs.set(fdef.name, fdef);
+        }
+
+        // Deep-link id into the our_projects module (best-effort).
+        let ourProjectId: string | null = null;
+        const ourRes = await sb.from('v_our_projects').select('id').eq('project', projectId).maybeSingle();
+        if (!ourRes.error) ourProjectId = (ourRes.data as { id: string } | null)?.id ?? null;
+
+        // Developer name (the record stores the developer's record id).
+        let developerName: string | null = null;
+        const devId = typeof data.developer === 'string' ? data.developer : null;
+        if (devId) {
+          const dv = await sb.from('unified_records').select('data').eq('id', devId).maybeSingle();
+          const dd = (dv.data as { data?: Record<string, unknown> } | null)?.data;
+          if (dd) {
+            const nm = dd.developer_name ?? dd.name ?? dd.company_name ?? dd.developer;
+            developerName = typeof nm === 'string' ? nm : null;
+          }
+        }
+
+        const fields: ProjectInfoField[] = [];
+        for (const key of PROJECT_INFO_KEYS) {
+          const built = buildProjectInfoField(key, fieldDefs.get(key), data[key]);
+          if (built) fields.push(built);
+        }
+
+        return jsonOk({
+          project: {
+            id: projectId,
+            our_project_id: ourProjectId,
+            developer_name: developerName,
+            fields,
+          },
+          model_id: model.id,
+        });
       }
 
       /* -------------------------------------------------------- */
