@@ -310,7 +310,16 @@ function RequireAuth({ children }: { children: ReactNode }) {
   const authReady = useAppStore((s) => s.authReady);
   const authEmail = useAppStore((s) => s.authEmail);
 
-  if (!authReady) return null;
+  // Show a spinner (not a blank screen) while the session restores — otherwise a
+  // cold launch from a push notification renders NOTHING until auth is ready,
+  // which reads as "the app opened to a blank page".
+  if (!authReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-cream-light">
+        <Loader2 size={26} className="animate-spin text-copper" />
+      </div>
+    );
+  }
   if (isAuthAvailable() && !authEmail) {
     return <Navigate to="/login" replace />;
   }

@@ -28,7 +28,17 @@
     <title>وصل العقارية | Wassel Real Estate</title>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Boot loader — shown until React's first paint replaces #root. Without
+         it a cold launch (esp. opening a deep link from a push notification)
+         shows a blank white page while the JS downloads/parses and the auth
+         session restores. React.createRoot(...).render() replaces these
+         children automatically, so there's nothing to remove. -->
+    <div id="root">
+      <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#F5EDE0">
+        <div style="width:40px;height:40px;border:3px solid rgba(184,115,79,.25);border-top-color:#B8734F;border-radius:50%;animation:wassel-boot-spin .8s linear infinite"></div>
+      </div>
+    </div>
+    <style>@keyframes wassel-boot-spin{to{transform:rotate(360deg)}}</style>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

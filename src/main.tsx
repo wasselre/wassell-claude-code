@@ -5,6 +5,47 @@ import './index.css';
 import './lib/i18n';
 import { useAppStore } from './stores/appStore';
 
+// ── Stale-chunk recovery (needed once the app is route-code-split) ──────────
+// A failed dynamic import is almost always a stale deploy: the cached index /
+// entry references hashed chunk filenames that no longer exist after a new
+// build shipped. With lazy routes and NO handling that's a permanent BLANK
+// PAGE (the symptom reps hit opening a deep link from a push notification).
+// Reload ONCE to fetch the fresh index + chunk graph; a sessionStorage guard
+// prevents an infinite reload loop, and it's cleared after a few seconds of
+// successful running so a later (different) stale chunk can still self-heal.
+const CHUNK_RELOAD_KEY = 'wassell_chunk_reloaded';
+function reloadOnceForStaleChunk(): void {
+  try {
+    if (sessionStorage.getItem(CHUNK_RELOAD_KEY)) return;
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
+  } catch {
+    // sessionStorage unavailable — still reload (worst case: one extra reload).
+  }
+  window.location.reload();
+}
+// Vite fires this when a lazy chunk's <link modulepreload> fails.
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault();
+  reloadOnceForStaleChunk();
+});
+// And catch the raw dynamic-import rejection (covers browsers / paths that
+// don't emit vite:preloadError).
+window.addEventListener('unhandledrejection', (event) => {
+  const msg = String((event.reason && (event.reason as Error).message) || event.reason || '');
+  if (/dynamically imported module|Importing a module script failed|ChunkLoadError|Failed to fetch dynamically imported/i.test(msg)) {
+    reloadOnceForStaleChunk();
+  }
+});
+if (typeof window !== 'undefined') {
+  window.setTimeout(() => {
+    try {
+      sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, 8000);
+}
+
 // DEV-only debug handle so local browser-driven tests (Claude preview tooling)
 // can read/inject store state without an authenticated backend. Dead code in
 // production builds (import.meta.env.DEV is statically false).
