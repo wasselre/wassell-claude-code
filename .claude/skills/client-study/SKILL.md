@@ -114,6 +114,18 @@ FROM records WHERE model_id = (SELECT id FROM models WHERE name='market_listings
 abs(ppm2 - median)` or `quality_score DESC`, LIMIT 6–8. Show street_name, area,
 bedrooms, age, price, ppm2.
 
+**`quality_grade` means AD quality, NOT property quality** (critical — user
+correction, study #3). The scraper's `quality_grade` (A/B/C/D) / `quality_score`
+scores the *listing*, not the home: اكتمال البيانات (30), الوسائط صور/فيديو (25),
+الوصف والمميزات (20), الموثوقية والترخيص (15), حداثة الإعلان (10). So A/B = a
+complete, licensed, media-rich, recent AD — it filters out junk/incomplete/
+mislabeled listings so a price floor is trustworthy, but it says NOTHING about
+finish or condition. **Never label a `quality_grade`-filtered figure «جيدة» /
+"good apartment"** — that implies property quality. Label such a floor
+**«أدنى سعر موثّق»** (or «أرخص شقة بإعلان موثّق») and always add the footnote:
+*«الموثّق = إعلان مكتمل البيانات ومرخّص، لاستبعاد الإعلانات الناقصة أو المضلِّلة —
+وليس تقييماً لحالة الشقة.»*
+
 **Subject project + units**: `all_projects` record (available_price_range /
 available_area_range / avg_price_per_m2 are trigger-maintained stored rollups —
 trust them); per-unit detail from the `units` model
@@ -122,6 +134,19 @@ trust them); per-unit detail from the `units` model
 **Competing projects**: all_projects with `available_units > 0`, same district,
 `available_price_range->>min <= budget`. Quote the **available**-range family
 only (never all-unit ranges) per repo rules.
+
+**⚠️ ALWAYS city/region-scope `all_projects` to the CLIENT'S city — verify, never
+trust the Arabic district name** (hard rule — user caught a Jeddah + a Qassim
+project served to a Riyadh client, study #3). District NAMES repeat across
+cities: حي الصفا, حي الصوارى, حي الفاروق, حي الريان all exist in Riyadh AND
+Jeddah/Qassim. Filtering `all_projects` by budget alone silently pulls in
+same-named districts in the wrong city. Every projects query MUST
+`JOIN districts d ON d.id = (p.data->'location'->>'district')::uuid` and filter
+`d.city_name_ar = '<client city>'` (or `d.region_name_ar`). Before listing ANY
+project in the study, confirm its `city_name_ar` matches the client's city and
+its `center_lat/lng` is where you claim — a project you call "قريبة" must
+actually be in that city. Never describe a project's location from its district
+name alone.
 
 **Landmark distances** (client asked "which is closer?"): `geo_elements`
 (element_type: hospitals, malls, universities, landmarks, lifestyle,
@@ -169,6 +194,18 @@ using such a set for distances.
   units/models (user rule).
 - Do NOT include: sales/inventory status ("بِيع ٣ من ٧"), developer/marketer
   attribution lines, "بدون سعي" — user removed all of these (2026-07-22).
+- **ALWAYS flag off-plan projects** (hard rule — user standing preference). Any
+  project sold «على الخارطة» / under construction (not ready-to-hand-over) MUST
+  be labeled **«على الخارطة»** inline next to its name/row EVERY time it appears
+  — never omit it. Check each `all_projects` record's status/delivery field
+  before listing it; if a project is off-plan and you don't say so, the study is
+  wrong. Ready units say nothing special; off-plan is the flag that must show.
+- **Our projects (`all_projects`) are ones Wassel MARKETS, not builds.** Never
+  write «من تطويرنا» / «طوّرناها» / "we developed" — factually wrong. And even
+  when the user asks to feature our projects, present them **neutrally as
+  market options that fit the budget**, never «لدينا» / «مشاريعنا» / a push the
+  client can feel is steered. Phrase like «تتوفر مشاريع سكنية جديدة ضمن ميزانيتك
+  في أحياء قريبة» and let the numbers make the case. (User correction, study #3.)
 - Every stats table/section gets a `.note` with the source + comparison class.
 - Footer sources line: "تحليل N إعلاناً نشطاً في <الحي> (<شهر سنة>). الأسعار
   استرشادية وقابلة للتغير."
@@ -209,3 +246,4 @@ using such a set for distances.
 - 2026-07-22 · Keep honest counter-rows (المطار أقرب للجبيلة) — user approved.
 - 2026-07-22 · Deployment decision: stays in Claude Code (user call). Revisit an in-app button + worker queue (deck-pipeline shape: study_jobs + SQL tool + Chrome-in-Docker + vision verify) only if study volume makes the rep wait on sessions.
 - 2026-07-23 · Headless lessons from acceptance runs #1/#2: the Supabase MCP is unauthenticated in runner sessions (prints an OAuth URL and dies) → added `assets/db_query.mjs` + `claude_runner_sql` read-only RPC; sentinel JSON broke on Windows backslash paths → forward slashes required + runner parses leniently.
+- 2026-08-23 · Study #3 (منار, budget-not-enough): (a) `quality_grade` is AD quality, not property quality — label a grade-filtered floor «أدنى سعر موثّق» with the footnote, never «جيدة» (see query library). (b) `all_projects` = projects we MARKET, not build — never «من تطويرنا»/«لدينا»; feature them neutrally as budget-fitting market options even when the user asks to show them (see Step 5 rules). (c) **CITY-SCOPE `all_projects` — user caught a جدة (حي الصوارى) + a بريدة/القصيم (حي الريان) project served to a Riyadh client** because the projects query filtered by budget alone. District names repeat across cities; ALWAYS JOIN districts and filter `city_name_ar`/`region_name_ar` to the client's city, and verify each recommended project's city before listing it (see query-library hard rule). (d) **ALWAYS flag off-plan** — pull `construction_status`/`project_status` for every `all_projects` row; `under_construction`/`تحت-التطوير`/`available_on_map` → label «على الخارطة» inline on every appearance; `ready`/`available` → ready. Never omit the off-plan flag.
