@@ -29,7 +29,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  AlertTriangle, Download, FileText, Link2, Loader2, Lock, Paperclip, Unlink,
+  AlertTriangle, Download, FileText, LayoutGrid, Link2, List, Loader2, Lock, Paperclip, Unlink,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Button from '@/components/ui/Button';
@@ -67,6 +67,16 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
   // preview modal.
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [previewRow, setPreviewRow] = useState<FileRow | null>(null);
+  // Grid (file/thumbnail-focused) vs list (name + metadata-focused), the same
+  // two layouts the Files Library offers. Remembered per browser.
+  const [layout, setLayout] = useState<'grid' | 'list'>(() => {
+    if (typeof window === 'undefined') return 'grid';
+    return window.localStorage.getItem('wassell_record_files_layout') === 'list' ? 'list' : 'grid';
+  });
+  const changeLayout = useCallback((next: 'grid' | 'list') => {
+    setLayout(next);
+    try { window.localStorage.setItem('wassell_record_files_layout', next); } catch { /* private mode — the choice still applies this session */ }
+  }, []);
 
   const load = useCallback(async () => {
     setError(null);
@@ -160,6 +170,133 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
   );
   const groups = useMemo(() => groupByRole(entries ?? []), [entries]);
 
+  // A doc opens its editor; everything else opens the full previewer — images,
+  // PDFs, video, audio and office files all render inline there, so a record
+  // reads like the Library rather than forcing a download to see what a file is.
+  const openEntry = (e: RecordFileEntry) => {
+    if (e.file.kind === 'wassel_doc') navigate(`/files/doc/${e.file.id}`);
+    else void openPreview(e.file.id);
+  };
+
+  // Where a non-removable row comes from — a field, or another derivation.
+  const sourceSuffix = (e: RecordFileEntry) =>
+    e.removable ? null : (
+      <span className="ms-1.5 inline-flex items-center gap-1">
+        <Lock size={9} aria-hidden />
+        {e.sourceField ? t('files.record.from_field', { field: e.sourceField }) : t('files.record.derived')}
+      </span>
+    );
+
+  // Grid: file-focused. A big thumbnail (or the kind icon) leads; name + size
+  // sit under it; the download / unlink actions overlay the corner on hover.
+  const renderTile = (e: RecordFileEntry) => {
+    const Icon = kindIcon[e.file.kind];
+    const accent = kindAccent[e.file.kind];
+    const thumb = thumbs[e.file.id];
+    return (
+      <div
+        key={e.link_id}
+        className="group relative rounded-xl border border-sand/30 bg-white overflow-hidden hover:border-copper/30 hover:shadow-md transition-all"
+      >
+        <button type="button" onClick={() => openEntry(e)} className="block w-full text-start">
+          <div className={`relative h-28 flex items-center justify-center ${accent.bg}`}>
+            {thumb ? (
+              <img src={thumb} alt="" loading="lazy" className="w-full h-full object-cover" />
+            ) : (
+              <Icon size={28} className={accent.fg} aria-hidden />
+            )}
+          </div>
+          <div className="p-2.5">
+            <div className="text-sm font-bold text-charcoal line-clamp-2 leading-snug" dir="auto" title={e.file.title}>
+              {e.file.title}
+            </div>
+            <div className="mt-1 text-[11px] text-charcoal/45 flex items-center flex-wrap">
+              {formatBytes(e.file.size_bytes, isAr)}
+              {sourceSuffix(e)}
+            </div>
+          </div>
+        </button>
+        <span className="absolute top-1.5 end-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={() => void download(e.file.id)}
+            aria-label={t('files.library.download')}
+            className="p-1.5 rounded-md bg-white/90 border border-sand/40 text-charcoal/60 hover:!text-copper hover:bg-white transition-colors"
+          >
+            <Download size={13} aria-hidden />
+          </button>
+          {e.removable && (
+            <button
+              type="button"
+              onClick={() => setDetachTarget(e)}
+              aria-label={t('files.record.unlink')}
+              className="p-1.5 rounded-md bg-white/90 border border-sand/40 text-charcoal/60 hover:!text-red-600 hover:bg-white transition-colors"
+            >
+              <Unlink size={13} aria-hidden />
+            </button>
+          )}
+        </span>
+      </div>
+    );
+  };
+
+  // List: name + metadata focused. A small thumbnail, the title, and the type ·
+  // size line; actions reveal on hover at the end of the row.
+  const renderRow = (e: RecordFileEntry) => {
+    const Icon = kindIcon[e.file.kind];
+    const accent = kindAccent[e.file.kind];
+    const thumb = thumbs[e.file.id];
+    return (
+      <div
+        key={e.link_id}
+        className="group flex items-center gap-2.5 px-3 py-2 rounded-xl border border-sand/30 hover:border-copper/30 hover:bg-cream/60 transition-colors"
+      >
+        <button
+          type="button"
+          onClick={() => openEntry(e)}
+          className="flex items-center gap-2.5 min-w-0 flex-1 text-start"
+        >
+          {thumb ? (
+            <img src={thumb} alt="" loading="lazy" className="w-9 h-9 rounded-md object-cover shrink-0 border border-sand/30" />
+          ) : (
+            <span className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${accent.bg}`}>
+              <Icon size={15} className={accent.fg} aria-hidden />
+            </span>
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-bold text-charcoal truncate" dir="auto" title={e.file.title}>
+              {e.file.title}
+            </span>
+            <span className="block text-[11px] text-charcoal/45 truncate">
+              {documentTypeLabel(e.file.document_type, types, isAr)} · {formatBytes(e.file.size_bytes, isAr)}
+              {sourceSuffix(e)}
+            </span>
+          </span>
+        </button>
+        <span className="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => void download(e.file.id)}
+            aria-label={t('files.library.download')}
+            className="p-1.5 rounded-md text-charcoal/0 group-hover:text-charcoal/40 hover:!text-copper hover:bg-copper/10 transition-colors"
+          >
+            <Download size={13} aria-hidden />
+          </button>
+          {e.removable && (
+            <button
+              type="button"
+              onClick={() => setDetachTarget(e)}
+              aria-label={t('files.record.unlink')}
+              className="p-1.5 rounded-md text-charcoal/0 group-hover:text-charcoal/40 hover:!text-red-600 hover:bg-red-500/10 transition-colors"
+            >
+              <Unlink size={13} aria-hidden />
+            </button>
+          )}
+        </span>
+      </div>
+    );
+  };
+
   return (
     <div className="mt-6 bg-white rounded-2xl border border-sand/30 p-5">
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
@@ -173,14 +310,40 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
             <Loader2 size={13} className="animate-spin text-charcoal/30" aria-hidden />
           )}
         </div>
-        <Button
-          variant="secondary"
-          className="!px-3 !py-2 text-xs"
-          onClick={() => setAttachOpen(true)}
-        >
-          <Link2 size={13} aria-hidden />
-          {t('files.record.attach_existing')}
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Grid (files) vs list (names + metadata) — the same choice /files
+              offers, so a record's files can be browsed either way. */}
+          <div className="flex items-center rounded-lg border border-sand/40 overflow-hidden" role="group">
+            <button
+              type="button"
+              onClick={() => changeLayout('grid')}
+              aria-label={t('files.library.layout.grid')}
+              aria-pressed={layout === 'grid'}
+              title={t('files.library.layout.grid')}
+              className={`p-1.5 transition-colors ${layout === 'grid' ? 'bg-copper text-white' : 'text-charcoal/45 hover:bg-cream'}`}
+            >
+              <LayoutGrid size={14} aria-hidden />
+            </button>
+            <button
+              type="button"
+              onClick={() => changeLayout('list')}
+              aria-label={t('files.library.layout.list')}
+              aria-pressed={layout === 'list'}
+              title={t('files.library.layout.list')}
+              className={`p-1.5 transition-colors ${layout === 'list' ? 'bg-copper text-white' : 'text-charcoal/45 hover:bg-cream'}`}
+            >
+              <List size={14} aria-hidden />
+            </button>
+          </div>
+          <Button
+            variant="secondary"
+            className="!px-3 !py-2 text-xs"
+            onClick={() => setAttachOpen(true)}
+          >
+            <Link2 size={13} aria-hidden />
+            {t('files.record.attach_existing')}
+          </Button>
+        </div>
       </div>
 
       {error ? (
@@ -207,93 +370,15 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
                 {documentTypeLabel(g.role, types, isAr)}
                 <span className="ms-1.5 text-charcoal/25 tabular-nums">{g.entries.length}</span>
               </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {g.entries.map((e) => {
-                  const Icon = kindIcon[e.file.kind];
-                  const accent = kindAccent[e.file.kind];
-                  const thumb = thumbs[e.file.id];
-                  return (
-                    <div
-                      key={e.link_id}
-                      className="group flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-sand/30 hover:border-copper/30 hover:bg-cream/60 transition-colors"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          // A doc opens its editor; everything else opens the
-                          // full previewer — images, PDFs, video, audio and
-                          // office files all render inline there, so a record
-                          // reads like the Library rather than forcing a
-                          // download to see what a file is.
-                          if (e.file.kind === 'wassel_doc') navigate(`/files/doc/${e.file.id}`);
-                          else void openPreview(e.file.id);
-                        }}
-                        className="flex items-center gap-2.5 min-w-0 flex-1 text-start"
-                      >
-                        {thumb ? (
-                          <img
-                            src={thumb}
-                            alt=""
-                            loading="lazy"
-                            className="w-11 h-11 rounded-lg object-cover shrink-0 border border-sand/30"
-                          />
-                        ) : (
-                          <span className={`w-11 h-11 rounded-lg flex items-center justify-center shrink-0 ${accent.bg}`}>
-                            <Icon size={18} className={accent.fg} aria-hidden />
-                          </span>
-                        )}
-                        <span className="min-w-0">
-                          <span
-                            className="block text-sm font-bold text-charcoal truncate"
-                            dir="auto"
-                            title={e.file.title}
-                          >
-                            {e.file.title}
-                          </span>
-                          <span className="block text-[11px] text-charcoal/40">
-                            {formatBytes(e.file.size_bytes, isAr)}
-                            {/* Where this came from. A derived row says so; a
-                                manual one does not need to. */}
-                            {!e.removable && e.sourceField && (
-                              <span className="ms-1.5 inline-flex items-center gap-1">
-                                <Lock size={9} aria-hidden />
-                                {t('files.record.from_field', { field: e.sourceField })}
-                              </span>
-                            )}
-                            {!e.removable && !e.sourceField && (
-                              <span className="ms-1.5 inline-flex items-center gap-1">
-                                <Lock size={9} aria-hidden />
-                                {t('files.record.derived')}
-                              </span>
-                            )}
-                          </span>
-                        </span>
-                      </button>
-
-                      <span className="flex items-center gap-0.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => void download(e.file.id)}
-                          aria-label={t('files.library.download')}
-                          className="p-1.5 rounded-md text-charcoal/0 group-hover:text-charcoal/40 hover:!text-copper hover:bg-copper/10 transition-colors"
-                        >
-                          <Download size={13} aria-hidden />
-                        </button>
-                        {e.removable && (
-                          <button
-                            type="button"
-                            onClick={() => setDetachTarget(e)}
-                            aria-label={t('files.record.unlink')}
-                            className="p-1.5 rounded-md text-charcoal/0 group-hover:text-charcoal/40 hover:!text-red-600 hover:bg-red-500/10 transition-colors"
-                          >
-                            <Unlink size={13} aria-hidden />
-                          </button>
-                        )}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
+              {layout === 'grid' ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                  {g.entries.map((e) => renderTile(e))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                  {g.entries.map((e) => renderRow(e))}
+                </div>
+              )}
             </section>
           ))}
         </div>
