@@ -615,6 +615,7 @@ const resources = {
       'files.post_upload.no_link': 'بدون ربط',
       'files.post_upload.skip': 'تخطَّ',
       'files.post_upload.dismiss': 'إغلاق الشريط',
+      'files.post_upload.file_titles': 'عناوين الملفات ({{count}})',
       'files.post_upload.skip_hint': 'التخطي لا يضر — يبقى الملف نشطاً وستجده لاحقاً في عرض «ملفات غير مرتبطة».',
       // Files System · Phase 3 · B5 — the Business Files Library
       'files.tabs.library': 'المكتبة',
@@ -1773,6 +1774,7 @@ const resources = {
       'files.post_upload.no_link': 'Don’t link',
       'files.post_upload.skip': 'Skip',
       'files.post_upload.dismiss': 'Dismiss',
+      'files.post_upload.file_titles': 'File titles ({{count}})',
       'files.post_upload.skip_hint': 'Skipping is fine — the file stays active and turns up later in the “Unlinked files” view.',
       // Files System · Phase 3 · B5 — the Business Files Library
       'files.tabs.library': 'Library',

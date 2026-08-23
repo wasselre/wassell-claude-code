@@ -60,7 +60,7 @@ import SaveViewModal from './library/SaveViewModal';
 import LibraryBulkBar from './library/LibraryBulkBar';
 import BulkEditModal from './library/BulkEditModal';
 import BulkLinkModal from './library/BulkLinkModal';
-import PostUploadStrip from './library/PostUploadStrip';
+import PostUploadModal from './library/PostUploadModal';
 import UploadDropzone from './components/UploadDropzone';
 
 const SEARCH_DEBOUNCE_MS = 400;
@@ -494,7 +494,7 @@ export default function FilesLibraryPage({ basePath = '/files', defaultView = nu
           )}
 
           {justUploaded.length > 0 && (
-            <PostUploadStrip
+            <PostUploadModal
               files={justUploaded}
               types={types}
               onDismiss={() => setJustUploaded([])}
