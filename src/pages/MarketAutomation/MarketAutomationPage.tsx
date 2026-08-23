@@ -60,6 +60,9 @@ export default function MarketAutomationPage() {
   // Navigation snapshot for the Save & Next flow: the ordered keys the drawer walks.
   const [navKeys, setNavKeys] = useState<string[]>([]);
   const [navIndex, setNavIndex] = useState(-1);
+  // Session gamification: XP + streak earned reviewing in THIS sitting.
+  const [sessionXp, setSessionXp] = useState(0);
+  const [sessionCount, setSessionCount] = useState(0);
 
   const load = () => {
     setLoading(true);
@@ -111,12 +114,25 @@ export default function MarketAutomationPage() {
   // its scroll position and the drawer can advance smoothly.
   const patchRow = (patch: Partial<FieldStatus> & { platform: string; source_path: string }) =>
     setRows((prev) => prev.map((r) => (keyOf(r) === `${patch.platform}|${patch.source_path}` ? { ...r, ...patch } : r)));
+  // A decision landed: update the row in place AND award session XP. Returns the
+  // points earned so the review screen can celebrate it.
+  const handleDecided = (patch: Partial<FieldStatus> & { platform: string; source_path: string }) => {
+    patchRow(patch);
+    const gain = 10 + (patch.authoritative_status === 'mapped_existing_field' || patch.authoritative_status === 'candidate_new_field' ? 5 : 0);
+    setSessionXp((x) => x + gain);
+    setSessionCount((c) => c + 1);
+    return gain;
+  };
   const hasNext = navIndex >= 0 && navIndex + 1 < navKeys.length;
+  const hasPrev = navIndex > 0;
   const goNext = () => {
-    const nextKey = navKeys[navIndex + 1];
-    const next = rows.find((r) => keyOf(r) === nextKey);
+    const next = rows.find((r) => keyOf(r) === navKeys[navIndex + 1]);
     if (next) { setNavIndex(navIndex + 1); setDeciding(next); }
     else setDeciding(null);
+  };
+  const goPrev = () => {
+    const prev = rows.find((r) => keyOf(r) === navKeys[navIndex - 1]);
+    if (prev) { setNavIndex(navIndex - 1); setDeciding(prev); }
   };
 
   const tabs: { id: Tab; ar: string; en: string; icon: typeof Database }[] = [
@@ -216,8 +232,9 @@ export default function MarketAutomationPage() {
 
       {deciding && (
         <DecisionPanel key={keyOf(deciding)} field={deciding} targetFields={targetFields} targetTypes={targetTypes} targetLabels={labels} isAr={isAr}
-          hasNext={hasNext} position={navIndex >= 0 ? { at: navIndex + 1, of: navKeys.length } : null}
-          onClose={() => setDeciding(null)} onDecided={patchRow} onNext={goNext} />
+          hasNext={hasNext} hasPrev={hasPrev} position={navIndex >= 0 ? { at: navIndex + 1, of: navKeys.length } : null}
+          xp={sessionXp} streak={sessionCount} decided={summary.total - summary.needsReview} total={summary.total} needsReview={summary.needsReview}
+          onClose={() => setDeciding(null)} onDecided={handleDecided} onNext={goNext} onPrev={goPrev} />
       )}
     </div>
   );
