@@ -328,3 +328,17 @@ export async function saveFileSubjects(fileId: string, subjects: string[]): Prom
     .insert(clean.map((subject) => ({ file_id: fileId, subject })));
   if (ins.error) throw surfaceLibraryError('save file subjects', ins.error);
 }
+
+/** ADD a set of subjects to many files at once (upload / bulk). Additive and
+ *  idempotent — existing rows are left alone (the primary is also mirrored by
+ *  the files_sync_primary_subject trigger, so re-adding it is a no-op). */
+export async function bulkAddSubjects(fileIds: string[], subjects: string[]): Promise<void> {
+  const clean = [...new Set(subjects.map((s) => s.trim()).filter(Boolean))];
+  if (fileIds.length === 0 || clean.length === 0) return;
+  const db = requireSupabase('add file subjects');
+  const rows = fileIds.flatMap((file_id) => clean.map((subject) => ({ file_id, subject })));
+  const { error } = await db
+    .from('file_subjects')
+    .upsert(rows, { onConflict: 'file_id,subject', ignoreDuplicates: true });
+  if (error) throw surfaceLibraryError('add file subjects', error);
+}

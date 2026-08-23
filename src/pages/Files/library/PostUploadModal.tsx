@@ -27,9 +27,10 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { bulkLinkToRecord, bulkUpdateMetadata, type BulkPatch } from '@/lib/files/bulkEdit';
-import { errorText, listFileVocabularies, updateFileMetadata } from '@/lib/files/library';
+import { bulkAddSubjects, errorText, listFileVocabularies, updateFileMetadata } from '@/lib/files/library';
 import { linkableModels, recordTitle } from '@/lib/documents/links';
 import type { FileDocumentTypeRow, FileRow, FileVocabDimension, FileVocabRow } from '@/types';
+import ClassificationSelect from './ClassificationSelect';
 
 interface Props {
   files: FileRow[];
@@ -49,9 +50,9 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
 
-  // The type the fill-in trigger inferred is left untouched unless the user
-  // picks something; empty string means "keep the inferred type".
-  const [docType, setDocType] = useState<string>('');
+  // Classification is a MULTISELECT shared across the batch. Empty = keep
+  // whatever the fill-in trigger inferred per file (its primary subject).
+  const [subjects, setSubjects] = useState<string[]>([]);
   const [tagsText, setTagsText] = useState('');
   const [recordId, setRecordId] = useState('');
   const [modelId, setModelId] = useState('');
@@ -118,7 +119,10 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
     [files, titles, initialTitles],
   );
 
-  const nothingToDo = !docType && !anyAxis && tags.length === 0 && !recordId && changedTitles.length === 0;
+  // The primary document_type = the first chosen classification (or none, to
+  // keep each file's inferred type).
+  const primary = subjects[0] ?? null;
+  const nothingToDo = subjects.length === 0 && !anyAxis && tags.length === 0 && !recordId && changedTitles.length === 0;
 
   const apply = useCallback(async () => {
     setBusy(true);
@@ -126,12 +130,15 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
     try {
       const ids = files.map((f) => f.id);
       const metaPatch: Omit<BulkPatch, 'addTags' | 'removeTags'> = {};
-      if (docType) metaPatch.document_type = docType;
+      if (primary) metaPatch.document_type = primary;
       if (axes.asset_nature) metaPatch.asset_nature = axes.asset_nature;
       if (axes.acquisition_source) metaPatch.acquisition_source = axes.acquisition_source;
       if (axes.usage_rights) metaPatch.usage_rights = axes.usage_rights;
       if (axes.production_state) metaPatch.production_state = axes.production_state;
       if (Object.keys(metaPatch).length > 0) await bulkUpdateMetadata(ids, metaPatch);
+      // Every chosen classification becomes a subject on every file (additive;
+      // the primary is also mirrored by the DB trigger).
+      if (subjects.length > 0) await bulkAddSubjects(ids, subjects);
       if (tags.length > 0) {
         // Reuses the bulk tag path so "add" is set arithmetic, not a
         // replacement — an upload dialog must not wipe tags a trigger set.
@@ -142,7 +149,7 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
         await updateFileMetadata(f.id, { title: (titles[f.id] ?? '').trim() });
       }
       if (recordId && effModel) {
-        await bulkLinkToRecord(ids, effModel, recordId, docType || null);
+        await bulkLinkToRecord(ids, effModel, recordId, primary);
       }
       onApplied();
     } catch (e) {
@@ -150,7 +157,7 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
     } finally {
       setBusy(false);
     }
-  }, [files, docType, axes, tags, changedTitles, titles, recordId, effModel, onApplied]);
+  }, [files, subjects, primary, axes, tags, changedTitles, titles, recordId, effModel, onApplied]);
 
   const field = 'w-full px-3 py-2 rounded-lg bg-white border border-sand/40 text-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-copper/30';
   const label = 'block text-[11px] font-bold text-charcoal/60 mb-1';
@@ -168,17 +175,19 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
         {/* Shared metadata — applied to every uploaded file. */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className={label}>{t('files.library.meta.document_type')}</label>
-            <select
-              className={field}
-              value={docType}
-              onChange={(e) => setDocType(e.target.value)}
-            >
-              <option value="">{t('files.post_upload.keep_type')}</option>
-              {types.map((x) => (
-                <option key={x.value} value={x.value}>{isAr ? x.label_ar : x.label_en}</option>
-              ))}
-            </select>
+            <label className={label}>{t('files.library.meta.subjects')}</label>
+            {/* MULTISELECT — tick every classification that applies to the batch.
+                Empty keeps each file's inferred type. */}
+            <ClassificationSelect
+              options={types.filter((x) => x.applies_to_kinds.length === 0
+                || files.some((f) => x.applies_to_kinds.includes(f.kind)))}
+              selected={subjects}
+              onToggle={(v) => setSubjects((prev) =>
+                prev.includes(v) ? prev.filter((s) => s !== v) : [...prev, v])}
+              disabled={false}
+              isAr={isAr}
+              emptyLabel={t('files.post_upload.keep_type')}
+            />
           </div>
           <div>
             <label className={label}>{t('files.library.meta.tags')}</label>
