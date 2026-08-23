@@ -124,7 +124,8 @@ export default function DecisionPanel({
   };
 
   const pct = total > 0 ? Math.round((decided / total) * 100) : 0;
-  const complete = needsReview === 0;
+  const listDone = total > 0 && decided >= total; // finished the list being walked this session
+  const allDone = needsReview === 0;              // nothing anywhere still needs a decision
   const level = levelFor(xp);
   const examples = exampleList(field.example_values, 8);
   const platAr = field.source_label ?? (field.canonical_field ? targetLabels[field.canonical_field]?.ar : null);
@@ -153,23 +154,33 @@ export default function DecisionPanel({
         {/* progress */}
         <div className="max-w-5xl mx-auto mt-2.5 flex items-center gap-3">
           <div className="flex-1 h-2 rounded-full bg-sand/25 overflow-hidden">
-            <div className={`h-full rounded-full transition-all duration-500 ${complete ? 'bg-emerald-500' : 'bg-copper'}`} style={{ width: `${pct}%` }} />
+            <div className={`h-full rounded-full transition-all duration-500 ${listDone ? 'bg-emerald-500' : 'bg-copper'}`} style={{ width: `${pct}%` }} />
           </div>
-          <span className={`text-[12px] tabular-nums shrink-0 ${complete ? 'text-emerald-700 font-medium' : 'text-charcoal/50'}`}>
-            {complete
-              ? (isAr ? '🎉 اكتملت المراجعة!' : '🎉 All reviewed!')
-              : (isAr ? `${decided} من ${total} مُقرَّرة` : `${decided} of ${total} decided`)}
+          <span className={`text-[12px] tabular-nums shrink-0 ${listDone ? 'text-emerald-700 font-medium' : 'text-charcoal/55'}`}>
+            {listDone
+              ? (isAr ? '🎉 أنهيت هذه القائمة!' : '🎉 List complete!')
+              : (isAr ? `راجعت ${decided} من ${total} في هذه الجلسة` : `${decided} of ${total} reviewed this session`)}
           </span>
+          {needsReview > 0 && (
+            <span className="text-[11px] text-charcoal/35 shrink-0 hidden sm:inline">
+              · {isAr ? `${needsReview} بحاجة لقرار عمومًا` : `${needsReview} still to decide`}
+            </span>
+          )}
         </div>
       </div>
 
       {/* ── body ── */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto p-4 sm:p-6">
-          {complete && (
+          {allDone ? (
             <div className="flex items-center gap-2 text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 mb-5 text-sm">
               <PartyPopper className="w-5 h-5 shrink-0" />
-              {isAr ? 'لا حقول بانتظار قرار — أحسنت! يمكنك مراجعة قراراتك السابقة أو الإغلاق.' : 'No fields awaiting a decision — great work! You can revisit past decisions or close.'}
+              {isAr ? 'لا حقول بانتظار قرار على المنصة — أحسنت! يمكنك مراجعة قراراتك السابقة أو الإغلاق.' : 'No fields anywhere await a decision — great work! You can revisit past decisions or close.'}
+            </div>
+          ) : listDone && (
+            <div className="flex items-center gap-2 text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 mb-5 text-sm">
+              <PartyPopper className="w-5 h-5 shrink-0" />
+              {isAr ? `أنهيت هذه القائمة في جلستك! لا يزال ${needsReview} حقلًا بحاجة لقرار عمومًا.` : `You finished this list this session! ${needsReview} field(s) still need a decision overall.`}
             </div>
           )}
 

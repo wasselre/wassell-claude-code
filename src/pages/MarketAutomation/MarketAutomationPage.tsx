@@ -60,9 +60,12 @@ export default function MarketAutomationPage() {
   // Navigation snapshot for the Save & Next flow: the ordered keys the drawer walks.
   const [navKeys, setNavKeys] = useState<string[]>([]);
   const [navIndex, setNavIndex] = useState(-1);
-  // Session gamification: XP + streak earned reviewing in THIS sitting.
+  // Session gamification: XP + streak earned reviewing in THIS sitting, plus the
+  // set of field keys the operator personally decided this session (drives the
+  // "my progress" bar — distinct from the global already-decided count).
   const [sessionXp, setSessionXp] = useState(0);
   const [sessionCount, setSessionCount] = useState(0);
+  const [sessionDecided, setSessionDecided] = useState<Set<string>>(new Set());
 
   const load = () => {
     setLoading(true);
@@ -121,8 +124,13 @@ export default function MarketAutomationPage() {
     const gain = 10 + (patch.authoritative_status === 'mapped_existing_field' || patch.authoritative_status === 'candidate_new_field' ? 5 : 0);
     setSessionXp((x) => x + gain);
     setSessionCount((c) => c + 1);
+    setSessionDecided((prev) => new Set(prev).add(`${patch.platform}|${patch.source_path}`));
     return gain;
   };
+  // "My progress": of the list the operator is walking, how many THEY decided this
+  // session (not the global already-decided count).
+  const sessionTotal = navKeys.length;
+  const sessionDone = navKeys.reduce((a, k) => a + (sessionDecided.has(k) ? 1 : 0), 0);
   const hasNext = navIndex >= 0 && navIndex + 1 < navKeys.length;
   const hasPrev = navIndex > 0;
   const goNext = () => {
@@ -233,7 +241,7 @@ export default function MarketAutomationPage() {
       {deciding && (
         <DecisionPanel key={keyOf(deciding)} field={deciding} targetFields={targetFields} targetTypes={targetTypes} targetLabels={labels} isAr={isAr}
           hasNext={hasNext} hasPrev={hasPrev} position={navIndex >= 0 ? { at: navIndex + 1, of: navKeys.length } : null}
-          xp={sessionXp} streak={sessionCount} decided={summary.total - summary.needsReview} total={summary.total} needsReview={summary.needsReview}
+          xp={sessionXp} streak={sessionCount} decided={sessionDone} total={sessionTotal} needsReview={summary.needsReview}
           onClose={() => setDeciding(null)} onDecided={handleDecided} onNext={goNext} onPrev={goPrev} />
       )}
     </div>
