@@ -20,10 +20,10 @@
  * it is not enough. `updateFileMetadata` still checks the row count, because
  * an affordance is not a guard.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  AlertCircle, Download, ExternalLink, Loader2, Lock, Maximize2, Save, X,
+  AlertCircle, Check, ChevronDown, Download, ExternalLink, Loader2, Lock, Maximize2, Save, X,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -98,6 +98,73 @@ function draftFrom(file: BusinessFileRow): Draft {
     usage_rights: file.usage_rights ?? '',
     production_state: file.production_state ?? '',
   };
+}
+
+/**
+ * A subject/classification MULTISELECT — one control that replaced the old
+ * single-value type dropdown + a separate chip row (operator: "make the dropdown
+ * multiselect"). The selected set IS the file's subjects; the primary
+ * document_type is derived from it on save (first selected, or the existing
+ * primary if still chosen). Dropdown style so it stays compact in the panel.
+ */
+function ClassificationSelect({ options, selected, onToggle, disabled, isAr, emptyLabel }: {
+  options: FileDocumentTypeRow[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  disabled: boolean;
+  isAr: boolean;
+  emptyLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  const labelFor = (v: string) => {
+    const o = options.find((x) => x.value === v);
+    return o ? (isAr ? o.label_ar : o.label_en) : v;
+  };
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white border border-sand/40 text-sm text-charcoal text-start disabled:bg-cream/70 disabled:text-charcoal/60 focus:outline-none focus:ring-2 focus:ring-copper/30"
+      >
+        <span className={`truncate ${selected.length === 0 ? 'text-charcoal/45' : ''}`} dir="auto">
+          {selected.length === 0 ? emptyLabel : selected.map(labelFor).join('، ')}
+        </span>
+        <ChevronDown size={14} className="shrink-0 text-charcoal/40" aria-hidden />
+      </button>
+      {open && !disabled && (
+        <div className="absolute z-30 mt-1 w-full max-h-64 overflow-auto rounded-lg bg-white border border-sand/40 shadow-lg p-1">
+          {options.map((o) => {
+            const on = selected.includes(o.value);
+            return (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => onToggle(o.value)}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-sm text-charcoal hover:bg-cream text-start"
+              >
+                <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-copper border-copper' : 'border-sand/60'}`}>
+                  {on && <Check size={11} className="text-white" aria-hidden />}
+                </span>
+                <span className="flex-1 truncate" dir="auto">{isAr ? o.label_ar : o.label_en}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOpenPreview, thumbUrl }: Props) {
@@ -197,12 +264,21 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
   }, [draft, file, subjectsChanged]);
 
   const onSave = useCallback(async () => {
+    // The classification is now the multiselect. document_type (a NOT NULL
+    // column) is the PRIMARY subject, derived from the set: keep the existing
+    // primary if it is still selected, else the first chosen. At least one
+    // subject is required.
+    if (subjects.length === 0) {
+      setSaveError(t('files.library.meta.subject_required'));
+      return;
+    }
+    const primary: string = subjects.includes(draft.document_type) ? draft.document_type : subjects[0]!;
     setSaving(true);
     setSaveError(null);
     try {
       const patch: FileMetadataPatch = {
         title: draft.title.trim(),
-        document_type: draft.document_type,
+        document_type: primary,
         description: draft.description.trim() || null,
         tags: draft.tagsText.split(',').map((s) => s.trim()).filter(Boolean),
         status: draft.status,
@@ -217,13 +293,11 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
         production_state: draft.production_state || null,
       };
       const saved = await updateFileMetadata(file.id, patch);
-      // The primary subject (document_type) is always part of the subject set.
-      if (subjectsChanged || !subjects.includes(draft.document_type)) {
-        const full = [...new Set([draft.document_type, ...subjects])];
-        await saveFileSubjects(file.id, full);
-        setSubjects(full);
-        setSubjectsInit(full);
-      }
+      // The subject set always contains the primary (it is one of the chosen).
+      const full = [...new Set([primary, ...subjects])];
+      await saveFileSubjects(file.id, full);
+      setSubjects(full);
+      setSubjectsInit(full);
       onSaved(saved);
       addToast(t('files.library.saved'), 'success');
     } catch (e) {
@@ -234,7 +308,7 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
     } finally {
       setSaving(false);
     }
-  }, [draft, file.id, subjects, subjectsChanged, onSaved, addToast, t]);
+  }, [draft, file.id, subjects, onSaved, addToast, t]);
 
   const field = 'w-full px-3 py-2 rounded-lg bg-white border border-sand/40 text-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-copper/30 disabled:bg-cream/70 disabled:text-charcoal/60';
   const labelCls = 'block mb-1 text-[11px] font-bold uppercase tracking-wide text-charcoal/45';
@@ -365,21 +439,19 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
         </div>
 
         <div>
-          <label className={labelCls} htmlFor="md-type">{t('files.library.meta.document_type')}</label>
-          <select id="md-type" className={field} disabled={!canEdit}
-                  value={draft.document_type}
-                  onChange={(e) => setDraft({ ...draft, document_type: e.target.value })}>
-            {/* A file whose type has since been DEACTIVATED keeps it: the value
-                is still valid (the FK is on `value`, not on `active`) but the
-                vocabulary no longer returns it, so it is added explicitly or
-                the select would silently jump to another type on save. */}
-            {!types.some((x) => x.value === draft.document_type) && (
-              <option value={draft.document_type}>{draft.document_type}</option>
-            )}
-            {types.map((x) => (
-              <option key={x.value} value={x.value}>{isAr ? x.label_ar : x.label_en}</option>
-            ))}
-          </select>
+          <label className={labelCls}>{t('files.library.meta.subjects')}</label>
+          {/* One MULTISELECT for classification. The set is the file's subjects;
+              the primary document_type is derived from it on save. Replaces the
+              old single-value type dropdown + the separate chip row. */}
+          <ClassificationSelect
+            options={types.filter((x) => x.applies_to_kinds.length === 0 || x.applies_to_kinds.includes(file.kind))}
+            selected={subjects}
+            onToggle={(v) => setSubjects((prev) =>
+              prev.includes(v) ? prev.filter((s) => s !== v) : [...prev, v])}
+            disabled={!canEdit}
+            isAr={isAr}
+            emptyLabel={t('files.library.meta.unset')}
+          />
         </div>
 
         <div>
@@ -405,36 +477,6 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
           <h4 className="text-[11px] font-bold uppercase tracking-widest text-charcoal/45">
             {t('files.library.meta.intelligence')}
           </h4>
-
-          {/* Multi-subject: the primary (document_type) is always on; extras toggle. */}
-          <div>
-            <label className={labelCls}>{t('files.library.meta.subjects')}</label>
-            <div className="flex flex-wrap gap-1.5">
-              {types
-                .filter((x) => x.applies_to_kinds.length === 0 || x.applies_to_kinds.includes(file.kind))
-                .map((x) => {
-                  const primary = x.value === draft.document_type;
-                  const on = primary || subjects.includes(x.value);
-                  return (
-                    <button
-                      key={x.value}
-                      type="button"
-                      disabled={!canEdit || primary}
-                      aria-pressed={on}
-                      onClick={() => setSubjects((prev) =>
-                        prev.includes(x.value) ? prev.filter((s) => s !== x.value) : [...prev, x.value])}
-                      className={`px-2 py-1 rounded-lg text-[11px] font-bold border transition-colors ${
-                        on ? 'bg-copper/10 border-copper/40 text-copper'
-                           : 'bg-white border-sand/40 text-charcoal/60 hover:border-copper/30'
-                      } ${primary ? 'opacity-90' : ''} disabled:cursor-default`}
-                      title={primary ? (isAr ? 'التصنيف الأساسي' : 'Primary subject') : undefined}
-                    >
-                      {isAr ? x.label_ar : x.label_en}
-                    </button>
-                  );
-                })}
-            </div>
-          </div>
 
           <div className="grid grid-cols-2 gap-3">
             {([
@@ -545,10 +587,12 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
         {canEdit && (
           <div className="flex items-center justify-end gap-2">
             <Button type="button" variant="secondary" className="!px-3 !py-2 text-xs"
-                    disabled={!dirty || saving} onClick={() => setDraft(draftFrom(file))}>
+                    disabled={!dirty || saving}
+                    onClick={() => { setDraft(draftFrom(file)); setSubjects(subjectsInit); }}>
               {t('files.library.discard')}
             </Button>
-            <Button type="submit" className="!px-3 !py-2 text-xs" disabled={!dirty || saving}>
+            <Button type="submit" className="!px-3 !py-2 text-xs"
+                    disabled={!dirty || saving || subjects.length === 0}>
               {saving ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <Save size={13} aria-hidden />}
               {t('common.save')}
             </Button>
