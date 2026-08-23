@@ -1,4 +1,4 @@
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, MapPin, CalendarPlus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { FollowUpTypeConfig } from '@/lib/salesProcess';
 
@@ -8,6 +8,11 @@ interface MissionHeaderProps {
   client: Record<string, unknown> | null;
   draft: Record<string, unknown>;
   attemptNumber: number | null;
+  /** Record a client-reported visit (opens the minimal visit form). */
+  onRecordVisit: () => void;
+  /** Book a visit appointment (opens the appointment form). */
+  onBookAppointment: () => void;
+  readOnly?: boolean;
 }
 
 function fmt(iso: unknown, isAr: boolean): string | null {
@@ -18,7 +23,7 @@ function fmt(iso: unknown, isAr: boolean): string | null {
 }
 
 /** Top banner: the mission, the client, when it's due, and where they stand. */
-export default function MissionHeader({ typeConfig, typeKeyRaw, client, draft, attemptNumber }: MissionHeaderProps) {
+export default function MissionHeader({ typeConfig, typeKeyRaw, client, draft, attemptNumber, onRecordVisit, onBookAppointment, readOnly = false }: MissionHeaderProps) {
   const isAr = useAppStore((s) => s.language === 'ar');
 
   const title = typeConfig ? (isAr ? typeConfig.label_ar : typeConfig.label_en) : (typeKeyRaw ?? (isAr ? 'متابعة' : 'Follow-up'));
@@ -48,6 +53,26 @@ export default function MissionHeader({ typeConfig, typeKeyRaw, client, draft, a
             {stage && <Chip label={isAr ? 'المرحلة' : 'Stage'} value={stage} color="#B8734F" />}
             {status && <Chip label={isAr ? 'الحالة' : 'Status'} value={status} color="#8E4E3A" />}
             {priority && <Chip label={isAr ? 'الأولوية' : 'Priority'} value={priority} color="#C09B5F" />}
+          </div>
+          {/* Rep actions — available on every step (record a client-reported visit,
+              or book a visit appointment). */}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onRecordVisit}
+              disabled={readOnly}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-copper/40 bg-copper/5 px-3 py-1.5 text-sm font-semibold text-copper transition hover:bg-copper/10 disabled:opacity-40"
+            >
+              <MapPin size={15} /> {isAr ? 'تسجيل زيارة' : 'Record a visit'}
+            </button>
+            <button
+              type="button"
+              onClick={onBookAppointment}
+              disabled={readOnly}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-copper/40 bg-copper/5 px-3 py-1.5 text-sm font-semibold text-copper transition hover:bg-copper/10 disabled:opacity-40"
+            >
+              <CalendarPlus size={15} /> {isAr ? 'حجز موعد' : 'Book an appointment'}
+            </button>
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2 text-sm">

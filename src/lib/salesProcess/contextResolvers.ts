@@ -60,6 +60,7 @@ const LABELS: Record<ContextBlockId, { ar: string; en: string }> = {
   previous_attempts: { ar: 'المحاولات السابقة', en: 'Previous Attempts' },
   latest_call_summary: { ar: 'ملخص آخر مكالمة', en: 'Latest Call Summary' },
   latest_whatsapp: { ar: 'آخر رسالة واتساب', en: 'Latest WhatsApp' },
+  whatsapp_status: { ar: 'حالة الواتساب', en: 'WhatsApp' },
   appointment: { ar: 'الموعد', en: 'Appointment' },
   project_location: { ar: 'موقع المشروع', en: 'Project Location' },
   appointment_status: { ar: 'حالة الموعد', en: 'Appointment Status' },
@@ -110,6 +111,16 @@ export function resolveContext(blockId: ContextBlockId, ctx: ContextInput): Cont
       return { ...base, value: str(ctx.latestCallSummary) };
     case 'latest_whatsapp':
       return { ...base, value: str(ctx.latestWhatsApp) };
+    // Reply-checkpoint state for a WhatsApp follow-up, read straight off the
+    // follow-up record (no async fetch). Only the waiting state is meaningful to
+    // surface; anything else resolves to undefined so the row hides.
+    case 'whatsapp_status':
+      return {
+        ...base,
+        value: ctx.followup?.whatsapp_state === 'message_sent_waiting_response'
+          ? (ctx.isAr ? 'رسالة مُرسلة — بانتظار رد العميل' : 'Message sent — awaiting reply')
+          : undefined,
+      };
     case 'appointment':
     case 'missed_appointment_date':
       return { ...base, value: fmtDate(appt.appointment_date) };

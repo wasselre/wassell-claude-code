@@ -18,7 +18,7 @@ export default function ChatThreadModal({ recordId, onClose }: { recordId: strin
       className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/40 p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="flex h-[80vh] max-h-[680px] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+      <div className="flex h-[90vh] max-h-[900px] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
         <div className="flex shrink-0 items-center justify-end border-b border-sand/20 px-3 py-2">
           <button
             onClick={onClose}

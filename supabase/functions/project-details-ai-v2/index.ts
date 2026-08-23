@@ -29,52 +29,40 @@ import Anthropic from "npm:@anthropic-ai/sdk@0.35.0";
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 8000;
 
-// Writing/translation routing (FINAL decision 2026-07-21): Claude is the
-// DEFAULT writer. Qwen3 30B on Cloudflare Workers AI is an OPT-IN for bulk
-// jobs, enabled only via TEXT_LLM_PROVIDER=qwen; on any Qwen failure Claude
-// runs as the fallback. Mirrors api/_lib/textLlm.ts (this Deno function can't
-// import it).
-const QWEN_MODEL_DEFAULT = "@cf/qwen/qwen3-30b-a3b-fp8";
-const QWEN_MAX_TOKENS = 4096;
+// Writing/translation routing (2026-08-10, "don't use Qwen anywhere — use
+// DeepSeek"): DeepSeek (deepseek-chat) is the PRIMARY writer; Claude is the
+// automatic fallback on any failure. DeepSeek is ON by default whenever
+// DEEPSEEK_API_KEY is set; TEXT_LLM_PROVIDER=anthropic forces the Claude-only
+// path. Mirrors api/_lib/textLlm.ts (this Deno function can't import it).
+// Qwen3 / Cloudflare Workers AI has been removed.
+const DEEPSEEK_MODEL = "deepseek-chat";
+const DEEPSEEK_MAX_TOKENS = 4096;
 
-/** Remove Qwen3 <think>…</think> reasoning blocks (incl. an unclosed one). */
-function stripThink(content: string): string {
-  return content
-    .replace(/<think>[\s\S]*?<\/think>/g, "")
-    .replace(/<think>[\s\S]*$/g, "")
-    .trim();
-}
-
-/** One Qwen chat call via Cloudflare's OpenAI-compatible endpoint. Throws on any failure. */
-async function qwenChat(accountId: string, apiToken: string, system: string, user: string): Promise<string> {
-  const model = Deno.env.get("CLOUDFLARE_AI_MODEL") || QWEN_MODEL_DEFAULT;
-  const res = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiToken}` },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        max_tokens: QWEN_MAX_TOKENS,
-        stream: false,
-      }),
-      signal: AbortSignal.timeout(60_000),
-    },
-  );
+/** One DeepSeek chat call (OpenAI-compatible endpoint). Throws on any failure. */
+async function deepseekChat(apiKey: string, system: string, user: string): Promise<string> {
+  const res = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: DEEPSEEK_MODEL,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: DEEPSEEK_MAX_TOKENS,
+      temperature: 0.2,
+      stream: false,
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
-    throw new Error(`cloudflare ${res.status}: ${bodyText.slice(0, 200)}`);
+    throw new Error(`deepseek ${res.status}: ${bodyText.slice(0, 200)}`);
   }
   const json = await res.json();
   const content = json?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content) throw new Error("qwen returned no content");
-  const text = stripThink(content);
-  if (!text) throw new Error("qwen returned only a think block");
-  return text;
+  if (typeof content !== "string" || !content.trim()) throw new Error("deepseek returned no content");
+  return content.trim();
 }
 
 /* ─── Geography localization (Issue #8) ──────────────────────────────────
@@ -280,25 +268,23 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     let text = "";
     // Provider attribution (Issue #8): every generation records which model
-    // actually answered, so a silent Qwen→Claude fallback can never again make
-    // stored output unattributable.
+    // actually answered, so a silent DeepSeek→Claude fallback can never again
+    // make stored output unattributable.
     let usedProvider = "none";
 
-    // ── Primary: Qwen on Cloudflare Workers AI ─────────────────────────
-    const cfAccount = Deno.env.get("CLOUDFLARE_ACCOUNT_ID") ?? "";
-    const cfToken = Deno.env.get("CLOUDFLARE_API_TOKEN") ?? "";
-    const qwenModel = Deno.env.get("CLOUDFLARE_AI_MODEL") || QWEN_MODEL_DEFAULT;
-    const qwenOn =
-      (Deno.env.get("TEXT_LLM_PROVIDER") ?? "").trim().toLowerCase() === "qwen" &&
-      cfAccount !== "" && cfToken !== "";
-    if (qwenOn) {
+    // ── Primary: DeepSeek ──────────────────────────────────────────────
+    const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY") ?? "";
+    const deepseekOn =
+      (Deno.env.get("TEXT_LLM_PROVIDER") ?? "").trim().toLowerCase() !== "anthropic" &&
+      deepseekKey !== "";
+    if (deepseekOn) {
       try {
-        text = await qwenChat(cfAccount, cfToken, system, user);
-        usedProvider = `cloudflare:${qwenModel}`;
+        text = await deepseekChat(deepseekKey, system, user);
+        usedProvider = `deepseek:${DEEPSEEK_MODEL}`;
         console.log(`[project-details-ai-v2] generated by ${usedProvider}`);
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
-        console.error(`[project-details-ai-v2] PRIMARY cloudflare:${qwenModel} FAILED — falling back to anthropic:${CLAUDE_MODEL}: ${m}`);
+        console.error(`[project-details-ai-v2] PRIMARY deepseek:${DEEPSEEK_MODEL} FAILED — falling back to anthropic:${CLAUDE_MODEL}: ${m}`);
       }
     }
 
@@ -346,7 +332,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     }
     // Attribute the failure to the provider that ACTUALLY answered — this said
-    // "Claude" even when Qwen produced the output, which misled triage.
+    // "Claude" even when DeepSeek produced the output, which misled triage.
     if (!parsed) return json({ error: `Could not extract JSON from the model response (provider: ${usedProvider})`, step, provider: usedProvider, first_300: text.slice(0, 300) }, 500, cors);
 
     const features = Array.isArray(parsed.features) ? parsed.features : [];

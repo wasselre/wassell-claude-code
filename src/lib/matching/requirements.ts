@@ -191,6 +191,18 @@ export function draftToMatchRequirements(args: DraftToRequirementsArgs): MatchRe
   if (area.min != null) out.area_min = area.min;
   if (area.max != null) out.area_max = area.max;
 
+  // ── Bedrooms: the client stores a range; the matcher wants a single AT-LEAST
+  //    value → its minimum. Centralized here (was duplicated in the finder view's
+  //    buildReqs) so every caller — the finder AND the live inventory meter — sends
+  //    the same `bedrooms` and can never disagree on eligibility. ──
+  const bedsV = pick('preferred_bedrooms');
+  if (bedsV && typeof bedsV === 'object' && !Array.isArray(bedsV)) {
+    const mn = Number((bedsV as Record<string, unknown>).min);
+    if (Number.isFinite(mn) && mn > 0) out.bedrooms = mn;
+  } else if (typeof bedsV === 'number' && bedsV > 0) {
+    out.bedrooms = bedsV;
+  }
+
   // ── Unit age (عمر العقار) — the dropdown stores the max years as a STRING
   //    option value ('0' = new only, '2', '5', '10'). '0' is meaningful, so the
   //    check is Number.isFinite, not truthiness. ──

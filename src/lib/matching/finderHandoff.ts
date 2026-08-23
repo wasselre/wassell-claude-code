@@ -15,6 +15,14 @@ export interface FinderHandoff {
   prefDraft: Record<string, unknown>;
   followupDraft: Record<string, unknown>;
   projectName: string | null;
+  /**
+   * Optional qualification provenance + exceptions (Phase 3+). The working DRAFT
+   * always survives the finder round-trip via `prefDraft`; these carry the per-field
+   * AI/rep provenance and the pending-exception queue so their flags survive too.
+   * Populated once live capture fills them (Phase 4); absent → restored as empty.
+   */
+  meta?: Record<string, unknown>;
+  exceptions?: unknown[];
 }
 
 let current: FinderHandoff | null = null;

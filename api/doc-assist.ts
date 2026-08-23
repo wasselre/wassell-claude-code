@@ -22,7 +22,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
-import { qwenRoutingEnabled, qwenText, logQwenFallback } from './_lib/textLlm.js';
+import { llmRoutingEnabled, llmText, logLlmFallback } from './_lib/textLlm.js';
 
 export const config = { runtime: 'edge' };
 
@@ -94,19 +94,18 @@ export default async function handler(req: Request): Promise<Response> {
     }
     parts.push(`Text to transform:\n<<<\n${text}\n>>>`);
 
-    // ── Primary: Qwen on Cloudflare Workers AI (writing/translation routing) ──
-    if (qwenRoutingEnabled()) {
+    // ── Primary: DeepSeek (writing/translation routing) ──
+    if (llmRoutingEnabled()) {
       try {
-        const out = await qwenText({
+        const out = await llmText({
           system: SYSTEM_PROMPT,
           user: parts.join('\n\n'),
-          // Thinking tokens count toward the cap — headroom over the Claude sizing.
           maxTokens: Math.min(8_000, Math.max(2_000, Math.ceil(text.length / 2) + 1_000)),
           timeoutMs: 55_000,
         });
         return jsonOk({ result: out });
       } catch (err) {
-        logQwenFallback('/api/doc-assist', err);
+        logLlmFallback('/api/doc-assist', err);
       }
     }
 

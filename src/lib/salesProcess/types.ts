@@ -36,6 +36,7 @@ export type ContextBlockId =
   | 'previous_attempts'
   | 'latest_call_summary'
   | 'latest_whatsapp'
+  | 'whatsapp_status'
   | 'appointment'
   | 'project_location'
   | 'appointment_status'

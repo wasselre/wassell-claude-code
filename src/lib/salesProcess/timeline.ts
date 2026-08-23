@@ -29,6 +29,16 @@ export interface TimelineEntry {
   model_name?: string;
   record_id?: string;
   tone?: 'positive' | 'neutral' | 'negative';
+  /** Optional key/value rows shown when the entry is expanded inline (a read-only
+   *  summary — outcome, notes, rep… — instead of opening the full record form). */
+  summary?: TimelineSummaryRow[];
+}
+
+/** One labelled line in an entry's inline summary. */
+export interface TimelineSummaryRow {
+  label_ar: string;
+  label_en: string;
+  value: string;
 }
 
 /** Common date slugs, most-relevant first, for picking an entry timestamp. */

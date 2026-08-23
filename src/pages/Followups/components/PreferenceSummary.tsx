@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { SlidersHorizontal, Save, Loader2 } from 'lucide-react';
+import { SlidersHorizontal, Save, Loader2, Sparkles, Lock } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferences';
+import type { FieldMeta } from '@/lib/salesProcess/qualificationDraft';
 import type { ModelField } from '@/types';
 
 interface PreferenceSummaryProps {
@@ -17,6 +18,26 @@ interface PreferenceSummaryProps {
    */
   draft?: Record<string, unknown>;
   onFieldChange?: (slug: string, value: unknown) => void;
+  /** Per-field provenance from the qualification draft (controlled mode). Renders a
+   *  small badge: AI-filled (green) / AI-changed-needs-review (amber) / rep-edited
+   *  (locked). Empty until live capture fills the draft (Phase 4). */
+  meta?: Record<string, FieldMeta>;
+}
+
+/** Small provenance chip next to a field label. Returns null for saved/untouched. */
+function ProvenanceBadge({ meta, isAr }: { meta: FieldMeta | undefined; isAr: boolean }) {
+  if (!meta || meta.provenance === 'saved') return null;
+  if (meta.provenance === 'rep_edited') {
+    return <span className="inline-flex items-center gap-0.5 text-[10px] text-charcoal/50" title={isAr ? 'عدّلته يدويًا' : 'You edited this'}><Lock size={10} /></span>;
+  }
+  const amber = meta.provenance === 'ai_changed';
+  const color = amber ? '#C09B5F' : '#10B981';
+  const label = amber ? (isAr ? 'تغيّر — للمراجعة' : 'Changed — review') : (isAr ? 'من المكالمة' : 'From the call');
+  return (
+    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold" style={{ color }} title={meta.aiQuote ?? undefined}>
+      <Sparkles size={10} /> {label}
+    </span>
+  );
 }
 
 // The preference fields the rep edits inline, in display order. Always shown
@@ -30,7 +51,7 @@ interface PreferenceSummaryProps {
 const PREF_SLUGS = ['location', 'preferred_unit_type', 'preferred_max_unit_age', 'preferred_area', 'preferred_bedrooms', 'budget', 'preferred_amenities', 'purchase_objective', 'preference_notes'] as const;
 
 /** Inline-editable client preferences — unit type, budget, location, direction. */
-export default function PreferenceSummary({ clientId, onEditFull, draft: draftProp, onFieldChange }: PreferenceSummaryProps) {
+export default function PreferenceSummary({ clientId, onEditFull, draft: draftProp, onFieldChange, meta }: PreferenceSummaryProps) {
   const { models, records, language, saveRecord, addToast } = useAppStore();
   const isAr = language === 'ar';
 
@@ -100,24 +121,30 @@ export default function PreferenceSummary({ clientId, onEditFull, draft: draftPr
           <SlidersHorizontal size={13} /> {isAr ? 'تعديل التفضيلات الكاملة' : 'Edit Full Preferences'}
         </button>
       </div>
-      <div className="space-y-3">
-        {fields.map((field) => (
-          <div key={field.id}>
-            <label className="mb-1 block text-xs font-semibold text-charcoal/60">
-              {isAr ? field.label_ar : field.label_en}
-            </label>
-            <DynamicField
-              field={field}
-              value={draft[field.name]}
-              onChange={(v) => setField(field.name, v)}
-              recordData={draft}
-              compact
-              modelId={clientsModel.id}
-              recordId={clientId}
-              onPatch={(patch) => Object.entries(patch).forEach(([k, v]) => setField(k, v))}
-            />
-          </div>
-        ))}
+      {/* Two fields per row (each smaller) so the list stays short. Wide fields —
+          the location cascade and free-text notes — span the full width. */}
+      <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+        {fields.map((field) => {
+          const fullWidth = field.type === 'location' || field.type === 'textarea' || field.name === 'preference_notes';
+          return (
+            <div key={field.id} className={fullWidth ? 'sm:col-span-2' : ''}>
+              <label className="mb-1 flex items-center justify-between gap-2 text-xs font-semibold text-charcoal/60">
+                <span>{isAr ? field.label_ar : field.label_en}</span>
+                <ProvenanceBadge meta={meta?.[field.name]} isAr={isAr} />
+              </label>
+              <DynamicField
+                field={field}
+                value={draft[field.name]}
+                onChange={(v) => setField(field.name, v)}
+                recordData={draft}
+                compact
+                modelId={clientsModel.id}
+                recordId={clientId}
+                onPatch={(patch) => Object.entries(patch).forEach(([k, v]) => setField(k, v))}
+              />
+            </div>
+          );
+        })}
       </div>
       {dirty && (
         <div className="mt-3 flex justify-end">

@@ -51,6 +51,14 @@ interface FinderBody {
   text?: string;
   parse?: boolean;
   explain?: boolean;
+  /**
+   * 'count' → the live inventory meter: run the SAME deterministic engine but
+   * return ONLY the source counts (no groups, no LLM, no deal badges, no audit
+   * row). Everything about eligibility — hard budget/type/area gates, the geo
+   * gate, the score floor — is identical to a 'full' run, so "N suitable" means
+   * exactly what Suggested Projects would show. Default 'full'.
+   */
+  mode?: 'full' | 'count';
   sources?: string[];
   locale?: string;
   client_id?: string;
@@ -201,9 +209,22 @@ export default async function handler(req: Request): Promise<Response> {
     // this is an Arabic-first app; the caller passes 'en' for the English UI).
     const locale: 'ar' | 'en' = body.locale === 'en' ? 'en' : 'ar';
 
+    // Count mode = the live inventory meter. Same engine, slim response.
+    const isCount = body.mode === 'count';
+
     // Short-circuit: no matchable preference → ask for preferences (no misleading
     // "everything is a strong match"). No audit row — nothing was recommended.
     if (!hasAnyCriteria(requirements)) {
+      if (isCount) {
+        return jsonOk({
+          mode: 'count',
+          needs_preferences: true,
+          missing_required_preferences: missingPreferences(requirements),
+          our_count: 0,
+          geo_filter: null,
+          generated_at: new Date().toISOString(),
+        });
+      }
       const emptyGroups = Object.fromEntries(FINDER_GROUP_KEYS.map((k) => [k, []]));
       return jsonOk({
         requirements,
@@ -331,9 +352,11 @@ export default async function handler(req: Request): Promise<Response> {
 
     // (2) DETERMINISTIC engine — selection, scoring, ranking. No AI.
     // perGroup: 0 = UNLIMITED (show every match). Otherwise default 8.
+    // Count mode MUST run unlimited: source_counts is tallied AFTER the perGroup
+    // slice (projectFinder.ts), so any positive cap would undercount.
     const reqPerGroup = num(body.perGroup);
     const finder = await findMatchingProjects(supabase, requirements, {
-      perGroup: reqPerGroup != null ? reqPerGroup : 8,
+      perGroup: isCount ? 0 : reqPerGroup != null ? reqPerGroup : 8,
       minScore: num(body.minScore),
       sources,
       locale,
@@ -348,6 +371,20 @@ export default async function handler(req: Request): Promise<Response> {
     // Long resolved by now (the engine awaited the gate) — just read the metadata.
     const geoFilter = (await geoGatePromise).filter;
     let result = finder.result;
+
+    // Count mode returns here — the meter needs only the own-inventory count.
+    // Deliberately BEFORE explain / deal badges / the audit insert: a per-edit
+    // count must never call the LLM or write an assistant_recommendation_runs row.
+    if (isCount) {
+      return jsonOk({
+        mode: 'count',
+        needs_preferences: false,
+        missing_required_preferences: result.metadata.missing_required_preferences,
+        our_count: result.metadata.source_counts.our_projects,
+        geo_filter: geoFilter,
+        generated_at: new Date().toISOString(),
+      });
+    }
 
     // (3) Optional LLM EXPLANATION — replaces explanation strings only; the guard
     //     (inside applyLlmExplanations) proves no ranking field moved.

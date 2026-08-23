@@ -205,21 +205,12 @@ export default function SuggestedProjectsView({
     return EDIT_SLUGS.map((slug) => bySlug.get(slug)).filter((f): f is ModelField => !!f);
   }, [clientsModel]);
 
-  // Build the server-side requirements from a preference draft. preferred_bedrooms
-  // (a range on the client) maps to the matcher's single `bedrooms` (its minimum).
+  // Build the server-side requirements from a preference draft. Bedrooms (range →
+  // AT-LEAST minimum) and the per-field strictness bands (`preference_constraints`)
+  // are both mapped inside draftToMatchRequirements now, so the finder and the live
+  // inventory meter share one builder — nothing extra to wire here.
   function buildReqs(d: Record<string, unknown>): MatchRequirementsInput {
-    const reqs = draftToMatchRequirements({ clientsModel, prefDraft: d, savedClientData: clientRec?.data ?? null, resolveLookupName });
-    const pb = d.preferred_bedrooms;
-    if (pb && typeof pb === 'object' && !Array.isArray(pb)) {
-      const mn = Number((pb as Record<string, unknown>).min);
-      if (Number.isFinite(mn) && mn > 0) reqs.bedrooms = mn;
-    } else if (typeof pb === 'number' && pb > 0) {
-      reqs.bedrooms = pb;
-    }
-    // Per-field strictness bands ride in the draft's `preference_constraints`
-    // (edited via the band control under each preference field) and are mapped by
-    // draftToMatchRequirements — nothing extra to wire here.
-    return reqs;
+    return draftToMatchRequirements({ clientsModel, prefDraft: d, savedClientData: clientRec?.data ?? null, resolveLookupName });
   }
 
   const refinedGroups = useMemo(

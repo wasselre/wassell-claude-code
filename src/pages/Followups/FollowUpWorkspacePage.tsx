@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { SlidersHorizontal, ArrowLeft } from 'lucide-react';
+import { SlidersHorizontal, ArrowLeft, FileText } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanEditRecord, useCanViewRecord } from '@/hooks/usePermission';
 import { useRecordDraft } from '@/hooks/useRecordDraft';
@@ -10,14 +10,21 @@ import { completeFollowUp } from './lib/completeFollowup';
 import { cancelSuggestionsForFollowup } from '@/lib/callSuggestions/client';
 import type { AppRecord } from '@/types';
 import { resolveFollowupContext } from './lib/followupContext';
-import { getFinderHandoff, clearFinderHandoff } from '@/lib/matching/finderHandoff';
+import { useQualificationDraft } from './hooks/useQualificationDraft';
 import MissionHeader from './components/MissionHeader';
 import PrimaryAction from './components/PrimaryAction';
-import RegisterVisitAction from './components/RegisterVisitAction';
-import ScriptPanel from './components/ScriptPanel';
-import ContextPanel from './components/ContextPanel';
+import ScriptModal from './components/ScriptModal';
+import OptionsBrief from './components/OptionsBrief';
+import InventoryMeter from './components/InventoryMeter';
+import MissionStepper from './components/MissionStepper';
+import { missionStages, type MissionStage } from './lib/missionStages';
 import PreferenceSummary from './components/PreferenceSummary';
-import TimelinePanel from './components/TimelinePanel';
+import { useOwnInventoryCount } from './hooks/useOwnInventoryCount';
+import * as qualificationSession from '@/lib/salesProcess/qualificationSession';
+import ClientContextCard from './components/ClientContextCard';
+import QuickVisitModal from './components/QuickVisitModal';
+import QuickAppointmentModal from './components/QuickAppointmentModal';
+import ClientDetailModal from './components/ClientDetailModal';
 import OutcomePanel from './components/OutcomePanel';
 import SalesAssistantSidePanel from './components/SalesAssistantSidePanel';
 import StartChatModal from '@/pages/Chats/components/StartChatModal';
@@ -37,13 +44,8 @@ export default function FollowUpWorkspacePage() {
   const { recordId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { models, records, language, saveRecord, addToast, currentUserId, users, salesProcessOverrides } = useAppStore();
+  const { models, records, language, saveRecord, addToast, currentUserId, salesProcessOverrides } = useAppStore();
   const isAr = language === 'ar';
-  const resolveUser = (id: unknown): string | undefined => {
-    if (typeof id !== 'string' || !id) return undefined;
-    const u = users.find((x) => x.id === id);
-    return u ? ((isAr ? u.name_ar : u.name_en) || u.email || undefined) : undefined;
-  };
 
   const model = models.find((m) => m.name === 'followups');
   const record = useMemo(
@@ -89,7 +91,6 @@ export default function FollowUpWorkspacePage() {
   const ctx = useMemo(() => resolveFollowupContext(draft, models, records), [draft, models, records]);
   const salesConfig = useMemo(() => applyOverridesToConfig(salesProcessOverrides), [salesProcessOverrides]);
   const typeConfig = getFollowUpTypeConfig(ctx.typeKey, salesConfig);
-  const appointmentsModelId = models.find((m) => m.name === 'appointments')?.id;
   const clientsModel = models.find((m) => m.name === 'clients');
   const clientRec = clientsModel && ctx.clientId
     ? (records[clientsModel.id] ?? []).find((r) => r.id === ctx.clientId) ?? null
@@ -130,49 +131,26 @@ export default function FollowUpWorkspacePage() {
   };
 
   // Best-effort our_projects id to prefill the visit's Project lookup. The
-  // follow-up's project context is keyed on all_projects, but a visit's Project
-  // lookup targets our_projects — so only prefill when a candidate id is a real
-  // our_projects record (otherwise leave it blank rather than show a broken ref).
-  const ourProjectsModel = models.find((m) => m.name === 'our_projects');
-  const visitProjectCandidate = useMemo<string | null>(() => {
-    if (!ourProjectsModel) return null;
-    const ourIds = new Set((records[ourProjectsModel.id] ?? []).map((r) => r.id));
-    const candidates: unknown[] = [
-      ctx.appointment?.project_id,
-      draft.appointment_project,
-      draft.visited_projects,
-      ctx.client?.preferred_projects,
-    ];
-    for (const c of candidates) {
-      if (typeof c === 'string' && ourIds.has(c)) return c;
-      if (Array.isArray(c)) {
-        const hit = c.find((v) => typeof v === 'string' && ourIds.has(v));
-        if (typeof hit === 'string') return hit;
-      }
-    }
-    return null;
-  }, [ourProjectsModel, records, ctx.appointment, ctx.client, draft.appointment_project, draft.visited_projects]);
+  // Qualification working draft — the lifted client-preference buffer PLUS per-field
+  // provenance (saved / ai_filled / ai_changed / rep_edited) and the AI exceptions
+  // queue. Owned by the hook (seeds from the saved client, restores across the
+  // Suggested-Projects round-trip). `prefDraft` is the value source of truth shared
+  // with PreferenceSummary (editor), the InventoryMeter, and the Sales Assistant.
+  // AI auto-apply lands here in Phase 4; today only the rep edits it.
+  const qual = useQualificationDraft({ clientId: ctx.clientId, followupId: record?.id ?? null });
+  const prefDraft = qual.draft;
+  const setPrefField = qual.setPrefField;
 
-  // Lifted client-preference draft buffer. Seeded from the saved client (once
-  // per client; survives realtime echoes — same rule PreferenceSummary used
-  // internally), shared with BOTH PreferenceSummary (the editor) AND the Sales
-  // Assistant side panel (the reader), so a quick action uses the rep's UNSAVED
-  // edits. prefSeededRef is nulled after a full-modal save so the freshly-saved
-  // prefs re-seed the buffer.
-  const [prefDraft, setPrefDraft] = useState<Record<string, unknown>>({});
-  const prefSeededRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (clientRec && prefSeededRef.current !== ctx.clientId) {
-      prefSeededRef.current = ctx.clientId;
-      // Returning from the full-page Suggested Projects finder: restore the exact
-      // (unsaved-included) draft the rep had when they opened it, then clear the
-      // hand-off so a later legitimate re-seed reads the saved client data.
-      const handoff = record ? getFinderHandoff(record.id) : null;
-      setPrefDraft(handoff ? { ...handoff.prefDraft } : { ...clientRec.data });
-      if (handoff) clearFinderHandoff();
-    }
-  }, [ctx.clientId, clientRec, record]);
-  const setPrefField = (slug: string, value: unknown) => setPrefDraft((d) => ({ ...d, [slug]: value }));
+  // Live count of OUR projects that fit the current (draft) preferences — reacts as
+  // the rep qualifies. Deterministic (Project Finder mode:'count'); see the hook.
+  const inventory = useOwnInventoryCount({ clientId: ctx.clientId, prefDraft });
+
+  // Which stage of the guided mission the rep is on. The page is keyed by recordId
+  // (App.tsx), so this resets when the rep opens a different follow-up.
+  const [stage, setStage] = useState<MissionStage>('context');
+  const [showScript, setShowScript] = useState(false);
+  const [showVisit, setShowVisit] = useState(false);
+  const [showClient360, setShowClient360] = useState(false);
 
   if (!model) return <div className="p-6 text-[#8E4E3A]">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
   if (!record) return <div className="p-6 text-[#8E4E3A]">{isAr ? 'المتابعة غير موجودة' : 'Follow-up not found'}</div>;
@@ -181,6 +159,12 @@ export default function FollowUpWorkspacePage() {
   const readOnly = !canEdit;
 
   const goAdvanced = () => navigate(`/model/followups/${record.id}?generic=1`);
+
+  // Guided-mission stages for this follow-up type + Next/Back navigation.
+  const stages = missionStages(ctx.typeKey, typeConfig?.primary_channel);
+  const stageIdx = Math.max(0, stages.indexOf(stage));
+  const goNextStage = () => { if (stageIdx < stages.length - 1) setStage(stages[stageIdx + 1]!); };
+  const goPrevStage = () => { if (stageIdx > 0) setStage(stages[stageIdx - 1]!); };
 
   const handleComplete = async (outcomeKey: string) => {
     setSaving(true);
@@ -224,6 +208,10 @@ export default function FollowUpWorkspacePage() {
     // by hand. Retire it so the popup doesn't ask them to confirm an outcome
     // they already recorded themselves.
     void cancelSuggestionsForFollowup(record.id);
+
+    // Clear the qualification session so the next follow-up can't inherit this
+    // task's working draft / provenance / exceptions.
+    qualificationSession.resetSession(record.id);
 
     // Return the rep to where they came from (e.g. the Sales Tasks queue, with
     // its view/filters preserved) if the entry point passed a ?returnTo=; else
@@ -300,30 +288,85 @@ export default function FollowUpWorkspacePage() {
         <ArrowLeft size={15} className={isAr ? 'rotate-180' : ''} /> {isAr ? 'رجوع' : 'Back'}
       </button>
 
-      <MissionHeader typeConfig={typeConfig} typeKeyRaw={ctx.typeKey} client={ctx.client} draft={draft} attemptNumber={ctx.attemptNumber} />
+      <MissionHeader
+        typeConfig={typeConfig}
+        typeKeyRaw={ctx.typeKey}
+        client={ctx.client}
+        draft={draft}
+        attemptNumber={ctx.attemptNumber}
+        onRecordVisit={() => setShowVisit(true)}
+        onBookAppointment={() => setShowApptModal(true)}
+        readOnly={readOnly}
+      />
 
-      <div className="grid gap-5 lg:grid-cols-3">
-        <div className="space-y-5 lg:col-span-2">
-          <PrimaryAction
-            channel={typeConfig?.primary_channel ?? 'call'}
-            phones={ctx.phones}
-            clientId={ctx.clientId}
-            appointmentId={(draft.appointment_id as string) ?? null}
-            onWhatsApp={openWhatsApp}
-            onViewClient={() => setShowClientModal(true)}
-          />
-          {/* FOLLOWUP_4: register a client-reported visit as evidence — secondary,
-              available for every follow-up type, never changes the outcome. */}
-          <RegisterVisitAction
-            followupId={record.id}
-            clientId={ctx.clientId}
-            clientName={(ctx.client?.client_name as string | undefined) ?? null}
-            phone={ctx.phones[0] ?? null}
-            salesRep={draft.sales_rep}
-            projectCandidateId={visitProjectCandidate}
-            readOnly={readOnly}
-          />
-          <ScriptPanel typeConfig={typeConfig} />
+      <MissionStepper stages={stages} current={stage} onJump={setStage} isAr={isAr} />
+
+      {/* ── the current stage ─────────────────────────────────────────────── */}
+      <div className="space-y-5">
+        {stage === 'context' ? (
+          <>
+            <OptionsBrief clientId={ctx.clientId} />
+            <ClientContextCard
+              clientId={ctx.clientId}
+              client={ctx.client}
+              currentFollowupId={record.id}
+              phones={ctx.phones}
+              onOpenWhatsApp={openWhatsApp}
+            />
+          </>
+        ) : null}
+
+        {stage === 'call' || stage === 'whatsapp' ? (
+          <>
+            <PrimaryAction
+              channel={typeConfig?.primary_channel ?? 'call'}
+              phones={ctx.phones}
+              clientId={ctx.clientId}
+              appointmentId={(draft.appointment_id as string) ?? null}
+              onWhatsApp={openWhatsApp}
+              onViewClient={() => setShowClient360(true)}
+            />
+            {(isAr ? typeConfig?.script?.ar : typeConfig?.script?.en)?.length ? (
+              <button
+                type="button"
+                onClick={() => setShowScript(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-sand px-4 py-2.5 text-sm font-semibold text-copper transition hover:bg-cream"
+              >
+                <FileText size={16} /> {isAr ? 'سكربت المكالمة' : 'Call script'}
+              </button>
+            ) : null}
+          </>
+        ) : null}
+
+        {stage === 'qualify' ? (
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
+            <div className="min-w-0 flex-1">
+              <PreferenceSummary
+                clientId={ctx.clientId}
+                onEditFull={() => setShowClientModal(true)}
+                draft={prefDraft}
+                onFieldChange={setPrefField}
+                meta={qual.meta}
+              />
+            </div>
+            {/* Left rail: the Suggested Projects launcher (full "Present" stage
+                returns later) with the live own-inventory count right beneath it. */}
+            <div className="w-full space-y-5 xl:w-[340px] xl:shrink-0">
+              <SalesAssistantSidePanel
+                isAr={isAr}
+                clientsModel={clientsModel ?? null}
+                clientRec={clientRec}
+                prefDraft={prefDraft}
+                followupDraft={draft}
+                followupId={record.id}
+                projectName={(ctx.project?.project_name as string | undefined) ?? null}
+              />
+              <InventoryMeter state={inventory} />
+            </div>
+          </div>
+        ) : null}
+
+        {stage === 'confirm' ? (
           <OutcomePanel
             followupModel={model}
             typeKey={ctx.typeKey}
@@ -338,19 +381,38 @@ export default function FollowUpWorkspacePage() {
             onComplete={handleComplete}
             saving={saving}
           />
-        </div>
-        <div className="space-y-5">
-          <ContextPanel
-            typeConfig={typeConfig}
-            ctx={{ client: ctx.client, appointment: ctx.appointment, project: ctx.project, followup: draft, attemptNumber: ctx.attemptNumber, resolveUser, isAr }}
-          />
-          <PreferenceSummary
-            clientId={ctx.clientId}
-            onEditFull={() => setShowClientModal(true)}
-            draft={prefDraft}
-            onFieldChange={setPrefField}
-          />
-          <TimelinePanel clientId={ctx.clientId} currentFollowupId={record.id} phones={ctx.phones} />
+        ) : null}
+      </div>
+
+      {/* ── stage navigation ──────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-sand/60 pt-4">
+        <button
+          type="button"
+          onClick={goPrevStage}
+          disabled={stageIdx === 0}
+          className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-semibold text-charcoal/70 hover:bg-cream disabled:opacity-40"
+        >
+          <ArrowLeft size={15} className={isAr ? 'rotate-180' : ''} /> {isAr ? 'السابق' : 'Back'}
+        </button>
+        <div className="flex items-center gap-2">
+          {stage !== 'confirm' ? (
+            <button
+              type="button"
+              onClick={() => setStage('confirm')}
+              className="rounded-lg px-3 py-2 text-sm font-semibold text-copper hover:bg-cream"
+            >
+              {isAr ? 'سجّل النتيجة' : 'Record outcome'}
+            </button>
+          ) : null}
+          {stageIdx < stages.length - 1 ? (
+            <button
+              type="button"
+              onClick={goNextStage}
+              className="inline-flex items-center gap-1 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta"
+            >
+              {isAr ? 'التالي' : 'Next'} <ArrowLeft size={15} className={isAr ? '' : 'rotate-180'} />
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -360,30 +422,14 @@ export default function FollowUpWorkspacePage() {
         </button>
       </div>
       </div>
-
-      {/* Contextual Sales Assistant — the SAME assistant as the main page, scoped
-          to this follow-up. Reads the rep's UNSAVED preference draft (prefDraft). */}
-      <SalesAssistantSidePanel
-        isAr={isAr}
-        clientsModel={clientsModel ?? null}
-        clientRec={clientRec}
-        prefDraft={prefDraft}
-        followupDraft={draft}
-        followupId={record.id}
-        projectName={(ctx.project?.project_name as string | undefined) ?? null}
-      />
       </div>
 
-      {showApptModal && appointmentsModelId && (
-        <RecordFormModal
-          modelId={appointmentsModelId}
-          recordId={null}
-          prefill={{
-            client_id: ctx.clientId,
-            phone_number: ctx.phones[0] ?? '',
-            sales_rep: draft.sales_rep,
-            source_followup_id: record.id,
-          }}
+      {showApptModal && (
+        <QuickAppointmentModal
+          clientId={ctx.clientId}
+          phone={ctx.phones[0] ?? null}
+          salesRep={draft.sales_rep}
+          followupId={record.id}
           onClose={() => setShowApptModal(false)}
           onSaved={(apptId) => {
             patchDraft({ appointment_id: apptId });
@@ -409,6 +455,23 @@ export default function FollowUpWorkspacePage() {
         <ChatThreadModal recordId={chatThreadId} onClose={() => setChatThreadId(null)} />
       )}
 
+      {showScript && <ScriptModal typeConfig={typeConfig} onClose={() => setShowScript(false)} />}
+
+      {showClient360 && ctx.clientId && (
+        <ClientDetailModal clientId={ctx.clientId} onClose={() => setShowClient360(false)} />
+      )}
+
+      {showVisit && (
+        <QuickVisitModal
+          clientId={ctx.clientId}
+          clientName={(ctx.client?.client_name as string | undefined) ?? null}
+          phone={ctx.phones[0] ?? null}
+          salesRep={draft.sales_rep}
+          followupId={record.id}
+          onClose={() => setShowVisit(false)}
+        />
+      )}
+
       {/* View Client / Edit Full Preferences → client form in a modal, with an
           "Open full page" button to hand off to the full record page. */}
       {showClientModal && clientsModel && ctx.clientId && (
@@ -420,7 +483,7 @@ export default function FollowUpWorkspacePage() {
           onSaved={() => {
             // The full editor just persisted the client — re-seed the lifted
             // preference draft from the fresh record so the panel reflects it.
-            prefSeededRef.current = null;
+            qual.resetSeed();
             setShowClientModal(false);
           }}
         />

@@ -188,6 +188,63 @@ export async function fetchProjectFinder(
   return (await res.json()) as FinderResponse;
 }
 
+/** Slim response of the live inventory meter (`mode:'count'`). */
+export interface InventoryCountResponse {
+  mode: 'count';
+  /** True when the draft carries no matchable preference yet (server-authoritative). */
+  needs_preferences: boolean;
+  missing_required_preferences: string[];
+  /** Count of OUR (our_projects) projects genuinely eligible for this client. */
+  our_count: number;
+  geo_filter: { applied: boolean; match_count: number; needs_review: number } | null;
+  generated_at: string;
+}
+
+/**
+ * The live own-inventory count for a client's current (draft) requirements.
+ *
+ * Reuses `/api/project-finder` in `mode:'count'` — SAME engine, same hard budget /
+ * type / geo gates and same score floor as Suggested Projects, so the number can
+ * never disagree with what the finder would show. Returns only counts (no LLM, no
+ * deal badges, no audit row). Scores just the own portfolio (`sources:['our_projects']`).
+ *
+ * Throws `FinderRequestError` on a non-2xx so the hook can keep the last good count
+ * (an error must never read as "zero projects").
+ */
+export async function fetchInventoryCount(
+  args: {
+    requirements: MatchRequirementsInput;
+    clientId?: string | null;
+    locationItems?: unknown;
+    minScore?: number;
+  },
+  signal?: AbortSignal,
+): Promise<InventoryCountResponse> {
+  const res = await fetch('/api/project-finder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({
+      mode: 'count',
+      requirements: args.requirements,
+      client_id: args.clientId ?? undefined,
+      sources: ['our_projects'],
+      minScore: args.minScore ?? 70,
+      ...(Array.isArray(args.locationItems) ? { location_items: args.locationItems } : {}),
+      parse: false,
+      explain: false,
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new FinderRequestError(
+      body?.error || `POST /api/project-finder (count) failed (${res.status})`,
+      res.status,
+    );
+  }
+  return (await res.json()) as InventoryCountResponse;
+}
+
 /** Total matches across all four groups (empty-state check). */
 export function totalFinderMatches(resp: FinderResponse | null): number {
   if (!resp) return 0;

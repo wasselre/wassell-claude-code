@@ -10,13 +10,13 @@
  * Response: { ok: true, name_en: string }
  *
  * Auth: Supabase JWT via withAuth (same as api/translate.ts). Edge runtime.
- * Qwen on Cloudflare Workers AI first (writing/translation routing — see
- * api/_lib/textLlm.ts), Claude Haiku force-tool as fallback.
+ * DeepSeek first (writing/translation routing — see api/_lib/textLlm.ts),
+ * Claude Haiku force-tool as fallback.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
-import { qwenRoutingEnabled, qwenJson, logQwenFallback } from './_lib/textLlm.js';
+import { llmRoutingEnabled, llmJson, logLlmFallback } from './_lib/textLlm.js';
 
 export const config = {
   runtime: 'edge',
@@ -62,10 +62,10 @@ export default async function handler(req: Request): Promise<Response> {
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (!name) return jsonError(400, 'name is required');
 
-    // ── Primary: Qwen on Cloudflare Workers AI ─────────────────────────
-    if (qwenRoutingEnabled()) {
+    // ── Primary: DeepSeek ──────────────────────────────────────────────
+    if (llmRoutingEnabled()) {
       try {
-        const out = await qwenJson<{ name_en: string }>({
+        const out = await llmJson<{ name_en: string }>({
           system: SYSTEM_PROMPT.replace(' Always call the `transliterate` tool.', ''),
           user: name,
           shape: '{"name_en": string}',
@@ -75,7 +75,7 @@ export default async function handler(req: Request): Promise<Response> {
         });
         return jsonOk({ ok: true, name_en: out.name_en.trim() });
       } catch (err) {
-        logQwenFallback('/api/transliterate-name', err);
+        logLlmFallback('/api/transliterate-name', err);
       }
     }
 

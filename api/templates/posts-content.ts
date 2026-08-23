@@ -35,7 +35,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import { getServiceClient } from '../_lib/files.js';
-import { qwenRoutingEnabled, qwenJson, logQwenFallback } from '../_lib/textLlm.js';
+import { llmRoutingEnabled, llmJson, logLlmFallback } from '../_lib/textLlm.js';
 import { resolveLocalizedName } from '../../src/lib/geo/localizedName.js';
 import { angleById, type PostTone } from '../../src/lib/postsContent/templates.js';
 import { rankAngles, type PostLanguage } from '../../src/lib/postsContent/planning.js';
@@ -455,7 +455,7 @@ async function callModel(args: {
 }): Promise<{ out: ModelOut; generatedBy: string }> {
   const { system, user, language } = args;
 
-  if (qwenRoutingEnabled()) {
+  if (llmRoutingEnabled()) {
     try {
       // Only require the keys this language actually needs. Demanding all four
       // sent every Arabic-only / English-only request to the Anthropic fallback,
@@ -467,7 +467,7 @@ async function callModel(args: {
         ...(needsEn(language) ? ['headline_en', 'prose_en'] : []),
         'used_fact_ids',
       ];
-      const q = await qwenJson<Partial<ModelOut>>({
+      const q = await llmJson<Partial<ModelOut>>({
         system,
         user,
         shape: '{"headline_ar": string, "prose_ar": string, "headline_en": string, "prose_en": string, "used_fact_ids": string[]}',
@@ -477,10 +477,10 @@ async function callModel(args: {
       });
       return {
         out: normalizeOut(q),
-        generatedBy: `cloudflare:${process.env.CLOUDFLARE_AI_MODEL || '@cf/qwen/qwen3-30b-a3b-fp8'}`,
+        generatedBy: 'deepseek:deepseek-chat',
       };
     } catch (err) {
-      logQwenFallback('/api/templates/posts-content', err);
+      logLlmFallback('/api/templates/posts-content', err);
     }
   }
 

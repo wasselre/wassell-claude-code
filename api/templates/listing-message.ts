@@ -24,7 +24,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import { getServiceClient } from '../_lib/files.js';
-import { qwenRoutingEnabled, qwenJson, logQwenFallback } from '../_lib/textLlm.js';
+import { llmRoutingEnabled, llmJson, logLlmFallback } from '../_lib/textLlm.js';
 import { resolveLocalizedName, type LocalizedName } from '../../src/lib/geo/localizedName.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
@@ -288,10 +288,10 @@ ${JSON.stringify(
 LISTING DESCRIPTION (Arabic free text — extract amenities/features from here only):
 ${facts.description ?? '(no description provided)'}`;
 
-    // ── Primary: Qwen on Cloudflare Workers AI (writing/translation routing) ──
-    if (qwenRoutingEnabled()) {
+    // ── Primary: DeepSeek (writing/translation routing) ──
+    if (llmRoutingEnabled()) {
       try {
-        const out = await qwenJson<{ body_ar: string; body_en: string }>({
+        const out = await llmJson<{ body_ar: string; body_en: string }>({
           system: SYSTEM_PROMPT.replace(
             ' Write the message by calling `write_listing_message`.',
             '',
@@ -308,15 +308,15 @@ ${facts.description ?? '(no description provided)'}`;
           // Protected-fact gate: a model that altered an authoritative place
           // name is REJECTED, not published. Throwing here routes to the
           // Anthropic fallback below, which is validated the same way.
-          assertGeographyIntact({ bodyAr: qAr, bodyEn: qEn, districtGeo, cityGeo, provider: 'cloudflare-qwen' });
+          assertGeographyIntact({ bodyAr: qAr, bodyEn: qEn, districtGeo, cityGeo, provider: 'deepseek' });
           return jsonOk({
             ok: true, body_ar: qAr ?? '', body_en: qEn ?? '', facts,
-            generated_by: `cloudflare:${process.env.CLOUDFLARE_AI_MODEL || '@cf/qwen/qwen3-30b-a3b-fp8'}`,
+            generated_by: 'deepseek:deepseek-chat',
           });
         }
-        throw new Error('qwen returned an empty message');
+        throw new Error('deepseek returned an empty message');
       } catch (err) {
-        logQwenFallback('/api/templates/listing-message', err);
+        logLlmFallback('/api/templates/listing-message', err);
       }
     }
 
@@ -350,7 +350,7 @@ ${facts.description ?? '(no description provided)'}`;
     const bodyEn = asString(out.body_en);
     if (!bodyAr && !bodyEn) return jsonError(502, 'Claude returned an empty message');
 
-    // Same protected-fact gate as the Qwen path — no provider is trusted to
+    // Same protected-fact gate as the DeepSeek path — no provider is trusted to
     // leave authoritative place names alone.
     try {
       assertGeographyIntact({ bodyAr, bodyEn, districtGeo, cityGeo, provider: 'anthropic' });

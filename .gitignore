@@ -123,3 +123,8 @@ docs/marketing-reference/tools/node_modules/
 docs/marketing-reference/tools/render-page.html
 .mos-branch.local
 .mos-branch.env
+
+# Local-only dev API shim + vite override (Windows `vercel dev` workaround) — not
+# part of the app; each developer keeps their own. See CLAUDE.md dev notes.
+dev-api-shim.mjs
+vite.config.local.mjs

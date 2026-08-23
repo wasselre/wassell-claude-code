@@ -105,7 +105,12 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     objective_en: 'Book a project visit',
     primary_channel: 'call',
     stage: 'الاتصال لحجز موعد',
-    context_blocks: ['lead_source', 'campaign', 'preferred_project', 'budget', 'preferred_area', 'preferred_unit_type', 'previous_attempts', 'latest_call_summary', 'latest_whatsapp'],
+    // Lead source (shown when set) + the client's interested project. Budget /
+    // area / unit type live in the editable PreferenceSummary right below;
+    // attempt count is in the MissionHeader; prior calls are in the Timeline —
+    // so they're intentionally NOT repeated here. `campaign` has no field in the
+    // live clients model, so it is not offered.
+    context_blocks: ['lead_source', 'preferred_project'],
     preference_summary_fields: ['budget', 'preferred_projects', 'location', 'preferred_unit_type', 'preferred_area', 'preferred_language'],
     script: {
       ar: ['ما المنطقة التي تهمك؟', 'ما نطاق الميزانية المناسب لك؟', 'هل البحث للاستخدام الشخصي أم للاستثمار؟', 'هل يناسبك تحديد موعد زيارة قريبًا؟'],
@@ -137,7 +142,12 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     objective_en: "Follow up on the client's response to the project",
     primary_channel: 'whatsapp',
     stage: 'الاتصال لحجز موعد',
-    context_blocks: ['latest_whatsapp', 'suggested_template', 'preference_summary', 'next_recommended'],
+    // The reply-checkpoint state (did we send / are we waiting) + the project in
+    // play. Preferences are in PreferenceSummary; the project/option already sent
+    // and the prior call are surfaced by OptionsBrief + the Timeline. `latest_whatsapp`
+    // / `suggested_template` are not wired to a synchronous source yet, and
+    // `preference_summary` / `next_recommended` render nothing, so they're dropped.
+    context_blocks: ['whatsapp_status', 'preferred_project'],
     preference_summary_fields: ['budget', 'preferred_projects', 'preferred_unit_type', 'preferred_language'],
     script: {
       ar: [

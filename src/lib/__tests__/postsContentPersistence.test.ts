@@ -34,7 +34,7 @@ function generated(overrides: Partial<GeneratedPost> = {}): GeneratedPost {
     used_fact_ids: ['feature:4', 'unit_type:0'],
     evidence: ['ذكي'],
     grounded: true,
-    generated_by: 'cloudflare:qwen',
+    generated_by: 'deepseek:deepseek-chat',
     ...overrides,
   };
 }
