@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react';
-import { GitCompare, X } from 'lucide-react';
+import { Download, FileText, GitCompare, Loader2, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
-import { modelByName, fieldByCandidates } from '@/lib/projects/projectView';
+import { modelByName, fieldByCandidates, resolveProjectView, type ProjectView } from '@/lib/projects/projectView';
 import { resolveUnitView, unitsForProject, sortUnits, type UnitView, type UnitSortKey } from '@/lib/projects/unitView';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
+import { buildUnitsTablePdf, unitsPdfFilename } from '@/lib/projects/unitsPdf';
+import { downloadPdf, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
+import SendUnitsPdfModal from '@/pages/Chats/components/SendUnitsPdfModal';
 import UnitDrawer from './UnitDrawer';
 import UnitCompareModal from './UnitCompareModal';
 
@@ -13,13 +16,25 @@ interface UnitsInventoryProps {
   projectId: string;
   projectName?: string | null;
   isAr: boolean;
+  /**
+   * Pre-resolved project view (from the caller that already has it — e.g. the
+   * chat browser's drilled project). When omitted it's resolved locally from
+   * `projectId` so the PDF actions still work on the project detail page.
+   */
+  project?: ProjectView | null;
+  /**
+   * When set (the in-chat browser), each PDF action offers "Send to client"
+   * into this conversation. When null (project pages), only Download is shown.
+   */
+  chatPdf?: ChatPdfContext | null;
 }
 
 const SAR = (n: number | null, isAr: boolean) => (n === null ? (isAr ? 'غير متوفر' : 'N/A') : `${n.toLocaleString(isAr ? 'ar-SA' : 'en-US')} ${isAr ? 'ر.س' : 'SAR'}`);
 
-export default function UnitsInventory({ projectId, projectName, isAr }: UnitsInventoryProps) {
+export default function UnitsInventory({ projectId, projectName, isAr, project, chatPdf }: UnitsInventoryProps) {
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
+  const addToast = useAppStore((s) => s.addToast);
 
   const unitsModel = modelByName(models, 'units');
   const statusField = fieldByCandidates(unitsModel, ['unit_status']);
@@ -78,6 +93,32 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
     [allUnits, drawerUnitId],
   );
 
+  // Project view for the PDF header — the caller's if provided, else resolved
+  // from the project record so Download works on the project detail page too.
+  const projectView = useMemo<ProjectView | null>(() => {
+    if (project) return project;
+    const pm = modelByName(models, 'all_projects');
+    const rec = pm ? (records[pm.id] ?? []).find((r) => r.id === projectId) : undefined;
+    return rec ? resolveProjectView({ models, records }, rec, { isAr, translate: getEntityFieldText }) : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, models, records, projectId, isAr, translationVersion]);
+
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  const downloadTable = async () => {
+    if (!projectView || downloading) return;
+    setDownloading(true);
+    try {
+      const blob = await buildUnitsTablePdf({ project: projectView, units: filtered, isAr });
+      downloadPdf(blob, unitsPdfFilename(projectView));
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), 'error');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const toggle = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -117,6 +158,24 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
           <option value="best_per_m2">{isAr ? 'أفضل سعر متر' : 'Best price/m²'}</option>
           <option value="newest">{isAr ? 'الأحدث' : 'Newest'}</option>
         </select>
+
+        {/* Units table PDF — send to the client (in a chat) or download. The PDF
+            reflects the CURRENT filter (`filtered`). */}
+        {projectView && filtered.length > 0 && (
+          <div className="ms-auto">
+            {chatPdf ? (
+              <Button variant="secondary" className="text-sm !py-1.5" onClick={() => setPdfOpen(true)}>
+                <FileText size={14} className="inline -mt-0.5 me-1" />
+                {isAr ? `PDF الوحدات (${filtered.length})` : `Units PDF (${filtered.length})`}
+              </Button>
+            ) : (
+              <Button variant="secondary" className="text-sm !py-1.5" disabled={downloading} onClick={() => void downloadTable()}>
+                {downloading ? <Loader2 size={14} className="inline -mt-0.5 me-1 animate-spin" /> : <Download size={14} className="inline -mt-0.5 me-1" />}
+                {isAr ? `تنزيل PDF (${filtered.length})` : `Download PDF (${filtered.length})`}
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Selection action bar */}
@@ -173,8 +232,36 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
       )}
       <div className="text-xs text-charcoal/40">{isAr ? `${filtered.length} من ${allUnits.length} وحدة` : `${filtered.length} of ${allUnits.length} units`}</div>
 
-      <UnitDrawer unit={drawerUnit} projectName={projectName} isAr={isAr} onClose={() => setDrawerUnitId(null)} />
+      <UnitDrawer
+        unit={drawerUnit}
+        projectName={projectName}
+        isAr={isAr}
+        project={projectView}
+        chatPdf={chatPdf}
+        onClose={() => setDrawerUnitId(null)}
+      />
       <UnitCompareModal open={compareOpen} onClose={() => setCompareOpen(false)} units={selectedUnits} projectName={projectName} isAr={isAr} />
+
+      {/* Send/Download the units table PDF (chat context). Mounted only while
+          open so its cached-blob state resets per open. */}
+      {pdfOpen && chatPdf && projectView && (
+        <SendUnitsPdfModal
+          open
+          onClose={() => setPdfOpen(false)}
+          chatWid={chatPdf.chatWid}
+          clientName={chatPdf.clientName}
+          clientPhone={chatPdf.clientPhone}
+          title={isAr ? `وحدات ${projectView.name ?? ''}`.trim() : `${projectView.name ?? 'Project'} units`}
+          subtitle={isAr ? `${filtered.length} وحدة` : `${filtered.length} units`}
+          filename={unitsPdfFilename(projectView)}
+          defaultCaption={
+            isAr
+              ? `قائمة وحدات ${projectView.name ?? ''}`.trim()
+              : `${projectView.name ?? 'Project'} — units list`
+          }
+          build={() => buildUnitsTablePdf({ project: projectView, units: filtered, isAr })}
+        />
+      )}
     </div>
   );
 }

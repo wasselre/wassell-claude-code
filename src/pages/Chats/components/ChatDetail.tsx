@@ -506,7 +506,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           mobile action sheet closing can never unmount it mid-open. */}
       {showProjectsBrowser && (
         <Suspense fallback={<OverlayFallback />}>
-          <ProjectsUnitsBrowser clientId={clientLinkId} onClose={() => setShowProjectsBrowser(false)} />
+          <ProjectsUnitsBrowser clientId={clientLinkId} chatWid={chatWid} onClose={() => setShowProjectsBrowser(false)} />
         </Suspense>
       )}
 

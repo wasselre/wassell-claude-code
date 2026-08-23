@@ -13,6 +13,9 @@ import {
 } from '@/lib/projects/projectView';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
 import { addProjectToClient } from '@/lib/matching/addToClient';
+import { recordTitle } from '@/lib/documents/links';
+import { normalizePhone } from '@/lib/phone';
+import type { ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 import Badge from '@/components/ui/Badge';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
@@ -56,6 +59,11 @@ interface Props {
    * unlinked number) → the sheet is browse-only; nothing else changes.
    */
   clientId?: string | null;
+  /**
+   * The conversation's wid. Present → the units-table and single-unit PDFs can
+   * be SENT to this chat's client (not just downloaded). Absent → download-only.
+   */
+  chatWid?: string | null;
   /** Close the sheet (the caller owns the open/closed flag). */
   onClose: () => void;
 }
@@ -65,7 +73,7 @@ type Scope = 'all' | 'ours' | 'targeted';
 /** How many rows render before "show more" — keeps a 1,000-project list cheap on a phone. */
 const PAGE = 60;
 
-export default function ProjectsUnitsBrowser({ clientId, onClose }: Props) {
+export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Props) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
@@ -127,6 +135,19 @@ export default function ProjectsUnitsBrowser({ clientId, onClose }: Props) {
     if (!clientId || !clientsModel) return null;
     return (records[clientsModel.id] ?? []).find((r) => r.id === clientId) ?? null;
   }, [clientId, clientsModel, records]);
+
+  // Chat send-context for the units/unit PDFs — only when the sheet was opened
+  // from a real conversation (chatWid present).
+  const chatPdf = useMemo<ChatPdfContext | null>(() => {
+    if (!chatWid) return null;
+    return {
+      chatWid,
+      clientName: clientRec && clientsModel ? recordTitle(clientsModel, clientRec, isAr) : null,
+      clientPhone: clientRec
+        ? normalizePhone(String((clientRec.data as Record<string, unknown>).phone_number ?? '')) || null
+        : null,
+    };
+  }, [chatWid, clientRec, clientsModel, isAr]);
 
   // ── filters ───────────────────────────────────────────────────────────────
   const [scope, setScope] = useState<Scope>('all');
@@ -301,6 +322,7 @@ export default function ProjectsUnitsBrowser({ clientId, onClose }: Props) {
               model={projectsModel}
               canAct={!!clientRec}
               addState={addState}
+              chatPdf={chatPdf}
               onSend={() => setSendTarget({ id: openView.id, name: openView.name ?? '' })}
               onAdd={() => void addToOptions(openView)}
             />
@@ -536,13 +558,14 @@ function ProjectRow({
 
 /** The opened project: facts, rep actions, then the real units inventory. */
 function ProjectDetail({
-  v, isAr, model, canAct, addState, onSend, onAdd,
+  v, isAr, model, canAct, addState, chatPdf, onSend, onAdd,
 }: {
   v: ProjectView;
   isAr: boolean;
   model: AppModel | undefined;
   canAct: boolean;
   addState: 'idle' | 'saving' | 'added';
+  chatPdf: ChatPdfContext | null;
   onSend: () => void;
   onAdd: () => void;
 }) {
@@ -628,7 +651,7 @@ function ProjectDetail({
           horizontally inside the sheet on narrow viewports. */}
       <div>
         <h3 className="mb-2 text-sm font-bold text-chocolate">{L('الوحدات', 'Units')}</h3>
-        <UnitsInventory projectId={v.id} projectName={v.name} isAr={isAr} />
+        <UnitsInventory projectId={v.id} projectName={v.name} isAr={isAr} project={v} chatPdf={chatPdf} />
       </div>
     </div>
   );

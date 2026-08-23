@@ -1,17 +1,25 @@
 import { useEffect, useState } from 'react';
-import { X, ExternalLink, FileText, Loader2, Check } from 'lucide-react';
+import { X, ExternalLink, FileText, Loader2, Check, Download } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
+import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { canEditRecord, getFieldPermission } from '@/lib/permissions';
 import { signViewUrls } from '@/lib/files/client';
 import { isFileIdValue } from '@/pages/Records/components/useFileRowMap';
-import { modelByName, fieldByCandidates } from '@/lib/projects/projectView';
+import { modelByName, fieldByCandidates, type ProjectView } from '@/lib/projects/projectView';
 import type { UnitView } from '@/lib/projects/unitView';
+import { buildUnitPdf, unitPdfFilename } from '@/lib/projects/unitsPdf';
+import { downloadPdf, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
+import SendUnitsPdfModal from '@/pages/Chats/components/SendUnitsPdfModal';
 
 interface UnitDrawerProps {
   unit: UnitView | null;
   projectName?: string | null;
   isAr: boolean;
+  /** Project view for the PDF header (from the inventory). */
+  project?: ProjectView | null;
+  /** Set → the drawer offers "Send unit PDF" into that conversation. */
+  chatPdf?: ChatPdfContext | null;
   onClose: () => void;
 }
 
@@ -166,7 +174,8 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDrawerProps) {
+export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, onClose }: UnitDrawerProps) {
+  const addToast = useAppStore((s) => s.addToast);
   // Resolve the plan image: it's a files.id UUID (private wassel-files bucket) →
   // batch-sign a view URL; legacy http values are used directly.
   const [planUrl, setPlanUrl] = useState<string | null>(null);
@@ -183,6 +192,23 @@ export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDra
     }
     return () => { alive = false; };
   }, [planValue]);
+
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  // Reset the send/download modal when switching units.
+  useEffect(() => { setPdfOpen(false); }, [unit?.id]);
+
+  const downloadUnit = async () => {
+    if (!unit || !project || downloading) return;
+    setDownloading(true);
+    try {
+      downloadPdf(await buildUnitPdf({ project, unit, isAr }), unitPdfFilename(project, unit));
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), 'error');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (!unit) return null;
 
@@ -205,6 +231,24 @@ export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDra
         </div>
 
         <div className="p-4 space-y-5 flex-1">
+          {/* Unit PDF — send this unit's one-pager to the client (in a chat) or
+              download it. Needs the resolved project for the branded header. */}
+          {project && (
+            <div className="flex items-center gap-2">
+              {chatPdf ? (
+                <Button variant="primary" className="text-sm !py-1.5" onClick={() => setPdfOpen(true)}>
+                  <FileText size={14} className="inline -mt-0.5 me-1" />
+                  {isAr ? 'إرسال PDF للعميل' : 'Send unit PDF'}
+                </Button>
+              ) : (
+                <Button variant="secondary" className="text-sm !py-1.5" disabled={downloading} onClick={() => void downloadUnit()}>
+                  {downloading ? <Loader2 size={14} className="inline -mt-0.5 me-1 animate-spin" /> : <Download size={14} className="inline -mt-0.5 me-1" />}
+                  {isAr ? 'تنزيل PDF الوحدة' : 'Download unit PDF'}
+                </Button>
+              )}
+            </div>
+          )}
+
           {/* Status — editable in place (one click to mark sold/reserved). */}
           <section>
             <h3 className="text-xs font-bold uppercase tracking-wide text-copper mb-1.5">{isAr ? 'حالة الوحدة' : 'Unit status'}</h3>
@@ -327,6 +371,26 @@ export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDra
           )}
         </div>
       </div>
+
+      {/* Send/Download this unit's PDF (chat context). */}
+      {pdfOpen && chatPdf && project && (
+        <SendUnitsPdfModal
+          open
+          onClose={() => setPdfOpen(false)}
+          chatWid={chatPdf.chatWid}
+          clientName={chatPdf.clientName}
+          clientPhone={chatPdf.clientPhone}
+          title={isAr ? `وحدة ${unit.code ?? ''}`.trim() : `Unit ${unit.code ?? ''}`.trim()}
+          subtitle={[projectName, unit.type ? (isAr ? unit.type.label_ar : unit.type.label_en) : null].filter(Boolean).join(isAr ? ' · ' : ' · ')}
+          filename={unitPdfFilename(project, unit)}
+          defaultCaption={
+            isAr
+              ? `تفاصيل الوحدة ${unit.code ?? ''} — ${projectName ?? ''}`.trim()
+              : `Unit ${unit.code ?? ''} — ${projectName ?? ''}`.trim()
+          }
+          build={() => buildUnitPdf({ project, unit, isAr })}
+        />
+      )}
     </div>
   );
 }
