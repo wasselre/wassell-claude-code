@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { processLock } from '@supabase/auth-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -26,6 +27,18 @@ export const CLIENT_BUILD_ID: string =
 export const supabase: SupabaseClient | null =
   supabaseUrl && supabaseKey
     ? createClient(supabaseUrl, supabaseKey, {
+        auth: {
+          // Use the in-memory processLock instead of the default navigatorLock
+          // (Web Locks API). On iOS/Safari PWAs the Web Lock gets held across
+          // app suspend/resume and then "stolen by another request", which
+          // STALLS `getSession()` / the token refresh — so a WhatsApp send goes
+          // out slowly and sometimes without a fresh token, fails, and only
+          // works on a retry (the "takes a couple of tries + key stolen error"
+          // report, 2026-08-20). processLock serialises token refresh within the
+          // tab without the Web Locks API. This is Supabase's recommended fix
+          // for exactly this Safari/iOS symptom.
+          lock: processLock,
+        },
         global: {
           headers: {
             // T2 (2026-06-24): identify the SPA as a caller in Postgres logs /

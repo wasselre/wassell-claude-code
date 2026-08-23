@@ -21,6 +21,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@googlemaps/markerclusterer": "^2.6.2",
     "@react-google-maps/api": "^2.20.8",
+    "@supabase/auth-js": "2.103.3",
     "@supabase/supabase-js": "^2.49.1",
     "@tiptap/extension-collaboration": "3.22.4",
     "@tiptap/extension-collaboration-caret": "3.22.4",
