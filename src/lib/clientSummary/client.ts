@@ -10,6 +10,7 @@ import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
 import { listCallsForPhone } from '@/lib/hatif/client';
 import { getOutcome, getFollowUpTypeConfig } from '@/lib/salesProcess';
+import { buildDetailedClientPrefChips, buildGeoNameMap } from '@/pages/Chats/lib/prefChips';
 import type { AppRecord } from '@/types';
 
 // Keep the payload well under the endpoint's 24k-char cap while still covering
@@ -76,15 +77,18 @@ export async function gatherClientFacts(clientId: string, phones: string[]): Pro
   addClient('name', cd.client_name ?? cd.name);
   addClient('stage', cd.client_stage);
   addClient('status', cd.client_status);
-  addClient('unit_type', cd.preferred_unit_type);
-  addClient('bedrooms', cd.preferred_bedrooms);
-  addClient('area', cd.preferred_area);
-  addClient('purchase_objective', cd.purchase_objective);
   addClient('language', cd.preferred_language);
   addClient('notes', cd.preference_notes);
-  const budgetMin = str(cd.budget_min ?? (cd.budget as Record<string, unknown> | undefined)?.min);
-  const budgetMax = str(cd.budget_max ?? (cd.budget as Record<string, unknown> | undefined)?.max);
-  if (budgetMin || budgetMax) client.budget = `${budgetMin || '?'}–${budgetMax || '?'} ر.س`;
+  // Structured preferences — unit type (multiselect array), area / bedrooms / budget
+  // (range objects), location (geo-id compound → resolved names), amenities,
+  // purchase objective, unit-age. A naive stringify drops all of these (arrays /
+  // objects), which is why the briefing used to see ONLY the budget. Reuse the
+  // shared chip builder that renders them the same way the chat header does.
+  const clientsModelObj = models.find((m) => m.name === 'clients') ?? null;
+  const geoNames = buildGeoNameMap(models, records);
+  const prefChips = clientsModelObj ? buildDetailedClientPrefChips(cd, clientsModelObj, geoNames, isAr) : [];
+  const prefText = prefChips.map((c) => c.text).filter(Boolean).join(' · ');
+  if (prefText) client.preferences = prefText;
 
   // ── Follow-ups ──
   const followups: FollowupFact[] = recordsForClient(rowsOf('followups'), clientId, 'client_id')
