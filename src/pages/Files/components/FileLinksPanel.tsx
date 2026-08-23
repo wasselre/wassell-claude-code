@@ -1,33 +1,41 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Building2, Database, Loader2, Plus, X } from 'lucide-react';
+import { Building2, Plus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import {
   addDocumentLink,
   listLinksForFile,
   recordTitle,
-  removeDocumentLink,
   type DocumentLink,
 } from '@/lib/documents/links';
+import UsedInPanel from './UsedInPanel';
 
 interface Props {
   fileId: string;
-  /** When false the panel is read-only — the project picker and remove
-   *  buttons are hidden, matching the file's edit permission. */
+  /** When false the panel is read-only — the project picker is hidden, matching
+   *  the file's edit permission. The linked-records list shows either way. */
   canEdit: boolean;
 }
 
 /**
- * Links rail for a file/media, shown inside FilePreviewModal. Two fields:
- *   1. "Link a project" — a searchable dropdown over our_projects records that
- *      adds a document_links row (many-to-many).
- *   2. "Linked records" — every record currently linked to this file (any
- *      model), each removable.
+ * Links rail for a file/media, shown inside FilePreviewModal.
  *
- * Uses the existing document_links surface (addDocumentLink / removeDocumentLink
- * / listLinksForFile). RLS gates by FILE access, so a viewer only ever sees
- * links they could open.
+ *   1. "Link a project" — a searchable dropdown over our_projects records that
+ *      adds a `document_links` row (a MANUAL link).
+ *   2. "Linked records" — rendered by UsedInPanel from the UNIFIED `file_links`
+ *      graph, so it shows EVERY record the file is linked to, however the link
+ *      arose (a record field, a marketing asset, a manual document_links row —
+ *      all of which converge into file_links).
+ *
+ * ── WHY THE LIST IS UsedInPanel, NOT document_links ───────────────────────
+ * This panel used to list `document_links` only. A file linked to a project via
+ * a FIELD or a MARKETING asset (the common case) has no document_links row, so
+ * the panel read "no linked records" while the record's own files panel showed
+ * the file — a direct contradiction (operator report, 2026-08-23). file_links
+ * is the one converged truth; document_links is only the manual-link write path,
+ * still used by the "Link a project" adder above and to exclude already-linked
+ * projects from its results.
  */
 export default function FileLinksPanel({ fileId, canEdit }: Props) {
   const { t } = useTranslation();
@@ -36,8 +44,9 @@ export default function FileLinksPanel({ fileId, canEdit }: Props) {
   /** Store shape: Record<modelId, AppRecord[]> — per-model arrays. */
   const recordsMap = useAppStore((s) => s.records);
 
+  /** Manual links, loaded only to exclude already-linked projects from the
+   *  adder. The DISPLAYED list is UsedInPanel (the file_links truth). */
   const [links, setLinks] = useState<DocumentLink[]>([]);
-  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -45,8 +54,7 @@ export default function FileLinksPanel({ fileId, canEdit }: Props) {
   const masterModel = useMemo(() => models.find((m) => m.name === 'all_projects'), [models]);
 
   /** our_projects records carry no project_name of their own — the human name
-   *  lives on the linked master all_projects record (the 1:1 `project` lookup).
-   *  Resolve through it, falling back to the record's own title heuristic. */
+   *  lives on the linked master all_projects record (the 1:1 `project` lookup). */
   const projectDisplayTitle = useCallback(
     (record: AppRecord): string => {
       const raw = record.data?.project;
@@ -66,25 +74,16 @@ export default function FileLinksPanel({ fileId, canEdit }: Props) {
 
   useEffect(() => {
     setQuery('');
+    if (!canEdit) return;
     let cancelled = false;
-    setLoading(true);
     listLinksForFile(fileId)
-      .then((rows) => {
-        if (!cancelled) setLinks(rows);
-      })
-      .catch(() => {
-        /* surfaced by links.ts */
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fileId]);
+      .then((rows) => { if (!cancelled) setLinks(rows); })
+      .catch(() => { /* surfaced by links.ts */ });
+    return () => { cancelled = true; };
+  }, [fileId, canEdit]);
 
   /** Instant in-memory search over our_projects records, excluding ones already
-   *  linked to this file. */
+   *  manually linked to this file. */
   const projectResults = useMemo(() => {
     if (!projectModel) return [];
     const q = query.trim().toLowerCase();
@@ -110,40 +109,13 @@ export default function FileLinksPanel({ fileId, canEdit }: Props) {
     }
   };
 
-  const remove = async (link: DocumentLink) => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await removeDocumentLink(link.id);
-      setLinks((prev) => prev.filter((l) => l.id !== link.id));
-    } catch {
-      /* surfaced */
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const titleFor = (link: DocumentLink): { record: string; model: string } => {
-    const m = models.find((x) => x.id === link.model_id);
-    const r = (recordsMap[link.model_id] ?? []).find((x) => x.id === link.record_id);
-    const isProject = !!projectModel && link.model_id === projectModel.id;
-    return {
-      record: r
-        ? isProject
-          ? projectDisplayTitle(r)
-          : recordTitle(m, r, isAr)
-        : t('doc.links.record_missing'),
-      model: m ? (isAr ? m.label_ar : m.label_en) : '—',
-    };
-  };
-
   return (
     <div
       className="w-80 max-w-[85vw] shrink-0 bg-white border-s border-sand/30 flex flex-col overflow-y-auto"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="p-5 space-y-6">
-        {/* Field 1 — link a project */}
+        {/* Field 1 — link a project (writes a manual document_links row). */}
         {canEdit && (
           <div>
             <div className="text-xs font-bold text-charcoal/40 uppercase tracking-widest mb-2">
@@ -189,47 +161,8 @@ export default function FileLinksPanel({ fileId, canEdit }: Props) {
           </div>
         )}
 
-        {/* Field 2 — linked records to this media */}
-        <div>
-          <div className="text-xs font-bold text-charcoal/40 uppercase tracking-widest mb-2">
-            {t('files.links.linked_records')}
-          </div>
-          {loading ? (
-            <div className="py-4 flex justify-center">
-              <Loader2 size={18} className="animate-spin text-copper" />
-            </div>
-          ) : links.length === 0 ? (
-            <p className="text-sm text-charcoal/50">{t('files.links.empty')}</p>
-          ) : (
-            <div className="space-y-1.5">
-              {links.map((link) => {
-                const tt = titleFor(link);
-                return (
-                  <div
-                    key={link.id}
-                    className="flex items-center gap-2 px-3 py-2 rounded-xl bg-cream/60 border border-sand/30"
-                  >
-                    <Database size={14} className="text-copper shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-bold text-charcoal truncate">{tt.record}</div>
-                      <div className="text-[0.6875rem] text-charcoal/50">{tt.model}</div>
-                    </div>
-                    {canEdit && (
-                      <button
-                        onClick={() => void remove(link)}
-                        disabled={busy}
-                        className="p-1.5 rounded-lg text-charcoal/40 hover:text-red-600 hover:bg-red-50 disabled:opacity-40"
-                        aria-label={t('doc.links.remove')}
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        {/* Field 2 — the linked records, from the UNIFIED file_links graph. */}
+        <UsedInPanel fileId={fileId} isAr={isAr} />
       </div>
     </div>
   );

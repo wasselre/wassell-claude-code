@@ -13,7 +13,6 @@ import {
 import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindIcon, kindLabel } from '@/lib/files/format';
 import FileLinksPanel from './FileLinksPanel';
-import UsedInPanel from './UsedInPanel';
 
 // In-app PDF viewer (pdf.js), lazy so its ~1 MB worker only loads on a PDF open.
 // Replaces the browser's native <iframe> plugin — same reader everywhere,
@@ -251,10 +250,11 @@ export default function FilePreviewModal({
             </>
           )}
         </div>
+        {/* FileLinksPanel now includes the unified linked-records list
+            (UsedInPanel) inside its own rail, so the file's real links show once
+            and correctly — not a document_links-only list that read "none" for a
+            field/marketing-derived link. */}
         {showLinks && <FileLinksPanel fileId={file.id} canEdit={canEdit} />}
-        {/* Phase 1 projection — read-only, feature-flagged, renders nothing
-            when the flag is off or the file has no visible links. */}
-        {showLinks && <UsedInPanel fileId={file.id} isAr={isAr} />}
       </div>
     </div>,
     document.body,
