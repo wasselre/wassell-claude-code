@@ -54,6 +54,32 @@ export interface FileRow {
   content_etag: string | null;
   created_at: string;
   updated_at: string;
+  // Metadata Intelligence layers (Phase A/B). Optional; see BusinessFileRow.
+  asset_nature?: string | null;
+  acquisition_source?: string | null;
+  usage_rights?: string | null;
+  production_state?: string | null;
+  ai_description?: string | null;
+  width_px?: number | null;
+  height_px?: number | null;
+  duration_seconds?: number | null;
+  page_count?: number | null;
+}
+
+/** One row of a Metadata-Intelligence vocabulary (`file_vocabularies`) — the
+ *  data-driven picklist for one of the new scalar axes. Same shape idea as
+ *  FileDocumentTypeRow. Readable by any authenticated user; admin-only writes. */
+export type FileVocabDimension =
+  | 'asset_nature' | 'acquisition_source' | 'usage_rights' | 'production_state';
+
+export interface FileVocabRow {
+  dimension: FileVocabDimension;
+  value: string;
+  label_ar: string;
+  label_en: string;
+  applies_to_kinds: string[];
+  sort: number;
+  active: boolean;
 }
 
 /** Response of POST /api/files/office-preview — the SPA polls this while
@@ -248,6 +274,24 @@ export interface BusinessFileRow {
   /** Present only when business_files_search is asked for it; the Library's
    *  duplicate filter keys off it server-side. */
   content_etag?: string | null;
+  // ── Metadata Intelligence layers (Phase A/B, 2026-08-23). All optional: a
+  //    file with none set is still valid. See docs/files-metadata-intelligence-plan.md.
+  /** Asset nature — real / ai_generated / cgi_render / screenshot … (vocab). */
+  asset_nature?: string | null;
+  /** Where we obtained it — developer / competitor / client … (vocab). */
+  acquisition_source?: string | null;
+  /** What we may DO with it — approved / do_not_use … (vocab, ≠ confidentiality). */
+  usage_rights?: string | null;
+  /** How ready it is — raw / edited / final / published (vocab, ≠ status). */
+  production_state?: string | null;
+  /** Short AI summary of contents. NULL until the AI enrichment phase. */
+  ai_description?: string | null;
+  width_px?: number | null;
+  height_px?: number | null;
+  duration_seconds?: number | null;
+  page_count?: number | null;
+  /** Full subject set (file_subjects); document_type is the primary one. */
+  subjects?: string[];
 }
 
 /** Facet counts, computed over the WHOLE filtered set rather than the page, so
@@ -264,6 +308,12 @@ export interface BusinessFileFacets {
   linked_model: Record<string, number>;
   role: Record<string, number>;
   health: { unlinked: number; expired: number; duplicate: number };
+  // Metadata Intelligence axes (Phase B). Optional so an older RPC still types.
+  asset_nature?: Record<string, number>;
+  acquisition_source?: Record<string, number>;
+  usage_rights?: Record<string, number>;
+  production_state?: Record<string, number>;
+  subject?: Record<string, number>;
 }
 
 export interface BusinessFilesSearchResult {
@@ -284,6 +334,12 @@ export interface BusinessFilesSearchResult {
  */
 export interface LibraryFilters {
   document_type?: string[];
+  /** Multi-value subject (file_subjects). ANY listed subject matches. */
+  subject?: string[];
+  asset_nature?: string[];
+  acquisition_source?: string[];
+  usage_rights?: string[];
+  production_state?: string[];
   status?: FileStatus[];
   kind?: FilePreviewKind[];
   origin?: FileOrigin[];

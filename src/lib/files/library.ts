@@ -25,6 +25,7 @@ import type {
   BusinessFilesSearchResult,
   BusinessFileSort,
   FileDocumentTypeRow,
+  FileVocabRow,
   LibraryFilters,
   PageLinkSummary,
 } from '@/types';
@@ -238,6 +239,13 @@ export interface FileMetadataPatch {
   confidentiality?: BusinessFileRow['confidentiality'];
   valid_from?: string | null;
   valid_until?: string | null;
+  // Metadata Intelligence axes (Phase B) — direct scalar columns on files.
+  // `ai_description` is deliberately NOT here: it is machine-written in the AI
+  // phase, not hand-edited from this patch.
+  asset_nature?: string | null;
+  acquisition_source?: string | null;
+  usage_rights?: string | null;
+  production_state?: string | null;
 }
 
 /**
@@ -275,4 +283,48 @@ export async function updateFileMetadata(
     );
   }
   return saved;
+}
+
+/** The data-driven picklists for the Metadata-Intelligence scalar axes
+ *  (asset_nature / acquisition_source / usage_rights / production_state). One
+ *  round-trip returns all four; callers group by `dimension`. Only ACTIVE rows
+ *  are returned by RLS+filter, mirroring listDocumentTypes. */
+export async function listFileVocabularies(): Promise<FileVocabRow[]> {
+  const db = requireSupabase('load file vocabularies');
+  const { data, error } = await db
+    .from('file_vocabularies')
+    .select('*')
+    .eq('active', true)
+    .order('dimension')
+    .order('sort');
+  if (error) throw surfaceLibraryError('load file vocabularies', error);
+  return (data ?? []) as FileVocabRow[];
+}
+
+/** The FULL subject set for one file (file_subjects). document_type is the
+ *  PRIMARY subject and is always among these after a save. */
+export async function fetchFileSubjects(fileId: string): Promise<string[]> {
+  const db = requireSupabase('load file subjects');
+  const { data, error } = await db
+    .from('file_subjects')
+    .select('subject')
+    .eq('file_id', fileId);
+  if (error) throw surfaceLibraryError('load file subjects', error);
+  return (data ?? []).map((r) => (r as { subject: string }).subject);
+}
+
+/** Replace a file's subject set. The caller passes the COMPLETE desired set
+ *  (including the primary document_type). Delete-then-insert keeps it simple and
+ *  idempotent; RLS gates both on edit access to the parent file. Empty rows are
+ *  filtered so a stray blank never violates the FK. */
+export async function saveFileSubjects(fileId: string, subjects: string[]): Promise<void> {
+  const db = requireSupabase('save file subjects');
+  const clean = [...new Set(subjects.map((s) => s.trim()).filter(Boolean))];
+  const del = await db.from('file_subjects').delete().eq('file_id', fileId);
+  if (del.error) throw surfaceLibraryError('save file subjects', del.error);
+  if (clean.length === 0) return;
+  const ins = await db
+    .from('file_subjects')
+    .insert(clean.map((subject) => ({ file_id: fileId, subject })));
+  if (ins.error) throw surfaceLibraryError('save file subjects', ins.error);
 }

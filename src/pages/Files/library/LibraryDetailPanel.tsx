@@ -29,9 +29,13 @@ import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import { effectiveFileRoles, roleSatisfies, signDownloadUrl } from '@/lib/files/client';
-import { errorText, updateFileMetadata, type FileMetadataPatch } from '@/lib/files/library';
+import {
+  errorText, fetchFileSubjects, listFileVocabularies, saveFileSubjects,
+  updateFileMetadata, type FileMetadataPatch,
+} from '@/lib/files/library';
 import type {
   BusinessFileRow, FileConfidentiality, FileDocumentTypeRow, FilePermissionRole, FileStatus,
+  FileVocabDimension, FileVocabRow,
 } from '@/types';
 import { FILE_CONFIDENTIALITIES, FILE_STATUSES } from '@/lib/files/libraryUrl';
 import { originLabel, ownerLabel, shortDate } from './labels';
@@ -63,6 +67,11 @@ interface Draft {
   confidentiality: FileConfidentiality;
   valid_from: string;
   valid_until: string;
+  // Metadata Intelligence scalar axes. '' means "not set".
+  asset_nature: string;
+  acquisition_source: string;
+  usage_rights: string;
+  production_state: string;
 }
 
 /** `2026-08-19T00:00:00Z` → `2026-08-19` for <input type="date">, and back. */
@@ -84,6 +93,10 @@ function draftFrom(file: BusinessFileRow): Draft {
     confidentiality: file.confidentiality,
     valid_from: toDateInput(file.valid_from),
     valid_until: toDateInput(file.valid_until),
+    asset_nature: file.asset_nature ?? '',
+    acquisition_source: file.acquisition_source ?? '',
+    usage_rights: file.usage_rights ?? '',
+    production_state: file.production_state ?? '',
   };
 }
 
@@ -98,6 +111,42 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
   const [draft, setDraft] = useState<Draft>(() => draftFrom(file));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Metadata Intelligence: data-driven axis vocabularies + the multi-subject set.
+  const [vocab, setVocab] = useState<FileVocabRow[]>([]);
+  const [subjects, setSubjects] = useState<string[]>([]);
+  const [subjectsInit, setSubjectsInit] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await listFileVocabularies();
+        if (!cancelled) setVocab(rows);
+      } catch {
+        // listFileVocabularies toasted. Selects fall back to whatever value the
+        // file already carries (added explicitly below), never blank the panel.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Subjects live in file_subjects, not on the row, so they load per file.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await fetchFileSubjects(file.id);
+        if (!cancelled) { setSubjects(list); setSubjectsInit(list); }
+      } catch {
+        if (!cancelled) { setSubjects([]); setSubjectsInit([]); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [file.id]);
+
+  const vocabFor = (dim: FileVocabDimension) =>
+    vocab.filter((v) => v.dimension === dim
+      && (v.applies_to_kinds.length === 0 || v.applies_to_kinds.includes(file.kind)));
 
   // Re-sync the draft from whatever the row now says. This fires on a NEW file
   // AND after a save (the page patches the row in place, so the object changes
@@ -138,10 +187,14 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
   const Icon = kindIcon[file.kind];
   const accent = kindAccent[file.kind];
 
+  const subjectsChanged = useMemo(
+    () => subjects.slice().sort().join('') !== subjectsInit.slice().sort().join(''),
+    [subjects, subjectsInit],
+  );
   const dirty = useMemo(() => {
     const base = draftFrom(file);
-    return (Object.keys(base) as Array<keyof Draft>).some((k) => base[k] !== draft[k]);
-  }, [draft, file]);
+    return (Object.keys(base) as Array<keyof Draft>).some((k) => base[k] !== draft[k]) || subjectsChanged;
+  }, [draft, file, subjectsChanged]);
 
   const onSave = useCallback(async () => {
     setSaving(true);
@@ -157,8 +210,20 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
         confidentiality: draft.confidentiality,
         valid_from: fromDateInput(draft.valid_from),
         valid_until: fromDateInput(draft.valid_until),
+        // '' → null so a cleared axis stores as unset, not the empty string.
+        asset_nature: draft.asset_nature || null,
+        acquisition_source: draft.acquisition_source || null,
+        usage_rights: draft.usage_rights || null,
+        production_state: draft.production_state || null,
       };
       const saved = await updateFileMetadata(file.id, patch);
+      // The primary subject (document_type) is always part of the subject set.
+      if (subjectsChanged || !subjects.includes(draft.document_type)) {
+        const full = [...new Set([draft.document_type, ...subjects])];
+        await saveFileSubjects(file.id, full);
+        setSubjects(full);
+        setSubjectsInit(full);
+      }
       onSaved(saved);
       addToast(t('files.library.saved'), 'success');
     } catch (e) {
@@ -169,7 +234,7 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
     } finally {
       setSaving(false);
     }
-  }, [draft, file.id, onSaved, addToast, t]);
+  }, [draft, file.id, subjects, subjectsChanged, onSaved, addToast, t]);
 
   const field = 'w-full px-3 py-2 rounded-lg bg-white border border-sand/40 text-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-copper/30 disabled:bg-cream/70 disabled:text-charcoal/60';
   const labelCls = 'block mb-1 text-[11px] font-bold uppercase tracking-wide text-charcoal/45';
@@ -230,6 +295,21 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
              <dd className="font-bold text-charcoal/80 truncate" dir="auto">
                {ownerLabel(file.uploaded_by_user_id, users, isAr)}
              </dd></div>
+        {/* Technical metadata — objective, machine-captured. Shown only when known. */}
+        {file.width_px && file.height_px ? (
+          <div><dt className="text-charcoal/40">{t('files.library.meta.dimensions')}</dt>
+               <dd className="font-bold text-charcoal/80 tabular-nums">{file.width_px}×{file.height_px}</dd></div>
+        ) : null}
+        {file.duration_seconds ? (
+          <div><dt className="text-charcoal/40">{t('files.library.meta.duration')}</dt>
+               <dd className="font-bold text-charcoal/80 tabular-nums">
+                 {Math.floor(file.duration_seconds / 60)}:{String(Math.round(file.duration_seconds % 60)).padStart(2, '0')}
+               </dd></div>
+        ) : null}
+        {file.page_count ? (
+          <div><dt className="text-charcoal/40">{t('files.library.meta.pages')}</dt>
+               <dd className="font-bold text-charcoal/80 tabular-nums">{file.page_count}</dd></div>
+        ) : null}
       </dl>
 
       <div className="flex items-center gap-2">
@@ -315,6 +395,83 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
                  placeholder={t('files.library.meta.tags_placeholder')}
                  value={draft.tagsText}
                  onChange={(e) => setDraft({ ...draft, tagsText: e.target.value })} />
+        </div>
+
+        {/* ── Metadata Intelligence layers (Phase B) ─────────────────────────
+            Each axis is a SEPARATE concern (nature ≠ source ≠ rights ≠ state),
+            all data-driven from file_vocabularies. Subjects are multi-value on
+            top of the primary document_type above. AI enrichment comes later. */}
+        <div className="pt-2 border-t border-sand/30 space-y-3">
+          <h4 className="text-[11px] font-bold uppercase tracking-widest text-charcoal/45">
+            {t('files.library.meta.intelligence')}
+          </h4>
+
+          {/* Multi-subject: the primary (document_type) is always on; extras toggle. */}
+          <div>
+            <label className={labelCls}>{t('files.library.meta.subjects')}</label>
+            <div className="flex flex-wrap gap-1.5">
+              {types
+                .filter((x) => x.applies_to_kinds.length === 0 || x.applies_to_kinds.includes(file.kind))
+                .map((x) => {
+                  const primary = x.value === draft.document_type;
+                  const on = primary || subjects.includes(x.value);
+                  return (
+                    <button
+                      key={x.value}
+                      type="button"
+                      disabled={!canEdit || primary}
+                      aria-pressed={on}
+                      onClick={() => setSubjects((prev) =>
+                        prev.includes(x.value) ? prev.filter((s) => s !== x.value) : [...prev, x.value])}
+                      className={`px-2 py-1 rounded-lg text-[11px] font-bold border transition-colors ${
+                        on ? 'bg-copper/10 border-copper/40 text-copper'
+                           : 'bg-white border-sand/40 text-charcoal/60 hover:border-copper/30'
+                      } ${primary ? 'opacity-90' : ''} disabled:cursor-default`}
+                      title={primary ? (isAr ? 'التصنيف الأساسي' : 'Primary subject') : undefined}
+                    >
+                      {isAr ? x.label_ar : x.label_en}
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {([
+              ['asset_nature', 'files.library.meta.asset_nature'],
+              ['acquisition_source', 'files.library.meta.acquisition_source'],
+              ['usage_rights', 'files.library.meta.usage_rights'],
+              ['production_state', 'files.library.meta.production_state'],
+            ] as Array<[FileVocabDimension, string]>).map(([dim, key]) => {
+              const cur = draft[dim as keyof Draft] as string;
+              const opts = vocabFor(dim);
+              return (
+                <div key={dim}>
+                  <label className={labelCls} htmlFor={`md-${dim}`}>{t(key)}</label>
+                  <select id={`md-${dim}`} className={field} disabled={!canEdit}
+                          value={cur}
+                          onChange={(e) => setDraft({ ...draft, [dim]: e.target.value })}>
+                    <option value="">{t('files.library.meta.unset')}</option>
+                    {/* A value that was since deactivated stays selectable-as-current. */}
+                    {cur && !opts.some((o) => o.value === cur) && <option value={cur}>{cur}</option>}
+                    {opts.map((o) => (
+                      <option key={o.value} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* AI description — read-only placeholder until the AI enrichment phase. */}
+          {file.ai_description && (
+            <div>
+              <label className={labelCls}>{t('files.library.meta.ai_description')}</label>
+              <p className="text-xs text-charcoal/70 leading-relaxed bg-cream/40 rounded-lg p-2" dir="auto">
+                {file.ai_description}
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-3">

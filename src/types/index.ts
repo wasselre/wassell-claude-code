@@ -1522,6 +1522,8 @@ export type {
   FileClass,
   BusinessFileSort,
   FileDocumentTypeRow,
+  FileVocabDimension,
+  FileVocabRow,
   BusinessFileRow,
   BusinessFileFacets,
   BusinessFilesSearchResult,
