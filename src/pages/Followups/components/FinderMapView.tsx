@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
 import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
-import { Loader2, MapPin, X } from 'lucide-react';
+import { Loader2, MapPin, X, Maximize2, Minimize2 } from 'lucide-react';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { markActivity } from '@/lib/perf/freezeDetector';
 import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildColoredPinIcon, buildClusterIcon } from '@/lib/locationUtils';
@@ -66,6 +66,22 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
   // owned by MapLayersOverlay (below), so the map opens clean. See useGeoBoundaryLayer.
   useGeoBoundaryLayer(map, { roads: false, landmarks: false });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Full-view: the map wrapper enters the browser Fullscreen API (our own button
+  // on the LEFT, since Google's default control sits top-right behind the layers
+  // panel). isFs tracks it so the button flips between enter/exit.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [isFs, setIsFs] = useState(false);
+  useEffect(() => {
+    const onFs = () => setIsFs(document.fullscreenElement === wrapRef.current);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+  const toggleFs = () => {
+    const el = wrapRef.current;
+    if (!el) return;
+    if (document.fullscreenElement === el) void document.exitFullscreen();
+    else void el.requestFullscreen?.();
+  };
   const clustererRef = useRef<MarkerClusterer | null>(null);
   // OUR-project markers are placed on the map directly (NEVER in the clusterer) so
   // they always show as individual pins; kept here for teardown.
@@ -241,7 +257,7 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
 
   return (
     <div className="card overflow-hidden">
-      <div className={`relative w-full ${heightClass}`}>
+      <div ref={wrapRef} className={`relative w-full bg-cream ${isFs ? 'h-full' : heightClass}`}>
         <GoogleMap
           mapContainerStyle={{ width: '100%', height: '100%' }}
           center={DEFAULT_MAP_CENTER}
@@ -253,7 +269,9 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
             disableDefaultUI: false,
             mapTypeControl: false,
             streetViewControl: false,
-            fullscreenControl: true,
+            // Our own full-view button (top-left) replaces Google's default — its
+            // top-right control was hidden behind the layers panel.
+            fullscreenControl: false,
             clickableIcons: false,
             // MOBILE-ONLY one-finger pan: the default demands two fingers, so a
             // one-finger drag scrolls the surrounding modal instead of the map
@@ -264,6 +282,18 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
         />
 
         <MapLayersOverlay map={map} isAr={isAr} />
+
+        {/* Full view / exit — on the LEFT (end in RTL) so the layers panel (top
+            start) never hides it. Toggles the browser Fullscreen API. */}
+        <button
+          type="button"
+          onClick={toggleFs}
+          className="absolute top-3 end-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-sand/50 bg-white/95 text-charcoal shadow-sm backdrop-blur transition hover:bg-cream"
+          aria-label={isFs ? L('إنهاء العرض الكامل', 'Exit full view') : L('عرض كامل', 'Full view')}
+          title={isFs ? L('إنهاء العرض الكامل', 'Exit full view') : L('عرض كامل', 'Full view')}
+        >
+          {isFs ? <Minimize2 size={16} className="text-copper" /> : <Maximize2 size={16} className="text-copper" />}
+        </button>
 
         {/* Clicked-pin card — the SAME FinderCard as the list, full actions. */}
         {selectedMatch && renderSelectedCard && (

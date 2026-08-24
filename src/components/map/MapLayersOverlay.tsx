@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Layers, X, Loader2 } from 'lucide-react';
+import { Layers, ChevronUp, Loader2 } from 'lucide-react';
 import { MAP_LAYER_GROUPS, categoriesForLayers } from '@/lib/geo/mapLayers';
 import { useMapElementLayers } from './useMapElementLayers';
 
@@ -60,10 +60,12 @@ export default function MapLayersOverlay({ map, isAr }: { map: google.maps.Map |
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="text-charcoal/40 hover:text-charcoal"
-              aria-label={L('إغلاق', 'Close')}
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-charcoal/50 transition hover:bg-cream hover:text-charcoal"
+              aria-label={L('طيّ الطبقات', 'Collapse layers')}
+              title={L('طيّ', 'Collapse')}
             >
-              <X size={15} />
+              {L('طيّ', 'Collapse')}
+              <ChevronUp size={14} />
             </button>
           </div>
 
