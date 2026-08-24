@@ -62,12 +62,46 @@ const GENERIC_FIELDS: Record<string, FieldDef> = {
 const COMPOSED = new Set([
   'idea', 'hook', 'core_message', 'voiceover',
   'headlines', 'approved_headline', 'caption', 'hashtags',
+  // Per-platform caption companion keys (Instagram = the legacy `caption`).
+  'caption_tiktok', 'caption_x', 'caption_snapchat',
   'design_brief', 'slides', 'scenes',
 ]);
+
+/** One compact caption row per platform. Instagram keeps the legacy `caption`
+ *  key so existing data + downstream readers are untouched; the rest are
+ *  companion keys in `data`. */
+const CAPTION_PLATFORMS: Array<{ key: string; ar: string; en: string }> = [
+  { key: 'caption', ar: 'انستقرام', en: 'Instagram' },
+  { key: 'caption_tiktok', ar: 'تيك توك', en: 'TikTok' },
+  { key: 'caption_x', ar: 'إكس (تويتر)', en: 'X (Twitter)' },
+  { key: 'caption_snapchat', ar: 'سناب شات', en: 'Snapchat' },
+];
+
+/** The «الصيغة» multiselect options — deliverable type + common canvas sizes.
+ *  Stored as a string array on `design_format`; legacy free-text is preserved. */
+const FORMAT_OPTIONS: Array<{ value: string; ar: string; en: string }> = [
+  { value: 'post', ar: 'منشور', en: 'Post' },
+  { value: 'carousel', ar: 'كاروسيل', en: 'Carousel' },
+  { value: 'reel', ar: 'ريلز', en: 'Reel' },
+  { value: 'story', ar: 'ستوري', en: 'Story' },
+  { value: 'video', ar: 'فيديو', en: 'Video' },
+  { value: '1080x1080', ar: 'مربّع ١٠٨٠×١٠٨٠', en: 'Square 1080×1080' },
+  { value: '1080x1350', ar: 'عمودي ١٠٨٠×١٣٥٠', en: 'Portrait 1080×1350' },
+  { value: '1080x1920', ar: 'ريلز/ستوري ١٠٨٠×١٩٢٠', en: 'Reel/Story 1080×1920' },
+];
 
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '');
 const asList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+/** Read design_format as a list, tolerating a legacy free-text string. */
+const asFormatList = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x !== '')
+    : (typeof v === 'string' && v.trim() !== '' ? [v.trim()] : []);
+/** Label a format token — a known option's label, else the raw (legacy) text. */
+const formatLabel = (value: string, isAr: boolean): string => {
+  const o = FORMAT_OPTIONS.find((x) => x.value === value);
+  return o ? (isAr ? o.ar : o.en) : value;
+};
 
 /** A content-library row as the picker consumes it — content_list decorates the
  *  base row with a preview thumbnail (its final cut's image) + that asset's kind. */
@@ -457,7 +491,6 @@ export default function WritingFields({
   /* ── hashtags render as tags, edit as one line ── */
   const hashtags = str('hashtags');
   const tagList = hashtags.split(/\s+/).map((t) => t.trim()).filter(Boolean);
-  const captionParagraphs = disp('caption').split(/\n+/).map((p) => p.trim()).filter(Boolean);
 
   const nothingComposed = !has('idea') && !has('voiceover') && !has('headlines')
     && !has('caption') && !has('design_brief') && leftovers.length === 0;
@@ -578,14 +611,17 @@ export default function WritingFields({
           <div className={has('caption') && has('design_brief') ? 'grid g2' : undefined}>
             {has('caption') && (
               <div className="write">
-                <div className="doc-lbl">{isAr ? 'الكابشن · انستقرام' : 'The caption · Instagram'}</div>
-                {captionParagraphs.length === 0 ? (
-                  <p style={{ color: 'var(--mute)' }}>—</p>
-                ) : (
-                  captionParagraphs.map((p, i) => (
-                    <p key={i} style={{ fontSize: 14.5, lineHeight: 1.9 }}>{p}</p>
-                  ))
-                )}
+                <div className="doc-lbl">{isAr ? 'الكابشن' : 'Caption'}</div>
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {CAPTION_PLATFORMS.map((p) => (
+                    <div key={p.key} className="fld">
+                      <div className="k">{isAr ? p.ar : p.en}</div>
+                      <div className="v" style={{ whiteSpace: 'pre-line', lineHeight: 1.9 }}>
+                        {disp(p.key) || '—'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
                 {tagList.length > 0 && (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
                     {/* Four tags then «+٣» — screen 08's collapse point. */}
@@ -595,11 +631,6 @@ export default function WritingFields({
                     )}
                   </div>
                 )}
-                <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 10 }}>
-                  {isAr
-                    ? 'كابشن كل منصة أخرى مختلف — يُضبط في تبويب النشر، لا هنا.'
-                    : 'Every other platform’s caption is different — set in the Publishing tab, not here.'}
-                </div>
               </div>
             )}
 
@@ -610,7 +641,10 @@ export default function WritingFields({
                 </div>
                 <div className="fld">
                   <div className="k">{isAr ? 'الصيغة' : 'Format'}</div>
-                  <div className="v">{str('design_format') || '—'}</div>
+                  <div className="v">
+                    {asFormatList(draft.design_format ?? data.design_format)
+                      .map((v) => formatLabel(v, isAr)).join('، ') || '—'}
+                  </div>
                 </div>
                 <div className="fld">
                   <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
@@ -775,14 +809,22 @@ export default function WritingFields({
         <div className={has('caption') && has('design_brief') ? 'grid g2' : undefined}>
           {has('caption') && (
             <div className="write">
-              <div className="doc-lbl">{isAr ? 'الكابشن · انستقرام' : 'The caption · Instagram'}</div>
-              <textarea
-                className="inp"
-                rows={6}
-                style={{ fontSize: 14.5, lineHeight: 1.9 }}
-                value={str('caption')}
-                onChange={(e) => set('caption', e.target.value)}
-              />
+              <div className="doc-lbl">{isAr ? 'الكابشن' : 'Caption'}</div>
+              {/* One compact row per platform — each platform's caption differs. */}
+              <div style={{ display: 'grid', gap: 8 }}>
+                {CAPTION_PLATFORMS.map((p) => (
+                  <div key={p.key} className="fld">
+                    <div className="k">{isAr ? p.ar : p.en}</div>
+                    <textarea
+                      className="inp"
+                      rows={2}
+                      style={{ marginTop: 4, fontSize: 13, lineHeight: 1.8 }}
+                      value={str(p.key)}
+                      onChange={(e) => set(p.key, e.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
               {has('hashtags') && (
                 <>
                   {tagList.length > 0 && (
@@ -804,11 +846,6 @@ export default function WritingFields({
                   />
                 </>
               )}
-              <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 10 }}>
-                {isAr
-                  ? 'كابشن كل منصة أخرى مختلف — يُضبط في تبويب النشر، لا هنا.'
-                  : 'Every other platform’s caption is different — set in the Publishing tab, not here.'}
-              </div>
             </div>
           )}
 
@@ -819,13 +856,36 @@ export default function WritingFields({
               </div>
               <div className="fld">
                 <div className="k">{isAr ? 'الصيغة' : 'Format'}</div>
-                <input
-                  className="inp"
-                  style={{ marginTop: 4, fontSize: 13 }}
-                  value={str('design_format')}
-                  placeholder={isAr ? 'كاروسيل، ٤ شرائح · ١٠٨٠ × ١٣٥٠' : 'Carousel, 4 slides · 1080 × 1350'}
-                  onChange={(e) => set('design_format', e.target.value)}
-                />
+                {/* Multiselect: toggle the deliverable type(s) + canvas size(s).
+                    Preserves any legacy free-text token already stored. */}
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                  {(() => {
+                    const sel = asFormatList(draft.design_format);
+                    const toggle = (value: string): void =>
+                      set('design_format', sel.includes(value) ? sel.filter((v) => v !== value) : [...sel, value]);
+                    return (
+                      <>
+                        {FORMAT_OPTIONS.map((o) => (
+                          <button
+                            key={o.value}
+                            type="button"
+                            className={`fbtn${sel.includes(o.value) ? ' on' : ''}`}
+                            onClick={() => toggle(o.value)}
+                          >
+                            {isAr ? o.ar : o.en}
+                          </button>
+                        ))}
+                        {/* Any legacy free-text token that isn't one of the options
+                            stays selectable so nothing already written is lost. */}
+                        {sel.filter((v) => !FORMAT_OPTIONS.some((o) => o.value === v)).map((v) => (
+                          <button key={v} type="button" className="fbtn on" onClick={() => toggle(v)}>
+                            {v} ×
+                          </button>
+                        ))}
+                      </>
+                    );
+                  })()}
+                </div>
               </div>
               <div className="fld">
                 <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
