@@ -26,6 +26,7 @@ import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferenc
 import { saveFinderStash, loadFinderStash, clearFinderStash, type FinderStash } from '@/lib/matching/finderStash';
 import { setFormUnsaved } from '@/lib/staleBuild';
 import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
+import { chatPdfFromClient } from '@/lib/projects/sendPdfToChat';
 import FinderCard from './FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from './FinderRefinementBar';
 import FinderMapView from './FinderMapView';
@@ -116,6 +117,10 @@ export default function SuggestedProjectsView({
   const records = useAppStore((s) => s.records);
   const addToast = useAppStore((s) => s.addToast);
   const saveRecord = useAppStore((s) => s.saveRecord);
+
+  // A client is attached → each card's units popup can SEND the units-table +
+  // single-unit PDFs to the client (derived conversation), not just download.
+  const chatPdf = useMemo(() => chatPdfFromClient(clientRec), [clientRec]);
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
   // Starts true because the search normally fires on mount — but NOT when the
@@ -1127,6 +1132,7 @@ export default function SuggestedProjectsView({
                   onSendToClient={onSendToClient}
                   saveState={saveStates[item.project_id] ?? 'idle'}
                   existingStatus={existingStatusFor(item)}
+                  chatPdf={chatPdf}
                 />
               )}
             />
@@ -1152,6 +1158,7 @@ export default function SuggestedProjectsView({
                     onSendToClient={onSendToClient}
                     saveState={saveStates[item.project_id] ?? 'idle'}
                     existingStatus={existingStatusFor(item)}
+                    chatPdf={chatPdf}
                   />
                 ))}
               </div>
@@ -1178,6 +1185,7 @@ export default function SuggestedProjectsView({
                     onSendToClient={onSendToClient}
                     saveState={saveStates[item.project_id] ?? 'idle'}
                     existingStatus={existingStatusFor(item)}
+                    chatPdf={chatPdf}
                   />
                 ))}
               </div>

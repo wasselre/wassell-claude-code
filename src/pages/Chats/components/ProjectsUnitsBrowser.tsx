@@ -15,7 +15,7 @@ import { useSignedImage } from '@/lib/projects/useSignedImage';
 import { addProjectToClient } from '@/lib/matching/addToClient';
 import { recordTitle } from '@/lib/documents/links';
 import { normalizePhone } from '@/lib/phone';
-import type { ChatPdfContext } from '@/lib/projects/sendPdfToChat';
+import { chatPdfFromClient, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 import Badge from '@/components/ui/Badge';
 import DualRangeSlider from '@/components/ui/DualRangeSlider';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
@@ -137,17 +137,21 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
     return (records[clientsModel.id] ?? []).find((r) => r.id === clientId) ?? null;
   }, [clientId, clientsModel, records]);
 
-  // Chat send-context for the units/unit PDFs — only when the sheet was opened
-  // from a real conversation (chatWid present).
+  // Chat send-context for the units/unit PDFs. Prefer the REAL conversation wid
+  // when the sheet was opened from a chat; otherwise (opened from the Client
+  // Options popup's "Browse" with no chatWid) derive the conversation from the
+  // client's phone so the rep can still SEND, not just download.
   const chatPdf = useMemo<ChatPdfContext | null>(() => {
-    if (!chatWid) return null;
-    return {
-      chatWid,
-      clientName: clientRec && clientsModel ? recordTitle(clientsModel, clientRec, isAr) : null,
-      clientPhone: clientRec
-        ? normalizePhone(String((clientRec.data as Record<string, unknown>).phone_number ?? '')) || null
-        : null,
-    };
+    if (chatWid) {
+      return {
+        chatWid,
+        clientName: clientRec && clientsModel ? recordTitle(clientsModel, clientRec, isAr) : null,
+        clientPhone: clientRec
+          ? normalizePhone(String((clientRec.data as Record<string, unknown>).phone_number ?? '')) || null
+          : null,
+      };
+    }
+    return chatPdfFromClient(clientRec);
   }, [chatWid, clientRec, clientsModel, isAr]);
 
   // ── filters ───────────────────────────────────────────────────────────────

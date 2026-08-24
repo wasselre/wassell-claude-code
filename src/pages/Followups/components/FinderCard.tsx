@@ -11,6 +11,7 @@ import {
 } from '@/lib/matching/deliveryStatus';
 import { dealBadgeLabel, dealBadgeTone, type DealBadge } from '@/lib/market/dealBadge';
 import { CLIENT_OPTION_STATUS_META, CLIENT_OPTION_STATUS_ORDER, type ClientOptionStatus } from '@/lib/matching/clientOptions';
+import type { ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
 import QualityBadge from '@/components/market/QualityBadge';
@@ -52,6 +53,10 @@ interface Props {
    * option requires a client to attach it to, which the standalone tool doesn't have.
    */
   hideClientActions?: boolean;
+  /** When set (finder scoped to a client), the project's units popup lets the
+   *  rep SEND the units-table + single-unit PDFs to the client, not just
+   *  download them. Absent → download only. */
+  chatPdf?: ChatPdfContext | null;
 }
 
 const fmtNum = (n: number) => n.toLocaleString('en-US');
@@ -150,7 +155,7 @@ function DeliveryPill({ facts, source, isAr }: { facts: Record<string, unknown>;
 
 export default function FinderCard({
   item, isAr, onOpenDetails, selected, onToggleSelect, saveState, existingStatus,
-  onSetStatus, onSendToClient, hideClientActions,
+  onSetStatus, onSendToClient, hideClientActions, chatPdf,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
@@ -388,7 +393,7 @@ export default function FinderCard({
         </div>
       </div>
 
-      {showUnits && <ProjectUnitsModal item={item} isAr={isAr} onClose={() => setShowUnits(false)} />}
+      {showUnits && <ProjectUnitsModal item={item} isAr={isAr} chatPdf={chatPdf} onClose={() => setShowUnits(false)} />}
     </div>
   );
 }

@@ -18,6 +18,8 @@ import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
 import { uploadLocalFile } from '@/lib/haberchat/client';
 import { startJob, completeJob, failJob } from '@/lib/jobs/jobCenter';
+import { normalizePhone } from '@/lib/phone';
+import type { AppRecord } from '@/types';
 
 /**
  * The conversation a PDF can be sent into, plus the resolved recipient for the
@@ -28,6 +30,42 @@ export interface ChatPdfContext {
   chatWid: string;
   clientName?: string | null;
   clientPhone?: string | null;
+}
+
+const CLIENT_PHONE_SLUGS = ['phone_number', 'phone', 'mobile', 'whatsapp', 'whatsapp_number'];
+const CLIENT_NAME_SLUGS = ['name', 'full_name', 'client_name', 'name_ar', 'name_en'];
+
+/**
+ * Build a send-PDF context straight from a CLIENT record — so the units-table
+ * and single-unit PDFs surface "Send to client" on every surface that carries a
+ * client (the finder scoped to a client, the client's options list, the Client
+ * 360 tab), not only inside an open WhatsApp thread.
+ *
+ * The conversation wid is derived from the client's phone the SAME way
+ * `startNewChat` mints it (`<e164 digits>@c.us`), so it matches the existing
+ * chat record when the client has already been messaged. `sendChatMessage`
+ * requires that record to exist (it reads the recipient phone + send-from
+ * device off it) and otherwise fails with a visible "conversation not found"
+ * toast — a graceful degrade, never a silent drop. Returns null when the client
+ * has no usable phone (→ the caller shows Download only).
+ */
+export function chatPdfFromClient(clientRec: AppRecord | null | undefined): ChatPdfContext | null {
+  if (!clientRec) return null;
+  const d = (clientRec.data ?? {}) as Record<string, unknown>;
+  let phoneRaw: string | null = null;
+  for (const slug of CLIENT_PHONE_SLUGS) {
+    const v = d[slug];
+    if (typeof v === 'string' && v.trim()) { phoneRaw = v; break; }
+    if (typeof v === 'number' && Number.isFinite(v)) { phoneRaw = String(v); break; }
+  }
+  const e164 = normalizePhone(phoneRaw);
+  if (!e164) return null;
+  let name: string | null = null;
+  for (const slug of CLIENT_NAME_SLUGS) {
+    const v = d[slug];
+    if (typeof v === 'string' && v.trim()) { name = v.trim(); break; }
+  }
+  return { chatWid: `${e164.slice(1)}@c.us`, clientName: name, clientPhone: e164 };
 }
 
 export async function sendPdfToChat(

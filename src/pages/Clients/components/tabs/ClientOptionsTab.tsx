@@ -23,6 +23,7 @@ import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlo
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import Modal from '@/components/ui/Modal';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
+import { chatPdfFromClient } from '@/lib/projects/sendPdfToChat';
 
 interface Props {
   client: AppRecord;
@@ -136,6 +137,11 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
   const records = useAppStore((s) => s.records);
   const models = useAppStore((s) => s.models);
   const addToast = useAppStore((s) => s.addToast);
+
+  // Units popups on project option cards can SEND the units-table + single-unit
+  // PDFs to this client (conversation derived from the client's phone), not just
+  // download — the same capability the in-chat units browser has.
+  const chatPdf = useMemo(() => chatPdfFromClient(client), [client]);
 
   const modelId = useMemo(() => models.find((m) => m.name === 'client_property_options')?.id ?? null, [models]);
   const options = useMemo(
@@ -1075,7 +1081,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
           title={isAr ? `وحدات المشروع — ${unitsFor.name}` : `Project units — ${unitsFor.name}`}
           maxWidth="max-w-6xl"
         >
-          <UnitsInventory projectId={unitsFor.projectId} projectName={unitsFor.name} isAr={isAr} />
+          <UnitsInventory projectId={unitsFor.projectId} projectName={unitsFor.name} isAr={isAr} chatPdf={chatPdf} />
         </Modal>
       )}
 

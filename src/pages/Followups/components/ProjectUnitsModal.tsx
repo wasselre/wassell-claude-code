@@ -9,8 +9,18 @@ import Modal from '@/components/ui/Modal';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
 import { useAppStore } from '@/stores/appStore';
 import type { FinderMatch } from '@/lib/matching/projectFinder';
+import type { ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 
-export default function ProjectUnitsModal({ item, isAr, onClose }: { item: FinderMatch; isAr: boolean; onClose: () => void }) {
+export default function ProjectUnitsModal({
+  item, isAr, onClose, chatPdf,
+}: {
+  item: FinderMatch;
+  isAr: boolean;
+  onClose: () => void;
+  /** When set, the units table + each unit sheet gain a "Send to client" PDF
+   *  action into this client's conversation (else Download only). */
+  chatPdf?: ChatPdfContext | null;
+}) {
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
 
@@ -27,7 +37,7 @@ export default function ProjectUnitsModal({ item, isAr, onClose }: { item: Finde
 
   return (
     <Modal open onClose={onClose} title={isAr ? `وحدات المشروع — ${item.project_name}` : `Project units — ${item.project_name}`} maxWidth="max-w-6xl">
-      <UnitsInventory projectId={allProjectId} projectName={item.project_name} isAr={isAr} />
+      <UnitsInventory projectId={allProjectId} projectName={item.project_name} isAr={isAr} chatPdf={chatPdf} />
     </Modal>
   );
 }
