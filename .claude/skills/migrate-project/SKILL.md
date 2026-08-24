@@ -263,6 +263,66 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   in `developers`; do NOT create a new developer. Many Alajlan Riviera projects were bulk-seeded
   2026-04-26 as bare project rows with **0 units** — the migration job is to ENRICH the existing row +
   ADD its units, never duplicate.
+- **[2026-08-24] menaco.sa STATUS-UPDATE reconcile (مينا 52 - النرجس, project `a521bacf-c85d-4dc9-aab2-baf0b88fc1cf`,
+  م ش2176):** the menaco.sa listing page is an AUTHORITATIVE full snapshot — it lists EVERY unit with an explicit
+  per-unit status badge — so "update units status" is a clean diff-and-apply, NOT the scoped-sheet absence fork
+  (2026-08-18). No user question needed when all units are present with explicit statuses. **Join key = `unit_model`**
+  (the card title carries the model code `<floor>/<unit#>`, e.g. `3/1`, `A/2`), cross-validated by `total_price`
+  (all 16 prices matched exactly → join is safe). **Status source of truth = `<span class="for-what">` badge only:**
+  `مباع`→`sold`, `محجوز`→`reserved`, absent→`available`. **⚠ The `<div class="list-tag fz12">متاح للزيارة</div>`
+  tag is a "available to visit" MARKETING marker, NOT the status — it sits on non-sold units regardless, so keying
+  on it would misread every reserved unit as available.** Run: 5 changes (3/1 sold→reserved, 1/3 reserved→sold,
+  2/3 avail→sold, A/4 reserved→sold, 1/5 avail→sold); new dist 10 avail/5 sold/1 reserved. Writes via `record_save`
+  RPC through the Supabase MCP (`SELECT record_save(units_model, id, data || jsonb_build_object('unit_status',…),
+  NULL, NULL)`), version-unaware, creator preserved; the unit-change trigger auto-recomputed the project rollups.
+- **[2026-08-24] RIVA BROKER-PORTAL BULK RECONCILE (16 projects, user-approved source):** when the user says
+  "update units from riva", the source is the **broker portal** (see the riva BROKER PORTAL adapter) — user chose
+  it over public pages ("I drive, you log in" via Browserbase live-view). Reconcile posture: join broker unit code
+  → CRM `unit_model` (normalize: strip spaces + leading zeros per digit-run, `A03`≡`A3`; disambiguate dup keys by
+  area; verify area agreement before trusting any match). Apply BOTH status changes AND price changes (broker
+  repricings are real and bidirectional — سواري dropped ~9%, نخيل mixed ±; sold/reserved units' hidden prices get
+  FILLED from the broker). Broker-absent + CRM-already-sold units stay untouched (بارك 11's 3 sold D-units —
+  same absence rule as ستون الندى 2026-08-18). **Broker-only units are NEW RELEASES — ADD them** (مجبب هاوس فلل:
+  +27 units U-49527–U-49553 with real per-unit plans, sibling-propagated components/beds/baths, tagged in notes);
+  that's the standing ENRICH-existing posture, no need to re-ask. Run 2026-08-24: 19 status + 87 price changes
+  across 16 projects, 97 record_save patches, 27 new units, all rollups verified == broker counts. Backup:
+  scratchpad `backup_riva_units_20260824.json` (184 pre-change units).
+- **[2026-08-24] BROKER-PORTAL BATCH 2 (the user corrected: the portal has 20 projects, not 16 — handle ALL of them):**
+  (1) **أكنان 25 + يمام 17 MIGRATED as new projects** (`م ش2876` id aab86347-…, `م ش2877` id b66e165b-…;
+  developer أكنان CREATED `م ط203` id 2357a8a5-…, website riva.sa; يمام = existing e551d119-…). Source stack:
+  riva PUBLIC page (coords from the `maps?q=` link, license, features/guarantees/landmarks line-parsed, brochure
+  from the pdf-viewer snapshot, `project-media` gallery) + BROKER portal (units, statuses, prices, per-unit plans,
+  beds/baths). Districts: النرجس `5d788587-4219-7ad2-a6b6-e0bbfebde16d`, النزهة `45bd1934-4488-f2da-6392-5c77c85c87e2`.
+  Both got riva_projects classification + our_projects membership + both content fields.
+  (2) **The portal HIDES some unit cards server-side:** the "Showing … of N" footer exceeds the renderable cards
+  (مجبب 68/71, جديل 56/60, ستون 27/28, أكنان 62/69) — three independent scrape passes returned IDENTICAL sets, so
+  it's not lazy-render flake. Record the gap in `source_notes` (⚠ نطاق هذا السجل) and move on; don't fight it.
+  (3) **ستون الندى join** = broker code tokens `<apt> - <bldg> - <model>` (order sometimes scrambled: take
+  numerics as apt,bldg and the alpha token as model) → CRM `(building_number, unit_number)`; 27/27 matched. The
+  broker portal SUPERSEDES the 2026-08-18 sheet-absence flips: two units flipped back sold→available + 3 repriced.
+  (4) **جديل الرمال is NOT joinable to the broker portal** — the CRM (alramzre-source) has blocks 53+56 with
+  buildings 3–20, the portal renumbers 1–20 with a DIFFERENT model layout (CRM bldg 11=E1 vs portal 11=D), and
+  areas can't disambiguate because **the broker card area is GROSS ≈1.24× the CRM NET `unit_area`** (uniform per
+  model+floor). Never apply جديل statuses by a (building,floor) join. **User decision (2026-08-24): wait for the
+  developer's (الرمز) current availability sheet — its numbering matches the CRM — and reconcile from that;**
+  meanwhile the portal aggregate (14 avail / 2 res / 40 sold of 60 listed) is flagged in the record's
+  `source_notes` with `update_source='broker_portal_pending'`. When the sheet arrives, use the 2026-08-18
+  ستون الندى reconcile recipe.
+  (5) **construction_status (ready vs off-plan) determination for riva projects = the «بيع على الخارطة» CHIP on
+  the riva.sa/projects LISTING card** — the project detail pages, broker portal, and brochures carry NO
+  ready/off-plan marker anywhere (verified across all 20 on 2026-08-24; brochure text layers empty of
+  تسليم/جاهز/خارطة). Only 4 projects carry the chip (جديل الرمال، ستون الندى، اوتوجراف 21، إلوفي →
+  `تحت-التطوير` + `available_on_map`); no chip → `ready` + `available`. ⚠ the chip string also appears twice in
+  the listing's FILTER dropdown — match it inside the project card context, not by page-wide count. Always run
+  this check when migrating a riva project; never default construction_status from a template.
+  (6) **The riva LISTING card's aggregate «متاح X | محجوز Y | مباع Z» resolves the statuses of the portal's
+  hidden unit cards** (أكنان: listing متاح 62 vs 55 scraped ⇒ the 7 hidden are all متاحة; جديل: listing مباع 44
+  vs portal 40 ⇒ the 4 hidden are sold). Cross-check it at the end of every broker scrape.
+- **[2026-08-24] `files` TABLE SCHEMA CHANGED — the old INSERT shape in this skill's "Images" bullet is stale:**
+  `name` column no longer exists. Required now: `original_name`, `title`, `document_type` (use `'floor_plan'` for
+  unit plans), `owner_user_id` (= uploaded_by), `status:'active'`, `origin:'marketing_intake'`,
+  `file_class:'business'`, `confidentiality:'internal'` + the old kind/record_id/model_id/storage_* fields.
+  Copy the shape from an existing row (`SELECT row_to_json(files) WHERE id=<any unit_plan id>`) before inserting.
 - **[2026-06-28] Auto-IDs:** assign them on real runs (`project_id` code + `unit_code`).
 - **[2026-06-28] Dedup:** dedup by `project_name`. If the project already exists, do NOT blindly
   duplicate — surface it and confirm update/reconcile vs. duplicate with the user.
@@ -622,6 +682,46 @@ Every `our_projects` member's `all_projects` record now carries FOUR registry fi
   oceanresidence.com.sa is Cloudflare-gated (Browserbase gets the page but the image bytes 403 on direct
   download); الرمز ريا-النخيل/ستون-الندى/سديم-تاون aren't on alramzre.com → need the team's Drive links
   (existing rule). Run 2026-08-03: riva 12/12, yamam 7/8, zink 2/2, menaco 1/1 galleries + amenities filled.
+- **منيكو / MENA Development (menaco.sa)** → **Laravel + Livewire v3, server-rendered — plain `fetch` + regex.**
+  Parent project = `/listings/<listing_id>` (e.g. 865393 = مينا 52 - النرجس). The units are a nested Livewire
+  component `homez.sub-listing-component` (`perPage:6`, `hasMorePages`, `parentListingId`) — each unit is a
+  sub-listing at `/listings/sub/<sub_id>`. **Pagination = `loadMore` (NOT gotoPage — that returns the full page /
+  419):** GET the page with a cookie jar, grab `<meta name="csrf-token">`, pick the wire:snapshot whose
+  `memo.name=='homez.sub-listing-component'`, then POST `/livewire/update` with headers
+  `Content-Type/Accept: application/json`, `X-CSRF-TOKEN`, `X-Livewire: true`, `X-Requested-With: XMLHttpRequest`,
+  body `{_token, components:[{snapshot, updates:{}, calls:[{path:'',method:'loadMore',params:[]}]}]}`; **chain the
+  returned `components[0].snapshot` into the next call** (loadMore APPENDS — response `effects.html` is the full
+  re-rendered list; loop until `data.hasMorePages==false`, ~150ms between calls, no rate-limit seen). Each card
+  (split on `wire:key="sub-listing-<id>-<idx>"`; ~500 KB apart due to inline Alpine — slice between key offsets and
+  cut each body at `{ if (showInterestedModal)`): title carries `unit_model` `<floor>/<unit#>`, price, `N غرفة نوم`,
+  `N حمام`, gross `N متر مربع` (this is bigger than the CRM NET `unit_area` — ignore for the join, use it only as a
+  sanity check). **Status = `<span class="for-what">` only** (مباع/محجوز/else available — see the 2026-08-24
+  Decisions-Log entry; the `list-tag متاح للزيارة` is a decoy). Gallery images (2026-08-03 rule) are
+  `menaco.sa/listings/<sub_id>_*/…jpg`. Scripts saved to scratchpad: `loadmore.py` (pagination), `final.py` (parse).
+- **ريفا BROKER PORTAL (riva.sa/broker/projects) — the AUTHORITATIVE riva source, login-gated (added 2026-08-24).**
+  Richer + fresher than the public pages: per-unit status (متاحة/مباعة/محجوزة), prices INCLUDING repricings and
+  sold-unit prices the public site hides, per-unit plan images, commission terms, and NEW releases before they hit
+  the public page. **Login flow:** create a Browserbase PERSISTENT CONTEXT + a `keepAlive` session bound to it
+  (`browserSettings.context.{id,persist:true}`, pass `timeout:900` — the default session dies in ~10 min and kills
+  long scrapes), print `debuggerFullscreenUrl` and have the USER log in there (broker account: ريان ابانمي
+  BRK-00025). The login cookie persists in the context — later sessions on the same contextId are already
+  authenticated; on `410 session not running`, just mint a new session on the SAME context, no re-login.
+  **Shape:** projects list at `/broker/projects` (cards link `/broker/projects/<id>`; card text carries
+  "X وحدة متاحة من Y" — use Y as the per-project completeness target), paginated via `wire:click="nextPage('page')"`.
+  Detail page: unit cards = `[x-data*="images"]` divs, 12/page (`Showing 1 to 12 of N` footer), same nextPage
+  pagination. Per card: unit code = the `<img alt>` (⚠ cards with `images: []` have NO img — fall back to the text
+  between the status badge and the first unit-type keyword); status = the `rounded-full` badge span; plan image
+  URL = the card's `x-data` `images` JSON (`is_plan:true`, unescape `\/`); area `N م²`; beds/baths counts.
+  **Traps:** (1) **the price regex MUST search only BEFORE "عمولتك"** — sold cards on flat-commission projects
+  (مجبب هاوس: "عمولتك: 10,000 ريال") show no price, and a naive first-number regex writes the COMMISSION as
+  total_price; (2) cards render lazily in batches — wait for the card count to stop changing (3 stable polls)
+  before extracting, else you silently get a partial page (ساندستون rendered 3-of-7 for several runs);
+  (3) `fls-*.laravel.cloud` plan downloads 403 without a browser `User-Agent` header (+ Referer riva.sa) — with
+  one they 200; (4) dump each page's full HTML and parse offline (regex over saved HTML beats live evaluate for
+  auditability + re-parsing). **Speed:** the pagination walk is slow serially (~10 s/page); with ~16 projects
+  prefer FANNING OUT MULTIPLE Browserbase sessions on the SAME persistent context (login is shared) and scraping
+  projects in parallel — user explicitly asked for this (2026-08-24); serial took ~10 min that parallel would do
+  in ~1. Scripts: scratchpad `bb_start/bb_resume/bb_htmlinc.mjs` + `parse_all2.py` + `match.py`.
 - Other non-Almajdiah sites: document each site's units source + field shape here as you learn it.
 
 ## Verify & cleanup
