@@ -5281,6 +5281,66 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ links: list.data ?? [] });
       }
 
+      /* -------------------------------------------------------- */
+      /* Attach a FILES-library file as content material. The     */
+      /* material stays a mos_assets row (so approval/publishing/  */
+      /* roles are untouched) — this just find-or-creates the      */
+      /* mos_assets WRAPPER for the chosen file and links it.      */
+      /* The CONTENT record (mos_content) is never touched.        */
+      /* -------------------------------------------------------- */
+      case 'asset_link_from_file': {
+        const contentId = str(body.content_id);
+        const fileId = str(body.file_id);
+        if (!contentId || !fileId) return jsonError(400, 'content_id and file_id are required');
+        const role = str(body.role) ?? 'source';
+
+        // 1) Find-or-create the mos_assets wrapper for this file.
+        const existing = await sb.from('mos_assets')
+          .select('*').eq('file_id', fileId).is('archived_at', null).limit(1).maybeSingle();
+        const exf = dbFail(existing.error); if (exf) return exf;
+        let assetRow = existing.data as Record<string, unknown> | null;
+
+        if (!assetRow) {
+          const fileRes = await sb.from('files')
+            .select('id, title, original_name, kind, mime_type, size_bytes')
+            .eq('id', fileId).maybeSingle();
+          const ff = dbFail(fileRes.error); if (ff) return ff;
+          const file = fileRes.data as {
+            title?: string | null; original_name?: string | null; kind?: string | null;
+            mime_type?: string | null; size_bytes?: number | null;
+          } | null;
+          if (!file) return jsonError(404, 'file not found');
+          // Files kind → mos_assets kind vocabulary.
+          const KIND_MAP: Record<string, string> = {
+            image: 'photo', photo: 'photo', video: 'video', audio: 'audio',
+            document: 'document', pdf: 'document',
+          };
+          const kind = KIND_MAP[(file.kind ?? '').toLowerCase()] ?? 'document';
+          const ins = await sb.from('mos_assets').insert({
+            title: file.title || file.original_name || 'ملف',
+            kind,
+            file_id: fileId,
+            mime_type: file.mime_type ?? null,
+            size_bytes: file.size_bytes ?? null,
+            original_name: file.original_name ?? null,
+            created_by_user_id: await resolveAppUserId(sb, user.userId),
+          }).select('*').maybeSingle();
+          const inf = dbFail(ins.error); if (inf) return inf;
+          assetRow = ins.data as Record<string, unknown> | null;
+        }
+        const assetId = str(assetRow?.id);
+        if (!assetId) return jsonError(500, 'could not resolve the material for this file');
+
+        // 2) Link the wrapper to the content (idempotent), then return the fresh
+        //    links + the asset so the client can render it without a refetch.
+        const up = await sb.from('mos_asset_links')
+          .upsert({ asset_id: assetId, content_id: contentId, role }, { onConflict: 'asset_id,content_id' });
+        const uf = dbFail(up.error); if (uf) return uf;
+        const list = await sb.from('mos_asset_links').select('asset_id, content_id, role').eq('content_id', contentId);
+        const lf = dbFail(list.error); if (lf) return lf;
+        return jsonOk({ links: list.data ?? [], asset: assetRow });
+      }
+
       case 'asset_unlink': {
         const assetId = str(body.asset_id);
         const contentId = str(body.content_id);

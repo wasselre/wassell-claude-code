@@ -1535,6 +1535,14 @@ export const bulkAssets = (
 export const linkAsset = (assetId: string, contentId: string, role = 'source') =>
   call<{ links: MosAssetLink[] }>('asset_link', { asset_id: assetId, content_id: contentId, role });
 
+/** Attach a Files-library file as content material. Find-or-creates the
+ *  mos_assets wrapper for the file (the content record is untouched) and links
+ *  it; returns the fresh links + the (new or existing) asset. */
+export const linkAssetFromFile = (contentId: string, fileId: string, role = 'source') =>
+  call<{ links: MosAssetLink[]; asset: MosAsset }>(
+    'asset_link_from_file', { content_id: contentId, file_id: fileId, role },
+  );
+
 export const unlinkAsset = (assetId: string, contentId: string) =>
   call<{ links: MosAssetLink[] }>('asset_unlink', { asset_id: assetId, content_id: contentId });
 
