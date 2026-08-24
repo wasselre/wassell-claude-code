@@ -31,10 +31,11 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { updateContent, fetchContentList, type MosContentRow } from '@/lib/marketingOS/client';
+import { updateContent } from '@/lib/marketingOS/client';
+import { searchBusinessFiles } from '@/lib/files/library';
+import type { BusinessFileRow } from '@/types/files';
 import { Modal } from './kit';
 import { num } from '../lib/format';
-import { useAssetUrls } from '../lib/assetUrls';
 import { useMosText } from '../lib/useMosText';
 
 interface FieldDef {
@@ -103,23 +104,6 @@ const formatLabel = (value: string, isAr: boolean): string => {
   return o ? (isAr ? o.ar : o.en) : value;
 };
 
-/** A content-library row as the picker consumes it — content_list decorates the
- *  base row with a preview thumbnail (its final cut's image) + that asset's kind. */
-type PickerRow = MosContentRow & {
-  thumb_url?: string | null;
-  /** Set when the preview asset's bytes are a private `files` row — signed client-side. */
-  preview_file_id?: string | null;
-  preview_kind?: string | null;
-};
-
-/** Fallback tint for a content item's thumbnail box, keyed by content type. */
-const TYPE_BG: Record<string, string> = {
-  video: 'linear-gradient(135deg,#4A4E54,#6B4226)',
-  post: 'linear-gradient(135deg,#8E6A4F,#B8734F)',
-  carousel: 'linear-gradient(135deg,#7A5C86,#A6482A)',
-  story: 'linear-gradient(135deg,#3F6B52,#5A6570)',
-};
-
 /** The muted order index that replaces the old approval radio on each headline row. */
 const idxBadge = {
   flex: '0 0 auto', minWidth: 16, textAlign: 'center' as const,
@@ -169,80 +153,40 @@ function NewHeadlineRow({
 }
 
 /**
- * The Reference field's picker — a choice FROM the content library, not free
- * text. Stores the chosen content item's id; a legacy free-text value that
- * matches no item still renders verbatim so nothing already written is lost.
+ * The Reference field's picker — a choice from the FILES library. Stores the
+ * chosen file's id (`design_reference_file_id`) + a display title
+ * (`design_reference_file_title`), so the design brief can say "take after this
+ * example file." The CONTENT record is untouched. Debounced search.
  */
-/** The thumbnail box for one library row — the item's preview image, or a
- *  type-tinted placeholder when the piece has no linked cut yet. */
-function RefThumb({ row, isAr, size = 46, thumbUrl }: {
-  row: PickerRow; isAr: boolean; size?: number;
-  /** Resolved by the picker in ONE batch — never resolved per row. */
-  thumbUrl?: string | null;
-}) {
-  const bg = TYPE_BG[row.content_type_key] ?? 'var(--sand)';
-  return (
-    <span
-      style={{
-        flex: `0 0 ${size}px`, width: size, height: size, borderRadius: 8, overflow: 'hidden',
-        background: bg, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        color: '#fff', fontSize: 10, fontWeight: 700, textAlign: 'center', lineHeight: 1.2,
-      }}
-    >
-      {(thumbUrl ?? row.thumb_url)
-        ? <img src={(thumbUrl ?? row.thumb_url) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        : (isAr ? row.content_type_label_ar : row.content_type_label_en)}
-    </span>
-  );
-}
-
-function ReferencePicker({
-  value, contentList, currentId, loadError, loading, isAr, projectName, onChange,
+function FileReferencePicker({
+  fileId, title, isAr, onChange,
 }: {
-  value: string;
-  contentList: PickerRow[];
-  currentId: string;
-  loadError: string | null;
-  loading: boolean;
+  fileId: string;
+  title: string;
   isAr: boolean;
-  projectName: (id: string | null | undefined) => string;
-  onChange: (v: string) => void;
+  onChange: (fileId: string, title: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const [typeKey, setTypeKey] = useState('');   // '' = all types
-  const [projectId, setProjectId] = useState(''); // '' = all projects
+  const [rows, setRows] = useState<BusinessFileRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  const selected = contentList.find((c) => c.id === value) ?? null;
-  const label = (c: PickerRow): string => `${c.ref ? `${c.ref} — ` : ''}${c.title}`;
-  // One batched resolve for the whole list; legacy rows keep their stored thumb.
-  const { thumbFor: rowThumb } = useAssetUrls(
-    contentList.map((c) => ({
-      file_id: c.preview_file_id ?? null, url: null,
-      thumb_url: c.thumb_url ?? null, kind: 'photo' as const,
-    })),
-  );
-  const thumbOf = (c: PickerRow): string | null => rowThumb({
-    file_id: c.preview_file_id ?? null, url: null,
-    thumb_url: c.thumb_url ?? null, kind: 'photo',
-  });
-  // Selected item → its label; legacy non-id text → itself; nothing → empty.
-  const display = selected ? label(selected) : value;
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    setLoading(true);
+    setErr(null);
+    const t = setTimeout(() => {
+      searchBusinessFiles({ q, sort: 'created_desc', pageSize: 40 })
+        .then((r) => { if (alive) setRows(r.rows); })
+        .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); })
+        .finally(() => { if (alive) setLoading(false); });
+    }, 300);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q, open]);
 
-  const pool = contentList.filter((c) => c.id !== currentId);
-
-  // Filter facets built from what the data actually holds, so no empty option
-  // ever shows — the same discipline as the content list's own filters.
-  const types = Array.from(
-    new Map(pool.map((c) => [c.content_type_key, isAr ? c.content_type_label_ar : c.content_type_label_en])).entries(),
-  );
-  const projectIds = Array.from(new Set(pool.flatMap((c) => c.project_ids ?? []).filter(Boolean)));
-
-  const term = q.trim().toLowerCase();
-  const options = pool
-    .filter((c) => !typeKey || c.content_type_key === typeKey)
-    .filter((c) => !projectId || (c.project_ids ?? []).includes(projectId))
-    .filter((c) => !term || `${c.ref ?? ''} ${c.title}`.toLowerCase().includes(term));
+  const display = title || fileId;
 
   return (
     <>
@@ -251,19 +195,21 @@ function ReferencePicker({
           type="button"
           className="inp"
           style={{
-            flex: 1, display: 'flex', alignItems: 'center', gap: 8,
-            textAlign: isAr ? 'right' : 'left', fontSize: 13, cursor: 'pointer',
-            color: display ? 'var(--copper)' : 'var(--mute)',
+            flex: 1, textAlign: isAr ? 'right' : 'left', fontSize: 13, cursor: 'pointer',
+            color: display ? 'var(--copper)' : 'var(--mute)', overflow: 'hidden',
+            textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}
           onClick={() => setOpen(true)}
         >
-          {selected && <RefThumb row={selected} isAr={isAr} size={22} thumbUrl={thumbOf(selected)} />}
-          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {display || (isAr ? 'اختر من مكتبة المحتوى…' : 'Pick from the content library…')}
-          </span>
+          {display || (isAr ? 'اختر من مكتبة الملفات…' : 'Pick from the Files library…')}
         </button>
-        {value && (
-          <button type="button" style={delBtn} onClick={() => onChange('')} aria-label={isAr ? 'إزالة المرجع' : 'Clear reference'}>
+        {fileId && (
+          <button
+            type="button"
+            style={{ ...delBtn }}
+            onClick={() => onChange('', '')}
+            aria-label={isAr ? 'إزالة المرجع' : 'Clear reference'}
+          >
             ×
           </button>
         )}
@@ -271,116 +217,65 @@ function ReferencePicker({
 
       {open && (
         <Modal
-          title={isAr ? 'اختر مرجعًا من مكتبة المحتوى' : 'Pick a reference from the content library'}
-          sub={isAr ? 'المنشور أو الفيديو الذي يحتذي به هذا التصميم.' : 'The piece this design should take after.'}
+          title={isAr ? 'اختر مرجعًا من مكتبة الملفات' : 'Pick a reference from the Files library'}
+          sub={isAr ? 'ملف مثال يحتذي به هذا التصميم.' : 'An example file this design should take after.'}
           onClose={() => setOpen(false)}
         >
           <input
             className="inp"
             autoFocus
             style={{ marginBottom: 10 }}
-            placeholder={isAr ? 'ابحث بالرقم المرجعي أو العنوان' : 'Search by ref or title'}
+            placeholder={isAr ? 'ابحث في مكتبة الملفات…' : 'Search the Files library…'}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-
-          {/* Filters — type chips + a project select, drawn only from what the
-              list actually contains. */}
-          {(types.length > 1 || projectIds.length > 1) && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-              {types.length > 1 && types.map(([key, lbl]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={`tag${typeKey === key ? '' : ' tag-t'}`}
-                  style={{ cursor: 'pointer', border: 0 }}
-                  onClick={() => setTypeKey((cur) => (cur === key ? '' : key))}
-                >
-                  {lbl}
-                </button>
-              ))}
-              {projectIds.length > 1 && (
-                <select
-                  className="inp"
-                  style={{ width: 'auto', fontSize: 12.5, padding: '4px 8px', marginInlineStart: 'auto' }}
-                  value={projectId}
-                  onChange={(e) => setProjectId(e.target.value)}
-                >
-                  <option value="">{isAr ? 'كل المشاريع' : 'All projects'}</option>
-                  {projectIds.map((pid) => (
-                    <option key={pid} value={pid}>{projectName(pid)}</option>
-                  ))}
-                </select>
-              )}
+          {err && <div className="notice" style={{ marginBottom: 10 }}>{err}</div>}
+          {loading && rows.length === 0 && !err && (
+            <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
+              {isAr ? 'جارٍ البحث…' : 'Searching…'}
             </div>
           )}
-
-          {loadError && (
-            <div className="notice" style={{ marginBottom: 10 }}>
-              {isAr ? 'تعذّر تحميل المحتوى: ' : 'Could not load content: '}{loadError}
+          {!loading && rows.length === 0 && !err && (
+            <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
+              {isAr ? 'لا ملفات مطابقة.' : 'No matching files.'}
             </div>
           )}
           <div style={{ maxHeight: 360, overflowY: 'auto', display: 'grid', gap: 6 }}>
-            {loading && contentList.length === 0 && !loadError && (
-              <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
-                {isAr ? 'جارٍ تحميل المحتوى…' : 'Loading content…'}
-              </div>
-            )}
-            {options.length === 0 && !loadError && !(loading && contentList.length === 0) && (
-              <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
-                {isAr ? 'لا محتوى مطابق.' : 'No matching content.'}
-              </div>
-            )}
-            {options.map((c) => {
-              const proj = (c.project_ids ?? [])[0];
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={`opt${c.id === value ? ' pick' : ''}`}
-                  style={{ ...rowCentered, gap: 10, width: '100%', cursor: 'pointer', textAlign: isAr ? 'right' : 'left' }}
-                  onClick={() => { onChange(c.id); setOpen(false); }}
-                >
-                  <RefThumb row={c} isAr={isAr} thumbUrl={thumbOf(c)} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="tx" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {c.title}
-                    </div>
-                    <div className="mt">
-                      {c.ref ? <span className="ltr">{c.ref}</span> : null}
-                      {c.ref ? ' · ' : ''}
-                      {isAr ? c.content_type_label_ar : c.content_type_label_en}
-                      {proj ? ` · ${projectName(proj)}` : ''}
-                    </div>
+            {rows.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className={`opt${f.id === fileId ? ' pick' : ''}`}
+                style={{ alignItems: 'center', gap: 10, width: '100%', cursor: 'pointer', textAlign: isAr ? 'right' : 'left' }}
+                onClick={() => { onChange(f.id, f.title || f.original_name); setOpen(false); }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="tx" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {f.title || f.original_name}
                   </div>
-                </button>
-              );
-            })}
+                  <div className="mt">{f.kind}</div>
+                </div>
+              </button>
+            ))}
           </div>
         </Modal>
       )}
     </>
   );
 }
-
 export default function WritingFields({
-  contentId, schema, data, canEdit, isAr, projectName, onSaved,
+  contentId, schema, data, canEdit, isAr, onSaved,
 }: {
   contentId: string;
   schema: string[];
   data: Record<string, unknown>;
   canEdit: boolean;
   isAr: boolean;
-  /** Resolve an Our-Projects id to its display name — powers the picker's project filter. */
-  projectName: (id: string | null | undefined) => string;
   onSaved: (data: Record<string, unknown>) => void;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
-  const [contentList, setContentList] = useState<PickerRow[]>([]);
-  const [refLoadError, setRefLoadError] = useState<string | null>(null);
-  const [refLoading, setRefLoading] = useState(false);
 
   useEffect(() => { setDraft({ ...data }); }, [data]);
 
@@ -392,37 +287,6 @@ export default function WritingFields({
   const mosText = useMosText();
   const disp = (k: string): string => mosText(str(k), k);
   const set = (k: string, v: unknown): void => setDraft((d) => ({ ...d, [k]: v }));
-
-  // The reference field pulls from the content library. It lives INSIDE the
-  // design-brief card, which renders whenever `design_brief` is in the schema —
-  // `design_reference` / `design_format` are companion keys that need not be
-  // separate schema entries. So load the library whenever that card is present
-  // (or a bare `design_reference` key exists). Needed in BOTH edit (the picker)
-  // and locked (resolving a stored id to its title) modes.
-  const needsContentLibrary =
-    schema.includes('design_brief') || schema.includes('design_reference');
-  useEffect(() => {
-    if (!needsContentLibrary) return;
-    let alive = true;
-    setRefLoading(true);
-    fetchContentList({ limit: 500 })
-      .then((r) => { if (alive) setContentList(r.content); })
-      .catch((e) => {
-        if (!alive) return;
-        // Surfaced in the picker rather than as a toast — a failed reference
-        // list must not look like a silent success, but it also must not block
-        // writing the rest of the brief.
-        console.error('[marketing] content library load failed', e);
-        setRefLoadError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => { if (alive) setRefLoading(false); });
-    return () => { alive = false; };
-  }, [needsContentLibrary]);
-
-  const referenceDisplay = (value: string): string => {
-    const hit = contentList.find((c) => c.id === value);
-    return hit ? `${hit.ref ? `${hit.ref} — ` : ''}${hit.title}` : value;
-  };
 
   const leftovers = useMemo(
     () => schema.filter((k) => !COMPOSED.has(k) && GENERIC_FIELDS[k]),
@@ -652,8 +516,8 @@ export default function WritingFields({
                 </div>
                 <div className="fld">
                   <div className="k">{isAr ? 'مرجع' : 'Reference'}</div>
-                  <div className="v" style={str('design_reference') ? { color: 'var(--copper)' } : undefined}>
-                    {str('design_reference') ? referenceDisplay(str('design_reference')) : '—'}
+                  <div className="v" style={str('design_reference_file_id') ? { color: 'var(--copper)' } : undefined}>
+                    {str('design_reference_file_title') || str('design_reference_file_id') || '—'}
                   </div>
                 </div>
               </div>
@@ -900,15 +764,14 @@ export default function WritingFields({
               </div>
               <div className="fld">
                 <div className="k">{isAr ? 'مرجع' : 'Reference'}</div>
-                <ReferencePicker
-                  value={str('design_reference')}
-                  contentList={contentList}
-                  currentId={contentId}
-                  loadError={refLoadError}
-                  loading={refLoading}
+                <FileReferencePicker
+                  fileId={str('design_reference_file_id')}
+                  title={str('design_reference_file_title')}
                   isAr={isAr}
-                  projectName={projectName}
-                  onChange={(v) => set('design_reference', v)}
+                  onChange={(id, title) => {
+                    set('design_reference_file_id', id);
+                    set('design_reference_file_title', title);
+                  }}
                 />
               </div>
             </div>
