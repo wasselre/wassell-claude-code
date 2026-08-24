@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ListChecks, Star, ExternalLink, XCircle, RotateCcw, Loader2, Building2, MapPin,
   Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter, Plus, Compass, Send,
-  LayoutList, Map as MapIcon, Search, ArrowUpDown, SlidersHorizontal, CheckSquare, Square, Trash2,
+  LayoutList, LayoutGrid, Map as MapIcon, Search, ArrowUpDown, SlidersHorizontal, CheckSquare, Square, Trash2,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
@@ -21,6 +21,8 @@ import AddOptionModal from '../AddOptionModal';
 import ClientOptionsMapView from '../ClientOptionsMapView';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
+import Modal from '@/components/ui/Modal';
+import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
 
 interface Props {
   client: AppRecord;
@@ -256,6 +258,22 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
   const [addOpen, setAddOpen] = useState(false);
   // "Send to client" from an option card — the WhatsApp flow for this option.
   const [sendTarget, setSendTarget] = useState<{ sourceType: 'project' | 'market_listing'; sourceId: string; sourceName: string } | null>(null);
+  // "Units" from a PROJECT option card — the project's inventory in a popup
+  // (same UnitsInventory the finder + project page use). Holds the resolved
+  // all_projects id + a display name.
+  const [unitsFor, setUnitsFor] = useState<{ projectId: string; name: string } | null>(null);
+
+  // The all_projects id a project option's units live under. Our-portfolio
+  // options store the our_projects record id (their finder source_id), so we
+  // follow its master `project` link; all_projects options use the id directly.
+  // Mirrors ProjectUnitsModal's resolution so both surfaces agree.
+  const resolveUnitsProjectId = (sourceId: string): string => {
+    const our = models.find((m) => m.name === 'our_projects');
+    const rec = our ? (records[our.id] ?? []).find((r) => r.id === sourceId) : null;
+    const master = (rec?.data as Record<string, unknown> | undefined)?.project;
+    const id = Array.isArray(master) ? master[0] : master;
+    return typeof id === 'string' && id ? id : sourceId;
+  };
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: options.length };
@@ -653,6 +671,20 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
               </a>
             )}
 
+            {/* View the project's unit inventory in a popup — same table the
+                finder card and project page use. Projects only (a market
+                listing / single unit has no inventory of its own). */}
+            {d.source_type === 'project' && (
+              <button
+                type="button"
+                onClick={() => setUnitsFor({ projectId: resolveUnitsProjectId(d.source_id), name: d.source_name || '' })}
+                className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/75 transition hover:bg-cream/60"
+                title={L('عرض وحدات المشروع', 'View the project’s units')}
+              >
+                <LayoutGrid size={12} /> {L('الوحدات', 'Units')}
+              </button>
+            )}
+
             {/* Send THIS option to the client over WhatsApp — the prepared
                 message if one exists, else the creation flow. Projects +
                 market listings (units have no message flow). */}
@@ -1031,6 +1063,21 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
 
       {/* Manual add-option picker */}
       {addOpen && <AddOptionModal clientId={client.id} isAr={isAr} onClose={() => setAddOpen(false)} />}
+
+      {/* Project units inventory — opened from a project option's "Units" button.
+          Reuses UnitsInventory (filters, sort, unit drawer, compare, PDF). The
+          shared Modal portals to body at z-50, above the z-40 client-options /
+          360 hosts. */}
+      {unitsFor && (
+        <Modal
+          open
+          onClose={() => setUnitsFor(null)}
+          title={isAr ? `وحدات المشروع — ${unitsFor.name}` : `Project units — ${unitsFor.name}`}
+          maxWidth="max-w-6xl"
+        >
+          <UnitsInventory projectId={unitsFor.projectId} projectName={unitsFor.name} isAr={isAr} />
+        </Modal>
+      )}
 
       {/* "Send to client" WhatsApp flow — stored message → chat composer;
           missing message → creation flow first (project: deterministic compose;

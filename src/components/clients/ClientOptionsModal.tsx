@@ -90,15 +90,24 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
   // A drilled-into option's / finder result's SOURCE opens as an overlay that
   // STACKS ON TOP of this popup (rendered as a sibling below), so closing it
   // returns to whatever the rep was looking at — the options list OR the finder
-  // WITH ITS RESULTS INTACT (the finder stays mounted). While a source is open
-  // the popup drops to z-30 so the source (project overlay z-40 / RecordFormModal
-  // z-50) sits above it.
+  // WITH ITS RESULTS INTACT (the finder stays mounted).
+  //
+  // The base popup sits at z-40 — deliberately BELOW the z-50 shared-Modal tier,
+  // the SAME convention every other host in the app follows (the chat record
+  // overlay, ProjectsUnitsBrowser). This matters because the embedded finder
+  // spawns shared Modals from its cards — the units inventory (ProjectUnitsModal),
+  // its unit compare, and the units-table PDF — all at z-50. A host ABOVE that
+  // tier (the old z-55) hid them behind its own blurred backdrop, so clicking
+  // "الوحدات" opened a modal that never appeared. Its own stacked popups that DO
+  // need to clear it — eliminate / send-to-client — use z-60. While a source is
+  // open the popup drops to z-30 so the source (project overlay z-40 /
+  // RecordFormModal z-50) sits above it.
   return (
     <>
     <div
       role="dialog"
       aria-modal="true"
-      className={`fixed inset-0 ${sourceView ? 'z-30' : 'z-[55]'} flex items-center justify-center bg-charcoal/40 p-2 sm:p-4`}
+      className={`fixed inset-0 ${sourceView ? 'z-30' : 'z-40'} flex items-center justify-center bg-charcoal/40 p-2 sm:p-4`}
       onMouseDown={(e) => { if (e.target === e.currentTarget && mode === 'options' && !sourceView) onClose(); }}
       dir={isAr ? 'rtl' : 'ltr'}
     >
