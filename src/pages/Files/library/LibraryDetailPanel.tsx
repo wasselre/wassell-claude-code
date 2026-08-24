@@ -23,15 +23,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  AlertCircle, Download, ExternalLink, Loader2, Lock, Maximize2, Save, X,
+  AlertCircle, Check, Download, ExternalLink, Loader2, Lock, Maximize2, Save, Sparkles, X,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import { effectiveFileRoles, roleSatisfies, signDownloadUrl } from '@/lib/files/client';
 import {
-  createDocumentType, errorText, fetchFileSubjects, listFileVocabularies, saveFileSubjects,
-  updateFileMetadata, type FileMetadataPatch,
+  approveAiSuggestions, createDocumentType, dismissAiSuggestions, errorText, fetchFileProvenance,
+  fetchFileSubjects, listFileVocabularies, saveFileSubjects, updateFileMetadata,
+  type FileMetadataPatch,
 } from '@/lib/files/library';
 import type {
   BusinessFileRow, FileConfidentiality, FileDocumentTypeRow, FilePermissionRole, FileStatus,
@@ -148,6 +149,41 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
   const vocabFor = (dim: FileVocabDimension) =>
     vocab.filter((v) => v.dimension === dim
       && (v.applies_to_kinds.length === 0 || v.applies_to_kinds.includes(file.kind)));
+
+  // Which fields are still AI-SUGGESTED (awaiting the human's accept/dismiss).
+  const [aiFields, setAiFields] = useState<Set<string>>(new Set());
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const loadProvenance = useCallback(async () => {
+    try {
+      const prov = await fetchFileProvenance(file.id);
+      setAiFields(new Set(Object.entries(prov).filter(([, s]) => s === 'ai_suggested').map(([k]) => k)));
+    } catch {
+      setAiFields(new Set());
+    }
+  }, [file.id]);
+  useEffect(() => { void loadProvenance(); }, [loadProvenance]);
+
+  const acceptAi = useCallback(async () => {
+    setReviewBusy(true);
+    try {
+      await approveAiSuggestions(file.id);
+      setAiFields(new Set());                         // values stay, badges clear
+    } catch { /* toasted */ } finally { setReviewBusy(false); }
+  }, [file.id]);
+
+  const dismissAi = useCallback(async () => {
+    setReviewBusy(true);
+    try {
+      await dismissAiSuggestions(file.id);
+      // Reflect the removals locally: description + nature cleared, AI subjects gone.
+      const cleared = { ...file } as BusinessFileRow;
+      if (aiFields.has('ai_description')) cleared.ai_description = null;
+      if (aiFields.has('asset_nature')) { cleared.asset_nature = null; setDraft((d) => ({ ...d, asset_nature: '' })); }
+      onSaved(cleared);
+      await fetchFileSubjects(file.id).then((list) => { setSubjects(list); setSubjectsInit(list); }).catch(() => {});
+      setAiFields(new Set());
+    } catch { /* toasted */ } finally { setReviewBusy(false); }
+  }, [file, aiFields, onSaved]);
 
   // Re-sync the draft from whatever the row now says. This fires on a NEW file
   // AND after a save (the page patches the row in place, so the object changes
@@ -418,6 +454,39 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
             {t('files.library.meta.intelligence')}
           </h4>
 
+          {/* AI review banner — shown while any field is still an AI suggestion.
+              Accept keeps the values (marks approved); Dismiss removes the AI
+              description/nature/subjects. Editing a field elsewhere already makes
+              it human-owned. */}
+          {aiFields.size > 0 && canEdit && (
+            <div className="rounded-xl border border-copper/30 bg-copper/5 p-2.5 space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-copper">
+                <Sparkles size={13} aria-hidden />
+                {t('files.library.meta.ai_review', { count: aiFields.size })}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={reviewBusy}
+                  onClick={() => void acceptAi()}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-copper text-white text-xs font-bold hover:bg-terracotta disabled:opacity-50"
+                >
+                  {reviewBusy ? <Loader2 size={12} className="animate-spin" aria-hidden /> : <Check size={12} aria-hidden />}
+                  {t('files.library.meta.ai_accept')}
+                </button>
+                <button
+                  type="button"
+                  disabled={reviewBusy}
+                  onClick={() => void dismissAi()}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-sand/40 text-charcoal/70 text-xs font-bold hover:bg-cream disabled:opacity-50"
+                >
+                  <X size={12} aria-hidden />
+                  {t('files.library.meta.ai_dismiss')}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             {([
               ['asset_nature', 'files.library.meta.asset_nature'],
@@ -429,7 +498,10 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
               const opts = vocabFor(dim);
               return (
                 <div key={dim}>
-                  <label className={labelCls} htmlFor={`md-${dim}`}>{t(key)}</label>
+                  <label className={`${labelCls} flex items-center gap-1`} htmlFor={`md-${dim}`}>
+                    {t(key)}
+                    {aiFields.has(dim) && <Sparkles size={9} className="text-copper" aria-hidden />}
+                  </label>
                   <select id={`md-${dim}`} className={field} disabled={!canEdit}
                           value={cur}
                           onChange={(e) => setDraft({ ...draft, [dim]: e.target.value })}>
@@ -445,10 +517,13 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
             })}
           </div>
 
-          {/* AI description — read-only placeholder until the AI enrichment phase. */}
+          {/* AI description — machine-written; a badge marks it while unreviewed. */}
           {file.ai_description && (
             <div>
-              <label className={labelCls}>{t('files.library.meta.ai_description')}</label>
+              <label className={`${labelCls} flex items-center gap-1`}>
+                {t('files.library.meta.ai_description')}
+                {aiFields.has('ai_description') && <Sparkles size={9} className="text-copper" aria-hidden />}
+              </label>
               <p className="text-xs text-charcoal/70 leading-relaxed bg-cream/40 rounded-lg p-2" dir="auto">
                 {file.ai_description}
               </p>

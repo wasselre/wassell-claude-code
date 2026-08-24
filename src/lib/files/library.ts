@@ -340,6 +340,33 @@ export async function saveFileSubjects(fileId: string, subjects: string[]): Prom
   if (ins.error) throw surfaceLibraryError('save file subjects', ins.error);
 }
 
+/** Per-field provenance for one file: field_path → state (ai_suggested |
+ *  human_approved | human_modified). Used to badge AI suggestions. */
+export async function fetchFileProvenance(fileId: string): Promise<Record<string, string>> {
+  const db = requireSupabase('load provenance');
+  const { data, error } = await db
+    .from('file_metadata_provenance').select('field_path,state').eq('file_id', fileId);
+  if (error) throw surfaceLibraryError('load provenance', error);
+  const out: Record<string, string> = {};
+  for (const r of (data ?? []) as Array<{ field_path: string; state: string }>) out[r.field_path] = r.state;
+  return out;
+}
+
+/** Accept every AI suggestion on a file — values stay, provenance → approved. */
+export async function approveAiSuggestions(fileId: string): Promise<void> {
+  const db = requireSupabase('approve suggestions');
+  const { error } = await db.rpc('file_suggestions_approve', { p_file_id: fileId });
+  if (error) throw surfaceLibraryError('approve suggestions', error);
+}
+
+/** Dismiss AI suggestions — removes the AI-applied description / nature / subjects
+ *  (additive tags are left) and clears the ai_suggested provenance. */
+export async function dismissAiSuggestions(fileId: string): Promise<void> {
+  const db = requireSupabase('dismiss suggestions');
+  const { error } = await db.rpc('file_suggestions_dismiss', { p_file_id: fileId });
+  if (error) throw surfaceLibraryError('dismiss suggestions', error);
+}
+
 /** ADD a set of subjects to many files at once (upload / bulk). Additive and
  *  idempotent — existing rows are left alone (the primary is also mirrored by
  *  the files_sync_primary_subject trigger, so re-adding it is a no-op). */
