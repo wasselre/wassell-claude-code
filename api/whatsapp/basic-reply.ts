@@ -87,8 +87,10 @@ function classify(raw: string | null | undefined): Decision {
   if (/مهتم بمشاريع سكني|مشاريع سكنية (?:اخرى|أخرى)|أبحث عن منزل|ابحث عن منزل|استشارة عقاري|متوفر شق|عندكم مشاريع|عندكم شقق|عندكم فلل|ابي اعرف الاسعار|أبي أعرف الأسعار/.test(t))
     return { action: 'qualify' };
 
-  // Greeting.
-  if (/^(?:وعليكم\s+)?(?:ال)?سلام|^سلام|^هلا|^هلو|^اهل|^أهل|^مرحب|^صباح|^مساء|^هاي|^أهلين|^اهلين|^hi\b|^hello|^hey|^salam|^hala/.test(low) || t.length <= 3)
+  // Greeting — match real greeting words ONLY. (No char-count heuristic: «ليش»
+  // = "why" is 3 letters and is NOT a greeting; short unknowns fall to Kimi,
+  // which hands them off rather than replying «أهلاً» to a question.)
+  if (/^(?:وعليكم\s+)?(?:ال)?سلام|^سلام|^هلا|^هلو|^اهل|^أهل|^مرحب|^صباح|^مساء|^هاي|^أهلين|^اهلين|^hi\b|^hello|^hey|^salam|^hala/.test(low))
     return { action: 'greet' };
 
   return { action: 'kimi' };

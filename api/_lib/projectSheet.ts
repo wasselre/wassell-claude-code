@@ -145,6 +145,15 @@ export async function resolveProjectSheet(
     missing: [],
   };
 
+  // Guard: a project with NO sellable data (no available price, no bedrooms, no
+  // area, no unit types) is an empty placeholder shell (e.g. the imported «مينا NN»
+  // series with 0 units). Sending its "sheet" is a blank card — treat as not found
+  // so the caller hands off instead. A genuinely sold-out project still has
+  // bedroom/area rollups from its units, so it passes.
+  if (!facts.minPrice && !facts.bedrooms && !facts.areaRange && facts.unitTypes.length === 0) {
+    return { ok: false, reason: 'not_found', message: 'project has no sellable data (empty shell)' };
+  }
+
   const { body_ar, body_en } = composeProjectMessage(facts);
 
   const missing: string[] = [];
