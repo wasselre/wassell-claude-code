@@ -14,8 +14,11 @@ import BackToSettings from './components/BackToSettings';
  * the kill switch, the hours humans cover, and the two safety limits.
  */
 
+type ScheduleMode = 'outside_hours' | 'inside_hours' | 'always';
+
 interface AiSettings {
   is_enabled: boolean;
+  schedule_mode: ScheduleMode;
   work_start_hour: number;
   work_end_hour: number;
   work_days: number[];
@@ -112,10 +115,25 @@ export default function WhatsAppAiPage() {
   const REASON_AR: Record<string, string> = {
     disabled: 'المساعد متوقف',
     working_hours: 'ضمن ساعات عمل الفريق — الردود للمندوبين',
+    outside_agent_hours: 'خارج أوقات رد المساعد المحددة',
     human_active: 'مندوب رد على المحادثة مؤخراً',
     reply_cap_reached: 'وصل الحد الأقصى للردود',
     ok: 'المساعد يرد الآن على المحادثات الجديدة',
   };
+
+  const mode: ScheduleMode = settings.schedule_mode ?? 'outside_hours';
+  const MODES: { id: ScheduleMode; ar: string; en: string; hintAr: string; hintEn: string }[] = [
+    { id: 'always', ar: 'يرد دائماً (٢٤/٧)', en: 'Always (24/7)',
+      hintAr: 'يرد المساعد على الرسائل البسيطة في أي وقت — حتى أثناء دوام الفريق.',
+      hintEn: 'The agent answers simple messages any time — even during team hours.' },
+    { id: 'inside_hours', ar: 'يرد خلال أوقات محددة', en: 'Only during set hours',
+      hintAr: 'حدّد الأيام والساعات التي يرد فيها المساعد. يرد خلالها فقط ويصمت خارجها.',
+      hintEn: 'Pick the days & hours the agent replies. It answers only inside them.' },
+    { id: 'outside_hours', ar: 'يرد خارج دوام الفريق فقط', en: 'Only outside team hours',
+      hintAr: 'المندوبون يردّون خلال هذه الأوقات، والمساعد يغطي خارجها (ليالي/عطل).',
+      hintEn: 'Reps answer during these hours; the agent covers outside them (nights/weekends).' },
+  ];
+  const activeMode = MODES.find((m) => m.id === mode) ?? MODES[2]!;
 
   return (
     <div className="p-6 max-w-3xl">
@@ -179,20 +197,51 @@ export default function WhatsAppAiPage() {
         </label>
       </div>
 
-      {/* Working hours = when HUMANS cover */}
+      {/* When the AGENT replies — mode + (for the two windowed modes) the schedule */}
       <div className="card p-5 mb-4">
         <div className="flex items-center gap-2 mb-1">
           <Clock className="w-4 h-4 text-copper" />
           <h2 className="font-semibold text-charcoal">
-            {isAr ? 'ساعات عمل الفريق' : 'Team working hours'}
+            {isAr ? 'متى يرد المساعد؟' : 'When does the agent reply?'}
           </h2>
         </div>
-        <p className="text-sm text-charcoal/60 mb-4">
-          {isAr
-            ? 'خلال هذه الأوقات يرد المندوبون. المساعد يرد خارجها فقط.'
-            : 'Reps answer during these hours. The agent covers everything outside them.'}
+        <p className="text-sm text-charcoal/60 mb-3">
+          {isAr ? activeMode.hintAr : activeMode.hintEn}
         </p>
 
+        {/* Mode selector */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          {MODES.map((m) => {
+            const on = mode === m.id;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                disabled={saving}
+                onClick={() => { if (m.id !== mode) void save({ schedule_mode: m.id }); }}
+                className={`px-3 py-1.5 rounded-lg text-sm border transition ${
+                  on ? 'bg-copper text-white border-copper' : 'bg-white text-charcoal/70 border-sand hover:bg-cream'
+                }`}
+              >
+                {isAr ? m.ar : m.en}
+              </button>
+            );
+          })}
+        </div>
+
+        {mode === 'always' ? (
+          <p className="rounded-xl bg-green-50 px-4 py-2.5 text-sm text-green-700">
+            {isAr
+              ? 'المساعد يرد على مدار الساعة. لا حاجة لتحديد أيام أو ساعات.'
+              : 'The agent answers around the clock. No days or hours needed.'}
+          </p>
+        ) : (
+        <>
+        <p className="text-xs font-semibold text-charcoal/70 mb-2">
+          {mode === 'inside_hours'
+            ? (isAr ? 'الأيام والساعات التي يرد فيها المساعد:' : 'The days & hours the agent replies:')
+            : (isAr ? 'ساعات عمل الفريق (المساعد يرد خارجها):' : 'Team hours (agent replies outside them):')}
+        </p>
         <div className="flex flex-wrap gap-2 mb-4">
           {DAYS.map((d) => {
             const on = settings.work_days.includes(d.iso);
@@ -237,6 +286,8 @@ export default function WhatsAppAiPage() {
           </label>
           <div className="text-sm text-charcoal/50 pb-2">{settings.timezone}</div>
         </div>
+        </>
+        )}
       </div>
 
       {/* Safety limits */}

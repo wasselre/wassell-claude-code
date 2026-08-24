@@ -56,6 +56,14 @@ export default async function handler(req: Request): Promise<Response> {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (typeof body.is_enabled === 'boolean') patch.is_enabled = body.is_enabled;
 
+    if (body.schedule_mode !== undefined) {
+      const m = body.schedule_mode;
+      if (m !== 'outside_hours' && m !== 'inside_hours' && m !== 'always') {
+        return jsonError(400, "schedule_mode must be 'outside_hours', 'inside_hours', or 'always'");
+      }
+      patch.schedule_mode = m;
+    }
+
     const start = INT(body.work_start_hour, 0, 23);
     const end   = INT(body.work_end_hour, 1, 24);
     if (body.work_start_hour !== undefined) {
