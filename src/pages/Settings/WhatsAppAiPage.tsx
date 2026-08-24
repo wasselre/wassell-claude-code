@@ -25,6 +25,7 @@ interface AiSettings {
   timezone: string;
   max_replies_per_chat: number;
   human_quiet_hours: number;
+  stop_forever_after_human: boolean;
 }
 
 // ISO weekday numbering (Mon=1 … Sun=7) — matches EXTRACT(ISODOW) in the gate.
@@ -301,6 +302,28 @@ export default function WhatsAppAiPage() {
             ? 'تمنع المساعد من الاستمرار بلا نهاية أو الرد فوق مندوب يتابع العميل.'
             : 'Stop the agent running on forever, or talking over a rep who is on the case.'}
         </p>
+
+        {/* Permanent stop after any human reply */}
+        <label className="flex items-start gap-3 cursor-pointer mb-4">
+          <input
+            type="checkbox"
+            className="mt-1 w-5 h-5 accent-copper"
+            checked={settings.stop_forever_after_human}
+            disabled={saving}
+            onChange={(e) => void save({ stop_forever_after_human: e.target.checked })}
+          />
+          <div>
+            <div className="font-semibold text-charcoal">
+              {isAr ? 'توقف نهائياً بعد رد المندوب' : 'Stop permanently once a rep replies'}
+            </div>
+            <div className="text-sm text-charcoal/60">
+              {isAr
+                ? 'بمجرد أن يرد مندوب في المحادثة، لا يرد المساعد فيها أبداً بعد ذلك (إلا إذا سلّمتها له يدوياً).'
+                : 'The moment a rep replies in a conversation, the agent never answers there again (unless you manually hand it back).'}
+            </div>
+          </div>
+        </label>
+
         <div className="flex flex-wrap gap-5">
           <label className="text-sm">
             <span className="block text-charcoal/70 mb-1">
@@ -315,19 +338,21 @@ export default function WhatsAppAiPage() {
               }}
             />
           </label>
-          <label className="text-sm">
-            <span className="block text-charcoal/70 mb-1">
-              {isAr ? 'صمت بعد رد المندوب (ساعات)' : 'Stay silent after a rep replies (hours)'}
-            </span>
-            <input
-              type="number" min={0} max={168} className="form-input w-28"
-              defaultValue={settings.human_quiet_hours}
-              onBlur={(e) => {
-                const v = Number(e.target.value);
-                if (v !== settings.human_quiet_hours) void save({ human_quiet_hours: v });
-              }}
-            />
-          </label>
+          {!settings.stop_forever_after_human && (
+            <label className="text-sm">
+              <span className="block text-charcoal/70 mb-1">
+                {isAr ? 'صمت بعد رد المندوب (ساعات)' : 'Stay silent after a rep replies (hours)'}
+              </span>
+              <input
+                type="number" min={0} max={168} className="form-input w-28"
+                defaultValue={settings.human_quiet_hours}
+                onBlur={(e) => {
+                  const v = Number(e.target.value);
+                  if (v !== settings.human_quiet_hours) void save({ human_quiet_hours: v });
+                }}
+              />
+            </label>
+          )}
         </div>
       </div>
 

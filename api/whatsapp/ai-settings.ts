@@ -55,6 +55,7 @@ export default async function handler(req: Request): Promise<Response> {
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (typeof body.is_enabled === 'boolean') patch.is_enabled = body.is_enabled;
+    if (typeof body.stop_forever_after_human === 'boolean') patch.stop_forever_after_human = body.stop_forever_after_human;
 
     if (body.schedule_mode !== undefined) {
       const m = body.schedule_mode;
