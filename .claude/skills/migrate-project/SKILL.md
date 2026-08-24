@@ -458,6 +458,23 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   full merged `data` object per unit). The unit-change trigger auto-recomputes the project rollups (available_units,
   sold_units, available_price_range) — never set those by hand. Back up all units to a local JSON before writing.
 
+- **[2026-08-24] الرمز availability-sheet reconcile is now the STANDARD posture — no question needed (ريا النخيل run):**
+  applied the 2026-08-18 ستون الندى decision without asking, and it is hereby generalized for الرمز-style
+  "اخر تحديث"/بعد الخصم sheets: (1) match by `(building_number, unit_number)`, verify area+model per row;
+  (2) matched rows → set `total_price` to the sheet price (keep the notes' original pre-discount price as-is);
+  (3) in-scope available-but-absent units → `sold`; absent `reserved` stays `reserved`; buildings never in the
+  sheet stay untouched; (4) **sheet rows with NO matching DB unit are NEWLY-RELEASED units → CREATE them**
+  (the launch migration was a release batch, so later sheets legitimately add units): clone
+  bedrooms/bathrooms/`unit_components` — and `unit_plan` — from a SAME-MODEL sibling in the project; if the
+  model is new to the DB (e.g. A7a when only A7 exists), clone components from the nearest model variant with
+  an explanatory note but leave `unit_plan` EMPTY (never attach a wrong-model plan). New units get computed
+  `U-` codes (materialized real max + n) and `created_by` = the migration identity `a3374d65-9cee-4daa-8880-5e8ff23e7db0`.
+  Also append an "⚡ تحديث <date>" section to `project_analysis` (inventory, new price range, added units) —
+  a stale analysis quoting pre-discount prices is misleading. Back up units+project to a
+  `_backup_<project>_<date>` table in-DB first (better than local JSON). ريا النخيل 2026-08-24: 29 repriced
+  (بعد الخصم 1,279,112–1,599,000), 20 available→sold, 3 units added (`U-49524`–`U-49526`), rollups verified
+  (52/32/20, available_price_range matches the sheet exactly).
+
 ## Per-developer API/source adapters (document each site as you learn it)
 - **ريفا العقارية (riva.sa)** → **Laravel + Livewire v3, fully SERVER-RENDERED — plain `fetch` + regex,
   no Browserbase needed.** Listing `/projects` renders 18 cards; page 2 (6 more) is Livewire pagination —
