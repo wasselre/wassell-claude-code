@@ -77,10 +77,16 @@ export default function FilesAiReviewPage() {
     setError(null);
     void (async () => {
       try {
-        const [queue, count] = await Promise.all([fetchAiReviewQueue(PAGE_LIMIT), fetchAiReviewCount()]);
+        // The QUEUE is the page — its failure is the only fatal one. The count is
+        // a best-effort header number: fetched separately so a slow/failed count
+        // (it once timed out under a 7k-file backlog) can never blank the queue.
+        const queue = await fetchAiReviewQueue(PAGE_LIMIT);
         if (cancelled) return;
         setRows(queue);
-        setTotal(count);
+        setTotal(queue.length);
+        fetchAiReviewCount()
+          .then((c) => { if (!cancelled) setTotal(c); })
+          .catch(() => { /* keep the queue-length fallback; count is non-fatal */ });
       } catch (e) {
         if (!cancelled) setError(errorText(e));
       } finally {
