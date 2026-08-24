@@ -31,6 +31,12 @@ const POLL_MS      = Number(process.env.POLL_INTERVAL_MS || 5000);
 const SESSION_TIMEOUT_MS = Number(process.env.SESSION_TIMEOUT_MS || 8 * 60_000);
 const WORKER = `wa-agent-${process.env.FLY_MACHINE_ID || process.pid}`;
 const LEASE = 'whatsapp_reply';
+// Which reply skill each session runs. `whatsapp-reply` is the full Saad agent
+// (searches projects, holds a conversation); `whatsapp-basic-reply` is the
+// lightweight first-touch responder (greet / project sheet / one qualifying
+// question, then hand off). Flip via `fly secrets set WA_SKILL=…` — no code
+// change. Defaults to the full agent so setting nothing preserves old behaviour.
+const WA_SKILL = (process.env.WA_SKILL || 'whatsapp-reply').replace(/^\/+/, '');
 
 if (!SUPABASE_URL || !SERVICE_KEY) { console.error('[wa-agent] SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required'); process.exit(1); }
 if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) console.error('[wa-agent] WARNING: CLAUDE_CODE_OAUTH_TOKEN is not set — sessions will fail to authenticate');
@@ -249,7 +255,7 @@ async function handleWhatsappReply(job) {
   process.env.WA_ENV_JSON = envJson;   // inherited by the spawned session
 
   const prompt = [
-    `/whatsapp-reply ${chatWid}`,
+    `/${WA_SKILL} ${chatWid}`,
     '',
     'You are running HEADLESS on the WhatsApp queue. Nobody can answer questions —',
     'decide everything yourself per the skill. Job context is in:',
