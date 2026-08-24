@@ -21,6 +21,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import Anthropic from '@anthropic-ai/sdk';
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
+import { resolveProjectSheet } from '../_lib/projectSheet.js';
+import { enqueueAiReply } from '../_lib/aiSend.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -164,9 +166,6 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   const chatWid = (body.chat_wid ?? '').trim();
   if (!chatWid) return jsonRes(nodeRes, 400, { error: 'chat_wid is required' });
 
-  const host = (nodeReq.headers.host as string | undefined) ?? 'app.wassel.re';
-  const base = process.env.APP_URL || `https://${host}`;
-  const authHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'x-wassel-ai-secret': secret };
   const supa = getServiceSupabase();
 
   // Mode routing: 'agent' → delegate to the heavy Claude-session runner (Saad).
@@ -209,11 +208,9 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     replyText = NO_SERVICE;
     summary = 'العميل يسأل عن خدمة غير متوفرة (إيجار/تجاري/أرض).';
   } else if (d.action === 'project_sheet') {
-    const pm = await fetch(`${base}/api/templates/project-message`, {
-      method: 'POST', headers: authHeaders, body: JSON.stringify({ project_name: d.projectName }),
-    }).then((r) => r.json()).catch(() => null);
-    if (pm?.ok && pm.body_ar) {
-      replyText = pm.body_ar;
+    const sheet = await resolveProjectSheet(supa, supa, { projectName: d.projectName });
+    if (sheet.ok && sheet.body_ar) {
+      replyText = sheet.body_ar;
       summary = `أُرسلت بطاقة مشروع «${d.projectName}» للعميل.`;
     } else {
       // Couldn't resolve the project → hand off rather than guess.
@@ -232,24 +229,21 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         : 'رسالة تحتاج تدخّل بشري (تفاوض/استفسار خارج النطاق).';
   }
 
-  // Send the reply (reuses ai-send: gate re-check + queue + audit).
-  let sent = false; let blocked = false;
+  // Send the reply (in-process: gate re-check + device + queue + audit).
+  let sent = false;
   if (replyText) {
-    const res = await fetch(`${base}/api/whatsapp/ai-send`, {
-      method: 'POST', headers: authHeaders,
-      body: JSON.stringify({ chat_wid: chatWid, body: replyText, device_id: body.device_id }),
-    }).then((r) => r.json()).catch(() => ({}));
-    blocked = res?.blocked === true;
-    sent = res?.queued === true || res?.sent === true;
-    if (blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: res?.reason });
+    const res = await enqueueAiReply(supa, { chatWid, text: replyText, deviceId: body.device_id, jobId: 'basic' });
+    if (res.blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: res.reason });
+    sent = res.queued;
   }
 
-  // Notify the operator on handoff.
+  // Notify the operator on handoff (direct insert — no HTTP hop).
   if (handoff) {
-    await fetch(`${base}/api/whatsapp/ai-notify`, {
-      method: 'POST', headers: authHeaders,
-      body: JSON.stringify({ body: summary, severity, chat_wid: chatWid, chat_record_id: body.chat_record_id ?? null }),
-    }).catch((e) => console.error('[basic-reply] notify failed:', e));
+    const { error: notifyErr } = await supa.from('ai_notifications').insert({
+      source: 'whatsapp', severity, title: null, body: summary,
+      chat_wid: chatWid, chat_record_id: body.chat_record_id ?? null,
+    });
+    if (notifyErr) console.error('[basic-reply] notify insert failed:', notifyErr.message);
   }
 
   return jsonRes(nodeRes, 200, { action: d.action, sent, handoff, summary });

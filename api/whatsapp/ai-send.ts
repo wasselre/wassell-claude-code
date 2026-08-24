@@ -1,177 +1,52 @@
 /**
  * POST /api/whatsapp/ai-send
  *
- * The ONE send path for the WhatsApp AI agent — i.e. for the headless Claude
- * Code session that the runner spawns for a `whatsapp_reply` job. The session
- * has no WAHA credentials and no user JWT; it authenticates with a shared
- * secret and this endpoint does the rest.
- *
- * Why an endpoint instead of letting the session call WAHA directly:
- *   1. WAHA_URL / WAHA_API_KEY stay server-side (the session runs on a laptop).
- *   2. The gate is re-checked HERE, immediately before sending. A session can
- *      take a minute to think; if a human replied in the meantime, or someone
- *      flipped the kill switch, the message must NOT go out.
- *   3. Every AI-sent message is recorded in `whatsapp_ai_replies`, which is
- *      also what makes "a human replied" detectable (an outbound message NOT
- *      in that table).
- *
- * Auth: `x-wassel-ai-secret` header === WHATSAPP_AI_SECRET.
+ * The one send path for the WhatsApp AI agent (the headless session, the basic
+ * responder's manual/testing callers). Thin wrapper over the shared
+ * `enqueueAiReply` (gate re-check + device resolve + scheduled-send enqueue +
+ * audit). Auth: `x-wassel-ai-secret` === WHATSAPP_AI_SECRET.
  *
  * Body: { chat_wid, body, device_id?, job_id?, force? }
- *   - `force: true` skips the gate. ONLY for the operator's own smoke tests;
- *     never set it from the agent skill.
+ *   - `force: true` skips the gate. ONLY for operator smoke tests; never from the skill.
  *
- * The outbound `chat_messages` row is NOT written here — WhatsApp echoes our
- * own send back through the `message.any` webhook with fromMe:true, which
- * writes it. Writing it here too would duplicate the row.
+ * The outbound chat_messages row is NOT written here — WhatsApp echoes our own
+ * send back through the webhook (fromMe:true), which writes it.
  */
 
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
-import { sendMessage, resolveDefaultDeviceId } from '../_lib/whatsappGateway.js';
+import { enqueueAiReply } from '../_lib/aiSend.js';
 
-// EDGE, not nodejs: this handler is Web-API shaped (Request in, Response out).
-// Vercel's nodejs runtime hands the function (IncomingMessage, ServerResponse)
-// and ignores a returned Response — the request then hangs until the gateway
-// times out (verified live 2026-07-26: 20s, no response). Either adapt like
-// api/whatsapp/send-media-batch.ts, or run on edge. Edge is right here — the
-// work is one gate check + one fetch, no Node APIs.
-export const config = {
-  runtime: 'edge',
-};
+export const config = { runtime: 'edge' };
 
-interface Body {
-  chat_wid?: string;
-  body?: string;
-  device_id?: string;
-  job_id?: string;
-  force?: boolean;
-}
+interface Body { chat_wid?: string; body?: string; device_id?: string; job_id?: string; force?: boolean }
 
 export default async function handler(req: Request): Promise<Response> {
-  if (req.method === 'GET') {
-    return json({ ok: true, hint: 'POST { chat_wid, body } with x-wassel-ai-secret' });
-  }
+  if (req.method === 'GET') return json({ ok: true, hint: 'POST { chat_wid, body } with x-wassel-ai-secret' });
   if (req.method !== 'POST') return json({ error: `Method ${req.method} not allowed` }, 405);
 
   const secret = process.env.WHATSAPP_AI_SECRET;
   if (!secret) return json({ error: 'WHATSAPP_AI_SECRET not configured' }, 500);
-  if (!constantTimeEqual(req.headers.get('x-wassel-ai-secret') ?? '', secret)) {
-    return json({ error: 'unauthorized' }, 401);
-  }
+  if (!constantTimeEqual(req.headers.get('x-wassel-ai-secret') ?? '', secret)) return json({ error: 'unauthorized' }, 401);
 
   let input: Body;
-  try {
-    input = (await req.json()) as Body;
-  } catch {
-    return json({ error: 'invalid JSON body' }, 400);
-  }
+  try { input = (await req.json()) as Body; } catch { return json({ error: 'invalid JSON body' }, 400); }
 
-  const chatWid = (input.chat_wid ?? '').trim();
-  const text = (input.body ?? '').trim();
-  if (!chatWid) return json({ error: 'chat_wid is required' }, 400);
-  if (!text) return json({ error: 'body is required' }, 400);
-  if (text.length > 4000) return json({ error: 'body too long (max 4000 chars)' }, 400);
-
-  const supa = getServiceSupabase();
-
-  // Re-check the gate at send time (see header comment #2).
-  if (input.force !== true) {
-    const { data, error } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });
-    if (error) return json({ error: `gate check failed: ${error.message}` }, 500);
-    const row = Array.isArray(data) ? data[0] : data;
-    const allowed = (row as { should_reply?: boolean } | null)?.should_reply === true;
-    if (!allowed) {
-      const reason = (row as { reason?: string } | null)?.reason ?? 'blocked';
-      // 200, not an error: "a human took over" is a normal outcome the session
-      // should accept and stop on, not retry.
-      return json({ sent: false, blocked: true, reason });
-    }
-  }
-
-  // chat_wid is "<digits>@c.us" → phone.
-  const digits = chatWid.split('@')[0] ?? '';
-  if (!/^\d{8,15}$/.test(digits)) return json({ error: `unsupported chat_wid: ${chatWid}` }, 400);
-
-  // NEVER trust the device id we were handed. A stale one is worse than none:
-  // an old `wassel_main` gateway is still delivering webhooks for this number
-  // alongside the live `sales` session, so jobs get created carrying a device
-  // that the gateway we send through does not have — the reply then dies with
-  // `422 Session "wassel_main" does not exist` while the agent believes it sent
-  // (verified live 2026-07-27). Only an ACTIVE device may be used; anything
-  // else falls back to the configured default.
-  const requested = input.device_id?.trim() || null;
-  let deviceId: string | null = null;
-  if (requested) {
-    const { data: dev } = await supa
-      .from('whatsapp_numbers')
-      .select('device_id')
-      .eq('device_id', requested)
-      .eq('is_active', true)
-      .maybeSingle();
-    deviceId = dev?.device_id ?? null;
-    if (!deviceId) {
-      console.warn(`[whatsapp-ai-send] ignoring inactive/unknown device "${requested}" — using the default`);
-    }
-  }
-  deviceId = deviceId ?? (await resolveDefaultDeviceId());
-  if (!deviceId) return json({ error: 'no active WhatsApp device configured' }, 500);
-
-  // Send via the SCHEDULED QUEUE, not a direct WAHA call.
-  //
-  // WAHA refuses Vercel's egress with 403 while accepting the Fly worker and
-  // operator machines (verified live 2026-07-26: identical API key, direct call
-  // 200, from a Vercel function 403 — it is network-level, not credentials).
-  // The worker drains this queue every few seconds and owns the only working
-  // path to WAHA, so an AI reply lands within ~5s instead of failing outright.
-  // If the firewall is ever opened to Vercel, this can go back to a direct
-  // sendMessage() — the import is kept for that day.
-  void sendMessage;
-  const { data: schedId, error: schedErr } = await supa.rpc('scheduled_whatsapp_enqueue', {
-    p_device_id: deviceId,
-    p_chat_wid: chatWid,
-    p_phone: `+${digits}`,
-    p_body: text,
-    p_media: null,
-    p_reference: `ai:${input.job_id ?? 'manual'}:${Date.now()}`,
-    p_deliver_at: new Date().toISOString(),
-    p_user_id: null,
+  const res = await enqueueAiReply(getServiceSupabase(), {
+    chatWid: input.chat_wid ?? '',
+    text: input.body ?? '',
+    deviceId: input.device_id,
+    jobId: input.job_id,
+    force: input.force,
   });
-  if (schedErr) {
-    console.error('[whatsapp-ai-send] enqueue failed:', schedErr.message);
-    return json({ error: `enqueue failed: ${schedErr.message}` }, 502);
-  }
-  // The real message id only exists once the worker sends; the audit row is
-  // keyed by the queue job and matched to the outbound echo on (chat, body).
-  const wid = `sched:${String(schedId)}`;
 
-  // Audit + the human-vs-AI discriminator. Best-effort: a failed insert must
-  // not make the session think the message never went out (it did) — but it
-  // MUST be loud, because a missing row makes this message look human-sent and
-  // would suppress future AI replies in that chat.
-  const { error: auditErr } = await supa.from('whatsapp_ai_replies').insert({
-    message_wid: wid,
-    chat_wid: chatWid,
-    job_id: input.job_id ?? null,
-    body: text.slice(0, 2000),
-  });
-  if (auditErr) {
-    console.error('[whatsapp-ai-send] AUDIT INSERT FAILED — this message will look human-sent:', auditErr.message, wid);
+  if (res.blocked) return json({ sent: false, blocked: true, reason: res.reason });
+  if (res.error) {
+    // Validation-shaped errors → 400; device/config → 500; enqueue → 502.
+    const status = /required|too long|unsupported/.test(res.error) ? 400
+      : res.error.includes('no active') ? 500 : 502;
+    return json({ error: res.error }, status);
   }
-
-  // QUEUED, not sent (WA-30). The worker delivers this seconds-to-minutes from
-  // now and it can still fail permanently — 463, a wedged gateway, a retired
-  // session. Returning `sent: true` here told the agent's own transcript, and
-  // the job result, that the customer had been contacted when nothing had left
-  // the building yet. `sent` is kept alongside for the skill's existing check,
-  // but it now reports what this endpoint actually did.
-  return json({
-    queued: true,
-    sent: false,
-    delivery: 'queued',
-    wid,
-    chat_wid: chatWid,
-    audit_ok: !auditErr,
-  });
+  return json({ queued: res.queued, sent: res.sent, delivery: 'queued', wid: res.wid, chat_wid: input.chat_wid, audit_ok: res.audit_ok });
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
@@ -180,10 +55,6 @@ function constantTimeEqual(a: string, b: string): boolean {
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
-
 function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
