@@ -40,6 +40,7 @@ import { runDocumentJob, type DocumentJob } from './runDocumentJob.js';
 import { runImageJob, type ImageJob } from './runImageJob.js';
 import { runMigrationJob, type MigrationJob } from './runMigrationJob.js';
 import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
+import { runEnrichmentJob, type EnrichmentJob } from './runEnrichmentJob.js';
 import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
 import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
@@ -97,6 +98,10 @@ let callAnalysisWakeRequested = false;
 // for the same reason — a 2-10s soffice run should never wait behind a deck.
 let previewBusy = false;
 let previewWakeRequested = false;
+// File AI enrichment (file_enrichment_jobs) — its own loop so a slow vision
+// call never blocks previews/decks. Inert until file_enrichment_settings is on.
+let enrichmentBusy = false;
+let enrichmentWakeRequested = false;
 // PDF compression (pdf_compress_jobs) gets a FOURTH independent loop — bulk
 // compress fan-outs should drain at full speed regardless of deck/image load.
 let compressBusy = false;
@@ -916,6 +921,80 @@ async function runPreviewWatchdog(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// File AI enrichment — file_enrichment_jobs queue (vision on image + PDF).
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Claim ONE queued enrichment job (if any) and run it. Returns true if one
+ *  was claimed. complete/fail only touch 'running' rows (late finish = no-op). */
+async function claimAndRunOneEnrichment(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('file_enrichment_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] enrichment claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string; file_id: string; attempts: number;
+    storage_bucket: string; storage_path: string; mime_type: string; kind: string;
+    size_bytes: number; original_name: string; document_type: string;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: EnrichmentJob = {
+    id: row.job_id,
+    fileId: row.file_id,
+    attempts: row.attempts,
+    storageBucket: row.storage_bucket,
+    storagePath: row.storage_path,
+    mimeType: row.mime_type,
+    kind: row.kind,
+    sizeBytes: row.size_bytes,
+    originalName: row.original_name,
+    documentType: row.document_type,
+  };
+  console.log(`[worker] claimed enrichment job=${job.id} file=${job.fileId} kind=${job.kind} attempts=${job.attempts}`);
+
+  try {
+    const result = await runEnrichmentJob({ supabase, env, job });
+    const { error: doneErr } = await supabase.rpc('file_enrichment_complete', {
+      p_job_id: job.id,
+      p_result: result,
+    });
+    if (doneErr) {
+      console.error(`[worker] file_enrichment_complete RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(`[worker] completed enrichment job=${job.id}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] enrichment job=${job.id} FAILED:`, msg);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    try {
+      const { error: failErr } = await supabase.rpc('file_enrichment_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) console.error(`[worker] file_enrichment_fail RPC failed: ${failErr.message}`);
+    } catch (innerErr) {
+      console.error(`[worker] could not mark enrichment job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true;
+}
+
+async function runEnrichmentWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('file_enrichment_watchdog');
+    if (error) { console.error(`[worker] enrichment watchdog RPC error: ${error.message}`); return; }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) console.warn(`[worker] enrichment watchdog swept ${swept} stale job(s)`);
+  } catch (err) {
+    console.error(`[worker] enrichment watchdog threw:`, err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // PDF compression — pdf_compress_jobs queue (Ghostscript).
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -1316,6 +1395,36 @@ async function previewPollLoop(): Promise<void> {
     }
     const wokeAt = Date.now();
     while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !previewWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+/** Enrichment-queue twin of the poll loops. Inert (claim returns nothing) until
+ *  file_enrichment_settings.is_enabled is turned on. */
+async function enrichmentPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    enrichmentBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneEnrichment();
+    } catch (err) {
+      console.error('[worker] enrichment poll iteration error:', err);
+    }
+    enrichmentBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runEnrichmentWatchdog();
+    }
+
+    if (didClaim || enrichmentWakeRequested) {
+      enrichmentWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !enrichmentWakeRequested && !shuttingDown) {
       await sleep(200);
     }
   }
@@ -2290,6 +2399,7 @@ const server = http.createServer((req, res) => {
         call_analysis_busy: callAnalysisBusy,
         call_analysis_enabled: Boolean(env.DEEPSEEK_API_KEY),
         preview_busy: previewBusy,
+        enrichment_busy: enrichmentBusy,
         compress_busy: compressBusy,
         push_busy: pushBusy,
         push_enabled: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),
@@ -2358,7 +2468,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || previewBusy || enrichmentBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -2910,6 +3020,7 @@ if (env.WORKFLOW_PROOF_ONLY) {
     videoConvertPollLoop(),
     listingMirrorPollLoop(),
     previewPollLoop(),
+    enrichmentPollLoop(),
     compressPollLoop(),
     documentPollLoop(),
     migrationPollLoop(),
