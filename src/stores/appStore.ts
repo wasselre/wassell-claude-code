@@ -43,7 +43,7 @@ import {
   setError as setCacheError,
 } from '@/lib/recordsCache';
 import type { PaginatedRecordsByModel, RecordsPageCache } from '@/lib/recordsCache';
-import { bootExcludedModelIds, isSummaryModelName, summaryViewName, SUMMARY_MODEL_NAMES } from '@/lib/lazyModels';
+import { bootExcludedModelIds, isSummaryModelName, summaryViewName } from '@/lib/lazyModels';
 import type {
   AppState,
   AppModel,
@@ -2601,19 +2601,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       initialized: true,
     });
 
-    // ─── Background slim-full-load for SUMMARY models ─────────────
-    // Fire AFTER `initialized` so the ~31MB slim market_listings set
-    // (all ~46k rows) lands in the normal `records` store WITHOUT
-    // delaying boot or the main records tail. Non-blocking, errors
-    // surfaced via reportSupabaseError inside loadSummaryRecords. Each
-    // call is idempotent (skips if already loading/loaded). queueMicrotask
-    // defers it past this synchronous tick so paint isn't blocked.
-    for (const m of models) {
-      if (SUMMARY_MODEL_NAMES.has(m.name)) {
-        const summaryModelId = m.id;
-        queueMicrotask(() => { void get().loadSummaryRecords(summaryModelId); });
-      }
-    }
+    // ─── SUMMARY models (market_listings) load ON DEMAND, not on boot ──
+    // The eager background slim-full-load used to fire here for every session —
+    // ~31MB / hundreds of keyset-paged requests for all ~46k market_listings
+    // rows — even for users who never open the property Finder (e.g. anyone in
+    // the Marketing workspace). Those parallel fetches saturated the connection
+    // and made the whole app crawl (measured: 356 requests / 87MB / 314MB
+    // resources on a Marketing page). It is now loaded only where it is actually
+    // used, each an idempotent call to loadSummaryRecords:
+    //   • the market_listings LIST page (RecordListPage) on mount, and
+    //   • a single-listing deep link fetches just THAT record (RecordFormPage's
+    //     summaryDetail path — no full-set dependency).
+    // The Finder matches server-side (RPC), so it needs no browser copy either.
 
     // Realtime: watch the webhook_payloads table so incoming agent
     // webhooks fan out to the workflow engine without a page reload.
