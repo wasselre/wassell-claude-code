@@ -31,7 +31,7 @@ import {
 import { signViewUrls } from '@/lib/files/client';
 import { kindAccent, kindIcon } from '@/lib/files/format';
 import { linkableModels, recordTitle } from '@/lib/documents/links';
-import type { FileDocumentTypeRow, FileRow, FileVocabDimension, FileVocabRow } from '@/types';
+import type { AppModel, AppRecord, FileDocumentTypeRow, FileRow, FileVocabDimension, FileVocabRow } from '@/types';
 import ClassificationSelect from './ClassificationSelect';
 import FilePreviewModal from '../components/FilePreviewModal';
 
@@ -124,14 +124,34 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
   const model = models.find((m) => m.id === effModel);
 
   // ── #2 Record SEARCH picker ─────────────────────────────────────────────
+  // Some models store their subject as a reference UUID (e.g. targeted_projects
+  // keeps `data.project` = an all_projects id) rather than a name, so
+  // recordTitle falls back to "<model> · <id8>". Resolve that by following the
+  // reference into the loaded records for a readable label. Index built once.
+  const recordIndex = useMemo(() => {
+    const idx = new Map<string, { model: AppModel; record: AppRecord }>();
+    for (const m of models) for (const r of records[m.id] ?? []) idx.set(r.id, { model: m, record: r });
+    return idx;
+  }, [models, records]);
+  const titleFor = useCallback((r: AppRecord): string => {
+    const base = recordTitle(model, r, isAr);
+    if (base !== `${(isAr ? model?.label_ar : model?.label_en) ?? ''} · ${r.id.slice(0, 8)}`) return base;
+    for (const v of Object.values(r.data ?? {})) {
+      if (typeof v !== 'string') continue;
+      const hit = recordIndex.get(v);
+      if (hit && hit.record.id !== r.id) return recordTitle(hit.model, hit.record, isAr);
+    }
+    return base;
+  }, [model, isAr, recordIndex]);
+
   const recordResults = useMemo(() => {
+    // Only surface results once the user has typed — otherwise the dropdown
+    // opens on mount with the first N records and covers the file list below.
     const q = recordQuery.trim().toLowerCase();
+    if (!q) return [];
     const pool = records[effModel] ?? [];
-    const scored = q
-      ? pool.filter((r) => recordTitle(model, r, isAr).toLowerCase().includes(q))
-      : pool;
-    return scored.slice(0, 10);
-  }, [records, effModel, recordQuery, model, isAr]);
+    return pool.filter((r) => titleFor(r).toLowerCase().includes(q)).slice(0, 10);
+  }, [records, effModel, recordQuery, titleFor]);
   const selectedRecord = (records[effModel] ?? []).find((r) => r.id === recordId);
 
   const batchTags = useMemo(
@@ -287,7 +307,7 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
             {selectedRecord ? (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-cream/60 border border-copper/30">
                 <span className="flex-1 min-w-0 text-sm font-bold text-charcoal truncate" dir="auto">
-                  {recordTitle(model, selectedRecord, isAr)}
+                  {titleFor(selectedRecord)}
                 </span>
                 <button type="button" onClick={() => setRecordId('')}
                   aria-label={t('files.post_upload.no_link')}
@@ -307,7 +327,7 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
                       <button key={r.id} type="button"
                         onClick={() => { setRecordId(r.id); setRecordQuery(''); }}
                         className="w-full px-2.5 py-1.5 rounded-md text-sm text-charcoal hover:bg-cream text-start truncate" dir="auto">
-                        {recordTitle(model, r, isAr)}
+                        {titleFor(r)}
                       </button>
                     ))}
                   </div>
