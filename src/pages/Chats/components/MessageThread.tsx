@@ -35,14 +35,25 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
 
   // Initial load on mount / chat switch. Resets loading / error state so a
   // page reused via React key doesn't keep stale flags.
+  //
+  // INSTANT PAINT (2026-08-24): loadMessagesForChat hydrates the thread
+  // synchronously (in-memory copy from an earlier open, else the localStorage
+  // thread cache) BEFORE its network round-trip — so by the time the call
+  // returns control to us via the microtask below, a previously-seen thread is
+  // already in the store. The spinner shows only when there is genuinely
+  // nothing to paint (first-ever open of a thread on this device); otherwise
+  // the messages render immediately and the fetch corrects them quietly —
+  // the native-messaging-app model.
   useEffect(() => {
     pinnedRef.current = true;
     lastScrollTopRef.current = 0;
-    setLoading(true);
     setError(null);
+    const p = loadMessagesForChat(chatWid, { size: 50 });
+    // The synchronous hydration inside the call above has already run.
+    setLoading((useAppStore.getState().chatMessages[chatWid] ?? []).length === 0);
     void (async () => {
       try {
-        const res = await loadMessagesForChat(chatWid, { size: 50 });
+        const res = await p;
         setHasMore(res.hasMore);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));

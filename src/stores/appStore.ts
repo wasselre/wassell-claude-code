@@ -24,7 +24,7 @@ import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, healDisplayedChildModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
-import { listDevices as listHaberchatDevices, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
+import { listDevices as listHaberchatDevices, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient, deviceIdString, resolveSendDeviceId } from '@/lib/haberchat/normalize';
 import { mergeMessageSources, identityKey } from '@/lib/chat/messageIdentity';
 import { normalizePhone } from '@/lib/phone';
@@ -1472,6 +1472,39 @@ async function loadMessagesFromMirror(
     messages: rows.map(dbRowToChatMessage).reverse(),
     hasMore: rows.length >= size,
   };
+}
+
+// ── Local thread cache (instant paint) ──────────────────────────────────────
+// The last page of each recently-opened thread, mirrored to localStorage so a
+// conversation paints INSTANTLY on open — even after a full page reload — the
+// way a native messaging app does. Possibly a few messages stale for a moment;
+// the mirror fetch that runs in parallel corrects it as soon as it lands.
+// `wassell_chat_messages` is already in EVICTION_ORDER, so under localStorage
+// quota pressure this cache is among the first things dropped (lowest impact:
+// it only costs the instant paint, never data — Supabase holds the thread).
+const THREAD_CACHE_KEY = 'wassell_chat_messages';
+const THREAD_CACHE_MAX_THREADS = 30;
+const THREAD_CACHE_MAX_MSGS = 50;
+type ThreadCache = Record<string, { messages: ChatMessage[]; savedAt: string }>;
+
+function readCachedThread(chatWid: string): ChatMessage[] {
+  const cache = loadLocal<ThreadCache>(THREAD_CACHE_KEY);
+  return cache?.[chatWid]?.messages ?? [];
+}
+
+function cacheThread(chatWid: string, messages: ChatMessage[]): void {
+  // Optimistic in-flight bubbles are session state, not history — never cache.
+  const durable = messages.filter((m) => !m.pending && !m.id.startsWith('pending:'));
+  if (durable.length === 0) return;
+  const cache = loadLocal<ThreadCache>(THREAD_CACHE_KEY) ?? {};
+  cache[chatWid] = { messages: durable.slice(-THREAD_CACHE_MAX_MSGS), savedAt: new Date().toISOString() };
+  // LRU-prune to the most recently saved threads so the key stays small.
+  const wids = Object.keys(cache);
+  if (wids.length > THREAD_CACHE_MAX_THREADS) {
+    wids.sort((a, b) => (cache[a]?.savedAt ?? '').localeCompare(cache[b]?.savedAt ?? ''));
+    for (const w of wids.slice(0, wids.length - THREAD_CACHE_MAX_THREADS)) delete cache[w];
+  }
+  saveLocal(THREAD_CACHE_KEY, cache);
 }
 
 /** Merge one live `chat_messages` row into `chatMessages[chat_wid]`.
@@ -4889,98 +4922,60 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadMessagesForChat: async (chatWid: string, opts: { before?: string; size?: number } = {}) => {
     if (!chatWid) return { hasMore: false };
-    const state = get();
-    const chatsModel = state.models.find((m) => m.name === 'chats');
-    if (!chatsModel) return { hasMore: false };
+    const isInitial = !opts.before;
 
-    // Find the parent conversation record so we know which device to query.
-    const record = (state.records[chatsModel.id] ?? []).find((r) => {
-      const wid = (r.data as Record<string, unknown>).wid;
-      return typeof wid === 'string' && wid === chatWid;
-    });
-    // deviceIdString guards against the legacy corrupt shape where the
-    // webhook persisted the whole device OBJECT — a raw cast produced
-    // "deviceId=[object Object]" proxy calls that 400'd the thread load.
-    // (Extracts the object's id when possible, so multi-device setups still
-    // hit the right device instead of falling back to the default.)
-    const recordDeviceId = record ? deviceIdString((record.data as Record<string, unknown>).device_id) : null;
+    // ── OUR DATABASE IS THE THREAD (2026-08-24: and the ONLY source). ───────
+    //
+    // The per-open GATEWAY history fetch is gone. It was a Haberchat-era
+    // leftover: back then the gateway held history our DB didn't. Since the
+    // WAHA cutover the `chat_messages` mirror is the complete record (the
+    // webhook ingests every message both directions — this function's own
+    // 2026-07-28 note already called the mirror authoritative), so the
+    // gateway call added nothing but a slow per-open round-trip to the WAHA
+    // box — the main reason opening a chat felt like a "load" instead of a
+    // native messaging app. Realtime keeps the open thread live afterwards.
+    //
+    // Open sequence now (the WhatsApp-app model — local first, network second):
+    //  1) INSTANT PAINT: if the thread has nothing in memory, hydrate
+    //     synchronously from the localStorage thread cache (last ~50
+    //     messages, possibly momentarily stale).
+    //  2) ONE parallel round to Supabase: message page + reactions.
+    //  3) Merge (mirror leads — it is the only source reflecting edits and
+    //     revocations; in-flight `pending:` bubbles survive by identity).
+    //  4) Refresh the thread cache for the next instant paint.
+    if (isInitial && (get().chatMessages[chatWid] ?? []).length === 0) {
+      const cached = readCachedThread(chatWid);
+      if (cached.length > 0) {
+        set((s) => ({ chatMessages: { ...s.chatMessages, [chatWid]: cached } }));
+      }
+    }
 
-    // Pick the device: record's own device_id first, else the overlay
-    // default, else the first active device. This lets us load messages
-    // even if the chats list hasn't been refreshed yet this session.
-    const fallbackDevice =
-      state.waDevices.find((d) => d.is_default && d.is_active)?.device_id ??
-      state.waDevices.find((d) => d.is_active)?.device_id ??
-      state.waDevicesLive[0]?.id ??
-      null;
-    const deviceId = recordDeviceId ?? fallbackDevice;
-    if (!deviceId) {
-      console.warn('[loadMessagesForChat] no deviceId available — is a number set as default in Settings?');
+    const [mirror, reactions] = await Promise.all([
+      loadMessagesFromMirror(chatWid, opts),
+      // Reactions live only in our mirror and cover the whole thread; one
+      // fetch on the initial load is enough (paging reuses what's merged).
+      isInitial ? loadReactionsFromMirror(chatWid) : Promise.resolve([] as ChatMessage[]),
+    ]);
+    if (!mirror) {
+      // Offline / query failed (already logged). The cached/in-memory view
+      // stays on screen — degraded but never blank when we hold history.
       return { hasMore: false };
     }
-
-    // ── OUR DATABASE IS THE THREAD. The gateway only supplements it. ────────
-    //
-    // This used to be the other way round: fetch from the gateway, and fall
-    // back to `chat_messages` only inside a `catch`. That fallback fires on an
-    // EXCEPTION, and the gateway does not throw when it has no history — it
-    // answers 200 with `[]`. After the 2026-07-24 re-pair it had nothing for
-    // most chats, so 57 of the 68 busiest conversations rendered the
-    // "No messages in this conversation yet" empty state while their history
-    // sat intact in our own table (1,655 messages invisible, measured
-    // 2026-07-28).
-    //
-    // So: always read the mirror, treat the gateway as an optional extra that
-    // can only ADD messages, and never let its answer — empty, short or
-    // missing — decide what the thread contains.
-    const mirror = await loadMessagesFromMirror(chatWid, opts);
-
-    let gatewayMessages: ChatMessage[] = [];
-    let gatewayHasMore = false;
-    try {
-      const live = await listHaberchatMessages(deviceId, chatWid, opts);
-      gatewayMessages = live.messages;
-      gatewayHasMore = live.hasMore;
-    } catch (err) {
-      // Entirely non-fatal now — the mirror already has the thread.
-      console.warn('[loadMessagesForChat] gateway history unavailable (mirror still rendered):', err);
-    }
-
-    if (!mirror && gatewayMessages.length === 0) {
-      // No Supabase AND no gateway — nothing to show, and nothing to claim.
-      return { hasMore: false };
-    }
-
-    // Reactions live ONLY in our mirror (the gateway's history API returns
-    // messages, not reactions), so they are loaded separately either way.
-    const reactions = await loadReactionsFromMirror(chatWid);
 
     set((s) => {
       const existing = s.chatMessages[chatWid] ?? [];
-      // Trust order: our mirror → what we already hold → the gateway.
-      //
-      // The mirror leads because it is the only source that reflects EDITS and
-      // DELETIONS: a revoked message is re-kinded and emptied there, and an
-      // in-memory copy from before the deletion would otherwise keep showing
-      // the withdrawn text. In-flight optimistic bubbles are not lost by this
-      // ordering — until they are confirmed their id is `pending:<uuid>`, which
-      // is an identity of its own and collides with nothing.
-      //
-      // Merged on the STABLE message identity, so the same message reported as
-      // `…@c.us_<HASH>` by one source and `…@lid_<HASH>` by the other collapses
-      // into one bubble instead of two.
-      const merged = mergeMessageSources(
-        mirror?.messages ?? [],
-        existing,
-        gatewayMessages,
-        reactions,
-      );
+      // Trust order: our mirror → what we already hold. The mirror leads
+      // because it is the only source that reflects EDITS and DELETIONS: a
+      // revoked message is re-kinded and emptied there, and an in-memory or
+      // cached copy from before the deletion would otherwise keep showing the
+      // withdrawn text. In-flight optimistic bubbles are not lost — until
+      // confirmed their id is `pending:<uuid>`, an identity of its own.
+      const merged = mergeMessageSources(mirror.messages, existing, reactions);
       return { chatMessages: { ...s.chatMessages, [chatWid]: merged } };
     });
+    if (isInitial) cacheThread(chatWid, get().chatMessages[chatWid] ?? []);
 
-    // Paging follows the mirror, which is the complete record. The gateway can
-    // still report more when it holds history we have not ingested.
-    return { hasMore: (mirror?.hasMore ?? false) || gatewayHasMore };
+    return { hasMore: mirror.hasMore };
   },
 
   sendChatMessage: async (
