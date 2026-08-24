@@ -491,9 +491,15 @@ Every `our_projects` member's `all_projects` record now carries FOUR registry fi
    matching adapter details live in the "Per-developer adapters" section below.
 2. **After every reconcile/update run, SET `last_source_update`** (and refresh the notes if the
    channel changed). A migration of a NEW project must fill all four fields as part of step 5.
-3. Current assignment (2026-08-24, all 107 members populated):
+3. Current assignment (2026-08-24; 97 active members after the العجلان retirement):
    - **الماجدية (10)** → `developer_api` — per-project etmaam API URL stored (ids 180–241).
-   - **العجلان ريفيرا (10)** → `developer_page` — Browserbase DOM scrape of alajlaninvest.com.
+   - **العجلان ريفيرا — RETIRED 2026-08-24 (contract ended, user instruction):** all 12 Alajlan
+     rows (10 members + ريفييرا 61/ريفيرا 48 which carried the classification without membership)
+     were retired: our_projects rows DELETED (→ `is_public` auto-flipped false via
+     `records_enforce_our_projects_public`, off wassel.re), classification/type →
+     `general_project`/`general`, registry → `static_none` with an Arabic retirement note. Units
+     and history kept as archive. Backup: `public._backup_alajlan_retire_20260824` (22 rows).
+     **Retirement recipe for any future ended contract = exactly those four steps + backup first.**
    - **الرمز (8)** → `google_drive` — the team's «اخر تحديث»/price sheets; reconcile posture is the
      2026-08-24 standard (match (building, unit), absent-available→sold, new rows→create).
      ربوة الرمز has NO url on record — ask the team for its Drive link.
