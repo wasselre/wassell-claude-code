@@ -1,23 +1,32 @@
 /**
- * File AI enrichment job (file_enrichment_jobs queue) — the image + PDF lane.
+ * File AI enrichment job (file_enrichment_jobs queue) — image, PDF, video, audio.
  *
- * Downloads the file from the private bucket and asks a vision model to PROPOSE
- * metadata, constrained to the live allowlists (file_document_types for
- * subjects, file_vocabularies for asset_nature). Returns a result object; the
- * DB RPC file_enrichment_complete auto-applies the safe layers with an
- * ai_suggested provenance badge and re-validates every value server-side.
+ * A vision/text model PROPOSES metadata, constrained to the live allowlists
+ * (file_document_types subjects + file_vocabularies asset_nature). The DB RPC
+ * file_enrichment_complete auto-applies the safe layers with an ai_suggested
+ * provenance badge and re-validates every value server-side.
  *
- * Image AND PDF both go straight to the model — Anthropic accepts a PDF as a
- * `document` block, so no page-rendering step is needed (scanned PDFs included).
- * Office docs / video / audio are NOT handled here yet (video/audio need ASR);
- * they resolve to an empty result (job marked done, nothing applied) so they
- * never hang — a later lane can re-enrich them.
+ * Per kind:
+ *   image → the image straight to the model.
+ *   pdf   → the PDF as an Anthropic `document` block (scanned PDFs included).
+ *   video → sampled frames (vision) + the spoken transcript (fal Whisper) via
+ *           the SAME helpers the competitor-content pipeline uses (ffmpegMedia +
+ *           falTranscribe) — no second transcription service.
+ *   audio → the transcript only.
  *
- * NO api/ counterpart to keep in sync: enrichment is worker-only.
+ * A file that yields nothing usable (silent video with no frames, empty PDF)
+ * resolves to {} → the job completes, nothing is applied. NO api/ counterpart:
+ * enrichment is worker-only.
  */
 import Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
+import {
+  toTempFile, cleanup, probeDurationMs, hasAudioStream, extractAudio, sampleFrames,
+} from './marketing/content/ffmpegMedia.js';
+import { transcribeAudioUrl } from './marketing/content/falTranscribe.js';
+import { uploadBytes } from './marketing/content/contentStore.js';
+import { sha256Hex } from './marketing/adIntel.js';
 
 export interface EnrichmentJob {
   id: string;
@@ -34,16 +43,16 @@ export interface EnrichmentJob {
 
 /** Cheap, fast, vision-capable — enrichment is high-volume. */
 const ENRICH_MODEL = 'claude-haiku-4-5-20251001';
-/** Under Anthropic's ~32 MB request cap once base64-inflated. Bigger files
- *  no-op (a huge brochure PDF is rare; can be handled by a downsampling lane). */
-const MAX_ENRICH_BYTES = 24 * 1024 * 1024;
+/** Under Anthropic's ~32 MB request cap once base64-inflated (image/pdf sent
+ *  whole). Video is NOT sent whole — only its frames + transcript go to the
+ *  model — so a bigger cap applies to video (ffmpeg reads it locally). */
+const MAX_DIRECT_BYTES = 24 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 400 * 1024 * 1024;
+const MAX_FRAMES = 6;
 
 const IMAGE_MIMES: Record<string, 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'> = {
-  'image/jpeg': 'image/jpeg',
-  'image/jpg': 'image/jpeg',
-  'image/png': 'image/png',
-  'image/gif': 'image/gif',
-  'image/webp': 'image/webp',
+  'image/jpeg': 'image/jpeg', 'image/jpg': 'image/jpeg', 'image/png': 'image/png',
+  'image/gif': 'image/gif', 'image/webp': 'image/webp',
 };
 
 export interface RunEnrichmentJobArgs {
@@ -55,22 +64,11 @@ export interface RunEnrichmentJobArgs {
 /** Returns the result jsonb for file_enrichment_complete ({} = no-op). Throws
  *  on a genuine failure — index.ts routes that to file_enrichment_fail. */
 export async function runEnrichmentJob(
-  { supabase, env, job }: RunEnrichmentJobArgs,
+  { supabase, job }: RunEnrichmentJobArgs,
 ): Promise<Record<string, unknown>> {
   const kind = job.kind;
-  const isImage = kind === 'image';
-  const isPdf = kind === 'pdf';
-  if (!isImage && !isPdf) {
-    console.log(`[enrich] job=${job.id} kind=${kind} not handled by this lane — no-op`);
-    return {};
-  }
-  const imgMime = isImage ? IMAGE_MIMES[(job.mimeType || '').toLowerCase()] : undefined;
-  if (isImage && !imgMime) {
-    console.log(`[enrich] job=${job.id} image mime ${job.mimeType} unsupported by vision — no-op`);
-    return {};
-  }
-  if (job.sizeBytes > MAX_ENRICH_BYTES) {
-    console.log(`[enrich] job=${job.id} too large (${job.sizeBytes} bytes) — no-op`);
+  if (!['image', 'pdf', 'video', 'audio'].includes(kind)) {
+    console.log(`[enrich] job=${job.id} kind=${kind} not handled — no-op`);
     return {};
   }
 
@@ -79,95 +77,117 @@ export async function runEnrichmentJob(
     supabase.from('file_document_types')
       .select('value,label_ar,label_en,applies_to_kinds').eq('active', true),
     supabase.from('file_vocabularies')
-      .select('value,label_ar,label_en').eq('dimension', 'asset_nature').eq('active', true),
+      .select('value,label_ar').eq('dimension', 'asset_nature').eq('active', true),
   ]);
   const subjectRows = (subjRes.data ?? []) as Array<{ value: string; label_ar: string; label_en: string; applies_to_kinds: string[] }>;
-  const applicableSubjects = subjectRows.filter(
-    (r) => !r.applies_to_kinds?.length || r.applies_to_kinds.includes(kind),
-  );
-  const subjectValues = applicableSubjects.map((r) => r.value);
-  const natureRows = (natureRes.data ?? []) as Array<{ value: string; label_ar: string; label_en: string }>;
+  const applicable = subjectRows.filter((r) => !r.applies_to_kinds?.length || r.applies_to_kinds.includes(kind));
+  const subjectValues = applicable.map((r) => r.value);
+  const natureRows = (natureRes.data ?? []) as Array<{ value: string; label_ar: string }>;
   const natureValues = natureRows.map((r) => r.value);
-  if (subjectValues.length === 0) {
-    console.log(`[enrich] job=${job.id} no applicable subjects — no-op`);
-    return {};
+  if (subjectValues.length === 0) { console.log(`[enrich] job=${job.id} no applicable subjects — no-op`); return {}; }
+
+  // ── Gather what the model will see (blocks) + heard (transcript) ──────────
+  const blocks: Anthropic.ContentBlockParam[] = [];
+  let transcript = '';
+
+  if (kind === 'image' || kind === 'pdf') {
+    if (job.sizeBytes > MAX_DIRECT_BYTES) { console.log(`[enrich] job=${job.id} too large — no-op`); return {}; }
+    if (kind === 'image' && !IMAGE_MIMES[(job.mimeType || '').toLowerCase()]) {
+      console.log(`[enrich] job=${job.id} image mime ${job.mimeType} unsupported — no-op`); return {};
+    }
+    const bytes = await download(supabase, job);
+    const b64 = bytes.toString('base64');
+    blocks.push(kind === 'image'
+      ? { type: 'image', source: { type: 'base64', media_type: IMAGE_MIMES[(job.mimeType || '').toLowerCase()]!, data: b64 } }
+      : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } });
+  } else {
+    // video / audio — process locally with ffmpeg, transcribe with fal Whisper.
+    if (job.sizeBytes > MAX_VIDEO_BYTES) { console.log(`[enrich] job=${job.id} media too large — no-op`); return {}; }
+    const bytes = await download(supabase, job);
+    const tmp = await toTempFile(bytes, kind === 'video' ? 'mp4' : 'm4a');
+    try {
+      const durationMs = await probeDurationMs(tmp.path).catch(() => 0);
+      if (await hasAudioStream(tmp.path).catch(() => false)) {
+        try {
+          const audio = await extractAudio(tmp.path);
+          const up = await uploadBytes(audio, 'content/audio', sha256Hex(audio), 'm4a', 'audio/mp4');
+          const tx = await transcribeAudioUrl(up.storedUrl, durationMs || null);
+          transcript = (tx.text ?? '').trim().slice(0, 6000);
+        } catch (e) {
+          console.log(`[enrich] job=${job.id} transcribe failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      if (kind === 'video' && durationMs) {
+        try {
+          const frames = await sampleFrames(tmp.path, durationMs, MAX_FRAMES);
+          for (const f of frames) {
+            blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.jpeg.toString('base64') } });
+          }
+        } catch (e) {
+          console.log(`[enrich] job=${job.id} frames failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    } finally {
+      await cleanup(tmp.dir).catch(() => {});
+    }
+    if (blocks.length === 0 && !transcript) { console.log(`[enrich] job=${job.id} nothing to analyse — no-op`); return {}; }
   }
 
-  // ── Download the bytes ────────────────────────────────────────────────────
-  const { data: blob, error: dlErr } = await supabase.storage
-    .from(job.storageBucket).download(job.storagePath);
-  if (dlErr || !blob) throw new Error(`download failed: ${dlErr?.message ?? 'no data'}`);
-  const b64 = Buffer.from(await blob.arrayBuffer()).toString('base64');
-
-  const mediaBlock = isImage
-    ? { type: 'image' as const, source: { type: 'base64' as const, media_type: imgMime!, data: b64 } }
-    : { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data: b64 } };
-
-  // A readable allowlist for the prompt (bilingual labels so the model maps well).
-  const subjectMenu = applicableSubjects.map((r) => `${r.value} (${r.label_ar})`).join('، ');
+  // ── Ask the model ─────────────────────────────────────────────────────────
+  const subjectMenu = applicable.map((r) => `${r.value} (${r.label_ar})`).join('، ');
   const natureMenu = natureRows.map((r) => `${r.value} (${r.label_ar})`).join('، ');
-
   const tool = {
     name: 'propose_metadata',
     description: 'Propose metadata for a Wassel real-estate marketing file.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        description: { type: 'string', description: 'جملة أو جملتان بالعربية تصف ما يظهر في الملف بدقة.' },
-        subjects: { type: 'array', items: { type: 'string', enum: subjectValues }, description: 'التصنيفات المنطبقة — من القائمة المسموحة فقط.' },
-        asset_nature: { type: 'string', enum: natureValues, description: 'طبيعة الأصل — من القائمة المسموحة فقط.' },
-        tags: { type: 'array', items: { type: 'string' }, description: 'وسوم قصيرة بالعربية للسمات الظاهرة (مثل: مسبح، مطبخ، واجهة، ليلي، مفروش، أشخاص).' },
+        description: { type: 'string', description: 'جملة أو جملتان بالعربية تصف محتوى الملف بدقة.' },
+        subjects: { type: 'array', items: { type: 'string', enum: subjectValues }, description: 'التصنيفات المنطبقة — من القائمة فقط.' },
+        asset_nature: { type: 'string', enum: natureValues, description: 'طبيعة الأصل — من القائمة فقط.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'وسوم قصيرة بالعربية للسمات الظاهرة.' },
       },
       required: ['description'],
     },
   };
-
-  const prompt =
-    `أنت تصنّف ملفاً تسويقياً عقارياً لشركة وصل العقارية. انظر إلى الملف واستدعِ الأداة propose_metadata.\n` +
+  let prompt =
+    `أنت تصنّف ملفاً تسويقياً عقارياً لشركة وصل العقارية. استدعِ الأداة propose_metadata.\n` +
     `- التصنيفات المسموحة (استخدم القيمة الإنجليزية فقط): ${subjectMenu}.\n` +
     `- طبيعة الأصل المسموحة (القيمة الإنجليزية فقط): ${natureMenu}.\n` +
     `لا تخترع أي قيمة خارج القوائم. الوصف والوسوم بالعربية.`;
+  if (transcript) prompt += `\n\nنص الكلام في الملف (منسوخ آلياً):\n${transcript}`;
+  if (kind === 'audio') prompt += `\n\n(هذا ملف صوتي — اعتمد على النص أعلاه.)`;
 
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const msg = await client.messages.create({
     model: ENRICH_MODEL,
     max_tokens: 800,
     tools: [tool],
     tool_choice: { type: 'tool', name: 'propose_metadata' },
-    messages: [{ role: 'user', content: [mediaBlock, { type: 'text', text: prompt }] }],
+    messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }],
   });
 
   const toolUse = msg.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
-  if (!toolUse) {
-    console.log(`[enrich] job=${job.id} model returned no tool call — no-op`);
-    return {};
-  }
-  const out = (toolUse.input ?? {}) as {
-    description?: unknown; subjects?: unknown; asset_nature?: unknown; tags?: unknown;
-  };
+  if (!toolUse) { console.log(`[enrich] job=${job.id} no tool call — no-op`); return {}; }
+  const out = (toolUse.input ?? {}) as { description?: unknown; subjects?: unknown; asset_nature?: unknown; tags?: unknown };
 
-  // Clean + re-validate client-side too (the RPC re-validates as well).
   const result: Record<string, unknown> = { model: ENRICH_MODEL };
-  if (typeof out.description === 'string' && out.description.trim()) {
-    result.description = out.description.trim();
-  }
+  if (typeof out.description === 'string' && out.description.trim()) result.description = out.description.trim();
   if (Array.isArray(out.subjects)) {
     const subs = out.subjects.filter((s): s is string => typeof s === 'string' && subjectValues.includes(s));
     if (subs.length) result.subjects = [...new Set(subs)];
   }
-  if (typeof out.asset_nature === 'string' && natureValues.includes(out.asset_nature)) {
-    result.asset_nature = out.asset_nature;
-  }
+  if (typeof out.asset_nature === 'string' && natureValues.includes(out.asset_nature)) result.asset_nature = out.asset_nature;
   if (Array.isArray(out.tags)) {
-    const tags = out.tags
-      .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
-      .map((t) => t.trim())
-      .slice(0, 12);
+    const tags = out.tags.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).map((t) => t.trim()).slice(0, 12);
     if (tags.length) result.tags = [...new Set(tags)];
   }
-
-  console.log(
-    `[enrich] job=${job.id} kind=${kind} → desc=${result.description ? 'y' : 'n'} subjects=${(result.subjects as string[] | undefined)?.length ?? 0} nature=${result.asset_nature ?? '-'} tags=${(result.tags as string[] | undefined)?.length ?? 0}`,
-  );
+  console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} subjects=${(result.subjects as string[] | undefined)?.length ?? 0}`);
   return result;
+}
+
+async function download(supabase: SupabaseClient, job: EnrichmentJob): Promise<Buffer> {
+  const { data: blob, error } = await supabase.storage.from(job.storageBucket).download(job.storagePath);
+  if (error || !blob) throw new Error(`download failed: ${error?.message ?? 'no data'}`);
+  return Buffer.from(await blob.arrayBuffer());
 }
