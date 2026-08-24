@@ -475,6 +475,45 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   (بعد الخصم 1,279,112–1,599,000), 20 available→sold, 3 units added (`U-49524`–`U-49526`), rollups verified
   (52/32/20, available_price_range matches the sheet exactly).
 
+## Update-source registry (added 2026-08-24 — how EVERY member project gets updated)
+
+Every `our_projects` member's `all_projects` record now carries FOUR registry fields (section
+«جودة البيانات», next to `data_sources`/`source_notes`):
+
+- **`update_source`** (dropdown) — the update channel: `developer_api` / `developer_page` /
+  `broker_portal` / `google_drive` / `files_manual` / `static_none`
+- **`update_source_url`** — the exact endpoint/page/portal/Drive link to hit
+- **`update_source_notes`** — how the update is executed (adapter, matching key, quirks), in Arabic
+- **`last_source_update`** — date of the last reconcile against that source
+
+**Rules:**
+1. **Before updating any project, READ these fields first** — they tell you the channel; the
+   matching adapter details live in the "Per-developer adapters" section below.
+2. **After every reconcile/update run, SET `last_source_update`** (and refresh the notes if the
+   channel changed). A migration of a NEW project must fill all four fields as part of step 5.
+3. Current assignment (2026-08-24, all 107 members populated):
+   - **الماجدية (10)** → `developer_api` — per-project etmaam API URL stored (ids 180–241).
+   - **العجلان ريفيرا (10)** → `developer_page` — Browserbase DOM scrape of alajlaninvest.com.
+   - **الرمز (8)** → `google_drive` — the team's «اخر تحديث»/price sheets; reconcile posture is the
+     2026-08-24 standard (match (building, unit), absent-available→sold, new rows→create).
+     ربوة الرمز has NO url on record — ask the team for its Drive link.
+   - **ريفا وعلاماتها (24: يمام 8، مجبب 2، زنك 2، آبه، أجذى، أكدال، أوشن، ديار أصيلة، ديارا، زود،
+     عبق، عزوم، فيورا، مسان، مينا)** → `broker_portal` — the team logs into the riva.sa broker
+     portal (user statement 2026-08-24); the public Livewire scrape (adapter below) still works as
+     the headless fallback. Portal credentials: NOT yet on file — ask the user when a login is needed.
+   - **بن غاطي (43)** → `developer_page` — binghatti.com public pages + S3 brochures (content only,
+     no unit inventory for the Dubai projects).
+   - **صفا للاستثمار (12)** → `developer_page` — safainv.sa; **adapter NOT documented yet** — first
+     صفا update run must discover the units source and log it below.
+
+- **[2026-08-24] Update-source registry created (user ask: "a way to determine how we update every
+  project"):** four fields added to `all_projects` (`update_source`, `update_source_url`,
+  `update_source_notes`, `last_source_update` — section «جودة البيانات») and populated on all 107
+  our_projects members by developer family. See the "Update-source registry" section above for the
+  rules; maintaining these fields is now part of EVERY migration/reconcile run. Two known gaps to
+  close with the user: (a) riva broker-portal login URL + where credentials live; (b) the صفا
+  للاستثمار units source.
+
 ## Per-developer API/source adapters (document each site as you learn it)
 - **ريفا العقارية (riva.sa)** → **Laravel + Livewire v3, fully SERVER-RENDERED — plain `fetch` + regex,
   no Browserbase needed.** Listing `/projects` renders 18 cards; page 2 (6 more) is Livewire pagination —
