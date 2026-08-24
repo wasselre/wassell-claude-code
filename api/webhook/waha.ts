@@ -300,17 +300,27 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // which is matched by number. A LID-only chat has nothing to match on, so
   // storing the message (above) is the whole job here.
   if (flow === 'in' && isNew && counterpartyPhone) {
+    // Route to the BASIC responder (fast, deterministic + one Kimi fallback — no
+    // Claude session). It internally delegates to the heavy Claude-session queue
+    // (whatsapp_ai_enqueue) only when responder_mode='agent'. The isNew guard
+    // above makes this safe against WAHA's webhook retries (a retry sees
+    // isNew=false and skips). Failures never block message ingestion.
     try {
-      const { error } = await getServiceSupabase().rpc('whatsapp_ai_enqueue', {
-        p_chat_wid: chatWid,
-        p_chat_record_id: uuidV5FromWidSync(chatWid),
-        p_phone: counterpartyPhone,
-        p_device_id: session,
-        p_trigger_message: row.body ?? null,
+      const base = process.env.APP_URL || 'https://app.wassel.re';
+      const resp = await fetch(`${base}/api/whatsapp/basic-reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-wassel-ai-secret': process.env.WHATSAPP_AI_SECRET ?? '' },
+        body: JSON.stringify({
+          chat_wid: chatWid,
+          trigger_message: row.body ?? null,
+          chat_record_id: uuidV5FromWidSync(chatWid),
+          device_id: session,
+          phone: counterpartyPhone,
+        }),
       });
-      if (error) console.error('[waha-webhook] whatsapp_ai_enqueue failed:', error.message);
+      if (!resp.ok) console.error('[waha-webhook] basic-reply failed:', resp.status);
     } catch (err) {
-      console.error('[waha-webhook] whatsapp_ai_enqueue threw:', err);
+      console.error('[waha-webhook] basic-reply threw:', err);
     }
   }
 }
