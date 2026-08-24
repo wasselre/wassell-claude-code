@@ -27,10 +27,21 @@ import {
   fetchAiReviewQueue, fetchPageLinks, listDocumentTypes, listFileVocabularies,
 } from '@/lib/files/library';
 import { getFile, signViewUrls } from '@/lib/files/client';
+import { attachFileToRecord } from '@/lib/files/recordFiles';
 import FilesTabs from './components/FilesTabs';
 import FilePreviewModal from './components/FilePreviewModal';
 
 const PAGE_LIMIT = 200;
+
+/** One AI link suggestion staged in files.ai_suggestions.links (unlinked files
+ *  only). The record was matched deterministically from a name the AI read. */
+interface LinkSuggestion {
+  model_id: string;
+  model_name: string;
+  record_id: string;
+  label: string;
+  matched_name: string;
+}
 
 const kindIcon: Record<string, typeof FileText> = {
   image: ImageIcon, video: Film, audio: Music, pdf: FileText, document: FileText,
@@ -48,6 +59,9 @@ export default function FilesAiReviewPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  /** file_id:record_id currently being attached. */
+  const [attaching, setAttaching] = useState<Set<string>>(() => new Set());
+  const models = useAppStore((s) => s.models);
 
   const [types, setTypes] = useState<FileDocumentTypeRow[]>([]);
   const [vocab, setVocab] = useState<FileVocabRow[]>([]);
@@ -151,6 +165,33 @@ export default function FilesAiReviewPage() {
     }
   }, [removeRow]);
 
+  const attachLink = useCallback(async (row: AiReviewRow, s: LinkSuggestion) => {
+    const key = `${row.id}:${s.record_id}`;
+    setAttaching((cur) => new Set(cur).add(key));
+    try {
+      await attachFileToRecord(row.id, s.model_id, s.record_id, null);
+      // Reflect it immediately: the file now counts as linked (so the suggestion
+      // block hides and the green "linked" chip shows), and we drop the staged
+      // suggestions so a second click can't double-attach.
+      const m = models.find((mm) => mm.id === s.model_id);
+      setLinks((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(row.id) ?? [];
+        next.set(row.id, [...existing, {
+          file_id: row.id, model_name: s.model_name,
+          model_label_ar: m?.label_ar ?? null, model_label_en: m?.label_en ?? null, count: 1,
+        }]);
+        return next;
+      });
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, ai_suggestions: null } : r)));
+      addToast(t('files.ai_review.linked_toast', { label: s.label }), 'success');
+    } catch {
+      // attachFileToRecord toasted; leave the suggestion so it can be retried.
+    } finally {
+      setAttaching((cur) => { const n = new Set(cur); n.delete(key); return n; });
+    }
+  }, [models, addToast, t]);
+
   const approveAll = useCallback(async () => {
     setBulkBusy(true);
     try {
@@ -234,6 +275,9 @@ export default function FilesAiReviewPage() {
             const tags = row.tags ?? [];
             const rowLinks = links.get(row.id) ?? [];
             const linkTotal = rowLinks.reduce((n, l) => n + l.count, 0);
+            const suggestions: LinkSuggestion[] = linkTotal === 0 && row.ai_suggestions && typeof row.ai_suggestions === 'object'
+              ? ((row.ai_suggestions as { links?: LinkSuggestion[] }).links ?? [])
+              : [];
             return (
               <div key={row.id}
                    className="flex gap-4 p-3 rounded-2xl bg-white border border-sand/30 shadow-sm">
@@ -302,6 +346,29 @@ export default function FilesAiReviewPage() {
                       </>
                     ) : linksLoading ? (
                       <span className="text-[11px] text-charcoal/35">{t('files.ai_review.checking_links')}</span>
+                    ) : suggestions.length > 0 ? (
+                      <>
+                        <Sparkles size={12} className="text-copper" aria-hidden />
+                        <span className="text-[11px] font-bold text-copper">{t('files.ai_review.suggest_link')}</span>
+                        {suggestions.map((s) => {
+                          const key = `${row.id}:${s.record_id}`;
+                          const on = attaching.has(key);
+                          const modelLbl = (() => {
+                            const m = models.find((mm) => mm.id === s.model_id);
+                            return m ? (isAr ? m.label_ar : m.label_en) : s.model_name;
+                          })();
+                          return (
+                            <button key={key} type="button" disabled={on}
+                                    onClick={() => void attachLink(row, s)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-copper/10 text-copper text-[11px] font-bold hover:bg-copper/20 disabled:opacity-50"
+                                    dir="auto">
+                              {on ? <Loader2 size={10} className="animate-spin" aria-hidden /> : <Link2 size={10} aria-hidden />}
+                              {s.label}
+                              <span className="font-normal text-copper/60">· {modelLbl}</span>
+                            </button>
+                          );
+                        })}
+                      </>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[11px] font-bold text-charcoal/45">
                         <Unlink size={12} aria-hidden />{t('files.ai_review.not_linked')}

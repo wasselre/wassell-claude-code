@@ -146,6 +146,10 @@ export async function runEnrichmentJob(
         subjects: { type: 'array', items: { type: 'string', enum: subjectValues }, description: 'التصنيفات المنطبقة — من القائمة فقط.' },
         asset_nature: { type: 'string', enum: natureValues, description: 'طبيعة الأصل — من القائمة فقط.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'وسوم قصيرة بالعربية للسمات الظاهرة.' },
+        detected_names: {
+          type: 'array', items: { type: 'string' },
+          description: 'أسماء المشاريع العقارية أو المطوّرين الظاهرة نصياً في الملف، كما هي بالضبط (مثل «مينا 52»). اتركها فارغة إن لم يظهر اسم واضح — لا تخمّن.',
+        },
       },
       required: ['description'],
     },
@@ -154,6 +158,7 @@ export async function runEnrichmentJob(
     `أنت تصنّف ملفاً تسويقياً عقارياً لشركة وصل العقارية. استدعِ الأداة propose_metadata.\n` +
     `- التصنيفات المسموحة (استخدم القيمة الإنجليزية فقط): ${subjectMenu}.\n` +
     `- طبيعة الأصل المسموحة (القيمة الإنجليزية فقط): ${natureMenu}.\n` +
+    `- في detected_names: ضع أسماء المشاريع العقارية أو المطوّرين الظاهرة نصياً داخل الملف كما هي بالضبط (مثل «مينا 52»)، دون تخمين أو إضافة.\n` +
     `لا تخترع أي قيمة خارج القوائم. الوصف والوسوم بالعربية.`;
   if (transcript) prompt += `\n\nنص الكلام في الملف (منسوخ آلياً):\n${transcript}`;
   if (kind === 'audio') prompt += `\n\n(هذا ملف صوتي — اعتمد على النص أعلاه.)`;
@@ -169,7 +174,9 @@ export async function runEnrichmentJob(
 
   const toolUse = msg.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
   if (!toolUse) { console.log(`[enrich] job=${job.id} no tool call — no-op`); return {}; }
-  const out = (toolUse.input ?? {}) as { description?: unknown; subjects?: unknown; asset_nature?: unknown; tags?: unknown };
+  const out = (toolUse.input ?? {}) as {
+    description?: unknown; subjects?: unknown; asset_nature?: unknown; tags?: unknown; detected_names?: unknown;
+  };
 
   const result: Record<string, unknown> = { model: ENRICH_MODEL };
   if (typeof out.description === 'string' && out.description.trim()) result.description = out.description.trim();
@@ -182,7 +189,34 @@ export async function runEnrichmentJob(
     const tags = out.tags.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).map((t) => t.trim()).slice(0, 12);
     if (tags.length) result.tags = [...new Set(tags)];
   }
-  console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} subjects=${(result.subjects as string[] | undefined)?.length ?? 0}`);
+
+  // ── Link suggestions (UNLINKED files only) ────────────────────────────────
+  // The AI extracts the project/developer names it can read; matching to a real
+  // record is deterministic (file_link_suggest). Skip the whole step when the
+  // file is already linked — the operator rule is "linked → don't suggest". The
+  // complete RPC re-checks the unlinked gate authoritatively.
+  const names = Array.isArray(out.detected_names)
+    ? [...new Set(out.detected_names.filter((n): n is string => typeof n === 'string' && n.trim().length >= 2).map((n) => n.trim()))]
+    : [];
+  let nSugg = 0;
+  if (names.length > 0) {
+    try {
+      const { count } = await supabase
+        .from('file_links').select('id', { count: 'exact', head: true }).eq('file_id', job.fileId);
+      if ((count ?? 0) === 0) {
+        const { data: sugg, error } = await supabase.rpc('file_link_suggest', { p_names: names });
+        if (!error && Array.isArray(sugg) && sugg.length > 0) {
+          result.link_suggestions = sugg;
+          nSugg = sugg.length;
+        }
+      }
+    } catch (e) {
+      // A failed match is not a failed enrichment — the metadata still applies.
+      console.log(`[enrich] job=${job.id} link-suggest failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} subjects=${(result.subjects as string[] | undefined)?.length ?? 0} names=${names.length} linkSugg=${nSugg}`);
   return result;
 }
 
