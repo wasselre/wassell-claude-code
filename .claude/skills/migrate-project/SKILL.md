@@ -501,18 +501,22 @@ Every `our_projects` member's `all_projects` record now carries FOUR registry fi
      عبق، عزوم، فيورا، مسان، مينا)** → `broker_portal` — the team logs into the riva.sa broker
      portal (user statement 2026-08-24); the public Livewire scrape (adapter below) still works as
      the headless fallback. Portal credentials: NOT yet on file — ask the user when a login is needed.
-   - **بن غاطي (43)** → `developer_page` — binghatti.com public pages + S3 brochures (content only,
-     no unit inventory for the Dubai projects).
-   - **صفا للاستثمار (12)** → `developer_page` — safainv.sa; **adapter NOT documented yet** — first
-     صفا update run must discover the units source and log it below.
+   - **بن غاطي (43)** → `broker_portal` — Binghatti's broker portal hosts an Excel file with ALL
+     units, updated DAILY (user statement 2026-08-24). That Excel is the inventory source; the
+     binghatti.com pages + S3 brochures are the secondary content source. Portal URL + credentials:
+     not on file yet — ask at first run, then log here.
+   - **صفا للاستثمار (12)** → `broker_portal` — Safa has a broker portal (user statement
+     2026-08-24). Portal URL + credentials not on file yet — ask at first run, then log the
+     adapter (units/prices shape) below. safainv.sa is the secondary content source.
 
 - **[2026-08-24] Update-source registry created (user ask: "a way to determine how we update every
   project"):** four fields added to `all_projects` (`update_source`, `update_source_url`,
   `update_source_notes`, `last_source_update` — section «جودة البيانات») and populated on all 107
   our_projects members by developer family. See the "Update-source registry" section above for the
-  rules; maintaining these fields is now part of EVERY migration/reconcile run. Two known gaps to
-  close with the user: (a) riva broker-portal login URL + where credentials live; (b) the صفا
-  للاستثمار units source.
+  rules; maintaining these fields is now part of EVERY migration/reconcile run. Updated same day
+  per the user: **بن غاطي = broker portal with a DAILY-updated all-units Excel; صفا = broker
+  portal too.** Remaining gaps to close with the user: portal URLs + credential handling for
+  (a) riva, (b) binghatti, (c) صفا — and (d) the ربوة الرمز Drive link.
 
 ## Per-developer API/source adapters (document each site as you learn it)
 - **ريفا العقارية (riva.sa)** → **Laravel + Livewire v3, fully SERVER-RENDERED — plain `fetch` + regex,
