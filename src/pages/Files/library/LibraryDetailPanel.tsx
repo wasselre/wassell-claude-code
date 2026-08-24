@@ -113,6 +113,26 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
   const [draft, setDraft] = useState<Draft>(() => draftFrom(file));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** The tag being typed. Tags themselves live in draft.tagsText (comma-joined,
+   *  so the save path is unchanged); this is only the pending entry. */
+  const [newTag, setNewTag] = useState('');
+  const tagList = useMemo(
+    () => draft.tagsText.split(',').map((s) => s.trim()).filter(Boolean),
+    [draft.tagsText],
+  );
+  const setTags = useCallback((list: string[]) => {
+    setDraft((d) => ({ ...d, tagsText: [...new Set(list)].join(', ') }));
+  }, []);
+  const addTag = useCallback((raw: string) => {
+    const v = raw.replace(/,/g, '').trim();
+    if (!v) { setNewTag(''); return; }
+    setTags([...tagList, v]);
+    setNewTag('');
+  }, [tagList, setTags]);
+  const removeTag = useCallback(
+    (tag: string) => setTags(tagList.filter((x) => x !== tag)),
+    [tagList, setTags],
+  );
   // Metadata Intelligence: data-driven axis vocabularies + the multi-subject set.
   const [vocab, setVocab] = useState<FileVocabRow[]>([]);
   const [subjects, setSubjects] = useState<string[]>([]);
@@ -439,10 +459,47 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
 
         <div>
           <label className={labelCls} htmlFor="md-tags">{t('files.library.meta.tags')}</label>
-          <input id="md-tags" className={field} dir="auto" disabled={!canEdit}
-                 placeholder={t('files.library.meta.tags_placeholder')}
-                 value={draft.tagsText}
-                 onChange={(e) => setDraft({ ...draft, tagsText: e.target.value })} />
+          {/* One chip per tag. Editable: each chip has an × and a typing box that
+              commits on Enter or comma (and on blur). Read-only: bare chips. */}
+          <div className={`flex flex-wrap items-center gap-1.5 rounded-lg border border-sand/40 bg-white p-2 ${canEdit ? '' : 'opacity-90'}`}
+               dir="auto">
+            {tagList.map((tag) => (
+              <span key={tag}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cream text-charcoal/70 text-xs font-medium">
+                #{tag}
+                {canEdit && (
+                  <button type="button" onClick={() => removeTag(tag)}
+                          aria-label={t('common.remove')}
+                          className="text-charcoal/35 hover:text-red-600">
+                    <X size={11} aria-hidden />
+                  </button>
+                )}
+              </span>
+            ))}
+            {canEdit && (
+              <input id="md-tags"
+                     className="flex-1 min-w-[7rem] bg-transparent text-sm text-charcoal outline-none px-1 py-0.5"
+                     dir="auto"
+                     placeholder={tagList.length === 0 ? t('files.library.meta.tags_placeholder') : ''}
+                     value={newTag}
+                     onChange={(e) => {
+                       // Typing a comma commits the tag before it, so paste of a
+                       // "a, b, c" list splits into chips rather than one blob.
+                       if (e.target.value.includes(',')) addTag(e.target.value);
+                       else setNewTag(e.target.value);
+                     }}
+                     onKeyDown={(e) => {
+                       if (e.key === 'Enter') { e.preventDefault(); addTag(newTag); }
+                       else if (e.key === 'Backspace' && !newTag && tagList.length > 0) {
+                         removeTag(tagList[tagList.length - 1]!);
+                       }
+                     }}
+                     onBlur={() => addTag(newTag)} />
+            )}
+            {!canEdit && tagList.length === 0 && (
+              <span className="text-xs text-charcoal/35 px-1">—</span>
+            )}
+          </div>
         </div>
 
         {/* ── Metadata Intelligence layers (Phase B) ─────────────────────────
