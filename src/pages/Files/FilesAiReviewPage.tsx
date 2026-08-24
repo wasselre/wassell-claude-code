@@ -15,14 +15,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  AlertTriangle, Check, FileText, Film, Image as ImageIcon, Loader2, Music, Sparkles, X,
+  AlertTriangle, Check, FileText, Film, Image as ImageIcon, Link2, Loader2, Music, Sparkles, Unlink, X,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
-import type { AiReviewRow, FileDocumentTypeRow, FileVocabRow, FileRow } from '@/types';
+import type {
+  AiReviewRow, FileDocumentTypeRow, FileVocabRow, FileRow, PageLinkSummary,
+} from '@/types';
 import {
   approveAiSuggestions, dismissAiSuggestions, errorText, fetchAiReviewCount,
-  fetchAiReviewQueue, listDocumentTypes, listFileVocabularies,
+  fetchAiReviewQueue, fetchPageLinks, listDocumentTypes, listFileVocabularies,
 } from '@/lib/files/library';
 import { getFile, signViewUrls } from '@/lib/files/client';
 import FilesTabs from './components/FilesTabs';
@@ -50,6 +52,8 @@ export default function FilesAiReviewPage() {
   const [types, setTypes] = useState<FileDocumentTypeRow[]>([]);
   const [vocab, setVocab] = useState<FileVocabRow[]>([]);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [links, setLinks] = useState<Map<string, PageLinkSummary[]>>(new Map());
+  const [linksLoading, setLinksLoading] = useState(false);
   const [previewRow, setPreviewRow] = useState<FileRow | null>(null);
 
   // ── Load the queue ────────────────────────────────────────────────────────
@@ -96,6 +100,26 @@ export default function FilesAiReviewPage() {
         const map = await signViewUrls(imageIds);
         if (!cancelled) setThumbs(map);
       } catch { if (!cancelled) setThumbs({}); }
+    })();
+    return () => { cancelled = true; };
+  }, [rows]);
+
+  // Link status for each row — the reviewer needs to see whether a file is
+  // already attached to a record before judging it (and AI link suggestions,
+  // when they exist, only make sense for an UNLINKED file).
+  useEffect(() => {
+    if (rows.length === 0) { setLinks(new Map()); return; }
+    let cancelled = false;
+    setLinksLoading(true);
+    void (async () => {
+      try {
+        const map = await fetchPageLinks(rows.map((r) => r.id));
+        if (!cancelled) setLinks(map);
+      } catch {
+        if (!cancelled) setLinks(new Map()); // fetchPageLinks toasted
+      } finally {
+        if (!cancelled) setLinksLoading(false);
+      }
     })();
     return () => { cancelled = true; };
   }, [rows]);
@@ -208,6 +232,8 @@ export default function FilesAiReviewPage() {
             const busy = busyIds.has(row.id);
             const subjects = row.ai_subjects ?? [];
             const tags = row.tags ?? [];
+            const rowLinks = links.get(row.id) ?? [];
+            const linkTotal = rowLinks.reduce((n, l) => n + l.count, 0);
             return (
               <div key={row.id}
                    className="flex gap-4 p-3 rounded-2xl bg-white border border-sand/30 shadow-sm">
@@ -254,6 +280,32 @@ export default function FilesAiReviewPage() {
                     ))}
                     {subjects.length === 0 && !row.asset_nature && tags.length === 0 && !row.ai_description && (
                       <span className="text-[11px] text-charcoal/40">{t('files.ai_review.nothing_proposed')}</span>
+                    )}
+                  </div>
+
+                  {/* Link status — always shown, independent of what the AI
+                      proposed. Linked → the record model(s) it's attached to;
+                      unlinked → said plainly (that's where an AI link suggestion
+                      would belong, once the enrichment stages them). */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-sand/20">
+                    {linkTotal > 0 ? (
+                      <>
+                        <Link2 size={12} className="text-emerald-600" aria-hidden />
+                        <span className="text-[11px] font-bold text-emerald-700">{t('files.ai_review.linked')}</span>
+                        {rowLinks.map((l) => (
+                          <span key={l.model_name}
+                                className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-700 text-[11px]" dir="auto">
+                            {(isAr ? l.model_label_ar : l.model_label_en) || l.model_name}
+                            {l.count > 1 ? ` (${l.count})` : ''}
+                          </span>
+                        ))}
+                      </>
+                    ) : linksLoading ? (
+                      <span className="text-[11px] text-charcoal/35">{t('files.ai_review.checking_links')}</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-charcoal/45">
+                        <Unlink size={12} aria-hidden />{t('files.ai_review.not_linked')}
+                      </span>
                     )}
                   </div>
                 </div>
