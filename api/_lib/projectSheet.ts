@@ -69,11 +69,15 @@ export async function resolveProjectSheet(
   const modelId = apModel.id as string;
   const schema = (apModel.schema ?? null) as ModelSchema | null;
 
+  // all_projects is UNFROZEN (JSONB in `records`), so read the small base table
+  // directly instead of the `unified_records` view — the view UNIONs every frozen
+  // model incl. the 4.5GB market_listings, and an un-indexed ILIKE across that
+  // union was the multi-second cost. RLS on `records` still applies for a JWT caller.
   let projectId = input.projectId ?? null;
   if (!projectId) {
     const name = input.projectName ?? '';
     const { data: matches, error: mErr } = await readClient
-      .from('unified_records').select('id, data').eq('model_id', modelId)
+      .from('records').select('id, data').eq('model_id', modelId)
       .ilike('data->>project_name', `%${name}%`).limit(10);
     if (mErr) return { ok: false, reason: 'error', message: `name lookup failed: ${mErr.message}` };
     const rows = (matches ?? []) as Array<{ id: string; data: Record<string, unknown> }>;
@@ -89,7 +93,7 @@ export async function resolveProjectSheet(
   }
 
   const { data: projRow, error: projErr } = await readClient
-    .from('unified_records').select('data').eq('id', projectId as string).eq('model_id', modelId).single();
+    .from('records').select('data').eq('id', projectId as string).eq('model_id', modelId).single();
   if (projErr || !projRow) return { ok: false, reason: 'not_found', message: projErr?.message };
   const pd = (projRow.data ?? {}) as Record<string, unknown>;
 
