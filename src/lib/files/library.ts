@@ -21,6 +21,7 @@
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
 import type {
+  AiReviewRow,
   BusinessFileRow,
   BusinessFilesSearchResult,
   BusinessFileSort,
@@ -365,6 +366,25 @@ export async function dismissAiSuggestions(fileId: string): Promise<void> {
   const db = requireSupabase('dismiss suggestions');
   const { error } = await db.rpc('file_suggestions_dismiss', { p_file_id: fileId });
   if (error) throw surfaceLibraryError('dismiss suggestions', error);
+}
+
+/** The AI review queue — every file the caller can EDIT that still carries
+ *  unreviewed AI suggestions, newest first, with what the AI proposed. Throws on
+ *  failure (never renders as an empty queue). */
+export async function fetchAiReviewQueue(limit = 200, offset = 0): Promise<AiReviewRow[]> {
+  const db = requireSupabase('load AI review queue');
+  const { data, error } = await db.rpc('file_ai_review_queue', { p_limit: limit, p_offset: offset });
+  if (error) throw surfaceLibraryError('load AI review queue', error);
+  return (data ?? []) as AiReviewRow[];
+}
+
+/** Honest total of pending-review files (so the tab badge + "showing first N of
+ *  M" are truthful rather than a silent cap). */
+export async function fetchAiReviewCount(): Promise<number> {
+  const db = requireSupabase('count AI review queue');
+  const { data, error } = await db.rpc('file_ai_review_count');
+  if (error) throw surfaceLibraryError('count AI review queue', error);
+  return typeof data === 'number' ? data : 0;
 }
 
 /** ADD a set of subjects to many files at once (upload / bulk). Additive and

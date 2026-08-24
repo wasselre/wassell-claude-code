@@ -104,6 +104,7 @@ const ExperimentsPage = lazy(() => import('@/pages/SalesStudio/ExperimentsPage')
 const ExperimentDetailPage = lazy(() => import('@/pages/SalesStudio/ExperimentDetailPage'));
 const FilesPage = lazy(() => import('@/pages/Files/FilesPage'));
 const FilesRoot = lazy(() => import('@/pages/Files/FilesRoot'));
+const FilesAiReviewPage = lazy(() => import('@/pages/Files/FilesAiReviewPage'));
 const FilesLibraryPage = lazy(() => import('@/pages/Files/FilesLibraryPage'));
 const DocumentEditorPage = lazy(() => import('@/pages/Documents/DocumentEditorPage'));
 const PublicShareFilePage = lazy(() => import('@/pages/PublicShare/PublicShareFilePage'));
@@ -380,6 +381,10 @@ export default function App() {
               come BEFORE /files/:folderId so the literal "doc" segment
               doesn't get matched as a folder id. */}
           <Route path="/files/doc/:fileId" element={<DocumentEditorPage />} />
+          {/* AI review queue — a literal segment, so it must precede
+              /files/:folderId. Its own page, always available (the Library
+              flag is on for everyone). */}
+          <Route path="/files/ai-review" element={<FilesAiReviewPage />} />
           {/* Legacy folders root. Also a literal segment, so it must precede
               /files/:folderId — otherwise "folders" is read as a folder id. */}
           <Route path="/files/folders" element={<FilesPage />} />

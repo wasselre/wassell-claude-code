@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { FolderHeart, Folders, LibraryBig } from 'lucide-react';
+import { FolderHeart, Folders, LibraryBig, Sparkles } from 'lucide-react';
 import { filesLibraryEnabled } from '@/lib/files/libraryUrl';
 
 /**
@@ -33,6 +33,13 @@ export default function FilesTabs() {
         {libraryOn ? <LibraryBig size={16} aria-hidden /> : <Folders size={16} aria-hidden />}
         <span>{libraryOn ? t('files.tabs.library') : t('files.tabs.my_files')}</span>
       </NavLink>
+
+      {libraryOn && (
+        <NavLink to="/files/ai-review" className={cls}>
+          <Sparkles size={16} aria-hidden />
+          <span>{t('files.tabs.ai_review')}</span>
+        </NavLink>
+      )}
 
       {libraryOn && (
         <NavLink to="/files/folders" className={cls}>

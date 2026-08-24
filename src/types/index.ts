@@ -1525,6 +1525,7 @@ export type {
   FileVocabDimension,
   FileVocabRow,
   BusinessFileRow,
+  AiReviewRow,
   BusinessFileFacets,
   BusinessFilesSearchResult,
   LibraryFilters,

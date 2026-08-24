@@ -297,6 +297,27 @@ export interface BusinessFileRow {
   subjects?: string[];
 }
 
+/** One row of the AI review queue (`file_ai_review_queue`): a file that still
+ *  carries unreviewed AI suggestions, plus exactly what the AI proposed. */
+export interface AiReviewRow {
+  id: string;
+  original_name: string;
+  kind: FilePreviewKind;
+  mime_type: string;
+  document_type: string;
+  asset_nature: string | null;
+  ai_description: string | null;
+  tags: string[];
+  /** Staged relationship suggestions (never auto-applied). */
+  ai_suggestions: unknown;
+  /** provenance field_paths still in the ai_suggested state (ai_description,
+   *  asset_nature, tags, subject:<slug>…). */
+  ai_fields: string[];
+  /** Subject slugs the AI proposed (subset of the file's subjects). */
+  ai_subjects: string[];
+  created_at: string;
+}
+
 /** Facet counts, computed over the WHOLE filtered set rather than the page, so
  *  the filter bar shows real numbers and dead options can be hidden. */
 export interface BusinessFileFacets {
