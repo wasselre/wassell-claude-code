@@ -15,6 +15,23 @@ case, log it here too.
 
 ---
 
+## ⭐ RECURRING UPDATES LIVE IN THE APP — this skill is for FIRST-TIME migrations only (added 2026-08-24)
+
+The user decided: one shared skill for everything was wrong. The standing system is the **`unit_updates`
+model** (تحديثات الوحدات, id `aa10c001-2026-4824-9000-000000000001`, sidebar group المشاريع) — ONE record per
+tracked project holding `project` (lookup), `update_frequency`, `source_type`, `source_url`,
+`migration_instructions` (the exact per-PROJECT recipe — per project, NOT per developer), `last_migrated_at`,
+`next_due`, `is_active`, `migration_log`.
+
+- **"Update units for <project>" in a future session** → read THAT project's `unit_updates.migration_instructions`
+  and follow them (they encode the join key, the source quirks, the traps). Do NOT re-derive from this skill.
+- **After every update run** → stamp `last_migrated_at` + `next_due` (today + frequency) and append one line to
+  `migration_log` on the record. The list view sorted by `next_due` is the operator's task list.
+- **This skill's job is now the FIRST migration of a NEW project** — and its final pipeline step is to CREATE the
+  project's `unit_updates` record with a distilled recipe (see pipeline step 8 below). A migration that doesn't
+  register the project in `unit_updates` is incomplete.
+- 21 projects seeded 2026-08-24 (20 riva-broker-portal ones + مينا 52); recipes distilled from the adapters below.
+
 ## What this does (end state)
 From one project link (or files), produce in **wassell-prod**:
 - 1 `all_projects` record (deduped by `project_name`), with developer link, location, brochure/page
@@ -134,6 +151,13 @@ Run them from a scratch dir; they load the keys from `.env.local`.
 7. **Verify.** Query: units linked == expected, rollups populated, sample unit components/plan resolve
    (signed URL 200), AND `project_analysis` + `marketing_document` are both set. Hand the user a short
    summary with the project UUID.
+8. **Register in `unit_updates` (MANDATORY — the migration is incomplete without it).** Create one record in
+   model `aa10c001-2026-4824-9000-000000000001`: `project`=the new project's UUID, `update_frequency`
+   (default `weekly`), `source_type`/`source_url`, `last_migrated_at`=today, `next_due`=today+frequency,
+   `is_active`=true, and — most important — `migration_instructions`: the DISTILLED per-project recipe a future
+   Claude session follows without this skill (source + auth, the exact unit join key, status/price parse rules,
+   every trap you hit, the apply posture, and "stamp this record when done"). Model the wording on the 21
+   seeded records.
 
 ---
 
