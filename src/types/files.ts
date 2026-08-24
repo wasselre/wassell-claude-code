@@ -64,6 +64,7 @@ export interface FileRow {
   height_px?: number | null;
   duration_seconds?: number | null;
   page_count?: number | null;
+  aspect_ratio?: string | null;
 }
 
 /** One row of a Metadata-Intelligence vocabulary (`file_vocabularies`) — the
@@ -290,6 +291,8 @@ export interface BusinessFileRow {
   height_px?: number | null;
   duration_seconds?: number | null;
   page_count?: number | null;
+  /** Snapped display ratio (16:9 / 9:16 / 1:1 …), captured at upload. */
+  aspect_ratio?: string | null;
   /** Full subject set (file_subjects); document_type is the primary one. */
   subjects?: string[];
 }

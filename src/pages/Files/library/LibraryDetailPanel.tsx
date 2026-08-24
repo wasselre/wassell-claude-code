@@ -308,6 +308,10 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
           <div><dt className="text-charcoal/40">{t('files.library.meta.dimensions')}</dt>
                <dd className="font-bold text-charcoal/80 tabular-nums">{file.width_px}×{file.height_px}</dd></div>
         ) : null}
+        {file.aspect_ratio ? (
+          <div><dt className="text-charcoal/40">{t('files.library.meta.aspect_ratio')}</dt>
+               <dd className="font-bold text-charcoal/80 tabular-nums" dir="ltr">{file.aspect_ratio}</dd></div>
+        ) : null}
         {file.duration_seconds ? (
           <div><dt className="text-charcoal/40">{t('files.library.meta.duration')}</dt>
                <dd className="font-bold text-charcoal/80 tabular-nums">

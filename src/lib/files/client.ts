@@ -15,6 +15,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
+import { probeMediaMetadata } from '@/lib/files/mediaProbe';
 import type {
   FileRow,
   FilePermission,
@@ -314,6 +315,11 @@ export async function uploadFile(file: File, opts: UploadOpts = {}): Promise<Fil
   const storagePath = `${authUid}/${fileId}.${ext}`;
   const kind = kindFromMime(file.type);
 
+  // Automatic, deterministic media metadata (dimensions + length + ratio). NO
+  // AI, NO human — read from the local bytes, in parallel with the upload so it
+  // adds no latency. Never throws; a file whose metadata won't load stores null.
+  const mediaPromise = probeMediaMetadata(file, kind);
+
   if (opts.onProgress) {
     const token = session.session?.access_token;
     if (!token) throw surfaceError('upload', new Error('Not signed in'));
@@ -371,6 +377,7 @@ export async function uploadFile(file: File, opts: UploadOpts = {}): Promise<Fil
     }
   }
 
+  const media = await mediaPromise;
   const { data: row, error: insErr } = await supabase
     .from('files')
     .insert({
@@ -386,6 +393,10 @@ export async function uploadFile(file: File, opts: UploadOpts = {}): Promise<Fil
       storage_path: storagePath,
       kind,
       content_etag: contentEtag,
+      width_px: media.width_px ?? null,
+      height_px: media.height_px ?? null,
+      duration_seconds: media.duration_seconds ?? null,
+      aspect_ratio: media.aspect_ratio ?? null,
     })
     .select('*')
     .single();
