@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-23
+**Last updated (from DB):** 2026-08-24
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **10** (1 base, 9 non-base)
-- Fields: **66**
+- Fields: **70**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 1
@@ -336,6 +336,10 @@
 | `missing_required_fields` | Missing Required Fields / الحقول المطلوبة الناقصة | Text area | no | full | no |  |
 | `ai_audit_notes` | AI Audit Notes / ملاحظات تدقيق الذكاء الاصطناعي | Text area | no | full | no |  |
 | `source_notes` | Source Notes / ملاحظات المصدر | Text area | no | full | no |  |
+| `update_source` | Update Source / مصدر التحديث | Dropdown | no | half | no | 6 options |
+| `update_source_url` | Update Source URL / رابط مصدر التحديث | URL | no | half | no |  |
+| `update_source_notes` | Update Method Details / طريقة التحديث (تفاصيل) | Text area | no | full | no |  |
+| `last_source_update` | Last Source Update / آخر تحديث من المصدر | Date | no | half | no |  |
 
 **Field details:**
 
@@ -345,6 +349,13 @@
   - API value `project_page` → "Project Page" / "صفحة المشروع" · color `#F59E0B`
   - API value `inquiry` → "Inquiry" / "الإستفسار" · color `#EF4444`
   - API value `field_survey` → "Field Survey" / "مسح ميداني" · color `#8B5CF6`
+- **Update Source / مصدر التحديث** (`update_source`, type `dropdown`) — options:
+  - API value `developer_api` → "Developer API (auto)" / "API المطور (آلي)" · color `#3B82F6`
+  - API value `developer_page` → "Developer website scrape" / "سحب من موقع المطور" · color `#8B5CF6`
+  - API value `broker_portal` → "Broker portal (login)" / "بوابة المسوّق (تسجيل دخول)" · color `#B8734F`
+  - API value `google_drive` → "Google Drive files" / "ملفات قوقل درايف" · color `#10B981`
+  - API value `files_manual` → "Manual files from team" / "ملفات يدوية من الفريق" · color `#F59E0B`
+  - API value `static_none` → "No update source" / "لا يوجد مصدر تحديث" · color `#6B7280`
 
 ## Custom buttons
 
