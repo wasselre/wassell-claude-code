@@ -303,11 +303,17 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   (4) **جديل الرمال is NOT joinable to the broker portal** — the CRM (alramzre-source) has blocks 53+56 with
   buildings 3–20, the portal renumbers 1–20 with a DIFFERENT model layout (CRM bldg 11=E1 vs portal 11=D), and
   areas can't disambiguate because **the broker card area is GROSS ≈1.24× the CRM NET `unit_area`** (uniform per
-  model+floor). Never apply جديل statuses by a (building,floor) join. **User decision (2026-08-24): wait for the
-  developer's (الرمز) current availability sheet — its numbering matches the CRM — and reconcile from that;**
-  meanwhile the portal aggregate (14 avail / 2 res / 40 sold of 60 listed) is flagged in the record's
-  `source_notes` with `update_source='broker_portal_pending'`. When the sheet arrives, use the 2026-08-18
-  ستون الندى reconcile recipe.
+  model+floor). Never apply جديل statuses by a (building,floor) join — reconcile ONLY from the developer's
+  (الرمز) sheet, whose numbering matches the CRM. **RESOLVED same day: the user sent the developer availability
+  sheet as a phone screenshot** (columns: بلك | code `<bldg>-<pos>-<model>-<blk>` | عمارة | شقة | دور | orientation
+  | area | نموذج | متوفرة | price). Read rules learned: (a) rows the operator covered with GREEN highlighter =
+  SOLD (operator confirmed) — the fully-readable rows are the complete availability, everything else in the
+  covered blocks flips to sold; (b) trust the sheet's MODEL COLUMN + area over the code string (row `11-2-D-53`
+  had model col E1 + E1's area — the CODE letter was the typo, and CRM agreed); (c) sheet areas are NET and
+  matched CRM `unit_area` EXACTLY (151.85/181.11/186.07/173.93) — that's the identity proof; (d) a NEW block can
+  debut in the sheet (بلك 49) — user said add it; unreadable rows in a new block are NOT created, just noted.
+  Run 2026-08-24: 15 avail (repriced −1–8%) + 53 flipped to sold + 1 new block-49 unit `U-49625` → جديل now 69
+  units (16/53/0), `update_source='developer_sheet'`.
   (5) **construction_status (ready vs off-plan) determination for riva projects = the «بيع على الخارطة» CHIP on
   the riva.sa/projects LISTING card** — the project detail pages, broker portal, and brochures carry NO
   ready/off-plan marker anywhere (verified across all 20 on 2026-08-24; brochure text layers empty of
