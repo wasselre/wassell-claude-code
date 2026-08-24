@@ -593,22 +593,16 @@ export default function ContentDetailPage() {
                         onSaved={(patched) => { setItem(patched); setEditingBrief(false); }}
                       />
                     ) : (
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 26px' }}>
-                        <ReadField label={isAr ? 'الهدف' : 'Goal'}>{mosText(item.goal, 'goal') || '—'}</ReadField>
-                        <ReadField label={isAr ? 'الجمهور' : 'Audience'}>{mosText(item.audience, 'audience') || '—'}</ReadField>
-                        <ReadField label={isAr ? 'الزاوية' : 'Angle'}>{mosText(item.angle, 'angle') || '—'}</ReadField>
-                        <ReadField label={isAr ? 'دعوة الإجراء' : 'Call to action'}>{mosText(item.cta, 'cta') || '—'}</ReadField>
-                        <ReadField label={isAr ? 'يُنشر على' : 'Publishing to'}>
-                          {publications.length > 0
-                            ? publications
-                                .map((p) => (isAr ? PLATFORM_LABELS[p.platform]?.ar : PLATFORM_LABELS[p.platform]?.en) ?? p.platform)
-                                .join(isAr ? ' · ' : ' · ')
+                      <div style={{ display: 'grid', gap: 12 }}>
+                        <ReadField label={isAr ? 'المشروع' : 'Project'}>
+                          {linkedProjectIds.length > 0
+                            ? linkedProjectIds.map((id) => projectName(id)).filter(Boolean).join(isAr ? '، ' : ', ') || '—'
                             : '—'}
                         </ReadField>
-                        <ReadField label={isAr ? 'المدة المستهدفة' : 'Target duration'}>
-                          {typeof item.data?.duration_size === 'string' && item.data.duration_size !== ''
-                            ? item.data.duration_size
-                            : '—'}
+                        <ReadField label={isAr ? 'ملاحظات' : 'Notes'}>
+                          <span style={{ whiteSpace: 'pre-wrap' }}>
+                            {typeof item.data?.notes === 'string' && item.data.notes !== '' ? item.data.notes : '—'}
+                          </span>
                         </ReadField>
                       </div>
                     )}
@@ -1314,32 +1308,21 @@ function BriefForm({
   onSaved: (row: MosContentRow) => void;
 }) {
   const addToast = useAppStore((s) => s.addToast);
-  const [goal, setGoal] = useState(row.goal ?? '');
-  const [audience, setAudience] = useState(row.audience ?? '');
-  const [angle, setAngle] = useState(row.angle ?? '');
-  const [cta, setCta] = useState(row.cta ?? '');
   const [projectIds, setProjectIds] = useState<string[]>(row.project_ids ?? []);
-  // «المدة والحجم المطلوب» — free text («٣٥–٤٥ ثانية · ٩:١٦», «١٠ تصاميم»),
-  // not a date. Lives in data; the actual publish timing belongs to the
-  // Publishing tab's per-platform rows.
-  const [durationSize, setDurationSize] = useState(
-    typeof row.data?.duration_size === 'string' ? row.data.duration_size : '',
-  );
+  const [notes, setNotes] = useState(typeof row.data?.notes === 'string' ? row.data.notes : '');
   const [busy, setBusy] = useState(false);
 
   const save = async (): Promise<void> => {
     setBusy(true);
     try {
-      const mergedData = { ...(row.data ?? {}), duration_size: durationSize || null };
+      // Notes live in the content's `data` jsonb; the other brief fields
+      // (goal/audience/angle/cta) are no longer edited here and stay as-is.
+      const mergedData = { ...(row.data ?? {}), notes: notes || null };
       const res = await updateContent(row.id, {
-        goal: goal || null,
-        audience: audience || null,
-        angle: angle || null,
-        cta: cta || null,
         project_ids: projectIds,
         data: mergedData,
       });
-      onSaved({ ...row, ...res.item, goal, audience, angle, cta, data: mergedData });
+      onSaved({ ...row, ...res.item, project_ids: projectIds, data: mergedData });
       addToast(isAr ? 'حُفظ الموجز.' : 'Brief saved.', 'success');
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
@@ -1350,37 +1333,14 @@ function BriefForm({
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <label>
-          <span className="lbl">{isAr ? 'الهدف' : 'Goal'}</span>
-          <textarea className="inp" rows={2} value={goal} onChange={(e) => setGoal(e.target.value)} />
-        </label>
-        <label>
-          <span className="lbl">{isAr ? 'الجمهور' : 'Audience'}</span>
-          <textarea className="inp" rows={2} value={audience} onChange={(e) => setAudience(e.target.value)} />
-        </label>
-        <label>
-          <span className="lbl">{isAr ? 'الزاوية' : 'Angle'}</span>
-          <textarea className="inp" rows={2} value={angle} onChange={(e) => setAngle(e.target.value)} />
-        </label>
-        <label>
-          <span className="lbl">{isAr ? 'دعوة الإجراء' : 'Call to action'}</span>
-          <textarea className="inp" rows={2} value={cta} onChange={(e) => setCta(e.target.value)} />
-        </label>
-        <label>
-          <span className="lbl">{isAr ? 'المشروع' : 'Project'}</span>
-          <ProjectMultiSelect projects={projects} value={projectIds} onChange={setProjectIds} isAr={isAr} />
-        </label>
-        <label>
-          <span className="lbl">{isAr ? 'المدة والحجم المطلوب' : 'Required duration & volume'}</span>
-          <input
-            className="inp"
-            value={durationSize}
-            onChange={(e) => setDurationSize(e.target.value)}
-            placeholder={isAr ? '٣٥–٤٥ ثانية · ٩:١٦' : '35–45s · 9:16'}
-          />
-        </label>
-      </div>
+      <label>
+        <span className="lbl">{isAr ? 'المشروع' : 'Project'}</span>
+        <ProjectMultiSelect projects={projects} value={projectIds} onChange={setProjectIds} isAr={isAr} />
+      </label>
+      <label>
+        <span className="lbl">{isAr ? 'ملاحظات' : 'Notes'}</span>
+        <textarea className="inp" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </label>
       <div>
         <button type="button" className="btn btn-p" onClick={() => void save()} disabled={busy}>
           {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'حفظ الموجز' : 'Save brief'}
