@@ -1,6 +1,14 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+
+// When something is in the browser Fullscreen API (e.g. the finder's full-view
+// map), only descendants of the fullscreen element paint on the top layer — a
+// modal portaled to <body> renders on the hidden normal document, "outside" the
+// map. Portal into the active fullscreen element instead so popups (units, send
+// flows, …) open ON TOP of the full-view surface. Falls back to <body> normally.
+const pickPortalTarget = (): Element =>
+  (typeof document !== 'undefined' && document.fullscreenElement) || document.body;
 
 interface ModalProps {
   open: boolean;
@@ -19,6 +27,10 @@ export default function Modal({
   footer,
   maxWidth = 'max-w-lg',
 }: ModalProps) {
+  // Track the portal target across the modal's lifetime so entering/leaving
+  // full-view while it's open moves it onto/off the fullscreen surface.
+  const [portalTarget, setPortalTarget] = useState<Element>(pickPortalTarget);
+
   useEffect(() => {
     if (!open) return;
     const handleEsc = (e: KeyboardEvent) => {
@@ -27,6 +39,14 @@ export default function Modal({
     document.addEventListener('keydown', handleEsc);
     return () => document.removeEventListener('keydown', handleEsc);
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const sync = () => setPortalTarget(pickPortalTarget());
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, [open]);
 
   if (!open) return null;
 
@@ -55,6 +75,6 @@ export default function Modal({
         )}
       </div>
     </div>,
-    document.body,
+    portalTarget,
   );
 }
