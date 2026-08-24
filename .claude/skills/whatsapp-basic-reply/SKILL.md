@@ -159,6 +159,17 @@ Holding message:
 
 > أبشر، بيتواصل معك زميلي بأول الدوام إن شاء الله.
 
+**Whenever you hand off (or the customer needs a human's attention for any
+reason), NOTIFY the operator** so it lands in their Tasks → "AI notifications"
+tab. One short Arabic line: what the customer wants + what the human should do.
+
+```bash
+node /app/wa-agent/tools/notify.mjs "العميل يبي يفاوض على السعر لمشروع مينا 52 — يحتاج متابعة مندوب." action
+```
+
+Severity: `action` (a human must do something) · `warning` (complaint / angry /
+stop-contact) · `info` (FYI). Do this in ADDITION to setting `handoff: true`.
+
 ## Step 5 — send
 
 ```bash

@@ -1,18 +1,19 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, Phone, MessageCircle, Plus, Sparkles, FolderKanban, Hourglass, CalendarDays, AlertTriangle } from 'lucide-react';
+import { ClipboardList, Phone, MessageCircle, Plus, Sparkles, FolderKanban, Hourglass, CalendarDays, AlertTriangle, Bot, CheckCheck } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import { useIsAdmin, usePermission } from '@/hooks/usePermission';
 import { isRetiredModel } from '@/lib/featureFlags';
 import { useClientWhatsApp } from '@/pages/Clients/lib/useClientWhatsApp';
+import { useAiNotifications } from './lib/useAiNotifications';
 import {
   buildFollowupTasks, buildWaitingTasks, tasksForRep, byPriority, priorityTier, isWaitingForCustomer,
   type FollowupChannel, type FollowupTask,
 } from './lib/myWork';
 import FollowupTaskCard from './components/FollowupTaskCard';
 
-type Section = 'actions' | 'waiting' | 'appointments' | 'preferences' | 'other';
+type Section = 'actions' | 'waiting' | 'appointments' | 'ai_notifications' | 'preferences' | 'other';
 type ApptBucket = 'today' | 'tomorrow' | 'future' | 'last7' | 'older' | 'no_show';
 
 function ownerIdOf(v: unknown): string | null {
@@ -54,6 +55,15 @@ const APPT_STATUS_STYLE: Record<string, string> = {
   cancelled: 'bg-charcoal/10 text-charcoal/60',
 };
 
+// AI-notification severity → start-edge stripe + badge (mirrors the task-tier
+// stripe idea). warning = a complaint / stop-contact; action = a human must do
+// something; info = FYI.
+const AI_SEVERITY: Record<'info' | 'action' | 'warning', { stripe: string; badge: string; ar: string; en: string }> = {
+  warning: { stripe: '#B5462F', badge: 'bg-terracotta text-white', ar: 'تنبيه', en: 'Warning' },
+  action: { stripe: '#B8734F', badge: 'bg-copper text-white', ar: 'إجراء', en: 'Action' },
+  info: { stripe: '#C09B5F', badge: 'bg-sand/60 text-charcoal', ar: 'معلومة', en: 'Info' },
+};
+
 /**
  * My Tasks — the sales rep's daily work surface (redesigned 2026-07-21,
  * sales-process improvement plan Workstream B):
@@ -77,6 +87,10 @@ export default function MyTasksPage() {
   const isAr = language === 'ar';
 
   const { openWhatsApp, whatsAppModals } = useClientWhatsApp();
+  const {
+    notifications: aiNotifs, unreadCount: aiUnread, loading: aiLoading,
+    markRead: markNotifRead, markAllRead: markAllNotifsRead,
+  } = useAiNotifications();
 
   const [section, setSection] = useState<Section>('actions');
   const [channel, setChannel] = useState<FollowupChannel | 'all'>('all');
@@ -210,6 +224,7 @@ export default function MyTasksPage() {
     // Section badge counts only the LIVE schedule (today + tomorrow + future +
     // no-shows) — the stale past buckets shouldn't inflate the headline number.
     { id: 'appointments', label: { ar: 'المواعيد', en: 'Appointments' }, count: appointments.today.length + appointments.tomorrow.length + appointments.future.length + appointments.no_show.length },
+    { id: 'ai_notifications', label: { ar: 'إشعارات الذكاء', en: 'AI notifications' }, count: aiUnread, danger: aiNotifs.some((n) => !n.read_at && n.severity === 'warning') },
     { id: 'preferences', label: { ar: 'تفضيلات ناقصة', en: 'Incomplete Preferences' } },
     { id: 'other', label: { ar: 'مهام أخرى', en: 'Other Tasks' }, count: otherTasks.length },
   ];
@@ -383,6 +398,83 @@ export default function MyTasksPage() {
     );
   };
 
+  const renderAiNotifications = () => (
+    <>
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <p className="text-xs text-charcoal/60">
+          {isAr ? 'إشعارات من الوكيل الذكي على واتساب — يرسلها عند تحويل المحادثة لك أو عند الحاجة لتدخّلك.' : 'Notifications from the WhatsApp AI agent — sent when it hands a chat to you or needs your attention.'}
+        </p>
+        {aiUnread > 0 && (
+          <button
+            type="button"
+            onClick={() => void markAllNotifsRead()}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-charcoal/70 transition-colors hover:bg-cream"
+          >
+            <CheckCheck size={14} /> {isAr ? 'تعليم الكل كمقروء' : 'Mark all read'}
+          </button>
+        )}
+      </div>
+      {aiLoading ? (
+        <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</p>
+      ) : aiNotifs.length === 0 ? (
+        <div className="card flex flex-col items-center gap-3 p-12 text-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-copper/10 text-copper">
+            <Bot size={24} />
+          </span>
+          <h2 className="text-lg font-bold text-chocolate">{isAr ? 'لا توجد إشعارات' : 'No notifications'}</h2>
+          <p className="max-w-md text-sm text-charcoal/60">
+            {isAr ? 'عندما يرد الوكيل الذكي على عميل ويحتاج تدخّلك، سيظهر الإشعار هنا.' : 'When the AI agent replies to a customer and needs your attention, its notification appears here.'}
+          </p>
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {aiNotifs.map((n) => {
+            const sev = AI_SEVERITY[n.severity] ?? AI_SEVERITY.info;
+            const unread = !n.read_at;
+            return (
+              <li key={n.id}>
+                <div
+                  className={`card p-4 transition-opacity ${unread ? '' : 'opacity-70'}`}
+                  style={{ borderInlineStartWidth: 4, borderInlineStartColor: sev.stripe }}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${sev.badge}`}>{isAr ? sev.ar : sev.en}</span>
+                    {unread && <span className="h-2 w-2 rounded-full bg-copper" title={isAr ? 'غير مقروء' : 'Unread'} />}
+                    {n.title && <span className="font-bold text-chocolate">{n.title}</span>}
+                    <span className="ms-auto text-xs text-charcoal/50">
+                      {new Date(n.created_at).toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 whitespace-pre-wrap text-sm text-charcoal">{n.body}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {n.chat_record_id && (
+                      <button
+                        type="button"
+                        onClick={() => { void markNotifRead(n.id); navigate(`/model/chats/${n.chat_record_id}`); }}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white transition-opacity hover:opacity-90"
+                      >
+                        <MessageCircle size={14} /> {isAr ? 'فتح المحادثة' : 'Open chat'}
+                      </button>
+                    )}
+                    {unread && (
+                      <button
+                        type="button"
+                        onClick={() => void markNotifRead(n.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-charcoal/70 transition-colors hover:bg-cream"
+                      >
+                        <CheckCheck size={14} /> {isAr ? 'مقروء' : 'Mark read'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
+
   return (
     <div className="mx-auto max-w-5xl p-4 sm:p-6">
       {whatsAppModals}
@@ -417,6 +509,7 @@ export default function MyTasksPage() {
             >
               {s.id === 'waiting' && <Hourglass size={13} className="text-[#D97706]" />}
               {s.id === 'appointments' && <CalendarDays size={13} />}
+              {s.id === 'ai_notifications' && <Bot size={13} className="text-copper" />}
               {isAr ? s.label.ar : s.label.en}
               {s.count != null && s.count > 0 && (
                 <span className={`rounded-full px-1.5 py-0.5 text-xs font-bold ${s.danger ? 'bg-terracotta text-white' : 'bg-sand text-charcoal'}`}>{s.count}</span>
@@ -429,6 +522,7 @@ export default function MyTasksPage() {
       {section === 'actions' && renderActions()}
       {section === 'waiting' && renderWaiting()}
       {section === 'appointments' && renderAppointments()}
+      {section === 'ai_notifications' && renderAiNotifications()}
 
       {section === 'preferences' && (
         <div className="card flex flex-col items-center gap-3 p-12 text-center">
