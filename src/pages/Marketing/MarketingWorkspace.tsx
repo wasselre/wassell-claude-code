@@ -12,7 +12,7 @@
  * reloads" complaint, and this is the structural answer to it.
  */
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+  createContext, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type ReactNode,
 } from 'react';
 import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
@@ -538,17 +538,23 @@ export default function MarketingWorkspace() {
               early flashed the defaults — the raw content-type key in the Type
               column and "viewer" in the rail — which reads as a bug even
               though it corrects itself a moment later. */}
-          {ready ? (
-            <Outlet />
-          ) : (
-            <div className="body">
-              <div className="sk" style={{ height: 26, width: 200, marginBottom: 16 }} />
-              <div className="grid g4" style={{ marginBottom: 18 }}>
-                {[0, 1, 2, 3].map((i) => <div key={i} className="sk" style={{ height: 96 }} />)}
+          {(() => {
+            // A themed skeleton reused for BOTH the store-boot gate AND the
+            // lazy-chunk Suspense below. Without the inner Suspense a page-chunk
+            // load bubbled to the app's top-level fallback — a full-screen CREAM
+            // page — which flashed white over the dark shell on every click. Now
+            // the shell + sidebar stay put and only the content area skeletons.
+            const skeleton = (
+              <div className="body">
+                <div className="sk" style={{ height: 26, width: 200, marginBottom: 16 }} />
+                <div className="grid g4" style={{ marginBottom: 18 }}>
+                  {[0, 1, 2, 3].map((i) => <div key={i} className="sk" style={{ height: 96 }} />)}
+                </div>
+                <div className="sk" style={{ height: 200 }} />
               </div>
-              <div className="sk" style={{ height: 200 }} />
-            </div>
-          )}
+            );
+            return ready ? <Suspense fallback={skeleton}><Outlet /></Suspense> : skeleton;
+          })()}
         </div>
 
         {/* Bottom tab bar — visible only <760px (mobile-shell.css); items are
