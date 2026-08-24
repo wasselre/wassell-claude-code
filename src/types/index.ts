@@ -1533,6 +1533,7 @@ export type {
   LibraryLayout,
   FileViewRow,
   PageLinkSummary,
+  FileLinkedRecord,
 } from './files';
 
 export type ActivityLogStatus = 'success' | 'error' | 'warning' | 'info';

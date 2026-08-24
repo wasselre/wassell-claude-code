@@ -20,11 +20,11 @@ import {
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import type {
-  AiReviewRow, FileDocumentTypeRow, FileVocabRow, FileRow, PageLinkSummary,
+  AiReviewRow, FileDocumentTypeRow, FileVocabRow, FileRow, FileLinkedRecord,
 } from '@/types';
 import {
   approveAiSuggestions, dismissAiSuggestions, errorText, fetchAiReviewCount,
-  fetchAiReviewQueue, fetchPageLinks, listDocumentTypes, listFileVocabularies,
+  fetchAiReviewQueue, fetchFileLinkedRecords, listDocumentTypes, listFileVocabularies,
 } from '@/lib/files/library';
 import { getFile, signViewUrls } from '@/lib/files/client';
 import { attachFileToRecord } from '@/lib/files/recordFiles';
@@ -66,7 +66,7 @@ export default function FilesAiReviewPage() {
   const [types, setTypes] = useState<FileDocumentTypeRow[]>([]);
   const [vocab, setVocab] = useState<FileVocabRow[]>([]);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
-  const [links, setLinks] = useState<Map<string, PageLinkSummary[]>>(new Map());
+  const [links, setLinks] = useState<Map<string, FileLinkedRecord[]>>(new Map());
   const [linksLoading, setLinksLoading] = useState(false);
   const [previewRow, setPreviewRow] = useState<FileRow | null>(null);
 
@@ -127,16 +127,16 @@ export default function FilesAiReviewPage() {
     setLinksLoading(true);
     void (async () => {
       try {
-        const map = await fetchPageLinks(rows.map((r) => r.id));
+        const map = await fetchFileLinkedRecords(rows.map((r) => r.id), isAr);
         if (!cancelled) setLinks(map);
       } catch {
-        if (!cancelled) setLinks(new Map()); // fetchPageLinks toasted
+        if (!cancelled) setLinks(new Map()); // fetchFileLinkedRecords toasted
       } finally {
         if (!cancelled) setLinksLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [rows]);
+  }, [rows, isAr]);
 
   const typeLabel = useCallback((slug: string) => {
     const row = types.find((x) => x.value === slug);
@@ -178,8 +178,9 @@ export default function FilesAiReviewPage() {
         const next = new Map(prev);
         const existing = next.get(row.id) ?? [];
         next.set(row.id, [...existing, {
-          file_id: row.id, model_name: s.model_name,
-          model_label_ar: m?.label_ar ?? null, model_label_en: m?.label_en ?? null, count: 1,
+          file_id: row.id, model_id: s.model_id, model_name: s.model_name,
+          model_label_ar: m?.label_ar ?? null, model_label_en: m?.label_en ?? null,
+          record_id: s.record_id, label: s.label,
         }]);
         return next;
       });
@@ -274,7 +275,7 @@ export default function FilesAiReviewPage() {
             const subjects = row.ai_subjects ?? [];
             const tags = row.tags ?? [];
             const rowLinks = links.get(row.id) ?? [];
-            const linkTotal = rowLinks.reduce((n, l) => n + l.count, 0);
+            const linkTotal = rowLinks.length;
             const suggestions: LinkSuggestion[] = linkTotal === 0 && row.ai_suggestions && typeof row.ai_suggestions === 'object'
               ? ((row.ai_suggestions as { links?: LinkSuggestion[] }).links ?? [])
               : [];
@@ -337,10 +338,12 @@ export default function FilesAiReviewPage() {
                         <Link2 size={12} className="text-emerald-600" aria-hidden />
                         <span className="text-[11px] font-bold text-emerald-700">{t('files.ai_review.linked')}</span>
                         {rowLinks.map((l) => (
-                          <span key={l.model_name}
-                                className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-700 text-[11px]" dir="auto">
-                            {(isAr ? l.model_label_ar : l.model_label_en) || l.model_name}
-                            {l.count > 1 ? ` (${l.count})` : ''}
+                          <span key={l.record_id}
+                                className="inline-flex items-baseline gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-700 text-[11px]" dir="auto">
+                            <span className="font-bold">{l.label}</span>
+                            <span className="text-emerald-700/55">
+                              · {(isAr ? l.model_label_ar : l.model_label_en) || l.model_name}
+                            </span>
                           </span>
                         ))}
                       </>

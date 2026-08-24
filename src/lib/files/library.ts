@@ -20,12 +20,15 @@
  */
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
+import { recordTitle } from '@/lib/documents/links';
 import type {
   AiReviewRow,
+  AppRecord,
   BusinessFileRow,
   BusinessFilesSearchResult,
   BusinessFileSort,
   FileDocumentTypeRow,
+  FileLinkedRecord,
   FileVocabRow,
   LibraryFilters,
   PageLinkSummary,
@@ -207,6 +210,64 @@ export async function fetchPageLinks(fileIds: string[]): Promise<Map<string, Pag
     }
     list.sort((a, b) => b.count - a.count);
     out.set(fileId, list);
+  }
+  return out;
+}
+
+/**
+ * Per-file linked RECORDS (not just models), resolved to their display titles.
+ * The AI review tab needs "linked to صفا 52", not "linked to All Projects".
+ *
+ * Reads `file_links` (both-sides RLS) for the edges, then `unified_records` for
+ * the linked records' data — a point-lookup by id, so the 4.5 GB market_listings
+ * branch of the UNION is an index probe, not a scan. Labels come from the shared
+ * recordTitle so they match every other title in the app; a record the caller
+ * cannot see under RLS falls back to a short id rather than leaking or vanishing.
+ */
+export async function fetchFileLinkedRecords(
+  fileIds: string[], isAr: boolean,
+): Promise<Map<string, FileLinkedRecord[]>> {
+  const out = new Map<string, FileLinkedRecord[]>();
+  if (fileIds.length === 0) return out;
+  const db = requireSupabase('load linked records');
+
+  const { data: edges, error } = await db
+    .from('file_links').select('file_id, model_id, record_id').in('file_id', fileIds);
+  if (error) throw surfaceLibraryError('load linked records', error);
+  const rows = (edges ?? []) as Array<{ file_id: string; model_id: string; record_id: string }>;
+  if (rows.length === 0) return out;
+
+  const recordIds = [...new Set(rows.map((r) => r.record_id))];
+  const { data: recs, error: rerr } = await db
+    .from('unified_records').select('id, model_id, data').in('id', recordIds);
+  if (rerr) throw surfaceLibraryError('load linked records', rerr);
+  const recById = new Map(
+    ((recs ?? []) as Array<{ id: string; model_id: string; data: Record<string, unknown> }>).map((r) => [r.id, r]),
+  );
+
+  const models = useAppStore.getState().models;
+  const modelById = new Map(models.map((m) => [m.id, m]));
+
+  for (const e of rows) {
+    const model = modelById.get(e.model_id);
+    const rec = recById.get(e.record_id);
+    const label = rec
+      ? recordTitle(model, { id: rec.id, data: rec.data } as unknown as AppRecord, isAr)
+      : e.record_id.slice(0, 8);
+    const list = out.get(e.file_id) ?? [];
+    // Dedup: the same file linked to the same record via >1 edge is one chip.
+    if (!list.some((x) => x.record_id === e.record_id)) {
+      list.push({
+        file_id: e.file_id,
+        model_id: e.model_id,
+        model_name: model?.name ?? e.model_id.slice(0, 8),
+        model_label_ar: model?.label_ar ?? null,
+        model_label_en: model?.label_en ?? null,
+        record_id: e.record_id,
+        label,
+      });
+    }
+    out.set(e.file_id, list);
   }
   return out;
 }

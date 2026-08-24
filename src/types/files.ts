@@ -424,3 +424,18 @@ export interface PageLinkSummary {
   model_label_en: string | null;
   count: number;
 }
+
+/** A single record a file is linked to — resolved to its display title, not
+ *  just the model. Used where the reviewer needs to see exactly what a file is
+ *  attached to (the AI review tab). */
+export interface FileLinkedRecord {
+  file_id: string;
+  model_id: string;
+  model_name: string;
+  model_label_ar: string | null;
+  model_label_en: string | null;
+  record_id: string;
+  /** The record's title (project_name / name / … via recordTitle), or a short
+   *  id fallback when the record is not visible under the caller's RLS. */
+  label: string;
+}
