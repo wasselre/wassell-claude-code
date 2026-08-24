@@ -169,6 +169,9 @@ export default function SuggestedProjectsView({
   }
   // The preferences-chips area (QA: collapsible so popup results get the height).
   const [showPrefs, setShowPrefs] = useState(!defaultPrefsCollapsed);
+  // The refinement toolbar + group tabs — collapsible so the results/map get the
+  // full height when the rep just wants to browse.
+  const [showControls, setShowControls] = useState(true);
 
   // Cross-reference the client's already-saved options so each card shows its status.
   const clientOptionsModelId = useMemo(
@@ -960,10 +963,29 @@ export default function SuggestedProjectsView({
         </div>
       )}
 
-      {/* Refinement toolbar + group tabs */}
+      {/* Refinement toolbar + group tabs — collapsible so results/map get the height */}
       {!loading && !error && !needsPreferences && fetchedTotal > 0 && (
         <div className="border-b border-sand/30 bg-white/40">
-          <div className="mx-auto w-full max-w-6xl px-4 pt-3 sm:px-6">
+          <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
+            {/* Collapse/expand strip — collapsed, it shows the current match floor +
+                active tab so the rep still knows the state at a glance. */}
+            <div className="flex items-center justify-between gap-2 py-1.5">
+              <span className="truncate text-[11px] font-semibold text-charcoal/50">
+                {showControls
+                  ? L('أدوات التصفية والتبويبات', 'Refine & tabs')
+                  : `${L('التطابق ≥', 'Match ≥')} ${scoreThreshold}% · ${isAr ? DISPLAY_TAB_LABELS[activeTab].ar : DISPLAY_TAB_LABELS[activeTab].en} (${ourProjects.length + tabView.tabs[activeTab].length})`}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowControls((v) => !v)}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold text-copper transition hover:bg-cream"
+                title={showControls ? L('طيّ أدوات التصفية', 'Collapse controls') : L('توسيع أدوات التصفية', 'Expand controls')}
+              >
+                {showControls ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                {showControls ? L('طيّ', 'Collapse') : L('توسيع', 'Expand')}
+              </button>
+            </div>
+            {showControls && (<>
             <FinderRefinementBar
               isAr={isAr}
               floor={FETCH_FLOOR}
@@ -997,6 +1019,7 @@ export default function SuggestedProjectsView({
                 );
               })}
             </div>
+            </>)}
           </div>
         </div>
       )}
