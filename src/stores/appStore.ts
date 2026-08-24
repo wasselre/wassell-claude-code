@@ -24,7 +24,7 @@ import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, healDisplayedChildModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
-import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
+import { listDevices as listHaberchatDevices, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient, deviceIdString, resolveSendDeviceId } from '@/lib/haberchat/normalize';
 import { mergeMessageSources, identityKey } from '@/lib/chat/messageIdentity';
 import { normalizePhone } from '@/lib/phone';
@@ -4832,113 +4832,59 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   loadChatsFromHaberchat: async () => {
+    // Event-driven conversations (2026-08-24): the DATABASE is the source of
+    // truth for chat records and the WAHA WEBHOOK is their ONLY routine
+    // writer — it creates a conversation on its first message, bumps
+    // preview/recency/unread on every message, resolves client_link by phone
+    // server-side, refreshes the display name from pushName, and reopens a
+    // CRM-closed chat only when the customer actually writes (chatIngest.ts).
+    //
+    // This action used to mirror the GATEWAY's full chat list into Supabase on
+    // every Chats-page open: ~380 unconditional fire-and-forget upserts, each
+    // firing the entire records trigger stack (29 triggers) plus a Realtime
+    // event to every connected session — pure write amplification that also
+    // kept RE-OPENING CRM-closed chats (WAHA has no status concept, it reports
+    // every chat 'active') and, when the sync raced an empty store, re-created
+    // every chat with no status and no client_link (the 2026-08-24 inbox
+    // wipe). All of that is gone: this is now a READ — re-pull the chats slice
+    // from Supabase (manual refresh / page open); Realtime keeps it fresh in
+    // between. Do NOT reintroduce a gateway→records write here: pair-time
+    // seeding of historical chats (the one thing the webhook can't do) is an
+    // admin-time, server-side concern, not a page-load one.
     const state = get();
     const chatsModel = state.models.find((m) => m.name === 'chats');
-    if (!chatsModel) return;
+    if (!chatsModel || !supabase) return;
 
-    // Figure out which devices to sync. Preferred: active rows in the local
-    // overlay. Fallback: every live device from Haberchat (if we never
-    // populated the overlay). This lets the first-ever Chats page visit
-    // work before the admin opens /settings/whatsapp-numbers.
-    let deviceIds: string[] = state.waDevices.filter((d) => d.is_active).map((d) => d.device_id);
-    if (deviceIds.length === 0) {
-      // Best-effort: fetch live device list once; if that fails too, bail
-      // quietly so the list page can still render its local view.
-      try {
-        const live = await listHaberchatDevices();
-        set({ waDevicesLive: live });
-        deviceIds = live.map((d) => d.id);
-      } catch (err) {
-        console.warn('[loadChatsFromHaberchat] could not resolve any device:', err);
-        return;
+    // Keyset-paged so we never silently truncate at PostgREST's 1000-row cap
+    // (the classic supabaseLoad guard, scoped to one model_id).
+    const pageSize = 1000;
+    const rows: AppRecord[] = [];
+    let cursor = '00000000-0000-0000-0000-000000000000';
+    for (;;) {
+      const { data, error } = await supabase
+        .from('records')
+        .select('*')
+        .eq('model_id', chatsModel.id)
+        .gt('id', cursor)
+        .order('id', { ascending: true })
+        .limit(pageSize);
+      if (error) {
+        reportSupabaseError('records', 'load', error.message ?? String(error));
+        return; // keep whatever slice the store already has
       }
+      const page = (data ?? []) as AppRecord[];
+      rows.push(...page);
+      if (page.length < pageSize) break;
+      const last = page[page.length - 1];
+      if (!last) break;
+      cursor = last.id;
     }
-    if (deviceIds.length === 0) return;
-
-    // Fetch each device's chats in parallel. A single failed device
-    // shouldn't block the others — collect failures and log them.
-    const results = await Promise.allSettled(deviceIds.map((id) => listHaberchatChats(id).then((chats) => ({ id, chats }))));
-
-    // Re-read the store FRESH: records may have finished loading during the
-    // awaited gateway fetch above. Then guard against the empty-store wipe.
-    //
-    // If the chat store is empty here, this sync would merge every gateway
-    // chat against `prev = null` → mergeChatIntoRecord re-INSERTS each one
-    // fresh with status='active' and NO client_link, and upserts that over
-    // the real Supabase rows — silently wiping every CRM-owned close and
-    // phone link across the ENTIRE inbox (the reason closed chats re-opened
-    // and مغلقة snapped back to 0 after a reload: a sync raced the initial
-    // load). New conversations still appear without this resync because the
-    // webhook creates the record server-side the moment a message arrives
-    // (see the @lid note below), so bailing here loses nothing.
-    const existing = get().records[chatsModel.id] ?? [];
-    if (existing.length === 0) {
-      console.warn('[loadChatsFromHaberchat] chat store empty (initial load not finished?) — skipping full resync so it cannot wipe CRM-owned status/client_link');
-      return;
-    }
-    const byId = new Map<string, AppRecord>(existing.map((r) => [r.id, r]));
-    let changed = false;
-
-    for (const r of results) {
-      if (r.status === 'rejected') {
-        console.warn('[loadChatsFromHaberchat] device sync failed:', r.reason);
-        continue;
-      }
-      const { id: deviceId, chats } = r.value;
-      for (const chat of chats) {
-        const candidate = mergeChatIntoRecord(null, chat, deviceId, chatsModel.id);
-        const prev = byId.get(candidate.id) ?? null;
-        // A gateway chat addressed by LID is the SAME human as an existing
-        // phone-keyed chat, under WhatsApp's other identity. Minting a record
-        // for it produced a duplicate of every client conversation — 266 empty
-        // shells against 292 real chats, so the rep saw each client twice and
-        // the copy they opened had no history (live 2026-07-26).
-        //
-        // Only track a LID chat we already know: conversations still appear the
-        // moment a message arrives, because the webhook creates the record then
-        // — and it resolves the phone when WhatsApp gives us one.
-        if (!prev && String(chat.wid ?? '').endsWith('@lid')) continue;
-        const next = mergeChatIntoRecord(prev, chat, deviceId, chatsModel.id);
-        byId.set(next.id, next);
-        changed = true;
-      }
-    }
-
-    if (!changed) return;
-
-    // Resolve client_link for any chat that isn't attached to a LIVE
-    // client. Matches by digits-only phone compare so format differences
-    // ("+966...", "0...", "966...") don't block. A `client_link` pointing
-    // to a since-deleted client is treated as unlinked — that's the only
-    // way a chat picks up a freshly-recreated client with the same phone.
-    // Never overwrites a link to a live client — admins may have manually
-    // linked to someone other than the phone owner and we respect that.
-    const clientsModel = state.models.find((m) => m.name === 'clients');
-    const clientRecords = clientsModel ? (state.records[clientsModel.id] ?? []) : [];
-    const clientPhoneSlugs = phoneFieldSlugs(clientsModel);
-    const merged = [...byId.values()].map((rec) => {
-      const data = rec.data as Record<string, unknown>;
-      if (isLiveClient(data.client_link, clientRecords)) return rec;
-      const link = resolveClientLink(data.phone as string | null | undefined, clientRecords, clientPhoneSlugs);
-      if (!link || link === data.client_link) return rec;
-      return { ...rec, data: { ...data, client_link: link } };
-    });
 
     set((s) => {
-      const nextRecords = { ...s.records, [chatsModel.id]: merged };
-      // Persist the chats bucket so a refresh keeps the list even if Haberchat
-      // is offline on next load.
-      saveLocalRecordsForModel(chatsModel.id, merged);
-      return { records: nextRecords };
+      // Persist the chats bucket so a refresh keeps the list offline too.
+      saveLocalRecordsForModel(chatsModel.id, rows);
+      return { records: { ...s.records, [chatsModel.id]: rows } };
     });
-
-    // Background Supabase upsert of every chat record. Done per-row so one
-    // row's failure doesn't abort the rest. No FK parent gating needed —
-    // the chats model itself is already in Supabase.
-    for (const rec of merged) {
-      // Intentionally not awaited — fire-and-forget batched via microtask.
-      void supabaseUpsert('records', rec);
-    }
   },
 
   loadMessagesForChat: async (chatWid: string, opts: { before?: string; size?: number } = {}) => {
