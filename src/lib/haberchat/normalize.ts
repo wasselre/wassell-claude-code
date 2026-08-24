@@ -250,6 +250,17 @@ export function mergeChatIntoRecord(
   if (typeof prevData.unread_count === 'number') {
     nextData.unread_count = prevData.unread_count;
   }
+  // status is CRM-owned once a chat is CLOSED. WAHA has no per-chat status
+  // concept and feeds 'active' for every chat (see api/_lib/waha.ts listChats),
+  // so taking the gateway's status on every list sync silently RE-OPENED every
+  // resolved/archived chat — the reason مغلقة stayed at 0 (and the Done button
+  // appeared not to work) after the WAHA cutover. A CRM-closed chat must stay
+  // closed across syncs; the ONE intentional re-open is the server webhook's
+  // inbound-reply reopen (chatIngest.ts), never a passive list sync. Active vs
+  // pending is still gateway-driven; only the closed states are pinned.
+  if (prevData.status === 'resolved' || prevData.status === 'archived') {
+    nextData.status = prevData.status;
+  }
   return {
     id,
     model_id: chatsModelId,
