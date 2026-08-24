@@ -8,7 +8,7 @@
  * the money columns as a dash: «—» means "does not apply", while ٠ would mean
  * "we spent and got nothing".
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
@@ -710,6 +710,48 @@ export function CampaignModal({
   const [execDrafts, setExecDrafts] = useState<ExecDraft[]>([]);
   const [busy, setBusy] = useState(false);
 
+  // Snapshot of the form's opening state, so a stray click on the backdrop (or
+  // Escape) can't silently throw away work in progress. Compared field-by-field
+  // below; the drafts/executions arrays start empty, so any planned content or
+  // ad campaign already counts as dirty.
+  const initial = useRef({
+    kind: campaign?.kind ?? 'paid',
+    goal: campaign?.goal ?? campaign?.name ?? '',
+    goalIds: JSON.stringify(campaign?.goal_ids ?? []),
+    projectIds: JSON.stringify(campaign?.project_ids ?? []),
+    ownerRole: campaign?.owner_role ?? 'marketing_manager',
+    startsOn: campaign?.starts_on ?? '',
+    endsOn: campaign?.ends_on ?? '',
+    budget: campaign?.budget_total?.toString() ?? '',
+    status: campaign?.status ?? 'planning',
+    measures: JSON.stringify(measuresToDrafts(campaign?.success_measures)),
+  }).current;
+
+  const dirty = kind !== initial.kind
+    || goal !== initial.goal
+    || JSON.stringify(goalIds) !== initial.goalIds
+    || JSON.stringify(projectIds) !== initial.projectIds
+    || ownerRole !== initial.ownerRole
+    || startsOn !== initial.startsOn
+    || endsOn !== initial.endsOn
+    || budget !== initial.budget
+    || status !== initial.status
+    || JSON.stringify(measures) !== initial.measures
+    || drafts.length > 0
+    || execDrafts.length > 0;
+
+  // Guarded close: while saving, ignore the request entirely; with unsaved
+  // changes, confirm before discarding. Wired to the backdrop click, Escape, the
+  // header ✕, and the Cancel button — so "click outside" can no longer wipe the
+  // form without a deliberate confirmation. Matches SettingsWorkflows' pattern.
+  const requestClose = useCallback((): void => {
+    if (busy) return;
+    if (dirty && !window.confirm(isAr
+      ? 'لديك تغييرات غير محفوظة في هذه الحملة — تجاهلها وإغلاق النافذة؟'
+      : 'You have unsaved changes on this campaign — discard them and close?')) return;
+    onClose();
+  }, [busy, dirty, isAr, onClose]);
+
   const totalBudget = budget.trim() === '' ? null : Number(budget);
   // Create is gated for a new paid campaign: at least one execution, and every
   // execution fully configured.
@@ -900,7 +942,7 @@ export function CampaignModal({
       sub={isAr
         ? 'هدف، ومدة، والمنصات التي ستعمل عليها. تُنشأ الحملات الإعلانية كمسودات.'
         : 'A goal, a duration, and the platforms it runs on. Ad campaigns are created as drafts.'}
-      onClose={onClose}
+      onClose={requestClose}
       footer={
         <>
           <span className="note">
@@ -912,7 +954,7 @@ export function CampaignModal({
                 ? 'لا شيء ينفق مالًا هنا. الحملات الإعلانية مسودات حتى يطلقها أحد على المنصة نفسها.'
                 : 'Nothing here spends money. Ad campaigns stay drafts until someone launches them on the platform itself.'}
           </span>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>
+          <button type="button" className="btn" onClick={requestClose} disabled={busy}>
             {isAr ? 'إلغاء' : 'Cancel'}
           </button>
           <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy || !execGateOk}>
