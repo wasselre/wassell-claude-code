@@ -1,6 +1,6 @@
 import { buildGeoNameMap } from '@/lib/geo/geoNameMap';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown, ChevronUp, TimerOff, RefreshCw, CheckSquare } from 'lucide-react';
+import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown, ChevronUp, TimerOff, RefreshCw, CheckSquare, List, Map as MapIcon } from 'lucide-react';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
@@ -33,6 +33,34 @@ import FinderMapView from './FinderMapView';
 import ProjectWhatsAppFlow from './ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import LeaveWithoutSavingModal from '@/components/matching/LeaveWithoutSavingModal';
+
+/** List / map results-view toggle. Lives in the ALWAYS-VISIBLE bottom bar so the
+ *  rep can switch views no matter how the refine controls above are collapsed
+ *  (moved out of FinderRefinementBar for exactly that — user report 2026-08-24:
+ *  "the list and map view buttons should be below so they are always shown"). */
+function ViewToggle({ viewMode, onViewMode, isAr }: { viewMode: FinderViewMode; onViewMode: (m: FinderViewMode) => void; isAr: boolean }) {
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+  return (
+    <div className="flex items-center rounded-lg border border-sand/60 bg-white p-0.5">
+      <button
+        type="button"
+        onClick={() => onViewMode('list')}
+        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-bold transition ${viewMode === 'list' ? 'bg-copper text-white' : 'text-charcoal/60 hover:bg-cream/60'}`}
+        aria-pressed={viewMode === 'list'}
+      >
+        <List size={13} /> {L('قائمة', 'List')}
+      </button>
+      <button
+        type="button"
+        onClick={() => onViewMode('map')}
+        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-bold transition ${viewMode === 'map' ? 'bg-copper text-white' : 'text-charcoal/60 hover:bg-cream/60'}`}
+        aria-pressed={viewMode === 'map'}
+      >
+        <MapIcon size={13} /> {L('خريطة', 'Map')}
+      </button>
+    </div>
+  );
+}
 
 /** Small labelled divider heading a card section (our projects / other options). */
 function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) {
@@ -590,6 +618,13 @@ export default function SuggestedProjectsView({
   const needsPreferences = resp?.metadata.needs_preferences === true;
   const market = resp?.metadata.market;
   const suggestLabel = (code: string) => (MISSING_LABELS[code] ? (isAr ? MISSING_LABELS[code].ar : MISSING_LABELS[code].en) : code);
+  // Amber notices above the results — folded away with the refine controls when
+  // there ARE results (kept always-on at zero results, where they explain the
+  // emptiness). The collapsed strip keeps a small count so nothing is hidden silently.
+  const constraintDropSummary = summarizeConstraintDrops(resp?.metadata.constraint_drops, isAr);
+  const hasMarketNotice = market?.status === 'too_many' || market?.status === 'needs_district' || market?.status === 'unavailable';
+  const topNoticeCount = (constraintDropSummary ? 1 : 0) + (hasMarketNotice ? 1 : 0);
+  const showTopNotices = showControls || fetchedTotal === 0;
   const selectedVisible = FINDER_GROUP_KEYS.reduce(
     (n, k) => n + refinedGroups[k].filter((i) => selected.has(i.project_id)).length, 0,
   );
@@ -912,14 +947,14 @@ export default function SuggestedProjectsView({
 
       {/* Required-field exclusions — name the field(s) doing the cutting so a
           short list isn't mistaken for "nothing available". */}
-      {summarizeConstraintDrops(resp?.metadata.constraint_drops, isAr) && (
+      {constraintDropSummary && showTopNotices && (
         <div className="border-b border-amber-200 bg-amber-50">
           <div className="mx-auto w-full max-w-6xl px-4 py-2 sm:px-6">
             <div className="flex items-start gap-1.5 text-[11px] text-amber-800">
               <AlertTriangle size={13} className="mt-0.5 shrink-0" />
               <span>
                 {L('حقول إلزامية استبعدت خيارات — ', 'Required fields excluded options — ')}
-                <span className="font-semibold">{summarizeConstraintDrops(resp?.metadata.constraint_drops, isAr)}</span>
+                <span className="font-semibold">{constraintDropSummary}</span>
                 {L('. حوّل الحقل إلى «مفضّل» أو وسّع نطاقه لعرضها.', '. Switch the field to "Preferred" or widen its band to see them.')}
               </span>
             </div>
@@ -928,7 +963,7 @@ export default function SuggestedProjectsView({
       )}
 
       {/* Market-source honesty notices */}
-      {(market?.status === 'too_many' || market?.status === 'needs_district' || market?.status === 'unavailable') && (
+      {hasMarketNotice && showTopNotices && (
         <div className="border-b border-amber-200 bg-amber-50">
           <div className="mx-auto w-full max-w-6xl px-4 py-2 sm:px-6">
             {market?.status === 'too_many' && (
@@ -970,11 +1005,21 @@ export default function SuggestedProjectsView({
             {/* Collapse/expand strip — collapsed, it shows the current match floor +
                 active tab so the rep still knows the state at a glance. */}
             <div className="flex items-center justify-between gap-2 py-1.5">
-              <span className="truncate text-[11px] font-semibold text-charcoal/50">
-                {showControls
-                  ? L('أدوات التصفية والتبويبات', 'Refine & tabs')
-                  : `${L('التطابق ≥', 'Match ≥')} ${scoreThreshold}% · ${isAr ? DISPLAY_TAB_LABELS[activeTab].ar : DISPLAY_TAB_LABELS[activeTab].en} (${ourProjects.length + tabView.tabs[activeTab].length})`}
-              </span>
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                {!showControls && topNoticeCount > 0 && (
+                  <span
+                    className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-amber-700"
+                    title={L('تنبيهات مخفية — وسّع لعرضها', 'Hidden notices — expand to view')}
+                  >
+                    <AlertTriangle size={11} /> {topNoticeCount}
+                  </span>
+                )}
+                <span className="truncate text-[11px] font-semibold text-charcoal/50">
+                  {showControls
+                    ? L('أدوات التصفية والتبويبات', 'Refine & tabs')
+                    : `${L('التطابق ≥', 'Match ≥')} ${scoreThreshold}% · ${isAr ? DISPLAY_TAB_LABELS[activeTab].ar : DISPLAY_TAB_LABELS[activeTab].en} (${ourProjects.length + tabView.tabs[activeTab].length})`}
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowControls((v) => !v)}
@@ -999,8 +1044,6 @@ export default function SuggestedProjectsView({
               onToggleRefine={() => setShowRefine((v) => !v)}
               refinedTotal={refinedTotal}
               fetchedTotal={fetchedTotal}
-              viewMode={viewMode}
-              onViewMode={setViewMode}
             />
             <div className="flex flex-wrap gap-1 pb-2">
               {DISPLAY_TAB_KEYS.map((k) => {
@@ -1225,17 +1268,25 @@ export default function SuggestedProjectsView({
         </div>
       </div>
 
-      {/* Footer — selection summary (the Save-options action lives in the header). */}
-      {!loading && !error && fetchedTotal > 0 && clientRec && (
+      {/* Footer — ALWAYS-VISIBLE list/map toggle + the selection summary (the
+          Save-options action lives in the header). The view toggle sits here, not
+          in the collapsible refine toolbar, so switching views is always one click
+          away regardless of how the controls above are folded. */}
+      {!loading && !error && fetchedTotal > 0 && (
         <div className="border-t border-sand/40 bg-white">
           <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-2 sm:px-6">
-            <span className="text-xs text-charcoal/60">
-              {L(`${selectedVisible} محدّد`, `${selectedVisible} selected`)}
-            </span>
-            {!savedAny && (
-              <span className="text-[11px] font-semibold text-amber-700">
-                {L('لم يُحفظ أي خيار لهذا العميل بعد.', 'No option saved for this client yet.')}
-              </span>
+            <ViewToggle viewMode={viewMode} onViewMode={setViewMode} isAr={isAr} />
+            {clientRec && (
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="shrink-0 text-xs text-charcoal/60">
+                  {L(`${selectedVisible} محدّد`, `${selectedVisible} selected`)}
+                </span>
+                {!savedAny && (
+                  <span className="truncate text-[11px] font-semibold text-amber-700">
+                    {L('لم يُحفظ أي خيار لهذا العميل بعد.', 'No option saved for this client yet.')}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>
