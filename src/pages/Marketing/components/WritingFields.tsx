@@ -78,31 +78,9 @@ const CAPTION_PLATFORMS: Array<{ key: string; ar: string; en: string }> = [
   { key: 'caption_snapchat', ar: 'سناب شات', en: 'Snapchat' },
 ];
 
-/** The «الصيغة» multiselect options — deliverable type + common canvas sizes.
- *  Stored as a string array on `design_format`; legacy free-text is preserved. */
-const FORMAT_OPTIONS: Array<{ value: string; ar: string; en: string }> = [
-  { value: 'post', ar: 'منشور', en: 'Post' },
-  { value: 'carousel', ar: 'كاروسيل', en: 'Carousel' },
-  { value: 'reel', ar: 'ريلز', en: 'Reel' },
-  { value: 'story', ar: 'ستوري', en: 'Story' },
-  { value: 'video', ar: 'فيديو', en: 'Video' },
-  { value: '1080x1080', ar: 'مربّع ١٠٨٠×١٠٨٠', en: 'Square 1080×1080' },
-  { value: '1080x1350', ar: 'عمودي ١٠٨٠×١٣٥٠', en: 'Portrait 1080×1350' },
-  { value: '1080x1920', ar: 'ريلز/ستوري ١٠٨٠×١٩٢٠', en: 'Reel/Story 1080×1920' },
-];
-
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '');
 const asList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
-/** Read design_format as a list, tolerating a legacy free-text string. */
-const asFormatList = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x !== '')
-    : (typeof v === 'string' && v.trim() !== '' ? [v.trim()] : []);
-/** Label a format token — a known option's label, else the raw (legacy) text. */
-const formatLabel = (value: string, isAr: boolean): string => {
-  const o = FORMAT_OPTIONS.find((x) => x.value === value);
-  return o ? (isAr ? o.ar : o.en) : value;
-};
 
 /** The muted order index that replaces the old approval radio on each headline row. */
 const idxBadge = {
@@ -504,13 +482,6 @@ export default function WritingFields({
                   {isAr ? 'موجز التصميم — للمونتير' : 'The design brief — for the editor'}
                 </div>
                 <div className="fld">
-                  <div className="k">{isAr ? 'الصيغة' : 'Format'}</div>
-                  <div className="v">
-                    {asFormatList(draft.design_format ?? data.design_format)
-                      .map((v) => formatLabel(v, isAr)).join('، ') || '—'}
-                  </div>
-                </div>
-                <div className="fld">
                   <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
                   <div className="v">{str('design_brief') || '—'}</div>
                 </div>
@@ -717,39 +688,6 @@ export default function WritingFields({
             <div className="write">
               <div className="doc-lbl">
                 {isAr ? 'موجز التصميم — للمونتير' : 'The design brief — for the editor'}
-              </div>
-              <div className="fld">
-                <div className="k">{isAr ? 'الصيغة' : 'Format'}</div>
-                {/* Multiselect: toggle the deliverable type(s) + canvas size(s).
-                    Preserves any legacy free-text token already stored. */}
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                  {(() => {
-                    const sel = asFormatList(draft.design_format);
-                    const toggle = (value: string): void =>
-                      set('design_format', sel.includes(value) ? sel.filter((v) => v !== value) : [...sel, value]);
-                    return (
-                      <>
-                        {FORMAT_OPTIONS.map((o) => (
-                          <button
-                            key={o.value}
-                            type="button"
-                            className={`fbtn${sel.includes(o.value) ? ' on' : ''}`}
-                            onClick={() => toggle(o.value)}
-                          >
-                            {isAr ? o.ar : o.en}
-                          </button>
-                        ))}
-                        {/* Any legacy free-text token that isn't one of the options
-                            stays selectable so nothing already written is lost. */}
-                        {sel.filter((v) => !FORMAT_OPTIONS.some((o) => o.value === v)).map((v) => (
-                          <button key={v} type="button" className="fbtn on" onClick={() => toggle(v)}>
-                            {v} ×
-                          </button>
-                        ))}
-                      </>
-                    );
-                  })()}
-                </div>
               </div>
               <div className="fld">
                 <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
