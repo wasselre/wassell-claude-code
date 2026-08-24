@@ -61,26 +61,50 @@ function toNumericRange(v: unknown): NumericRange | null {
 export async function resolveProjectSheet(
   readClient: SupabaseClient,
   svc: SupabaseClient,
-  input: { projectId?: string; projectName?: string },
+  input: { projectId?: string; projectName?: string; onlyOurProjects?: boolean },
 ): Promise<SheetResult> {
-  const { data: apModel, error: apModelErr } = await readClient
-    .from('models').select('id, schema').eq('name', 'all_projects').single();
-  if (apModelErr || !apModel) return { ok: false, reason: 'error', message: `all_projects model not found: ${apModelErr?.message ?? ''}` };
+  const { data: modelRows, error: mdlErr } = await readClient
+    .from('models').select('id, name, schema').in('name', ['all_projects', 'our_projects']);
+  if (mdlErr) return { ok: false, reason: 'error', message: `models lookup failed: ${mdlErr.message}` };
+  const apModel = (modelRows ?? []).find((m) => m.name === 'all_projects');
+  const opModel = (modelRows ?? []).find((m) => m.name === 'our_projects');
+  if (!apModel) return { ok: false, reason: 'error', message: 'all_projects model not found' };
   const modelId = apModel.id as string;
   const schema = (apModel.schema ?? null) as ModelSchema | null;
 
+  // Restrict to OUR projects — the WhatsApp bot must only ever offer projects we
+  // actually market (the curated `our_projects` set), NOT the full all_projects
+  // master (which holds many empty import/placeholder shells like the «مينا NN»
+  // series). our_projects links to an all_projects master via its `project` lookup;
+  // the name + rollups live on the master, so we match all_projects but keep only
+  // the ids that are linked from an our_projects record.
+  let ourSet: Set<string> | null = null;
+  if (input.onlyOurProjects) {
+    if (!opModel) return { ok: false, reason: 'error', message: 'our_projects model not found' };
+    const { data: opRows, error: opErr } = await readClient
+      .from('records').select('data').eq('model_id', opModel.id as string);
+    if (opErr) return { ok: false, reason: 'error', message: `our_projects lookup failed: ${opErr.message}` };
+    ourSet = new Set<string>();
+    for (const r of (opRows ?? []) as Array<{ data: Record<string, unknown> }>) {
+      const p = r.data?.project;
+      if (typeof p === 'string' && p) ourSet.add(p);
+      else if (Array.isArray(p) && typeof p[0] === 'string') ourSet.add(p[0]);
+    }
+  }
+
   // all_projects is UNFROZEN (JSONB in `records`), so read the small base table
-  // directly instead of the `unified_records` view — the view UNIONs every frozen
-  // model incl. the 4.5GB market_listings, and an un-indexed ILIKE across that
-  // union was the multi-second cost. RLS on `records` still applies for a JWT caller.
+  // directly instead of the `unified_records` view (which UNIONs every frozen model
+  // incl. the 4.5GB market_listings — an un-indexed ILIKE across it was ~seconds).
+  // RLS on `records` still applies for a JWT caller.
   let projectId = input.projectId ?? null;
   if (!projectId) {
     const name = input.projectName ?? '';
     const { data: matches, error: mErr } = await readClient
       .from('records').select('id, data').eq('model_id', modelId)
-      .ilike('data->>project_name', `%${name}%`).limit(10);
+      .ilike('data->>project_name', `%${name}%`).limit(20);
     if (mErr) return { ok: false, reason: 'error', message: `name lookup failed: ${mErr.message}` };
-    const rows = (matches ?? []) as Array<{ id: string; data: Record<string, unknown> }>;
+    let rows = (matches ?? []) as Array<{ id: string; data: Record<string, unknown> }>;
+    if (ourSet) rows = rows.filter((r) => ourSet!.has(r.id));
     const [first] = rows;
     if (!first) return { ok: false, reason: 'not_found' };
     if (rows.length > 1) {
@@ -90,6 +114,8 @@ export async function resolveProjectSheet(
     } else {
       projectId = first.id;
     }
+  } else if (ourSet && !ourSet.has(projectId)) {
+    return { ok: false, reason: 'not_found', message: 'project is not in our_projects' };
   }
 
   const { data: projRow, error: projErr } = await readClient

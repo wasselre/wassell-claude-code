@@ -210,7 +210,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     replyText = NO_SERVICE;
     summary = 'العميل يسأل عن خدمة غير متوفرة (إيجار/تجاري/أرض).';
   } else if (d.action === 'project_sheet') {
-    const sheet = await resolveProjectSheet(supa, supa, { projectName: d.projectName });
+    const sheet = await resolveProjectSheet(supa, supa, { projectName: d.projectName, onlyOurProjects: true });
     if (sheet.ok && sheet.body_ar) {
       replyText = sheet.body_ar;
       summary = `أُرسلت بطاقة مشروع «${d.projectName}» للعميل.`;
