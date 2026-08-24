@@ -4859,7 +4859,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     // shouldn't block the others — collect failures and log them.
     const results = await Promise.allSettled(deviceIds.map((id) => listHaberchatChats(id).then((chats) => ({ id, chats }))));
 
-    const existing = state.records[chatsModel.id] ?? [];
+    // Re-read the store FRESH: records may have finished loading during the
+    // awaited gateway fetch above. Then guard against the empty-store wipe.
+    //
+    // If the chat store is empty here, this sync would merge every gateway
+    // chat against `prev = null` → mergeChatIntoRecord re-INSERTS each one
+    // fresh with status='active' and NO client_link, and upserts that over
+    // the real Supabase rows — silently wiping every CRM-owned close and
+    // phone link across the ENTIRE inbox (the reason closed chats re-opened
+    // and مغلقة snapped back to 0 after a reload: a sync raced the initial
+    // load). New conversations still appear without this resync because the
+    // webhook creates the record server-side the moment a message arrives
+    // (see the @lid note below), so bailing here loses nothing.
+    const existing = get().records[chatsModel.id] ?? [];
+    if (existing.length === 0) {
+      console.warn('[loadChatsFromHaberchat] chat store empty (initial load not finished?) — skipping full resync so it cannot wipe CRM-owned status/client_link');
+      return;
+    }
     const byId = new Map<string, AppRecord>(existing.map((r) => [r.id, r]));
     let changed = false;
 
