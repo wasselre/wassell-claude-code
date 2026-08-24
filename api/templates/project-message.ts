@@ -36,7 +36,7 @@ import {
   composeProjectMessage,
   type ProjectMessageFacts,
   type NumericRange,
-} from '../../src/lib/projectMessageFacts.js';
+} from '../../src/lib/projectMessage/compose.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 

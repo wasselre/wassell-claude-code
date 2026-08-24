@@ -19,66 +19,15 @@ import type { AppModel, AppRecord, ModelField } from '@/types';
 import { parseGoogleMapsUrl } from './locationUtils';
 import { resolveLocalizedName } from './geo/localizedName';
 
-export interface Bilingual {
-  ar: string;
-  en: string;
-}
-
-export interface NumericRange {
-  min: number;
-  max: number;
-}
-
-/**
- * Bilingual, pre-resolved facts handed to the generation endpoint. Every
- * dropdown value is already resolved to its ar/en label so the server never
- * resolves anything (and so it cannot invent a label). Prices are pre-formatted
- * per language. `null` / empty = genuinely missing → the prompt renders the
- * "not available" placeholder and the preview shows a warning.
- */
-export interface ProjectMessageFacts {
-  /** The our_projects record this was generated from. */
-  ourProjectId: string;
-  /** The linked all_projects master id — what the template links to. */
-  allProjectId: string | null;
-  name: string | null;
-  city: Bilingual | null;
-  district: Bilingual | null;
-  unitTypes: Bilingual[];
-  bedrooms: NumericRange | null;
-  bathrooms: NumericRange | null;
-  /**
-   * Unit area range in m² — the AVAILABLE-units-only rollup
-   * (`available_area_range`), NOT the all-unit `area_range`. Customer
-   * messages must never quote the area of a sold/reserved unit (QA-003).
-   * Null when the project has no available units → the line is omitted.
-   */
-  areaRange: NumericRange | null;
-  /**
-   * Pre-formatted starting price per language (e.g. "1,200,000 ر.س" /
-   * "SAR 1,200,000"). Derived from the AVAILABLE-units-only price rollup
-   * (`available_price_range`), so "prices start from" is a price a customer
-   * can actually buy at. Null when no units are available → line omitted.
-   */
-  minPrice: Bilingual | null;
-  brochureLink: string | null;
-  locationLink: string | null;
-  /**
-   * Public-website link to the project's unit details (the units grid on
-   * project.html). Replaces the brochure in the WhatsApp message — labeled
-   * "الرابط / Link". Present whenever the our_projects record links to an
-   * all_projects master (so we have an id to point the URL at).
-   */
-  websiteUnitsLink: string | null;
-  /**
-   * CRM `files` ids of every image saved on the project (the all_projects
-   * `project_images` multi-image field, falling back to `main_image`). These
-   * are sent as their own WhatsApp image messages alongside the text.
-   */
-  imageFileIds: string[];
-  /** Human-readable keys of the required fields that came back empty. */
-  missing: string[];
-}
+// The composer + its fact shape now live in ./projectMessage/compose.ts — a
+// pure, import-free module so a serverless function (api/templates/project-
+// message.ts) can use it without pulling in this file's browser-shaped chain
+// (locationUtils → mirrorResolver → …), whose extensionless relative imports
+// crash Vercel's Node-ESM runtime. Re-exported here so existing importers of
+// '@/lib/projectMessageFacts' keep working unchanged.
+import type { Bilingual, NumericRange, ProjectMessageFacts } from './projectMessage/compose.js';
+export { composeProjectMessage } from './projectMessage/compose.js';
+export type { Bilingual, NumericRange, ProjectMessageFacts };
 
 /**
  * Public marketing website base. The project unit-details link points at
@@ -350,53 +299,5 @@ export function resolveProjectFacts(
   };
 }
 
-function rangeText(r: NumericRange): string {
-  return r.min === r.max ? String(r.min) : `${r.min} - ${r.max}`;
-}
-
-/** Area range, rounded to whole m² (unit areas come as decimals like 114.28). */
-function areaRangeText(r: NumericRange): string {
-  const lo = Math.round(r.min);
-  const hi = Math.round(r.max);
-  return lo === hi ? String(lo) : `${lo} - ${hi}`;
-}
-
-/**
- * Compose the WhatsApp message DETERMINISTICALLY from resolved facts — no AI,
- * no greeting line, no closing line, exact labels. A field that's missing is
- * OMITTED entirely (never written as "not available"; the preview surfaces
- * what's missing separately, via `facts.missing`). Structure: the project name
- * on its own line, a blank line, then one labeled line per PRESENT field.
- *
- * Per the user's exact spec (2026-06-08): price label is "الأسعار تبدأ من" /
- * "Prices start from"; nothing extra is ever added to the body.
- */
-export function composeProjectMessage(
-  facts: ProjectMessageFacts,
-  opts?: { nameEn?: string | null },
-): { body_ar: string; body_en: string } {
-  const ar: string[] = [];
-  const en: string[] = [];
-  if (facts.city) { ar.push(`المدينة: ${facts.city.ar}`); en.push(`City: ${facts.city.en}`); }
-  if (facts.district) { ar.push(`الحي: ${facts.district.ar}`); en.push(`District: ${facts.district.en}`); }
-  if (facts.unitTypes.length > 0) {
-    ar.push(`أنواع الوحدات: ${facts.unitTypes.map((u) => u.ar).join('، ')}`);
-    en.push(`Unit Types: ${facts.unitTypes.map((u) => u.en).join(', ')}`);
-  }
-  if (facts.bedrooms) { ar.push(`غرف النوم: ${rangeText(facts.bedrooms)}`); en.push(`Bedrooms: ${rangeText(facts.bedrooms)}`); }
-  if (facts.areaRange) { ar.push(`المساحة: ${areaRangeText(facts.areaRange)} م²`); en.push(`Area: ${areaRangeText(facts.areaRange)} m²`); }
-  if (facts.bathrooms) { ar.push(`دورات المياه: ${rangeText(facts.bathrooms)}`); en.push(`Bathrooms: ${rangeText(facts.bathrooms)}`); }
-  if (facts.minPrice) { ar.push(`الأسعار تبدأ من: ${facts.minPrice.ar}`); en.push(`Prices start from: ${facts.minPrice.en}`); }
-  // The public-website unit-details link replaces the brochure (labeled
-  // "الرابط / Link"). The map/location line was dropped per the 2026-06-30 spec.
-  if (facts.websiteUnitsLink) { ar.push(`الرابط: ${facts.websiteUnitsLink}`); en.push(`Link: ${facts.websiteUnitsLink}`); }
-  // The project name is a single (Arabic) text field with no stored English
-  // form, so the English body uses a translated/transliterated name when one
-  // is supplied (e.g. "مينا 52" → "Mena 52"); falls back to the Arabic name.
-  const titleAr = facts.name ?? '';
-  const titleEn = (opts?.nameEn || facts.name) ?? '';
-  return {
-    body_ar: [titleAr, '', ...ar].join('\n').trim(),
-    body_en: [titleEn, '', ...en].join('\n').trim(),
-  };
-}
+// composeProjectMessage + rangeText/areaRangeText moved to
+// ./projectMessage/compose.ts (re-exported at the top of this file).
