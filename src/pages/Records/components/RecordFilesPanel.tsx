@@ -26,17 +26,17 @@
  * `document_links` row, so its output arrives through the projection like
  * everything else. Deliberate scope call, recorded rather than silent.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  AlertTriangle, Download, FileText, LayoutGrid, Link2, List, Loader2, Lock, Paperclip, Unlink,
+  AlertTriangle, Download, FileText, LayoutGrid, Link2, List, Loader2, Lock, Paperclip, Unlink, Upload,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Button from '@/components/ui/Button';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
-import { getFile, signDownloadUrl, signViewUrls } from '@/lib/files/client';
+import { getFile, signDownloadUrl, signViewUrls, uploadFile } from '@/lib/files/client';
 import { errorText, listDocumentTypes } from '@/lib/files/library';
 import {
   detachFileFromRecord, groupByRole, listRecordFiles, type RecordFileEntry,
@@ -77,6 +77,8 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
     setLayout(next);
     try { window.localStorage.setItem('wassell_record_files_layout', next); } catch { /* private mode — the choice still applies this session */ }
   }, []);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -91,6 +93,25 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
   }, [modelId, recordId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Upload NEW files straight into this record: uploadFile stamps model_id +
+  // record_id, which converges into file_links, so they appear here at once —
+  // no separate trip to the Library. Failures are surfaced by uploadFile.
+  const onUpload = useCallback(async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(fileList)) {
+        await uploadFile(file, { modelId, recordId });
+      }
+      await load();
+    } catch {
+      // uploadFile toasted; whatever succeeded before the failure is kept.
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [modelId, recordId, load]);
 
   useEffect(() => {
     let cancelled = false;
@@ -335,6 +356,22 @@ export default function RecordFilesPanel({ modelId, recordId }: Props) {
               <List size={14} aria-hidden />
             </button>
           </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => void onUpload(e.target.files)}
+          />
+          <Button
+            variant="secondary"
+            className="!px-3 !py-2 text-xs"
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {uploading ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <Upload size={13} aria-hidden />}
+            {t('files.record.upload_new')}
+          </Button>
           <Button
             variant="secondary"
             className="!px-3 !py-2 text-xs"

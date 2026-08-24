@@ -18,7 +18,7 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { errorText, searchBusinessFiles } from '@/lib/files/library';
-import { effectiveFileRoles, roleSatisfies } from '@/lib/files/client';
+import { effectiveFileRoles, roleSatisfies, signViewUrls } from '@/lib/files/client';
 import { attachFileToRecord } from '@/lib/files/recordFiles';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import type { BusinessFileRow, FileDocumentTypeRow, FilePermissionRole } from '@/types';
@@ -54,6 +54,7 @@ export default function AttachExistingFileModal({
   /** fileId -> the caller's effective role. null = not resolved yet. */
   const [roles, setRoles] = useState<Record<string, FilePermissionRole> | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open) { setInput(''); setQ(''); setRows([]); setError(null); setTotal(0); setRoles(null); }
@@ -103,6 +104,23 @@ export default function AttachExistingFileModal({
   }, [q]);
 
   useEffect(() => { if (open) void run(); }, [open, run]);
+
+  // Thumbnails for the image results — one batch sign, like the Library grid, so
+  // the picker shows the actual files, not just names.
+  useEffect(() => {
+    const imageIds = [...new Set(rows.filter((r) => r.kind === 'image').map((r) => r.id))];
+    if (imageIds.length === 0) { setThumbs({}); return; }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const map = await signViewUrls(imageIds);
+        if (!cancelled) setThumbs(map);
+      } catch {
+        if (!cancelled) setThumbs({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [rows]);
 
   const attach = useCallback(async (file: BusinessFileRow) => {
     setBusyId(file.id);
@@ -184,64 +202,71 @@ export default function AttachExistingFileModal({
           </div>
         )}
 
-        <div className="max-h-80 overflow-auto rounded-xl border border-sand/30 divide-y divide-sand/20">
-          {loading && rows.length === 0 ? (
-            <div className="py-12 flex justify-center">
-              <Loader2 size={22} className="animate-spin text-copper" aria-hidden />
-            </div>
-          ) : !error && rows.length === 0 ? (
-            <p className="py-12 text-center text-xs text-charcoal/45">
-              {t('files.library.empty_title')}
-            </p>
-          ) : (
-            rows.map((f) => {
+        {loading && rows.length === 0 ? (
+          <div className="py-12 flex justify-center">
+            <Loader2 size={22} className="animate-spin text-copper" aria-hidden />
+          </div>
+        ) : !error && rows.length === 0 ? (
+          <p className="py-12 text-center text-xs text-charcoal/45">
+            {t('files.library.empty_title')}
+          </p>
+        ) : (
+          <div className="max-h-[26rem] overflow-auto grid grid-cols-2 sm:grid-cols-3 gap-2 p-0.5">
+            {rows.map((f) => {
               const Icon = kindIcon[f.kind];
               const accent = kindAccent[f.kind];
+              const thumb = thumbs[f.id];
               const linked = alreadyLinkedFileIds.has(f.id);
+              const noEdit = roles && !roleSatisfies(roles[f.id] ?? null, 'edit');
               return (
-                <div key={f.id} className="flex items-center gap-3 px-3 py-2.5">
-                  <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${accent.bg}`}>
-                    <Icon size={15} className={accent.fg} aria-hidden />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-bold text-charcoal truncate" dir="auto" title={f.title}>
+                <div key={f.id} className="rounded-xl border border-sand/30 bg-white overflow-hidden flex flex-col">
+                  <div className={`relative h-24 flex items-center justify-center ${accent.bg}`}>
+                    {thumb ? (
+                      <img src={thumb} alt="" loading="lazy" className="w-full h-full object-cover" />
+                    ) : (
+                      <Icon size={26} className={accent.fg} aria-hidden />
+                    )}
+                    {linked && (
+                      <span className="absolute top-1.5 end-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/90 border border-sand/40 text-[10px] font-bold text-charcoal/60">
+                        <Check size={10} aria-hidden />
+                        {t('files.record.already_linked')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="p-2 flex-1 flex flex-col gap-1">
+                    <span className="text-xs font-bold text-charcoal line-clamp-2 leading-snug" dir="auto" title={f.title}>
                       {f.title}
                     </span>
-                    <span className="block text-[11px] text-charcoal/40">
-                      {formatBytes(f.size_bytes, isAr)}
-                    </span>
-                  </span>
-                  {linked ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-charcoal/45">
-                      <Check size={12} aria-hidden />
-                      {t('files.record.already_linked')}
-                    </span>
-                  ) : roles && !roleSatisfies(roles[f.id] ?? null, 'edit') ? (
-                    <span
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-charcoal/35"
-                      title={t('files.record.no_edit_rights_hint')}
-                    >
-                      <Lock size={11} aria-hidden />
-                      {t('files.record.no_edit_rights')}
-                    </span>
-                  ) : (
-                    <Button
-                      variant="secondary"
-                      className="!px-3 !py-1.5 text-xs shrink-0"
-                      disabled={busyId === f.id}
-                      onClick={() => void attach(f)}
-                    >
-                      {busyId === f.id
-                        ? <Loader2 size={12} className="animate-spin" aria-hidden />
-                        : <Link2 size={12} aria-hidden />}
-                      {t('files.record.link')}
-                    </Button>
-                  )}
+                    <span className="text-[10px] text-charcoal/40">{formatBytes(f.size_bytes, isAr)}</span>
+                    <div className="mt-auto pt-1">
+                      {linked ? null : noEdit ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] font-bold text-charcoal/35"
+                          title={t('files.record.no_edit_rights_hint')}
+                        >
+                          <Lock size={10} aria-hidden />
+                          {t('files.record.no_edit_rights')}
+                        </span>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          className="w-full !px-2 !py-1.5 text-xs justify-center"
+                          disabled={busyId === f.id}
+                          onClick={() => void attach(f)}
+                        >
+                          {busyId === f.id
+                            ? <Loader2 size={12} className="animate-spin" aria-hidden />
+                            : <Link2 size={12} aria-hidden />}
+                          {t('files.record.link')}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
 
         {total > rows.length && (
           <p className="text-[11px] text-charcoal/40">
