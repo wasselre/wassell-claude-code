@@ -289,18 +289,21 @@ function FileReferencePicker({
                   title={f.title || f.original_name}
                   style={{
                     display: 'flex', flexDirection: 'column', cursor: 'pointer', padding: 0,
-                    border: picked ? '2px solid var(--copper)' : '1px solid var(--line, #e6dccb)',
-                    borderRadius: 10, overflow: 'hidden', background: 'var(--card, #fff)',
+                    width: '100%', boxSizing: 'border-box',
+                    border: picked ? '2px solid var(--copper)' : '1px solid #d8ccb6',
+                    borderRadius: 10, overflow: 'hidden', background: '#fff',
                     textAlign: isAr ? 'right' : 'left',
                   }}
                 >
+                  {/* flex:0 0 96px pins the preview height — a fixed-height flex
+                      child inside a stretched grid item otherwise collapses. The
+                      image is a background so it can't shrink the box either. */}
                   <div style={{
-                    height: 96, background: 'var(--bg, #f5ede0)', display: 'flex',
-                    alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+                    flex: '0 0 96px', width: '100%',
+                    background: thumb ? `#efe6d6 center/cover no-repeat url("${thumb}")` : '#efe6d6',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
-                    {thumb
-                      ? <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      : <span style={{ fontSize: 22, color: 'var(--copper)' }}>{kindGlyph(f.kind)}</span>}
+                    {!thumb && <span style={{ fontSize: 22 }}>{kindGlyph(f.kind)}</span>}
                   </div>
                   <div style={{ padding: '6px 8px', minWidth: 0 }}>
                     <div className="tx" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
