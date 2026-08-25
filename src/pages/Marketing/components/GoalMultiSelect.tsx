@@ -8,7 +8,7 @@
  * link the user can still see), and styles with the MOS CSS variables so it
  * matches both the light content modal and the dark campaign panel.
  */
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MosGoal, fetchGoals } from '@/lib/marketingOS/client';
 
 interface Props {
@@ -23,6 +23,7 @@ export default function GoalMultiSelect({ value, onChange, isAr, disabled = fals
   const [goals, setGoals] = useState<MosGoal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -50,20 +51,6 @@ export default function GoalMultiSelect({ value, onChange, isAr, disabled = fals
     onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
   };
 
-  const chip = (selected: boolean): CSSProperties => ({
-    display: 'inline-flex', alignItems: 'center', gap: 6,
-    padding: '5px 11px', borderRadius: 999, fontSize: 12.5, lineHeight: 1.5,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    border: selected
-      ? '1px solid color-mix(in srgb, var(--copper) 55%, transparent)'
-      : '1px solid var(--line)',
-    background: selected
-      ? 'color-mix(in srgb, var(--copper) 16%, transparent)'
-      : 'var(--paper)',
-    color: selected ? 'var(--choc)' : 'var(--ink)',
-    fontWeight: selected ? 700 : 400,
-  });
-
   if (loading) {
     return <div style={{ fontSize: 12, color: 'var(--mute)' }}>{isAr ? 'جارٍ تحميل الأهداف…' : 'Loading goals…'}</div>;
   }
@@ -80,30 +67,73 @@ export default function GoalMultiSelect({ value, onChange, isAr, disabled = fals
     );
   }
 
+  const chosenNames = options.filter((g) => value.includes(g.id)).map((g) => g.name);
+  const summary = chosenNames.length > 0
+    ? chosenNames.join('، ')
+    : (isAr ? 'اختر الأهداف…' : 'Choose goals…');
+
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-      {options.map((g) => {
-        const selected = value.includes(g.id);
-        return (
-          <button
-            key={g.id}
-            type="button"
-            style={chip(selected)}
-            disabled={disabled}
-            aria-pressed={selected}
-            onClick={() => toggle(g.id)}
-            title={g.description ?? undefined}
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        className="inp"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 8, cursor: disabled ? 'not-allowed' : 'pointer',
+          textAlign: isAr ? 'right' : 'left', fontSize: 13,
+          color: chosenNames.length > 0 ? 'var(--ink)' : 'var(--mute)',
+        }}
+      >
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {summary}
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--mute)' }}>▾</span>
+      </button>
+
+      {open && !disabled && (
+        <>
+          {/* Click-away catcher. */}
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+            onClick={() => setOpen(false)}
+          />
+          <div
+            style={{
+              position: 'absolute', zIndex: 41, top: 'calc(100% + 4px)', insetInline: 0,
+              background: 'var(--paper)', border: '1px solid var(--line)', borderRadius: 10,
+              boxShadow: '0 10px 30px rgba(0,0,0,0.25)', padding: 5, maxHeight: 260, overflowY: 'auto',
+            }}
           >
-            {selected && <span style={{ fontSize: 11 }}>✓</span>}
-            {g.name}
-            {!g.is_active && (
-              <span style={{ fontSize: 10.5, color: 'var(--mute)' }}>
-                {isAr ? '(معطّل)' : '(inactive)'}
-              </span>
-            )}
-          </button>
-        );
-      })}
+            {options.map((g) => {
+              const selected = value.includes(g.id);
+              return (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => toggle(g.id)}
+                  title={g.description ?? undefined}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '7px 9px', borderRadius: 7, border: 0, cursor: 'pointer',
+                    background: selected ? 'color-mix(in srgb, var(--copper) 14%, transparent)' : 'transparent',
+                    color: 'var(--ink)', textAlign: isAr ? 'right' : 'left', fontSize: 13,
+                    fontWeight: selected ? 700 : 400,
+                  }}
+                >
+                  <span style={{ width: 14, fontSize: 11, color: 'var(--copper)' }}>{selected ? '✓' : ''}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>{g.name}</span>
+                  {!g.is_active && (
+                    <span style={{ fontSize: 10.5, color: 'var(--mute)' }}>
+                      {isAr ? '(معطّل)' : '(inactive)'}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }

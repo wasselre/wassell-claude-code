@@ -709,6 +709,8 @@ export function CampaignModal({
   // campaign row, in one flow.
   const [execDrafts, setExecDrafts] = useState<ExecDraft[]>([]);
   const [busy, setBusy] = useState(false);
+  // In-app (not window.confirm) discard-guard for a dirty close.
+  const [closeConfirm, setCloseConfirm] = useState(false);
 
   // Snapshot of the form's opening state, so a stray click on the backdrop (or
   // Escape) can't silently throw away work in progress. Compared field-by-field
@@ -746,11 +748,11 @@ export function CampaignModal({
   // form without a deliberate confirmation. Matches SettingsWorkflows' pattern.
   const requestClose = useCallback((): void => {
     if (busy) return;
-    if (dirty && !window.confirm(isAr
-      ? 'لديك تغييرات غير محفوظة في هذه الحملة — تجاهلها وإغلاق النافذة؟'
-      : 'You have unsaved changes on this campaign — discard them and close?')) return;
+    // In-app confirm (dark, themed) instead of the browser's «app.wassel.re says»
+    // dialog. Clean close when there is nothing unsaved.
+    if (dirty) { setCloseConfirm(true); return; }
     onClose();
-  }, [busy, dirty, isAr, onClose]);
+  }, [busy, dirty, onClose]);
 
   const totalBudget = budget.trim() === '' ? null : Number(budget);
   // Create is gated for a new paid campaign: at least one execution, and every
@@ -937,6 +939,7 @@ export function CampaignModal({
   };
 
   return (
+    <>
     <Modal
       title={isNew ? (isAr ? 'حملة جديدة' : 'New campaign') : (isAr ? 'تعديل الحملة' : 'Edit campaign')}
       sub={isAr
@@ -1126,5 +1129,27 @@ export function CampaignModal({
         </div>
       )}
     </Modal>
+    {closeConfirm && (
+      <Modal
+        title={isAr ? 'تجاهل التغييرات؟' : 'Discard changes?'}
+        sub={isAr ? 'لديك تغييرات غير محفوظة في هذه الحملة.' : 'You have unsaved changes on this campaign.'}
+        onClose={() => setCloseConfirm(false)}
+        footer={
+          <>
+            <button type="button" className="btn" onClick={() => setCloseConfirm(false)}>
+              {isAr ? 'متابعة التحرير' : 'Keep editing'}
+            </button>
+            <button type="button" className="btn btn-d" onClick={() => { setCloseConfirm(false); onClose(); }}>
+              {isAr ? 'تجاهل وإغلاق' : 'Discard & close'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.9 }}>
+          {isAr ? 'سيُفقد ما لم يُحفظ إن أغلقت الآن.' : 'Anything unsaved will be lost if you close now.'}
+        </div>
+      </Modal>
+    )}
+    </>
   );
 }

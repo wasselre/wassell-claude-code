@@ -223,17 +223,24 @@ function ExecDraftEditor({
 
   const commit = (): void => onSave({ ...draft, platform, settings, adSets });
 
+  // In-app discard-guard (not window.confirm) when the plan was edited.
+  const [closeConfirm, setCloseConfirm] = useState(false);
+  const dirty = JSON.stringify({ platform, settings, adSets })
+    !== JSON.stringify({ platform: draft.platform, settings: draft.settings, adSets: draft.adSets });
+  const requestClose = (): void => { if (dirty) setCloseConfirm(true); else onClose(); };
+
   return (
+    <>
     <Modal
       title={isAr ? 'إعداد الحملة الإعلانية' : 'Configure ad campaign'}
       sub={isAr
         ? 'الخطة على المنصة، ثم المجموعات الإعلانية، ثم الإعلانات (محتوى + كابشن). المعرّفات تأتي من ميتا عند الإنشاء.'
         : 'The platform plan, then ad sets, then ads (content + caption). IDs come from Meta on create.'}
-      onClose={onClose}
+      onClose={requestClose}
       wide
       footer={
         <>
-          <button type="button" className="btn" onClick={onClose}>
+          <button type="button" className="btn" onClick={requestClose}>
             {isAr ? 'إلغاء' : 'Cancel'}
           </button>
           <button type="button" className="btn btn-p" onClick={commit}>
@@ -348,5 +355,27 @@ function ExecDraftEditor({
         </div>
       </div>
     </Modal>
+    {closeConfirm && (
+      <Modal
+        title={isAr ? 'تجاهل التغييرات؟' : 'Discard changes?'}
+        sub={isAr ? 'لديك تغييرات غير محفوظة في هذه الحملة الإعلانية.' : 'You have unsaved changes on this ad campaign.'}
+        onClose={() => setCloseConfirm(false)}
+        footer={
+          <>
+            <button type="button" className="btn" onClick={() => setCloseConfirm(false)}>
+              {isAr ? 'متابعة التحرير' : 'Keep editing'}
+            </button>
+            <button type="button" className="btn btn-d" onClick={() => { setCloseConfirm(false); onClose(); }}>
+              {isAr ? 'تجاهل وإغلاق' : 'Discard & close'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.9 }}>
+          {isAr ? 'سيُفقد ما لم يُحفظ إن أغلقت الآن.' : 'Anything unsaved will be lost if you close now.'}
+        </div>
+      </Modal>
+    )}
+    </>
   );
 }
