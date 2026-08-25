@@ -1353,6 +1353,25 @@ export const saveExecution = (campaignId: string, execution: Record<string, unkn
     'execution_save', { campaign_id: campaignId, execution },
   );
 
+/** A reusable campaign SETUP (goals, projects, budget, executions, content) that
+ *  prefills the New-campaign modal. `setup` is an opaque blob owned by the modal;
+ *  stored server-side in ONE mos_settings row (no migration). */
+export interface CampaignTemplate {
+  id: string;
+  name: string;
+  /** The campaign-form snapshot to seed. Shape owned by CampaignModal. */
+  setup: Record<string, unknown>;
+}
+
+export const fetchCampaignTemplates = () =>
+  call<{ templates: CampaignTemplate[] }>('campaign_templates_list');
+
+export const saveCampaignTemplate = (template: Record<string, unknown>) =>
+  call<{ templates: CampaignTemplate[] }>('campaign_template_save', { template });
+
+export const deleteCampaignTemplate = (id: string) =>
+  call<{ templates: CampaignTemplate[] }>('campaign_template_delete', { id });
+
 export const deleteExecution = (campaignId: string, id: string) =>
   call<{ executions: MosExecution[] }>('execution_delete', { campaign_id: campaignId, id });
 

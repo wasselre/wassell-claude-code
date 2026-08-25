@@ -12,7 +12,7 @@
  * Self-contained + controlled: the parent holds `drafts` and does the create
  * (deriving platforms + projectIds from the campaign at that point).
  */
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { MosContentType } from '@/lib/marketingOS/client';
 
 /** One planned content piece. `key` is local-only; the server assigns the real id. */
@@ -22,6 +22,12 @@ export interface ContentDraft {
   title: string;
   notes: string;
 }
+
+const MAX_BATCH = 100;
+const clampInt = (v: number, lo: number, hi: number): number =>
+  Math.max(lo, Math.min(hi, Math.floor(Number.isFinite(v) ? v : lo)));
+/** Western digits → Arabic-Indic, for the small inline counts/titles. */
+const toArabic = (n: number): string => String(n).replace(/[0-9]/g, (ch) => '٠١٢٣٤٥٦٧٨٩'[Number(ch)] ?? ch);
 
 interface CampaignContentBuilderProps {
   isAr: boolean;
@@ -37,7 +43,26 @@ export default function CampaignContentBuilder({
   const newKey = (): string => { seq.current += 1; return `d${seq.current}`; };
   const firstType = contentTypes[0]?.key ?? '';
 
-  const add = (): void => onChange([...drafts, { key: newKey(), typeKey: firstType, title: '', notes: '' }]);
+  // The bulk-generate template — a base title + type + count → N rows at once.
+  const [tType, setTType] = useState(firstType);
+  const [tHeadline, setTHeadline] = useState('');
+  const [count, setCount] = useState(4);
+
+  const rowTitle = (base: string, oneBased: number, batch: number): string => {
+    const b = base.trim();
+    if (b) return batch > 1 ? `${b} ${isAr ? toArabic(oneBased) : oneBased}` : b;
+    return isAr ? `منشور ${toArabic(oneBased)}` : `Post ${oneBased}`;
+  };
+  const generate = (): void => {
+    const n = clampInt(count, 1, MAX_BATCH);
+    const start = drafts.length;
+    const batch: ContentDraft[] = Array.from({ length: n }, (_, i) => ({
+      key: newKey(), typeKey: tType || firstType, title: rowTitle(tHeadline, start + i + 1, n), notes: '',
+    }));
+    onChange([...drafts, ...batch]);
+  };
+
+  const add = (): void => onChange([...drafts, { key: newKey(), typeKey: tType || firstType, title: '', notes: '' }]);
   const patch = (key: string, over: Partial<ContentDraft>): void =>
     onChange(drafts.map((d) => (d.key === key ? { ...d, ...over } : d)));
   const remove = (key: string): void => onChange(drafts.filter((d) => d.key !== key));
@@ -49,6 +74,30 @@ export default function CampaignContentBuilder({
         {isAr
           ? 'لكل قطعة: النوع، العنوان، وملاحظات. المنصة تأتي من الحملة الإعلانية والمشروع من الحملة — لا تُختار هنا.'
           : 'Per piece: type, title, notes. Platform comes from the ad campaign and project from the campaign — not chosen here.'}
+      </div>
+
+      {/* Bulk generate — a base title + type + count populate N editable rows. */}
+      <div style={{
+        display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', padding: 11, borderRadius: 10,
+        border: '1px solid var(--line, rgba(255,255,255,0.10))', background: 'var(--panel, rgba(255,255,255,0.03))',
+      }}>
+        <label style={{ display: 'grid', gap: 3, flex: 1, minWidth: 160 }}>
+          <span className="lbl">{isAr ? 'العنوان المبدئي' : 'Base title'}</span>
+          <input className="inp" value={tHeadline} placeholder={isAr ? 'عنوان يُرقَّم تلقائيًا' : 'title, auto-numbered'} onChange={(e) => setTHeadline(e.target.value)} />
+        </label>
+        <label style={{ display: 'grid', gap: 3 }}>
+          <span className="lbl">{isAr ? 'النوع' : 'Type'}</span>
+          <select className="inp" style={{ minWidth: 120 }} value={tType} onChange={(e) => setTType(e.target.value)}>
+            {contentTypes.map((t) => (<option key={t.key} value={t.key}>{isAr ? t.label_ar : t.label_en}</option>))}
+          </select>
+        </label>
+        <label style={{ display: 'grid', gap: 3 }}>
+          <span className="lbl">{isAr ? 'كم قطعة' : 'How many'}</span>
+          <input className="inp" style={{ width: 72 }} type="number" min={1} max={MAX_BATCH} value={count} onChange={(e) => setCount(clampInt(Number(e.target.value), 1, MAX_BATCH))} />
+        </label>
+        <button type="button" className="fbtn on" style={{ height: 38 }} onClick={generate}>
+          {isAr ? '+ توليد المحتوى' : '+ Generate content'}
+        </button>
       </div>
 
       {drafts.length === 0 ? (
