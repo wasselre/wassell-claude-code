@@ -47,6 +47,10 @@ interface Props {
    *  the stored message if one exists, else starts the creation flow. The
    *  parent owns the flow modal. Omit → no send button. */
   onSendToClient?: (item: FinderMatch) => void;
+  /** Jump to the MAP view and open/center THIS project's pin. Supplied only in
+   *  list context (a map is available to switch to); omitted for the map's own
+   *  selected-pin card and where the item has no coordinates. */
+  onShowOnMap?: (item: FinderMatch) => void;
   /**
    * Standalone Project Finder (no client context): hide the select checkbox and
    * the save / eliminate / reactivate actions, leaving only "Details". Saving an
@@ -153,9 +157,14 @@ function DeliveryPill({ facts, source, isAr }: { facts: Record<string, unknown>;
   );
 }
 
+const asCoord = (v: unknown): number | null => {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) && n !== 0 ? n : null;
+};
+
 export default function FinderCard({
   item, isAr, onOpenDetails, selected, onToggleSelect, saveState, existingStatus,
-  onSetStatus, onSendToClient, hideClientActions, chatPdf,
+  onSetStatus, onSendToClient, onShowOnMap, hideClientActions, chatPdf,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
@@ -165,6 +174,8 @@ export default function FinderCard({
   // Units belong to catalog projects (our_projects / all_projects); a single
   // market listing has none, so the "view units" affordance is projects-only.
   const hasUnits = item.source !== 'market_listings';
+  // "Show on map" only makes sense when the pin can actually be placed.
+  const hasCoords = asCoord(f.latitude) != null && asCoord(f.longitude) != null;
   // Main image: raw URL (market listings) or files.id (projects) → resolved to a
   // renderable URL by useSignedImage (passthrough / short-lived signed view URL).
   const imgUrl = useSignedImage(typeof f.image === 'string' && f.image ? f.image : null);
@@ -356,6 +367,11 @@ export default function FinderCard({
             reason-notes prompt. Hidden on the standalone finder (no client). */}
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
           <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
+
+          {/* Jump to the map view and center this project's pin. */}
+          {onShowOnMap && hasCoords && (
+            <ActionBtn icon={<MapPin size={12} />} label={L('عرض على الخريطة', 'Show on map')} onClick={() => onShowOnMap(item)} />
+          )}
 
           {/* All units of this project in a popup (catalog projects only). */}
           {hasUnits && (

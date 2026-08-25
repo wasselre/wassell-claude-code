@@ -31,6 +31,9 @@ interface Props {
   /** Render the clicked match as a full card (the parent's own wired FinderCard).
    *  When provided, a pin click shows this card in a panel instead of navigating. */
   renderSelectedCard?: (match: FinderMatch) => ReactNode;
+  /** External "show on map" request from a list card — open + center this pin.
+   *  The nonce re-triggers even when the same project is asked for twice. */
+  focus?: { id: string; nonce: number } | null;
   /** Tailwind height for the map container. Default h-[70vh]. */
   heightClass?: string;
 }
@@ -54,7 +57,7 @@ const asCoord = (v: unknown): number | null => {
 
 interface Plotted { match: FinderMatch; lat: number; lng: number }
 
-export default function FinderMapView({ matches, isAr, onOpenDetails, renderSelectedCard, heightClass = 'h-[70vh]' }: Props) {
+export default function FinderMapView({ matches, isAr, onOpenDetails, renderSelectedCard, focus, heightClass = 'h-[70vh]' }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const isMobile = useIsMobile();
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
@@ -232,6 +235,27 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
     // the same render as plottedSig, so the closure is always in sync with the signature.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, isLoaded, plottedSig]);
+
+  // External "show on map" request (from a list card). Applied ONCE per nonce,
+  // as soon as the map is ready AND the pin is in the current plotted set (which
+  // may lag a tab switch / a fresh mount) — declared after the marker effect so
+  // its panTo lands after that effect's fitBounds, and after the clear-on-change
+  // effect so it re-opens rather than being cleared. Guarded by the nonce so a
+  // later pin rebuild can't silently reopen a card the rep has since closed.
+  const appliedFocusNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!focus || !map || !isLoaded) return;
+    if (focus.nonce === appliedFocusNonce.current) return;
+    const p = plotted.find((x) => x.match.project_id === focus.id);
+    if (!p) return; // pin not in the current set yet — re-runs when plottedSig updates
+    appliedFocusNonce.current = focus.nonce;
+    setSelectedId(focus.id);
+    map.panTo({ lat: p.lat, lng: p.lng });
+    google.maps.event.addListenerOnce(map, 'idle', () => {
+      if ((map.getZoom() ?? 0) < 13) map.setZoom(15);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus, map, isLoaded, plottedSig]);
 
   if (keyMissing) {
     return (

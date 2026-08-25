@@ -186,6 +186,9 @@ export default function ProjectFinderPage() {
   const [hasSearched, setHasSearched] = useState(false);
   const [activeTab, setActiveTab] = useState<DisplayTabKey>('exact_district_matches');
   const [viewMode, setViewMode] = useState<FinderViewMode>('list');
+  // "Show on map" from a card → switch to the map + focus that pin.
+  const [mapFocus, setMapFocus] = useState<{ id: string; nonce: number } | null>(null);
+  const mapFocusNonce = useRef(0);
   const [visibleCount, setVisibleCount] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -487,6 +490,20 @@ export default function ProjectFinderPage() {
   const activeCount = ourProjects.length + tierItems.length; // total cards in the active tab
   const shownTier = tierItems.slice(0, visibleCount);
 
+  // Card → map: make sure the pin is plotted for the active tab (our-projects
+  // show on every tab; a tier match only on its own), switch to the map, and
+  // hand it a focus request to open + center that pin.
+  function onShowOnMap(item: FinderMatch) {
+    const inOurs = ourProjects.some((o) => o.project_id === item.project_id);
+    if (!inOurs) {
+      const tab = DISPLAY_TAB_KEYS.find((k) => (tabView.tabs[k] ?? []).some((t) => t.project_id === item.project_id));
+      if (tab && tab !== activeTab) setActiveTab(tab);
+    }
+    setViewMode('map');
+    mapFocusNonce.current += 1;
+    setMapFocus({ id: item.project_id, nonce: mapFocusNonce.current });
+  }
+
   const selectedVisible = useMemo(
     () => (selectedClientId ? FINDER_GROUP_KEYS.reduce((n, k) => n + refinedGroups[k].filter((i) => selected.has(i.project_id)).length, 0) : 0),
     [selectedClientId, refinedGroups, selected],
@@ -524,7 +541,8 @@ export default function ProjectFinderPage() {
   }, [mustConfirmLeave, prefsDirty]);
 
   // One card, wired for a selected client (full actions) or read-only discovery.
-  const renderCard = (item: FinderMatch, key: string) => (
+  // `showMapBtn` is false for the map's own selected-pin card (already on the map).
+  const renderCard = (item: FinderMatch, key: string, showMapBtn = true) => (
     <FinderCard
       key={key}
       item={item}
@@ -537,6 +555,7 @@ export default function ProjectFinderPage() {
       onReactivate={noop}
       onSetStatus={selectedClientId ? onSetStatus : undefined}
       onSendToClient={clientRec ? setSendTarget : undefined}
+      onShowOnMap={showMapBtn ? onShowOnMap : undefined}
       saveState={selectedClientId ? saveStates[item.project_id] ?? 'idle' : 'idle'}
       existingStatus={selectedClientId ? existingStatusFor(item) : null}
       hideClientActions={!selectedClientId}
@@ -861,8 +880,9 @@ export default function ProjectFinderPage() {
               <FinderMapView
                 matches={[...ourProjects, ...tierItems]}
                 isAr={isAr}
+                focus={mapFocus}
                 onOpenDetails={onOpenDetails}
-                renderSelectedCard={(m) => renderCard(m, `map-${m.project_id}`)}
+                renderSelectedCard={(m) => renderCard(m, `map-${m.project_id}`, false)}
               />
             </div>
           )}

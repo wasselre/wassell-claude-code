@@ -158,6 +158,10 @@ export default function SuggestedProjectsView({
   const [error, setError] = useState<{ message: string; timeout: boolean } | null>(null);
   const [activeTab, setActiveTab] = useState<DisplayTabKey>('exact_district_matches');
   const [viewMode, setViewMode] = useState<FinderViewMode>('list');
+  // "Show on map" from a card: switch to the map and open/center that pin. The
+  // nonce lets the same project be re-focused (e.g. clicked twice).
+  const [mapFocus, setMapFocus] = useState<{ id: string; nonce: number } | null>(null);
+  const mapFocusNonce = useRef(0);
   const [visibleCount, setVisibleCount] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -650,6 +654,20 @@ export default function SuggestedProjectsView({
   const tierItems = tabView.tabs[activeTab] ?? [];
   const activeCount = ourProjects.length + tierItems.length;
   const shownTier = tierItems.slice(0, visibleCount);
+
+  // Card → map. Ensure the pin is in the plotted set (our-projects show on every
+  // tab; a tier match only shows on its own tab, so hop to it), switch to the map
+  // view, and hand the map a focus request to open + center that pin.
+  function onShowOnMap(item: FinderMatch) {
+    const inOurs = ourProjects.some((o) => o.project_id === item.project_id);
+    if (!inOurs) {
+      const tab = DISPLAY_TAB_KEYS.find((k) => (tabView.tabs[k] ?? []).some((t) => t.project_id === item.project_id));
+      if (tab && tab !== activeTab) setActiveTab(tab);
+    }
+    setViewMode('map');
+    mapFocusNonce.current += 1;
+    setMapFocus({ id: item.project_id, nonce: mapFocusNonce.current });
+  }
 
   useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, tabView]);
   useEffect(() => {
@@ -1183,6 +1201,7 @@ export default function SuggestedProjectsView({
             <FinderMapView
               matches={[...ourProjects, ...tierItems]}
               isAr={isAr}
+              focus={mapFocus}
               onOpenDetails={onOpenDetails}
               renderSelectedCard={(item) => (
                 <FinderCard
@@ -1222,6 +1241,7 @@ export default function SuggestedProjectsView({
                     onReactivate={onReactivate}
                     onSetStatus={onSetStatus}
                     onSendToClient={onSendToClient}
+                    onShowOnMap={onShowOnMap}
                     saveState={saveStates[item.project_id] ?? 'idle'}
                     existingStatus={existingStatusFor(item)}
                     chatPdf={chatPdf}
@@ -1249,6 +1269,7 @@ export default function SuggestedProjectsView({
                     onReactivate={onReactivate}
                     onSetStatus={onSetStatus}
                     onSendToClient={onSendToClient}
+                    onShowOnMap={onShowOnMap}
                     saveState={saveStates[item.project_id] ?? 'idle'}
                     existingStatus={existingStatusFor(item)}
                     chatPdf={chatPdf}
