@@ -893,19 +893,24 @@ export function CampaignModal({
       let contentOk = 0;
       let contentFail = 0;
       if (isNew && res.item?.id && drafts.length > 0) {
+        // Platform + project are DERIVED from the campaign, not chosen per piece:
+        // platforms from the ad campaign's executions, project from the campaign.
+        const derivedPlatforms = Array.from(new Set(execDrafts.map((e) => e.platform))).filter(Boolean);
+        const derivedPurpose: 'paid' | 'organic' = kind === 'paid' ? 'paid' : 'organic';
         for (const d of drafts) {
           try {
             const cres = await createContent({
               title: d.title.trim(),
               content_type_key: d.typeKey,
-              project_ids: d.projectIds,
+              project_ids: projectIds,
               campaign_id: res.item.id,
-              purpose: d.purpose,
-              target_publish_at: d.targetDate ? new Date(d.targetDate).toISOString() : null,
+              purpose: derivedPurpose,
+              // Notes land in the content's data.notes — the field the «الموجز» shows.
+              data: { notes: d.notes.trim() || null },
             });
             const cid = cres.item?.id;
             if (cid) {
-              for (const p of d.platforms) await savePublication(cid, { platform: p, status: 'draft' });
+              for (const p of derivedPlatforms) await savePublication(cid, { platform: p, status: 'draft' });
             }
             contentOk += 1;
           } catch (err) {
@@ -1066,12 +1071,9 @@ export function CampaignModal({
       {isNew && (
         <CampaignContentBuilder
           isAr={isAr}
-          projects={projects}
           contentTypes={contentTypes}
           drafts={drafts}
           onChange={setDrafts}
-          paid={kind === 'paid'}
-          defaultProjectIds={projectIds}
         />
       )}
 
