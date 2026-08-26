@@ -28,8 +28,9 @@ import {
   fetchAssets, fetchContentDetail, fetchContentVersions, fetchShoots,
   linkAsset, linkAssetFromFile, saveAsset, saveShoot, setApprovalAsset, unlinkAsset,
 } from '@/lib/marketingOS/client';
-import { searchBusinessFiles } from '@/lib/files/library';
-import type { BusinessFileRow } from '@/types/files';
+import { listDocumentTypes, searchBusinessFiles } from '@/lib/files/library';
+import type { BusinessFileRow, FileDocumentTypeRow, FileRow } from '@/types/files';
+import PostUploadModal from '@/pages/Files/library/PostUploadModal';
 import { formatBytes, heicToJpeg, isHeic, kindFromFile } from '../lib/upload';
 import { assetErrorText, canonicalAssetFields, uploadCanonicalAsset } from '../lib/canonicalUpload';
 import { useAssetUrls } from '../lib/assetUrls';
@@ -749,6 +750,15 @@ export function NewAssetModal({
   const [overrides, setOverrides] = useState<Record<string, AssetOverride>>({});
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [tagDraft, setTagDraft] = useState('');
+  // After upload, the SAME Files-library popup takes over (AI results,
+  // classifications, link-to-record) — one upload experience everywhere.
+  const [postUpload, setPostUpload] = useState<FileRow[]>([]);
+  const [docTypes, setDocTypes] = useState<FileDocumentTypeRow[]>([]);
+  useEffect(() => {
+    let alive = true;
+    listDocumentTypes().then((r) => { if (alive) setDocTypes(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   const single = files.length === 1;
   const keyOf = (f: File): string => `${f.name}:${f.size}`;
@@ -794,6 +804,7 @@ export function NewAssetModal({
     }
     setBusy(true);
     const created: MosAsset[] = [];
+    const uploadedRows: FileRow[] = [];
     let failed = 0;
     try {
       for (let i = 0; i < files.length; i += 1) {
@@ -838,6 +849,7 @@ export function NewAssetModal({
             original_name: original.name,
           });
           created.push(res.asset);
+          uploadedRows.push(fileRow);
         } catch (e) {
           // One failed file must not sink the whole batch — surface it, keep going.
           // An unsupported format reports the specific reason and what to do,
@@ -858,11 +870,28 @@ export function NewAssetModal({
         }
         await onCreated(created);
       }
+      // Hand off to the shared Files popup for AI review + metadata + linking.
+      // The add-material form is replaced by it (see the early return below);
+      // dismissing it closes the whole flow.
+      if (uploadedRows.length > 0) setPostUpload(uploadedRows);
     } finally {
       setUploading(null);
       setBusy(false);
     }
   };
+
+  // Once files are up, the identical Files-library popup takes over — same AI,
+  // same classifications, same link-to-record as every other upload in the app.
+  if (postUpload.length > 0) {
+    return (
+      <PostUploadModal
+        files={postUpload}
+        types={docTypes}
+        onDismiss={onClose}
+        onApplied={onClose}
+      />
+    );
+  }
 
   return (
     <Modal

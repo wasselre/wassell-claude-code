@@ -32,6 +32,9 @@ import {
   kindFromFile, tagsFromPath,
 } from './lib/upload';
 import { assetErrorText, canonicalAssetFields, uploadCanonicalAsset } from './lib/canonicalUpload';
+import { listDocumentTypes } from '@/lib/files/library';
+import type { FileDocumentTypeRow, FileRow } from '@/types/files';
+import PostUploadModal from '@/pages/Files/library/PostUploadModal';
 
 type RowStatus = 'waiting' | 'converting' | 'uploading' | 'done' | 'failed' | 'duplicate' | 'skipped';
 
@@ -122,6 +125,16 @@ export default function UploadPage() {
   // Counted in the upload lanes — the `rows` closure inside start() is stale
   // by the time the batch ends, so the delivery check reads this instead.
   const successRef = useRef(0);
+  // Files rows uploaded this batch — handed to the shared Files popup at the end
+  // so marketing intake gets the exact same AI review + metadata + linking UX.
+  const uploadedRowsRef = useRef<FileRow[]>([]);
+  const [postUpload, setPostUpload] = useState<FileRow[]>([]);
+  const [docTypes, setDocTypes] = useState<FileDocumentTypeRow[]>([]);
+  useEffect(() => {
+    let alive = true;
+    listDocumentTypes().then((r) => { if (alive) setDocTypes(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     // The existing library, for duplicate detection at the door.
@@ -277,6 +290,7 @@ export default function UploadPage() {
       });
       patchRow(row.id, { status: 'done', progress: 1, assetRef: res.asset.ref });
       successRef.current += 1;
+      uploadedRowsRef.current.push(fileRow);
     } catch (e) {
       if (signal.aborted) {
         patchRow(row.id, { status: 'waiting', progress: 0 });
@@ -293,6 +307,7 @@ export default function UploadPage() {
     if (uploadable.length === 0) return;
     setRunning(true);
     successRef.current = 0;
+    uploadedRowsRef.current = [];
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -330,6 +345,9 @@ export default function UploadPage() {
           addToast(e instanceof Error ? e.message : String(e), 'error');
         }
       }
+      // Hand the batch to the shared Files popup — same AI review + metadata +
+      // link-to-record as every other upload in the app.
+      if (uploadedRowsRef.current.length > 0) setPostUpload([...uploadedRowsRef.current]);
     }
   };
 
@@ -630,6 +648,15 @@ export default function UploadPage() {
           </div>
         </div>
       </div>
+
+      {postUpload.length > 0 && (
+        <PostUploadModal
+          files={postUpload}
+          types={docTypes}
+          onDismiss={() => setPostUpload([])}
+          onApplied={() => setPostUpload([])}
+        />
+      )}
     </>
   );
 }

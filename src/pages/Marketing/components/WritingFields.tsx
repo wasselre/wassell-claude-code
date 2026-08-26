@@ -35,9 +35,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { updateContent } from '@/lib/marketingOS/client';
-import { searchBusinessFiles } from '@/lib/files/library';
+import { listDocumentTypes, searchBusinessFiles } from '@/lib/files/library';
 import { signViewUrls, uploadFile } from '@/lib/files/client';
-import type { BusinessFileRow } from '@/types/files';
+import type { BusinessFileRow, FileDocumentTypeRow, FileRow } from '@/types/files';
+import PostUploadModal from '@/pages/Files/library/PostUploadModal';
 import { Modal } from './kit';
 import { num } from '../lib/format';
 import { useMosText } from '../lib/useMosText';
@@ -158,6 +159,13 @@ function FileReferencePicker({
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const [postUpload, setPostUpload] = useState<FileRow | null>(null);
+  const [docTypes, setDocTypes] = useState<FileDocumentTypeRow[]>([]);
+  useEffect(() => {
+    let alive = true;
+    listDocumentTypes().then((r) => { if (alive) setDocTypes(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -191,7 +199,8 @@ function FileReferencePicker({
     try {
       const row = await uploadFile(f);
       onChange(row.id, row.original_name);
-      setOpen(false);
+      // Same Files popup as everywhere: review AI + metadata for the new file.
+      setPostUpload(row);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -309,6 +318,15 @@ function FileReferencePicker({
             })}
           </div>
         </Modal>
+      )}
+
+      {postUpload && (
+        <PostUploadModal
+          files={[postUpload]}
+          types={docTypes}
+          onDismiss={() => { setPostUpload(null); setOpen(false); }}
+          onApplied={() => { setPostUpload(null); setOpen(false); }}
+        />
       )}
     </>
   );
