@@ -12,8 +12,11 @@
  *                                         the piece needs; none is "approved" and none
  *                                         is discarded — every headline is part of the
  *                                         post, so there is no picker and no forced count.
- *   caption + hashtags                  → the caption card (per-platform captions live
- *                                         in the Publishing tab, and the card says so)
+ *   (caption + hashtags + paid ad copy) → NOT here. Distribution copy belongs to
+ *                                         the PLACEMENT it runs on, so it is authored
+ *                                         in PlacementCaptions (rendered by the content
+ *                                         tab next to this) — organic captions on the
+ *                                         publication rows, paid copy on the ad rows.
  *   design_brief (+ format/reference)   → the structured design brief, so "what do I
  *                                         design" never drowns in a notes box. The
  *                                         reference is a PICK from the content library,
@@ -68,16 +71,6 @@ const COMPOSED = new Set([
   'caption_tiktok', 'caption_x', 'caption_snapchat',
   'design_brief', 'slides', 'scenes',
 ]);
-
-/** One compact caption row per platform. Instagram keeps the legacy `caption`
- *  key so existing data + downstream readers are untouched; the rest are
- *  companion keys in `data`. */
-const CAPTION_PLATFORMS: Array<{ key: string; ar: string; en: string }> = [
-  { key: 'caption', ar: 'انستقرام', en: 'Instagram' },
-  { key: 'caption_tiktok', ar: 'تيك توك', en: 'TikTok' },
-  { key: 'caption_x', ar: 'إكس (تويتر)', en: 'X (Twitter)' },
-  { key: 'caption_snapchat', ar: 'سناب شات', en: 'Snapchat' },
-];
 
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '');
 const asList = (v: unknown): string[] =>
@@ -409,12 +402,8 @@ export default function WritingFields({
     return isAr ? `${num(written, true)} عنوان` : `${written} headline${written === 1 ? '' : 's'}`;
   };
 
-  /* ── hashtags render as tags, edit as one line ── */
-  const hashtags = str('hashtags');
-  const tagList = hashtags.split(/\s+/).map((t) => t.trim()).filter(Boolean);
-
   const nothingComposed = !has('idea') && !has('voiceover') && !has('headlines')
-    && !has('caption') && !has('design_brief') && leftovers.length === 0;
+    && !has('design_brief') && leftovers.length === 0;
 
   if (nothingComposed) {
     return (
@@ -528,50 +517,23 @@ export default function WritingFields({
           </div>
         )}
 
-        {(has('caption') || has('design_brief')) && (
-          <div className={has('caption') && has('design_brief') ? 'grid g2' : undefined}>
-            {has('caption') && (
-              <div className="write">
-                <div className="doc-lbl">{isAr ? 'الكابشن' : 'Caption'}</div>
-                <div style={{ display: 'grid', gap: 10 }}>
-                  {CAPTION_PLATFORMS.map((p) => (
-                    <div key={p.key} className="fld">
-                      <div className="k">{isAr ? p.ar : p.en}</div>
-                      <div className="v" style={{ whiteSpace: 'pre-line', lineHeight: 1.9 }}>
-                        {disp(p.key) || '—'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {tagList.length > 0 && (
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
-                    {/* Four tags then «+٣» — screen 08's collapse point. */}
-                    {tagList.slice(0, 4).map((t) => <span key={t} className="tag">{t}</span>)}
-                    {tagList.length > 4 && (
-                      <span className="tag tag-t">+{num(tagList.length - 4, isAr)}</span>
-                    )}
-                  </div>
-                )}
+        {/* Captions/ad-copy are authored in PlacementCaptions (rendered by the
+            content tab) — they belong to the placement, not the creative. */}
+        {has('design_brief') && (
+          <div className="write">
+            <div className="doc-lbl">
+              {isAr ? 'موجز التصميم — للمونتير' : 'The design brief — for the editor'}
+            </div>
+            <div className="fld">
+              <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
+              <div className="v">{str('design_brief') || '—'}</div>
+            </div>
+            <div className="fld">
+              <div className="k">{isAr ? 'مرجع' : 'Reference'}</div>
+              <div className="v" style={str('design_reference_file_id') ? { color: 'var(--copper)' } : undefined}>
+                {str('design_reference_file_title') || str('design_reference_file_id') || '—'}
               </div>
-            )}
-
-            {has('design_brief') && (
-              <div className="write">
-                <div className="doc-lbl">
-                  {isAr ? 'موجز التصميم — للمونتير' : 'The design brief — for the editor'}
-                </div>
-                <div className="fld">
-                  <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
-                  <div className="v">{str('design_brief') || '—'}</div>
-                </div>
-                <div className="fld">
-                  <div className="k">{isAr ? 'مرجع' : 'Reference'}</div>
-                  <div className="v" style={str('design_reference_file_id') ? { color: 'var(--copper)' } : undefined}>
-                    {str('design_reference_file_title') || str('design_reference_file_id') || '—'}
-                  </div>
-                </div>
-              </div>
-            )}
+            </div>
           </div>
         )}
 
@@ -718,81 +680,38 @@ export default function WritingFields({
         </div>
       )}
 
-      {/* ── الكابشن + موجز التصميم ─────────────────────────────────── */}
-      {(has('caption') || has('design_brief')) && (
-        <div className={has('caption') && has('design_brief') ? 'grid g2' : undefined}>
-          {has('caption') && (
-            <div className="write">
-              <div className="doc-lbl">{isAr ? 'الكابشن' : 'Caption'}</div>
-              {/* One compact row per platform — each platform's caption differs. */}
-              <div style={{ display: 'grid', gap: 8 }}>
-                {CAPTION_PLATFORMS.map((p) => (
-                  <div key={p.key} className="fld">
-                    <div className="k">{isAr ? p.ar : p.en}</div>
-                    <textarea
-                      className="inp"
-                      rows={2}
-                      style={{ marginTop: 4, fontSize: 13, lineHeight: 1.8 }}
-                      value={str(p.key)}
-                      onChange={(e) => set(p.key, e.target.value)}
-                    />
-                  </div>
-                ))}
-              </div>
-              {has('hashtags') && (
-                <>
-                  {tagList.length > 0 && (
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
-                      {/* Four tags then «+٣» — screen 08's collapse point. */}
-                      {tagList.slice(0, 4).map((t) => <span key={t} className="tag">{t}</span>)}
-                      {tagList.length > 4 && (
-                        <span className="tag tag-t">+{num(tagList.length - 4, isAr)}</span>
-                      )}
-                    </div>
-                  )}
-                  <input
-                    className="inp"
-                    dir="rtl"
-                    style={{ marginTop: 8, fontSize: 12.5 }}
-                    value={hashtags}
-                    placeholder={isAr ? '#الوسوم مفصولة بمسافة' : '#hashtags separated by spaces'}
-                    onChange={(e) => set('hashtags', e.target.value)}
-                  />
-                </>
-              )}
-            </div>
-          )}
-
-          {has('design_brief') && (
-            <div className="write">
-              <div className="doc-lbl">
-                {isAr ? 'موجز التصميم — للمونتير' : 'The design brief — for the editor'}
-              </div>
-              <div className="fld">
-                <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
-                <textarea
-                  className="inp"
-                  rows={3}
-                  style={{ marginTop: 4, fontSize: 13 }}
-                  value={str('design_brief')}
-                  placeholder={isAr ? 'صور داخلية، ساعة ذهبية. بدون صور مخزون.' : 'Interior shots, golden hour. No stock photos.'}
-                  onChange={(e) => set('design_brief', e.target.value)}
-                />
-              </div>
-              <div className="fld">
-                <div className="k">{isAr ? 'مرجع' : 'Reference'}</div>
-                <FileReferencePicker
-                  fileId={str('design_reference_file_id')}
-                  title={str('design_reference_file_title')}
-                  isAr={isAr}
-                  onChange={(id, title) => {
-                    set('design_reference_file_id', id);
-                    set('design_reference_file_title', title);
-                  }}
-                />
-              </div>
-            </div>
-          )}
+      {/* ── موجز التصميم ───────────────────────────────────────────── */}
+      {/* Captions + paid ad-copy live in PlacementCaptions (the content tab
+          renders it next to this) — a caption belongs to the placement it runs
+          on, not to the creative. */}
+      {has('design_brief') && (
+        <div className="write">
+          <div className="doc-lbl">
+            {isAr ? 'موجز التصميم — للمونتير' : 'The design brief — for the editor'}
+          </div>
+          <div className="fld">
+            <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
+            <textarea
+              className="inp"
+              rows={3}
+              style={{ marginTop: 4, fontSize: 13 }}
+              value={str('design_brief')}
+              placeholder={isAr ? 'صور داخلية، ساعة ذهبية. بدون صور مخزون.' : 'Interior shots, golden hour. No stock photos.'}
+              onChange={(e) => set('design_brief', e.target.value)}
+            />
+          </div>
+          <div className="fld">
+            <div className="k">{isAr ? 'مرجع' : 'Reference'}</div>
+            <FileReferencePicker
+              fileId={str('design_reference_file_id')}
+              title={str('design_reference_file_title')}
+              isAr={isAr}
+              onChange={(id, title) => {
+                set('design_reference_file_id', id);
+                set('design_reference_file_title', title);
+              }}
+            />
+          </div>
         </div>
       )}
 

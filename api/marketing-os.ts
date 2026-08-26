@@ -322,7 +322,7 @@ interface Row {
  */
 const CONTENT_LIST_COLUMNS = [
   'id', 'ref', 'title', 'content_type_key', 'content_type_label_ar', 'content_type_label_en',
-  'project_id', 'project_ids', 'campaign_id', 'purpose',
+  'project_id', 'project_ids', 'campaign_id', 'purpose', 'organic_platforms',
   'status_key', 'current_step_label_ar', 'current_step_label_en',
   'owner_role', 'current_assignee_user_id', 'current_task_due_at', 'current_round',
   'due_at', 'target_publish_at', 'updated_at',
@@ -331,9 +331,65 @@ const CONTENT_LIST_COLUMNS = [
 /** Patchable content fields. Identity and provenance are excluded by omission. */
 const CONTENT_EDITABLE = [
   'title', 'project_id', 'project_ids', 'campaign_id', 'purpose', 'language',
-  'goal', 'audience', 'angle', 'cta',
+  'goal', 'audience', 'angle', 'cta', 'organic_platforms',
   'target_publish_at', 'due_at', 'data',
 ] as const;
+
+/** The five standardized ad-copy keys a paid placement carries in `creative`. */
+const AD_CREATIVE_KEYS = ['primary_text', 'headline', 'description', 'cta', 'destination_url'] as const;
+
+interface PaidAdExec {
+  id: string; platform: string; label: string | null; status: string; content_id: string | null;
+}
+interface PaidAdRow {
+  id: string; execution_id: string; content_id: string | null;
+  creative: Record<string, unknown> | null; status: string;
+}
+interface PaidAdsPayload {
+  campaign: { id: string; name: string; destination_url: string | null } | null;
+  items: Array<{ execution: PaidAdExec; ad: PaidAdRow | null }>;
+}
+
+/**
+ * The paid-authoring surface for ONE content item: its campaign (only when the
+ * campaign is `kind='paid'`) and, per execution, the ad row that carries THIS
+ * content's copy. Reused by the `content_paid_ads` read and returned fresh from
+ * `content_ad_creative_save`. Reads as the CALLER (RLS) — throws PostgrestError.
+ */
+async function loadPaidAdsPayload(sb: SupabaseClient, contentId: string): Promise<PaidAdsPayload> {
+  const c = await sb.from('mos_content_v').select('campaign_id').eq('id', contentId).maybeSingle();
+  if (c.error) throw c.error;
+  const campaignId = (c.data as { campaign_id: string | null } | null)?.campaign_id ?? null;
+  if (!campaignId) return { campaign: null, items: [] };
+
+  const camp = await sb.from('mos_campaigns')
+    .select('id, name, kind, destination_url').eq('id', campaignId).maybeSingle();
+  if (camp.error) throw camp.error;
+  const campaign = camp.data as { id: string; name: string; kind: string; destination_url: string | null } | null;
+  // Paid authoring belongs to paid campaigns only — an organic campaign has no ads.
+  if (!campaign || campaign.kind !== 'paid') return { campaign: null, items: [] };
+
+  const execs = await sb.from('mos_campaign_executions')
+    .select('id, platform, label, status, content_id')
+    .eq('campaign_id', campaignId).order('platform', { ascending: true });
+  if (execs.error) throw execs.error;
+  const execRows = (execs.data ?? []) as PaidAdExec[];
+
+  let ads: PaidAdRow[] = [];
+  if (execRows.length > 0) {
+    const adsRes = await sb.from('mos_execution_ads')
+      .select('id, execution_id, content_id, creative, status')
+      .in('execution_id', execRows.map((e) => e.id))
+      .eq('content_id', contentId).is('archived_at', null);
+    if (adsRes.error) throw adsRes.error;
+    ads = (adsRes.data ?? []) as PaidAdRow[];
+  }
+  const adByExec = new Map(ads.map((a) => [a.execution_id, a]));
+  return {
+    campaign: { id: campaign.id, name: campaign.name, destination_url: campaign.destination_url },
+    items: execRows.map((e) => ({ execution: e, ad: adByExec.get(e.id) ?? null })),
+  };
+}
 
 /** The live metric a success measure's target is tracked against (mirrors the
  *  MosMeasureSource type + the mos_measure_types.source CHECK constraint). */
@@ -2117,6 +2173,141 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ publications: list.data ?? [] });
       }
 
+      /* ---------------------------------------------------------------- */
+      /* Placement-authoring from the CONTENT tab (Option A, 2026-08-26).  */
+      /*                                                                  */
+      /* A caption belongs to the PLACEMENT it runs on, not the creative. */
+      /* The content writer authors it here; the SAME publication row is  */
+      /* what the Publish tab schedules and what bundle.social posts — so  */
+      /* the caption a writer types is finally the caption that publishes. */
+      /*                                                                  */
+      /* These write only TEXT (caption / ad creative) and are gated on   */
+      /* `write_content`. Scheduling a publication stays gated by          */
+      /* `schedule` and ad structure/metrics by `enter_metrics` —         */
+      /* capabilities the writer role need not hold — so the text write    */
+      /* goes through the service client after the write_content gate,     */
+      /* touching nothing but the copy.                                    */
+      /* ---------------------------------------------------------------- */
+      case 'content_caption_save': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        const contentId = str(body.content_id);
+        const platform = str(body.platform);
+        if (!contentId || !platform) return jsonError(400, 'content_id and platform are required');
+        const caption = typeof body.caption === 'string' ? body.caption : '';
+
+        // The caller must be able to SEE the content (RLS read) before we write.
+        const own = await sb.from('mos_content_v').select('id').eq('id', contentId).maybeSingle();
+        const of = dbFail(own.error); if (of) return of;
+        if (!own.data) return jsonError(404, 'content item not found');
+
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+
+        // Lazy-upsert the platform's DRAFT publication — caption text ONLY.
+        const existing = await svc.from('mos_publications').select('id')
+          .eq('content_id', contentId).eq('platform', platform)
+          .order('created_at', { ascending: true }).limit(1).maybeSingle();
+        const ef = dbFail(existing.error); if (ef) return ef;
+        if (existing.data) {
+          const upd = await svc.from('mos_publications')
+            .update({ caption, updated_at: new Date().toISOString() })
+            .eq('id', (existing.data as { id: string }).id).select('id').maybeSingle();
+          const uf = dbFail(upd.error); if (uf) return uf;
+        } else {
+          // Default account for the platform (prefer connected, then sort order).
+          const acct = await svc.from('mos_platform_accounts').select('id')
+            .eq('platform', platform).is('archived_at', null)
+            .order('is_connected', { ascending: false }).order('sort_order', { ascending: true })
+            .limit(1).maybeSingle();
+          const af = dbFail(acct.error); if (af) return af;
+          const ins = await svc.from('mos_publications').insert({
+            content_id: contentId, platform,
+            account_id: (acct.data as { id: string } | null)?.id ?? null,
+            status: 'draft', caption,
+          }).select('id').maybeSingle();
+          const insf = dbFail(ins.error); if (insf) return insf;
+        }
+
+        const list = await sb.from('mos_publication_v').select('*').eq('content_id', contentId)
+          .order('scheduled_at', { ascending: true, nullsFirst: false });
+        const lf = dbFail(list.error); if (lf) return lf;
+        return jsonOk({ publications: list.data ?? [] });
+      }
+
+      case 'content_paid_ads': {
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        try {
+          return jsonOk(await loadPaidAdsPayload(sb, contentId));
+        } catch (e) {
+          return dbFail(e as PostgrestError)
+            ?? jsonError(500, e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      case 'content_ad_creative_save': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        const contentId = str(body.content_id);
+        const executionId = str(body.execution_id);
+        if (!contentId || !executionId) return jsonError(400, 'content_id and execution_id are required');
+        const rawCreative = (body.creative ?? {}) as Record<string, unknown>;
+        const creative: Record<string, string> = {};
+        for (const k of AD_CREATIVE_KEYS) {
+          if (typeof rawCreative[k] === 'string') creative[k] = rawCreative[k] as string;
+        }
+
+        // Visibility (content) + linkage (execution ↔ same campaign) as the caller.
+        const own = await sb.from('mos_content_v').select('id, title, campaign_id')
+          .eq('id', contentId).maybeSingle();
+        const of = dbFail(own.error); if (of) return of;
+        const ownRow = own.data as { id: string; title: string; campaign_id: string | null } | null;
+        if (!ownRow) return jsonError(404, 'content item not found');
+        const exec = await sb.from('mos_campaign_executions').select('id, campaign_id, content_id')
+          .eq('id', executionId).maybeSingle();
+        const exf = dbFail(exec.error); if (exf) return exf;
+        const execRow = exec.data as { id: string; campaign_id: string; content_id: string | null } | null;
+        if (!execRow) return jsonError(404, 'execution not found');
+        if (ownRow.campaign_id && execRow.campaign_id !== ownRow.campaign_id) {
+          return jsonError(400, 'this execution belongs to a different campaign than the content');
+        }
+
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+
+        // Lazy-upsert the ad row for (execution, content) — CREATIVE TEXT ONLY.
+        const existing = await svc.from('mos_execution_ads').select('id, creative')
+          .eq('execution_id', executionId).eq('content_id', contentId).is('archived_at', null)
+          .order('created_at', { ascending: true }).limit(1).maybeSingle();
+        const ef = dbFail(existing.error); if (ef) return ef;
+        if (existing.data) {
+          const prev = ((existing.data as { creative: unknown }).creative ?? {}) as Record<string, unknown>;
+          const upd = await svc.from('mos_execution_ads')
+            .update({ creative: { ...prev, ...creative }, updated_at: new Date().toISOString() })
+            .eq('id', (existing.data as { id: string }).id).select('id').maybeSingle();
+          const uf = dbFail(upd.error); if (uf) return uf;
+        } else {
+          const ins = await svc.from('mos_execution_ads').insert({
+            execution_id: executionId, content_id: contentId,
+            label: ownRow.title, status: 'waiting', creative,
+          }).select('id').maybeSingle();
+          const insf = dbFail(ins.error); if (insf) return insf;
+        }
+        // Link the execution to this content when it wasn't, so the campaign tree
+        // shows the ad under it. Only fills a NULL — never re-points a linked exec.
+        if (!execRow.content_id) {
+          const link = await svc.from('mos_campaign_executions')
+            .update({ content_id: contentId }).eq('id', executionId).select('id').maybeSingle();
+          const lf = dbFail(link.error); if (lf) return lf;
+        }
+
+        try {
+          return jsonOk(await loadPaidAdsPayload(sb, contentId));
+        } catch (e) {
+          return dbFail(e as PostgrestError)
+            ?? jsonError(500, e instanceof Error ? e.message : String(e));
+        }
+      }
+
       /* -------------------------------------------------------- */
       /* Organic posting via bundle.social — the REAL publish path */
       /* (the manual copy-paste flow stays for x/website).         */
@@ -2177,6 +2368,22 @@ export default async function handler(req: Request): Promise<Response> {
           return jsonError(400, 'This publication has no approved file to post.');
         }
         const caption = typeof pub.caption === 'string' ? pub.caption : '';
+        // Shared hashtags live once on the CONTENT (data.hashtags) so a single
+        // edit updates every platform; they are folded into the placement caption
+        // HERE at publish, leaving the authored caption clean copy. Idempotent on
+        // re-publish (the caption is rebuilt from pub.caption each time).
+        let finalCaption = caption;
+        {
+          const cid = typeof pub.content_id === 'string' ? pub.content_id : '';
+          if (cid) {
+            const tagRes = await sb.from('mos_content').select('data').eq('id', cid).maybeSingle();
+            const tags = typeof (tagRes.data as { data?: Record<string, unknown> } | null)?.data?.hashtags === 'string'
+              ? String((tagRes.data as { data: Record<string, unknown> }).data.hashtags).trim() : '';
+            if (tags && !finalCaption.includes(tags)) {
+              finalCaption = finalCaption ? `${finalCaption}\n\n${tags}` : tags;
+            }
+          }
+        }
 
         // Resolve every approved asset, PRESERVING the carousel order (the
         // .in() result order is arbitrary — re-order by effectiveIds).
@@ -2206,7 +2413,7 @@ export default async function handler(req: Request): Promise<Response> {
         // the authoritative gate (a stale client or a direct API call still
         // cannot push a doomed post). Blockers only — warnings (unverifiable
         // metadata) pass through: bundle validates everything at post time.
-        const flight = preflightPublishSet(platform, assets, caption);
+        const flight = preflightPublishSet(platform, assets, finalCaption);
         const blockers = flight.issues.filter((i) => i.level === 'block');
         if (blockers.length > 0) {
           return jsonError(422, blockers.map((b) => `${b.ar} / ${b.en}`).join('  •  '));
@@ -2273,7 +2480,7 @@ export default async function handler(req: Request): Promise<Response> {
             id: up.id,
             kind: (assets[i]?.kind ?? 'photo') as 'photo' | 'video' | 'design' | 'audio' | 'document',
           }));
-          const built = buildPlatformData(platform, { text: caption, uploads });
+          const built = buildPlatformData(platform, { text: finalCaption, uploads });
           if (!built) return jsonError(400, `${platform} is not supported for auto-posting.`);
           post = await createPost(cfg, {
             title,

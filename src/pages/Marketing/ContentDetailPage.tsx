@@ -38,6 +38,7 @@ import StageRail from './components/StageRail';
 import ProjectLink from './components/ProjectLink';
 import TaskCard, { TasksApprovalsTab } from './components/TaskCard';
 import WritingFields from './components/WritingFields';
+import PlacementCaptions from './components/PlacementCaptions';
 import SceneTable from './components/SceneTable';
 import { useMosText } from './lib/useMosText';
 import PublishTab from './components/PublishTab';
@@ -678,6 +679,36 @@ export default function ContentDetailPage() {
                 canEdit={canEditNow}
                 isAr={isAr}
                 onSaved={(data) => setItem({ ...item, data })}
+              />
+              {/* Distribution copy — captions per organic platform + paid ad copy —
+                  authored on the PLACEMENTS, shown by purpose. */}
+              <PlacementCaptions
+                contentId={item.id}
+                purpose={item.purpose}
+                campaignId={item.campaign_id}
+                hasCaption={fieldSchemaKeys(type?.field_schema ?? []).includes('caption')}
+                hasHashtags={fieldSchemaKeys(type?.field_schema ?? []).includes('hashtags')}
+                accounts={accounts}
+                publications={publications}
+                hashtags={typeof item.data?.hashtags === 'string' ? item.data.hashtags : ''}
+                organicPlatforms={item.organic_platforms ?? []}
+                canEdit={canEditNow}
+                isAr={isAr}
+                onPublicationsChanged={setPublications}
+                onHashtagsChanged={(value) => {
+                  const nextData = { ...(item.data ?? {}), hashtags: value };
+                  setItem({ ...item, data: nextData });
+                  updateContent(item.id, { data: nextData })
+                    .catch((e: unknown) => addToast(e instanceof Error ? e.message : String(e), 'error'));
+                }}
+                onOrganicPlatformsChanged={(platforms) => {
+                  // Optimistic — content_update's returned row omits `data`, so
+                  // replacing `item` with it would wipe the creative prose. Keep
+                  // the local merge; the server persists the array in the background.
+                  setItem({ ...item, organic_platforms: platforms });
+                  updateContent(item.id, { organic_platforms: platforms })
+                    .catch((e: unknown) => addToast(e instanceof Error ? e.message : String(e), 'error'));
+                }}
               />
               {/* Screen 29, phone 2: on the phone the scenes render as a
                   READABLE list with a duration bar, not a compressed table. */}

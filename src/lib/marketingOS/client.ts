@@ -224,6 +224,10 @@ export interface MosContentRow {
   project_ids: string[];
   campaign_id: string | null;
   purpose: 'organic' | 'paid' | 'both';
+  /** The organic channels this creative targets — drives which per-platform
+   *  caption editors the content tab shows. Paid platforms come from the linked
+   *  campaign's executions, so there is no paid twin of this. */
+  organic_platforms: string[];
   status_key: string;
   current_step_label_ar: string | null;
   current_step_label_en: string | null;
@@ -605,6 +609,54 @@ export const savePublication = (contentId: string, publication: Record<string, u
   call<{ publications: MosPublication[] }>('publication_save', {
     content_id: contentId,
     publication,
+  });
+
+/**
+ * Author an ORGANIC caption from the content tab. Writes the caption TEXT onto
+ * the platform's draft publication (lazily creating it) — the same row the
+ * Publish tab schedules and bundle.social posts. Gated on `write_content`;
+ * scheduling stays gated by `schedule`. Returns the refreshed publication list.
+ */
+export const saveContentCaption = (contentId: string, platform: string, caption: string) =>
+  call<{ publications: MosPublication[] }>('content_caption_save', {
+    content_id: contentId, platform, caption,
+  });
+
+/** The five standardized ad-copy fields a paid placement carries. */
+export interface AdCreative {
+  primary_text?: string;
+  headline?: string;
+  description?: string;
+  cta?: string;
+  destination_url?: string;
+}
+export interface PaidAdExecItem {
+  execution: {
+    id: string; platform: string; label: string | null; status: string; content_id: string | null;
+  };
+  ad: {
+    id: string; execution_id: string; content_id: string | null;
+    creative: AdCreative | null; status: string;
+  } | null;
+}
+export interface PaidAdsResult {
+  /** Null unless the content is linked to a `kind='paid'` campaign. */
+  campaign: { id: string; name: string; destination_url: string | null } | null;
+  items: PaidAdExecItem[];
+}
+
+/** The paid-authoring surface for a content item — its paid campaign's
+ *  executions and the ad row that carries THIS content's copy per execution. */
+export const fetchPaidAds = (contentId: string) =>
+  call<PaidAdsResult>('content_paid_ads', { content_id: contentId });
+
+/** Author paid ad COPY from the content tab. Writes `creative` onto the ad row
+ *  for (execution, content) — lazily creating it and linking the execution to
+ *  the content. Gated on `write_content`; ad structure/metrics stay gated by
+ *  `manage_paid_ads`/`enter_metrics`. Returns the refreshed paid-ads surface. */
+export const saveAdCreative = (contentId: string, executionId: string, creative: AdCreative) =>
+  call<PaidAdsResult>('content_ad_creative_save', {
+    content_id: contentId, execution_id: executionId, creative,
   });
 
 /**
