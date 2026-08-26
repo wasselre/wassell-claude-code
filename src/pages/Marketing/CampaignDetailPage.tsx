@@ -1978,19 +1978,6 @@ export default function CampaignDetailPage() {
                   )}
                 </div>
               </div>
-              <div className="card">
-                <div className="card-h"><h4>{isAr ? 'عن الربط والفك' : 'On linking and unlinking'}</h4></div>
-                <div className="card-b" style={{ fontSize: 12, lineHeight: 1.9, color: 'var(--ink-2)' }}>
-                  {isAr
-                    ? <>«فك» يوقف عرض العنصر ضمن هذه الحملة ويحتفظ بأرقامه التاريخية. <b>لا يحذف المحتوى</b>، ولا يؤثر على نشره العضوي، ولا يمس أي حملة أخرى تستخدمه.</>
-                    : <>“Unlink” stops showing the item inside this campaign and keeps its historical numbers. <b>It never deletes the content</b>, never touches its organic publishing, and never affects another campaign using it.</>}
-                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line-soft)', color: 'var(--mute)' }}>
-                    {isAr
-                      ? 'العنصر الواحد قد يعمل هنا كإعلان مدفوع، ويُنشر عضويًا، ويظهر في التقويم — سجل واحد في ثلاثة أمكنة.'
-                      : 'One item can run here as a paid ad, publish organically, and appear on the calendar — one record in three places.'}
-                  </div>
-                </div>
-              </div>
             </div>
           </>
         )}
