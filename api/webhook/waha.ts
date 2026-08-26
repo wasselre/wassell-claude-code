@@ -279,6 +279,9 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   await bumpConversationRecord({
     chatWid,
     deviceId: session,
+    // The composer's identity gate needs the phone on the record. We already
+    // resolved it above (may be null for a LID-only chat with no map entry yet).
+    phone: counterpartyPhone,
     lastBody: row.body ?? '[media]',
     lastAt: date,
     lastFlow: flow,

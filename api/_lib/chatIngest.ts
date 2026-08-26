@@ -228,9 +228,26 @@ export function isValidChatWid(wid: string): boolean {
   return CHAT_WID_RE.test(wid);
 }
 
+/**
+ * The canonical `+<digits>` phone embedded in a `<digits>@c.us` chat wid, or
+ * null for any other addressing mode (`@lid`, `@g.us`, …). Mirrors
+ * `extractPhoneFromWid` in api/_lib/waha.ts — kept local so this
+ * provider-neutral module doesn't depend on the WAHA gateway client.
+ */
+export function phoneFromChatWid(wid: string): string | null {
+  const m = wid.match(/^(\d+)@c\.us$/i);
+  return m ? `+${m[1]}` : null;
+}
+
 export async function bumpConversationRecord(args: {
   chatWid: string;
   deviceId: string;
+  /** Canonical `+<digits>` recipient phone the caller already resolved (the
+   *  webhook runs the full @c.us → SenderAlt → LID-map ladder). Optional — when
+   *  absent it is derived from a `@c.us` chatWid. Without this the composer's
+   *  identity gate has no phone and refuses to send (live 2026-08-26: 10 chats
+   *  first seen via inbound webhook were stuck on "الرقم غير معروف"). */
+  phone?: string | null;
   lastBody: string;
   lastAt: string;
   lastFlow: 'in' | 'out';
@@ -259,6 +276,10 @@ export async function bumpConversationRecord(args: {
   const nextData = {
     ...prevData,
     wid: prevData.wid ?? args.chatWid,
+    // The send path (composer identity gate) requires a phone. Fill it once so a
+    // conversation first created by the webhook is sendable without waiting on a
+    // separate sync. Never overwrite an existing value.
+    phone: prevData.phone ?? args.phone ?? phoneFromChatWid(args.chatWid) ?? null,
     device_id: prevData.device_id ?? args.deviceId,
     last_message_at: args.lastAt,
     last_message_preview: truncate(args.lastBody, 120),
