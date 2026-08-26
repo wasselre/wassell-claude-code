@@ -439,6 +439,25 @@ export async function fetchAiReviewQueue(limit = 200, offset = 0): Promise<AiRev
   return (data ?? []) as AiReviewRow[];
 }
 
+/** Live enrichment status + AI results for a set of files — powers the
+ *  post-upload modal's "AI is analysing…" progress + inline results. */
+export interface EnrichmentPeek {
+  file_id: string;
+  status: 'none' | 'queued' | 'running' | 'completed' | 'failed';
+  ai_description: string | null;
+  asset_nature: string | null;
+  tags: string[];
+  ai_subjects: string[];
+  has_link_suggestions: boolean;
+}
+export async function peekEnrichment(fileIds: string[]): Promise<EnrichmentPeek[]> {
+  if (fileIds.length === 0) return [];
+  const db = requireSupabase('peek enrichment');
+  const { data, error } = await db.rpc('file_enrichment_peek', { p_file_ids: fileIds });
+  if (error) throw surfaceLibraryError('peek enrichment', error);
+  return (data ?? []) as EnrichmentPeek[];
+}
+
 /** Honest total of pending-review files (so the tab badge + "showing first N of
  *  M" are truthful rather than a silent cap). */
 export async function fetchAiReviewCount(): Promise<number> {

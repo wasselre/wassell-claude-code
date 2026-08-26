@@ -26,7 +26,8 @@ import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { bulkLinkToRecord, bulkUpdateMetadata, type BulkPatch } from '@/lib/files/bulkEdit';
 import {
-  bulkAddSubjects, createDocumentType, errorText, listFileVocabularies, updateFileMetadata,
+  bulkAddSubjects, createDocumentType, errorText, listFileVocabularies, peekEnrichment,
+  updateFileMetadata, type EnrichmentPeek,
 } from '@/lib/files/library';
 import { signViewUrls } from '@/lib/files/client';
 import { kindAccent, kindIcon } from '@/lib/files/format';
@@ -105,6 +106,53 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
     })();
     return () => { cancelled = true; };
   }, [files]);
+
+  // ── AI enrichment: poll each file until its analysis lands ────────────────
+  // Enrichment runs in the background right after upload (~seconds). Poll the
+  // peek RPC so the operator watches the AI fill in a description + tags here,
+  // instead of the box looking empty while the AI works out of sight.
+  const [ai, setAi] = useState<Record<string, EnrichmentPeek>>({});
+  const enrichable = useMemo(
+    () => files.filter((f) => ['image', 'pdf', 'video', 'audio'].includes(f.kind)).map((f) => f.id),
+    [files],
+  );
+  useEffect(() => {
+    if (enrichable.length === 0) return;
+    let stopped = false;
+    let tries = 0;
+    const MAX_TRIES = 40; // ~100s at 2.5s — well past the usual few-second finish
+    const tick = async () => {
+      if (stopped) return;
+      tries += 1;
+      try {
+        const rows = await peekEnrichment(enrichable);
+        if (stopped) return;
+        setAi((prev) => {
+          const next = { ...prev };
+          for (const r of rows) next[r.file_id] = r;
+          return next;
+        });
+        const allDone = rows.length > 0
+          && rows.every((r) => r.status === 'completed' || r.status === 'failed' || r.status === 'none');
+        if (allDone || tries >= MAX_TRIES) return; // stop scheduling
+      } catch {
+        // peekEnrichment toasted; keep trying a few more times, then give up.
+      }
+      if (!stopped) window.setTimeout(() => void tick(), 2500);
+    };
+    void tick();
+    return () => { stopped = true; };
+  }, [enrichable]);
+
+  const aiDone = enrichable.filter((id) => {
+    const s = ai[id]?.status;
+    return s === 'completed' || s === 'failed' || s === 'none';
+  }).length;
+  const aiPending = enrichable.length - aiDone;
+  const typeLabel = (slug: string) => {
+    const row = types.find((x) => x.value === slug);
+    return row ? (isAr ? row.label_ar : row.label_en) : slug;
+  };
 
   const vocabFor = (dim: FileVocabDimension) =>
     vocab.filter((v) => v.dimension === dim
@@ -247,6 +295,25 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
           </h2>
         </div>
 
+        {/* AI progress — the enrichment runs in the background; show it working. */}
+        {enrichable.length > 0 && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-copper/5 border border-copper/20 text-xs">
+            {aiPending > 0 ? (
+              <>
+                <Loader2 size={13} className="animate-spin text-copper shrink-0" aria-hidden />
+                <span className="text-charcoal/70">
+                  {t('files.post_upload.ai_analyzing', { done: aiDone, total: enrichable.length })}
+                </span>
+              </>
+            ) : (
+              <>
+                <Sparkles size={13} className="text-copper shrink-0" aria-hidden />
+                <span className="text-charcoal/70">{t('files.post_upload.ai_done', { count: enrichable.length })}</span>
+              </>
+            )}
+          </div>
+        )}
+
         {/* ── Batch defaults ───────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -350,8 +417,12 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
               const accent = kindAccent[f.kind];
               const thumb = thumbs[f.id];
               const overridden = Boolean(overrides[f.id]);
+              const peek = ai[f.id];
+              const analyzing = ['image', 'pdf', 'video', 'audio'].includes(f.kind)
+                && (!peek || peek.status === 'queued' || peek.status === 'running');
               return (
-                <div key={f.id} className="flex items-center gap-2 p-2">
+                <div key={f.id} className="p-2 space-y-1.5">
+                <div className="flex items-center gap-2">
                   {/* #4 preview */}
                   <button type="button" onClick={() => setPreview(f)}
                     aria-label={t('files.actions.preview')}
@@ -373,6 +444,36 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
                     }`}>
                     <Pencil size={13} aria-hidden />
                   </button>
+                </div>
+
+                {/* AI result / progress for this file */}
+                {analyzing ? (
+                  <div className="flex items-center gap-1.5 ps-11 text-[11px] text-charcoal/45">
+                    <Loader2 size={10} className="animate-spin text-copper" aria-hidden />
+                    {t('files.post_upload.ai_reading')}
+                  </div>
+                ) : peek && peek.status === 'completed' && (peek.ai_description || (peek.ai_subjects?.length ?? 0) > 0 || (peek.tags?.length ?? 0) > 0) ? (
+                  <div className="ps-11 space-y-1">
+                    {peek.ai_description && (
+                      <p className="text-[11px] text-charcoal/65 leading-snug flex gap-1" dir="auto">
+                        <Sparkles size={10} className="text-copper shrink-0 mt-0.5" aria-hidden />
+                        <span>{peek.ai_description}</span>
+                      </p>
+                    )}
+                    {((peek.ai_subjects?.length ?? 0) > 0 || (peek.tags?.length ?? 0) > 0) && (
+                      <div className="flex flex-wrap gap-1">
+                        {peek.ai_subjects.map((s) => (
+                          <span key={`s-${s}`} className="px-1.5 py-0.5 rounded bg-copper/10 text-copper text-[10px] font-bold" dir="auto">
+                            {typeLabel(s)}
+                          </span>
+                        ))}
+                        {(peek.tags ?? []).slice(0, 6).map((tg) => (
+                          <span key={`t-${tg}`} className="px-1.5 py-0.5 rounded bg-cream text-charcoal/55 text-[10px]" dir="auto">#{tg}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
                 </div>
               );
             })}

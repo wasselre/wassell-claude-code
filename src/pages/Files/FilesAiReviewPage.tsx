@@ -30,6 +30,7 @@ import { getFile, signViewUrls } from '@/lib/files/client';
 import { attachFileToRecord } from '@/lib/files/recordFiles';
 import FilesTabs from './components/FilesTabs';
 import FilePreviewModal from './components/FilePreviewModal';
+import BulkLinkModal from './library/BulkLinkModal';
 
 const PAGE_LIMIT = 200;
 
@@ -61,7 +62,19 @@ export default function FilesAiReviewPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   /** file_id:record_id currently being attached. */
   const [attaching, setAttaching] = useState<Set<string>>(() => new Set());
+  /** File whose manual "link to a record" dialog is open. */
+  const [linkFileId, setLinkFileId] = useState<string | null>(null);
   const models = useAppStore((s) => s.models);
+
+  const refreshRowLinks = useCallback(async (fileId: string) => {
+    try {
+      const map = await fetchFileLinkedRecords([fileId], isAr);
+      const list = map.get(fileId) ?? [];
+      setLinks((prev) => { const next = new Map(prev); next.set(fileId, list); return next; });
+      // Now that it's linked, drop the AI link suggestions from the card.
+      if (list.length > 0) setRows((prev) => prev.map((r) => (r.id === fileId ? { ...r, ai_suggestions: null } : r)));
+    } catch { /* fetchFileLinkedRecords toasted */ }
+  }, [isAr]);
 
   const [types, setTypes] = useState<FileDocumentTypeRow[]>([]);
   const [vocab, setVocab] = useState<FileVocabRow[]>([]);
@@ -355,33 +368,43 @@ export default function FilesAiReviewPage() {
                       </>
                     ) : linksLoading ? (
                       <span className="text-[11px] text-charcoal/35">{t('files.ai_review.checking_links')}</span>
-                    ) : suggestions.length > 0 ? (
-                      <>
-                        <Sparkles size={12} className="text-copper" aria-hidden />
-                        <span className="text-[11px] font-bold text-copper">{t('files.ai_review.suggest_link')}</span>
-                        {suggestions.map((s) => {
-                          const key = `${row.id}:${s.record_id}`;
-                          const on = attaching.has(key);
-                          const modelLbl = (() => {
-                            const m = models.find((mm) => mm.id === s.model_id);
-                            return m ? (isAr ? m.label_ar : m.label_en) : s.model_name;
-                          })();
-                          return (
-                            <button key={key} type="button" disabled={on}
-                                    onClick={() => void attachLink(row, s)}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-copper/10 text-copper text-[11px] font-bold hover:bg-copper/20 disabled:opacity-50"
-                                    dir="auto">
-                              {on ? <Loader2 size={10} className="animate-spin" aria-hidden /> : <Link2 size={10} aria-hidden />}
-                              {s.label}
-                              <span className="font-normal text-copper/60">· {modelLbl}</span>
-                            </button>
-                          );
-                        })}
-                      </>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-charcoal/45">
-                        <Unlink size={12} aria-hidden />{t('files.ai_review.not_linked')}
-                      </span>
+                      <>
+                        {suggestions.length > 0 ? (
+                          <>
+                            <Sparkles size={12} className="text-copper" aria-hidden />
+                            <span className="text-[11px] font-bold text-copper">{t('files.ai_review.suggest_link')}</span>
+                            {suggestions.map((s) => {
+                              const key = `${row.id}:${s.record_id}`;
+                              const on = attaching.has(key);
+                              const modelLbl = (() => {
+                                const m = models.find((mm) => mm.id === s.model_id);
+                                return m ? (isAr ? m.label_ar : m.label_en) : s.model_name;
+                              })();
+                              return (
+                                <button key={key} type="button" disabled={on}
+                                        onClick={() => void attachLink(row, s)}
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-copper/10 text-copper text-[11px] font-bold hover:bg-copper/20 disabled:opacity-50"
+                                        dir="auto">
+                                  {on ? <Loader2 size={10} className="animate-spin" aria-hidden /> : <Link2 size={10} aria-hidden />}
+                                  {s.label}
+                                  <span className="font-normal text-copper/60">· {modelLbl}</span>
+                                </button>
+                              );
+                            })}
+                          </>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-charcoal/45">
+                            <Unlink size={12} aria-hidden />{t('files.ai_review.not_linked')}
+                          </span>
+                        )}
+                        {/* Manual link — always available for an unlinked file, whether
+                            or not the AI proposed a record. */}
+                        <button type="button" onClick={() => setLinkFileId(row.id)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-copper/40 text-copper text-[11px] font-bold hover:bg-copper/10">
+                          <Link2 size={10} aria-hidden />{t('files.ai_review.link_manual')}
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -420,6 +443,16 @@ export default function FilesAiReviewPage() {
         onShare={() => {}}
         onPermissions={() => {}}
         onDelete={() => {}}
+      />
+
+      {/* Manual "link to a record" — reuses the library's file→record picker for
+          the single file, then refreshes just that card's link status. */}
+      <BulkLinkModal
+        open={Boolean(linkFileId)}
+        fileIds={linkFileId ? [linkFileId] : []}
+        types={types}
+        onClose={() => setLinkFileId(null)}
+        onApplied={() => { if (linkFileId) void refreshRowLinks(linkFileId); }}
       />
     </div>
   );
