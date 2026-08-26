@@ -15,8 +15,10 @@
  * per-execution editors on the detail page use.
  */
 import { useEffect, useState } from 'react';
+import { useAppStore } from '@/stores/appStore';
 import {
   MosContentRow, PLATFORM_LABELS, fetchContentList,
+  ExecutionTemplate, fetchExecutionTemplates, saveExecutionTemplate, deleteExecutionTemplate,
 } from '@/lib/marketingOS/client';
 import {
   PlatformSettings, defaultPlatformSettings, getPlatformSchema, objectiveKeyOf,
@@ -61,6 +63,47 @@ export const newExecDraft = (platform = 'meta'): ExecDraft => ({
   adSets: [blankAdSet()],
 });
 
+/** The opaque template `setup` blob = the reusable ad-campaign SETTINGS. Content
+ *  is per-project, so ads carry only their name + caption scaffold, never a
+ *  content reference. */
+export function execDraftToSetup(d: ExecDraft): Record<string, unknown> {
+  return {
+    platform: d.platform,
+    settings: d.settings,
+    adSets: d.adSets.map((s) => ({
+      name: s.name,
+      ads: s.ads.map((a) => ({ label: a.label, caption: a.caption })),
+    })),
+  };
+}
+
+/** Rehydrate a fresh, uniquely-keyed draft from a saved template's setup. Content
+ *  picks start empty (they belong to the project this execution will serve). */
+export function execDraftFromSetup(setup: Record<string, unknown>): ExecDraft {
+  const platform = typeof setup.platform === 'string' && setup.platform ? setup.platform : 'meta';
+  const rawSettings = setup.settings;
+  const settings: PlatformSettings = rawSettings && typeof rawSettings === 'object'
+    ? { ...(rawSettings as PlatformSettings) }
+    : defaultPlatformSettings(platform);
+  const rawSets = Array.isArray(setup.adSets) ? (setup.adSets as Array<Record<string, unknown>>) : [];
+  const adSets: ExecAdSetDraft[] = rawSets.length > 0
+    ? rawSets.map((s) => ({
+      key: k(),
+      name: typeof s.name === 'string' ? s.name : '',
+      ads: (Array.isArray(s.ads) ? (s.ads as Array<Record<string, unknown>>) : []).map((a) => ({
+        key: k(),
+        label: typeof a.label === 'string' ? a.label : '',
+        contentId: '',
+        asset: null,
+        caption: typeof a.caption === 'string' ? a.caption : '',
+      })),
+    }))
+    : [blankAdSet()];
+  // Guarantee at least one ad in every set (the create gate + editor expect it).
+  for (const s of adSets) if (s.ads.length === 0) s.ads.push(blankAd());
+  return { key: k(), platform, settings, adSets };
+}
+
 /** A draft is complete when it has a platform + an objective + at least one ad
  *  set with a name + every ad named. This is exactly the parent's create gate. */
 export function execDraftComplete(d: ExecDraft): boolean {
@@ -89,6 +132,7 @@ interface Props {
 
 export default function CampaignExecutionsBuilder({ drafts, onChange, isAr }: Props): JSX.Element {
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
   const [content, setContent] = useState<MosContentRow[]>([]);
 
   useEffect(() => {
@@ -103,9 +147,9 @@ export default function CampaignExecutionsBuilder({ drafts, onChange, isAr }: Pr
     })();
   }, []);
 
-  const add = (): void => {
-    const d = newExecDraft('meta');
+  const addDraft = (d: ExecDraft): void => {
     onChange([...drafts, d]);
+    setPicking(false);
     setEditingKey(d.key);
   };
   const remove = (key: string): void => onChange(drafts.filter((d) => d.key !== key));
@@ -171,10 +215,19 @@ export default function CampaignExecutionsBuilder({ drafts, onChange, isAr }: Pr
       )}
 
       <div style={{ marginTop: 9 }}>
-        <button type="button" className="fbtn on" onClick={add}>
+        <button type="button" className="fbtn on" onClick={() => setPicking(true)}>
           <IconPlus /> {isAr ? 'إضافة حملة إعلانية' : 'Add ad campaign'}
         </button>
       </div>
+
+      {picking && (
+        <ExecStartChooser
+          isAr={isAr}
+          onScratch={() => addDraft(newExecDraft('meta'))}
+          onPick={(tpl) => addDraft(execDraftFromSetup(tpl.setup))}
+          onClose={() => setPicking(false)}
+        />
+      )}
 
       {editing && (
         <ExecDraftEditor
@@ -186,6 +239,102 @@ export default function CampaignExecutionsBuilder({ drafts, onChange, isAr }: Pr
         />
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* New-execution chooser: start blank, or from a saved settings        */
+/* template that prefills platform + plan + ad-set/ad scaffold.        */
+/* ------------------------------------------------------------------ */
+
+function ExecStartChooser({
+  isAr, onScratch, onPick, onClose,
+}: {
+  isAr: boolean;
+  onScratch: () => void;
+  onPick: (t: ExecutionTemplate) => void;
+  onClose: () => void;
+}) {
+  const addToast = useAppStore((s) => s.addToast);
+  const [templates, setTemplates] = useState<ExecutionTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetchExecutionTemplates()
+      .then((r) => { if (alive) setTemplates(r.templates); })
+      .catch((e) => { if (alive) console.error('[mos] exec templates load failed', e); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const del = async (id: string): Promise<void> => {
+    setBusy(true);
+    try {
+      const r = await deleteExecutionTemplate(id);
+      setTemplates(r.templates);
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={isAr ? 'حملة إعلانية جديدة' : 'New ad campaign'}
+      sub={isAr
+        ? 'ابدأ من الصفر، أو من قالب إعدادات محفوظ (المنصة، الميزانية، الهدف، المجموعات) فتُملأ الإعدادات وتضيف المحتوى فقط.'
+        : 'Start blank, or from a saved settings template (platform, budget, objective, ad sets) so the setup is prefilled and you only add content.'}
+      onClose={onClose}
+      footer={<button type="button" className="btn" onClick={onClose}>{isAr ? 'إلغاء' : 'Cancel'}</button>}
+    >
+      <div style={{ display: 'grid', gap: 12 }}>
+        <button
+          type="button"
+          className="btn btn-p"
+          style={{ justifyContent: 'center', padding: '12px' }}
+          onClick={onScratch}
+        >
+          {isAr ? '+ حملة إعلانية من الصفر' : '+ Ad campaign from scratch'}
+        </button>
+
+        <div className="lbl">{isAr ? 'أو من قالب إعدادات' : 'Or from a settings template'}</div>
+        {loading ? (
+          <div style={{ fontSize: 13, color: 'var(--mute)' }}>{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>
+        ) : templates.length === 0 ? (
+          <div style={{
+            fontSize: 12.5, color: 'var(--mute)', padding: '10px 12px', lineHeight: 1.8,
+            border: '1px dashed var(--line)', borderRadius: 8,
+          }}>
+            {isAr
+              ? 'لا قوالب بعد. أعدّ حملة إعلانية ثم «حفظ كقالب» لإعادة استخدام إعداداتها.'
+              : 'No templates yet. Configure an ad campaign, then «Save as template» to reuse its settings.'}
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {templates.map((t) => (
+              <div
+                key={t.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+                  border: '1px solid var(--line)', borderRadius: 10,
+                }}
+              >
+                <span style={{ flex: 1, fontWeight: 700 }}>{t.name}</span>
+                <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onPick(t)}>
+                  {isAr ? 'استخدم' : 'Use'}
+                </button>
+                <button type="button" className="btn btn-d btn-sm" disabled={busy} title={isAr ? 'حذف' : 'Delete'} onClick={() => void del(t.id)}>
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -229,6 +378,27 @@ function ExecDraftEditor({
     !== JSON.stringify({ platform: draft.platform, settings: draft.settings, adSets: draft.adSets });
   const requestClose = (): void => { if (dirty) setCloseConfirm(true); else onClose(); };
 
+  // Save these settings as a reusable template (name-prompt sub-modal).
+  const addToast = useAppStore((s) => s.addToast);
+  const [savingTpl, setSavingTpl] = useState(false);
+  const [tplName, setTplName] = useState('');
+  const [tplBusy, setTplBusy] = useState(false);
+  const saveAsTemplate = async (): Promise<void> => {
+    const name = tplName.trim();
+    if (!name) return;
+    setTplBusy(true);
+    try {
+      await saveExecutionTemplate({ name, setup: execDraftToSetup({ ...draft, platform, settings, adSets }) });
+      addToast(isAr ? 'حُفظ القالب' : 'Template saved', 'success');
+      setSavingTpl(false);
+      setTplName('');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setTplBusy(false);
+    }
+  };
+
   return (
     <>
     <Modal
@@ -240,6 +410,14 @@ function ExecDraftEditor({
       wide
       footer={
         <>
+          <button
+            type="button"
+            className="btn"
+            style={{ marginInlineEnd: 'auto' }}
+            onClick={() => { setTplName(''); setSavingTpl(true); }}
+          >
+            {isAr ? 'حفظ كقالب' : 'Save as template'}
+          </button>
           <button type="button" className="btn" onClick={requestClose}>
             {isAr ? 'إلغاء' : 'Cancel'}
           </button>
@@ -355,6 +533,42 @@ function ExecDraftEditor({
         </div>
       </div>
     </Modal>
+    {savingTpl && (
+      <Modal
+        title={isAr ? 'حفظ كقالب' : 'Save as template'}
+        sub={isAr
+          ? 'يُحفظ إعداد الحملة الإعلانية (المنصة، الميزانية، الهدف، المجموعات) لإعادة استخدامه. المحتوى لا يُحفظ — يُضاف لكل مشروع.'
+          : 'Saves the ad-campaign setup (platform, budget, objective, ad sets) for reuse. Content is not saved — it is added per project.'}
+        onClose={() => setSavingTpl(false)}
+        footer={
+          <>
+            <button type="button" className="btn" onClick={() => setSavingTpl(false)}>
+              {isAr ? 'إلغاء' : 'Cancel'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-p"
+              disabled={tplBusy || tplName.trim() === ''}
+              onClick={() => void saveAsTemplate()}
+            >
+              {tplBusy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'حفظ' : 'Save')}
+            </button>
+          </>
+        }
+      >
+        <label style={{ display: 'grid', gap: 4 }}>
+          <span className="lbl">{isAr ? 'اسم القالب' : 'Template name'}</span>
+          <input
+            className="inp"
+            autoFocus
+            value={tplName}
+            onChange={(e) => setTplName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && tplName.trim()) void saveAsTemplate(); }}
+            placeholder={isAr ? 'مثال: ميتا — رسائل — ميزانية يومية' : 'e.g. Meta — Messages — daily budget'}
+          />
+        </label>
+      </Modal>
+    )}
     {closeConfirm && (
       <Modal
         title={isAr ? 'تجاهل التغييرات؟' : 'Discard changes?'}

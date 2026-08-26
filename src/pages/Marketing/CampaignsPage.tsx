@@ -16,7 +16,6 @@ import {
   PLATFORM_LABELS, ROLE_LABELS,
   createContent, fetchCampaigns, fetchGoals,
   saveCampaign, saveCampaignTree, saveExecution, savePublication, successMeasureSuffix,
-  CampaignTemplate, fetchCampaignTemplates, saveCampaignTemplate, deleteCampaignTemplate,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
@@ -239,7 +238,7 @@ export default function CampaignsPage() {
   const [error, setError] = useState<string | null>(null);
   // false = closed · 'choose' = the scratch-or-template chooser · {seed} = the
   // campaign form (seed prefills from a picked template, null = from scratch).
-  const [creating, setCreating] = useState<false | 'choose' | { seed: Record<string, unknown> | null }>(false);
+  const [creating, setCreating] = useState(false);
   const [statusF, setStatusF] = useState<StatusFilter>('all');
   const [kindF, setKindF] = useState<KindFilter>('all');
   const [projectF, setProjectF] = useState('');
@@ -357,7 +356,7 @@ export default function CampaignsPage() {
     <>
       <PageHead title={isAr ? 'الحملات' : 'Campaigns'} sub={sub}>
         {can('approve_budget') && (
-          <button type="button" className="btn btn-p" onClick={() => setCreating('choose')}>
+          <button type="button" className="btn btn-p" onClick={() => setCreating(true)}>
             <IconPlus />
             {isAr ? 'حملة جديدة' : 'New campaign'}
           </button>
@@ -376,7 +375,7 @@ export default function CampaignsPage() {
               : 'A campaign is an envelope of money and time. Content stays in the library and is attributed to it, never copied.'}
           >
             {can('approve_budget') && (
-              <button type="button" className="btn btn-p" onClick={() => setCreating('choose')}>
+              <button type="button" className="btn btn-p" onClick={() => setCreating(true)}>
                 <IconPlus />
                 {isAr ? 'حملة جديدة' : 'New campaign'}
               </button>
@@ -640,117 +639,14 @@ export default function CampaignsPage() {
         )}
       </div>
 
-      {creating === 'choose' && (
-        <CampaignStartChooser
-          isAr={isAr}
-          onScratch={() => setCreating({ seed: null })}
-          onPick={(tpl) => setCreating({ seed: tpl.setup })}
-          onClose={() => setCreating(false)}
-        />
-      )}
-      {creating && creating !== 'choose' && (
+      {creating && (
         <CampaignModal
           isAr={isAr}
-          seed={creating.seed}
           onClose={() => setCreating(false)}
           onSaved={(c) => { setCreating(false); navigate(`/m/campaigns/${c.id}`); }}
         />
       )}
     </>
-  );
-}
-
-/**
- * The New-campaign entry chooser: start from scratch, or pick a saved template
- * that prefills the whole setup (goals, project, budget, ad campaigns, content)
- * so the operator just fills in the names.
- */
-function CampaignStartChooser({
-  isAr, onScratch, onPick, onClose,
-}: {
-  isAr: boolean;
-  onScratch: () => void;
-  onPick: (t: CampaignTemplate) => void;
-  onClose: () => void;
-}) {
-  const addToast = useAppStore((s) => s.addToast);
-  const [templates, setTemplates] = useState<CampaignTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    fetchCampaignTemplates()
-      .then((r) => { if (alive) setTemplates(r.templates); })
-      .catch((e) => { if (alive) { console.error('[mos] templates load failed', e); } })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, []);
-
-  const del = async (id: string): Promise<void> => {
-    setBusy(true);
-    try {
-      const r = await deleteCampaignTemplate(id);
-      setTemplates(r.templates);
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={isAr ? 'حملة جديدة' : 'New campaign'}
-      sub={isAr ? 'ابدأ من الصفر، أو من قالب محفوظ فتُملأ الإعدادات وتكتب الأسماء فقط.' : 'Start from scratch, or from a saved template that prefills the setup so you just fill in names.'}
-      onClose={onClose}
-      footer={<button type="button" className="btn" onClick={onClose}>{isAr ? 'إلغاء' : 'Cancel'}</button>}
-    >
-      <div style={{ display: 'grid', gap: 12 }}>
-        <button
-          type="button"
-          className="btn btn-p"
-          style={{ justifyContent: 'center', padding: '12px' }}
-          onClick={onScratch}
-        >
-          {isAr ? '+ حملة من الصفر' : '+ Campaign from scratch'}
-        </button>
-
-        <div className="lbl">{isAr ? 'أو من قالب' : 'Or from a template'}</div>
-        {loading ? (
-          <div style={{ fontSize: 13, color: 'var(--mute)' }}>{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>
-        ) : templates.length === 0 ? (
-          <div style={{
-            fontSize: 12.5, color: 'var(--mute)', padding: '10px 12px', lineHeight: 1.8,
-            border: '1px dashed var(--line)', borderRadius: 8,
-          }}>
-            {isAr
-              ? 'لا قوالب بعد. أنشئ حملة ثم «حفظ كقالب» لإعادة استخدام إعدادها.'
-              : 'No templates yet. Create a campaign, then «Save as template» to reuse its setup.'}
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gap: 8 }}>
-            {templates.map((t) => (
-              <div
-                key={t.id}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
-                  border: '1px solid var(--line)', borderRadius: 10,
-                }}
-              >
-                <span style={{ flex: 1, fontWeight: 700 }}>{t.name}</span>
-                <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onPick(t)}>
-                  {isAr ? 'استخدم' : 'Use'}
-                </button>
-                <button type="button" className="btn btn-d btn-sm" disabled={busy} title={isAr ? 'حذف' : 'Delete'} onClick={() => void del(t.id)}>
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </Modal>
   );
 }
 
@@ -787,33 +683,10 @@ function duration(c: MosCampaign, isAr: boolean): string {
  * as drafts until someone launches them on the platform itself.
  */
 
-// ── Template re-keying ────────────────────────────────────────────────
-// Seeded exec/content rows carry keys from when the template was authored; the
-// builders' own counters restart per mount, so re-key on seed to guarantee
-// unique React keys (and no collision with rows the user then adds).
-let seedKeyCtr = 0;
-const seedKey = (): string => { seedKeyCtr += 1; return `sk${seedKeyCtr}`; };
-function rekeyExecDrafts(arr: ExecDraft[]): ExecDraft[] {
-  return arr.map((e) => ({
-    ...e,
-    key: seedKey(),
-    adSets: (e.adSets ?? []).map((s) => ({
-      ...s,
-      key: seedKey(),
-      ads: (s.ads ?? []).map((a) => ({ ...a, key: seedKey() })),
-    })),
-  }));
-}
-function rekeyContentDrafts(arr: ContentDraft[]): ContentDraft[] {
-  return arr.map((d) => ({ ...d, key: seedKey() }));
-}
-
 export function CampaignModal({
-  campaign, seed, isAr, onClose, onSaved,
+  campaign, isAr, onClose, onSaved,
 }: {
   campaign?: MosCampaign | null;
-  /** A template SETUP to prefill a NEW campaign (goals/projects/budget/execs/content). */
-  seed?: Record<string, unknown> | null;
   isAr: boolean;
   onClose: () => void;
   onSaved: (campaign: MosCampaign) => void;
@@ -822,38 +695,25 @@ export function CampaignModal({
   const addToast = useAppStore((s) => s.addToast);
   const isNew = !campaign;
 
-  // Seed accessors — a template blob prefills a NEW campaign. Re-keyed on read
-  // (see rekey helpers) so seeded exec/content rows never collide with new ones.
-  const sd = seed ?? {};
-  const sdStr = (k: string, dflt = ''): string => (typeof sd[k] === 'string' ? sd[k] as string : dflt);
-  const sdArr = <T,>(k: string): T[] => (Array.isArray(sd[k]) ? sd[k] as T[] : []);
-
-  const [kind, setKind] = useState<MosCampaign['kind']>(
-    campaign?.kind ?? (sdStr('kind') === 'organic' ? 'organic' : sdStr('kind') === 'paid' ? 'paid' : 'paid'),
-  );
+  const [kind, setKind] = useState<MosCampaign['kind']>(campaign?.kind ?? 'paid');
   const [goal, setGoal] = useState(campaign?.goal ?? campaign?.name ?? '');
-  const [goalIds, setGoalIds] = useState<string[]>(campaign?.goal_ids ?? sdArr<string>('goalIds'));
-  const [projectIds, setProjectIds] = useState<string[]>(campaign?.project_ids ?? sdArr<string>('projectIds'));
+  const [goalIds, setGoalIds] = useState<string[]>(campaign?.goal_ids ?? []);
+  const [projectIds, setProjectIds] = useState<string[]>(campaign?.project_ids ?? []);
   // Bulk content planned alongside a NEW campaign (created on save; empty for edit).
-  const [drafts, setDrafts] = useState<ContentDraft[]>(() => rekeyContentDrafts(sdArr<ContentDraft>('drafts')));
-  const [ownerRole, setOwnerRole] = useState<string>(campaign?.owner_role ?? sdStr('ownerRole', 'marketing_manager'));
+  const [drafts, setDrafts] = useState<ContentDraft[]>([]);
+  const [ownerRole, setOwnerRole] = useState<string>(campaign?.owner_role ?? 'marketing_manager');
   const [startsOn, setStartsOn] = useState(campaign?.starts_on ?? '');
   const [endsOn, setEndsOn] = useState(campaign?.ends_on ?? '');
-  const [budget, setBudget] = useState(campaign?.budget_total?.toString() ?? sdStr('budget'));
-  const [measures, setMeasures] = useState<MeasureDraft[]>(
-    () => (campaign ? measuresToDrafts(campaign.success_measures) : sdArr<MeasureDraft>('measures')),
-  );
+  const [budget, setBudget] = useState(campaign?.budget_total?.toString() ?? '');
+  const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(campaign?.success_measures));
   const [status, setStatus] = useState<MosCampaign['status']>(campaign?.status ?? 'planning');
   // Paid + new: fully-configured executions (plan → ad sets → ads) that must be
-  // complete before the parent can be created. They are written after the
-  // campaign row, in one flow.
-  const [execDrafts, setExecDrafts] = useState<ExecDraft[]>(() => rekeyExecDrafts(sdArr<ExecDraft>('execDrafts')));
+  // complete before the parent can be created. Each execution can be saved as /
+  // started from a TEMPLATE (see CampaignExecutionsBuilder).
+  const [execDrafts, setExecDrafts] = useState<ExecDraft[]>([]);
   const [busy, setBusy] = useState(false);
   // In-app (not window.confirm) discard-guard for a dirty close.
   const [closeConfirm, setCloseConfirm] = useState(false);
-  // Save-as-template modal (name prompt).
-  const [savingTpl, setSavingTpl] = useState(false);
-  const [tplName, setTplName] = useState('');
 
   // Snapshot of the form's opening state, so a stray click on the backdrop (or
   // Escape) can't silently throw away work in progress. Compared field-by-field
@@ -897,23 +757,6 @@ export function CampaignModal({
     onClose();
   }, [busy, dirty, onClose]);
 
-  // Save the current setup (minus the campaign's own name/dates) as a reusable
-  // template. Stored in mos_settings; prefills a future New-campaign.
-  const saveAsTemplate = async (): Promise<void> => {
-    const name = tplName.trim();
-    if (!name) return;
-    try {
-      await saveCampaignTemplate({
-        name,
-        setup: { kind, goalIds, projectIds, ownerRole, budget, measures, execDrafts, drafts },
-      });
-      addToast(isAr ? 'حُفظ القالب.' : 'Template saved.', 'success');
-      setSavingTpl(false);
-      setTplName('');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    }
-  };
 
   const totalBudget = budget.trim() === '' ? null : Number(budget);
   // Create is gated for a new paid campaign: at least one execution, and every
@@ -1123,11 +966,6 @@ export function CampaignModal({
                 ? 'لا شيء ينفق مالًا هنا. الحملات الإعلانية مسودات حتى يطلقها أحد على المنصة نفسها.'
                 : 'Nothing here spends money. Ad campaigns stay drafts until someone launches them on the platform itself.'}
           </span>
-          {isNew && (
-            <button type="button" className="btn" onClick={() => setSavingTpl(true)} disabled={busy}>
-              {isAr ? 'حفظ كقالب' : 'Save as template'}
-            </button>
-          )}
           <button type="button" className="btn" onClick={requestClose} disabled={busy}>
             {isAr ? 'إلغاء' : 'Cancel'}
           </button>
@@ -1297,27 +1135,6 @@ export function CampaignModal({
         </div>
       )}
     </Modal>
-    {savingTpl && (
-      <Modal
-        title={isAr ? 'حفظ كقالب' : 'Save as template'}
-        sub={isAr ? 'يحفظ الإعداد (الأهداف، المشروع، الميزانية، الحملات الإعلانية، المحتوى) لإعادة استخدامه — لا اسم الحملة ولا تواريخها.' : 'Saves the setup (goals, project, budget, ad campaigns, content) to reuse — not the campaign name or dates.'}
-        onClose={() => setSavingTpl(false)}
-        footer={
-          <>
-            <button type="button" className="btn" onClick={() => setSavingTpl(false)}>{isAr ? 'إلغاء' : 'Cancel'}</button>
-            <button type="button" className="btn btn-p" disabled={!tplName.trim()} onClick={() => void saveAsTemplate()}>
-              {isAr ? 'حفظ القالب' : 'Save template'}
-            </button>
-          </>
-        }
-      >
-        <label style={{ display: 'grid', gap: 4 }}>
-          <span className="lbl">{isAr ? 'اسم القالب' : 'Template name'}</span>
-          <input className="inp" autoFocus value={tplName} onChange={(e) => setTplName(e.target.value)}
-            placeholder={isAr ? 'مثال: حملة مشروع مدفوعة — ميتا' : 'e.g. Paid project campaign — Meta'} />
-        </label>
-      </Modal>
-    )}
     {closeConfirm && (
       <Modal
         title={isAr ? 'تجاهل التغييرات؟' : 'Discard changes?'}

@@ -5794,15 +5794,16 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
-      /* Campaign templates — a reusable campaign SETUP (goals,    */
-      /* projects, budget, executions, content) that prefills the  */
-      /* New-campaign modal. Stored as ONE mos_settings row        */
-      /* (`campaign_templates` → { items: [...] }) so it needs no   */
-      /* schema migration. The `setup` blob is opaque to the server */
-      /* (the client owns its shape); we only manage the list.     */
+      /* Execution templates — a reusable AD-CAMPAIGN setup        */
+      /* (platform + budget/objective/goal/dates settings + ad     */
+      /* sets + ads) that prefills a NEW execution draft. Stored   */
+      /* as ONE mos_settings row (`execution_templates` →          */
+      /* { items: [...] }) so it needs no schema migration. The    */
+      /* `setup` blob is opaque to the server (the client owns its */
+      /* shape); we only manage the list.                          */
       /* -------------------------------------------------------- */
-      case 'campaign_templates_list': {
-        const res = await sb.from('mos_settings').select('value').eq('key', 'campaign_templates').maybeSingle();
+      case 'execution_templates_list': {
+        const res = await sb.from('mos_settings').select('value').eq('key', 'execution_templates').maybeSingle();
         const f = dbFail(res.error); if (f) return f;
         const value = (res.data as { value?: { items?: unknown } } | null)?.value;
         const items = value && typeof value === 'object' && Array.isArray((value as { items?: unknown }).items)
@@ -5810,11 +5811,11 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ templates: items });
       }
 
-      case 'campaign_template_save': {
+      case 'execution_template_save': {
         const tpl = (body.template ?? {}) as Record<string, unknown>;
         const name = str(tpl.name);
         if (!name) return jsonError(400, 'template name is required');
-        const cur = await sb.from('mos_settings').select('value').eq('key', 'campaign_templates').maybeSingle();
+        const cur = await sb.from('mos_settings').select('value').eq('key', 'execution_templates').maybeSingle();
         const cf = dbFail(cur.error); if (cf) return cf;
         const curVal = (cur.data as { value?: { items?: unknown[] } } | null)?.value;
         const items: Array<Record<string, unknown>> = Array.isArray(curVal?.items)
@@ -5824,23 +5825,23 @@ export default async function handler(req: Request): Promise<Response> {
         const idx = items.findIndex((t) => str(t.id) === id);
         if (idx >= 0) items[idx] = record; else items.push(record);
         const up = await sb.from('mos_settings').upsert(
-          { key: 'campaign_templates', value: { items }, updated_by_user_id: await resolveAppUserId(sb, user.userId) },
+          { key: 'execution_templates', value: { items }, updated_by_user_id: await resolveAppUserId(sb, user.userId) },
           { onConflict: 'key' },
         );
         const uf = dbFail(up.error); if (uf) return uf;
         return jsonOk({ templates: items });
       }
 
-      case 'campaign_template_delete': {
+      case 'execution_template_delete': {
         const id = str(body.id);
         if (!id) return jsonError(400, 'id is required');
-        const cur = await sb.from('mos_settings').select('value').eq('key', 'campaign_templates').maybeSingle();
+        const cur = await sb.from('mos_settings').select('value').eq('key', 'execution_templates').maybeSingle();
         const cf = dbFail(cur.error); if (cf) return cf;
         const curVal = (cur.data as { value?: { items?: unknown[] } } | null)?.value;
         const items: Array<Record<string, unknown>> = Array.isArray(curVal?.items)
           ? (curVal!.items as Array<Record<string, unknown>>).filter((t) => str(t.id) !== id) : [];
         const up = await sb.from('mos_settings').upsert(
-          { key: 'campaign_templates', value: { items }, updated_by_user_id: await resolveAppUserId(sb, user.userId) },
+          { key: 'execution_templates', value: { items }, updated_by_user_id: await resolveAppUserId(sb, user.userId) },
           { onConflict: 'key' },
         );
         const uf = dbFail(up.error); if (uf) return uf;
