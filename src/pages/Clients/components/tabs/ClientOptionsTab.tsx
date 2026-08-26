@@ -17,6 +17,8 @@ import {
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
 import QualityBadge from '@/components/market/QualityBadge';
+import DeliveryPill from '@/components/matching/DeliveryPill';
+import { resolveDeliveryStatus } from '@/lib/matching/deliveryStatus';
 import AddOptionModal from '../AddOptionModal';
 import ClientOptionsMapView from '../ClientOptionsMapView';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
@@ -540,6 +542,10 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
     const beds = fmtRange(f.bedroom_range, '');
     const baths = fmtRange(f.bathroom_range, '');
     const avail = typeof f.available_units === 'number' ? f.available_units : null;
+    // Delivery readiness (جاهز / على الخارطة + handover) from the snapshot facts;
+    // hidden only for a market listing with no construction stage (→ unknown).
+    const isMarketListing = d.source_type === 'market_listing';
+    const showDelivery = !(resolveDeliveryStatus(f).kind === 'unknown' && isMarketListing);
     const meta = CLIENT_OPTION_STATUS_META[d.status as ClientOptionStatus] ?? CLIENT_OPTION_STATUS_META.suitable;
     const srcMeta = CLIENT_OPTION_SOURCE_META[d.source_type as ClientOptionSourceType];
     const adId =
@@ -617,6 +623,14 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
         </div>
 
         <div className="space-y-2.5 p-3">
+          {/* Delivery readiness — جاهز / على الخارطة (+ handover), same source as
+              the finder card so a saved option reads identically. */}
+          {showDelivery && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <DeliveryPill facts={f} isMarketListing={isMarketListing} isAr={isAr} />
+            </div>
+          )}
+
           {/* Specs grid */}
           <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-lg bg-cream/30 p-2.5 text-xs sm:grid-cols-3">
             <Spec icon={<Wallet size={12} />} label={L('السعر', 'Price')} value={price} isAr={isAr} />
