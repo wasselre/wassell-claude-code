@@ -26,7 +26,7 @@ import {
   ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosAsset, MosAssetLink, MosContentVersion,
   MosScene, MosShootItem, MosShootRequest, RolePerson,
   fetchAssets, fetchContentDetail, fetchContentVersions, fetchShoots,
-  linkAsset, linkAssetFromFile, saveAsset, saveShoot, setApprovalAsset, unlinkAsset,
+  linkAssetFromFile, saveAsset, saveShoot, setApprovalAsset, unlinkAsset,
 } from '@/lib/marketingOS/client';
 import { listDocumentTypes } from '@/lib/files/library';
 import type { FileDocumentTypeRow, FileRow } from '@/types/files';
@@ -37,7 +37,7 @@ import { assetErrorText, canonicalAssetFields, uploadCanonicalAsset } from '../l
 import { useAssetUrls } from '../lib/assetUrls';
 import { useWorkspace } from '../MarketingWorkspace';
 import { Field, LoadError, Modal, Skeleton } from './kit';
-import { IconLibrary, IconPlus, IconShoot, IconTrash } from './icons';
+import { IconLibrary, IconShoot, IconTrash } from './icons';
 import { dayName, num, shortDate } from '../lib/format';
 import '../styles/cd2.css';
 
@@ -139,7 +139,6 @@ export default function MaterialsTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
-  const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const scenes = scenesProp ?? fetchedScenes;
@@ -250,20 +249,6 @@ export default function MaterialsTab({
       await setApprovalAsset(contentId, next);
     } catch (e) {
       setApprovalAssetId(prev); // roll back on failure — never silently
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const link = async (assetId: string, role: string): Promise<void> => {
-    setBusy(true);
-    try {
-      const res = await linkAsset(assetId, contentId, role);
-      setLinks((cur) => [...cur.filter((l) => l.content_id !== contentId), ...res.links]);
-      onCount(res.links.length);
-      setPicking(false);
-    } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setBusy(false);
@@ -539,10 +524,6 @@ export default function MaterialsTab({
               <IconLibrary />
               {isAr ? 'سحب من المكتبة' : 'Pull from the library'}
             </button>
-            <button type="button" className="btn" onClick={() => setAdding(true)}>
-              <IconPlus />
-              {isAr ? 'إضافة مادة جديدة' : 'Add new material'}
-            </button>
           </div>
         )}
       </div>
@@ -622,18 +603,6 @@ export default function MaterialsTab({
         />
       )}
 
-      {adding && (
-        <NewAssetModal
-          isAr={isAr}
-          projectId={projectId}
-          onClose={() => setAdding(false)}
-          onCreated={async (created) => {
-            setAssets((cur) => [...created, ...cur]);
-            setAdding(false);
-            for (const a of created) await link(a.id, 'source');
-          }}
-        />
-      )}
     </div>
   );
 }
