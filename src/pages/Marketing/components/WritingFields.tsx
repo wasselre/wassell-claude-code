@@ -32,14 +32,10 @@
  * Values live in `mos_content.data` — free-form JSONB, so companion keys like
  * core_message need no migration.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { updateContent } from '@/lib/marketingOS/client';
-import { listDocumentTypes, searchBusinessFiles } from '@/lib/files/library';
-import { signViewUrls, uploadFile } from '@/lib/files/client';
-import type { BusinessFileRow, FileDocumentTypeRow, FileRow } from '@/types/files';
-import PostUploadModal from '@/pages/Files/library/PostUploadModal';
-import { Modal } from './kit';
+import FilePickerModal from '@/pages/Files/library/FilePickerModal';
 import { num } from '../lib/format';
 import { useMosText } from '../lib/useMosText';
 
@@ -125,23 +121,11 @@ function NewHeadlineRow({
   );
 }
 
-/** A glyph fallback for non-image files in the reference grid. */
-function kindGlyph(kind: string): string {
-  switch (kind) {
-    case 'pdf': return '📕';
-    case 'video': return '🎬';
-    case 'audio': return '🎧';
-    case 'document': case 'wassel_doc': return '📄';
-    default: return '📎';
-  }
-}
-
 /**
- * The Reference field's picker — a choice from the FILES library, OR a new file
- * uploaded on the spot. Stores the chosen file's id (`design_reference_file_id`)
- * + a display title (`design_reference_file_title`), so the design brief can say
- * "take after this example file." The CONTENT record is untouched. Thumbnail
- * grid + debounced search, like the record Attach-existing modal.
+ * The Reference field's picker — the ONE shared Files picker (search + real
+ * library cards + upload), so it is byte-for-byte the same experience as
+ * selecting a file anywhere else. Stores the chosen file's id
+ * (`design_reference_file_id`) + a display title (`design_reference_file_title`).
  */
 function FileReferencePicker({
   fileId, title, isAr, onChange,
@@ -152,62 +136,6 @@ function FileReferencePicker({
   onChange: (fileId: string, title: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [q, setQ] = useState('');
-  const [rows, setRows] = useState<BusinessFileRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [thumbs, setThumbs] = useState<Record<string, string>>({});
-  const [uploading, setUploading] = useState(false);
-  const fileInput = useRef<HTMLInputElement | null>(null);
-  const [postUpload, setPostUpload] = useState<FileRow | null>(null);
-  const [docTypes, setDocTypes] = useState<FileDocumentTypeRow[]>([]);
-  useEffect(() => {
-    let alive = true;
-    listDocumentTypes().then((r) => { if (alive) setDocTypes(r); }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    let alive = true;
-    setLoading(true);
-    setErr(null);
-    const t = setTimeout(() => {
-      searchBusinessFiles({ q, sort: 'created_desc', pageSize: 40 })
-        .then((r) => { if (alive) setRows(r.rows); })
-        .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); })
-        .finally(() => { if (alive) setLoading(false); });
-    }, 300);
-    return () => { alive = false; clearTimeout(t); };
-  }, [q, open]);
-
-  // Thumbnails for the image rows — one batch sign, like the Library grid.
-  useEffect(() => {
-    const ids = rows.filter((r) => r.kind === 'image').map((r) => r.id);
-    if (ids.length === 0) { setThumbs({}); return; }
-    let alive = true;
-    signViewUrls(ids).then((m) => { if (alive) setThumbs(m); }).catch(() => { if (alive) setThumbs({}); });
-    return () => { alive = false; };
-  }, [rows]);
-
-  // Upload a NEW file and make it the reference immediately. It lands in the
-  // Files library (no record link — it's a "take after this" example).
-  const onUpload = async (f: File | undefined) => {
-    if (!f) return;
-    setUploading(true);
-    setErr(null);
-    try {
-      const row = await uploadFile(f);
-      onChange(row.id, row.original_name);
-      // Same Files popup as everywhere: review AI + metadata for the new file.
-      setPostUpload(row);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setUploading(false);
-    }
-  };
-
   const display = title || fileId;
 
   return (
@@ -237,97 +165,13 @@ function FileReferencePicker({
         )}
       </div>
 
-      {open && (
-        <Modal
-          title={isAr ? 'اختر مرجعًا من مكتبة الملفات' : 'Pick a reference from the Files library'}
-          sub={isAr ? 'ملف مثال يحتذي به هذا التصميم.' : 'An example file this design should take after.'}
-          onClose={() => setOpen(false)}
-        >
-          <input
-            ref={fileInput}
-            type="file"
-            style={{ display: 'none' }}
-            onChange={(e) => { void onUpload(e.target.files?.[0]); e.currentTarget.value = ''; }}
-          />
-          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-            <input
-              className="inp"
-              autoFocus
-              style={{ flex: 1 }}
-              placeholder={isAr ? 'ابحث بالعنوان أو الوصف أو الوسم…' : 'Search by title, description or tag…'}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-            <button
-              type="button"
-              className="btn"
-              style={{ whiteSpace: 'nowrap', opacity: uploading ? 0.6 : 1 }}
-              disabled={uploading}
-              onClick={() => fileInput.current?.click()}
-            >
-              {uploading ? (isAr ? 'جارٍ الرفع…' : 'Uploading…') : (isAr ? '⤒ رفع ملف' : '⤒ Upload')}
-            </button>
-          </div>
-          {err && <div className="notice" style={{ marginBottom: 10 }}>{err}</div>}
-          {loading && rows.length === 0 && !err && (
-            <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
-              {isAr ? 'جارٍ البحث…' : 'Searching…'}
-            </div>
-          )}
-          {!loading && rows.length === 0 && !err && (
-            <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
-              {isAr ? 'لا ملفات مطابقة — يمكنك رفع ملف جديد.' : 'No matching files — you can upload a new one.'}
-            </div>
-          )}
-          <div style={{ maxHeight: 420, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-            {rows.map((f) => {
-              const thumb = thumbs[f.id];
-              const picked = f.id === fileId;
-              return (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => { onChange(f.id, f.title || f.original_name); setOpen(false); }}
-                  title={f.title || f.original_name}
-                  style={{
-                    display: 'flex', flexDirection: 'column', cursor: 'pointer', padding: 0,
-                    width: '100%', boxSizing: 'border-box',
-                    border: picked ? '2px solid var(--copper)' : '1px solid #d8ccb6',
-                    borderRadius: 10, overflow: 'hidden', background: '#fff',
-                    textAlign: isAr ? 'right' : 'left',
-                  }}
-                >
-                  {/* flex:0 0 96px pins the preview height — a fixed-height flex
-                      child inside a stretched grid item otherwise collapses. The
-                      image is a background so it can't shrink the box either. */}
-                  <div style={{
-                    flex: '0 0 96px', width: '100%',
-                    background: thumb ? `#efe6d6 center/cover no-repeat url("${thumb}")` : '#efe6d6',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    {!thumb && <span style={{ fontSize: 22 }}>{kindGlyph(f.kind)}</span>}
-                  </div>
-                  <div style={{ padding: '6px 8px', minWidth: 0 }}>
-                    <div className="tx" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {f.title || f.original_name}
-                    </div>
-                    <div className="mt" style={{ fontSize: 11 }}>{f.kind}</div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </Modal>
-      )}
-
-      {postUpload && (
-        <PostUploadModal
-          files={[postUpload]}
-          types={docTypes}
-          onDismiss={() => { setPostUpload(null); setOpen(false); }}
-          onApplied={() => { setPostUpload(null); setOpen(false); }}
-        />
-      )}
+      <FilePickerModal
+        open={open}
+        onClose={() => setOpen(false)}
+        onPick={(f) => onChange(f.id, f.title)}
+        title={isAr ? 'اختر مرجعًا من مكتبة الملفات' : 'Pick a reference from the Files library'}
+        sub={isAr ? 'ملف مثال يحتذي به هذا التصميم.' : 'An example file this design should take after.'}
+      />
     </>
   );
 }

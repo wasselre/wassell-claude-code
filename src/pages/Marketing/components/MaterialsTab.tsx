@@ -28,9 +28,10 @@ import {
   fetchAssets, fetchContentDetail, fetchContentVersions, fetchShoots,
   linkAsset, linkAssetFromFile, saveAsset, saveShoot, setApprovalAsset, unlinkAsset,
 } from '@/lib/marketingOS/client';
-import { listDocumentTypes, searchBusinessFiles } from '@/lib/files/library';
-import type { BusinessFileRow, FileDocumentTypeRow, FileRow } from '@/types/files';
+import { listDocumentTypes } from '@/lib/files/library';
+import type { FileDocumentTypeRow, FileRow } from '@/types/files';
 import PostUploadModal from '@/pages/Files/library/PostUploadModal';
+import FilePickerModal from '@/pages/Files/library/FilePickerModal';
 import { formatBytes, heicToJpeg, isHeic, kindFromFile } from '../lib/upload';
 import { assetErrorText, canonicalAssetFields, uploadCanonicalAsset } from '../lib/canonicalUpload';
 import { useAssetUrls } from '../lib/assetUrls';
@@ -40,13 +41,6 @@ import { IconLibrary, IconPlus, IconShoot, IconTrash } from './icons';
 import { dayName, num, shortDate } from '../lib/format';
 import '../styles/cd2.css';
 
-const ROLES = ['source', 'reference', 'final'] as const;
-/** The link roles, labelled by the band they land in (mapping above). */
-const ROLE_LABELS: Record<string, { ar: string; en: string }> = {
-  source:    { ar: 'مادة أصلية', en: 'Source material' },
-  reference: { ar: 'ملف عمل',    en: 'Working file' },
-  final:     { ar: 'معتمد',      en: 'Approved' },
-};
 
 /**
  * «سحب من المكتبة» — browse the unified FILES library and attach a file as
@@ -63,94 +57,28 @@ function FilesMaterialPicker({
   linkFile: (fileId: string, role: string) => Promise<{ links: MosAssetLink[]; asset: MosAsset }>;
 }) {
   const addToast = useAppStore((s) => s.addToast);
-  const [q, setQ] = useState('');
-  const [rows, setRows] = useState<BusinessFileRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setErr(null);
-    // Debounced — business_files_search is 350–1,100 ms; never one call/keystroke.
-    const t = setTimeout(() => {
-      searchBusinessFiles({ q, sort: 'created_desc', pageSize: 40 })
-        .then((r) => { if (alive) setRows(r.rows); })
-        .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); })
-        .finally(() => { if (alive) setLoading(false); });
-    }, 300);
-    return () => { alive = false; clearTimeout(t); };
-  }, [q]);
-
-  const pick = async (fileId: string, role: string): Promise<void> => {
-    setBusy(true);
+  // The ONE shared Files picker (search + real library cards + upload), so
+  // "pull from the library" looks exactly like the library. A picked (or newly
+  // uploaded) file links as source material «المواد الأصلية» — the common band;
+  // it can be moved to reference/final afterward. Content record untouched.
+  const pick = async (fileId: string): Promise<void> => {
     try {
-      onLinked(await linkFile(fileId, role));
+      onLinked(await linkFile(fileId, 'source'));
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-      setBusy(false);
     }
   };
 
   return (
-    <Modal
+    <FilePickerModal
+      open
+      onClose={onClose}
+      onPick={(f) => { void pick(f.id); }}
       title={isAr ? 'سحب من مكتبة الملفات' : 'Pull from the Files library'}
       sub={isAr
-        ? 'اختر ملفًا ثم الشريط الذي يدخل فيه — يُربط كمادة، وسجل المحتوى لا يتغيّر.'
-        : 'Pick a file, then its band — it links as material and the content record is untouched.'}
-      onClose={onClose}
-      wide
-    >
-      <input
-        className="inp"
-        autoFocus
-        style={{ marginBottom: 10 }}
-        placeholder={isAr ? 'ابحث في مكتبة الملفات…' : 'Search the Files library…'}
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
-      {err && <div className="notice" style={{ marginBottom: 10 }}>{err}</div>}
-      {loading && rows.length === 0 && !err && (
-        <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
-          {isAr ? 'جارٍ البحث…' : 'Searching…'}
-        </div>
-      )}
-      {!loading && rows.length === 0 && !err && (
-        <div style={{ fontSize: 13, color: 'var(--mute)', padding: '8px 2px' }}>
-          {isAr ? 'لا ملفات مطابقة.' : 'No matching files.'}
-        </div>
-      )}
-      <div className="tbl-wrap" style={{ maxHeight: 380, overflowY: 'auto' }}>
-        <table className="tbl">
-          <tbody>
-            {rows.map((f) => (
-              <tr key={f.id}>
-                <td className="ttl">{f.title || f.original_name}</td>
-                <td><span className="tag">{f.kind}</span></td>
-                <td style={{ color: 'var(--mute)', fontSize: 12 }}>{formatBytes(f.size_bytes, isAr)}</td>
-                <td style={{ width: 280 }}>
-                  <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end' }}>
-                    {ROLES.map((r) => (
-                      <button
-                        key={r}
-                        type="button"
-                        className="btn btn-sm"
-                        disabled={busy}
-                        onClick={() => void pick(f.id, r)}
-                      >
-                        {isAr ? ROLE_LABELS[r]?.ar : ROLE_LABELS[r]?.en}
-                      </button>
-                    ))}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Modal>
+        ? 'اختر ملفًا أو ارفع جديدًا — يُربط كمادة أصلية، وسجل المحتوى لا يتغيّر.'
+        : 'Pick or upload a file — it links as source material and the content record is untouched.'}
+    />
   );
 }
 
