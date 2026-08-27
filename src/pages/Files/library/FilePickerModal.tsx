@@ -4,19 +4,20 @@
  * picker, attach-to-record, marketing materials…). It IS the Files library grid:
  * the same search, the same `LibraryFileTile` cards, the same thumbnails.
  *
- * Upload is built INTO this one modal (not a second popup stacked behind it):
- * the file uploads, and for a single pick it's selected immediately. Its AI
- * enrichment runs in the background and is reviewed in the AI review tab — the
- * picker never opens a metadata modal on top of itself.
+ * Upload uses the SAME structure as the Files library: pick one or MANY files,
+ * then the real PostUploadModal (AI analysis + all the metadata fields). It
+ * REPLACES the picker while open — never a second popup stacked behind it — and
+ * returns to the refreshed grid afterward so the new files can be picked.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Search, Upload, X } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
-import type { BusinessFileRow, FileDocumentTypeRow } from '@/types';
+import type { BusinessFileRow, FileDocumentTypeRow, FileRow } from '@/types';
 import { errorText, listDocumentTypes, searchBusinessFiles } from '@/lib/files/library';
 import { signViewUrls, uploadFile } from '@/lib/files/client';
 import LibraryFileTile from './LibraryFileTile';
+import PostUploadModal from './PostUploadModal';
 
 interface Props {
   open: boolean;
@@ -44,6 +45,10 @@ export default function FilePickerModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  /** Just-uploaded files — while set, the real Files PostUploadModal shows in
+   *  place of the grid (AI + metadata), exactly like the Files library. */
+  const [uploaded, setUploaded] = useState<FileRow[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const seq = useRef(0);
 
@@ -66,7 +71,7 @@ export default function FilePickerModal({
         .finally(() => { if (my === seq.current) setLoading(false); });
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(id);
-  }, [q, open]);
+  }, [q, open, reloadKey]);
 
   // Batch-sign image thumbnails for the visible slice — same as the library page.
   useEffect(() => {
@@ -77,28 +82,53 @@ export default function FilePickerModal({
     return () => { alive = false; };
   }, [rows]);
 
-  const onUpload = useCallback(async (f: File | undefined) => {
-    if (!f) return;
+  // Upload one or MANY files (same as the Files library), then hand off to the
+  // real PostUploadModal for AI + metadata (it replaces the grid below).
+  const onUpload = useCallback(async (list: FileList | null) => {
+    const files = Array.from(list ?? []);
+    if (files.length === 0) return;
     setUploading(true);
     setError(null);
+    const rowsUp: FileRow[] = [];
     try {
-      const row = await uploadFile(f, { modelId: uploadModelId, recordId: uploadRecordId });
-      // The whole point of uploading from a picker is to use that file — pick it
-      // and close. No second popup; AI enrichment runs in the background.
-      onPick({ id: row.id, title: row.original_name });
-      onClose();
-    } catch (e) {
-      setError(errorText(e));
+      for (const f of files) {
+        try { rowsUp.push(await uploadFile(f, { modelId: uploadModelId, recordId: uploadRecordId })); }
+        catch (e) { setError(errorText(e)); }
+      }
+      if (rowsUp.length > 0) setUploaded(rowsUp);
     } finally {
       setUploading(false);
     }
-  }, [onPick, onClose, uploadModelId, uploadRecordId]);
+  }, [uploadModelId, uploadRecordId]);
 
   const heading = title ?? t('files.picker.title');
   const subtitle = sub ?? t('files.picker.sub');
   const empty = useMemo(() => !loading && !error && rows.length === 0, [loading, error, rows.length]);
 
   if (!open) return null;
+
+  // While files are being reviewed, show the EXACT Files-library post-upload
+  // popup (AI analysis + metadata) in place of the picker — one modal, never
+  // stacked. Afterward, return to the picker with the grid refreshed so the new
+  // files are pickable; for a single-file upload, auto-pick it.
+  if (uploaded.length > 0) {
+    const finish = () => {
+      const first = uploaded[0];
+      const single = uploaded.length === 1;
+      setUploaded([]);
+      setReloadKey((k) => k + 1);
+      if (single && first) { onPick({ id: first.id, title: first.original_name }); onClose(); }
+    };
+    return (
+      <PostUploadModal
+        files={uploaded}
+        types={types}
+        onDismiss={finish}
+        onApplied={finish}
+      />
+    );
+  }
+
   const field = 'w-full px-3 py-2 rounded-lg bg-white border border-sand/40 text-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-copper/30';
 
   return (
@@ -115,8 +145,8 @@ export default function FilePickerModal({
           </button>
         </div>
 
-        <input ref={fileInput} type="file" className="hidden"
-               onChange={(e) => { void onUpload(e.target.files?.[0]); e.currentTarget.value = ''; }} />
+        <input ref={fileInput} type="file" multiple className="hidden"
+               onChange={(e) => { void onUpload(e.target.files); e.currentTarget.value = ''; }} />
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search size={15} className="absolute top-1/2 -translate-y-1/2 start-3 text-charcoal/40 pointer-events-none" aria-hidden />
