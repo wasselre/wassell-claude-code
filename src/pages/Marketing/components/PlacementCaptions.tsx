@@ -350,7 +350,6 @@ function PaidBlock({
               key={item.execution.id}
               contentId={contentId}
               item={item}
-              defaultDestination={result.campaign?.destination_url ?? ''}
               canEdit={canEdit}
               isAr={isAr}
               onSaved={setResult}
@@ -362,20 +361,21 @@ function PaidBlock({
   );
 }
 
+// One box only — the ad TEXT (Meta's "primary text"), i.e. the caption/comment
+// shown with the ad. Headline / description / CTA / destination were removed:
+// for Click-to-WhatsApp Instagram ads the CTA + destination come from the
+// campaign/execution and Meta defaults, and the headline/description don't show
+// on an IG feed ad. `saveAdCreative` merges, so any of those keys set elsewhere
+// (e.g. the campaign push) are left untouched.
 const AD_FIELDS: Array<{ key: keyof AdCreative; ar: string; en: string; long?: boolean }> = [
-  { key: 'primary_text', ar: 'النص الأساسي', en: 'Primary text', long: true },
-  { key: 'headline', ar: 'العنوان', en: 'Headline' },
-  { key: 'description', ar: 'الوصف', en: 'Description' },
-  { key: 'cta', ar: 'زر الحث (CTA)', en: 'Call to action' },
-  { key: 'destination_url', ar: 'رابط الوجهة', en: 'Destination URL' },
+  { key: 'primary_text', ar: 'نص الإعلان', en: 'Ad text', long: true },
 ];
 
 function AdCard({
-  contentId, item, defaultDestination, canEdit, isAr, onSaved,
+  contentId, item, canEdit, isAr, onSaved,
 }: {
   contentId: string;
   item: PaidAdExecItem;
-  defaultDestination: string;
   canEdit: boolean;
   isAr: boolean;
   onSaved: (r: PaidAdsResult) => void;
@@ -383,11 +383,7 @@ function AdCard({
   const addToast = useAppStore((s) => s.addToast);
   const initial = useMemo<AdCreative>(() => ({
     primary_text: item.ad?.creative?.primary_text ?? '',
-    headline: item.ad?.creative?.headline ?? '',
-    description: item.ad?.creative?.description ?? '',
-    cta: item.ad?.creative?.cta ?? '',
-    destination_url: item.ad?.creative?.destination_url ?? (item.ad ? '' : defaultDestination),
-  }), [item.ad, defaultDestination]);
+  }), [item.ad]);
 
   const [draft, setDraft] = useState<AdCreative>(initial);
   const [busy, setBusy] = useState(false);
