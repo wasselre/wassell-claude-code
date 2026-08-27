@@ -41,6 +41,15 @@ export const config = { runtime: 'nodejs', maxDuration: 120 };
 interface RequestBody {
   project_id?: string;
   provider?: 'anthropic' | 'kimi';
+  /**
+   * FACT-CHECK mode. When an existing saved message is supplied, the model does
+   * NOT rewrite it — it only corrects the NUMBERS (price / area / bed-bath /
+   * unit types) to the project's current values and leaves all wording intact.
+   * Faster than a full rewrite (the whole record is not sent). Either language
+   * being present switches the endpoint into this mode.
+   */
+  existing_ar?: string;
+  existing_en?: string;
 }
 
 // ── Node↔Web bridge (the nodejs runtime ignores a returned Web Response) ────
@@ -113,6 +122,33 @@ function buildUserContent(recordData: Record<string, unknown>, facts: Record<str
 ${JSON.stringify(recordData, null, 2)}
 
 AUTHORITATIVE FACTS (already resolved — trust these over the raw record for names/prices):
+${JSON.stringify(facts, null, 2)}`;
+}
+
+// ── FACT-CHECK mode ────────────────────────────────────────────────────────
+// Update the NUMBERS in an existing saved message to the project's current
+// values; change nothing else. This preserves the marketing copy the rep
+// approved while never sending a stale price.
+const FACTCHECK_SYSTEM_PROMPT = `You are updating an EXISTING WhatsApp marketing message for one of Wassel Real Estate's own projects so its NUMBERS match the project's CURRENT data. You are given the existing message (body_ar and body_en) plus an AUTHORITATIVE FACTS block. Return the message by calling \`write_project_message\`.
+
+ABSOLUTE RULES — never violate:
+1. Return BOTH languages. Keep each body OTHERWISE IDENTICAL to the input — same wording, sentences, order, emojis, line breaks, tone, and the project name. Change NOTHING except numeric values that are wrong.
+2. Update every numeric value to match the AUTHORITATIVE FACTS: the starting price (use the available price only), the area range in m², the bedroom and bathroom counts/ranges, and the unit-types list. Use ONLY values present in the facts — never invent or estimate.
+3. If a number in the message already matches the facts, leave it EXACTLY as written (same formatting). Only touch a figure that actually disagrees.
+4. PRICE: quote only the available price from the facts. If the facts carry no available price but the message states one, remove just that figure while keeping the sentence readable — do not invent a replacement.
+5. GEOGRAPHY: the facts carry district_ar/district_en and city_ar/city_en. If a place name in the message disagrees with the facts, correct it to the facts value (Arabic form in body_ar, English form in body_en); otherwise leave it. Never invent a place name or swap languages.
+6. Do NOT add, remove, or reorder any non-numeric text. Do NOT add a closing line, CTA, or sign-off. NEVER write prose outside the tool; ALWAYS call write_project_message.`;
+
+function buildFactCheckContent(existingAr: string, existingEn: string, facts: Record<string, unknown>): string {
+  return `EXISTING MESSAGE — update ONLY its numbers to match the facts; keep every other character identical:
+
+body_ar:
+${existingAr || '(none)'}
+
+body_en:
+${existingEn || '(none)'}
+
+AUTHORITATIVE FACTS (the current, correct values):
 ${JSON.stringify(facts, null, 2)}`;
 }
 
@@ -291,7 +327,15 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       website_link: `https://wassel.re/project?id=${encodeURIComponent(projectId)}#units`,
     };
 
-    const userContent = buildUserContent(pd, facts);
+    // FACT-CHECK vs full GENERATE. Fact-check only refreshes numbers in an
+    // existing message (no full record sent), so it's the faster reuse path.
+    const existingAr = typeof body.existing_ar === 'string' ? body.existing_ar : '';
+    const existingEn = typeof body.existing_en === 'string' ? body.existing_en : '';
+    const isFactCheck = existingAr.trim().length > 0 || existingEn.trim().length > 0;
+    const systemPrompt = isFactCheck ? FACTCHECK_SYSTEM_PROMPT : SYSTEM_PROMPT;
+    const userContent = isFactCheck
+      ? buildFactCheckContent(existingAr, existingEn, facts)
+      : buildUserContent(pd, facts);
 
     // ── Provider selection. Default is KIMI (the chosen production provider,
     //    2026-08-23 — ~7× cheaper, quality confirmed in the bake-off). A body
@@ -321,7 +365,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       response = await client.messages.create({
         model,
         max_tokens: 2_000,
-        system: SYSTEM_PROMPT,
+        system: systemPrompt,
         tools: [TOOL_SCHEMA],
         tool_choice: { type: 'tool', name: 'write_project_message' },
         // kimi-k3 defaults to extended thinking, which Moonshot rejects together
@@ -351,6 +395,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
 
     return jsonOk({
       ok: true,
+      mode: isFactCheck ? 'factcheck' : 'generate',
       body_ar: bodyAr ?? '',
       body_en: bodyEn ?? '',
       facts,

@@ -22,17 +22,14 @@ export interface ProjectMessageAiResult {
   body_en: string;
   facts?: Record<string, unknown>;
   generated_by?: string;
+  mode?: 'generate' | 'factcheck';
 }
 
-/** provider is for testing/bake-off; production omits it (server env decides). */
-export async function generateProjectMessageAi(
-  projectId: string,
-  provider?: 'anthropic' | 'kimi',
-): Promise<ProjectMessageAiResult> {
+async function postProjectMessageAi(payload: Record<string, unknown>): Promise<ProjectMessageAiResult> {
   const res = await fetch('/api/templates/project-message-ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ project_id: projectId, ...(provider ? { provider } : {}) }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     // Never surface an EMPTY message: a non-JSON body (edge/CDN error page) or an
@@ -42,6 +39,34 @@ export async function generateProjectMessageAi(
     const serverMsg = typeof b?.error === 'string' ? b.error.trim() : '';
     throw new Error(serverMsg || `AI message generation failed (HTTP ${res.status})`);
   }
-  const j = (await res.json()) as { body_ar?: string; body_en?: string; facts?: Record<string, unknown>; generated_by?: string };
-  return { body_ar: j.body_ar ?? '', body_en: j.body_en ?? '', facts: j.facts, generated_by: j.generated_by };
+  const j = (await res.json()) as ProjectMessageAiResult;
+  return { body_ar: j.body_ar ?? '', body_en: j.body_en ?? '', facts: j.facts, generated_by: j.generated_by, mode: j.mode };
+}
+
+/** Full AI rewrite from the whole project record. provider is for
+ *  testing/bake-off; production omits it (server env decides). */
+export async function generateProjectMessageAi(
+  projectId: string,
+  provider?: 'anthropic' | 'kimi',
+): Promise<ProjectMessageAiResult> {
+  return postProjectMessageAi({ project_id: projectId, ...(provider ? { provider } : {}) });
+}
+
+/**
+ * FACT-CHECK an existing saved message: the model updates ONLY the numbers
+ * (price / area / bed-bath / unit types) to the project's current values and
+ * leaves all wording intact. Faster than a full rewrite (no whole record sent).
+ */
+export async function factCheckProjectMessage(
+  projectId: string,
+  existingAr: string,
+  existingEn: string,
+  provider?: 'anthropic' | 'kimi',
+): Promise<ProjectMessageAiResult> {
+  return postProjectMessageAi({
+    project_id: projectId,
+    existing_ar: existingAr,
+    existing_en: existingEn,
+    ...(provider ? { provider } : {}),
+  });
 }
