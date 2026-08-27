@@ -26,7 +26,7 @@ import {
   ASSET_KIND_LABELS, ASSET_SOURCE_LABELS, MosAsset, MosAssetLink, MosContentVersion,
   MosScene, MosShootItem, MosShootRequest, RolePerson,
   fetchAssets, fetchContentDetail, fetchContentVersions, fetchShoots,
-  linkAssetFromFile, saveAsset, saveShoot, setApprovalAsset, unlinkAsset,
+  linkAsset, linkAssetFromFile, saveAsset, saveShoot, setApprovalAsset, unlinkAsset,
 } from '@/lib/marketingOS/client';
 import { listDocumentTypes } from '@/lib/files/library';
 import type { FileDocumentTypeRow, FileRow } from '@/types/files';
@@ -255,6 +255,23 @@ export default function MaterialsTab({
     }
   };
 
+  /** Move an attached file between «المواد الأصلية» (source) and «ملفات العمل»
+   *  (reference) in place — the `asset_link` upsert re-roles the same row, so no
+   *  unlink-and-re-pull. Never touches the approval band (final is earned via the
+   *  manager's approval only). */
+  const moveBand = async (assetId: string, role: 'source' | 'reference'): Promise<void> => {
+    setBusy(true);
+    try {
+      const res = await linkAsset(assetId, contentId, role);
+      setLinks((cur) => [...cur.filter((l) => l.content_id !== contentId), ...res.links]);
+      onCount(res.links.length);
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /** «إسناد تصوير» — the existing shoot-assignment flow, for ONE scene. */
   const assignShoot = async (scene: MosScene): Promise<void> => {
     setBusy(true);
@@ -334,6 +351,21 @@ export default function MaterialsTab({
             <a className="btn btn-d btn-sm" href={urlFor(a) ?? undefined} target="_blank" rel="noreferrer">
               {isAr ? 'معاينة' : 'Preview'}
             </a>
+          )}
+          {approvable && canEdit && (l.role === 'source' || l.role === 'reference') && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy}
+              onClick={() => void moveBand(a.id, l.role === 'source' ? 'reference' : 'source')}
+              title={isAr
+                ? 'انقل الملف بين «المواد الأصلية» و«ملفات العمل» — لا يمس الاعتماد.'
+                : 'Move the file between Source material and Working files — approval is untouched.'}
+            >
+              {l.role === 'source'
+                ? (isAr ? 'نقل إلى ملفات العمل' : 'Move to working files')
+                : (isAr ? 'نقل إلى المواد الأصلية' : 'Move to source material')}
+            </button>
           )}
           {approvable && canEdit && (
             <button
