@@ -5,30 +5,25 @@
  * provenance ("where it was born") — it does NOT decide where the creative can
  * run. Each placement carries its OWN destination:
  *
- *   organic → an mos_publications row: platform + account + caption + schedule,
- *             optionally linked to an ORGANIC campaign (or none). This is the
- *             same row the Publishing board schedules and bundle.social posts —
- *             so adding one here is just a FASTER door into the organic section.
- *   paid    → an mos_execution_ads row under any paid campaign's execution +
- *             ad set. The old "must match the content's campaign" rule is gone.
+ *   organic → an mos_publications row: platform + account + caption + schedule +
+ *             the approved file + the publish/schedule action, optionally linked
+ *             to an ORGANIC campaign (or none). This is the FULL publish surface
+ *             (the old «النشر» tab, merged in here so a placement is one complete
+ *             thing) — reused via <PublishTab>. The workspace Publishing Board
+ *             stays as the cross-content calendar.
+ *   paid    → an mos_execution_ads row under any paid campaign's execution + ad
+ *             set. You attach to an existing (unlinked) ad or add a new one.
  *
- * `purpose` is no longer chosen — it is derived (in mos_content_v) from the
- * placements that exist. Writes go through `write_content`-gated actions.
+ * `purpose` is derived (in mos_content_v) from the placements that exist.
+ * Writes go through `write_content`- / `schedule`-gated actions.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  AdCreative, MosAccount, MosCampaign, MosPublication,
-  PaidPlacement, PaidPlacementTarget, PLATFORM_LABELS,
-  fetchCampaigns, fetchPaidAds, fetchPaidPlacementTargets,
-  removePaidPlacement, removePublication, saveAdCreative, savePublication,
-  saveCampaign,
+  AdCreative, MosAccount, MosPublication, PaidPlacement, PaidPlacementTarget, PLATFORM_LABELS,
+  fetchPaidAds, fetchPaidPlacementTargets, removePaidPlacement, saveAdCreative,
 } from '@/lib/marketingOS/client';
 import { useAppStore } from '@/stores/appStore';
-import { isoDateTimeLocal } from '../lib/format';
-
-/** Platforms that publish ORGANICALLY (a caption lands verbatim). */
-const ORGANIC_PLATFORMS = ['instagram', 'tiktok', 'snapchat', 'x', 'youtube'];
-const AUTO_PLATFORMS = new Set(['instagram', 'tiktok', 'snapchat']);
+import PublishTab from './PublishTab';
 
 const platformLabel = (p: string, isAr: boolean): string => {
   const l = PLATFORM_LABELS[p];
@@ -37,14 +32,17 @@ const platformLabel = (p: string, isAr: boolean): string => {
 
 export default function PlacementsTab({
   contentId, hasHashtags, accounts, publications, hashtags,
-  canEdit, isAr, onPublicationsChanged, onHashtagsChanged, onOrganicPlatformsChanged,
+  canEdit, canPublish, isAr, onPublicationsChanged, onHashtagsChanged, onOrganicPlatformsChanged,
 }: {
   contentId: string;
   hasHashtags: boolean;
   accounts: MosAccount[];
   publications: MosPublication[];
   hashtags: string;
+  /** Author copy / paid placements (write_content). */
   canEdit: boolean;
+  /** Publish / schedule the organic placements (schedule | publish). */
+  canPublish: boolean;
   isAr: boolean;
   onPublicationsChanged: (pubs: MosPublication[]) => void;
   onHashtagsChanged: (value: string) => void;
@@ -52,456 +50,70 @@ export default function PlacementsTab({
    *  the derived purpose and every other reader stay correct. */
   onOrganicPlatformsChanged: (platforms: string[]) => void;
 }) {
+  const handleOrganicChange = (pubs: MosPublication[]): void => {
+    onPublicationsChanged(pubs);
+    onOrganicPlatformsChanged([...new Set(pubs.map((p) => p.platform))]);
+  };
+
   return (
     <div style={{ display: 'grid', gap: 24 }}>
-      <OrganicPlacements
-        contentId={contentId}
-        accounts={accounts}
-        publications={publications}
-        hashtags={hashtags}
-        hasHashtags={hasHashtags}
-        canEdit={canEdit}
-        isAr={isAr}
-        onPublicationsChanged={onPublicationsChanged}
-        onHashtagsChanged={onHashtagsChanged}
-        onOrganicPlatformsChanged={onOrganicPlatformsChanged}
-      />
+      <div>
+        <div className="doc-lbl" style={{ marginBottom: 8 }}>
+          {isAr ? 'أماكن النشر العضوية' : 'Organic placements'}
+        </div>
+        {/* The full publish surface — caption, file, schedule, publish, status,
+            and the organic-campaign link — so a placement is one complete thing. */}
+        <PublishTab
+          contentId={contentId}
+          publications={publications}
+          accounts={accounts}
+          canEdit={canPublish || canEdit}
+          isAr={isAr}
+          onChange={handleOrganicChange}
+        />
+        {hasHashtags && publications.length > 0 && (
+          <HashtagsEditor hashtags={hashtags} canEdit={canEdit} isAr={isAr} onChange={onHashtagsChanged} />
+        )}
+      </div>
+
       <PaidPlacements contentId={contentId} canEdit={canEdit} isAr={isAr} />
     </div>
   );
 }
 
-/* ══════════════════════ organic ══════════════════════ */
-
-function OrganicPlacements({
-  contentId, accounts, publications, hashtags, hasHashtags,
-  canEdit, isAr, onPublicationsChanged, onHashtagsChanged, onOrganicPlatformsChanged,
+function HashtagsEditor({
+  hashtags, canEdit, isAr, onChange,
 }: {
-  contentId: string;
-  accounts: MosAccount[];
-  publications: MosPublication[];
   hashtags: string;
-  hasHashtags: boolean;
   canEdit: boolean;
   isAr: boolean;
-  onPublicationsChanged: (pubs: MosPublication[]) => void;
-  onHashtagsChanged: (value: string) => void;
-  onOrganicPlatformsChanged: (platforms: string[]) => void;
+  onChange: (value: string) => void;
 }) {
-  const addToast = useAppStore((s) => s.addToast);
-  const [orgCampaigns, setOrgCampaigns] = useState<MosCampaign[]>([]);
-  const [adding, setAdding] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    fetchCampaigns()
-      .then((r) => { if (alive) setOrgCampaigns(r.campaigns.filter((c) => c.kind === 'organic' && c.status !== 'cancelled')); })
-      .catch(() => { /* the picker just shows "no campaign" — non-fatal */ });
-    return () => { alive = false; };
-  }, []);
-
-  // The organic platforms with an account on file — the pickable universe.
-  const organicAccounts = useMemo(
-    () => accounts
-      .filter((a) => ORGANIC_PLATFORMS.includes(a.platform))
-      .sort((a, b) => ORGANIC_PLATFORMS.indexOf(a.platform) - ORGANIC_PLATFORMS.indexOf(b.platform)),
-    [accounts],
-  );
-
-  const syncPlatforms = (pubs: MosPublication[]): void => {
-    onPublicationsChanged(pubs);
-    onOrganicPlatformsChanged([...new Set(pubs.map((p) => p.platform))]);
-  };
-
-  const [tagDraft, setTagDraft] = useState(hashtags);
-  useEffect(() => { setTagDraft(hashtags); }, [hashtags]);
-
-  const created = (r: { campaign: MosCampaign }): void => setOrgCampaigns((prev) => [r.campaign, ...prev]);
+  const [draft, setDraft] = useState(hashtags);
+  useEffect(() => { setDraft(hashtags); }, [hashtags]);
 
   return (
-    <div className="write">
-      <div className="doc-lbl" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span>{isAr ? 'أماكن النشر العضوية' : 'Organic placements'}</span>
-        {canEdit && !adding && organicAccounts.length > 0 && (
-          <button
-            type="button"
-            className="btn btn-p btn-sm"
-            style={{ marginInlineStart: 'auto' }}
-            onClick={() => setAdding(true)}
-          >
-            {isAr ? '+ إضافة منصة عضوية' : '+ Add organic'}
-          </button>
-        )}
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
+      <div className="k" style={{ marginBottom: 4 }}>
+        {isAr ? 'الوسوم (تُضاف لكل المنصات عند النشر)' : 'Hashtags (added to every platform at publish)'}
       </div>
-
-      {publications.length === 0 && !adding && (
-        <p style={{ color: 'var(--mute)', fontSize: 13, lineHeight: 1.9 }}>
-          {canEdit
-            ? (isAr ? 'أضِف منصة عضوية لنشر هذا المحتوى — كل منصة لها كابشن وموعد وحملة عضوية (اختيارية).'
-                    : 'Add an organic placement to post this creative — each platform gets its own caption, schedule and optional organic campaign.')
-            : (isAr ? 'لا توجد أماكن نشر عضوية بعد.' : 'No organic placements yet.')}
-        </p>
-      )}
-
-      <div style={{ display: 'grid', gap: 10 }}>
-        {publications.map((pub) => (
-          <OrganicCard
-            key={pub.id}
-            contentId={contentId}
-            pub={pub}
-            orgCampaigns={orgCampaigns}
-            canEdit={canEdit}
-            isAr={isAr}
-            onSaved={syncPlatforms}
-            onCampaignCreated={created}
-            addToast={addToast}
-          />
-        ))}
-      </div>
-
-      {adding && (
-        <AddOrganic
-          contentId={contentId}
-          accounts={organicAccounts}
-          existingPlatforms={publications.map((p) => p.platform)}
-          orgCampaigns={orgCampaigns}
-          isAr={isAr}
-          onCancel={() => setAdding(false)}
-          onSaved={(pubs) => { syncPlatforms(pubs); setAdding(false); }}
-          onCampaignCreated={created}
-          addToast={addToast}
-        />
-      )}
-
-      {hasHashtags && publications.length > 0 && (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
-          <div className="k" style={{ marginBottom: 4 }}>
-            {isAr ? 'الوسوم (تُضاف لكل المنصات عند النشر)' : 'Hashtags (added to every platform at publish)'}
-          </div>
-          {canEdit ? (
-            <input
-              className="inp"
-              dir="rtl"
-              style={{ fontSize: 12.5 }}
-              value={tagDraft}
-              placeholder={isAr ? '#الوسوم مفصولة بمسافة' : '#hashtags separated by spaces'}
-              onChange={(e) => setTagDraft(e.target.value)}
-              onBlur={() => { if (tagDraft !== hashtags) onHashtagsChanged(tagDraft); }}
-            />
-          ) : (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {hashtags.split(/\s+/).filter(Boolean).map((t) => <span key={t} className="tag">{t}</span>)}
-              {!hashtags.trim() && <span style={{ color: 'var(--mute)', fontSize: 13 }}>—</span>}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function OrganicCard({
-  contentId, pub, orgCampaigns, canEdit, isAr, onSaved, onCampaignCreated, addToast,
-}: {
-  contentId: string;
-  pub: MosPublication;
-  orgCampaigns: MosCampaign[];
-  canEdit: boolean;
-  isAr: boolean;
-  onSaved: (pubs: MosPublication[]) => void;
-  onCampaignCreated: (r: { campaign: MosCampaign }) => void;
-  addToast: (msg: string, kind: 'success' | 'error') => void;
-}) {
-  const [caption, setCaption] = useState(pub.caption ?? '');
-  const [scheduledAt, setScheduledAt] = useState(pub.scheduled_at ?? '');
-  const [campaignId, setCampaignId] = useState(pub.campaign_id ?? '');
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { setCaption(pub.caption ?? ''); setScheduledAt(pub.scheduled_at ?? ''); setCampaignId(pub.campaign_id ?? ''); }, [pub]);
-
-  const dirty = caption !== (pub.caption ?? '')
-    || (scheduledAt || '') !== (pub.scheduled_at ?? '')
-    || (campaignId || '') !== (pub.campaign_id ?? '');
-  const manual = !AUTO_PLATFORMS.has(pub.platform);
-
-  const save = async (): Promise<void> => {
-    setBusy(true);
-    try {
-      const res = await savePublication(contentId, {
-        id: pub.id,
-        caption,
-        scheduled_at: scheduledAt || null,
-        campaign_id: campaignId || null,
-        // Setting a time promotes a draft to scheduled; clearing it drops back.
-        status: scheduledAt ? (pub.status === 'published' ? 'published' : 'scheduled') : 'draft',
-      });
-      onSaved(res.publications);
-      addToast(isAr ? 'حُفظ' : 'Saved', 'success');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally { setBusy(false); }
-  };
-
-  const remove = async (): Promise<void> => {
-    if (!window.confirm(isAr ? 'إزالة هذه المنصة العضوية؟' : 'Remove this organic placement?')) return;
-    setBusy(true);
-    try {
-      const res = await removePublication(contentId, pub.id);
-      onSaved(res.publications);
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <div style={{ border: '1px solid var(--line-soft)', borderRadius: 10, padding: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span className="tag" style={{ borderColor: 'var(--copper)', color: 'var(--copper)' }}>
-          {platformLabel(pub.platform, isAr)}
-        </span>
-        {manual && <span className="tag tag-t" style={{ fontSize: 10 }}>{isAr ? 'يدوي' : 'manual'}</span>}
-        {pub.status === 'published' && (
-          <span className="tag tag-t" style={{ fontSize: 10 }}>{isAr ? 'نُشر' : 'published'}</span>
-        )}
-        {canEdit && (
-          <div style={{ marginInlineStart: 'auto', display: 'flex', gap: 6 }}>
-            {dirty && (
-              <button type="button" className="btn btn-p btn-sm" onClick={() => void save()} disabled={busy}>
-                {busy ? '…' : (isAr ? 'حفظ' : 'Save')}
-              </button>
-            )}
-            <button
-              type="button"
-              className="btn btn-sm"
-              style={{ color: 'var(--danger, #b04242)' }}
-              onClick={() => void remove()}
-              disabled={busy}
-              title={isAr ? 'إزالة' : 'Remove'}
-            >
-              ×
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div style={{ display: 'grid', gap: 8 }}>
-        <div className="fld">
-          <div className="k">{isAr ? 'الكابشن' : 'Caption'}</div>
-          {canEdit ? (
-            <textarea
-              className="inp"
-              rows={2}
-              style={{ marginTop: 4, fontSize: 13, lineHeight: 1.8 }}
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-            />
-          ) : (
-            <div className="v" style={{ whiteSpace: 'pre-line', lineHeight: 1.9 }}>{pub.caption || '—'}</div>
-          )}
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <div className="fld">
-            <div className="k">{isAr ? 'الموعد' : 'Schedule'}</div>
-            {canEdit ? (
-              <input
-                className="inp"
-                type="datetime-local"
-                dir="ltr"
-                style={{ marginTop: 4, fontSize: 12.5 }}
-                value={scheduledAt ? isoDateTimeLocal(scheduledAt) : ''}
-                onChange={(e) => setScheduledAt(e.target.value ? new Date(e.target.value).toISOString() : '')}
-              />
-            ) : (
-              <div className="v">{pub.scheduled_at ? new Date(pub.scheduled_at).toLocaleString() : '—'}</div>
-            )}
-          </div>
-          <div className="fld">
-            <div className="k">{isAr ? 'الحملة العضوية' : 'Organic campaign'}</div>
-            {canEdit ? (
-              <CampaignSelect
-                value={campaignId}
-                orgCampaigns={orgCampaigns}
-                isAr={isAr}
-                onChange={setCampaignId}
-                onCampaignCreated={onCampaignCreated}
-                addToast={addToast}
-              />
-            ) : (
-              <div className="v">{orgCampaigns.find((c) => c.id === pub.campaign_id)?.name ?? (isAr ? 'بدون حملة' : 'no campaign')}</div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AddOrganic({
-  contentId, accounts, existingPlatforms, orgCampaigns, isAr, onCancel, onSaved, onCampaignCreated, addToast,
-}: {
-  contentId: string;
-  accounts: MosAccount[];
-  existingPlatforms: string[];
-  orgCampaigns: MosCampaign[];
-  isAr: boolean;
-  onCancel: () => void;
-  onSaved: (pubs: MosPublication[]) => void;
-  onCampaignCreated: (r: { campaign: MosCampaign }) => void;
-  addToast: (msg: string, kind: 'success' | 'error') => void;
-}) {
-  const openPlatforms = accounts.filter((a) => !existingPlatforms.includes(a.platform));
-  const [accountId, setAccountId] = useState(openPlatforms[0]?.id ?? '');
-  const [caption, setCaption] = useState('');
-  const [scheduledAt, setScheduledAt] = useState('');
-  const [campaignId, setCampaignId] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const account = accounts.find((a) => a.id === accountId) ?? null;
-
-  const save = async (): Promise<void> => {
-    if (!account) { addToast(isAr ? 'اختر منصة' : 'Pick a platform', 'error'); return; }
-    setBusy(true);
-    try {
-      const res = await savePublication(contentId, {
-        platform: account.platform,
-        account_id: account.id,
-        caption,
-        scheduled_at: scheduledAt || null,
-        campaign_id: campaignId || null,
-        status: scheduledAt ? 'scheduled' : 'draft',
-      });
-      onSaved(res.publications);
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <div style={{ border: '1px dashed var(--copper)', borderRadius: 10, padding: 12, marginTop: 10 }}>
-      <div className="k" style={{ marginBottom: 8 }}>{isAr ? 'منصة عضوية جديدة' : 'New organic placement'}</div>
-      {openPlatforms.length === 0 ? (
-        <p style={{ color: 'var(--mute)', fontSize: 13 }}>
-          {isAr ? 'كل المنصات العضوية المتاحة مضافة بالفعل.' : 'Every available organic platform is already added.'}
-        </p>
-      ) : (
-        <div style={{ display: 'grid', gap: 8 }}>
-          <div className="fld">
-            <div className="k">{isAr ? 'المنصة والحساب' : 'Platform & account'}</div>
-            <select className="inp" style={{ marginTop: 4 }} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              {openPlatforms.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {platformLabel(a.platform, isAr)}{a.handle ? ` · ${a.handle}` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="fld">
-            <div className="k">{isAr ? 'الكابشن' : 'Caption'}</div>
-            <textarea
-              className="inp"
-              rows={2}
-              style={{ marginTop: 4, fontSize: 13, lineHeight: 1.8 }}
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-            />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <div className="fld">
-              <div className="k">{isAr ? 'الموعد' : 'Schedule'}</div>
-              <input
-                className="inp"
-                type="datetime-local"
-                dir="ltr"
-                style={{ marginTop: 4, fontSize: 12.5 }}
-                value={scheduledAt ? isoDateTimeLocal(scheduledAt) : ''}
-                onChange={(e) => setScheduledAt(e.target.value ? new Date(e.target.value).toISOString() : '')}
-              />
-            </div>
-            <div className="fld">
-              <div className="k">{isAr ? 'الحملة العضوية' : 'Organic campaign'}</div>
-              <CampaignSelect
-                value={campaignId}
-                orgCampaigns={orgCampaigns}
-                isAr={isAr}
-                onChange={setCampaignId}
-                onCampaignCreated={onCampaignCreated}
-                addToast={addToast}
-              />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button type="button" className="btn btn-sm" onClick={onCancel} disabled={busy}>
-              {isAr ? 'إلغاء' : 'Cancel'}
-            </button>
-            <button type="button" className="btn btn-p btn-sm" onClick={() => void save()} disabled={busy}>
-              {busy ? '…' : (isAr ? 'إضافة' : 'Add')}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** existing-organic-campaign picker with an inline "＋ new" that creates one. */
-function CampaignSelect({
-  value, orgCampaigns, isAr, onChange, onCampaignCreated, addToast,
-}: {
-  value: string;
-  orgCampaigns: MosCampaign[];
-  isAr: boolean;
-  onChange: (id: string) => void;
-  onCampaignCreated: (r: { campaign: MosCampaign }) => void;
-  addToast: (msg: string, kind: 'success' | 'error') => void;
-}) {
-  const [creating, setCreating] = useState(false);
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const create = async (): Promise<void> => {
-    if (!name.trim()) return;
-    setBusy(true);
-    try {
-      const res = await saveCampaign({ name: name.trim(), kind: 'organic' });
-      onCampaignCreated({ campaign: res.item });
-      onChange(res.item.id);
-      setCreating(false);
-      setName('');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally { setBusy(false); }
-  };
-
-  if (creating) {
-    return (
-      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+      {canEdit ? (
         <input
           className="inp"
+          dir="rtl"
           style={{ fontSize: 12.5 }}
-          value={name}
-          placeholder={isAr ? 'اسم الحملة العضوية' : 'Organic campaign name'}
-          onChange={(e) => setName(e.target.value)}
-          autoFocus
+          value={draft}
+          placeholder={isAr ? '#الوسوم مفصولة بمسافة' : '#hashtags separated by spaces'}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => { if (draft !== hashtags) onChange(draft); }}
         />
-        <button type="button" className="btn btn-p btn-sm" onClick={() => void create()} disabled={busy}>
-          {busy ? '…' : (isAr ? 'إنشاء' : 'Create')}
-        </button>
-        <button type="button" className="btn btn-sm" onClick={() => setCreating(false)} disabled={busy}>×</button>
-      </div>
-    );
-  }
-
-  return (
-    <select
-      className="inp"
-      style={{ marginTop: 4 }}
-      value={value}
-      onChange={(e) => { if (e.target.value === '__new__') setCreating(true); else onChange(e.target.value); }}
-    >
-      <option value="">{isAr ? 'بدون حملة' : 'No campaign'}</option>
-      {orgCampaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-      <option value="__new__">{isAr ? '＋ حملة عضوية جديدة' : '＋ New organic campaign'}</option>
-    </select>
+      ) : (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {hashtags.split(/\s+/).filter(Boolean).map((t) => <span key={t} className="tag">{t}</span>)}
+          {!hashtags.trim() && <span style={{ color: 'var(--mute)', fontSize: 13 }}>—</span>}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -681,8 +293,9 @@ function AddPaid({
   const [targets, setTargets] = useState<PaidPlacementTarget[] | null>(null);
   const [campaignId, setCampaignId] = useState('');
   const [executionId, setExecutionId] = useState('');
-  const [adSetChoice, setAdSetChoice] = useState(''); // an ad-set id, or '__new__', or '' (none)
+  const [adSetChoice, setAdSetChoice] = useState(''); // an ad-set id, '__new__', or '' (none)
   const [newSetName, setNewSetName] = useState('');
+  const [adChoice, setAdChoice] = useState('__new__'); // an existing UNLINKED ad id, or '__new__'
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -696,6 +309,11 @@ function AddPaid({
 
   const campaign = targets?.find((c) => c.id === campaignId) ?? null;
   const execution = campaign?.executions.find((e) => e.id === executionId) ?? null;
+  const adSet = adSetChoice && adSetChoice !== '__new__'
+    ? execution?.ad_sets.find((s) => s.id === adSetChoice) ?? null
+    : null;
+  // Attaching to an existing ad only makes sense for a real (existing) ad set.
+  const attachableAds = adSet?.ads.filter((a) => !a.linked) ?? [];
 
   const save = async (): Promise<void> => {
     if (!executionId) { addToast(isAr ? 'اختر حملة ومنصة إعلانية' : 'Pick a campaign and ad platform', 'error'); return; }
@@ -704,16 +322,16 @@ function AddPaid({
     }
     setBusy(true);
     try {
-      const res = await saveAdCreative(
-        contentId,
-        {
-          executionId,
-          ...(adSetChoice === '__new__'
-            ? { newAdSetName: newSetName.trim() }
-            : adSetChoice ? { adSetId: adSetChoice } : {}),
-        },
-        text ? { primary_text: text } : {},
-      );
+      // Attach to an existing ad, OR add a new ad (optionally in a new set).
+      const target = adChoice !== '__new__'
+        ? { adId: adChoice }
+        : {
+            executionId,
+            ...(adSetChoice === '__new__'
+              ? { newAdSetName: newSetName.trim() }
+              : adSetChoice ? { adSetId: adSetChoice } : {}),
+          };
+      const res = await saveAdCreative(contentId, target, text ? { primary_text: text } : {});
       onSaved(res.placements);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
@@ -737,7 +355,7 @@ function AddPaid({
               className="inp"
               style={{ marginTop: 4 }}
               value={campaignId}
-              onChange={(e) => { setCampaignId(e.target.value); setExecutionId(''); setAdSetChoice(''); }}
+              onChange={(e) => { setCampaignId(e.target.value); setExecutionId(''); setAdSetChoice(''); setAdChoice('__new__'); }}
             >
               <option value="">{isAr ? '— اختر —' : '— pick —'}</option>
               {targets.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -756,7 +374,7 @@ function AddPaid({
                   className="inp"
                   style={{ marginTop: 4 }}
                   value={executionId}
-                  onChange={(e) => { setExecutionId(e.target.value); setAdSetChoice(''); }}
+                  onChange={(e) => { setExecutionId(e.target.value); setAdSetChoice(''); setAdChoice('__new__'); }}
                 >
                   <option value="">{isAr ? '— اختر —' : '— pick —'}</option>
                   {campaign.executions.map((ex) => (
@@ -776,7 +394,7 @@ function AddPaid({
                 className="inp"
                 style={{ marginTop: 4 }}
                 value={adSetChoice}
-                onChange={(e) => setAdSetChoice(e.target.value)}
+                onChange={(e) => { setAdSetChoice(e.target.value); setAdChoice('__new__'); }}
               >
                 <option value="">{isAr ? 'بدون مجموعة' : 'No ad set'}</option>
                 {execution.ad_sets.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -791,6 +409,27 @@ function AddPaid({
                   onChange={(e) => setNewSetName(e.target.value)}
                 />
               )}
+            </div>
+          )}
+
+          {/* Attach to an existing ad, or add a new one — only when a real ad set
+              with unlinked ads is chosen. */}
+          {adSet && attachableAds.length > 0 && (
+            <div className="fld">
+              <div className="k">{isAr ? 'الإعلان' : 'Ad'}</div>
+              <select
+                className="inp"
+                style={{ marginTop: 4 }}
+                value={adChoice}
+                onChange={(e) => setAdChoice(e.target.value)}
+              >
+                <option value="__new__">{isAr ? '＋ إعلان جديد' : '＋ New ad'}</option>
+                {attachableAds.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {isAr ? 'ربط بـ: ' : 'Attach to: '}{a.label || (a.platform_ad_id ? `#${a.platform_ad_id}` : a.id.slice(0, 8))}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 

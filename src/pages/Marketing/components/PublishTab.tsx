@@ -32,6 +32,7 @@ import { probeVideoDuration } from '../lib/upload';
 import { useWorkspace } from '../MarketingWorkspace';
 import { preflightPublishSet } from '@/lib/marketingOS/platformRules';
 import { Field, Modal, Pill, type Tone } from './kit';
+import OrganicCampaignSelect from './OrganicCampaignSelect';
 import { IconPlus } from './icons';
 import { dateTimeShort, isoDateTimeLocal, num, shortDate, toArabicDigits } from '../lib/format';
 import { useAssetUrls } from '../lib/assetUrls';
@@ -1074,6 +1075,7 @@ function PublicationModal({
   const [status, setStatus] = useState(publication?.status ?? 'draft');
   const [when, setWhen] = useState(isoDateTimeLocal(publication?.scheduled_at));
   const [caption, setCaption] = useState(publication?.caption ?? '');
+  const [campaignId, setCampaignId] = useState(publication?.campaign_id ?? '');
   const [url, setUrl] = useState(publication?.external_url ?? '');
   // The ORDERED pick — carousel order. Seeded from asset_ids (carousel rows),
   // else the durable single asset link, else the legacy file_id match.
@@ -1133,6 +1135,7 @@ function PublicationModal({
               status,
               scheduled_at: when ? new Date(when).toISOString() : null,
               caption: caption || null,
+              campaign_id: campaignId || null,
               external_url: url || null,
               asset_id: picked?.id ?? null,
               // The full ordered set; the server keeps asset_id = the first.
@@ -1179,6 +1182,11 @@ function PublicationModal({
           </select>
         </Field>
       </div>
+
+      {/* The OPTIONAL organic campaign this placement belongs to. */}
+      <Field label={isAr ? 'الحملة العضوية' : 'Organic campaign'}>
+        <OrganicCampaignSelect value={campaignId} isAr={isAr} onChange={setCampaignId} />
+      </Field>
 
       {/* The band-4 rule, enforced: the picker lists ONLY approved files.
           Instagram/TikTok take an ORDERED set (carousel, up to 10 — the pick

@@ -660,7 +660,12 @@ export interface PaidPlacementTarget {
   name: string;
   executions: Array<{
     id: string; platform: string; label: string | null;
-    ad_sets: Array<{ id: string; name: string }>;
+    ad_sets: Array<{
+      id: string; name: string;
+      /** Ads already in this set — attach the creative to an UNLINKED one
+       *  (linked=false) or add a new ad. */
+      ads: Array<{ id: string; label: string | null; platform_ad_id: string | null; linked: boolean }>;
+    }>;
   }>;
 }
 

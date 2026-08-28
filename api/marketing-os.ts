@@ -2317,15 +2317,20 @@ export default async function handler(req: Request): Promise<Response> {
         if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
 
         if (adId) {
-          // Edit an existing placement's copy — must belong to THIS creative.
+          // Edit THIS creative's placement, OR attach to an existing UNLINKED ad
+          // (e.g. a Meta-synced ad the buyer made). Never steal an ad already
+          // linked to a different creative.
           const existing = await svc.from('mos_execution_ads').select('id, creative, content_id')
             .eq('id', adId).is('archived_at', null).maybeSingle();
           const ef = dbFail(existing.error); if (ef) return ef;
           const exRow = existing.data as { id: string; creative: unknown; content_id: string | null } | null;
-          if (!exRow || exRow.content_id !== contentId) return jsonError(404, 'placement not found');
+          if (!exRow) return jsonError(404, 'placement not found');
+          if (exRow.content_id && exRow.content_id !== contentId) {
+            return jsonError(400, 'that ad is already linked to another creative');
+          }
           const prev = (exRow.creative ?? {}) as Record<string, unknown>;
           const upd = await svc.from('mos_execution_ads')
-            .update({ creative: { ...prev, ...creative }, updated_at: new Date().toISOString() })
+            .update({ content_id: contentId, creative: { ...prev, ...creative }, updated_at: new Date().toISOString() })
             .eq('id', adId).select('id').maybeSingle();
           const uf = dbFail(upd.error); if (uf) return uf;
         } else {
@@ -2412,20 +2417,38 @@ export default async function handler(req: Request): Promise<Response> {
         const execRows = (execs.data ?? []) as Array<{ id: string; campaign_id: string; platform: string; label: string | null }>;
 
         let setRows: Array<{ id: string; execution_id: string; name: string; sort_order: number }> = [];
+        let adRows: Array<{ id: string; ad_set_id: string | null; label: string | null; content_id: string | null; platform_ad_id: string | null }> = [];
         if (execRows.length > 0) {
-          const sets = await sb.from('mos_ad_sets').select('id, execution_id, name, sort_order')
-            .in('execution_id', execRows.map((e) => e.id)).is('archived_at', null)
-            .order('sort_order', { ascending: true });
-          const sf = dbFail(sets.error); if (sf) return sf;
+          const [sets, ads] = await Promise.all([
+            sb.from('mos_ad_sets').select('id, execution_id, name, sort_order')
+              .in('execution_id', execRows.map((e) => e.id)).is('archived_at', null)
+              .order('sort_order', { ascending: true }),
+            sb.from('mos_execution_ads').select('id, ad_set_id, label, content_id, platform_ad_id')
+              .in('execution_id', execRows.map((e) => e.id)).is('archived_at', null),
+          ]);
+          const sf = dbFail(sets.error) ?? dbFail(ads.error); if (sf) return sf;
           setRows = (sets.data ?? []) as typeof setRows;
+          adRows = (ads.data ?? []) as typeof adRows;
         }
-        const setsByExec = new Map<string, Array<{ id: string; name: string }>>();
+        // Existing ads a creative can ATTACH to = those not yet linked to any
+        // creative (an unlinked/synced ad). Ads already linked show as taken.
+        type TargetAd = { id: string; label: string | null; platform_ad_id: string | null; linked: boolean };
+        type TargetSet = { id: string; name: string; ads: TargetAd[] };
+        type TargetExec = { id: string; platform: string; label: string | null; ad_sets: TargetSet[] };
+        const adsBySet = new Map<string, TargetAd[]>();
+        for (const a of adRows) {
+          if (!a.ad_set_id) continue;
+          const arr = adsBySet.get(a.ad_set_id) ?? [];
+          arr.push({ id: a.id, label: a.label, platform_ad_id: a.platform_ad_id, linked: !!a.content_id });
+          adsBySet.set(a.ad_set_id, arr);
+        }
+        const setsByExec = new Map<string, TargetSet[]>();
         for (const s of setRows) {
           const arr = setsByExec.get(s.execution_id) ?? [];
-          arr.push({ id: s.id, name: s.name });
+          arr.push({ id: s.id, name: s.name, ads: adsBySet.get(s.id) ?? [] });
           setsByExec.set(s.execution_id, arr);
         }
-        const execsByCamp = new Map<string, Array<{ id: string; platform: string; label: string | null; ad_sets: Array<{ id: string; name: string }> }>>();
+        const execsByCamp = new Map<string, TargetExec[]>();
         for (const e of execRows) {
           const arr = execsByCamp.get(e.campaign_id) ?? [];
           arr.push({ id: e.id, platform: e.platform, label: e.label, ad_sets: setsByExec.get(e.id) ?? [] });

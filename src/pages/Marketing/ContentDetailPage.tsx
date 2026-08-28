@@ -41,7 +41,6 @@ import WritingFields from './components/WritingFields';
 import PlacementsTab from './components/PlacementsTab';
 import SceneTable from './components/SceneTable';
 import { useMosText } from './lib/useMosText';
-import PublishTab from './components/PublishTab';
 import PerformanceTab from './components/PerformanceTab';
 import MaterialsTab from './components/MaterialsTab';
 import { ProjectAssetsTab, ProjectInfoTab } from './components/ProjectPanels';
@@ -52,7 +51,7 @@ import { IconBack, IconCheck, IconForward, IconSend } from './components/icons';
 import { dateTimeShort, daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
 import './styles/mobile-m2.css';
 
-type Tab = 'overview' | 'content' | 'placements' | 'materials' | 'project_assets' | 'project_info' | 'tasks' | 'publishing' | 'performance';
+type Tab = 'overview' | 'content' | 'placements' | 'materials' | 'project_assets' | 'project_info' | 'tasks' | 'performance';
 
 /** The breadcrumb's plural type names — s06 «الفيديوهات», s08 «المنشورات». */
 const TYPE_PLURAL: Record<string, { ar: string; en: string }> = {
@@ -346,9 +345,10 @@ export default function ContentDetailPage() {
     // preset lacks it, so an oversight role sees no script (screen 36), but
     // it's now a capability toggle, not a hardcoded role check.
     { key: 'content', ar: 'المحتوى', en: 'Content', needs: 'view_content_body' },
-    // Where this creative runs — organic posts + paid ads, each added the same
-    // way. `purpose` is derived from what's here, not chosen up front.
-    { key: 'placements', ar: 'أماكن النشر', en: 'Placements', needs: 'view_content_body' },
+    // Where this creative runs — organic posts (full publish surface) + paid ads,
+    // each added the same way. `purpose` is derived from what's here, not chosen
+    // up front. The standalone Publishing tab was merged in here (2026-08-28).
+    { key: 'placements', ar: 'أماكن النشر', en: 'Placements', needs: 'view_content_body', badge: openPubs || undefined },
     { key: 'materials', ar: 'المواد', en: 'Material', badge: materialCount || undefined },
     // The project the content runs under — its linked files + facts, so the
     // writer has every reference in one place. Shown only when a project is known.
@@ -359,7 +359,6 @@ export default function ContentDetailPage() {
         ])
       : []),
     { key: 'tasks', ar: 'المهام والاعتمادات', en: 'Tasks & approvals', badge: openTasks || undefined },
-    { key: 'publishing', ar: 'النشر', en: 'Publishing', badge: openPubs || undefined },
     { key: 'performance', ar: 'الأداء', en: 'Performance' },
   ];
   const tabs = allTabs.filter((t) => !t.needs || can(t.needs));
@@ -621,7 +620,7 @@ export default function ContentDetailPage() {
                         ? `${num(publications.length, true)} منصة${publications.every((p) => !p.scheduled_at && !p.published_at) && publications.length > 0 ? ' · لا شيء مجدول بعد' : ''}`
                         : `${publications.length} platforms${publications.every((p) => !p.scheduled_at && !p.published_at) && publications.length > 0 ? ' · nothing scheduled yet' : ''}`}
                     </span>
-                    <button type="button" className="btn btn-sm" onClick={() => setTab('publishing')}>
+                    <button type="button" className="btn btn-sm" onClick={() => setTab('placements')}>
                       {isAr ? 'فتح' : 'Open'}
                     </button>
                   </div>
@@ -715,6 +714,7 @@ export default function ContentDetailPage() {
               publications={publications}
               hashtags={typeof item.data?.hashtags === 'string' ? item.data.hashtags : ''}
               canEdit={canEditNow}
+              canPublish={can('schedule') || can('publish')}
               isAr={isAr}
               onPublicationsChanged={setPublications}
               onHashtagsChanged={(value) => {
@@ -766,17 +766,6 @@ export default function ContentDetailPage() {
             />
           )}
 
-
-          {activeTab === 'publishing' && (
-            <PublishTab
-              contentId={item.id}
-              publications={publications}
-              accounts={accounts}
-              canEdit={can('schedule') || can('publish')}
-              isAr={isAr}
-              onChange={setPublications}
-            />
-          )}
 
           {activeTab === 'performance' && (
             <PerformanceTab
