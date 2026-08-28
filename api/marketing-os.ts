@@ -453,13 +453,21 @@ async function loadPaidAdsPayload(sb: SupabaseClient, contentId: string): Promis
 
   const placements: PaidPlacement[] = ads.map((a) => {
     const e = execById.get(a.execution_id);
+    // The ad caption has two historical homes: `message` (written by the campaign
+    // wizard / tree editor) and `primary_text` (written by the Placements tab).
+    // Surface ONE — primary_text, falling back to message — so the caption a user
+    // typed in the wizard shows on the Placements card instead of an empty box.
+    const cr = a.creative ?? {};
+    const normCreative = (cr.primary_text == null && typeof cr.message === 'string')
+      ? { ...cr, primary_text: cr.message }
+      : cr;
     return {
       id: a.id,
       execution_id: a.execution_id,
       ad_set_id: a.ad_set_id,
       ad_set_name: a.ad_set_id ? (setName.get(a.ad_set_id) ?? null) : null,
       content_id: a.content_id,
-      creative: a.creative,
+      creative: normCreative,
       status: a.status,
       execution: e
         ? { id: e.id, platform: e.platform, label: e.label, campaign_id: e.campaign_id, campaign_name: campName.get(e.campaign_id) ?? null }
@@ -2367,6 +2375,10 @@ export default async function handler(req: Request): Promise<Response> {
         for (const k of AD_CREATIVE_KEYS) {
           if (typeof rawCreative[k] === 'string') creative[k] = rawCreative[k] as string;
         }
+        // The ad caption lives under `message` for the campaign wizard / tree
+        // editor (and any Meta-facing use). Mirror primary_text → message so a
+        // caption typed on the Placements tab is the SAME field both surfaces read.
+        if (typeof creative.primary_text === 'string') creative.message = creative.primary_text;
 
         // The caller must be able to SEE the content (RLS read) before we write.
         const own = await sb.from('mos_content_v').select('id, title').eq('id', contentId).maybeSingle();

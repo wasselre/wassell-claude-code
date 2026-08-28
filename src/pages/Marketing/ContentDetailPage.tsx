@@ -717,6 +717,7 @@ export default function ContentDetailPage() {
           {activeTab === 'placements' && (
             <PlacementsTab
               contentId={item.id}
+              defaultCampaignId={item.campaign_id ?? null}
               hasHashtags={fieldSchemaKeys(type?.field_schema ?? []).includes('hashtags')}
               accounts={accounts}
               publications={publications}

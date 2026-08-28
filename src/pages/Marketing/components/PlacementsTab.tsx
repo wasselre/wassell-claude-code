@@ -31,10 +31,14 @@ const platformLabel = (p: string, isAr: boolean): string => {
 };
 
 export default function PlacementsTab({
-  contentId, hasHashtags, accounts, publications, hashtags,
+  contentId, defaultCampaignId, hasHashtags, accounts, publications, hashtags,
   canEdit, canPublish, isAr, onPublicationsChanged, onHashtagsChanged, onOrganicPlatformsChanged,
 }: {
   contentId: string;
+  /** The content's own campaign (provenance) — pre-selects the paid-placement
+   *  campaign picker so a creative born under a paid campaign attaches there by
+   *  default (still changeable — a creative may run paid in any campaign). */
+  defaultCampaignId: string | null;
   hasHashtags: boolean;
   accounts: MosAccount[];
   publications: MosPublication[];
@@ -76,7 +80,7 @@ export default function PlacementsTab({
         )}
       </div>
 
-      <PaidPlacements contentId={contentId} canEdit={canEdit} isAr={isAr} />
+      <PaidPlacements contentId={contentId} defaultCampaignId={defaultCampaignId} canEdit={canEdit} isAr={isAr} />
     </div>
   );
 }
@@ -120,9 +124,10 @@ function HashtagsEditor({
 /* ══════════════════════ paid ══════════════════════ */
 
 function PaidPlacements({
-  contentId, canEdit, isAr,
+  contentId, defaultCampaignId, canEdit, isAr,
 }: {
   contentId: string;
+  defaultCampaignId: string | null;
   canEdit: boolean;
   isAr: boolean;
 }) {
@@ -183,6 +188,7 @@ function PaidPlacements({
       {adding && (
         <AddPaid
           contentId={contentId}
+          defaultCampaignId={defaultCampaignId}
           isAr={isAr}
           onCancel={() => setAdding(false)}
           onSaved={(pls) => { setPlacements(pls); setAdding(false); }}
@@ -282,9 +288,10 @@ function PaidCard({
 }
 
 function AddPaid({
-  contentId, isAr, onCancel, onSaved, addToast,
+  contentId, defaultCampaignId, isAr, onCancel, onSaved, addToast,
 }: {
   contentId: string;
+  defaultCampaignId: string | null;
   isAr: boolean;
   onCancel: () => void;
   onSaved: (pls: PaidPlacement[]) => void;
@@ -302,13 +309,40 @@ function AddPaid({
   useEffect(() => {
     let alive = true;
     fetchPaidPlacementTargets()
-      .then((r) => { if (alive) setTargets(r.campaigns); })
+      .then((r) => {
+        if (!alive) return;
+        setTargets(r.campaigns);
+        // Pre-select the content's OWN campaign (its provenance) — a creative
+        // born under a paid campaign attaches there by default, so the operator
+        // doesn't re-pick what the system already knows. Still changeable.
+        if (defaultCampaignId && r.campaigns.some((c) => c.id === defaultCampaignId)) {
+          setCampaignId(defaultCampaignId);
+        }
+      })
       .catch((e) => { if (alive) addToast(e instanceof Error ? e.message : String(e), 'error'); });
     return () => { alive = false; };
-  }, [addToast]);
+  }, [addToast, defaultCampaignId]);
 
   const campaign = targets?.find((c) => c.id === campaignId) ?? null;
   const execution = campaign?.executions.find((e) => e.id === executionId) ?? null;
+
+  // An execution IS a platform under the campaign; when the campaign has exactly
+  // one, there is nothing to choose — select it automatically (still overridable
+  // via the dropdown when a campaign has more than one execution).
+  useEffect(() => {
+    if (campaign && !executionId && campaign.executions.length === 1) {
+      setExecutionId(campaign.executions[0]?.id ?? '');
+    }
+  }, [campaign, executionId]);
+  // When the chosen execution changes, default its ad set: the lone one if there
+  // is exactly one, else «بدون مجموعة». Keyed on executionId (not adSetChoice) so
+  // a later manual pick of «بدون مجموعة» is not immediately re-selected.
+  useEffect(() => {
+    if (!execution) return;
+    setAdSetChoice(execution.ad_sets.length === 1 ? (execution.ad_sets[0]?.id ?? '') : '');
+    setAdChoice('__new__');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [executionId]);
   const adSet = adSetChoice && adSetChoice !== '__new__'
     ? execution?.ad_sets.find((s) => s.id === adSetChoice) ?? null
     : null;
