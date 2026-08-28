@@ -692,6 +692,68 @@ async function mirrorOutboundMedia(
 }
 
 /**
+ * Mirror a WAHA-HOSTED media file (`wf_<session>/<fname>`) into our durable
+ * bucket at the exact path downloadFile's mirror fallback reads, the moment the
+ * message arrives — while WAHA still holds its `/api/files` copy.
+ *
+ * WAHA writes that copy asynchronously and evicts it within minutes. Outbound
+ * media is already covered by mirrorOutboundMedia (send time, from the pristine
+ * source). INBOUND client media had NO proactive mirror — it was only cached
+ * LAZILY on first successful view (downloadFile's cache-through), so any client
+ * photo/voice-note/document that WAHA evicted before a rep opened the thread was
+ * 404'd forever and rendered as a red "تعذّر تحميل الملف" bubble. Measured
+ * 2026-08-28: 19 of 34 inbound media had no durable copy. This closes that gap
+ * (and, as a belt-and-suspenders second attempt, backstops the send-time
+ * outbound mirror), keyed by WAHA's OWN filename so the stem always matches the
+ * stored `wf_` ref — no wid-hash prediction, unlike the send-time path.
+ *
+ * Idempotent (skips when a matching mirror already exists), time-bounded, and
+ * never throws: this runs on the webhook hot path and must never fail ingest.
+ */
+export async function mirrorWahaHostedMedia(
+  session: string,
+  fname: string,
+  mime?: string | null,
+): Promise<void> {
+  try {
+    if (!session || !fname) return;
+    // Already mirrored? (send-time outbound mirror, or a lazy cache-through, or a
+    // prior webhook retry.) Match downloadFile's lookup: exact name OR same stem
+    // with a different extension. Skips the WAHA round-trip for the common
+    // already-covered outbound case.
+    const stem = fname.includes('.') ? fname.slice(0, fname.lastIndexOf('.')) : fname;
+    const { data: existing } = await svc().storage
+      .from(OUTBOUND_BUCKET)
+      .list(`${MIRROR_PREFIX}/${session}`, { search: stem, limit: 10 });
+    if ((existing ?? []).some((o) => o.name === fname || (stem && o.name.startsWith(`${stem}.`)))) {
+      return;
+    }
+
+    const res = await fetch(`${wahaUrl()}/api/files/${session}/${fname}`, {
+      headers: wahaAuthHeaders(),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      // Already evicted (we lost the race), or a transient gateway error. A later
+      // first-view cache-through is the last remaining chance; nothing to do here.
+      console.error(`[waha.mirrorWahaHostedMedia] source fetch ${res.status} for ${session}/${fname}`);
+      return;
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const contentType = mime || res.headers.get('content-type') || 'application/octet-stream';
+    const { error } = await svc().storage
+      .from(OUTBOUND_BUCKET)
+      .upload(`${MIRROR_PREFIX}/${session}/${fname}`, bytes, { contentType, upsert: false });
+    // "already exists" is a benign race with the lazy cache-through, not a failure.
+    if (error && !/exists/i.test(error.message)) {
+      console.error(`[waha.mirrorWahaHostedMedia] mirror upload failed for ${session}/${fname}:`, error.message);
+    }
+  } catch (err) {
+    console.error('[waha.mirrorWahaHostedMedia] unexpected error:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
  * The recipient's chat id — the LAST place a phone number can still be wrong.
  *
  * This used to strip non-digits and append `@c.us`, with no country-code logic

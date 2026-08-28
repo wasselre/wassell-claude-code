@@ -32,7 +32,7 @@ import {
   uuidV5FromWidSync,
   type ChatMessageRow,
 } from '../_lib/chatIngest.js';
-import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, type WahaMessageRaw } from '../_lib/waha.js';
+import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, mirrorWahaHostedMedia, type WahaMessageRaw } from '../_lib/waha.js';
 
 export const config = {
   runtime: 'edge',
@@ -240,6 +240,18 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   };
 
   const { isNew } = await upsertChatMessage(row);
+
+  // Proactively mirror WAHA-hosted media the instant it arrives, while the
+  // gateway still holds its transient /api/files copy (it evicts within minutes).
+  // Covers INBOUND client media — photos/voice notes/documents — which had no
+  // send-time mirror and was 404'd forever once evicted, showing the red
+  // "تعذّر تحميل الملف" bubble the operator kept hitting. Awaited so it completes
+  // on the Edge runtime; idempotent + time-bounded + never throws, so it can't
+  // slow retries or break ingest (the message is already stored above).
+  if (mediaFileId) {
+    const fname = mediaFileId.slice(mediaFileId.indexOf('/') + 1);
+    await mirrorWahaHostedMedia(session, fname, mime);
+  }
 
   // Ad-sourced lead → marketing acquisition capture (2026-08-23).
   //
