@@ -21,6 +21,12 @@ const PLATFORM_COLORS: Record<string, string> = {
   instagram: '#C13584', tiktok: 'var(--ink)', snapchat: '#C8B400', x: 'var(--ink)', youtube: '#C4302B',
 };
 
+/** Marketing role keys → Arabic labels (for the bottleneck line). */
+const ROLE_AR: Record<string, string> = {
+  ceo: 'الرئيس التنفيذي', marketing_manager: 'مدير التسويق', ops_supervisor: 'مشرف العمليات',
+  writer: 'الكاتب', montage: 'المونتاج',
+};
+
 /* One stacked pace bar: published (solid) + planned (light) against the whole
    window's target, with a marker at where you SHOULD be by today. */
 function PaceBar({ cell }: { cell: CoverageCell }) {
@@ -79,6 +85,7 @@ export default function CoveragePanel({ isAr }: { isAr: boolean }) {
 
   const label = (p: string) => (isAr ? PLATFORM_LABELS[p]?.ar : PLATFORM_LABELS[p]?.en) ?? p;
   const bucketLabel = (b: string) => b === 'post' ? (isAr ? 'منشورات' : 'Posts') : (isAr ? 'فيديو' : 'Videos');
+  const roleLabel = (k: string | null) => (k && isAr ? (ROLE_AR[k] ?? k) : (k ?? ''));
 
   const overall = cov?.overall;
   const overallPct = overall && overall.fullTarget > 0
@@ -201,7 +208,7 @@ export default function CoveragePanel({ isAr }: { isAr: boolean }) {
                 <span style={{ color: c.short ? 'var(--late)' : 'var(--go)' }}>
                   {c.bottleneckPerDay > 0
                     ? (isAr
-                      ? `طاقة ${num(c.bottleneckPerDay, true)}/يوم${c.bottleneckRole ? ` (اختناق: ${c.bottleneckRole})` : ''}`
+                      ? `طاقة ${num(c.bottleneckPerDay, true)}/يوم${c.bottleneckRole ? ` (اختناق: ${roleLabel(c.bottleneckRole)})` : ''}`
                       : `capacity ${c.bottleneckPerDay}/day${c.bottleneckRole ? ` (bottleneck: ${c.bottleneckRole})` : ''}`)
                     : (isAr ? 'لا طاقة إنتاج مُعدّة' : 'no production capacity set')}
                 </span>

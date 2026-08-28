@@ -100,8 +100,10 @@ export function computeCoverage(
     return every ? every.per_day : 0;
   };
 
+  // Compare on WHOLE days (all windows are local-midnight). Today counts as
+  // elapsed. Aligning to midnight avoids the 23:59 → dayCount off-by-one.
   const today = new Date(now);
-  today.setHours(23, 59, 59, 999); // count today as elapsed
+  today.setHours(0, 0, 0, 0);
   const lastElapsed = today < period.start ? null : (today > period.end ? period.end : today);
 
   const rows: CoveragePlatform[] = platforms.map((platform) => {
