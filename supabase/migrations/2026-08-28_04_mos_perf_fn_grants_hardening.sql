@@ -20,3 +20,7 @@ REVOKE EXECUTE ON FUNCTION public.mos_leave_request(timestamptz, timestamptz, te
 REVOKE EXECUTE ON FUNCTION public.mos_leave_decide(uuid, boolean) FROM anon;
 REVOKE EXECUTE ON FUNCTION public.mos_perf_task_block(text, uuid, boolean, text) FROM anon;
 REVOKE EXECUTE ON FUNCTION public.mos_perf_kpi_evaluate(text) FROM anon;
+
+-- Trigger functions keep PUBLIC execute by default; revoke it too (the
+-- trigger itself runs as table owner and needs no caller grant).
+REVOKE ALL ON FUNCTION public.mos_perf_on_task_close() FROM PUBLIC;
