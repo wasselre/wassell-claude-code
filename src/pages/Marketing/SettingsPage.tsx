@@ -551,6 +551,39 @@ export default function SettingsPage() {
               />
 
               <IndexCard
+                icon={IC.matrix}
+                title={isAr ? 'طاقة العمل والمُهَل' : 'Load & SLA'}
+                desc={isAr
+                  ? 'كم مهمة جديدة تصل لكل دور يوميًا، وكم ساعة تُمهَل كل مهمة قبل اعتبارها متأخرة.'
+                  : 'How many new tasks land per role per day, and the hours each task gets before it counts late.'}
+                tags={
+                  <>
+                    <span className="tag">{isAr ? 'الكاتب ١٠ + ٣ يوميًا' : 'Writer 10 + 3 /day'}</span>
+                    <span className="tag">{isAr ? 'المونتير ٤ + ٢ يوميًا' : 'Montage 4 + 2 /day'}</span>
+                    <span className="tag">{isAr ? 'مُهَل ٤–٢٤ ساعة' : 'SLAs 4–24h'}</span>
+                  </>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/load')}
+              />
+
+              <IndexCard
+                icon={IC.bell}
+                title={isAr ? 'إيقاع النشر' : 'Posting cadence'}
+                desc={isAr
+                  ? 'كم منشورًا وفيديو نريد يوميًا على كل منصة — أهداف تقويم التغطية.'
+                  : 'How many posts and videos we want per platform per day — the coverage calendar\'s targets.'}
+                tags={
+                  <>
+                    <span className="tag">{isAr ? 'الهدف مقابل المنشور فعلًا' : 'Target vs published'}</span>
+                    <span className="tag">{isAr ? 'ينبّه ولا ينشر بالنيابة' : 'Nudges, never auto-posts'}</span>
+                  </>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/cadence')}
+              />
+
+              <IndexCard
                 icon={IC.campaigns}
                 title={isAr ? 'أنواع الحملات' : 'Campaign types'}
                 desc={isAr
