@@ -1,11 +1,10 @@
 /**
  * Scenes — design screen 07, the half the Google Doc always failed at.
  *
- * The strip above the table shows REAL timing: each segment's width is its
- * scene's duration, so a 38-second script cannot quietly become 70. Columns
- * are the design's — التوقيت / الصورة / التعليق الصوتي / نص على الشاشة /
- * التصوير — and footage status stays a first-class control because every
- * scene marked missing is a shot somebody has to go and film.
+ * Columns are الصورة / التعليق الصوتي / نص على الشاشة / التصوير — footage
+ * status stays a first-class control because every scene marked missing is a
+ * shot somebody has to go and film. (Per-scene timing was dropped — a scene is
+ * a shot, not a stopwatch entry.)
  */
 import { useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
@@ -13,7 +12,96 @@ import {
   FOOTAGE_LABELS, MosScene, deleteScene, saveScene, saveShoot,
 } from '@/lib/marketingOS/client';
 import { IconPlus, IconShoot, IconTrash } from './icons';
-import { num, toArabicDigits } from '../lib/format';
+import { Modal } from './kit';
+import { num } from '../lib/format';
+
+/**
+ * The three descriptive scene columns. They hold real sentences — a voice-over
+ * line, an on-screen caption — so the cell is a CLAMPED preview that opens a
+ * roomy popup editor on click, never a cramped inline box you fight to type in.
+ */
+const CELL_FIELDS = ['visual', 'voiceover', 'on_screen_text'] as const;
+type CellField = typeof CELL_FIELDS[number];
+const CELL_LABELS: Record<CellField, { ar: string; en: string }> = {
+  visual:         { ar: 'الصورة', en: 'The shot' },
+  voiceover:      { ar: 'التعليق الصوتي', en: 'Voice-over' },
+  on_screen_text: { ar: 'نص على الشاشة', en: 'On-screen text' },
+};
+
+/**
+ * One editable scene cell: a clamped preview (up to 3 lines) that opens a popup
+ * with a full-height textarea. Commits on Save only when the text changed, so
+ * opening a cell and closing it never fires a needless write.
+ */
+function SceneTextCell({
+  value, label, busy, isAr, onSave,
+}: {
+  value: string;
+  label: string;
+  busy: boolean;
+  isAr: boolean;
+  onSave: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  const openEditor = (): void => { setDraft(value); setOpen(true); };
+  const commit = (): void => {
+    if (draft !== value) onSave(draft);
+    setOpen(false);
+  };
+  const placeholder = isAr ? 'اضغط للكتابة…' : 'Tap to write…';
+
+  return (
+    <>
+      <div
+        className="inp"
+        role="button"
+        tabIndex={busy ? -1 : 0}
+        aria-label={label}
+        onClick={() => { if (!busy) openEditor(); }}
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && !busy) { e.preventDefault(); openEditor(); }
+        }}
+        style={{
+          width: '100%', minHeight: 40, fontSize: 12, lineHeight: 1.7,
+          cursor: busy ? 'default' : 'text', whiteSpace: 'pre-wrap',
+          display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+          overflow: 'hidden', textAlign: isAr ? 'right' : 'left',
+          color: value ? 'var(--ink)' : 'var(--mute)',
+        }}
+      >
+        {value || placeholder}
+      </div>
+      {open && (
+        <Modal
+          title={label}
+          onClose={() => setOpen(false)}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setOpen(false)}>
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button type="button" className="btn btn-p" onClick={commit}>
+                {isAr ? 'حفظ' : 'Save'}
+              </button>
+            </>
+          }
+        >
+          <textarea
+            className="inp"
+            autoFocus
+            rows={9}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={placeholder}
+            style={{ width: '100%', fontSize: 14, lineHeight: 1.95 }}
+          />
+        </Modal>
+      )}
+    </>
+  );
+}
 
 const STATUSES: Array<MosScene['footage_status']> = ['have', 'to_make', 'missing', 'template'];
 const STATUS_BG: Record<string, string> = {
@@ -31,22 +119,6 @@ const STATUS_PILL: Record<MosScene['footage_status'], string> = {
   missing: 'p-late',
   template: 'p-wait',
 };
-/** The strip's palette cycle — the design's warm sequence, not status colors. */
-const STRIP = ['var(--choc)', 'var(--copper)', 'var(--terracotta)', 'var(--copper)', 'var(--gold)', 'var(--choc)'];
-
-/** Seconds of a scene; scenes without timing count as 0 width until timed. */
-const duration = (s: MosScene): number =>
-  s.start_sec !== null && s.end_sec !== null && s.end_sec > s.start_sec
-    ? s.end_sec - s.start_sec
-    : 0;
-
-const timeLabel = (s: MosScene, isAr: boolean): string => {
-  if (s.start_sec === null || s.end_sec === null) return '—';
-  const a = isAr ? toArabicDigits(String(s.start_sec)) : String(s.start_sec);
-  const b = isAr ? toArabicDigits(String(s.end_sec)) : String(s.end_sec);
-  return isAr ? `${a}–${b}ث` : `${a}–${b}s`;
-};
-
 export default function SceneTable({
   contentId, contentTitle, projectId, scenes, canEdit, canDelete = false, canRaiseShoot = false, isAr, onChange,
 }: {
@@ -86,9 +158,6 @@ export default function SceneTable({
   // footage: a «قالب» scene is nobody's filming job, so it leaves the total.
   const needFootage = scenes.filter((s) => s.footage_status !== 'template').length;
   const haveTextAr = have === 1 ? 'لقطة' : have === 2 ? 'لقطتان' : num(have, true);
-  const totalSeconds = scenes.reduce((a, s) => Math.max(a, s.end_sec ?? 0), 0);
-  const timed = scenes.filter((s) => duration(s) > 0);
-  const timedTotal = timed.reduce((a, s) => a + duration(s), 0);
 
   const raiseShoot = async (): Promise<void> => {
     setBusy(true);
@@ -120,8 +189,8 @@ export default function SceneTable({
         <h4>{isAr ? 'المشاهد' : 'The scenes'}</h4>
         <span className="r">
           {isAr
-            ? `${num(scenes.length, true)} مشاهد${totalSeconds > 0 ? ` · ${num(totalSeconds, true)} ثانية` : ''} · ${haveTextAr} من ${num(needFootage, true)} لديها تصوير`
-            : `${scenes.length} scenes${totalSeconds > 0 ? ` · ${totalSeconds}s` : ''} · ${have} of ${needFootage} have footage`}
+            ? `${num(scenes.length, true)} مشاهد · ${haveTextAr} من ${num(needFootage, true)} لديها تصوير`
+            : `${scenes.length} scenes · ${have} of ${needFootage} have footage`}
         </span>
         {missing.length > 0 && (canEdit || canRaiseShoot) && (
           <button
@@ -153,45 +222,23 @@ export default function SceneTable({
         {scenes.length === 0 ? (
           <p style={{ padding: 14, textAlign: 'center', fontSize: 13, color: 'var(--mute)' }}>
             {isAr
-              ? 'لا مشاهد بعد. مشهد لكل لقطة، بتوقيته — الناقص منها هو ما يصبح طلب تصوير.'
-              : 'No scenes yet. One per shot, with its timing — the missing ones are what become a shoot request.'}
+              ? 'لا مشاهد بعد. مشهد لكل لقطة — الناقص منها هو ما يصبح طلب تصوير.'
+              : 'No scenes yet. One per shot — the missing ones are what become a shoot request.'}
           </p>
         ) : (
           <>
-            {/* The truth strip: widths ARE the durations. */}
-            {timedTotal > 0 && (
-              <div className="timeline">
-                {timed.map((s, i) => {
-                  const d = duration(s);
-                  const bg = STRIP[i % STRIP.length] ?? 'var(--copper)';
-                  return (
-                    <i
-                      key={s.id}
-                      style={{
-                        width: `${(d / timedTotal) * 100}%`,
-                        background: bg,
-                        color: bg === 'var(--gold)' ? '#4A2A12' : undefined,
-                      }}
-                      title={s.visual ?? ''}
-                    >
-                      {isAr ? `${toArabicDigits(String(d))}ث` : `${d}s`}
-                    </i>
-                  );
-                })}
-              </div>
-            )}
-
             <div className="tbl-wrap">
               <table className="tbl" style={{ fontSize: 12 }}>
                 <thead>
                   <tr>
-                    {/* Read widths are the mockup's (62/104); edit mode widens
-                        the two control columns to fit its inputs and buttons. */}
+                    {/* التعليق الصوتي and نص على الشاشة carry full sentences, so
+                        they get the room — voice-over flexes to the widest, and
+                        on-screen text is a generous fixed column; both open a
+                        popup editor on click. */}
                     <th style={{ width: 32 }}>#</th>
-                    <th style={{ width: canEdit ? 96 : 62 }}>{isAr ? 'التوقيت' : 'Timing'}</th>
-                    <th style={{ width: 180 }}>{isAr ? 'الصورة' : 'The shot'}</th>
-                    <th>{isAr ? 'التعليق الصوتي' : 'Voice-over'}</th>
-                    <th style={{ width: 150 }}>{isAr ? 'نص على الشاشة' : 'On-screen text'}</th>
+                    <th style={{ width: 200 }}>{isAr ? 'الصورة' : 'The shot'}</th>
+                    <th style={{ minWidth: 260 }}>{isAr ? 'التعليق الصوتي' : 'Voice-over'}</th>
+                    <th style={{ width: 240 }}>{isAr ? 'نص على الشاشة' : 'On-screen text'}</th>
                     <th style={{ width: canEdit ? 168 : 104 }}>{isAr ? 'التصوير' : 'Footage'}</th>
                     {canDelete && <th style={{ width: 36 }} />}
                   </tr>
@@ -200,55 +247,16 @@ export default function SceneTable({
                   {scenes.map((s) => (
                     <tr key={s.id} style={{ verticalAlign: 'top' }}>
                       <td className="id">{num(s.position, isAr)}</td>
-                      <td className="num" style={{ padding: 6 }}>
-                        {canEdit ? (
-                          <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center' }} className="ltr">
-                            <input
-                              className="inp"
-                              style={{ width: 34, padding: '2px 4px', fontSize: 11, textAlign: 'center' }}
-                              inputMode="numeric"
-                              defaultValue={s.start_sec ?? ''}
-                              disabled={busy}
-                              onBlur={(e) => {
-                                const v = e.target.value.trim() === '' ? null : Number(e.target.value);
-                                if (v !== s.start_sec) {
-                                  void run(() => saveScene(contentId, { id: s.id, start_sec: v }));
-                                }
-                              }}
-                            />
-                            –
-                            <input
-                              className="inp"
-                              style={{ width: 34, padding: '2px 4px', fontSize: 11, textAlign: 'center' }}
-                              inputMode="numeric"
-                              defaultValue={s.end_sec ?? ''}
-                              disabled={busy}
-                              onBlur={(e) => {
-                                const v = e.target.value.trim() === '' ? null : Number(e.target.value);
-                                if (v !== s.end_sec) {
-                                  void run(() => saveScene(contentId, { id: s.id, end_sec: v }));
-                                }
-                              }}
-                            />
-                          </span>
-                        ) : (
-                          timeLabel(s, isAr)
-                        )}
-                      </td>
-                      {(['visual', 'voiceover', 'on_screen_text'] as const).map((f) => (
+                      {CELL_FIELDS.map((f) => (
                         <td key={f} style={{ padding: 6 }}>
                           {canEdit ? (
-                            <textarea
-                              defaultValue={(s[f] as string | null) ?? ''}
-                              disabled={busy}
-                              rows={2}
-                              className="inp"
-                              style={{ fontSize: 12, padding: '4px 6px', border: '1px solid transparent', background: 'transparent' }}
-                              onBlur={(e) => {
-                                if (e.target.value !== ((s[f] as string | null) ?? '')) {
-                                  void run(() => saveScene(contentId, { id: s.id, [f]: e.target.value || null }));
-                                }
-                              }}
+                            <SceneTextCell
+                              value={(s[f] as string | null) ?? ''}
+                              label={isAr ? CELL_LABELS[f].ar : CELL_LABELS[f].en}
+                              busy={busy}
+                              isAr={isAr}
+                              onSave={(v) =>
+                                void run(() => saveScene(contentId, { id: s.id, [f]: v || null }))}
                             />
                           ) : (
                             // Screen 07's filled state — plain text, «—» when empty.

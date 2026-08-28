@@ -873,17 +873,10 @@ export default function ContentDetailPage() {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   Screen 29, phone 2 — «المشاهد» as a READABLE phone list: a proportional
-   duration bar on top, then one row per scene (number · time · footage pill,
-   visual line under). Read-only by design: the phone flow is for REVIEWING;
-   scene editing stays on the desktop SceneTable.
+   Screen 29, phone 2 — «المشاهد» as a READABLE phone list: one row per scene
+   (number · footage pill, visual line under). Read-only by design: the phone
+   flow is for REVIEWING; scene editing stays on the desktop SceneTable.
    ════════════════════════════════════════════════════════════════════════ */
-
-/** The mockup's bar segment colours, cycled in its exact order. */
-const SCENE_BAR_COLORS = [
-  'var(--choc)', 'var(--copper)', 'var(--terracotta)',
-  'var(--copper)', 'var(--gold)', 'var(--choc)',
-];
 
 const FOOTAGE_TONE: Record<MosScene['footage_status'], string> = {
   have: 'p-go',
@@ -895,67 +888,26 @@ const FOOTAGE_TONE: Record<MosScene['footage_status'], string> = {
 function MobileSceneList({ scenes, isAr }: { scenes: MosScene[]; isAr: boolean }) {
   const sorted = [...scenes].sort((a, b) => a.position - b.position);
 
-  // Segment widths: proportional when every scene carries a valid duration,
-  // an even split otherwise — a half-timed script must not draw a lying bar.
-  const durations = sorted.map((s) =>
-    s.start_sec != null && s.end_sec != null && s.end_sec > s.start_sec
-      ? s.end_sec - s.start_sec
-      : null,
-  );
-  const allTimed = durations.every((d): d is number => d !== null);
-  const totalDur = allTimed ? durations.reduce((a, b) => a + (b ?? 0), 0) : 0;
-  const widthOf = (i: number): string =>
-    allTimed && totalDur > 0
-      ? `${(((durations[i] ?? 0) / totalDur) * 100).toFixed(1)}%`
-      : `${(100 / sorted.length).toFixed(1)}%`;
-
-  // «٦ · ٣٨ ثانية» — count · the last scene's end second.
-  const totalSec = sorted.reduce((a, s) => Math.max(a, s.end_sec ?? 0), 0);
-  const tag = totalSec > 0
-    ? isAr
-      ? `${num(sorted.length, true)} · ${num(totalSec, true)} ثانية`
-      : `${sorted.length} · ${totalSec}s`
-    : num(sorted.length, isAr);
-
-  const timeOf = (s: MosScene): string | null =>
-    s.start_sec != null && s.end_sec != null
-      ? isAr
-        ? `${num(s.start_sec, true)}–${num(s.end_sec, true)}ث`
-        : `${s.start_sec}–${s.end_sec}s`
-      : null;
-
   return (
     <div className="m2-scenes">
       <div className="hd">
         <span className="l">{isAr ? 'المشاهد' : 'Scenes'}</span>
-        <span className="tag">{tag}</span>
+        <span className="tag">{num(sorted.length, isAr)}</span>
       </div>
-      <div className="m2-bar">
-        {sorted.map((s, i) => (
-          <i
-            key={s.id}
-            style={{ width: widthOf(i), background: SCENE_BAR_COLORS[i % SCENE_BAR_COLORS.length] }}
-          />
-        ))}
-      </div>
-      {sorted.map((s) => {
-        const t = timeOf(s);
-        return (
-          <div key={s.id} className="m2-scene">
-            <div className="row">
-              <span className="n">{num(s.position, isAr)}</span>
-              {t && <span className="t">{t}</span>}
-              <span className={`pill ${FOOTAGE_TONE[s.footage_status] ?? 'p-idle'}`}>
-                {(isAr ? FOOTAGE_LABELS[s.footage_status]?.ar : FOOTAGE_LABELS[s.footage_status]?.en)
-                  ?? s.footage_status}
-              </span>
-            </div>
-            {(s.visual || s.voiceover) && (
-              <div className="v">{s.visual ?? s.voiceover}</div>
-            )}
+      {sorted.map((s) => (
+        <div key={s.id} className="m2-scene">
+          <div className="row">
+            <span className="n">{num(s.position, isAr)}</span>
+            <span className={`pill ${FOOTAGE_TONE[s.footage_status] ?? 'p-idle'}`}>
+              {(isAr ? FOOTAGE_LABELS[s.footage_status]?.ar : FOOTAGE_LABELS[s.footage_status]?.en)
+                ?? s.footage_status}
+            </span>
           </div>
-        );
-      })}
+          {(s.visual || s.voiceover) && (
+            <div className="v">{s.visual ?? s.voiceover}</div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

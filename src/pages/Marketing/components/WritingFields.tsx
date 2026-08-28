@@ -49,8 +49,6 @@ interface FieldDef {
 
 const GENERIC_FIELDS: Record<string, FieldDef> = {
   script:       { ar: 'النص', en: 'Script', kind: 'long' },
-  duration:     { ar: 'المدة', en: 'Duration', kind: 'short' },
-  aspect_ratio: { ar: 'نسبة العرض', en: 'Aspect ratio', kind: 'short' },
   expiry:       { ar: 'تاريخ الانتهاء', en: 'Expiry', kind: 'short' },
 };
 
