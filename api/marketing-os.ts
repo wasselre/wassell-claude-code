@@ -382,6 +382,13 @@ const CONTENT_EDITABLE = [
 /** The five standardized ad-copy keys a paid placement carries in `creative`. */
 const AD_CREATIVE_KEYS = ['primary_text', 'headline', 'description', 'cta', 'destination_url'] as const;
 
+/** Ad channels with NO organic feed. A publications row is the ORGANIC publish
+ *  surface — a row on one of these renders «إعلانات ميتا» inside the Placements
+ *  tab's organic section (the 2026-08-28 bug: paid-campaign bulk content seeded
+ *  a publication per execution platform). Paid placements live on
+ *  mos_execution_ads, never on mos_publications — refuse loudly. */
+const PAID_ONLY_PLATFORMS = new Set(['meta', 'google']);
+
 /** ONE paid placement = one `mos_execution_ads` row for this creative, wherever
  *  it lives (any campaign, any execution, any ad set). The creative is decoupled
  *  from its campaign, so a placement resolves its OWN execution → campaign path. */
@@ -2223,6 +2230,12 @@ export default async function handler(req: Request): Promise<Response> {
           patch.asset_id = ids[0] ?? patch.asset_id ?? null;
         }
 
+        // A publication is an ORGANIC placement — ad channels are refused here;
+        // they belong on mos_execution_ads (content_ad_creative_save).
+        if (typeof patch.platform === 'string' && PAID_ONLY_PLATFORMS.has(patch.platform)) {
+          return jsonError(400, `"${patch.platform}" is an ad channel, not an organic feed — add it as a paid placement instead`);
+        }
+
         // Marking published stamps who and when, so "who posted this" is never a
         // guess. The DB also refuses published without a timestamp.
         if (patch.status === 'published') {
@@ -2273,6 +2286,9 @@ export default async function handler(req: Request): Promise<Response> {
         const contentId = str(body.content_id);
         const platform = str(body.platform);
         if (!contentId || !platform) return jsonError(400, 'content_id and platform are required');
+        if (PAID_ONLY_PLATFORMS.has(platform)) {
+          return jsonError(400, `"${platform}" is an ad channel, not an organic feed — paid ad copy lives on the placement (content_ad_creative_save)`);
+        }
         const caption = typeof body.caption === 'string' ? body.caption : '';
 
         // The caller must be able to SEE the content (RLS read) before we write.

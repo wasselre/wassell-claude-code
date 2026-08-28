@@ -15,7 +15,7 @@ import {
   CAMPAIGN_STATUS_LABELS, MosCampaign, MosGoal,
   PLATFORM_LABELS, ROLE_LABELS,
   createContent, fetchCampaigns, fetchGoals,
-  saveCampaign, saveCampaignTree, saveExecution, savePublication, successMeasureSuffix,
+  saveAdCreative, saveCampaign, saveCampaignTree, saveExecution, successMeasureSuffix,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
@@ -838,6 +838,7 @@ export function CampaignModal({
       // A failure on one execution is surfaced but never rolls back the campaign.
       let execOk = 0;
       let execFail = 0;
+      const createdExecIds: string[] = [];
       if (isNew && kind === 'paid' && res.item?.id) {
         for (const d of execDrafts) {
           try {
@@ -849,6 +850,7 @@ export function CampaignModal({
             });
             const execId = execRes.saved_id;
             if (execId) {
+              createdExecIds.push(execId);
               await saveCampaignTree({
                 execution_id: execId,
                 ad_sets: d.adSets.map((s, i) => ({
@@ -891,15 +893,16 @@ export function CampaignModal({
       }
       // Bulk content: create each planned piece linked to the just-created
       // campaign, so ONE save spins up the campaign AND its production line.
-      // Mirrors the single-create path — content_create opens the first task,
-      // and each platform gets its own draft publication. A failure on one
-      // piece is surfaced but never rolls back the campaign or its siblings.
+      // Mirrors the single-create path — content_create opens the first task.
+      // A paid campaign's executions are AD channels («إعلانات ميتا»), not
+      // organic feeds, so each piece gets a PAID placement (an mos_execution_ads
+      // row) on every created execution — never a draft publication, which
+      // would land an ad channel in the Placements tab's organic section.
+      // A failure on one piece is surfaced but never rolls back the campaign
+      // or its siblings.
       let contentOk = 0;
       let contentFail = 0;
       if (isNew && res.item?.id && drafts.length > 0) {
-        // Platform + project are DERIVED from the campaign, not chosen per piece:
-        // platforms from the ad campaign's executions, project from the campaign.
-        const derivedPlatforms = Array.from(new Set(execDrafts.map((e) => e.platform))).filter(Boolean);
         for (const d of drafts) {
           try {
             const cres = await createContent({
@@ -907,15 +910,15 @@ export function CampaignModal({
               content_type_key: d.typeKey,
               project_ids: projectIds,
               campaign_id: res.item.id,
-              // `purpose` is derived from placements now — not set here. The draft
-              // publications created below (per platform) are the organic starting
-              // point; paid placements are added on the content's Placements tab.
+              // `purpose` is derived from placements now — not set here.
               // Notes land in the content's data.notes — the field the «الموجز» shows.
               data: { notes: d.notes.trim() || null },
             });
             const cid = cres.item?.id;
             if (cid) {
-              for (const p of derivedPlatforms) await savePublication(cid, { platform: p, status: 'draft' });
+              for (const execId of createdExecIds) {
+                await saveAdCreative(cid, { executionId: execId }, {});
+              }
             }
             contentOk += 1;
           } catch (err) {
