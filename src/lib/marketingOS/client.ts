@@ -1441,6 +1441,17 @@ export const fetchGoals = () => call<{ goals: MosGoal[] }>('goals_list');
 export const saveGoal = (goal: Record<string, unknown>) =>
   call<{ goals: MosGoal[] }>('goal_save', { goal });
 
+/** Hard-delete one or many goals (gated approve_budget, like goal_save).
+ *  Campaign links detach; campaigns survive. Returns the refreshed list. */
+export const deleteGoals = (ids: string[]) =>
+  call<{ goals: MosGoal[]; deleted: number }>('goal_delete', { ids });
+
+/** Hard-delete one or many campaigns (gated delete_records). Executions,
+ *  comments, events and goal links go with them; content/tasks unlink.
+ *  409s when a selection is the Meta-sync holder or carries attributions. */
+export const deleteCampaigns = (ids: string[]) =>
+  call<{ deleted: number }>('campaign_delete', { ids });
+
 export const saveCampaign = (
   campaign: Record<string, unknown>,
   executions?: Array<{ platform: string; label?: string | null; budget?: number | null }>,

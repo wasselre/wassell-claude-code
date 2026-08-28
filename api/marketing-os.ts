@@ -4245,6 +4245,145 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ goals });
       }
 
+      case 'goal_delete': {
+        // Hard-delete one or many goals. Campaign links cascade away in the DB
+        // (mos_campaign_goals.goal_id ON DELETE CASCADE) — the campaigns
+        // themselves survive, possibly serving fewer goals; series/manual tasks
+        // unlink (SET NULL). Goal management is approve_budget territory (same
+        // as goal_save and the mos_goals DELETE RLS policy), NOT delete_records.
+        const gate = await requireCap(sb, 'approve_budget'); if (gate) return gate;
+        const ids = Array.isArray(body.ids)
+          ? (body.ids as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [];
+        if (ids.length === 0) return jsonError(400, 'ids is required');
+        const del = await sb.from('mos_goals').delete().in('id', ids).select('id');
+        const df = dbFail(del.error);
+        if (df) return df;
+        // Return the refreshed list — same convention as goal_save, so the page
+        // swaps its rows wholesale without a second round trip.
+        const [list, links] = await Promise.all([
+          sb.from('mos_goals').select('*').is('archived_at', null)
+            .order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+          sb.from('mos_campaign_goals').select('goal_id'),
+        ]);
+        const lf = dbFail(list.error) ?? dbFail(links.error);
+        if (lf) return lf;
+        const counts = new Map<string, number>();
+        for (const l of (links.data ?? []) as Array<{ goal_id: string }>) {
+          counts.set(l.goal_id, (counts.get(l.goal_id) ?? 0) + 1);
+        }
+        const goals = ((list.data ?? []) as Array<{ id: string }>).map((g) => ({
+          ...g,
+          campaign_count: counts.get(g.id) ?? 0,
+        }));
+        return jsonOk({ goals, deleted: (del.data ?? []).length });
+      }
+
+      case 'campaign_delete': {
+        // Hard-delete one or many campaigns. Children cascade in the DB
+        // (executions + their ads, comments, events, goal links) or unlink
+        // (publications, task series, manual tasks — SET NULL). Gated on
+        // delete_records for a clean 403; the DELETE RLS policy on
+        // mos_campaigns re-enforces it per row.
+        const gate = await requireCap(sb, 'delete_records'); if (gate) return gate;
+        const ids = Array.isArray(body.ids)
+          ? (body.ids as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [];
+        if (ids.length === 0) return jsonError(400, 'ids is required');
+        const targets = await sb.from('mos_campaigns').select('id, ref, name').in('id', ids);
+        const tf = dbFail(targets.error);
+        if (tf) return tf;
+        const targetRows = (targets.data ?? []) as Array<{ id: string; ref: string | null; name: string }>;
+        // The Meta-sync holder is infrastructure — deleting it would cascade
+        // every synced execution, and the next sync run would recreate the lot.
+        if (targetRows.some((c) => (c.ref ?? '').startsWith('meta-sync:'))) {
+          return new Response(
+            JSON.stringify({
+              error: 'The "Meta — synced" holder campaign is sync infrastructure and cannot be deleted.',
+              error_ar: 'حملة «Meta — synced» بنية أساسية للمزامنة ولا يمكن حذفها.',
+            }),
+            { status: 409, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        // client_attributions RESTRICTs on campaign_id, execution_id AND ad_id —
+        // and deleting a campaign cascades into its executions and ads, so an
+        // attribution naming ONLY an execution or ad blocks the delete too.
+        // Resolve the full spend tree, then pre-check all three columns to name
+        // the blockers; the FK still backstops if RLS hides any of this.
+        const execs = await sb.from('mos_campaign_executions').select('id, campaign_id').in('campaign_id', ids);
+        const ef = dbFail(execs.error);
+        if (ef) return ef;
+        const execRows = (execs.data ?? []) as Array<{ id: string; campaign_id: string }>;
+        const execToCampaign = new Map(execRows.map((e) => [e.id, e.campaign_id]));
+        let adRows: Array<{ id: string; execution_id: string | null }> = [];
+        if (execRows.length > 0) {
+          const ads = await sb.from('mos_execution_ads').select('id, execution_id')
+            .in('execution_id', execRows.map((e) => e.id));
+          const af = dbFail(ads.error);
+          if (af) return af;
+          adRows = (ads.data ?? []) as Array<{ id: string; execution_id: string | null }>;
+        }
+        const adToCampaign = new Map(
+          adRows.map((a) => [a.id, a.execution_id ? execToCampaign.get(a.execution_id) ?? null : null]),
+        );
+        const orParts = [`campaign_id.in.(${ids.join(',')})`];
+        if (execRows.length > 0) orParts.push(`execution_id.in.(${execRows.map((e) => e.id).join(',')})`);
+        if (adRows.length > 0) orParts.push(`ad_id.in.(${adRows.map((a) => a.id).join(',')})`);
+        const linked = await sb.from('client_attributions')
+          .select('campaign_id, execution_id, ad_id').or(orParts.join(','));
+        const lkf = dbFail(linked.error);
+        if (lkf) return lkf;
+        const blockedIds = new Set<string>();
+        for (const r of (linked.data ?? []) as Array<{ campaign_id: string | null; execution_id: string | null; ad_id: string | null }>) {
+          const candidates = [
+            r.campaign_id,
+            r.execution_id ? execToCampaign.get(r.execution_id) ?? null : null,
+            r.ad_id ? adToCampaign.get(r.ad_id) ?? null : null,
+          ];
+          for (const c of candidates) if (c && ids.includes(c)) blockedIds.add(c);
+        }
+        const attributionRefusal = (names: string[]): Response => new Response(
+          JSON.stringify({
+            error: names.length > 0
+              ? `Cannot delete: ${names.join(', ')} — linked to client acquisition records. Deselect and retry.`
+              : 'A selected campaign is linked to client acquisition records and cannot be deleted. Deselect it and retry.',
+            error_ar: names.length > 0
+              ? `لا يمكن الحذف: ${names.join('، ')} — مرتبطة بسجلات اكتساب عملاء. ألغِ تحديدها وأعد المحاولة.`
+              : 'إحدى الحملات المحددة مرتبطة بسجلات اكتساب عملاء ولا يمكن حذفها. ألغِ تحديدها وأعد المحاولة.',
+            blocked: [...blockedIds],
+          }),
+          { status: 409, headers: { 'Content-Type': 'application/json' } },
+        );
+        if (blockedIds.size > 0) {
+          return attributionRefusal(targetRows.filter((c) => blockedIds.has(c.id)).map((c) => c.name));
+        }
+        // Delete FIRST — cleanup must never run for a delete that gets refused
+        // (a raced attribution insert can still trip the FK backstop below).
+        const del = await sb.from('mos_campaigns').delete().in('id', ids).select('id');
+        if (del.error) {
+          // FK RESTRICT backstop: the whole statement aborts, nothing deleted.
+          if (del.error.code === '23503') return attributionRefusal([]);
+          const f = dbFail(del.error);
+          if (f) return f;
+        }
+        const deletedIds = ((del.data ?? []) as Array<{ id: string }>).map((r) => r.id);
+        if (deletedIds.length > 0) {
+          // Post-delete provenance cleanup: mos_content.campaign_id has no FK,
+          // so content still points at the now-deleted campaigns. The caller's
+          // RLS may lack write_content even with delete_records, so this uses
+          // the service client — it only ever nulls references to campaigns
+          // that no longer exist (keyed on the ACTUALLY deleted ids).
+          const svc = makeServiceClient('api:marketing-os');
+          if (svc) {
+            const detach = await svc.from('mos_content').update({ campaign_id: null }).in('campaign_id', deletedIds);
+            if (detach.error) console.error('campaign_delete: content provenance detach failed', detach.error);
+          } else {
+            console.error('campaign_delete: service client unavailable — content provenance not detached', deletedIds);
+          }
+        }
+        return jsonOk({ deleted: deletedIds.length });
+      }
+
       case 'execution_save': {
         const campaignId = str(body.campaign_id);
         if (!campaignId) return jsonError(400, 'campaign_id is required');

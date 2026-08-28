@@ -14,7 +14,7 @@ import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, MosCampaign, MosGoal,
   PLATFORM_LABELS, ROLE_LABELS,
-  createContent, fetchCampaigns, fetchGoals,
+  createContent, deleteCampaigns, fetchCampaigns, fetchGoals,
   saveAdCreative, saveCampaign, saveCampaignTree, saveExecution, successMeasureSuffix,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
@@ -227,9 +227,13 @@ function verdictCardOf(c: MosCampaign, isAr: boolean): VerdictCard {
   };
 }
 
+/** The Meta-sync holder is infrastructure — never selectable for deletion. */
+const isSyncHolder = (c: MosCampaign): boolean => (c.ref ?? '').startsWith('meta-sync:');
+
 export default function CampaignsPage() {
   const { isAr, can, projects, projectName } = useWorkspace();
   const navigate = useNavigate();
+  const addToast = useAppStore((s) => s.addToast);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [rows, setRows] = useState<MosCampaign[]>([]);
@@ -244,6 +248,12 @@ export default function CampaignsPage() {
   const [projectF, setProjectF] = useState('');
   const [goalF, setGoalF] = useState(searchParams.get('goal') ?? '');
   const [monthScope, setMonthScope] = useState(true);
+
+  // Multi-select for bulk delete (desktop table) — same pattern as ContentListPage.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const canDelete = can('delete_records');
 
   // Keep the goal filter reflected in the URL so it is shareable/back-navigable.
   const setGoalFilter = useCallback((id: string): void => {
@@ -261,6 +271,7 @@ export default function CampaignsPage() {
     try {
       const list = (await fetchCampaigns()).campaigns;
       setRows(list);
+      setSelected(new Set());
       // Goals power the filter dropdown + the active-filter label. Non-fatal:
       // a failed goals read just leaves the dropdown empty, campaigns still show.
       void fetchGoals()
@@ -285,6 +296,56 @@ export default function CampaignsPage() {
     && (!projectF || (c.project_ids ?? []).includes(projectF))
     && (!goalF || (c.goal_ids ?? []).includes(goalF)),
   ), [rows, statusF, kindF, projectF, goalF]);
+
+  /* ── bulk delete (desktop table) ────────────────────────────────────── */
+
+  // Prune the selection whenever the visible set changes — a row hidden by a
+  // filter change must never ride invisibly into an irreversible bulk delete.
+  useEffect(() => {
+    setSelected((prev) => {
+      const visible = new Set(filtered.map((c) => c.id));
+      const next = new Set([...prev].filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filtered]);
+
+  const selectable = useMemo(() => filtered.filter((c) => !isSyncHolder(c)), [filtered]);
+  const allFilteredSelected = selectable.length > 0 && selectable.every((c) => selected.has(c.id));
+  const toggleAll = (): void => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) selectable.forEach((c) => next.delete(c.id));
+      else selectable.forEach((c) => next.add(c.id));
+      return next;
+    });
+  };
+  const toggleOne = (id: string): void => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkDelete = async (): Promise<void> => {
+    if (selected.size === 0 || deleting) return;
+    setDeleting(true);
+    try {
+      const res = await deleteCampaigns([...selected]);
+      addToast(
+        isAr ? `حُذفت ${num(res.deleted, true)} حملة.` : `Deleted ${res.deleted} campaign(s).`,
+        'success',
+      );
+      setSelected(new Set());
+      setConfirmOpen(false);
+      await load();
+    } catch (e) {
+      // 409s arrive with a bilingual message (Meta holder / client attributions).
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   /* ── stats — scoped to this month while the month chip is on ────────── */
 
@@ -491,6 +552,28 @@ export default function CampaignsPage() {
               </span>
             </div>
 
+            {canDelete && selected.size > 0 && (
+              <div
+                className="card m4-desk"
+                style={{ padding: '10px 14px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}
+              >
+                <b style={{ fontSize: 12.5 }}>
+                  {isAr ? `${num(selected.size, true)} محدد` : `${selected.size} selected`}
+                </b>
+                <button type="button" className="btn btn-sm" onClick={() => setSelected(new Set())}>
+                  {isAr ? 'إلغاء التحديد' : 'Clear'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-d btn-sm"
+                  style={{ marginInlineStart: 'auto' }}
+                  onClick={() => setConfirmOpen(true)}
+                >
+                  {isAr ? `حذف (${num(selected.size, true)})` : `Delete (${selected.size})`}
+                </button>
+              </div>
+            )}
+
             {filtered.length === 0 ? (
               <div style={{ padding: '22px 6px', color: 'var(--mute)', fontSize: 12.5 }}>
                 {isAr ? 'لا حملات تطابق هذه المرشحات.' : 'No campaigns match these filters.'}
@@ -501,6 +584,16 @@ export default function CampaignsPage() {
                   <table className="tbl">
                     <thead>
                       <tr>
+                        {canDelete && (
+                          <th style={{ width: 34 }}>
+                            <input
+                              type="checkbox"
+                              checked={allFilteredSelected}
+                              onChange={toggleAll}
+                              aria-label={isAr ? 'تحديد الكل' : 'Select all'}
+                            />
+                          </th>
+                        )}
                         <th style={{ width: 66 }}>{isAr ? 'الرقم' : 'Ref'}</th>
                         <th>{isAr ? 'الحملة' : 'Campaign'}</th>
                         <th style={{ width: 74 }}>{isAr ? 'النوع' : 'Type'}</th>
@@ -534,9 +627,28 @@ export default function CampaignsPage() {
                           <tr
                             key={c.id}
                             className="click"
-                            style={dimmed ? { opacity: 0.65 } : undefined}
+                            style={{
+                              ...(dimmed ? { opacity: 0.65 } : undefined),
+                              ...(selected.has(c.id)
+                                ? { background: 'color-mix(in srgb, var(--copper) 9%, transparent)' }
+                                : undefined),
+                            }}
                             onClick={() => navigate(`/m/campaigns/${c.id}`)}
                           >
+                            {canDelete && (
+                              <td onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={selected.has(c.id)}
+                                  disabled={isSyncHolder(c)}
+                                  title={isSyncHolder(c)
+                                    ? (isAr ? 'بنية أساسية للمزامنة — لا تُحذف' : 'Sync infrastructure — cannot be deleted')
+                                    : undefined}
+                                  onChange={() => toggleOne(c.id)}
+                                  aria-label={isAr ? `تحديد ${c.name}` : `Select ${c.name}`}
+                                />
+                              </td>
+                            )}
                             <td className="id">{c.ref ?? '—'}</td>
                             <td className="ttl">
                               {c.name}
@@ -645,6 +757,40 @@ export default function CampaignsPage() {
           onClose={() => setCreating(false)}
           onSaved={(c) => { setCreating(false); navigate(`/m/campaigns/${c.id}`); }}
         />
+      )}
+
+      {confirmOpen && (
+        <Modal
+          title={isAr ? 'حذف الحملات' : 'Delete campaigns'}
+          sub={isAr
+            ? `ستُحذف ${num(selected.size, true)} حملة نهائيًا مع إعلاناتها وتعليقاتها وسجل أحداثها — لا يمكن التراجع. المحتوى والمهام تبقى وتُفصل عنها فقط.`
+            : `${selected.size} campaign(s) will be permanently deleted with their executions, comments and event log — this cannot be undone. Content and tasks survive and are only detached.`}
+          onClose={() => { if (!deleting) setConfirmOpen(false); }}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setConfirmOpen(false)} disabled={deleting}>
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button type="button" className="btn btn-d" onClick={() => void bulkDelete()} disabled={deleting}>
+                {deleting
+                  ? isAr ? 'جارٍ الحذف…' : 'Deleting…'
+                  : isAr ? `حذف ${num(selected.size, true)}` : `Delete ${selected.size}`}
+              </button>
+            </>
+          }
+        >
+          <div style={{ fontSize: 12.5, color: 'var(--mute)', lineHeight: 1.8 }}>
+            {[...selected]
+              .map((id) => rows.find((c) => c.id === id))
+              .filter((c): c is MosCampaign => c !== undefined)
+              .map((c) => (
+                <div key={c.id}>
+                  <span className="id ltr" style={{ marginInlineEnd: 6 }}>{c.ref ?? '—'}</span>
+                  {c.name}
+                </div>
+              ))}
+          </div>
+        </Modal>
       )}
     </>
   );

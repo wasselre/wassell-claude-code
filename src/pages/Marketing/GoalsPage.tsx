@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
-import { MosGoal, fetchGoals, saveGoal, successMeasureSuffix } from '@/lib/marketingOS/client';
+import { MosGoal, deleteGoals, fetchGoals, saveGoal, successMeasureSuffix } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton } from './components/kit';
 import { IconGoals, IconPlus } from './components/icons';
@@ -25,6 +25,7 @@ import SuccessMeasuresEditor, {
 export default function GoalsPage() {
   const { isAr, can } = useWorkspace();
   const navigate = useNavigate();
+  const addToast = useAppStore((s) => s.addToast);
   const canManage = can('approve_budget');
 
   const [rows, setRows] = useState<MosGoal[]>([]);
@@ -34,11 +35,17 @@ export default function GoalsPage() {
   const [creating, setCreating] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
 
+  // Multi-select for bulk delete — same pattern as ContentListPage/CampaignsPage.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       setRows((await fetchGoals()).goals);
+      setSelected(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -53,6 +60,43 @@ export default function GoalsPage() {
     [rows, showInactive],
   );
   const inactiveCount = useMemo(() => rows.filter((g) => !g.is_active).length, [rows]);
+
+  // Prune the selection whenever the visible set changes — a card hidden by
+  // the inactive toggle must never ride invisibly into a bulk delete.
+  useEffect(() => {
+    setSelected((prev) => {
+      const shown = new Set(visible.map((g) => g.id));
+      const next = new Set([...prev].filter((id) => shown.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [visible]);
+
+  const toggleOne = (id: string): void => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkDelete = async (): Promise<void> => {
+    if (selected.size === 0 || deleting) return;
+    setDeleting(true);
+    try {
+      const res = await deleteGoals([...selected]);
+      addToast(
+        isAr ? `حُذفت ${num(res.deleted, true)} من الأهداف.` : `Deleted ${res.deleted} goal(s).`,
+        'success',
+      );
+      setRows(res.goals);
+      setSelected(new Set());
+      setConfirmOpen(false);
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const sub = isAr
     ? `${num(rows.filter((g) => g.is_active).length, true)} هدفًا نشطًا · كل حملة تخدم هدفًا واحدًا على الأقل`
@@ -105,14 +149,53 @@ export default function GoalsPage() {
               </div>
             )}
 
+            {canManage && selected.size > 0 && (
+              <div
+                className="card"
+                style={{ padding: '10px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}
+              >
+                <b style={{ fontSize: 12.5 }}>
+                  {isAr ? `${num(selected.size, true)} محدد` : `${selected.size} selected`}
+                </b>
+                <button type="button" className="btn btn-sm" onClick={() => setSelected(new Set())}>
+                  {isAr ? 'إلغاء التحديد' : 'Clear'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-d btn-sm"
+                  style={{ marginInlineStart: 'auto' }}
+                  onClick={() => setConfirmOpen(true)}
+                >
+                  {isAr ? `حذف (${num(selected.size, true)})` : `Delete (${selected.size})`}
+                </button>
+              </div>
+            )}
+
             <div className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
               {visible.map((g) => (
                 <div
                   key={g.id}
                   className="card"
-                  style={{ padding: 16, opacity: g.is_active ? 1 : 0.6, display: 'flex', flexDirection: 'column', gap: 9 }}
+                  style={{
+                    padding: 16,
+                    opacity: g.is_active ? 1 : 0.6,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 9,
+                    ...(selected.has(g.id)
+                      ? { background: 'color-mix(in srgb, var(--copper) 9%, transparent)' }
+                      : undefined),
+                  }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                    {canManage && (
+                      <input
+                        type="checkbox"
+                        checked={selected.has(g.id)}
+                        onChange={() => toggleOne(g.id)}
+                        aria-label={isAr ? `تحديد ${g.name}` : `Select ${g.name}`}
+                      />
+                    )}
                     <span style={{ color: 'var(--copper)', display: 'inline-flex' }}>
                       <IconGoals style={{ width: 18, height: 18 }} />
                     </span>
@@ -183,6 +266,46 @@ export default function GoalsPage() {
           onClose={() => { setCreating(false); setEditing(null); }}
           onSaved={(goals) => { setRows(goals); setCreating(false); setEditing(null); }}
         />
+      )}
+
+      {confirmOpen && (
+        <Modal
+          title={isAr ? 'حذف الأهداف' : 'Delete goals'}
+          sub={isAr
+            ? `ستُحذف ${num(selected.size, true)} من الأهداف نهائيًا — لا يمكن التراجع. الحملات المرتبطة تبقى، ويُفك ربطها بالهدف فقط.`
+            : `${selected.size} goal(s) will be permanently deleted — this cannot be undone. Linked campaigns survive; only the link is removed.`}
+          onClose={() => { if (!deleting) setConfirmOpen(false); }}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setConfirmOpen(false)} disabled={deleting}>
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button type="button" className="btn btn-d" onClick={() => void bulkDelete()} disabled={deleting}>
+                {deleting
+                  ? isAr ? 'جارٍ الحذف…' : 'Deleting…'
+                  : isAr ? `حذف ${num(selected.size, true)}` : `Delete ${selected.size}`}
+              </button>
+            </>
+          }
+        >
+          <div style={{ fontSize: 12.5, color: 'var(--mute)', lineHeight: 1.8 }}>
+            {[...selected]
+              .map((id) => rows.find((g) => g.id === id))
+              .filter((g): g is MosGoal => g !== undefined)
+              .map((g) => (
+                <div key={g.id}>
+                  {g.name}
+                  {g.campaign_count > 0 && (
+                    <span style={{ fontSize: 11.5, marginInlineStart: 6 }}>
+                      {isAr
+                        ? `(${num(g.campaign_count, true)} ${g.campaign_count === 1 ? 'حملة مرتبطة' : 'حملات مرتبطة'})`
+                        : `(${g.campaign_count} linked campaign${g.campaign_count === 1 ? '' : 's'})`}
+                    </span>
+                  )}
+                </div>
+              ))}
+          </div>
+        </Modal>
       )}
     </>
   );
