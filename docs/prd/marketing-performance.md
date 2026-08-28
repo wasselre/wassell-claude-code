@@ -25,7 +25,8 @@ Consequences ship **dark**: `discipline_observe=true`, `deductions_enabled=false
 - **Rewards**: seeded "Day off = 250 XP". Claim reserves nothing until **approval**, which spends the XP. Manager approves/rejects on the desk.
 - **Discipline decisions**: approve/reject on the desk; approving a deduction is refused while observe mode is on or deductions are off (`MOS:DEDUCTIONS_DISABLED`). Employees can dispute a pending action with a note.
 - **KPI bonuses**: `mos_perf_kpi_goals` per month (metric cpl/ctr/cpc/leads/spend, comparator, target, bonus %, recipients = users or roles; optional campaign scope). Evaluated from **`mos_perf_paid_monthly`** — a monthly snapshot written by the daily 04:0x-Riyadh cron run via a **ranged** Meta insights pull (`getInsightsRange`), because the live `mos_campaign_executions` numbers are lifetime totals. CPL = spend/leads (SAR), CTR = clicks/impressions (0–1).
-- **Coverage strip** on `/m/calendar`: month-to-date published (+scheduled) vs target per platform × bucket, with «ناقص N» shortfall flags. Assists; never auto-schedules.
+- **Coverage strip** on `/m/calendar`: **follows the calendar's view** — this week in week view, else this month — published (+scheduled) vs target-to-date per platform × bucket, with «ناقص N» shortfall flags + a «التفاصيل ←» link to the Organic page. Assists; never auto-schedules.
+- **Coverage & cadence panel** on `/m/organic` (نبض المنصات): the detailed demand-vs-supply report. Week/Month toggle; an overall pace bar (published solid + scheduled light, with a vertical "where we should be today" marker) + per-platform × bucket pace bars with status (مكتمل / على المسار / ناقص N); and a **demand-vs-production-capacity** block — per bucket, the daily demand vs the slowest producer stage (finished-piece throughput = the bottleneck role from `mos_role_load`), flagging any structural gap. Shared math with the strip via `lib/coverage.ts`. Reporting only.
 - **Structural gap** on the desk: cadence demand per bucket vs total role capacity — the "IG wants 3 videos/day but montage capacity is 2" signal.
 
 ## User flows
@@ -57,7 +58,10 @@ Deliberate separations: employee-bonus goals are `mos_perf_kpi_goals`, NOT the c
 | Manager desk | `src/pages/Marketing/PerformanceDeskPage.tsx` |
 | Settings grids | `src/pages/Marketing/components/SettingsLoad.tsx`, `SettingsCadence.tsx` |
 | Rating card | `src/pages/Marketing/components/PerfRatingCard.tsx` |
+| Coverage math (shared) | `src/pages/Marketing/lib/coverage.ts` |
 | Coverage strip | `src/pages/Marketing/components/CoverageStrip.tsx` |
+| Coverage panel (Organic) | `src/pages/Marketing/components/CoveragePanel.tsx` (+ `OrganicPulsePage.tsx`) |
+| Coverage API (from/to + capacity) | `api/marketing-os.ts` `perf_calendar` |
 | Wiring | `src/pages/Marketing/{MarketingWorkspace,SettingsPage,CalendarPage,ContentDetailPage}.tsx`, `src/App.tsx` |
 
 ## Non-goals / guardrails

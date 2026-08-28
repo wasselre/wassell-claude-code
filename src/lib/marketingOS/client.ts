@@ -2479,12 +2479,17 @@ export interface PerfDesk {
 
 export interface PerfCalendarData {
   month: string;
+  /** The window actually returned (YYYY-MM-DD, `to` inclusive). */
+  from: string;
+  to: string;
   targets: PerfPostingTarget[];
   publications: Array<{
     id: string; content_id: string | null; platform: string; status: string;
     scheduled_at: string | null; published_at: string | null; bucket: PerfBucket;
   }>;
   intents: Array<{ id: string; date: string | null; bucket: PerfBucket; platforms: string[] }>;
+  /** Producer daily intake per (role, bucket) — the supply side. */
+  capacity: Array<{ role_key: string; bucket: PerfBucket; per_day: number }>;
 }
 
 export const fetchPerfConfig = (): Promise<PerfConfig> => call('perf_config');
@@ -2551,5 +2556,6 @@ export const deletePerfKpiGoal = (id: string): Promise<{ ok: boolean }> =>
 export const fetchPerfKpiStatus = (month?: string): Promise<{ month: string; goals: PerfKpiGoal[] }> =>
   call('perf_kpi_status', month ? { month } : {});
 
-export const fetchPerfCalendar = (month?: string): Promise<PerfCalendarData> =>
-  call('perf_calendar', month ? { month } : {});
+export const fetchPerfCalendar = (
+  opts?: { month?: string; from?: string; to?: string },
+): Promise<PerfCalendarData> => call('perf_calendar', opts ?? {});

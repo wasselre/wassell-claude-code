@@ -538,8 +538,9 @@ export default function CalendarPage() {
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
         {loading && !data && <Skeleton rows={6} />}
 
-        {/* Performance system: target vs planned vs published for this month. */}
-        {data && <CoverageStrip monthDate={cursor} isAr={isAr} />}
+        {/* Performance system: target vs published vs planned for the period
+            the calendar is showing (this week in week view, else this month). */}
+        {data && <CoverageStrip view={effView} cursor={cursor} isAr={isAr} />}
 
         {data && isMobile && (
           <>

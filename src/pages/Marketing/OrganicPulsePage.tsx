@@ -25,6 +25,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, LoadError, PageHead, Pill, Skeleton } from './components/kit';
+import CoveragePanel from './components/CoveragePanel';
 import { num, shortDate, dateTimeShort } from './lib/format';
 import './styles/pages-remaining.css';
 
@@ -212,6 +213,10 @@ export default function OrganicPulsePage() {
       <div className="body">
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
         {loading && pulse.length === 0 && <Skeleton rows={4} />}
+
+        {/* Demand vs supply — the detailed coverage report. Self-hides when no
+            cadence targets are configured; independent of connected accounts. */}
+        {!loading && <CoveragePanel isAr={isAr} />}
 
         {!loading && accounts.length === 0 && !error && (
           <Empty

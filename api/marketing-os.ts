@@ -7498,26 +7498,44 @@ export default async function handler(req: Request): Promise<Response> {
 
       /* Coverage calendar — targets vs planned vs published for one month. */
       case 'perf_calendar': {
+        // The window is either an explicit [from, to] (both YYYY-MM-DD, `to`
+        // INCLUSIVE — the week/month the calendar is showing) or a month.
+        const from = str(body.from);
+        const to = str(body.to);
         const month = str(body.month)
           ?? new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 7);
-        const monthStart = `${month}-01`;
-        const y = Number(month.slice(0, 4));
-        const m = Number(month.slice(5, 7));
-        const nextMonth = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
-        const [targetsRes, pubsRes, intentsRes, bucketsRes, typesRes] = await Promise.all([
+        let winStart: string;
+        let winEndExcl: string; // exclusive
+        if (from && to) {
+          winStart = from;
+          const ty = Number(to.slice(0, 4));
+          const tm = Number(to.slice(5, 7));
+          const td = Number(to.slice(8, 10));
+          winEndExcl = new Date(Date.UTC(ty, tm - 1, td + 1)).toISOString().slice(0, 10);
+        } else {
+          winStart = `${month}-01`;
+          const y = Number(month.slice(0, 4));
+          const m = Number(month.slice(5, 7));
+          winEndExcl = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+        }
+        const [targetsRes, pubsRes, intentsRes, bucketsRes, typesRes, loadRes, rolesRes] = await Promise.all([
           sb.from('mos_posting_targets').select('*').eq('active', true),
           sb.from('mos_publications')
             .select('id, content_id, platform, status, scheduled_at, published_at')
-            .or(`and(published_at.gte.${monthStart},published_at.lt.${nextMonth}),and(scheduled_at.gte.${monthStart},scheduled_at.lt.${nextMonth})`),
+            .or(`and(published_at.gte.${winStart},published_at.lt.${winEndExcl}),and(scheduled_at.gte.${winStart},scheduled_at.lt.${winEndExcl})`),
           sb.from('mos_content')
             .select('id, content_type_id, target_publish_at, organic_platforms')
-            .gte('target_publish_at', monthStart).lt('target_publish_at', nextMonth)
+            .gte('target_publish_at', winStart).lt('target_publish_at', winEndExcl)
             .is('archived_at', null),
           sb.from('mos_load_buckets').select('content_type_id, bucket'),
           sb.from('mos_content_types').select('id, key'),
+          // Production capacity: how many NEW tasks each producer role can start
+          // per day, per bucket — the "supply" side of demand-vs-supply.
+          sb.from('mos_role_load').select('role_id, bucket, daily_new_tasks'),
+          sb.from('roles').select('id, key').eq('domain', 'marketing'),
         ]);
         const fail = dbFail(targetsRes.error) ?? dbFail(pubsRes.error) ?? dbFail(intentsRes.error)
-          ?? dbFail(bucketsRes.error) ?? dbFail(typesRes.error);
+          ?? dbFail(bucketsRes.error) ?? dbFail(typesRes.error) ?? dbFail(loadRes.error) ?? dbFail(rolesRes.error);
         if (fail) return fail;
 
         // Bucket for each publication's content (one batched lookup).
@@ -7539,8 +7557,14 @@ export default async function handler(req: Request): Promise<Response> {
             ?? (keyByType.get(typeId) === 'video' ? 'video' : 'post');
         };
 
+        const roleKeyById = new Map(((rolesRes.data ?? []) as Array<{ id: string; key: string }>)
+          .map((r) => [r.id, r.key]));
+
         return jsonOk({
           month,
+          from: winStart,
+          // Echo the inclusive `to` the caller asked for (or the month's last day).
+          to: to && from ? to : new Date(new Date(winEndExcl).getTime() - 86400000).toISOString().slice(0, 10),
           targets: targetsRes.data ?? [],
           publications: ((pubsRes.data ?? []) as Array<Record<string, unknown>>).map((p) => ({
             ...p, bucket: bucketOf(typeByContent.get(p.content_id as string)),
@@ -7550,6 +7574,15 @@ export default async function handler(req: Request): Promise<Response> {
             bucket: bucketOf(c.content_type_id as string),
             platforms: Array.isArray(c.organic_platforms) ? c.organic_platforms : [],
           })),
+          // role_key stripped of the mos_ prefix, per bucket, with the daily
+          // intake — the UI derives the production bottleneck from this.
+          capacity: ((loadRes.data ?? []) as Array<{ role_id: string; bucket: string; daily_new_tasks: number }>)
+            .map((l) => ({
+              role_key: (roleKeyById.get(l.role_id) ?? '').replace(/^mos_/, ''),
+              bucket: l.bucket,
+              per_day: l.daily_new_tasks,
+            }))
+            .filter((c) => c.role_key && c.per_day > 0),
         });
       }
 
