@@ -23,6 +23,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { LoadError, PageHead, Skeleton } from './components/kit';
+import CoverageStrip from './components/CoverageStrip';
 import NewContentModal from './components/NewContentModal';
 import { IconBack, IconForward, IconPlus } from './components/icons';
 import { num, shortDate, toArabicDigits, whole } from './lib/format';
@@ -536,6 +537,9 @@ export default function CalendarPage() {
       <div className="body">
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
         {loading && !data && <Skeleton rows={6} />}
+
+        {/* Performance system: target vs planned vs published for this month. */}
+        {data && <CoverageStrip monthDate={cursor} isAr={isAr} />}
 
         {data && isMobile && (
           <>

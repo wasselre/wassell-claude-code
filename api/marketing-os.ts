@@ -141,6 +141,46 @@ const DB_MESSAGES: Record<string, { en: string; ar: string }> = {
     en: 'That marketing role does not exist.',
     ar: 'دور التسويق غير موجود.',
   },
+  'MOS:RATINGS_DISABLED': {
+    en: 'Ratings are switched off in performance settings.',
+    ar: 'التقييم متوقف من إعدادات الأداء.',
+  },
+  'MOS:CONTENT_NOT_DONE': {
+    en: 'This creative still has an open task — rate it when it is finished.',
+    ar: 'لا يزال لهذا المحتوى مهمة مفتوحة — قيّمه بعد اكتماله.',
+  },
+  'MOS:NO_CONTRIBUTORS': {
+    en: 'No contributors found on this creative to rate.',
+    ar: 'لا يوجد مساهمون في هذا المحتوى لتقييمهم.',
+  },
+  'MOS:INSUFFICIENT_XP': {
+    en: 'Not enough points for this reward yet.',
+    ar: 'النقاط لا تكفي لهذه المكافأة بعد.',
+  },
+  'MOS:CLAIM_NOT_PENDING': {
+    en: 'This reward claim was already decided.',
+    ar: 'طلب المكافأة سبق البت فيه.',
+  },
+  'MOS:ACTION_NOT_PENDING': {
+    en: 'This notice was already decided.',
+    ar: 'هذا الإشعار سبق البت فيه.',
+  },
+  'MOS:DEDUCTIONS_DISABLED': {
+    en: 'Deductions are in observe mode — enable them in performance settings first.',
+    ar: 'الخصومات في وضع المراقبة — فعّلها من إعدادات الأداء أولًا.',
+  },
+  'MOS:LEAVE_NOT_PENDING': {
+    en: 'This leave request was already decided.',
+    ar: 'طلب الإجازة سبق البت فيه.',
+  },
+  'MOS:BAD_RANGE': {
+    en: 'The leave end must be after its start.',
+    ar: 'نهاية الإجازة يجب أن تكون بعد بدايتها.',
+  },
+  'MOS:REWARD_NOT_FOUND': {
+    en: 'That reward is not available.',
+    ar: 'هذه المكافأة غير متاحة.',
+  },
   'MOS:TASK_NOT_YOURS': {
     en: 'This task is assigned to someone else.',
     ar: 'هذه المهمة مسندة إلى شخص آخر.',
@@ -551,6 +591,8 @@ const SURFACES = [
   'shoots', 'goals', 'campaigns', 'numbers',
   // Organic cockpit: Platform Pulse ('organic') + Publishing Board ('publishing').
   'organic', 'publishing',
+  // Performance & load system: own profile ('myperf') + the manager desk.
+  'myperf', 'performance',
   'settings', 'roles',
 ] as const;
 type SurfaceKey = (typeof SURFACES)[number];
@@ -572,6 +614,9 @@ const CAPABILITIES = [
   // API (can affect live ad spend). Gated separately from manage_settings so a
   // role can run reports/sync without the power to launch or edit live ads.
   'manage_paid_ads',
+  // Performance & load system (2026-08-28): rate finished creatives, and run
+  // the manager desk (discipline/leave/reward decisions, KPI goals, toggles).
+  'rate_creative', 'manage_performance',
 ] as const;
 
 /** The notification channels a step may permit; AND-ed with each role's grid. */
@@ -6810,6 +6855,534 @@ export default async function handler(req: Request): Promise<Response> {
           campaigns: campaignRes.data ?? [],
           assets: assetRes.data ?? [],
           shoots: shootRes.data ?? [],
+        });
+      }
+
+      /* ════════════════════════════════════════════════════════════ */
+      /* Performance & load system — spec: docs/marketing-task-load-   */
+      /* plan.md. Config grids, rating, XP profile, discipline, leave, */
+      /* rewards, KPI bonuses and the coverage calendar. All writes go */
+      /* through RLS (config tables) or SECURITY DEFINER RPCs (ledgers)*/
+      /* ════════════════════════════════════════════════════════════ */
+
+      /* All capacity/cadence config + toggles in one read. */
+      case 'perf_config': {
+        const [loadRes, slaRes, bucketsRes, targetsRes, rewardsRes, settingsRes, rolesRes] =
+          await Promise.all([
+            sb.from('mos_role_load').select('role_id, bucket, daily_new_tasks'),
+            sb.from('mos_role_sla').select('role_id, bucket, step_key, sla_hours'),
+            sb.from('mos_load_buckets').select('content_type_id, bucket'),
+            sb.from('mos_posting_targets').select('*').order('platform').order('bucket'),
+            sb.from('mos_rewards').select('*').order('cost_xp'),
+            sb.from('mos_perf_settings').select('*').maybeSingle(),
+            sb.from('roles').select('id, key, label_ar, label_en').eq('domain', 'marketing'),
+          ]);
+        const fail = dbFail(loadRes.error) ?? dbFail(slaRes.error) ?? dbFail(bucketsRes.error)
+          ?? dbFail(targetsRes.error) ?? dbFail(rewardsRes.error) ?? dbFail(settingsRes.error)
+          ?? dbFail(rolesRes.error);
+        if (fail) return fail;
+        return jsonOk({
+          role_load: loadRes.data ?? [],
+          role_sla: slaRes.data ?? [],
+          buckets: bucketsRes.data ?? [],
+          posting_targets: targetsRes.data ?? [],
+          rewards: rewardsRes.data ?? [],
+          settings: settingsRes.data ?? null,
+          roles: rolesRes.data ?? [],
+        });
+      }
+
+      /* Upsert capacity/SLA/bucket rows (RLS: manage_roles). */
+      case 'perf_load_save': {
+        const rows = Array.isArray(body.role_load) ? body.role_load as Array<Record<string, unknown>> : [];
+        const slas = Array.isArray(body.role_sla) ? body.role_sla as Array<Record<string, unknown>> : [];
+        const buckets = Array.isArray(body.buckets) ? body.buckets as Array<Record<string, unknown>> : [];
+        if (rows.length > 0) {
+          const up = await sb.from('mos_role_load').upsert(
+            rows.map((r) => ({
+              role_id: r.role_id, bucket: r.bucket,
+              daily_new_tasks: Math.max(0, Math.floor(Number(r.daily_new_tasks) || 0)),
+              updated_at: new Date().toISOString(),
+            })), { onConflict: 'role_id,bucket' });
+          const f = dbFail(up.error); if (f) return f;
+        }
+        if (slas.length > 0) {
+          const del = slas.filter((r) => !(Number(r.sla_hours) > 0));
+          const keep = slas.filter((r) => Number(r.sla_hours) > 0);
+          if (keep.length > 0) {
+            const up = await sb.from('mos_role_sla').upsert(
+              keep.map((r) => ({
+                role_id: r.role_id, bucket: r.bucket ?? '*', step_key: r.step_key ?? '*',
+                sla_hours: Number(r.sla_hours), updated_at: new Date().toISOString(),
+              })), { onConflict: 'role_id,bucket,step_key' });
+            const f = dbFail(up.error); if (f) return f;
+          }
+          for (const r of del) {
+            const dl = await sb.from('mos_role_sla').delete()
+              .eq('role_id', r.role_id as string).eq('bucket', (r.bucket as string) ?? '*')
+              .eq('step_key', (r.step_key as string) ?? '*');
+            const f = dbFail(dl.error); if (f) return f;
+          }
+        }
+        if (buckets.length > 0) {
+          const up = await sb.from('mos_load_buckets').upsert(
+            buckets.map((r) => ({
+              content_type_id: r.content_type_id, bucket: r.bucket,
+              updated_at: new Date().toISOString(),
+            })), { onConflict: 'content_type_id' });
+          const f = dbFail(up.error); if (f) return f;
+        }
+        return jsonOk({ ok: true });
+      }
+
+      /* Posting-cadence targets (RLS: manage_roles). */
+      case 'perf_target_save': {
+        const t = (body.target ?? {}) as Record<string, unknown>;
+        const row: Record<string, unknown> = {
+          platform: str(t.platform), bucket: str(t.bucket),
+          per_day: Math.max(0, Math.floor(Number(t.per_day) || 0)),
+          weekday: typeof t.weekday === 'number' ? t.weekday : null,
+          active: t.active !== false,
+          updated_at: new Date().toISOString(),
+        };
+        if (!row.platform || !row.bucket) return jsonError(400, 'platform and bucket are required');
+        const id = str(t.id);
+        const res = id
+          ? await sb.from('mos_posting_targets').update(row).eq('id', id).select('*').maybeSingle()
+          : await sb.from('mos_posting_targets').insert(row).select('*').maybeSingle();
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk({ target: res.data });
+      }
+
+      case 'perf_target_delete': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+        const res = await sb.from('mos_posting_targets').delete().eq('id', id);
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      /* Performance toggles (RLS: manage_performance). */
+      case 'perf_settings_save': {
+        const patch: Record<string, unknown> = {};
+        for (const k of ['ratings_enabled', 'xp_rewards_enabled', 'discipline_observe',
+          'deductions_enabled', 'kpi_bonus_enabled', 'cadence_enabled']) {
+          if (typeof body[k] === 'boolean') patch[k] = body[k];
+        }
+        if (Object.keys(patch).length === 0) return jsonError(400, 'no toggles in patch');
+        patch.updated_at = new Date().toISOString();
+        const res = await sb.from('mos_perf_settings').update(patch).eq('id', true)
+          .select('*').maybeSingle();
+        const f = dbFail(res.error); if (f) return f;
+        if (!res.data) return jsonError(403, 'manage_performance capability required');
+        return jsonOk({ settings: res.data });
+      }
+
+      /* Contributors + existing ratings for the rating widget. */
+      case 'perf_ratings': {
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        const [tasksRes, ratingsRes] = await Promise.all([
+          sb.from('workflow_role_tasks')
+            .select('assignee_user_id, role_key, closed_at')
+            .eq('subject_table', 'mos_content').eq('subject_id', contentId)
+            .eq('status', 'done').not('assignee_user_id', 'is', null),
+          sb.from('mos_creative_ratings').select('*').eq('content_id', contentId),
+        ]);
+        const f = dbFail(tasksRes.error) ?? dbFail(ratingsRes.error); if (f) return f;
+        const seen = new Map<string, string>();
+        for (const t of (tasksRes.data ?? []) as Array<{ assignee_user_id: string; role_key: string }>) {
+          if (!seen.has(t.assignee_user_id)) seen.set(t.assignee_user_id, t.role_key);
+        }
+        const ids = Array.from(seen.keys());
+        const users = ids.length > 0
+          ? await sb.from('users').select('id, name_ar, name_en').in('id', ids)
+          : { data: [], error: null };
+        const f2 = dbFail(users.error); if (f2) return f2;
+        return jsonOk({
+          contributors: ids.map((id) => ({
+            user_id: id, role_key: seen.get(id),
+            ...( (users.data ?? [] as Array<{ id: string }>).find((u) => (u as { id: string }).id === id) ?? {}),
+          })),
+          ratings: ratingsRes.data ?? [],
+        });
+      }
+
+      /* Rate a finished creative (definer RPC gates on rate_creative). */
+      case 'perf_rate': {
+        const contentId = str(body.content_id);
+        const level = str(body.level);
+        if (!contentId || !level) return jsonError(400, 'content_id and level are required');
+        const overrides = (body.overrides && typeof body.overrides === 'object' && !Array.isArray(body.overrides))
+          ? body.overrides : {};
+        const res = await sb.rpc('mos_perf_rate_content', {
+          p_content_id: contentId, p_level: level, p_overrides: overrides,
+        });
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk(res.data ?? { rated: 0 });
+      }
+
+      /* My profile — XP, rewards, discipline, KPI status, today's load. */
+      case 'perf_me': {
+        const appUserId = await resolveAppUserId(sb, user.userId);
+        if (!appUserId) return jsonError(403, 'no app user');
+        const month = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 7);
+        const [xpRes, ledgerRes, lateRes, actionsRes, rewardsRes, claimsRes, leavesRes,
+          goalsRes, resultsRes, recipientsRes, myTasksRes, settingsRes, myRolesRes] = await Promise.all([
+          sb.from('mos_xp_ledger').select('points').eq('user_id', appUserId).limit(10000),
+          sb.from('mos_xp_ledger').select('*').eq('user_id', appUserId)
+            .order('created_at', { ascending: false }).limit(20),
+          sb.from('mos_late_events').select('id').eq('user_id', appUserId).eq('month_key', month),
+          sb.from('mos_discipline_actions').select('*').eq('user_id', appUserId)
+            .order('created_at', { ascending: false }).limit(50),
+          sb.from('mos_rewards').select('*').eq('active', true).order('cost_xp'),
+          sb.from('mos_reward_claims').select('*').eq('user_id', appUserId)
+            .order('requested_at', { ascending: false }).limit(20),
+          sb.from('mos_leaves').select('*').eq('user_id', appUserId)
+            .order('start_at', { ascending: false }).limit(20),
+          sb.from('mos_perf_kpi_goals').select('*').eq('month_key', month),
+          sb.from('mos_perf_kpi_results').select('*'),
+          sb.from('mos_perf_kpi_recipients').select('*'),
+          sb.from('workflow_role_tasks')
+            .select('id, subject_id, step_key, role_key, bucket, opened_at, due_at, late_flag, blocked')
+            .eq('status', 'open').eq('assignee_user_id', appUserId)
+            .order('due_at', { ascending: true }),
+          sb.from('mos_perf_settings').select('*').maybeSingle(),
+          sb.rpc('wassell_mos_roles'),
+        ]);
+        const fail = dbFail(xpRes.error) ?? dbFail(ledgerRes.error) ?? dbFail(lateRes.error)
+          ?? dbFail(actionsRes.error) ?? dbFail(rewardsRes.error) ?? dbFail(claimsRes.error)
+          ?? dbFail(leavesRes.error) ?? dbFail(goalsRes.error) ?? dbFail(resultsRes.error)
+          ?? dbFail(recipientsRes.error) ?? dbFail(myTasksRes.error) ?? dbFail(settingsRes.error)
+          ?? dbFail(myRolesRes.error);
+        if (fail) return fail;
+
+        const xpTotal = ((xpRes.data ?? []) as Array<{ points: number }>)
+          .reduce((s, r) => s + (r.points || 0), 0);
+
+        // KPI goals that include me (directly or through a held role).
+        const heldKeys = ((myRolesRes.data as string[] | null) ?? []).map((r) => `mos_${r}`);
+        const roleRows = await sb.from('roles').select('id, key').in('key', heldKeys.length > 0 ? heldKeys : ['-']);
+        const roleIds = new Set(((roleRows.data ?? []) as Array<{ id: string }>).map((r) => r.id));
+        const recips = (recipientsRes.data ?? []) as Array<{ goal_id: string; subject_kind: string; subject_id: string }>;
+        const resultById = new Map(((resultsRes.data ?? []) as Array<{ goal_id: string }>).map((r) => [r.goal_id, r]));
+        const myGoals = ((goalsRes.data ?? []) as Array<{ id: string }>).filter((g) =>
+          recips.some((r) => r.goal_id === g.id
+            && ((r.subject_kind === 'user' && r.subject_id === appUserId)
+              || (r.subject_kind === 'role' && roleIds.has(r.subject_id)))))
+          .map((g) => ({ ...g, result: resultById.get(g.id) ?? null }));
+
+        return jsonOk({
+          xp_total: xpTotal,
+          ledger: ledgerRes.data ?? [],
+          late_this_month: (lateRes.data ?? []).length,
+          discipline: actionsRes.data ?? [],
+          rewards: rewardsRes.data ?? [],
+          claims: claimsRes.data ?? [],
+          leaves: leavesRes.data ?? [],
+          kpi_goals: myGoals,
+          open_tasks: myTasksRes.data ?? [],
+          settings: settingsRes.data ?? null,
+          month,
+        });
+      }
+
+      /* The manager desk — everything pending + the load heatmap. */
+      case 'perf_desk': {
+        const gate = await requireCap(sb, 'manage_performance'); if (gate) return gate;
+        const month = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 7);
+        const [usersRes, xpRes, lateRes, actionsRes, claimsRes, leavesRes, blockedRes,
+          loadRes, rolesRes, openRes, targetsRes, goalsRes, resultsRes, recipientsRes] = await Promise.all([
+          sb.from('users').select('id, name_ar, name_en, role_assignments').eq('is_active', true),
+          sb.from('mos_xp_ledger').select('user_id, points').limit(50000),
+          sb.from('mos_late_events').select('user_id').eq('month_key', month),
+          sb.from('mos_discipline_actions').select('*').in('status', ['pending', 'disputed'])
+            .order('created_at', { ascending: false }),
+          sb.from('mos_reward_claims').select('*').eq('status', 'requested'),
+          sb.from('mos_leaves').select('*').eq('status', 'requested'),
+          sb.from('workflow_role_tasks')
+            .select('id, subject_id, step_key, role_key, bucket, assignee_user_id, due_at, blocked, blocked_reason, late_flag')
+            .eq('status', 'open').or('blocked.eq.true,late_flag.eq.true'),
+          sb.from('mos_role_load').select('role_id, bucket, daily_new_tasks'),
+          sb.from('roles').select('id, key, label_ar, label_en').eq('domain', 'marketing'),
+          sb.from('workflow_role_tasks')
+            .select('role_key, bucket, assignee_user_id, opened_at, status')
+            .eq('status', 'open'),
+          sb.from('mos_posting_targets').select('*').eq('active', true),
+          sb.from('mos_perf_kpi_goals').select('*').eq('month_key', month),
+          sb.from('mos_perf_kpi_results').select('*'),
+          sb.from('mos_perf_kpi_recipients').select('*'),
+        ]);
+        const fail = dbFail(usersRes.error) ?? dbFail(xpRes.error) ?? dbFail(lateRes.error)
+          ?? dbFail(actionsRes.error) ?? dbFail(claimsRes.error) ?? dbFail(leavesRes.error)
+          ?? dbFail(blockedRes.error) ?? dbFail(loadRes.error) ?? dbFail(rolesRes.error)
+          ?? dbFail(openRes.error) ?? dbFail(targetsRes.error) ?? dbFail(goalsRes.error)
+          ?? dbFail(resultsRes.error) ?? dbFail(recipientsRes.error);
+        if (fail) return fail;
+
+        // People = users holding any marketing role; annotate xp + lateness.
+        const roleIdSet = new Set(((rolesRes.data ?? []) as Array<{ id: string }>).map((r) => r.id));
+        const xpByUser = new Map<string, number>();
+        for (const r of (xpRes.data ?? []) as Array<{ user_id: string; points: number }>) {
+          xpByUser.set(r.user_id, (xpByUser.get(r.user_id) ?? 0) + (r.points || 0));
+        }
+        const lateByUser = new Map<string, number>();
+        for (const r of (lateRes.data ?? []) as Array<{ user_id: string }>) {
+          lateByUser.set(r.user_id, (lateByUser.get(r.user_id) ?? 0) + 1);
+        }
+        const people = ((usersRes.data ?? []) as Array<{
+          id: string; name_ar: string | null; name_en: string | null;
+          role_assignments: Array<{ role_id?: string }> | null;
+        }>)
+          .filter((u) => Array.isArray(u.role_assignments)
+            && u.role_assignments.some((a) => a.role_id && roleIdSet.has(a.role_id)))
+          .map((u) => ({
+            user_id: u.id, name_ar: u.name_ar, name_en: u.name_en,
+            roles: (u.role_assignments ?? [])
+              .map((a) => ((rolesRes.data ?? []) as Array<{ id: string; key: string }>)
+                .find((r) => r.id === a.role_id)?.key ?? null)
+              .filter(Boolean),
+            xp_total: xpByUser.get(u.id) ?? 0,
+            late_this_month: lateByUser.get(u.id) ?? 0,
+          }));
+
+        const resultById2 = new Map(((resultsRes.data ?? []) as Array<{ goal_id: string }>).map((r) => [r.goal_id, r]));
+        return jsonOk({
+          month,
+          people,
+          pending_actions: actionsRes.data ?? [],
+          pending_claims: claimsRes.data ?? [],
+          pending_leaves: leavesRes.data ?? [],
+          flagged_tasks: blockedRes.data ?? [],
+          role_load: loadRes.data ?? [],
+          roles: rolesRes.data ?? [],
+          open_tasks: openRes.data ?? [],
+          posting_targets: targetsRes.data ?? [],
+          kpi_goals: ((goalsRes.data ?? []) as Array<{ id: string }>).map((g) => ({
+            ...g, result: resultById2.get(g.id) ?? null,
+            recipients: ((recipientsRes.data ?? []) as Array<{ goal_id: string }>)
+              .filter((r) => r.goal_id === g.id),
+          })),
+        });
+      }
+
+      /* Decisions — all definer RPCs with their own gates. */
+      case 'perf_reward_claim': {
+        const rewardId = str(body.reward_id);
+        if (!rewardId) return jsonError(400, 'reward_id is required');
+        const res = await sb.rpc('mos_perf_claim_reward', { p_reward_id: rewardId });
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk({ claim_id: res.data });
+      }
+
+      case 'perf_reward_decide': {
+        const claimId = str(body.claim_id);
+        if (!claimId) return jsonError(400, 'claim_id is required');
+        const res = await sb.rpc('mos_perf_decide_reward', {
+          p_claim_id: claimId, p_approve: body.approve === true,
+        });
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      case 'perf_discipline_decide': {
+        const actionId = str(body.action_id);
+        if (!actionId) return jsonError(400, 'action_id is required');
+        const res = await sb.rpc('mos_perf_decide_discipline', {
+          p_action_id: actionId, p_approve: body.approve === true,
+        });
+        const f = dbFail(res.error); if (f) return f;
+        // Tell the person their notice was decided (in-app; grid decides more).
+        const row = await sb.from('mos_discipline_actions')
+          .select('user_id, kind, status').eq('id', actionId).maybeSingle();
+        if (row.data) {
+          const a = row.data as { user_id: string; kind: string; status: string };
+          if (a.status === 'approved') {
+            await emitNotify(sb, {
+              event: 'discipline_decided',
+              roles: [], users: [a.user_id],
+              titleAr: a.kind === 'deduction' ? 'قرار خصم' : 'إنذار تأخير',
+              titleEn: a.kind === 'deduction' ? 'Deduction decided' : 'Late warning issued',
+              bodyAr: a.kind === 'deduction'
+                ? 'اعتُمد خصم يوم بسبب تجاوز مواعيد المهام هذا الشهر.'
+                : 'صدر إنذار بسبب مهمة تجاوزت موعدها. راجع ملفك.',
+              bodyEn: 'See your performance profile.',
+              url: '/m/me',
+            });
+          }
+        }
+        return jsonOk({ ok: true });
+      }
+
+      case 'perf_discipline_dispute': {
+        const actionId = str(body.action_id);
+        const note = str(body.note);
+        if (!actionId || !note) return jsonError(400, 'action_id and note are required');
+        const res = await sb.rpc('mos_perf_dispute_discipline', {
+          p_action_id: actionId, p_note: note,
+        });
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      case 'perf_leave_request': {
+        const start = str(body.start_at);
+        const end = str(body.end_at);
+        if (!start || !end) return jsonError(400, 'start_at and end_at are required');
+        const res = await sb.rpc('mos_leave_request', {
+          p_start: start, p_end: end,
+          p_kind: str(body.kind) ?? 'annual', p_note: str(body.note),
+        });
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk({ leave_id: res.data });
+      }
+
+      case 'perf_leave_decide': {
+        const leaveId = str(body.leave_id);
+        if (!leaveId) return jsonError(400, 'leave_id is required');
+        const res = await sb.rpc('mos_leave_decide', {
+          p_leave_id: leaveId, p_approve: body.approve === true,
+        });
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      case 'perf_task_block': {
+        const taskId = str(body.task_id);
+        const source = str(body.task_source) ?? 'workflow';
+        if (!taskId) return jsonError(400, 'task_id is required');
+        const res = await sb.rpc('mos_perf_task_block', {
+          p_task_source: source, p_task_id: taskId,
+          p_blocked: body.blocked === true, p_reason: str(body.reason),
+        });
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      /* KPI goals (RLS: manage_performance) + evaluation. */
+      case 'perf_kpi_save': {
+        const g = (body.goal ?? {}) as Record<string, unknown>;
+        const row: Record<string, unknown> = {
+          month_key: str(g.month_key) ?? new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 7),
+          metric: str(g.metric), comparator: str(g.comparator),
+          target: Number(g.target), bonus_pct: Number(g.bonus_pct),
+          label_ar: str(g.label_ar), label_en: str(g.label_en),
+          scope_campaign_ids: Array.isArray(g.scope_campaign_ids) && g.scope_campaign_ids.length > 0
+            ? g.scope_campaign_ids : null,
+        };
+        if (!row.metric || !row.comparator || !Number.isFinite(row.target as number)
+          || !Number.isFinite(row.bonus_pct as number)) {
+          return jsonError(400, 'metric, comparator, target and bonus_pct are required');
+        }
+        const appUserId = await resolveAppUserId(sb, user.userId);
+        const id = str(g.id);
+        const res = id
+          ? await sb.from('mos_perf_kpi_goals').update(row).eq('id', id).select('*').maybeSingle()
+          : await sb.from('mos_perf_kpi_goals').insert({ ...row, created_by: appUserId })
+              .select('*').maybeSingle();
+        const f = dbFail(res.error); if (f) return f;
+        if (!res.data) return jsonError(403, 'manage_performance capability required');
+        const goalId = (res.data as { id: string }).id;
+        // Recipients: replace the set when provided.
+        if (Array.isArray(body.recipients)) {
+          const dl = await sb.from('mos_perf_kpi_recipients').delete().eq('goal_id', goalId);
+          const f2 = dbFail(dl.error); if (f2) return f2;
+          const recs = (body.recipients as Array<Record<string, unknown>>)
+            .filter((r) => str(r.subject_kind) && str(r.subject_id))
+            .map((r) => ({ goal_id: goalId, subject_kind: r.subject_kind, subject_id: r.subject_id }));
+          if (recs.length > 0) {
+            const ins = await sb.from('mos_perf_kpi_recipients').insert(recs);
+            const f3 = dbFail(ins.error); if (f3) return f3;
+          }
+        }
+        return jsonOk({ goal: res.data });
+      }
+
+      case 'perf_kpi_delete': {
+        const id = str(body.id);
+        if (!id) return jsonError(400, 'id is required');
+        const res = await sb.from('mos_perf_kpi_goals').delete().eq('id', id);
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk({ ok: true });
+      }
+
+      case 'perf_kpi_status': {
+        const month = str(body.month)
+          ?? new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 7);
+        const ev = await sb.rpc('mos_perf_kpi_evaluate', { p_month: month });
+        const f = dbFail(ev.error); if (f) return f;
+        const [goalsRes, resultsRes, recipientsRes] = await Promise.all([
+          sb.from('mos_perf_kpi_goals').select('*').eq('month_key', month),
+          sb.from('mos_perf_kpi_results').select('*'),
+          sb.from('mos_perf_kpi_recipients').select('*'),
+        ]);
+        const f2 = dbFail(goalsRes.error) ?? dbFail(resultsRes.error) ?? dbFail(recipientsRes.error);
+        if (f2) return f2;
+        const byId = new Map(((resultsRes.data ?? []) as Array<{ goal_id: string }>).map((r) => [r.goal_id, r]));
+        return jsonOk({
+          month,
+          goals: ((goalsRes.data ?? []) as Array<{ id: string }>).map((g) => ({
+            ...g, result: byId.get(g.id) ?? null,
+            recipients: ((recipientsRes.data ?? []) as Array<{ goal_id: string }>)
+              .filter((r) => r.goal_id === g.id),
+          })),
+        });
+      }
+
+      /* Coverage calendar — targets vs planned vs published for one month. */
+      case 'perf_calendar': {
+        const month = str(body.month)
+          ?? new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 7);
+        const monthStart = `${month}-01`;
+        const y = Number(month.slice(0, 4));
+        const m = Number(month.slice(5, 7));
+        const nextMonth = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+        const [targetsRes, pubsRes, intentsRes, bucketsRes, typesRes] = await Promise.all([
+          sb.from('mos_posting_targets').select('*').eq('active', true),
+          sb.from('mos_publications')
+            .select('id, content_id, platform, status, scheduled_at, published_at')
+            .or(`and(published_at.gte.${monthStart},published_at.lt.${nextMonth}),and(scheduled_at.gte.${monthStart},scheduled_at.lt.${nextMonth})`),
+          sb.from('mos_content')
+            .select('id, content_type_id, target_publish_at, organic_platforms')
+            .gte('target_publish_at', monthStart).lt('target_publish_at', nextMonth)
+            .is('archived_at', null),
+          sb.from('mos_load_buckets').select('content_type_id, bucket'),
+          sb.from('mos_content_types').select('id, key'),
+        ]);
+        const fail = dbFail(targetsRes.error) ?? dbFail(pubsRes.error) ?? dbFail(intentsRes.error)
+          ?? dbFail(bucketsRes.error) ?? dbFail(typesRes.error);
+        if (fail) return fail;
+
+        // Bucket for each publication's content (one batched lookup).
+        const bucketByType = new Map(((bucketsRes.data ?? []) as Array<{ content_type_id: string; bucket: string }>)
+          .map((b) => [b.content_type_id, b.bucket]));
+        const keyByType = new Map(((typesRes.data ?? []) as Array<{ id: string; key: string }>)
+          .map((t) => [t.id, t.key]));
+        const pubContentIds = Array.from(new Set(((pubsRes.data ?? []) as Array<{ content_id: string | null }>)
+          .map((p) => p.content_id).filter((c): c is string => Boolean(c))));
+        const pubContent = pubContentIds.length > 0
+          ? await sb.from('mos_content').select('id, content_type_id').in('id', pubContentIds)
+          : { data: [], error: null };
+        const f2 = dbFail(pubContent.error); if (f2) return f2;
+        const typeByContent = new Map(((pubContent.data ?? []) as Array<{ id: string; content_type_id: string }>)
+          .map((c) => [c.id, c.content_type_id]));
+        const bucketOf = (typeId: string | undefined): string => {
+          if (!typeId) return 'post';
+          return bucketByType.get(typeId)
+            ?? (keyByType.get(typeId) === 'video' ? 'video' : 'post');
+        };
+
+        return jsonOk({
+          month,
+          targets: targetsRes.data ?? [],
+          publications: ((pubsRes.data ?? []) as Array<Record<string, unknown>>).map((p) => ({
+            ...p, bucket: bucketOf(typeByContent.get(p.content_id as string)),
+          })),
+          intents: ((intentsRes.data ?? []) as Array<Record<string, unknown>>).map((c) => ({
+            id: c.id, date: (c.target_publish_at as string | null)?.slice(0, 10) ?? null,
+            bucket: bucketOf(c.content_type_id as string),
+            platforms: Array.isArray(c.organic_platforms) ? c.organic_platforms : [],
+          })),
         });
       }
 

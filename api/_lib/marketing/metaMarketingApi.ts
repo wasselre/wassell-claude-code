@@ -236,6 +236,20 @@ export class MetaMarketingClient {
     });
   }
 
+  /**
+   * Insights over an explicit date window (both dates inclusive, YYYY-MM-DD).
+   * The perf system's monthly CPL/CTR snapshot uses this — the sync's stored
+   * numbers are LIFETIME (date_preset 'maximum') and cannot answer "what did
+   * this month cost", so the monthly cron pulls the month's own window.
+   */
+  async getInsightsRange(level: MetaInsightLevel, since: string, until: string): Promise<MetaInsightRow[]> {
+    return this.getAll<MetaInsightRow>(`${this.act}/insights`, {
+      level,
+      time_range: JSON.stringify({ since, until }),
+      fields: 'campaign_id,adset_id,ad_id,spend,impressions,clicks,inline_link_clicks,actions,cost_per_action_type,reach,frequency',
+    });
+  }
+
   // ----- WRITE (ads_management) --------------------------------------------
   // Every write accepts validateOnly → Meta's execution_options:["validate_only"]
   // so a "check" button can dry-run without creating anything or spending.

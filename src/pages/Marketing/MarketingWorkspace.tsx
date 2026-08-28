@@ -116,7 +116,10 @@ export type Capability =
   // Sync + create/manage OUR Meta campaigns via the Marketing API (live spend).
   | 'manage_paid_ads'
   // Fine-grained view gates (replace the old hardcoded `role === 'ceo'` checks).
-  | 'view_content_body' | 'view_activity' | 'compare_versions';
+  | 'view_content_body' | 'view_activity' | 'compare_versions'
+  // Performance & load system (2026-08-28): rate finished creatives, and run
+  // the manager desk (discipline/leave/reward decisions, KPI goals, toggles).
+  | 'rate_creative' | 'manage_performance';
 
 const Ctx = createContext<WorkspaceCtx | null>(null);
 
@@ -158,6 +161,8 @@ const NAV: NavGroup[] = [
       { to: '/m', ar: 'نظرة عامة', en: 'Overview', Icon: IconOverview, end: true, surface: 'overview' },
       { to: '/m/my-work', ar: 'مهامي', en: 'My work', Icon: IconMyWork, badge: 'mywork', surface: 'mywork' },
       { to: '/m/team', ar: 'متابعة الفريق', en: 'Team work', Icon: IconTeam, surface: 'team' },
+      { to: '/m/me', ar: 'ملفي', en: 'My profile', Icon: IconGoals, surface: 'myperf' },
+      { to: '/m/performance', ar: 'مكتب الأداء', en: 'Performance', Icon: IconMetrics, surface: 'performance' },
     ],
   },
   {

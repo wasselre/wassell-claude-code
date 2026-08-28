@@ -44,6 +44,7 @@ import { useMosText } from './lib/useMosText';
 import PerformanceTab from './components/PerformanceTab';
 import MaterialsTab from './components/MaterialsTab';
 import { ProjectAssetsTab, ProjectInfoTab } from './components/ProjectPanels';
+import PerfRatingCard from './components/PerfRatingCard';
 import RequestChangesModal from './components/RequestChangesModal';
 import ProjectMultiSelect from './components/ProjectMultiSelect';
 import ApprovalSheet, { useIsMobile } from './components/ApprovalSheet';
@@ -569,6 +570,13 @@ export default function ContentDetailPage() {
                         ? 'لا مهمة مفتوحة. هذا العنصر ليس في طابور أحد.'
                         : 'No open task. This item is in nobody’s queue.'}
                   </div>
+                )}
+
+                {/* Performance system: a finished creative gets rated once by
+                    whoever holds rate_creative; points land on every
+                    contributor's XP. Hidden for everyone else. */}
+                {item.status_key === 'done' && can('rate_creative' as Capability) && (
+                  <PerfRatingCard contentId={item.id} isAr={isAr} />
                 )}
 
                 <div className="card">

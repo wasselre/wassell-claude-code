@@ -31,6 +31,7 @@
     { "path": "/api/cron/watchdogs", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/meta-sync", "schedule": "17 * * * *" },
     { "path": "/api/cron/bundle-metrics", "schedule": "37 6 * * *" },
-    { "path": "/api/cron/bundle-status", "schedule": "*/10 * * * *" }
+    { "path": "/api/cron/bundle-status", "schedule": "*/10 * * * *" },
+    { "path": "/api/cron/perf-sweep", "schedule": "*/10 * * * *" }
   ]
 }

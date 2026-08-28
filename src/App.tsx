@@ -85,6 +85,8 @@ const MarketingContentListPage = lazy(() => import('@/pages/Marketing/ContentLis
 const MarketingSearchPage = lazy(() => import('@/pages/Marketing/SearchPage'));
 const MarketingContentDetailPage = lazy(() => import('@/pages/Marketing/ContentDetailPage'));
 const MarketingCalendarPage = lazy(() => import('@/pages/Marketing/CalendarPage'));
+const MarketingMyPerfPage = lazy(() => import('@/pages/Marketing/MyPerfPage'));
+const MarketingPerformanceDeskPage = lazy(() => import('@/pages/Marketing/PerformanceDeskPage'));
 const MarketingCampaignsPage = lazy(() => import('@/pages/Marketing/CampaignsPage'));
 const MarketingGoalsPage = lazy(() => import('@/pages/Marketing/GoalsPage'));
 const MarketingCampaignDetailPage = lazy(() => import('@/pages/Marketing/CampaignDetailPage'));
@@ -514,6 +516,8 @@ export default function App() {
           <Route path="/m/content" element={<MarketingContentListPage />} />
           <Route path="/m/content/:contentId" element={<MarketingContentDetailPage />} />
           <Route path="/m/calendar" element={<MarketingCalendarPage />} />
+          <Route path="/m/me" element={<MarketingMyPerfPage />} />
+          <Route path="/m/performance" element={<MarketingPerformanceDeskPage />} />
           <Route path="/m/library" element={<MarketingAssetLibrary />} />
           <Route path="/m/library/upload" element={<MarketingUploadPage />} />
           <Route path="/m/library/unused" element={<MarketingLibraryUnusedPage />} />

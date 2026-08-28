@@ -34,6 +34,8 @@ import SettingsWorkflows from './components/SettingsWorkflows';
 import SettingsAccess from './components/SettingsAccess';
 import SettingsPeople from './components/SettingsPeople';
 import SettingsNotifications from './components/SettingsNotifications';
+import SettingsLoad from './components/SettingsLoad';
+import SettingsCadence from './components/SettingsCadence';
 import { num } from './lib/format';
 import './styles/settings-engine.css';
 
@@ -83,6 +85,18 @@ const SECTIONS = [
     ar: 'الأدوار والصلاحيات', en: 'Roles and permissions',
     ar_d: 'من يرى ماذا ومن يفعل ماذا — مصفوفة الشاشات الثلاثية لكل دور.',
     en_d: 'Who sees what and who does what — the three-state screen matrix per role.',
+  },
+  {
+    slug: 'load',
+    ar: 'طاقة العمل والمُهَل', en: 'Load & SLA',
+    ar_d: 'كم مهمة جديدة يوميًا لكل دور، وكم ساعة تُمهَل كل مهمة قبل التأخير.',
+    en_d: 'How many new tasks per role per day, and the hours each task gets before it counts late.',
+  },
+  {
+    slug: 'cadence',
+    ar: 'إيقاع النشر', en: 'Posting cadence',
+    ar_d: 'كم منشورًا وفيديو نريد يوميًا على كل منصة — أهداف تقويم التغطية.',
+    en_d: 'How many posts and videos we want per platform per day — the coverage calendar\'s targets.',
   },
   {
     slug: 'notifications',
@@ -628,7 +642,8 @@ export function SettingsSectionPage() {
     // These three fetch their own data (people/roles) or none at all
     // (notifications loads its rules itself) — settings_data would be waste.
     if (section === 'roles' || section === 'people' || section === 'notifications'
-        || section === 'measures' || section === 'audiences') {
+        || section === 'measures' || section === 'audiences'
+        || section === 'load' || section === 'cadence') {
       // These fetch their own data (or none) — settings_data would be waste.
       setLoading(false);
       return;
@@ -653,7 +668,7 @@ export function SettingsSectionPage() {
   const Back = isAr ? IconForward : IconBack;
   const canManage = can('manage_settings' as Capability);
   // Screens 26/27/43 render their own header (sub + actions depend on live data).
-  const ownHead = section === 'platforms' || section === 'content-types' || section === 'notifications' || section === 'measures' || section === 'audiences';
+  const ownHead = section === 'platforms' || section === 'content-types' || section === 'notifications' || section === 'measures' || section === 'audiences' || section === 'load' || section === 'cadence';
 
   if (!meta) {
     return (
@@ -688,6 +703,12 @@ export function SettingsSectionPage() {
         )}
         {!loading && section === 'audiences' && (
           <SettingsAudiences canManage={canManage} isAr={isAr} />
+        )}
+        {!loading && section === 'load' && (
+          <SettingsLoad canManage={can('manage_roles')} isAr={isAr} />
+        )}
+        {!loading && section === 'cadence' && (
+          <SettingsCadence canManage={can('manage_roles')} isAr={isAr} />
         )}
       </>
     );

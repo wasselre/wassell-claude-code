@@ -32,7 +32,9 @@ export type SurfaceKey =
   | 'shoots' | 'goals' | 'campaigns' | 'numbers' | 'settings' | 'roles'
   // Organic cockpit: 'organic' = Platform Pulse dashboard, 'publishing' = the
   // cross-platform Publishing Board.
-  | 'organic' | 'publishing';
+  | 'organic' | 'publishing'
+  // Performance & load system: own profile + the manager desk.
+  | 'myperf' | 'performance';
 
 export type SurfaceLevel = 'full' | 'read' | 'hidden';
 
@@ -2330,3 +2332,213 @@ export const mosMetaPushStructure = (
   executionId: string, validateOnly = false,
 ): Promise<MetaPushResult> =>
   call<MetaPushResult>('meta_push_structure', { execution_id: executionId, validate_only: validateOnly });
+
+/* ------------------------------------------------------------------ */
+/* Performance & load system (spec: docs/marketing-task-load-plan.md) */
+/* ------------------------------------------------------------------ */
+
+export type PerfBucket = 'post' | 'video';
+export type PerfRatingLevel = 'normal' | 'good' | 'very_good' | 'excellent' | 'very_excellent';
+
+export const RATING_LEVELS: readonly PerfRatingLevel[] =
+  ['normal', 'good', 'very_good', 'excellent', 'very_excellent'];
+
+export const RATING_LABELS: Record<PerfRatingLevel, { ar: string; en: string; points: number }> = {
+  normal:         { ar: 'عادي',     en: 'Normal',      points: 1 },
+  good:           { ar: 'جيد',      en: 'Good',        points: 2 },
+  very_good:      { ar: 'جيد جدًا', en: 'Very good',   points: 4 },
+  excellent:      { ar: 'ممتاز',    en: 'Excellent',   points: 7 },
+  very_excellent: { ar: 'استثنائي', en: 'Outstanding', points: 10 },
+};
+
+export interface PerfRoleLoad { role_id: string; bucket: PerfBucket; daily_new_tasks: number }
+export interface PerfRoleSla { role_id: string; bucket: PerfBucket | '*'; step_key: string; sla_hours: number }
+export interface PerfBucketMap { content_type_id: string; bucket: PerfBucket }
+
+export interface PerfPostingTarget {
+  id: string;
+  platform: string;
+  bucket: PerfBucket;
+  per_day: number;
+  weekday: number | null;
+  active: boolean;
+}
+
+export interface PerfSettings {
+  ratings_enabled: boolean;
+  xp_rewards_enabled: boolean;
+  discipline_observe: boolean;
+  deductions_enabled: boolean;
+  kpi_bonus_enabled: boolean;
+  cadence_enabled: boolean;
+}
+
+export interface PerfRoleRow { id: string; key: string; label_ar: string; label_en: string }
+
+export interface PerfReward {
+  id: string; label_ar: string; label_en: string; cost_xp: number; kind: string; active: boolean;
+}
+
+export interface PerfConfig {
+  role_load: PerfRoleLoad[];
+  role_sla: PerfRoleSla[];
+  buckets: PerfBucketMap[];
+  posting_targets: PerfPostingTarget[];
+  rewards: PerfReward[];
+  settings: PerfSettings | null;
+  roles: PerfRoleRow[];
+}
+
+export interface PerfXpEntry {
+  id: string; source: 'rating' | 'on_time' | 'reward_spend' | 'adjustment';
+  ref_id: string | null; points: number; note: string | null; created_at: string;
+}
+
+export interface PerfDisciplineAction {
+  id: string; user_id: string; month_key: string; ordinal: number;
+  kind: 'warning' | 'deduction';
+  status: 'pending' | 'approved' | 'rejected' | 'disputed';
+  amount_days: number | null; dispute_note: string | null;
+  decided_at: string | null; created_at: string;
+}
+
+export interface PerfRewardClaim {
+  id: string; user_id: string; reward_id: string; cost_xp: number;
+  status: 'requested' | 'approved' | 'rejected' | 'consumed';
+  requested_at: string; decided_at: string | null;
+}
+
+export interface PerfLeave {
+  id: string; user_id: string; start_at: string; end_at: string;
+  kind: 'annual' | 'sick' | 'other';
+  status: 'requested' | 'approved' | 'rejected';
+  note: string | null; created_at: string;
+}
+
+export interface PerfKpiGoal {
+  id: string; month_key: string;
+  metric: 'cpl' | 'ctr' | 'cpc' | 'leads' | 'spend';
+  comparator: 'lte' | 'gte';
+  target: number; bonus_pct: number;
+  label_ar: string | null; label_en: string | null;
+  scope_campaign_ids: string[] | null;
+  result?: { actual: number | null; hit: boolean; evaluated_at: string } | null;
+  recipients?: Array<{ subject_kind: 'user' | 'role'; subject_id: string }>;
+}
+
+export interface PerfOpenTask {
+  id: string; subject_id: string; step_key: string; role_key: string;
+  bucket: PerfBucket | null; opened_at: string | null; due_at: string | null;
+  late_flag: boolean; blocked: boolean;
+  assignee_user_id?: string | null; blocked_reason?: string | null;
+}
+
+export interface PerfMe {
+  xp_total: number;
+  ledger: PerfXpEntry[];
+  late_this_month: number;
+  discipline: PerfDisciplineAction[];
+  rewards: PerfReward[];
+  claims: PerfRewardClaim[];
+  leaves: PerfLeave[];
+  kpi_goals: PerfKpiGoal[];
+  open_tasks: PerfOpenTask[];
+  settings: PerfSettings | null;
+  month: string;
+}
+
+export interface PerfPerson {
+  user_id: string; name_ar: string | null; name_en: string | null;
+  roles: string[]; xp_total: number; late_this_month: number;
+}
+
+export interface PerfDesk {
+  month: string;
+  people: PerfPerson[];
+  pending_actions: PerfDisciplineAction[];
+  pending_claims: PerfRewardClaim[];
+  pending_leaves: PerfLeave[];
+  flagged_tasks: PerfOpenTask[];
+  role_load: PerfRoleLoad[];
+  roles: PerfRoleRow[];
+  open_tasks: Array<{ role_key: string; bucket: PerfBucket | null; assignee_user_id: string | null; opened_at: string | null }>;
+  posting_targets: PerfPostingTarget[];
+  kpi_goals: PerfKpiGoal[];
+}
+
+export interface PerfCalendarData {
+  month: string;
+  targets: PerfPostingTarget[];
+  publications: Array<{
+    id: string; content_id: string | null; platform: string; status: string;
+    scheduled_at: string | null; published_at: string | null; bucket: PerfBucket;
+  }>;
+  intents: Array<{ id: string; date: string | null; bucket: PerfBucket; platforms: string[] }>;
+}
+
+export const fetchPerfConfig = (): Promise<PerfConfig> => call('perf_config');
+
+export const savePerfLoad = (payload: {
+  role_load?: PerfRoleLoad[]; role_sla?: PerfRoleSla[]; buckets?: PerfBucketMap[];
+}): Promise<{ ok: boolean }> => call('perf_load_save', payload);
+
+export const savePerfTarget = (
+  target: Partial<PerfPostingTarget>,
+): Promise<{ target: PerfPostingTarget }> => call('perf_target_save', { target });
+
+export const deletePerfTarget = (id: string): Promise<{ ok: boolean }> =>
+  call('perf_target_delete', { id });
+
+export const savePerfSettings = (
+  patch: Partial<PerfSettings>,
+): Promise<{ settings: PerfSettings }> => call('perf_settings_save', patch);
+
+export const fetchPerfRatings = (contentId: string): Promise<{
+  contributors: Array<{ user_id: string; role_key: string; name_ar?: string | null; name_en?: string | null }>;
+  ratings: Array<{ contributor_user_id: string; level: PerfRatingLevel; points: number; is_override: boolean }>;
+}> => call('perf_ratings', { content_id: contentId });
+
+export const ratePerfContent = (
+  contentId: string, level: PerfRatingLevel, overrides: Record<string, PerfRatingLevel> = {},
+): Promise<{ rated: number }> => call('perf_rate', { content_id: contentId, level, overrides });
+
+export const fetchPerfMe = (): Promise<PerfMe> => call('perf_me');
+
+export const fetchPerfDesk = (): Promise<PerfDesk> => call('perf_desk');
+
+export const claimPerfReward = (rewardId: string): Promise<{ claim_id: string }> =>
+  call('perf_reward_claim', { reward_id: rewardId });
+
+export const decidePerfReward = (claimId: string, approve: boolean): Promise<{ ok: boolean }> =>
+  call('perf_reward_decide', { claim_id: claimId, approve });
+
+export const decidePerfDiscipline = (actionId: string, approve: boolean): Promise<{ ok: boolean }> =>
+  call('perf_discipline_decide', { action_id: actionId, approve });
+
+export const disputePerfDiscipline = (actionId: string, note: string): Promise<{ ok: boolean }> =>
+  call('perf_discipline_dispute', { action_id: actionId, note });
+
+export const requestPerfLeave = (payload: {
+  start_at: string; end_at: string; kind?: string; note?: string;
+}): Promise<{ leave_id: string }> => call('perf_leave_request', payload);
+
+export const decidePerfLeave = (leaveId: string, approve: boolean): Promise<{ ok: boolean }> =>
+  call('perf_leave_decide', { leave_id: leaveId, approve });
+
+export const blockPerfTask = (payload: {
+  task_id: string; task_source?: 'workflow' | 'manual'; blocked: boolean; reason?: string;
+}): Promise<{ ok: boolean }> => call('perf_task_block', payload);
+
+export const savePerfKpiGoal = (
+  goal: Partial<PerfKpiGoal>,
+  recipients?: Array<{ subject_kind: 'user' | 'role'; subject_id: string }>,
+): Promise<{ goal: PerfKpiGoal }> => call('perf_kpi_save', { goal, recipients });
+
+export const deletePerfKpiGoal = (id: string): Promise<{ ok: boolean }> =>
+  call('perf_kpi_delete', { id });
+
+export const fetchPerfKpiStatus = (month?: string): Promise<{ month: string; goals: PerfKpiGoal[] }> =>
+  call('perf_kpi_status', month ? { month } : {});
+
+export const fetchPerfCalendar = (month?: string): Promise<PerfCalendarData> =>
+  call('perf_calendar', month ? { month } : {});
