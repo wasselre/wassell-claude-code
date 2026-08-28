@@ -35,9 +35,10 @@ export default function PlacementsTab({
   canEdit, canPublish, isAr, onPublicationsChanged, onHashtagsChanged, onOrganicPlatformsChanged,
 }: {
   contentId: string;
-  /** The content's own campaign (provenance) — pre-selects the paid-placement
-   *  campaign picker so a creative born under a paid campaign attaches there by
-   *  default (still changeable — a creative may run paid in any campaign). */
+  /** The content's own campaign (provenance). Pre-selects BOTH the paid-placement
+   *  campaign picker (a creative born under a paid campaign attaches there by
+   *  default) AND a new organic publication's organic-campaign link. Still
+   *  changeable in both — a creative may run in any campaign. */
   defaultCampaignId: string | null;
   hasHashtags: boolean;
   accounts: MosAccount[];
@@ -73,6 +74,7 @@ export default function PlacementsTab({
           accounts={accounts}
           canEdit={canPublish || canEdit}
           isAr={isAr}
+          defaultCampaignId={defaultCampaignId}
           onChange={handleOrganicChange}
         />
         {hasHashtags && publications.length > 0 && (

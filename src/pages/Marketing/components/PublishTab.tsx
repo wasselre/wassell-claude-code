@@ -126,7 +126,7 @@ function platformLink(platform: string, handle: string | null): string | null {
 type PubRow = MosPublication;
 
 export default function PublishTab({
-  contentId, publications, accounts, canEdit, isAr, onChange,
+  contentId, publications, accounts, canEdit, isAr, onChange, defaultCampaignId,
 }: {
   contentId: string;
   publications: MosPublication[];
@@ -134,6 +134,9 @@ export default function PublishTab({
   canEdit: boolean;
   isAr: boolean;
   onChange: (pubs: MosPublication[]) => void;
+  /** The creative's provenance organic campaign — pre-selected for a new
+   *  publication so a post created inside a campaign starts linked to it. */
+  defaultCampaignId?: string | null;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const { people } = useWorkspace();
@@ -860,6 +863,7 @@ export default function PublishTab({
           finalAssets={finalAssets}
           isAr={isAr}
           busy={busy}
+          defaultCampaignId={defaultCampaignId}
           onClose={() => { setEditing(null); setAdding(false); }}
           onSave={(payload, picked) => void save(payload, picked)}
         />
@@ -1057,7 +1061,7 @@ export default function PublishTab({
 }
 
 function PublicationModal({
-  publication, accounts, available, finalAssets, isAr, busy, onClose, onSave,
+  publication, accounts, available, finalAssets, isAr, busy, defaultCampaignId, onClose, onSave,
 }: {
   publication: MosPublication | null;
   accounts: MosAccount[];
@@ -1066,6 +1070,8 @@ function PublicationModal({
   finalAssets: MosAsset[];
   isAr: boolean;
   busy: boolean;
+  /** The creative's provenance organic campaign — pre-selected on a NEW row. */
+  defaultCampaignId?: string | null;
   onClose: () => void;
   onSave: (payload: Record<string, unknown>, pickedAsset: MosAsset | null) => void;
 }) {
@@ -1183,9 +1189,16 @@ function PublicationModal({
         </Field>
       </div>
 
-      {/* The OPTIONAL organic campaign this placement belongs to. */}
+      {/* The OPTIONAL organic campaign this placement belongs to. On a NEW row it
+          pre-selects the creative's provenance campaign (still changeable); an
+          existing row keeps whatever it already had. */}
       <Field label={isAr ? 'الحملة العضوية' : 'Organic campaign'}>
-        <OrganicCampaignSelect value={campaignId} isAr={isAr} onChange={setCampaignId} />
+        <OrganicCampaignSelect
+          value={campaignId}
+          isAr={isAr}
+          onChange={setCampaignId}
+          defaultCampaignId={publication ? null : defaultCampaignId}
+        />
       </Field>
 
       {/* The band-4 rule, enforced: the picker lists ONLY approved files.
