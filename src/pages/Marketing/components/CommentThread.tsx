@@ -9,7 +9,7 @@
 import { useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { MosComment, MosStep, MosTask, ROLE_LABELS, addComment } from '@/lib/marketingOS/client';
-import { IconSend } from './icons';
+import MentionComposer, { renderMentions } from './MentionComposer';
 import { dateTime, initial, num, roleAvatarClass } from '../lib/format';
 
 interface Entry {
@@ -34,7 +34,6 @@ export default function CommentThread({
   onChange: (comments: MosComment[]) => void;
 }) {
   const addToast = useAppStore((s) => s.addToast);
-  const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
 
   const nameOf = (userId: string | null): string | null => {
@@ -82,16 +81,15 @@ export default function CommentThread({
       }),
   ].sort((a, b) => a.at.localeCompare(b.at));
 
-  const send = async (): Promise<void> => {
-    const body = text.trim();
-    if (!body) return;
+  const send = async (body: string, mentions: string[]): Promise<boolean> => {
     setBusy(true);
     try {
-      const res = await addComment(target, body);
+      const res = await addComment(target, body, mentions);
       onChange(res.comments);
-      setText('');
+      return true;
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -127,7 +125,7 @@ export default function CommentThread({
                   {e.detail ?? (isAr ? 'تعليق' : 'Comment')}
                   <span className="tm">{dateTime(e.at, isAr)}</span>
                 </div>
-                <div className="msg">{e.body}</div>
+                <div className="msg">{renderMentions(e.body, users, isAr)}</div>
               </>
             )}
           </div>
@@ -136,23 +134,13 @@ export default function CommentThread({
 
       {canComment && (
         <div style={{ marginTop: 12 }}>
-          <textarea
-            className="inp"
+          <MentionComposer
+            people={users}
+            isAr={isAr}
+            busy={busy}
             rows={3}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={isAr ? 'اكتب تعليقًا…' : 'Write a comment…'}
+            onSubmit={send}
           />
-          <button
-            type="button"
-            className="btn btn-p btn-sm"
-            style={{ marginTop: 8 }}
-            disabled={busy || text.trim() === ''}
-            onClick={() => void send()}
-          >
-            <IconSend />
-            {isAr ? 'إرسال' : 'Post'}
-          </button>
         </div>
       )}
     </div>

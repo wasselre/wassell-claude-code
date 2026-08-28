@@ -48,7 +48,8 @@ import PerfRatingCard from './components/PerfRatingCard';
 import RequestChangesModal from './components/RequestChangesModal';
 import ProjectMultiSelect from './components/ProjectMultiSelect';
 import ApprovalSheet, { useIsMobile } from './components/ApprovalSheet';
-import { IconBack, IconCheck, IconForward, IconSend } from './components/icons';
+import { IconBack, IconCheck, IconForward } from './components/icons';
+import MentionComposer, { renderMentions } from './components/MentionComposer';
 import { dateTimeShort, daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
 import './styles/mobile-m2.css';
 
@@ -933,7 +934,6 @@ function ActivityRail({
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [collapsed, setCollapsed] = useState(false);
-  const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
 
   const person = (userId: string | null | undefined): RolePerson | null =>
@@ -1007,22 +1007,19 @@ function ActivityRail({
     ...systemEntries.map((s) => ({ key: s.key, at: s.at, sys: s.node })),
   ].sort((a, b) => b.at.localeCompare(a.at)); // newest first — the rail's order
 
-  /** @mentions render in copper, as in the mockups. */
-  const renderBody = (body: string): ReactNode =>
-    body.split(/(@[^\s@]+)/g).map((part, i) =>
-      part.startsWith('@') ? <span key={i} className="mn">{part}</span> : part,
-    );
+  /** @mentions of known people render in copper (spaced Arabic names included). */
+  const mentionPeople = people.map((p) => ({ id: p.user_id, name_ar: p.name_ar, name_en: p.name_en }));
+  const renderBody = (bodyText: string): ReactNode => renderMentions(bodyText, mentionPeople, isAr);
 
-  const send = async (): Promise<void> => {
-    const body = text.trim();
-    if (!body) return;
+  const send = async (body: string, mentions: string[]): Promise<boolean> => {
     setBusy(true);
     try {
-      const res = await addComment({ contentId: item.id }, body);
+      const res = await addComment({ contentId: item.id }, body, mentions);
       onCommentsChange(res.comments);
-      setText('');
+      return true;
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1046,29 +1043,12 @@ function ActivityRail({
         <>
           {canComment && (
             <div style={{ marginBottom: 13 }}>
-              <textarea
-                className="inp"
-                rows={2}
-                style={{ width: '100%', fontSize: 12 }}
-                placeholder={isAr ? 'اكتب تعليقًا، أو اذكر شخصًا…' : 'Write a comment, or mention someone…'}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void send();
-                }}
+              <MentionComposer
+                people={people.map((p) => ({ id: p.user_id, name_ar: p.name_ar, name_en: p.name_en, email: p.email }))}
+                isAr={isAr}
+                busy={busy}
+                onSubmit={send}
               />
-              {text.trim() !== '' && (
-                <button
-                  type="button"
-                  className="btn btn-p btn-sm"
-                  style={{ marginTop: 7 }}
-                  disabled={busy}
-                  onClick={() => void send()}
-                >
-                  <IconSend />
-                  {isAr ? 'إرسال' : 'Post'}
-                </button>
-              )}
             </div>
           )}
 

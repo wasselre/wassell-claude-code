@@ -937,6 +937,87 @@ async function notifyTaskAssigned(
 }
 
 /**
+ * @mention notifications on a comment. Each tagged person gets a
+ * `mentioned_in_comment` inbox row (seeded ON for every role in 2026-08-01_04,
+ * so the dashboard bell always shows it) deep-linking to the commented subject.
+ *
+ * The claimed ids are re-validated against active users before we notify —
+ * never trust the client's mention list to interrupt arbitrary accounts. The
+ * author is dropped: mentioning yourself is a no-op. A read failure degrades to
+ * no notification, never to a failed comment write.
+ */
+async function notifyCommentMentions(
+  sb: SupabaseClient,
+  a: {
+    mentionIds: string[];
+    authorId: string | null;
+    contentId: string | null;
+    campaignId: string | null;
+    bodyText: string;
+  },
+): Promise<void> {
+  const ids = a.mentionIds.filter((id) => id !== a.authorId);
+  if (ids.length === 0) return;
+
+  // Only real, active accounts may be tagged.
+  const usersRes = await sb.from('users').select('id').eq('is_active', true).in('id', ids);
+  if (usersRes.error) {
+    console.error('[marketing-os] mention validation failed', usersRes.error.code, usersRes.error.message);
+    return;
+  }
+  const valid = ((usersRes.data ?? []) as Array<{ id: string }>).map((u) => u.id);
+  if (valid.length === 0) return;
+
+  // The tagger's name answers «من ذكرني؟». A failed lookup degrades to no name.
+  let byAr = '';
+  let byEn = '';
+  if (a.authorId) {
+    const who = await sb.from('users').select('name_ar, name_en, email').eq('id', a.authorId).maybeSingle();
+    if (!who.error && who.data) {
+      const u = who.data as { name_ar: string | null; name_en: string | null; email: string | null };
+      byAr = u.name_ar ?? u.name_en ?? u.email ?? '';
+      byEn = u.name_en ?? u.name_ar ?? u.email ?? '';
+    }
+  }
+
+  // The subject label + deep link. Content → «V-004 · العنوان»; campaign → its name.
+  let subjectAr = '';
+  let subjectEn = '';
+  let url: string | null = null;
+  if (a.contentId) {
+    const c = await sb.from('mos_content').select('ref, title').eq('id', a.contentId).maybeSingle();
+    if (!c.error && c.data) {
+      const row = c.data as { ref: string | null; title: string | null };
+      const label = [row.ref, row.title].filter((x): x is string => !!x && x.trim() !== '').join(' · ');
+      subjectAr = label;
+      subjectEn = label;
+    }
+    url = `/m/content/${a.contentId}`;
+  } else if (a.campaignId) {
+    const c = await sb.from('mos_campaigns').select('name').eq('id', a.campaignId).maybeSingle();
+    if (!c.error && c.data) {
+      const row = c.data as { name: string | null };
+      subjectAr = row.name ?? '';
+      subjectEn = row.name ?? '';
+    }
+    url = `/m/campaigns/${a.campaignId}`;
+  }
+
+  // A short excerpt of the comment gives the notification its own context.
+  const excerpt = a.bodyText.length > 140 ? `${a.bodyText.slice(0, 140)}…` : a.bodyText;
+
+  await emitNotify(sb, {
+    event: 'mentioned_in_comment',
+    users: valid,
+    titleAr: byAr ? `ذكرك ${byAr} في تعليق` : 'ذُكِرتَ في تعليق',
+    titleEn: byEn ? `${byEn} mentioned you in a comment` : 'You were mentioned in a comment',
+    bodyAr: subjectAr ? `على «${subjectAr}» — ${excerpt}` : excerpt,
+    bodyEn: subjectEn ? `on “${subjectEn}” — ${excerpt}` : excerpt,
+    url,
+  });
+}
+
+/**
  * Read the manual-task queue. Generation runs FIRST — `mos_task_series_materialize`
  * is idempotent and bounded, and pg_cron is not enabled on this project, so the
  * read is what turns a repeat rule into rows.
@@ -6272,14 +6353,32 @@ export default async function handler(req: Request): Promise<Response> {
         const bodyText = str(body.body);
         if (!bodyText) return jsonError(400, 'body is required');
         if (!contentId && !campaignId) return jsonError(400, 'content_id or campaign_id is required');
+        const authorId = await resolveAppUserId(sb, user.userId);
         const ins = await sb.from('mos_comments').insert({
           content_id: contentId,
           campaign_id: campaignId,
           body: bodyText,
-          author_user_id: await resolveAppUserId(sb, user.userId),
+          author_user_id: authorId,
         }).select('id').maybeSingle();
         const f = dbFail(ins.error);
         if (f) return f;
+
+        // @mention notifications. Never let a notification failure fail the
+        // comment write — emitNotify already swallows its own errors, and the
+        // validation read below degrades to "no notification", never to a 500.
+        const rawMentions = Array.isArray(body.mentions)
+          ? Array.from(new Set((body.mentions as unknown[])
+              .filter((x): x is string => typeof x === 'string' && x !== '')))
+          : [];
+        if (rawMentions.length > 0) {
+          await notifyCommentMentions(sb, {
+            mentionIds: rawMentions,
+            authorId,
+            contentId,
+            campaignId,
+            bodyText,
+          });
+        }
 
         let q = sb.from('mos_comments').select('*').order('created_at', { ascending: true }).limit(200);
         q = contentId ? q.eq('content_id', contentId) : q.eq('campaign_id', campaignId ?? '');

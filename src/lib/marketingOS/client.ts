@@ -1718,11 +1718,18 @@ export const fetchComments = (target: { contentId?: string; campaignId?: string 
     campaign_id: target.campaignId,
   });
 
-export const addComment = (target: { contentId?: string; campaignId?: string }, body: string) =>
+export const addComment = (
+  target: { contentId?: string; campaignId?: string },
+  body: string,
+  /** App-user ids the composer tagged with @ — each gets a `mentioned_in_comment`
+   *  notification. Server re-validates them against real workspace people. */
+  mentions: string[] = [],
+) =>
   call<{ comments: MosComment[] }>('comment_add', {
     content_id: target.contentId,
     campaign_id: target.campaignId,
     body,
+    mentions,
   });
 
 /**
