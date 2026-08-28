@@ -498,7 +498,7 @@ function ExecDraftEditor({
                       </button>
                     </div>
                     <div style={{ display: 'grid', gap: 3 }}>
-                      <span className="lbl">{isAr ? 'المحتوى — من القائمة أو المكتبة أو رفع جديد' : 'Content — list, library, or upload'}</span>
+                      <span className="lbl">{isAr ? 'المحتوى — سجل من قائمة المحتوى' : 'Content — a record from the content list'}</span>
                       <ContentPicker
                         value={{ contentId: a.contentId, asset: a.asset }}
                         contentOptions={content}

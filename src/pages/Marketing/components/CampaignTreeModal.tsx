@@ -38,8 +38,8 @@ interface AdRow {
   label: string;
   platformAdId: string;
   contentId: string;
-  /** A library/uploaded asset chosen as the creative (creative.asset_*). Exactly
-   *  one of contentId / asset is active at a time. */
+  /** LEGACY library asset carried in creative.asset_* (pre-2026-08-28 ads).
+   *  Display-only in the picker; picking content clears it. */
   asset: PickedAsset | null;
   status: string;
   /** The ad's caption (creative.message). */
@@ -552,7 +552,7 @@ export default function CampaignTreeModal({
                         </button>
                       </div>
                       <div style={{ display: 'grid', gap: 3 }}>
-                        <span className="lbl">{isAr ? 'المحتوى — من القائمة أو المكتبة أو رفع جديد' : 'Content — from the list, the library, or upload'}</span>
+                        <span className="lbl">{isAr ? 'المحتوى — سجل من قائمة المحتوى' : 'Content — a record from the content list'}</span>
                         <ContentPicker
                           value={{ contentId: a.contentId, asset: a.asset }}
                           contentOptions={content}

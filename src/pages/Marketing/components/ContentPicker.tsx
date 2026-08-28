@@ -1,22 +1,22 @@
 /**
- * ContentPicker — choose an ad's creative from THREE sources in one control:
+ * ContentPicker — choose an ad's creative from the Content list (mos_content
+ * records) ONLY.
  *
- *   1. the Content list  (mos_content records — the workflow-produced items)
- *   2. the Asset library (mos_assets — approved/raw material)
- *   3. an upload         (new file → the library, via the shared NewAssetModal)
+ * Operator decision 2026-08-28: an ad's creative must be a content record —
+ * the Asset-library / upload sources were removed. Linking an ad to a content
+ * record is what makes the ad a PAID PLACEMENT of that content (an
+ * mos_execution_ads row with content_id — see the Placements tab and the
+ * derived `purpose` in mos_content_v), so every pick must go through
+ * `content_id`.
  *
- * The ad row keeps referencing a content record through `content_id` (a real
- * column); a library/uploaded asset is carried in the ad's `creative` jsonb
- * (asset_id / asset_title / asset_url / asset_thumb) so NO schema change is
- * needed — `creative` is exactly where ad-level creative belongs. Exactly one
- * source is active at a time: picking content clears the asset and vice-versa.
+ * Legacy: ads created before this change may still carry a library asset in
+ * their `creative` jsonb (asset_id / asset_title / …). Such a pick is still
+ * RENDERED as the current value so the ad doesn't look empty, but no new
+ * asset can be chosen — picking a content record (or "no content") replaces it.
  */
-import { useEffect, useState } from 'react';
-import { useAppStore } from '@/stores/appStore';
-import { MosAsset, MosContentRow, fetchAssets } from '@/lib/marketingOS/client';
-import { NewAssetModal } from './MaterialsTab';
+import { MosContentRow } from '@/lib/marketingOS/client';
 
-/** The asset reference stored inside the ad's `creative` jsonb. */
+/** The (legacy) asset reference stored inside an ad's `creative` jsonb. */
 export interface PickedAsset {
   id: string;
   title: string;
@@ -26,6 +26,7 @@ export interface PickedAsset {
 
 export interface ContentPickerValue {
   contentId: string;
+  /** Legacy library asset — display-only; new picks always set this to null. */
   asset: PickedAsset | null;
 }
 
@@ -37,103 +38,40 @@ interface ContentPickerProps {
   onChange: (next: ContentPickerValue) => void;
 }
 
-const assetOf = (a: MosAsset): PickedAsset => ({
-  id: a.id,
-  title: a.title || a.ref || a.id,
-  url: a.url ?? null,
-  thumb: a.thumb_url ?? a.url ?? null,
-});
-
 export default function ContentPicker({
   value, contentOptions, isAr, onChange,
 }: ContentPickerProps): JSX.Element {
-  const addToast = useAppStore((s) => s.addToast);
-  const [assets, setAssets] = useState<MosAsset[]>([]);
-  const [uploading, setUploading] = useState(false);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const res = await fetchAssets({ limit: 300 });
-        setAssets(res.assets);
-      } catch (e) {
-        // Non-fatal: the content list + upload still work without the library.
-        console.error('[marketing] asset library unavailable for picker', e);
-      }
-    })();
-  }, []);
-
-  // The <select> value encodes the source: c:<id> = content, a:<id> = asset.
+  // The <select> value encodes the source: c:<id> = content record,
+  // a:<id> = a legacy asset pick (render-only — its option exists only while
+  // it IS the current value).
   const selectValue = value.asset ? `a:${value.asset.id}` : value.contentId ? `c:${value.contentId}` : '';
 
   const onSelect = (v: string): void => {
     if (!v) { onChange({ contentId: '', asset: null }); return; }
-    const [kind, id] = [v.slice(0, 1), v.slice(2)];
-    if (kind === 'c') { onChange({ contentId: id, asset: null }); return; }
-    const a = assets.find((x) => x.id === id);
-    if (a) onChange({ contentId: '', asset: assetOf(a) });
+    if (v.startsWith('c:')) { onChange({ contentId: v.slice(2), asset: null }); return; }
+    // Re-selecting the legacy asset option is a no-op (it's already the value).
   };
 
   return (
     <div style={{ display: 'grid', gap: 6 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, alignItems: 'center' }}>
-        <select className="inp" value={selectValue} onChange={(e) => onSelect(e.target.value)}>
-          <option value="">{isAr ? 'بدون محتوى' : 'No content'}</option>
-          <optgroup label={isAr ? 'قائمة المحتوى' : 'Content list'}>
-            {contentOptions.map((c) => (
-              <option key={c.id} value={`c:${c.id}`}>{c.ref ? `${c.ref} · ${c.title}` : c.title}</option>
-            ))}
-          </optgroup>
-          <optgroup label={isAr ? 'المكتبة' : 'Library'}>
-            {assets.map((a) => (
-              <option key={a.id} value={`a:${a.id}`}>{a.ref ? `${a.ref} · ${a.title}` : a.title}</option>
-            ))}
-            {/* An asset chosen this session that isn't in the fetched page yet
-                (e.g. a fresh upload) still needs to render as the current value. */}
-            {value.asset && !assets.some((a) => a.id === value.asset?.id) && (
-              <option value={`a:${value.asset.id}`}>{value.asset.title}</option>
-            )}
-          </optgroup>
-        </select>
-        <button
-          type="button"
-          className="btn btn-sm"
-          onClick={() => setUploading(true)}
-          title={isAr ? 'رفع ملف جديد إلى المكتبة' : 'Upload a new file to the library'}
-        >
-          {isAr ? '+ رفع' : '+ Upload'}
-        </button>
-      </div>
+      <select className="inp" value={selectValue} onChange={(e) => onSelect(e.target.value)}>
+        <option value="">{isAr ? 'بدون محتوى' : 'No content'}</option>
+        {contentOptions.map((c) => (
+          <option key={c.id} value={`c:${c.id}`}>{c.ref ? `${c.ref} · ${c.title}` : c.title}</option>
+        ))}
+        {value.asset && (
+          <option value={`a:${value.asset.id}`}>
+            {(isAr ? 'من المكتبة (قديم) · ' : 'Library (legacy) · ') + value.asset.title}
+          </option>
+        )}
+      </select>
 
-      {/* Thumbnail of a chosen library/uploaded asset — content-list picks have
-          no inline thumb here (their preview lives on the content record). */}
-      {value.asset?.thumb && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <img
-            src={value.asset.thumb}
-            alt=""
-            style={{ width: 34, height: 34, borderRadius: 6, objectFit: 'cover', border: '1px solid var(--line)' }}
-          />
-          <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
-            {isAr ? 'من المكتبة' : 'from library'} · {value.asset.title}
-          </span>
-        </div>
-      )}
-
-      {uploading && (
-        <NewAssetModal
-          isAr={isAr}
-          projectId={null}
-          onClose={() => setUploading(false)}
-          onCreated={(created) => {
-            setUploading(false);
-            const first = created[0];
-            if (!first) return;
-            setAssets((cur) => [...created, ...cur]);
-            onChange({ contentId: '', asset: assetOf(first) });
-            addToast(isAr ? 'أُضيف الملف إلى المكتبة واختير.' : 'File added to the library and selected.', 'success');
-          }}
-        />
+      {value.contentId !== '' && (
+        <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
+          {isAr
+            ? 'عند الحفظ يُسجَّل هذا الإعلان كموضع مدفوع على المحتوى المختار.'
+            : 'On save, this ad is recorded as a paid placement on the selected content.'}
+        </span>
       )}
     </div>
   );
