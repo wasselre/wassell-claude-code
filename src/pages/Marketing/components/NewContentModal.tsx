@@ -13,7 +13,6 @@ import { useAppStore } from '@/stores/appStore';
 import {
   MosStep,
   PLATFORM_LABELS,
-  PURPOSE_LABELS,
   ROLE_LABELS,
   WorkflowDef,
   createContent,
@@ -69,7 +68,6 @@ export default function NewContentModal({
   const [title, setTitle] = useState('');
   const [projectIds, setProjectIds] = useState<string[]>(presetProject ? [presetProject] : []);
   const [campaignId, setCampaignId] = useState(presetCampaign ?? '');
-  const [purpose, setPurpose] = useState<'organic' | 'paid' | 'both'>('organic');
   const [publishAt, setPublishAt] = useState('');
   const [platforms, setPlatforms] = useState<string[]>(['instagram']);
   const [steps, setSteps] = useState<MosStep[]>([]);
@@ -167,7 +165,6 @@ export default function NewContentModal({
         // Multi-project: the server derives the primary project_id from this.
         project_ids: projectIds,
         campaign_id: campaignId || null,
-        purpose,
         target_publish_at: publishAt ? new Date(publishAt).toISOString() : null,
       });
       const id = res.item?.id;
@@ -267,29 +264,14 @@ export default function NewContentModal({
         </Field>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
-        <Field label={isAr ? 'الغرض' : 'Purpose'}>
-          <div className="seg" style={{ width: '100%' }}>
-            {(['organic', 'paid', 'both'] as const).map((p) => (
-              <button
-                key={p}
-                type="button"
-                className={purpose === p ? 'on' : ''}
-                style={{ flex: 1, textAlign: 'center' }}
-                onClick={() => setPurpose(p)}
-              >
-                {isAr ? PURPOSE_LABELS[p]?.ar : PURPOSE_LABELS[p]?.en}
-              </button>
-            ))}
-          </div>
-        </Field>
-        <Field label={isAr ? 'تاريخ النشر المستهدف' : 'Target publish date'}>
-          <input type="date" className="inp" value={publishAt} onChange={(e) => setPublishAt(e.target.value)} />
-        </Field>
-      </div>
+      <Field label={isAr ? 'تاريخ النشر المستهدف' : 'Target publish date'}>
+        <input type="date" className="inp" value={publishAt} onChange={(e) => setPublishAt(e.target.value)} />
+      </Field>
 
       <div>
-        <div className="lbl" style={{ marginBottom: 7 }}>{isAr ? 'أين سيُنشر' : 'Where it goes'}</div>
+        {/* The organic starting point — a draft publication per platform. Whether
+            the creative also runs paid is decided later, per placement. */}
+        <div className="lbl" style={{ marginBottom: 7 }}>{isAr ? 'أين سيُنشر عضويًا' : 'Where it posts (organic)'}</div>
         <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
           {PLATFORMS.map((p) => (
             <button

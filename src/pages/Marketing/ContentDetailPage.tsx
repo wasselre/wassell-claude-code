@@ -38,7 +38,7 @@ import StageRail from './components/StageRail';
 import ProjectLink from './components/ProjectLink';
 import TaskCard, { TasksApprovalsTab } from './components/TaskCard';
 import WritingFields from './components/WritingFields';
-import PlacementCaptions from './components/PlacementCaptions';
+import PlacementsTab from './components/PlacementsTab';
 import SceneTable from './components/SceneTable';
 import { useMosText } from './lib/useMosText';
 import PublishTab from './components/PublishTab';
@@ -52,7 +52,7 @@ import { IconBack, IconCheck, IconForward, IconSend } from './components/icons';
 import { dateTimeShort, daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
 import './styles/mobile-m2.css';
 
-type Tab = 'overview' | 'content' | 'materials' | 'project_assets' | 'project_info' | 'tasks' | 'publishing' | 'performance';
+type Tab = 'overview' | 'content' | 'placements' | 'materials' | 'project_assets' | 'project_info' | 'tasks' | 'publishing' | 'performance';
 
 /** The breadcrumb's plural type names — s06 «الفيديوهات», s08 «المنشورات». */
 const TYPE_PLURAL: Record<string, { ar: string; en: string }> = {
@@ -346,6 +346,9 @@ export default function ContentDetailPage() {
     // preset lacks it, so an oversight role sees no script (screen 36), but
     // it's now a capability toggle, not a hardcoded role check.
     { key: 'content', ar: 'المحتوى', en: 'Content', needs: 'view_content_body' },
+    // Where this creative runs — organic posts + paid ads, each added the same
+    // way. `purpose` is derived from what's here, not chosen up front.
+    { key: 'placements', ar: 'أماكن النشر', en: 'Placements', needs: 'view_content_body' },
     { key: 'materials', ar: 'المواد', en: 'Material', badge: materialCount || undefined },
     // The project the content runs under — its linked files + facts, so the
     // writer has every reference in one place. Shown only when a project is known.
@@ -680,36 +683,8 @@ export default function ContentDetailPage() {
                 isAr={isAr}
                 onSaved={(data) => setItem({ ...item, data })}
               />
-              {/* Distribution copy — captions per organic platform + paid ad copy —
-                  authored on the PLACEMENTS, shown by purpose. */}
-              <PlacementCaptions
-                contentId={item.id}
-                purpose={item.purpose}
-                campaignId={item.campaign_id}
-                hasCaption={fieldSchemaKeys(type?.field_schema ?? []).includes('caption')}
-                hasHashtags={fieldSchemaKeys(type?.field_schema ?? []).includes('hashtags')}
-                accounts={accounts}
-                publications={publications}
-                hashtags={typeof item.data?.hashtags === 'string' ? item.data.hashtags : ''}
-                organicPlatforms={item.organic_platforms ?? []}
-                canEdit={canEditNow}
-                isAr={isAr}
-                onPublicationsChanged={setPublications}
-                onHashtagsChanged={(value) => {
-                  const nextData = { ...(item.data ?? {}), hashtags: value };
-                  setItem({ ...item, data: nextData });
-                  updateContent(item.id, { data: nextData })
-                    .catch((e: unknown) => addToast(e instanceof Error ? e.message : String(e), 'error'));
-                }}
-                onOrganicPlatformsChanged={(platforms) => {
-                  // Optimistic — content_update's returned row omits `data`, so
-                  // replacing `item` with it would wipe the creative prose. Keep
-                  // the local merge; the server persists the array in the background.
-                  setItem({ ...item, organic_platforms: platforms });
-                  updateContent(item.id, { organic_platforms: platforms })
-                    .catch((e: unknown) => addToast(e instanceof Error ? e.message : String(e), 'error'));
-                }}
-              />
+              {/* Captions + paid ad copy moved to the Placements tab (2026-08-28):
+                  a creative is neutral; where it runs lives on its placements. */}
               {/* Screen 29, phone 2: on the phone the scenes render as a
                   READABLE list with a duration bar, not a compressed table. */}
               {(item.content_type_key === 'video' || scenes.length > 0) && (
@@ -730,6 +705,33 @@ export default function ContentDetailPage() {
                 )
               )}
             </div>
+          )}
+
+          {activeTab === 'placements' && (
+            <PlacementsTab
+              contentId={item.id}
+              hasHashtags={fieldSchemaKeys(type?.field_schema ?? []).includes('hashtags')}
+              accounts={accounts}
+              publications={publications}
+              hashtags={typeof item.data?.hashtags === 'string' ? item.data.hashtags : ''}
+              canEdit={canEditNow}
+              isAr={isAr}
+              onPublicationsChanged={setPublications}
+              onHashtagsChanged={(value) => {
+                const nextData = { ...(item.data ?? {}), hashtags: value };
+                setItem({ ...item, data: nextData });
+                updateContent(item.id, { data: nextData })
+                  .catch((e: unknown) => addToast(e instanceof Error ? e.message : String(e), 'error'));
+              }}
+              onOrganicPlatformsChanged={(platforms) => {
+                // Optimistic — content_update's returned row omits `data`, so
+                // replacing `item` with it would wipe the creative prose. Keep
+                // the local merge; the server persists the array in the background.
+                setItem({ ...item, organic_platforms: platforms });
+                updateContent(item.id, { organic_platforms: platforms })
+                  .catch((e: unknown) => addToast(e instanceof Error ? e.message : String(e), 'error'));
+              }}
+            />
           )}
 
           {activeTab === 'materials' && (

@@ -487,6 +487,9 @@ export interface MosPublication {
   content_id: string;
   platform: string;
   account_id: string | null;
+  /** The OPTIONAL organic campaign this placement belongs to (mos_campaigns.id,
+   *  kind='organic'). NULL = "no campaign" — a supported choice. */
+  campaign_id: string | null;
   status: 'draft' | 'scheduled' | 'published' | 'cancelled';
   scheduled_at: string | null;
   published_at: string | null;
@@ -630,34 +633,73 @@ export interface AdCreative {
   cta?: string;
   destination_url?: string;
 }
-export interface PaidAdExecItem {
+/** ONE paid placement = one ad row for this creative, wherever it runs. The
+ *  creative is decoupled from its campaign, so each placement resolves its OWN
+ *  execution → campaign path. */
+export interface PaidPlacement {
+  id: string;
+  execution_id: string;
+  ad_set_id: string | null;
+  ad_set_name: string | null;
+  content_id: string | null;
+  creative: AdCreative | null;
+  status: string;
   execution: {
-    id: string; platform: string; label: string | null; status: string; content_id: string | null;
+    id: string; platform: string; label: string | null;
+    campaign_id: string; campaign_name: string | null;
   };
-  ad: {
-    id: string; execution_id: string; content_id: string | null;
-    creative: AdCreative | null; status: string;
-  } | null;
 }
-export interface PaidAdsResult {
-  /** Null unless the content is linked to a `kind='paid'` campaign. */
-  campaign: { id: string; name: string; destination_url: string | null } | null;
-  items: PaidAdExecItem[];
+export interface PaidPlacementsResult {
+  placements: PaidPlacement[];
 }
 
-/** The paid-authoring surface for a content item — its paid campaign's
- *  executions and the ad row that carries THIS content's copy per execution. */
+/** The pick-list for adding a paid placement: paid campaigns → executions →
+ *  ad sets (only the campaigns the caller can see). */
+export interface PaidPlacementTarget {
+  id: string;
+  name: string;
+  executions: Array<{
+    id: string; platform: string; label: string | null;
+    ad_sets: Array<{ id: string; name: string }>;
+  }>;
+}
+
+/** The paid placements a creative actually carries (its ad rows across ANY
+ *  campaign). */
 export const fetchPaidAds = (contentId: string) =>
-  call<PaidAdsResult>('content_paid_ads', { content_id: contentId });
+  call<PaidPlacementsResult>('content_paid_ads', { content_id: contentId });
 
-/** Author paid ad COPY from the content tab. Writes `creative` onto the ad row
- *  for (execution, content) — lazily creating it and linking the execution to
- *  the content. Gated on `write_content`; ad structure/metrics stay gated by
- *  `manage_paid_ads`/`enter_metrics`. Returns the refreshed paid-ads surface. */
-export const saveAdCreative = (contentId: string, executionId: string, creative: AdCreative) =>
-  call<PaidAdsResult>('content_ad_creative_save', {
-    content_id: contentId, execution_id: executionId, creative,
-  });
+/** The paid campaigns / executions / ad sets available to attach a new paid
+ *  placement to. */
+export const fetchPaidPlacementTargets = () =>
+  call<{ campaigns: PaidPlacementTarget[] }>('paid_placement_targets');
+
+/**
+ * Add or edit a PAID placement on a creative.
+ *   edit → pass `adId` + `creative` (merges the copy onto that placement).
+ *   add  → pass `{ executionId, adSetId? | newAdSetName? }` + optional `creative`.
+ * Gated on `write_content`. Returns the refreshed paid placements.
+ */
+export const saveAdCreative = (
+  contentId: string,
+  target: { adId?: string; executionId?: string; adSetId?: string | null; newAdSetName?: string },
+  creative: AdCreative,
+) => call<PaidPlacementsResult>('content_ad_creative_save', {
+  content_id: contentId,
+  ...(target.adId ? { ad_id: target.adId } : {}),
+  ...(target.executionId ? { execution_id: target.executionId } : {}),
+  ...(target.adSetId ? { ad_set_id: target.adSetId } : {}),
+  ...(target.newAdSetName ? { new_ad_set_name: target.newAdSetName } : {}),
+  creative,
+});
+
+/** Remove (soft-archive) a paid placement from a creative. */
+export const removePaidPlacement = (contentId: string, adId: string) =>
+  call<PaidPlacementsResult>('paid_placement_remove', { content_id: contentId, ad_id: adId });
+
+/** Remove an ORGANIC placement (deletes its publication). */
+export const removePublication = (contentId: string, id: string) =>
+  call<{ publications: MosPublication[] }>('publication_remove', { content_id: contentId, id });
 
 /**
  * Post/schedule this publication FOR REAL via bundle.social — uploads the

@@ -900,7 +900,6 @@ export function CampaignModal({
         // Platform + project are DERIVED from the campaign, not chosen per piece:
         // platforms from the ad campaign's executions, project from the campaign.
         const derivedPlatforms = Array.from(new Set(execDrafts.map((e) => e.platform))).filter(Boolean);
-        const derivedPurpose: 'paid' | 'organic' = kind === 'paid' ? 'paid' : 'organic';
         for (const d of drafts) {
           try {
             const cres = await createContent({
@@ -908,7 +907,9 @@ export function CampaignModal({
               content_type_key: d.typeKey,
               project_ids: projectIds,
               campaign_id: res.item.id,
-              purpose: derivedPurpose,
+              // `purpose` is derived from placements now — not set here. The draft
+              // publications created below (per platform) are the organic starting
+              // point; paid placements are added on the content's Placements tab.
               // Notes land in the content's data.notes — the field the «الموجز» shows.
               data: { notes: d.notes.trim() || null },
             });

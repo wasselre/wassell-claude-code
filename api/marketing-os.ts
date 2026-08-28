@@ -328,9 +328,13 @@ const CONTENT_LIST_COLUMNS = [
   'due_at', 'target_publish_at', 'updated_at',
 ].join(', ');
 
-/** Patchable content fields. Identity and provenance are excluded by omission. */
+/** Patchable content fields. Identity and provenance are excluded by omission.
+ *  `purpose` is NO LONGER writable — it is DERIVED in mos_content_v from the
+ *  placements that exist (paid ad rows / publications). `campaign_id` stays
+ *  writable but is now PROVENANCE ("born here"), not ownership: it does not
+ *  constrain which placements the creative may carry. */
 const CONTENT_EDITABLE = [
-  'title', 'project_id', 'project_ids', 'campaign_id', 'purpose', 'language',
+  'title', 'project_id', 'project_ids', 'campaign_id', 'language',
   'goal', 'audience', 'angle', 'cta', 'organic_platforms',
   'target_publish_at', 'due_at', 'data',
 ] as const;
@@ -338,57 +342,84 @@ const CONTENT_EDITABLE = [
 /** The five standardized ad-copy keys a paid placement carries in `creative`. */
 const AD_CREATIVE_KEYS = ['primary_text', 'headline', 'description', 'cta', 'destination_url'] as const;
 
-interface PaidAdExec {
-  id: string; platform: string; label: string | null; status: string; content_id: string | null;
+/** ONE paid placement = one `mos_execution_ads` row for this creative, wherever
+ *  it lives (any campaign, any execution, any ad set). The creative is decoupled
+ *  from its campaign, so a placement resolves its OWN execution → campaign path. */
+interface PaidPlacement {
+  id: string;
+  execution_id: string;
+  ad_set_id: string | null;
+  ad_set_name: string | null;
+  content_id: string | null;
+  creative: Record<string, unknown> | null;
+  status: string;
+  execution: {
+    id: string; platform: string; label: string | null;
+    campaign_id: string; campaign_name: string | null;
+  };
 }
-interface PaidAdRow {
-  id: string; execution_id: string; content_id: string | null;
-  creative: Record<string, unknown> | null; status: string;
-}
-interface PaidAdsPayload {
-  campaign: { id: string; name: string; destination_url: string | null } | null;
-  items: Array<{ execution: PaidAdExec; ad: PaidAdRow | null }>;
+interface PaidPlacementsPayload {
+  placements: PaidPlacement[];
 }
 
 /**
- * The paid-authoring surface for ONE content item: its campaign (only when the
- * campaign is `kind='paid'`) and, per execution, the ad row that carries THIS
- * content's copy. Reused by the `content_paid_ads` read and returned fresh from
- * `content_ad_creative_save`. Reads as the CALLER (RLS) — throws PostgrestError.
+ * The paid placements a creative actually carries — its `mos_execution_ads` rows
+ * across ANY campaign (the creative is no longer owned by one). Each row resolves
+ * its execution + campaign + ad set for display. Reused by the `content_paid_ads`
+ * read and returned fresh from the save/remove actions. Reads as the CALLER (RLS)
+ * — throws PostgrestError.
  */
-async function loadPaidAdsPayload(sb: SupabaseClient, contentId: string): Promise<PaidAdsPayload> {
-  const c = await sb.from('mos_content_v').select('campaign_id').eq('id', contentId).maybeSingle();
-  if (c.error) throw c.error;
-  const campaignId = (c.data as { campaign_id: string | null } | null)?.campaign_id ?? null;
-  if (!campaignId) return { campaign: null, items: [] };
+async function loadPaidAdsPayload(sb: SupabaseClient, contentId: string): Promise<PaidPlacementsPayload> {
+  const adsRes = await sb.from('mos_execution_ads')
+    .select('id, execution_id, ad_set_id, content_id, creative, status')
+    .eq('content_id', contentId).is('archived_at', null)
+    .order('created_at', { ascending: true });
+  if (adsRes.error) throw adsRes.error;
+  const ads = (adsRes.data ?? []) as Array<{
+    id: string; execution_id: string; ad_set_id: string | null;
+    content_id: string | null; creative: Record<string, unknown> | null; status: string;
+  }>;
+  if (ads.length === 0) return { placements: [] };
 
-  const camp = await sb.from('mos_campaigns')
-    .select('id, name, kind, destination_url').eq('id', campaignId).maybeSingle();
-  if (camp.error) throw camp.error;
-  const campaign = camp.data as { id: string; name: string; kind: string; destination_url: string | null } | null;
-  // Paid authoring belongs to paid campaigns only — an organic campaign has no ads.
-  if (!campaign || campaign.kind !== 'paid') return { campaign: null, items: [] };
+  const execIds = [...new Set(ads.map((a) => a.execution_id))];
+  const execsRes = await sb.from('mos_campaign_executions')
+    .select('id, platform, label, campaign_id').in('id', execIds);
+  if (execsRes.error) throw execsRes.error;
+  const execs = (execsRes.data ?? []) as Array<{ id: string; platform: string; label: string | null; campaign_id: string }>;
+  const execById = new Map(execs.map((e) => [e.id, e]));
 
-  const execs = await sb.from('mos_campaign_executions')
-    .select('id, platform, label, status, content_id')
-    .eq('campaign_id', campaignId).order('platform', { ascending: true });
-  if (execs.error) throw execs.error;
-  const execRows = (execs.data ?? []) as PaidAdExec[];
-
-  let ads: PaidAdRow[] = [];
-  if (execRows.length > 0) {
-    const adsRes = await sb.from('mos_execution_ads')
-      .select('id, execution_id, content_id, creative, status')
-      .in('execution_id', execRows.map((e) => e.id))
-      .eq('content_id', contentId).is('archived_at', null);
-    if (adsRes.error) throw adsRes.error;
-    ads = (adsRes.data ?? []) as PaidAdRow[];
+  const campIds = [...new Set(execs.map((e) => e.campaign_id))];
+  const campName = new Map<string, string>();
+  if (campIds.length > 0) {
+    const campsRes = await sb.from('mos_campaigns').select('id, name').in('id', campIds);
+    if (campsRes.error) throw campsRes.error;
+    for (const c of (campsRes.data ?? []) as Array<{ id: string; name: string }>) campName.set(c.id, c.name);
   }
-  const adByExec = new Map(ads.map((a) => [a.execution_id, a]));
-  return {
-    campaign: { id: campaign.id, name: campaign.name, destination_url: campaign.destination_url },
-    items: execRows.map((e) => ({ execution: e, ad: adByExec.get(e.id) ?? null })),
-  };
+
+  const setIds = [...new Set(ads.map((a) => a.ad_set_id).filter((x): x is string => !!x))];
+  const setName = new Map<string, string>();
+  if (setIds.length > 0) {
+    const setsRes = await sb.from('mos_ad_sets').select('id, name').in('id', setIds);
+    if (setsRes.error) throw setsRes.error;
+    for (const s of (setsRes.data ?? []) as Array<{ id: string; name: string }>) setName.set(s.id, s.name);
+  }
+
+  const placements: PaidPlacement[] = ads.map((a) => {
+    const e = execById.get(a.execution_id);
+    return {
+      id: a.id,
+      execution_id: a.execution_id,
+      ad_set_id: a.ad_set_id,
+      ad_set_name: a.ad_set_id ? (setName.get(a.ad_set_id) ?? null) : null,
+      content_id: a.content_id,
+      creative: a.creative,
+      status: a.status,
+      execution: e
+        ? { id: e.id, platform: e.platform, label: e.label, campaign_id: e.campaign_id, campaign_name: campName.get(e.campaign_id) ?? null }
+        : { id: a.execution_id, platform: '', label: null, campaign_id: '', campaign_name: null },
+    };
+  });
+  return { placements };
 }
 
 /** The live metric a success measure's target is tracked against (mirrors the
@@ -2125,6 +2156,10 @@ export default async function handler(req: Request): Promise<Response> {
         const patch: Record<string, unknown> = {};
         for (const k of ['platform', 'account_id', 'status', 'scheduled_at', 'published_at',
                          'caption', 'external_url', 'external_id', 'note',
+                         // The OPTIONAL organic campaign this placement belongs to
+                         // (mos_campaigns.id, kind='organic'). NULL = "no campaign" —
+                         // an explicitly supported choice for an organic placement.
+                         'campaign_id',
                          // The approved material this publication uses. asset_id is
                          // the durable link (mos_assets.id, always present); file_id
                          // is kept for legacy rows that stored an asset's file id.
@@ -2245,59 +2280,86 @@ export default async function handler(req: Request): Promise<Response> {
         }
       }
 
+      /* ---------------------------------------------------------------- */
+      /* Add / edit a PAID placement on a creative (Placements tab).       */
+      /*                                                                  */
+      /* A paid placement is an mos_execution_ads row under some execution */
+      /* + ad set. The creative is decoupled from its campaign, so a       */
+      /* placement may point at ANY paid campaign's execution — there is    */
+      /* no "must match the content's campaign" constraint any more.        */
+      /*                                                                  */
+      /*   edit   → send `ad_id` + `creative` (merges the copy).           */
+      /*   add    → send `execution_id` (+ `ad_set_id` OR `new_ad_set_name`)*/
+      /*            + optional initial `creative`; a new ad row is created. */
+      /*                                                                  */
+      /* Text-only + structure writes go through the service client after   */
+      /* the write_content gate — same posture as content_caption_save.     */
+      /* ---------------------------------------------------------------- */
       case 'content_ad_creative_save': {
         const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
         const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        const adId = str(body.ad_id);
         const executionId = str(body.execution_id);
-        if (!contentId || !executionId) return jsonError(400, 'content_id and execution_id are required');
         const rawCreative = (body.creative ?? {}) as Record<string, unknown>;
         const creative: Record<string, string> = {};
         for (const k of AD_CREATIVE_KEYS) {
           if (typeof rawCreative[k] === 'string') creative[k] = rawCreative[k] as string;
         }
 
-        // Visibility (content) + linkage (execution ↔ same campaign) as the caller.
-        const own = await sb.from('mos_content_v').select('id, title, campaign_id')
-          .eq('id', contentId).maybeSingle();
+        // The caller must be able to SEE the content (RLS read) before we write.
+        const own = await sb.from('mos_content_v').select('id, title').eq('id', contentId).maybeSingle();
         const of = dbFail(own.error); if (of) return of;
-        const ownRow = own.data as { id: string; title: string; campaign_id: string | null } | null;
+        const ownRow = own.data as { id: string; title: string } | null;
         if (!ownRow) return jsonError(404, 'content item not found');
-        const exec = await sb.from('mos_campaign_executions').select('id, campaign_id, content_id')
-          .eq('id', executionId).maybeSingle();
-        const exf = dbFail(exec.error); if (exf) return exf;
-        const execRow = exec.data as { id: string; campaign_id: string; content_id: string | null } | null;
-        if (!execRow) return jsonError(404, 'execution not found');
-        if (ownRow.campaign_id && execRow.campaign_id !== ownRow.campaign_id) {
-          return jsonError(400, 'this execution belongs to a different campaign than the content');
-        }
 
         const svc = makeServiceClient('api:marketing-os');
         if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
 
-        // Lazy-upsert the ad row for (execution, content) — CREATIVE TEXT ONLY.
-        const existing = await svc.from('mos_execution_ads').select('id, creative')
-          .eq('execution_id', executionId).eq('content_id', contentId).is('archived_at', null)
-          .order('created_at', { ascending: true }).limit(1).maybeSingle();
-        const ef = dbFail(existing.error); if (ef) return ef;
-        if (existing.data) {
-          const prev = ((existing.data as { creative: unknown }).creative ?? {}) as Record<string, unknown>;
+        if (adId) {
+          // Edit an existing placement's copy — must belong to THIS creative.
+          const existing = await svc.from('mos_execution_ads').select('id, creative, content_id')
+            .eq('id', adId).is('archived_at', null).maybeSingle();
+          const ef = dbFail(existing.error); if (ef) return ef;
+          const exRow = existing.data as { id: string; creative: unknown; content_id: string | null } | null;
+          if (!exRow || exRow.content_id !== contentId) return jsonError(404, 'placement not found');
+          const prev = (exRow.creative ?? {}) as Record<string, unknown>;
           const upd = await svc.from('mos_execution_ads')
             .update({ creative: { ...prev, ...creative }, updated_at: new Date().toISOString() })
-            .eq('id', (existing.data as { id: string }).id).select('id').maybeSingle();
+            .eq('id', adId).select('id').maybeSingle();
           const uf = dbFail(upd.error); if (uf) return uf;
         } else {
+          // Add a new placement — the caller picks execution + ad set (or a new one).
+          if (!executionId) return jsonError(400, 'execution_id or ad_id is required');
+          const exec = await sb.from('mos_campaign_executions').select('id, campaign_id')
+            .eq('id', executionId).maybeSingle();
+          const exf = dbFail(exec.error); if (exf) return exf;
+          if (!exec.data) return jsonError(404, 'execution not found');
+
+          let adSetId = str(body.ad_set_id) || null;
+          const newSetName = str(body.new_ad_set_name);
+          if (!adSetId && newSetName) {
+            const sets = await svc.from('mos_ad_sets').select('id')
+              .eq('execution_id', executionId).is('archived_at', null);
+            const scf = dbFail(sets.error); if (scf) return scf;
+            const setIns = await svc.from('mos_ad_sets').insert({
+              execution_id: executionId, name: newSetName,
+              sort_order: (sets.data ?? []).length, status: 'active',
+            }).select('id').maybeSingle();
+            const sif = dbFail(setIns.error); if (sif) return sif;
+            adSetId = str((setIns.data as { id?: string } | null)?.id) || null;
+          } else if (adSetId) {
+            const chk = await svc.from('mos_ad_sets').select('id')
+              .eq('id', adSetId).eq('execution_id', executionId).is('archived_at', null).maybeSingle();
+            const cf = dbFail(chk.error); if (cf) return cf;
+            if (!chk.data) return jsonError(400, 'ad set does not belong to that execution');
+          }
+
           const ins = await svc.from('mos_execution_ads').insert({
-            execution_id: executionId, content_id: contentId,
+            execution_id: executionId, ad_set_id: adSetId, content_id: contentId,
             label: ownRow.title, status: 'waiting', creative,
           }).select('id').maybeSingle();
           const insf = dbFail(ins.error); if (insf) return insf;
-        }
-        // Link the execution to this content when it wasn't, so the campaign tree
-        // shows the ad under it. Only fills a NULL — never re-points a linked exec.
-        if (!execRow.content_id) {
-          const link = await svc.from('mos_campaign_executions')
-            .update({ content_id: contentId }).eq('id', executionId).select('id').maybeSingle();
-          const lf = dbFail(link.error); if (lf) return lf;
         }
 
         try {
@@ -2306,6 +2368,97 @@ export default async function handler(req: Request): Promise<Response> {
           return dbFail(e as PostgrestError)
             ?? jsonError(500, e instanceof Error ? e.message : String(e));
         }
+      }
+
+      /* Remove (soft-archive) a paid placement from a creative. */
+      case 'paid_placement_remove': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        const contentId = str(body.content_id);
+        const adId = str(body.ad_id);
+        if (!contentId || !adId) return jsonError(400, 'content_id and ad_id are required');
+        const own = await sb.from('mos_content_v').select('id').eq('id', contentId).maybeSingle();
+        const of = dbFail(own.error); if (of) return of;
+        if (!own.data) return jsonError(404, 'content item not found');
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+        const ad = await svc.from('mos_execution_ads').select('id, content_id')
+          .eq('id', adId).is('archived_at', null).maybeSingle();
+        const af = dbFail(ad.error); if (af) return af;
+        const adRow = ad.data as { id: string; content_id: string | null } | null;
+        if (!adRow || adRow.content_id !== contentId) return jsonError(404, 'placement not found');
+        const upd = await svc.from('mos_execution_ads')
+          .update({ archived_at: new Date().toISOString() }).eq('id', adId);
+        const uf = dbFail(upd.error); if (uf) return uf;
+        try {
+          return jsonOk(await loadPaidAdsPayload(sb, contentId));
+        } catch (e) {
+          return dbFail(e as PostgrestError)
+            ?? jsonError(500, e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      /* The pick-list for "add paid placement": paid campaigns → executions →
+         ad sets. Read as the caller (RLS) — only campaigns they can see appear. */
+      case 'paid_placement_targets': {
+        const camps = await sb.from('mos_campaigns').select('id, name')
+          .eq('kind', 'paid').is('archived_at', null).order('created_at', { ascending: false });
+        const cf = dbFail(camps.error); if (cf) return cf;
+        const campRows = (camps.data ?? []) as Array<{ id: string; name: string }>;
+        if (campRows.length === 0) return jsonOk({ campaigns: [] });
+
+        const execs = await sb.from('mos_campaign_executions').select('id, campaign_id, platform, label')
+          .in('campaign_id', campRows.map((c) => c.id)).order('platform', { ascending: true });
+        const ef = dbFail(execs.error); if (ef) return ef;
+        const execRows = (execs.data ?? []) as Array<{ id: string; campaign_id: string; platform: string; label: string | null }>;
+
+        let setRows: Array<{ id: string; execution_id: string; name: string; sort_order: number }> = [];
+        if (execRows.length > 0) {
+          const sets = await sb.from('mos_ad_sets').select('id, execution_id, name, sort_order')
+            .in('execution_id', execRows.map((e) => e.id)).is('archived_at', null)
+            .order('sort_order', { ascending: true });
+          const sf = dbFail(sets.error); if (sf) return sf;
+          setRows = (sets.data ?? []) as typeof setRows;
+        }
+        const setsByExec = new Map<string, Array<{ id: string; name: string }>>();
+        for (const s of setRows) {
+          const arr = setsByExec.get(s.execution_id) ?? [];
+          arr.push({ id: s.id, name: s.name });
+          setsByExec.set(s.execution_id, arr);
+        }
+        const execsByCamp = new Map<string, Array<{ id: string; platform: string; label: string | null; ad_sets: Array<{ id: string; name: string }> }>>();
+        for (const e of execRows) {
+          const arr = execsByCamp.get(e.campaign_id) ?? [];
+          arr.push({ id: e.id, platform: e.platform, label: e.label, ad_sets: setsByExec.get(e.id) ?? [] });
+          execsByCamp.set(e.campaign_id, arr);
+        }
+        return jsonOk({
+          campaigns: campRows.map((c) => ({ id: c.id, name: c.name, executions: execsByCamp.get(c.id) ?? [] })),
+        });
+      }
+
+      /* Remove an ORGANIC placement (delete its publication). Gated on
+         write_content; the placement's own scheduling caps are not required. */
+      case 'publication_remove': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        const contentId = str(body.content_id);
+        const pubId = str(body.id);
+        if (!contentId || !pubId) return jsonError(400, 'content_id and id are required');
+        const own = await sb.from('mos_content_v').select('id').eq('id', contentId).maybeSingle();
+        const of = dbFail(own.error); if (of) return of;
+        if (!own.data) return jsonError(404, 'content item not found');
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+        const pub = await svc.from('mos_publications').select('id, content_id')
+          .eq('id', pubId).maybeSingle();
+        const pf = dbFail(pub.error); if (pf) return pf;
+        const pubRow = pub.data as { id: string; content_id: string | null } | null;
+        if (!pubRow || pubRow.content_id !== contentId) return jsonError(404, 'placement not found');
+        const del = await svc.from('mos_publications').delete().eq('id', pubId);
+        const df = dbFail(del.error); if (df) return df;
+        const list = await sb.from('mos_publication_v').select('*').eq('content_id', contentId)
+          .order('scheduled_at', { ascending: true, nullsFirst: false });
+        const lf = dbFail(list.error); if (lf) return lf;
+        return jsonOk({ publications: list.data ?? [] });
       }
 
       /* -------------------------------------------------------- */
