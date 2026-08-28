@@ -1974,6 +1974,11 @@
 /* The active toggle on type rows — a small switch, go-green when on. */
 .mos-root .sw{position:relative;width:32px;height:18px;border-radius:999px;background:var(--sand-2);border:1px solid var(--line);cursor:pointer;padding:0;flex:none}
 .mos-root .sw::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--mute);transition:transform .15s}
+/* RTL: the knob RESTS on the right and slides left — the resting inset must
+   flip too, not only the slide direction. Keeping left:2px while translating
+   -13px parked the ON knob at -11px, OUTSIDE the pill (the misrendered
+   toggles on every Arabic settings screen). */
+[dir="rtl"] .mos-root .sw::after{left:auto;right:2px}
 .mos-root .sw.on{background:color-mix(in srgb,var(--go) 22%,transparent);border-color:color-mix(in srgb,var(--go) 45%,transparent)}
 .mos-root .sw.on::after{transform:translateX(13px);background:var(--go)}
 [dir="rtl"] .mos-root .sw.on::after{transform:translateX(-13px)}
