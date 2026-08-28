@@ -17,10 +17,11 @@
  *                                         in PlacementCaptions (rendered by the content
  *                                         tab next to this) — organic captions on the
  *                                         publication rows, paid copy on the ad rows.
- *   design_brief (+ format/reference)   → the structured design brief, so "what do I
+ *   design_brief (+ references)         → the structured design brief, so "what do I
  *                                         design" never drowns in a notes box. The
- *                                         reference is a PICK from the content library,
- *                                         not free text — "make it like this piece."
+ *                                         references are PICKS from the Files library
+ *                                         (one or many), each shown as a thumbnail
+ *                                         card and previewable in place.
  * Anything else in the schema renders as a plain field. Unknown keys degrade
  * quietly rather than crashing the tab.
  *
@@ -36,6 +37,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { updateContent } from '@/lib/marketingOS/client';
 import FilePickerModal from '@/pages/Files/library/FilePickerModal';
+import FilePreviewModal from '@/pages/Files/components/FilePreviewModal';
+import { listFilesByIds, signViewUrls } from '@/lib/files/client';
+import { kindIcon, kindLabel } from '@/lib/files/format';
+import type { FileRow } from '@/types';
 import { num } from '../lib/format';
 import { useMosText } from '../lib/useMosText';
 
@@ -120,55 +125,165 @@ function NewHeadlineRow({
 }
 
 /**
- * The Reference field's picker — the ONE shared Files picker (search + real
- * library cards + upload), so it is byte-for-byte the same experience as
- * selecting a file anywhere else. Stores the chosen file's id
- * (`design_reference_file_id`) + a display title (`design_reference_file_title`).
+ * The design-brief References strip — MULTIPLE reference files from the Files
+ * library, each rendered as a real preview card: an image/video thumbnail
+ * (signed URL) or a kind icon, the file name, and an in-app preview on click
+ * (the Files system's own FilePreviewModal — never a navigation away). In edit
+ * mode each card gets an ×, and «+ إضافة مرجع» opens the ONE shared Files
+ * picker (search + library cards + upload).
+ *
+ * Data: `design_reference_file_ids: string[]` in mos_content.data; the parent
+ * keeps the legacy single keys (`design_reference_file_id`/`_title`) in sync.
  */
-function FileReferencePicker({
-  fileId, title, isAr, onChange,
+function ReferenceFilesStrip({
+  fileIds, fallbackTitles, canEdit, isAr, onChange,
 }: {
-  fileId: string;
-  title: string;
+  fileIds: string[];
+  /** Display names for ids whose rows can't be fetched (deleted/no access). */
+  fallbackTitles: Record<string, string>;
+  canEdit: boolean;
   isAr: boolean;
-  onChange: (fileId: string, title: string) => void;
+  /** Second arg = the first id's display title (legacy-key sync). */
+  onChange: (fileIds: string[], firstTitle: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const display = title || fileId;
+  const [rows, setRows] = useState<Map<string, FileRow>>(() => new Map());
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [preview, setPreview] = useState<FileRow | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const idsKey = fileIds.join(',');
+  useEffect(() => {
+    if (fileIds.length === 0) { setRows(new Map()); setThumbs({}); return; }
+    let alive = true;
+    listFilesByIds(fileIds)
+      .then((rs) => {
+        if (!alive) return;
+        setRows(new Map(rs.map((r) => [r.id, r])));
+        const media = rs.filter((r) => r.kind === 'image' || r.kind === 'video').map((r) => r.id);
+        return signViewUrls(media).then((m) => { if (alive) setThumbs(m); });
+      })
+      .catch((e) => {
+        // The cards degrade to name-only; the failure must still be visible.
+        console.error('[marketing] reference files load failed', e);
+      });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey]);
+
+  const titleOf = (id: string): string => {
+    const r = rows.get(id);
+    return r?.original_name || fallbackTitles[id] || id;
+  };
+
+  const emit = (ids: string[]): void => {
+    const first = ids[0];
+    onChange(ids, first ? titleOf(first) : '');
+  };
+
+  const card = {
+    position: 'relative' as const, width: 124, borderRadius: 8, overflow: 'hidden',
+    border: '1px solid var(--line, rgba(255,255,255,0.10))',
+    background: 'var(--panel, rgba(255,255,255,0.03))',
+  };
+  const thumbBox = {
+    width: '100%', height: 78, display: 'flex', alignItems: 'center',
+    justifyContent: 'center', background: 'rgba(0,0,0,0.18)',
+  };
+  const nameLine = {
+    display: 'block', width: '100%', padding: '5px 7px', fontSize: 11,
+    color: 'var(--ink, inherit)', overflow: 'hidden', textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const, textAlign: 'start' as const,
+  };
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4 }}>
-        <button
-          type="button"
-          className="inp"
-          style={{
-            flex: 1, textAlign: isAr ? 'right' : 'left', fontSize: 13, cursor: 'pointer',
-            color: display ? 'var(--copper)' : 'var(--mute)', overflow: 'hidden',
-            textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}
-          onClick={() => setOpen(true)}
-        >
-          {display || (isAr ? 'اختر من مكتبة الملفات…' : 'Pick from the Files library…')}
-        </button>
-        {fileId && (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+        {fileIds.map((id) => {
+          const row = rows.get(id) ?? null;
+          const url = thumbs[id];
+          const Icon = row ? kindIcon[row.kind] : null;
+          return (
+            <div key={id} style={card}>
+              <button
+                type="button"
+                style={{ display: 'block', width: '100%', padding: 0, border: 0, background: 'transparent', cursor: row ? 'pointer' : 'default' }}
+                title={titleOf(id)}
+                onClick={() => { if (row) setPreview(row); }}
+              >
+                <div style={thumbBox}>
+                  {row && row.kind === 'image' && url ? (
+                    <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : row && row.kind === 'video' && url ? (
+                    <video src={url} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : Icon && row ? (
+                    <span style={{ display: 'grid', justifyItems: 'center', gap: 4, color: 'var(--mute)' }}>
+                      <Icon size={22} aria-hidden />
+                      <span style={{ fontSize: 10 }}>{kindLabel(row.kind, isAr)}</span>
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 10.5, color: 'var(--mute)', padding: '0 6px', textAlign: 'center' }}>
+                      {isAr ? 'غير متاح' : 'Unavailable'}
+                    </span>
+                  )}
+                </div>
+                <span style={nameLine}>{titleOf(id)}</span>
+              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  style={{
+                    position: 'absolute', top: 3, insetInlineEnd: 3, width: 20, height: 20,
+                    borderRadius: 6, border: 0, cursor: 'pointer', lineHeight: 1, fontSize: 13,
+                    background: 'rgba(0,0,0,0.55)', color: '#fff',
+                  }}
+                  onClick={() => emit(fileIds.filter((x) => x !== id))}
+                  aria-label={isAr ? 'إزالة المرجع' : 'Remove reference'}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          );
+        })}
+
+        {canEdit && (
           <button
             type="button"
-            style={{ ...delBtn }}
-            onClick={() => onChange('', '')}
-            aria-label={isAr ? 'إزالة المرجع' : 'Clear reference'}
+            style={{
+              width: 124, minHeight: 104, borderRadius: 8, cursor: 'pointer',
+              border: '1px dashed var(--line, rgba(255,255,255,0.18))',
+              background: 'transparent', color: 'var(--mute)', fontSize: 12,
+            }}
+            onClick={() => setPickerOpen(true)}
           >
-            ×
+            {isAr ? '+ إضافة مرجع' : '+ Add reference'}
           </button>
+        )}
+
+        {!canEdit && fileIds.length === 0 && (
+          <span style={{ fontSize: 13, color: 'var(--mute)' }}>—</span>
         )}
       </div>
 
       <FilePickerModal
-        open={open}
-        onClose={() => setOpen(false)}
-        onPick={(f) => onChange(f.id, f.title)}
-        title={isAr ? 'اختر مرجعًا من مكتبة الملفات' : 'Pick a reference from the Files library'}
-        sub={isAr ? 'ملف مثال يحتذي به هذا التصميم.' : 'An example file this design should take after.'}
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPick={(f) => { if (!fileIds.includes(f.id)) emit([...fileIds, f.id]); }}
+        title={isAr ? 'أضف مرجعًا من مكتبة الملفات' : 'Add a reference from the Files library'}
+        sub={isAr ? 'ملفات مثال يحتذي بها هذا التصميم.' : 'Example files this design should take after.'}
+      />
+
+      {/* The Files system's own full-screen viewer — image lightbox, in-app PDF,
+          video player… — opened in place; read-only here. */}
+      <FilePreviewModal
+        file={preview}
+        open={!!preview}
+        canEdit={false}
+        canDelete={false}
+        onClose={() => setPreview(null)}
+        onShare={() => {}}
+        onPermissions={() => {}}
+        onDelete={() => {}}
       />
     </>
   );
@@ -207,6 +322,30 @@ export default function WritingFields({
     () => JSON.stringify(draft) !== JSON.stringify(data),
     [draft, data],
   );
+
+  /* ── design-brief reference files ──────────────────────────────────
+     The array key `design_reference_file_ids`, falling back to the legacy
+     single keys for content saved before multi-reference (2026-08-28). The
+     legacy keys are kept in sync (first id + its title) on every change. */
+  const refFileIds = useMemo(() => {
+    const arr = asList(draft.design_reference_file_ids ?? data.design_reference_file_ids);
+    if (arr.length > 0) return arr;
+    const legacy = asString(draft.design_reference_file_id ?? data.design_reference_file_id);
+    return legacy ? [legacy] : [];
+  }, [draft, data]);
+  const legacyRefTitles = useMemo(() => {
+    const id = asString(draft.design_reference_file_id ?? data.design_reference_file_id);
+    const title = asString(draft.design_reference_file_title ?? data.design_reference_file_title);
+    return id && title ? { [id]: title } : {};
+  }, [draft, data]);
+  const setRefFiles = (ids: string[], firstTitle: string): void => {
+    setDraft((d) => ({
+      ...d,
+      design_reference_file_ids: ids,
+      design_reference_file_id: ids[0] ?? '',
+      design_reference_file_title: ids.length > 0 ? firstTitle : '',
+    }));
+  };
 
   const save = async (): Promise<void> => {
     setBusy(true);
@@ -389,10 +528,14 @@ export default function WritingFields({
               <div className="v">{str('design_brief') || '—'}</div>
             </div>
             <div className="fld">
-              <div className="k">{isAr ? 'مرجع' : 'Reference'}</div>
-              <div className="v" style={str('design_reference_file_id') ? { color: 'var(--copper)' } : undefined}>
-                {str('design_reference_file_title') || str('design_reference_file_id') || '—'}
-              </div>
+              <div className="k">{isAr ? 'مراجع' : 'References'}</div>
+              <ReferenceFilesStrip
+                fileIds={refFileIds}
+                fallbackTitles={legacyRefTitles}
+                canEdit={false}
+                isAr={isAr}
+                onChange={() => {}}
+              />
             </div>
           </div>
         )}
@@ -561,15 +704,13 @@ export default function WritingFields({
             />
           </div>
           <div className="fld">
-            <div className="k">{isAr ? 'مرجع' : 'Reference'}</div>
-            <FileReferencePicker
-              fileId={str('design_reference_file_id')}
-              title={str('design_reference_file_title')}
+            <div className="k">{isAr ? 'مراجع' : 'References'}</div>
+            <ReferenceFilesStrip
+              fileIds={refFileIds}
+              fallbackTitles={legacyRefTitles}
+              canEdit
               isAr={isAr}
-              onChange={(id, title) => {
-                set('design_reference_file_id', id);
-                set('design_reference_file_title', title);
-              }}
+              onChange={setRefFiles}
             />
           </div>
         </div>
