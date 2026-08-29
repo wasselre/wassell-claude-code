@@ -86,6 +86,11 @@ export default function CoveragePanel({ isAr }: { isAr: boolean }) {
   const label = (p: string) => (isAr ? PLATFORM_LABELS[p]?.ar : PLATFORM_LABELS[p]?.en) ?? p;
   const bucketLabel = (b: string) => b === 'post' ? (isAr ? 'منشورات' : 'Posts') : (isAr ? 'فيديو' : 'Videos');
   const roleLabel = (k: string | null) => (k && isAr ? (ROLE_AR[k] ?? k) : (k ?? ''));
+  /** One-decimal number with Arabic digits when isAr (for the working-day average). */
+  const dec = (n: number): string => {
+    const s = (Math.round(n * 10) / 10).toString();
+    return isAr ? s.replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.charAt(Number(d))).replace('.', '٫') : s;
+  };
 
   const overall = cov?.overall;
   const overallPct = overall && overall.fullTarget > 0
@@ -192,47 +197,71 @@ export default function CoveragePanel({ isAr }: { isAr: boolean }) {
           ))}
         </div>
 
-        {/* ── demand vs production capacity ──────────────────────── */}
-        {cov && cov.capacity.length > 0 && (
-          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14, display: 'grid', gap: 8 }}>
-            <b style={{ fontSize: 12.5 }}>{isAr ? 'الطلب مقابل طاقة الإنتاج' : 'Demand vs production capacity'}</b>
-            {cov.capacity.map((c) => (
-              <div key={c.bucket} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
-                <span className="tag">{bucketLabel(c.bucket)}</span>
-                <span style={{ color: 'var(--mute)' }}>
-                  {isAr
-                    ? `الطلب ${num(c.demandPerDay, true)}/يوم`
-                    : `demand ${c.demandPerDay}/day`}
-                </span>
-                <span style={{ color: 'var(--mute)' }}>·</span>
-                <span style={{ color: c.short ? 'var(--late)' : 'var(--go)' }}>
-                  {c.bottleneckPerDay > 0
-                    ? (isAr
-                      ? `طاقة ${num(c.bottleneckPerDay, true)}/يوم${c.bottleneckRole ? ` (اختناق: ${roleLabel(c.bottleneckRole)})` : ''}`
-                      : `capacity ${c.bottleneckPerDay}/day${c.bottleneckRole ? ` (bottleneck: ${c.bottleneckRole})` : ''}`)
-                    : (isAr ? 'لا طاقة إنتاج مُعدّة' : 'no production capacity set')}
-                </span>
-                {c.short && (
-                  <b style={{ color: 'var(--late)' }}>
+        {/* ── distribution demand vs production demand vs capacity ──── */}
+        {cov && cov.demand.length > 0 && (
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14, display: 'grid', gap: 12 }}>
+            <b style={{ fontSize: 12.5 }}>{isAr ? 'النشر مقابل الإنتاج مقابل الطاقة' : 'Distribution vs production vs capacity'}</b>
+            {cov.demand.map((c) => (
+              <div key={c.bucket} style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span className="tag">{bucketLabel(c.bucket)}</span>
+                  {c.short && (
+                    <b style={{ color: 'var(--late)', fontSize: 11.5 }}>
+                      {isAr
+                        ? `عجز إنتاج ${num(c.productionGapPerWeek, true)}/أسبوع`
+                        : `production gap ${c.productionGapPerWeek}/week`}
+                    </b>
+                  )}
+                </div>
+                {/* Distribution demand — placements (every platform separately). */}
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <span style={{ color: 'var(--mute)', minWidth: 116, display: 'inline-block' }}>
+                    {isAr ? 'احتياج النشر' : 'Distribution demand'}
+                  </span>
+                  <span>
                     {isAr
-                      ? `عجز هيكلي ${num(c.demandPerDay - c.bottleneckPerDay, true)}/يوم`
-                      : `structural gap ${c.demandPerDay - c.bottleneckPerDay}/day`}
-                  </b>
-                )}
+                      ? `${num(c.distributionPerDay, true)}/يوم · ${num(c.distributionPerWeek, true)}/أسبوع موضِعًا`
+                      : `${c.distributionPerDay}/day · ${c.distributionPerWeek}/week placements`}
+                  </span>
+                </div>
+                {/* Production demand — unique creatives (reused across platforms). */}
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <span style={{ color: 'var(--mute)', minWidth: 116, display: 'inline-block' }}>
+                    {isAr ? 'احتياج الإنتاج الفعلي' : 'Actual production demand'}
+                  </span>
+                  <span style={{ fontWeight: 700 }}>
+                    {isAr
+                      ? `${num(c.productionPerDay, true)}/يوم · ${num(c.productionPerWeek, true)}/أسبوع · متوسط ${dec(c.productionWorkingDayAvg)}/يوم عمل`
+                      : `${c.productionPerDay}/day · ${c.productionPerWeek}/week · ${dec(c.productionWorkingDayAvg)}/working-day avg`}
+                  </span>
+                </div>
+                {/* Production capacity — slowest stage × working days. */}
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <span style={{ color: 'var(--mute)', minWidth: 116, display: 'inline-block' }}>
+                    {isAr ? 'طاقة الإنتاج' : 'Production capacity'}
+                  </span>
+                  <span style={{ color: c.short ? 'var(--late)' : 'var(--go)' }}>
+                    {c.capacityPerWorkingDay > 0
+                      ? (isAr
+                        ? `${num(c.capacityPerWorkingDay, true)}/يوم عمل · ${num(c.capacityPerWeek, true)}/أسبوع${c.bottleneckRole ? ` (اختناق: ${roleLabel(c.bottleneckRole)})` : ''}`
+                        : `${c.capacityPerWorkingDay}/working-day · ${c.capacityPerWeek}/week${c.bottleneckRole ? ` (bottleneck: ${c.bottleneckRole})` : ''}`)
+                      : (isAr ? 'لا طاقة إنتاج مُعدّة' : 'no production capacity set')}
+                  </span>
+                </div>
               </div>
             ))}
             <div style={{ fontSize: 10.5, color: 'var(--mute)' }}>
               {isAr
-                ? 'الطاقة = أبطأ مرحلة إنتاج (كل قطعة تمرّ بكل المراحل، والأبطأ يحدّد السرعة). تُضبط من الإعدادات ← طاقة العمل.'
-                : 'Capacity = the slowest production stage (a piece passes every stage; the slowest sets the rate). Set it in Settings → Load & SLA.'}
+                ? 'النشر = كل موضِع منصة على حدة. الإنتاج = القطع الفريدة فقط (الفيديو نفسه يُعاد استخدامه على كل المنصات وفي الإعلانات المدفوعة، فيُحسب مرة واحدة). الطاقة تُقارَن بالإنتاج لا بالنشر، وتُضبط من الإعدادات ← طاقة العمل.'
+                : 'Distribution = every platform placement. Production = unique creatives only (the same video is reused on every platform and in paid ads, counted once). Capacity is compared to production, not distribution. Set it in Settings → Load & SLA.'}
             </div>
           </div>
         )}
 
         <div style={{ fontSize: 10.5, color: 'var(--mute)' }}>
           {isAr
-            ? '▓ منشور · ▒ مجدول · الخط العمودي = أين يجب أن نكون اليوم. تقرير فقط — لا ينشر بالنيابة عنك.'
-            : '▓ published · ▒ scheduled · the vertical line = where we should be today. Reporting only — never auto-posts.'}
+            ? 'أشرطة المنصات تعدّ المواضِع المنشورة. ▓ منشور · ▒ مجدول · الخط العمودي = أين يجب أن نكون اليوم. تقرير فقط — لا ينشر بالنيابة عنك.'
+            : 'Platform bars count published placements. ▓ published · ▒ scheduled · the vertical line = where we should be today. Reporting only — never auto-posts.'}
         </div>
       </div>
     </div>

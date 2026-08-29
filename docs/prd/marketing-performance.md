@@ -1,6 +1,6 @@
 # Marketing Performance & Load
 
-**Last updated:** 2026-08-28
+**Last updated:** 2026-08-30
 **Design/decision source:** `docs/marketing-task-load-plan.md` (the approved build spec — every number and rule)
 
 ## What it is
@@ -26,8 +26,13 @@ Consequences ship **dark**: `discipline_observe=true`, `deductions_enabled=false
 - **Discipline decisions**: approve/reject on the desk; approving a deduction is refused while observe mode is on or deductions are off (`MOS:DEDUCTIONS_DISABLED`). Employees can dispute a pending action with a note.
 - **KPI bonuses**: `mos_perf_kpi_goals` per month (metric cpl/ctr/cpc/leads/spend, comparator, target, bonus %, recipients = users or roles; optional campaign scope). Evaluated from **`mos_perf_paid_monthly`** — a monthly snapshot written by the daily 04:0x-Riyadh cron run via a **ranged** Meta insights pull (`getInsightsRange`), because the live `mos_campaign_executions` numbers are lifetime totals. CPL = spend/leads (SAR), CTR = clicks/impressions (0–1).
 - **Coverage strip** on `/m/calendar`: **follows the calendar's view** — this week in week view, else this month — published (+scheduled) vs target-to-date per platform × bucket, with «ناقص N» shortfall flags + a «التفاصيل ←» link to the Organic page. Assists; never auto-schedules.
-- **Coverage & cadence panel** on `/m/organic` (نبض المنصات): the detailed demand-vs-supply report. Week/Month toggle; an overall pace bar (published solid + scheduled light, with a vertical "where we should be today" marker) + per-platform × bucket pace bars with status (مكتمل / على المسار / ناقص N); and a **demand-vs-production-capacity** block — per bucket, the daily demand vs the slowest producer stage (finished-piece throughput = the bottleneck role from `mos_role_load`), flagging any structural gap. Shared math with the strip via `lib/coverage.ts`. Reporting only.
-- **Structural gap** on the desk: cadence demand per bucket vs total role capacity — the "IG wants 3 videos/day but montage capacity is 2" signal.
+- **Distribution vs production demand (CRITICAL — corrected 2026-08-30).** Two distinct figures the reporting must never conflate, labeled in Arabic **احتياج النشر** (distribution) and **احتياج الإنتاج الفعلي** (production):
+  - **Distribution demand (احتياج النشر)** = every required platform PLACEMENT, **summed** across platforms. The same video on Instagram + TikTok is TWO placements. This is what platform coverage counts.
+  - **Production demand (احتياج الإنتاج الفعلي)** = the UNIQUE creatives to actually produce, the **max** across platforms per bucket — because the same video is reused on every platform (and in paid ads), so a creative reused on IG + TikTok + several paid ads counts ONCE in production but separately in every placement. Paid placements reuse existing `content_id`s and never raise production demand unless they reference a genuinely new content.
+  - Publishing runs **7 days/week**; production runs across **`mos_perf_settings.production_days_per_week`** working days (default **6**). Production **capacity** = the slowest producer stage (`mos_role_load` bottleneck, a piece passes every stage) × working days, and is compared to **production** demand, never distribution. Example (live cadence): distribution 5 video/day = 35/week; production 3 video/day = 21/week = 3.5/working-day; capacity 4/working-day (writer & montage) = 24/week ≥ 21 → no gap. The shared math is `lib/coverage.ts` (`computeDemand`, `placementCounts`), unit-tested in `lib/__tests__/coverage.test.ts` (one creative, many placements → counts once in production, N in distribution).
+- **Coverage & cadence panel** on `/m/organic` (نبض المنصات): Week/Month toggle; an overall pace bar (published solid + scheduled light, with a vertical "where we should be today" marker) + **per-platform × bucket pace bars counting PLACEMENTS** (distribution) with status (مكتمل / على المسار / ناقص N); and the three-line **النشر مقابل الإنتاج مقابل الطاقة** block (distribution demand · production demand · production capacity, per bucket, gap flagged). Reporting only.
+- **Structural gap** on the desk (`/m/performance`): the same three figures — احتياج النشر (weekly placements) vs احتياج الإنتاج الفعلي (weekly unique) vs production capacity (bottleneck × working days), gap flagged. Capacity is compared to unique production, never to distribution or to a sum of stages.
+- **Working days/week** is editable on the Performance desk's System-toggles card (`production_days_per_week`, 1–7, `manage_performance`); video capacity is set in Settings → Load & SLA (`mos_role_load`, both producers = 4/working-day).
 
 ## User flows
 

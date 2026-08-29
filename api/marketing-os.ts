@@ -7236,6 +7236,13 @@ export default async function handler(req: Request): Promise<Response> {
           'deductions_enabled', 'kpi_bonus_enabled', 'cadence_enabled']) {
           if (typeof body[k] === 'boolean') patch[k] = body[k];
         }
+        if (body.production_days_per_week !== undefined) {
+          const d = Math.floor(Number(body.production_days_per_week));
+          if (!Number.isFinite(d) || d < 1 || d > 7) {
+            return jsonError(400, 'production_days_per_week must be an integer 1–7');
+          }
+          patch.production_days_per_week = d;
+        }
         if (Object.keys(patch).length === 0) return jsonError(400, 'no toggles in patch');
         patch.updated_at = new Date().toISOString();
         const res = await sb.from('mos_perf_settings').update(patch).eq('id', true)
@@ -7359,7 +7366,7 @@ export default async function handler(req: Request): Promise<Response> {
         const gate = await requireCap(sb, 'manage_performance'); if (gate) return gate;
         const month = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 7);
         const [usersRes, xpRes, lateRes, actionsRes, claimsRes, leavesRes, blockedRes,
-          loadRes, rolesRes, openRes, targetsRes, goalsRes, resultsRes, recipientsRes] = await Promise.all([
+          loadRes, rolesRes, openRes, targetsRes, goalsRes, resultsRes, recipientsRes, deskSettingsRes] = await Promise.all([
           sb.from('users').select('id, name_ar, name_en, role_assignments').eq('is_active', true),
           sb.from('mos_xp_ledger').select('user_id, points').limit(50000),
           sb.from('mos_late_events').select('user_id').eq('month_key', month),
@@ -7379,12 +7386,13 @@ export default async function handler(req: Request): Promise<Response> {
           sb.from('mos_perf_kpi_goals').select('*').eq('month_key', month),
           sb.from('mos_perf_kpi_results').select('*'),
           sb.from('mos_perf_kpi_recipients').select('*'),
+          sb.from('mos_perf_settings').select('production_days_per_week').maybeSingle(),
         ]);
         const fail = dbFail(usersRes.error) ?? dbFail(xpRes.error) ?? dbFail(lateRes.error)
           ?? dbFail(actionsRes.error) ?? dbFail(claimsRes.error) ?? dbFail(leavesRes.error)
           ?? dbFail(blockedRes.error) ?? dbFail(loadRes.error) ?? dbFail(rolesRes.error)
           ?? dbFail(openRes.error) ?? dbFail(targetsRes.error) ?? dbFail(goalsRes.error)
-          ?? dbFail(resultsRes.error) ?? dbFail(recipientsRes.error);
+          ?? dbFail(resultsRes.error) ?? dbFail(recipientsRes.error) ?? dbFail(deskSettingsRes.error);
         if (fail) return fail;
 
         // People = users holding any marketing role; annotate xp + lateness.
@@ -7430,6 +7438,8 @@ export default async function handler(req: Request): Promise<Response> {
             recipients: ((recipientsRes.data ?? []) as Array<{ goal_id: string }>)
               .filter((r) => r.goal_id === g.id),
           })),
+          production_days_per_week: (deskSettingsRes.data as { production_days_per_week?: number } | null)
+            ?.production_days_per_week ?? 6,
         });
       }
 
@@ -7618,7 +7628,7 @@ export default async function handler(req: Request): Promise<Response> {
           const m = Number(month.slice(5, 7));
           winEndExcl = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
         }
-        const [targetsRes, pubsRes, intentsRes, bucketsRes, typesRes, loadRes, rolesRes] = await Promise.all([
+        const [targetsRes, pubsRes, intentsRes, bucketsRes, typesRes, loadRes, rolesRes, settingsRes] = await Promise.all([
           sb.from('mos_posting_targets').select('*').eq('active', true),
           sb.from('mos_publications')
             .select('id, content_id, platform, status, scheduled_at, published_at')
@@ -7633,9 +7643,11 @@ export default async function handler(req: Request): Promise<Response> {
           // per day, per bucket — the "supply" side of demand-vs-supply.
           sb.from('mos_role_load').select('role_id, bucket, daily_new_tasks'),
           sb.from('roles').select('id, key').eq('domain', 'marketing'),
+          sb.from('mos_perf_settings').select('production_days_per_week').maybeSingle(),
         ]);
         const fail = dbFail(targetsRes.error) ?? dbFail(pubsRes.error) ?? dbFail(intentsRes.error)
-          ?? dbFail(bucketsRes.error) ?? dbFail(typesRes.error) ?? dbFail(loadRes.error) ?? dbFail(rolesRes.error);
+          ?? dbFail(bucketsRes.error) ?? dbFail(typesRes.error) ?? dbFail(loadRes.error) ?? dbFail(rolesRes.error)
+          ?? dbFail(settingsRes.error);
         if (fail) return fail;
 
         // Bucket for each publication's content (one batched lookup).
@@ -7683,6 +7695,8 @@ export default async function handler(req: Request): Promise<Response> {
               per_day: l.daily_new_tasks,
             }))
             .filter((c) => c.role_key && c.per_day > 0),
+          production_days_per_week: (settingsRes.data as { production_days_per_week?: number } | null)
+            ?.production_days_per_week ?? 6,
         });
       }
 

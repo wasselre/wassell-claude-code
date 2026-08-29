@@ -21,8 +21,14 @@ import {
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Skeleton } from './components/kit';
 import { num } from './lib/format';
+import { computeDemand, type CapacityRow, type DemandLine } from './lib/coverage';
 
 const BUCKETS: readonly PerfBucket[] = ['post', 'video'];
+
+const ROLE_AR: Record<string, string> = {
+  ceo: 'الرئيس التنفيذي', marketing_manager: 'مدير التسويق', ops_supervisor: 'مشرف العمليات',
+  writer: 'الكاتب', montage: 'المونتاج',
+};
 
 const fmtDate = (iso: string | null | undefined, isAr: boolean): string => {
   if (!iso) return '—';
@@ -103,6 +109,18 @@ export default function PerformanceDeskPage() {
     }
   };
 
+  const saveWorkingDays = async (raw: number): Promise<void> => {
+    const days = Math.max(1, Math.min(7, Math.floor(raw)));
+    if (!Number.isFinite(days)) return;
+    try {
+      const res = await savePerfSettings({ production_days_per_week: days });
+      setSettings(res.settings);
+      void load();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
   const personName = (userId: string): string => {
     const p = desk?.people.find((x) => x.user_id === userId);
     if (!p) return userId.slice(0, 8);
@@ -119,11 +137,23 @@ export default function PerformanceDeskPage() {
   const capacityOf = (roleId: string, bucket: PerfBucket): number =>
     desk?.role_load.find((l) => l.role_id === roleId && l.bucket === bucket)?.daily_new_tasks ?? 0;
 
-  // Demand per bucket (every-day targets) vs total role capacity per bucket —
-  // the structural gap the spec calls the most valuable output.
-  const demand = (bucket: PerfBucket): number =>
-    desk?.posting_targets.filter((t) => t.bucket === bucket && t.weekday === null)
-      .reduce((s, t) => s + t.per_day, 0) ?? 0;
+  const roleKeyById = (roleId: string): string =>
+    (desk?.roles.find((r) => r.id === roleId)?.key ?? '').replace(/^mos_/, '');
+  const roleLabel = (k: string | null): string => (k && isAr ? (ROLE_AR[k] ?? k) : (k ?? ''));
+
+  // Distribution demand (placements, Σ platforms) vs PRODUCTION demand (unique
+  // creatives, max across platforms — content is reused) vs production capacity
+  // (slowest producer stage × working days). Shared with the coverage report so
+  // the two surfaces never disagree.
+  const demandLines: DemandLine[] = desk
+    ? computeDemand(
+      desk.posting_targets,
+      desk.role_load.map((l): CapacityRow => ({
+        role_key: roleKeyById(l.role_id), bucket: l.bucket, per_day: l.daily_new_tasks,
+      })).filter((c) => c.role_key && c.per_day > 0),
+      desk.production_days_per_week,
+    )
+    : [];
 
   const saveGoal = async (): Promise<void> => {
     const target = Number(gTarget);
@@ -323,21 +353,44 @@ export default function PerformanceDeskPage() {
                   </tbody>
                 </table>
               </div>
-              <div className="card-b" style={{ fontSize: 11.5, color: 'var(--mute)' }}>
-                {BUCKETS.map((b) => {
-                  const d = demand(b);
-                  if (d === 0) return null;
-                  const totalCap = desk.roles.reduce((s, r) => s + capacityOf(r.id, b), 0);
-                  const short = d > totalCap;
+              <div className="card-b" style={{ fontSize: 11.5, color: 'var(--mute)', display: 'grid', gap: 8 }}>
+                {demandLines.map((d) => {
+                  const bl = d.bucket === 'post' ? (isAr ? 'منشورات' : 'Posts') : (isAr ? 'فيديوهات' : 'Videos');
                   return (
-                    <div key={b} style={short ? { color: 'var(--bad, #b3261e)', fontWeight: 700 } : undefined}>
-                      {b === 'post' ? (isAr ? 'منشورات' : 'Posts') : (isAr ? 'فيديوهات' : 'Videos')}:{' '}
-                      {isAr
-                        ? `الطلب ${num(d, isAr)}/يوم مقابل طاقة ${num(totalCap, isAr)}/يوم${short ? ' — عجز هيكلي' : ''}`
-                        : `demand ${d}/day vs capacity ${totalCap}/day${short ? ' — structural shortfall' : ''}`}
+                    <div key={d.bucket} style={{ display: 'grid', gap: 2 }}>
+                      <div style={{ fontWeight: 700, color: 'var(--ink)' }}>
+                        {bl}
+                        {d.short && (
+                          <b style={{ color: 'var(--bad, #b3261e)', marginInlineStart: 8 }}>
+                            {isAr ? `— عجز إنتاج ${num(d.productionGapPerWeek, isAr)}/أسبوع` : `— production gap ${d.productionGapPerWeek}/week`}
+                          </b>
+                        )}
+                      </div>
+                      <div>
+                        {isAr
+                          ? `احتياج النشر ${num(d.distributionPerWeek, isAr)}/أسبوع (${num(d.distributionPerDay, isAr)}/يوم موضِعًا)`
+                          : `distribution demand ${d.distributionPerWeek}/week (${d.distributionPerDay}/day placements)`}
+                      </div>
+                      <div style={{ fontWeight: 700, color: 'var(--ink)' }}>
+                        {isAr
+                          ? `احتياج الإنتاج الفعلي ${num(d.productionPerWeek, isAr)}/أسبوع (${num(d.productionPerDay, isAr)}/يوم فريد)`
+                          : `actual production demand ${d.productionPerWeek}/week (${d.productionPerDay}/day unique)`}
+                      </div>
+                      <div style={d.short ? { color: 'var(--bad, #b3261e)', fontWeight: 700 } : { color: 'var(--go, #3f6b52)' }}>
+                        {d.capacityPerWorkingDay > 0
+                          ? (isAr
+                            ? `طاقة الإنتاج ${num(d.capacityPerWeek, isAr)}/أسبوع (${num(d.capacityPerWorkingDay, isAr)}/يوم عمل${d.bottleneckRole ? ` — اختناق: ${roleLabel(d.bottleneckRole)}` : ''})`
+                            : `production capacity ${d.capacityPerWeek}/week (${d.capacityPerWorkingDay}/working-day${d.bottleneckRole ? ` — bottleneck: ${d.bottleneckRole}` : ''})`)
+                          : (isAr ? 'لا طاقة إنتاج مُعدّة' : 'no production capacity set')}
+                      </div>
                     </div>
                   );
                 })}
+                <div style={{ fontSize: 10.5 }}>
+                  {isAr
+                    ? 'الطاقة تُقارَن بالإنتاج الفريد لا بالنشر. القطعة الواحدة تُنشر على عدة منصات وإعلانات لكنها تُنتَج مرة واحدة.'
+                    : 'Capacity is compared to unique production, not distribution. One creative is placed on many platforms and ads but produced once.'}
+                </div>
               </div>
             </div>
 
@@ -478,6 +531,22 @@ export default function PerformanceDeskPage() {
                         />
                       </div>
                     ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+                      <span style={{ fontSize: 13 }}>
+                        {isAr ? 'أيام العمل في الأسبوع' : 'Working days / week'}
+                        <span style={{ fontSize: 10.5, color: 'var(--mute)', display: 'block' }}>
+                          {isAr ? 'الإنتاج ٦ · النشر ٧ — تُقسِّم الطاقة الأسبوعية' : 'production 6 · publishing 7 — divides weekly capacity'}
+                        </span>
+                      </span>
+                      <input
+                        type="number" min={1} max={7} className="inp ltr" style={{ width: 64 }}
+                        defaultValue={settings.production_days_per_week}
+                        onBlur={(e) => {
+                          const v = Number(e.target.value);
+                          if (v !== settings.production_days_per_week) void saveWorkingDays(v);
+                        }}
+                      />
+                    </div>
                     <div style={{ fontSize: 11, color: 'var(--mute)' }}>
                       {isAr
                         ? 'لتفعيل الخصومات فعليًا: أطفئ وضع المراقبة وفعّل الخصومات.'

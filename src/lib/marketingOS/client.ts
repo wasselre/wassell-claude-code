@@ -2389,6 +2389,8 @@ export interface PerfSettings {
   deductions_enabled: boolean;
   kpi_bonus_enabled: boolean;
   cadence_enabled: boolean;
+  /** Working days/week production runs on (publishing runs 7). Default 6. */
+  production_days_per_week: number;
 }
 
 export interface PerfRoleRow { id: string; key: string; label_ar: string; label_en: string }
@@ -2482,6 +2484,7 @@ export interface PerfDesk {
   open_tasks: Array<{ role_key: string; bucket: PerfBucket | null; assignee_user_id: string | null; opened_at: string | null }>;
   posting_targets: PerfPostingTarget[];
   kpi_goals: PerfKpiGoal[];
+  production_days_per_week: number;
 }
 
 export interface PerfCalendarData {
@@ -2497,6 +2500,8 @@ export interface PerfCalendarData {
   intents: Array<{ id: string; date: string | null; bucket: PerfBucket; platforms: string[] }>;
   /** Producer daily intake per (role, bucket) — the supply side. */
   capacity: Array<{ role_key: string; bucket: PerfBucket; per_day: number }>;
+  /** Working days/week production runs on (publishing runs 7). Default 6. */
+  production_days_per_week: number;
 }
 
 export const fetchPerfConfig = (): Promise<PerfConfig> => call('perf_config');

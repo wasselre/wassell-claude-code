@@ -1,17 +1,32 @@
 /**
- * Coverage math — shared by the calendar strip and the Organic coverage panel
- * so they can never disagree. Turns raw perf_calendar data + a period window
- * into per-platform × bucket rows (target vs published vs planned) plus the
- * demand-vs-capacity structural summary.
+ * Coverage & demand math — shared by the calendar strip, the Organic coverage
+ * panel, and the Performance desk so they can never disagree. Spec:
+ * docs/marketing-task-load-plan.md §9.
  *
- * Spec: docs/marketing-task-load-plan.md §9. Weekday-specific targets override
- * the every-day target for that weekday; the daily target is summed across the
- * exact days in the window, so a week and a month are the same computation with
- * a different window.
+ * TWO distinct notions the reporting must never conflate:
+ *
+ *   • Distribution demand (احتياج النشر) — every required platform PLACEMENT.
+ *     The same video posted to Instagram AND TikTok is TWO placements. Summed
+ *     across platforms. This is what platform coverage counts.
+ *
+ *   • Production demand (احتياج الإنتاج الفعلي) — the UNIQUE creatives the team
+ *     must actually produce. Because the same video is REUSED across platforms
+ *     (the smaller platform's set is a subset of the larger's), the unique count
+ *     per bucket is the MAX across platforms, not the sum. A creative reused on
+ *     Instagram + TikTok + several paid ads counts ONCE in production but
+ *     separately in every placement. Paid placements reuse existing content_ids,
+ *     so they never raise production demand unless they reference a new content.
+ *
+ * Publishing runs 7 days/week; production runs across `productionDaysPerWeek`
+ * working days (default 6). Production CAPACITY is the slowest producer stage
+ * (a piece passes every stage; the bottleneck sets the rate) × working days, and
+ * is compared against PRODUCTION demand — never against distribution.
  */
 import type { PerfBucket, PerfCalendarData } from '@/lib/marketingOS/client';
 
 export const BUCKETS: readonly PerfBucket[] = ['post', 'video'];
+
+export const DEFAULT_PRODUCTION_DAYS = 6;
 
 export type PeriodKind = 'week' | 'month';
 
@@ -47,14 +62,144 @@ export function periodWindow(kind: PeriodKind, cursor: Date): Period {
   return { kind, start, end };
 }
 
+/* ── shared target/capacity shapes (the fields these functions actually use) ── */
+
+export interface TargetLite {
+  platform: string;
+  bucket: PerfBucket;
+  per_day: number;
+  weekday: number | null;
+  active?: boolean;
+}
+export interface CapacityRow {
+  role_key: string;
+  bucket: PerfBucket;
+  per_day: number;
+}
+
+/** The target for (platform,bucket) on a given weekday — weekday row overrides
+ *  the every-day (weekday=null) base. */
+function targetRate(active: TargetLite[], platform: string, bucket: PerfBucket, weekday: number): number {
+  const wd = active.find((t) => t.platform === platform && t.bucket === bucket && t.weekday === weekday);
+  if (wd) return wd.per_day;
+  const every = active.find((t) => t.platform === platform && t.bucket === bucket && t.weekday === null);
+  return every ? every.per_day : 0;
+}
+
+/** The every-day (weekday=null) base target for (platform,bucket). */
+function baseRate(active: TargetLite[], platform: string, bucket: PerfBucket): number {
+  const every = active.find((t) => t.platform === platform && t.bucket === bucket && t.weekday === null);
+  return every ? every.per_day : 0;
+}
+
+/* ── the demand-vs-capacity summary (distribution vs production) ────────────── */
+
+export interface DemandLine {
+  bucket: PerfBucket;
+  /** Distribution = placements (Σ across platforms). */
+  distributionPerDay: number;
+  distributionPerWeek: number;
+  /** Production = unique creatives (MAX across platforms — content is reused). */
+  productionPerDay: number;
+  productionPerWeek: number;
+  /** Production spread over the working days it's actually made on. */
+  productionWorkingDayAvg: number;
+  /** Slowest producer stage (finished-piece throughput) × working days. */
+  capacityPerWorkingDay: number;
+  capacityPerWeek: number;
+  bottleneckRole: string | null;
+  /** Weekly shortfall of PRODUCTION vs CAPACITY (never distribution). */
+  productionGapPerWeek: number;
+  short: boolean;
+}
+
+/**
+ * Distribution demand (placements) and production demand (unique creatives) per
+ * bucket, plus the production capacity to compare production against.
+ */
+export function computeDemand(
+  targets: TargetLite[],
+  capacity: CapacityRow[],
+  productionDaysPerWeek: number = DEFAULT_PRODUCTION_DAYS,
+): DemandLine[] {
+  const active = targets.filter((t) => t.active !== false);
+  const platforms = Array.from(new Set(active.map((t) => t.platform)));
+  const days = productionDaysPerWeek > 0 ? productionDaysPerWeek : DEFAULT_PRODUCTION_DAYS;
+
+  return BUCKETS.map((bucket): DemandLine => {
+    // Per-day figures from the every-day base rate.
+    const perPlatform = platforms.map((p) => baseRate(active, p, bucket));
+    const distributionPerDay = perPlatform.reduce((s, n) => s + n, 0);
+    const productionPerDay = perPlatform.reduce((m, n) => Math.max(m, n), 0);
+
+    // Weekly figures iterate the 7 publishing days (honouring weekday overrides):
+    // distribution SUMS placements; production takes the MAX (reuse) each day.
+    let distributionPerWeek = 0;
+    let productionPerWeek = 0;
+    for (let wd = 0; wd < 7; wd += 1) {
+      const rates = platforms.map((p) => targetRate(active, p, bucket, wd));
+      distributionPerWeek += rates.reduce((s, n) => s + n, 0);
+      productionPerWeek += rates.reduce((m, n) => Math.max(m, n), 0);
+    }
+
+    // Capacity = the slowest producer stage for this bucket × working days.
+    const producers = capacity.filter((c) => c.bucket === bucket && c.per_day > 0);
+    let capacityPerWorkingDay = 0;
+    let bottleneckRole: string | null = null;
+    if (producers.length > 0) {
+      const slowest = producers.reduce((a, b) => (b.per_day < a.per_day ? b : a));
+      capacityPerWorkingDay = slowest.per_day;
+      bottleneckRole = slowest.role_key;
+    }
+    const capacityPerWeek = capacityPerWorkingDay * days;
+    const productionWorkingDayAvg = productionPerWeek / days;
+    const productionGapPerWeek = Math.max(0, productionPerWeek - capacityPerWeek);
+
+    return {
+      bucket,
+      distributionPerDay, distributionPerWeek,
+      productionPerDay, productionPerWeek, productionWorkingDayAvg,
+      capacityPerWorkingDay, capacityPerWeek, bottleneckRole,
+      productionGapPerWeek,
+      short: productionGapPerWeek > 0,
+    };
+  }).filter((d) => d.distributionPerWeek > 0 || d.capacityPerWeek > 0);
+}
+
+/* ── placement vs production counting (proves "once produced, many placed") ─── */
+
+export interface PlacementCount {
+  /** Placements = one per platform row (distribution). */
+  placements: number;
+  /** Unique = distinct content_ids among them (production). */
+  unique: number;
+}
+
+/**
+ * Count placements vs unique creatives in a bucket. One creative published to
+ * Instagram AND TikTok is `{ placements: 2, unique: 1 }`. Optionally filter by
+ * publication status.
+ */
+export function placementCounts(
+  publications: Array<{ content_id: string | null; bucket: PerfBucket; status?: string }>,
+  bucket: PerfBucket,
+  statuses?: string[],
+): PlacementCount {
+  const rows = publications.filter((p) =>
+    p.bucket === bucket && (!statuses || statuses.includes(p.status ?? '')));
+  const uniq = new Set(rows.map((p) => p.content_id).filter((c): c is string => Boolean(c)));
+  return { placements: rows.length, unique: uniq.size };
+}
+
+/* ── per-platform placement coverage (distribution) — window based ──────────── */
+
 export interface CoverageCell {
   bucket: PerfBucket;
-  fullTarget: number;    // target across the WHOLE window
-  targetToDate: number;  // target up to min(today, window end)
-  published: number;     // publications already published in-window
-  planned: number;       // scheduled (future, in-window)
-  /** Projected shortfall to date: how far behind the pace we are, floored at 0. */
-  short: number;
+  fullTarget: number;    // placement target across the WHOLE window
+  targetToDate: number;  // placement target up to min(today, window end)
+  published: number;     // placements already published in-window
+  planned: number;       // placements scheduled (future, in-window)
+  short: number;         // projected placement shortfall to date, floored at 0
 }
 
 export interface CoveragePlatform {
@@ -62,18 +207,19 @@ export interface CoveragePlatform {
   cells: CoverageCell[];
 }
 
-export interface CapacityLine {
+/** Actual output in-window: placements published vs unique creatives produced. */
+export interface ActualLine {
   bucket: PerfBucket;
-  demandPerDay: number;       // every-day target summed across platforms
-  bottleneckPerDay: number;   // slowest producer stage (finished-piece throughput)
-  bottleneckRole: string | null;
-  short: boolean;             // demand exceeds what the team can produce
+  distributionPublished: number; // placements published
+  productionPublished: number;   // distinct content_ids published
+  distributionScheduled: number; // placements scheduled
 }
 
 export interface Coverage {
   platforms: CoveragePlatform[];
   overall: { fullTarget: number; targetToDate: number; published: number; planned: number; short: number };
-  capacity: CapacityLine[];
+  demand: DemandLine[];
+  actual: ActualLine[];
   /** days elapsed in-window (for a "day N of M" caption). */
   daysElapsed: number;
   daysTotal: number;
@@ -89,16 +235,8 @@ export function computeCoverage(
   period: Period,
   now: Date = new Date(),
 ): Coverage {
-  const active = data.targets.filter((t) => t.active);
+  const active = (data.targets as TargetLite[]).filter((t) => t.active !== false);
   const platforms = Array.from(new Set(active.map((t) => t.platform)));
-
-  // Per (platform,bucket): every-day rate + weekday overrides.
-  const rate = (platform: string, bucket: PerfBucket, weekday: number): number => {
-    const wd = active.find((t) => t.platform === platform && t.bucket === bucket && t.weekday === weekday);
-    if (wd) return wd.per_day;
-    const every = active.find((t) => t.platform === platform && t.bucket === bucket && t.weekday === null);
-    return every ? every.per_day : 0;
-  };
 
   // Compare on WHOLE days (all windows are local-midnight). Today counts as
   // elapsed. Aligning to midnight avoids the 23:59 → dayCount off-by-one.
@@ -111,7 +249,7 @@ export function computeCoverage(
       let fullTarget = 0;
       let targetToDate = 0;
       for (const d = new Date(period.start); d <= period.end; d.setDate(d.getDate() + 1)) {
-        const t = rate(platform, bucket, d.getDay());
+        const t = targetRate(active, platform, bucket, d.getDay());
         fullTarget += t;
         if (lastElapsed && d <= lastElapsed) targetToDate += t;
       }
@@ -137,29 +275,23 @@ export function computeCoverage(
     { fullTarget: 0, targetToDate: 0, published: 0, planned: 0, short: 0 },
   );
 
-  // Demand vs production capacity, per bucket.
-  const capacity: CapacityLine[] = BUCKETS.map((bucket) => {
-    const demandPerDay = active
-      .filter((t) => t.bucket === bucket && t.weekday === null)
-      .reduce((s, t) => s + t.per_day, 0);
-    // Finished-piece throughput = the SLOWEST producer stage for this bucket
-    // (a piece must pass every stage; the bottleneck sets the rate).
-    const producers = data.capacity.filter((c) => c.bucket === bucket);
-    let bottleneckPerDay = 0;
-    let bottleneckRole: string | null = null;
-    if (producers.length > 0) {
-      const min = producers.reduce((m, c) => (c.per_day < m.per_day ? c : m));
-      bottleneckPerDay = min.per_day;
-      bottleneckRole = min.role_key;
-    }
+  const demand = computeDemand(
+    active, data.capacity as CapacityRow[], data.production_days_per_week ?? DEFAULT_PRODUCTION_DAYS,
+  );
+
+  const actual: ActualLine[] = BUCKETS.map((bucket) => {
+    const pub = placementCounts(data.publications, bucket, ['published']);
+    const sched = placementCounts(data.publications, bucket, ['scheduled']);
     return {
-      bucket, demandPerDay, bottleneckPerDay, bottleneckRole,
-      short: demandPerDay > 0 && bottleneckPerDay > 0 && demandPerDay > bottleneckPerDay,
+      bucket,
+      distributionPublished: pub.placements,
+      productionPublished: pub.unique,
+      distributionScheduled: sched.placements,
     };
-  }).filter((c) => c.demandPerDay > 0 || c.bottleneckPerDay > 0);
+  });
 
   const daysTotal = dayCount(period.start, period.end);
   const daysElapsed = lastElapsed ? dayCount(period.start, lastElapsed < period.start ? period.start : lastElapsed) : 0;
 
-  return { platforms: rows, overall, capacity, daysElapsed, daysTotal };
+  return { platforms: rows, overall, demand, actual, daysElapsed, daysTotal };
 }
