@@ -230,6 +230,14 @@ objects depend on it`. Before writing a frozen-model migration:
 1. `SELECT DISTINCT dependent.relname FROM pg_depend d JOIN pg_rewrite r ON r.oid = d.objid JOIN pg_class dependent ON dependent.oid = r.ev_class JOIN pg_class source ON source.oid = d.refobjid WHERE source.relname = 'unified_records' AND dependent.relname <> 'unified_records';`
    — enumerate the dependents, because the list grows every time someone stacks a
    reporting view on `unified_records`.
+   **The query above only finds VIEWS. `unified_records` ALSO has RLS POLICY
+   dependents that a `DROP VIEW` will refuse on (learned 2026-08-29: the
+   `file_links_select` policy on `file_links` has an `EXISTS (SELECT 1 FROM
+   unified_records ur WHERE ur.id = record_id AND ur.model_id = model_id)` clause).
+   Enumerate them too — `SELECT tablename, policyname, qual FROM pg_policies WHERE
+   qual LIKE '%unified_records%' OR with_check LIKE '%unified_records%';` — then
+   `DROP POLICY` each (capture the full definition first) BEFORE dropping the view,
+   and `CREATE POLICY` them back verbatim after `rebuild_unified_records()`.**
 2. Capture each dependent's `pg_views.definition` AND its `pg_class.reloptions`, then
    drop them, call the two helpers, and recreate them.
    **`reloptions` is load-bearing:** `unified_records` and `<name>_v` are
@@ -257,10 +265,13 @@ objects depend on it`. Before writing a frozen-model migration:
    add-shadow-column → batched backfill → catalog-only rename swap; only the swap
    locks, and it touches no heap pages. Worked example: `2026-08-09_03`.
 
-The live dependency graph as measured on 2026-08-09 (re-derive it, it grows):
+The live dependency graph as re-measured on 2026-08-29 (re-derive it, it grows):
 `market_listings` ← `market_listings_v`, `market_listings_summary`, `v_market_listings`;
 `market_listings_v` ← `unified_records`;
-`unified_records` ← `v_market_properties`, `v_our_projects_scope`, `v_website_public`.
+`unified_records` ← views `v_market_properties`, `v_our_projects_scope`, `v_website_public`
+**AND the RLS policy `file_links_select` on `file_links`** (drop + recreate it too —
+see the policy note above). Worked example of the full add-a-frozen-column unwind:
+`2026-08-23_market_offer_type.sql`.
 
 Do it all in ONE transaction: the drops take `ACCESS EXCLUSIVE`, so concurrent readers
 block until `COMMIT` instead of meeting a missing view.

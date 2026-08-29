@@ -1,6 +1,6 @@
 # Market Listings Automation — section spec
 
-Last updated: 2026-08-19
+Last updated: 2026-08-29
 
 The operator-facing **cockpit** for the market-ingestion pipeline. You *see* and
 *decide* here; you never author extractor/adapter code here (that stays in the
@@ -216,3 +216,30 @@ quiet / quarantine). Nothing degrades quietly into the live table. Thresholds
 
 Until Pane B ships, the standing rule holds: **no field reaches a `market_listings`
 column until the operator has ruled on its meaning.**
+
+---
+
+## Decision review mode (added 2026-08-29)
+
+The per-field decision UI is a **full-page focus mode** (not the old right drawer),
+reached by clicking any row in the Raw Evidence / Field Decisions tabs.
+Implemented in `src/pages/MarketAutomation/components/DecisionPanel.tsx`; navigation
++ session state live in `MarketAutomationPage.tsx`.
+
+- **Filter bar** (raw + decisions tabs): text search (path / AR+EN label / target)
+  and status chips (All / Needs decision / Mapped / New / Platform-specific /
+  Ignored / Excluded), with a live match count.
+- **Walk the list**: Prev / Save & Next / Save & close, plus ←/→ keys (RTL-aware)
+  and Esc. Saving does an OPTIMISTIC in-place row update (no full reload → no scroll
+  jump) and advances to the next field in the current filtered snapshot.
+- **Gamification** (session-scoped, resets on reload): a progress bar that counts
+  **the fields YOU decided this session** out of the list you're walking
+  (`راجعت X من Y في هذه الجلسة`) — NOT the global already-decided count — with the
+  real remaining queue shown as a muted note; a 🔥 streak, ⭐ XP (+10/decision,
+  +15 for a real mapping), a 🏆 level, and a completion banner when the list (or the
+  whole queue) is cleared.
+- **Split mappings are adapter logic, not a cockpit feature.** One source can feed
+  two columns (e.g. `listing.categoryName` → clean `property_type` + `offer_type`
+  sale/rent). The cockpit records the primary mapping (`→ property_type`) with a
+  reason; the second half is done in the scraper adapter. Same pattern as
+  `listing.closed` (a sold signal, filed "ignored" as a mapping but consumed in code).
