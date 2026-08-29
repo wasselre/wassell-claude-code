@@ -1,6 +1,6 @@
 # record_save conflict-storm hardening — architecture + operator runbook
 
-_Last updated: 2026-06-21._
+_Last updated: 2026-08-29._
 
 This is the source-of-truth doc for the `record_save` version-conflict "storm"
 defense. A storm is a client (historically a stale browser tab) retrying
@@ -17,6 +17,7 @@ Code / migrations:
 - `supabase/migrations/2026-06-21_conflict_storm_layer3_session_ratelimit.sql` (per-session block)
 - `src/lib/staleBuild.ts`, `src/hooks/useAppVersionPoller.ts`, `src/components/UpdateBanner.tsx` (forced stale-build reload)
 - `src/stores/appStore.ts` → `supabaseRecordUpsert` (breaker, write-lockout, `record_conflict_report` call)
+- `src/lib/conflictBreaker.ts` (per-record breaker state machine incl. the 2026-08-29 absolute conflict cap — see §6)
 - `worker/src/index.ts` → `runConflictStormSweep` (calls the sweep every 30s)
 
 ---
@@ -406,3 +407,68 @@ durable capture channel while hosted logs lag 13h+). Result, unambiguous:
   needs Vercel support / instance-level introspection. Until understood, any
   listing-message clean can spawn a new zombie on the then-current deployment;
   the sweep alert + this recipe is the response.
+
+---
+
+## 6. 2026-08-29 — CURRENT-build tab storming a `followups` two-writer record (client-breaker gap + fix)
+
+**Signature.** CPU 76% (m6g.large, ap-south-1); probe = ~1,158 rollbacks/sec vs 38
+commits/sec. `xmax` hunt (see the memory `supabase-cpu-version-conflict-storm.md`)
+found the hot row instantly: `records` top row `851ee772` (model `followups`
+`764e0e67`), `xmax` ~8M txns ahead of every other row, churning each sample while
+`version` pinned at **3**. Enriched postgres log: **697,208 conflicts**, user
+`31621e58` (r.abanumay's own uid), session `78e32499`, **build `41699b01` = the
+CURRENT prod HEAD** (NOT an ancient bundle), tab `4e4de160`, `expected=2 current=3`
+fixed, `client=supabase-js-web`. The tab loaded the followup at v2; server
+automation (the WhatsApp activity bridge / no-response escalation, `created_by=null`,
+version-unaware) bumped it to v3; the tab then re-sent `expected=2` forever.
+
+**Why the existing client breaker didn't catch it.** `records_bump_version` bumps
+on **every** UPDATE, so `current` staying pinned at 3 through 697k conflicts proves
+**zero successful saves happened** — which means `clearRecordConflict` never ran, so
+the reload-attempt cap *should* have wedged after the 2nd conflict. It didn't,
+because **every existing hard-stop trigger has a reset path** and a hot two-writer
+record keeps hitting them:
+
+- `recordConflicts` (windowed count, trips at `RECORD_CONFLICT_LIMIT=4` in 10s) is
+  **deleted on every reload-and-retry** by `releaseBreakerForRetry` — so the count
+  can be perpetually re-zeroed before it trips.
+- `recordReloadAttempts` (the `MAX_RELOAD_RETRIES=1` cap) is only a single-shot
+  backstop and is reset by `clearRecordConflict`.
+- The only *monotonic* latch, `engageHardWriteStop` (`staleBuild.writeLocked`, reset
+  only by a page reload), was therefore never reached, so the tab never
+  write-locked and never force-reloaded.
+
+**Fix (this change).** A new **absolute, monotonic per-record conflict counter**
+in `src/lib/conflictBreaker.ts` (`noteAbsoluteConflict` / `reachedAbsoluteConflictCap`,
+cap `RECORD_ABSOLUTE_CONFLICT_LIMIT = 6`) that has **no window and exactly one reset —
+a genuinely successful save (`clearRecordConflict`)**. `supabaseRecordUpsert`
+increments it on every `version_mismatch`; once it crosses the cap it calls
+`markRecordWedged` + `engageHardWriteStop('record-storm')` — the same latch the
+windowed trip uses, but now reachable via a path **no re-fetch/retry race can
+zero**. During a real storm there is never a success (the version can't advance),
+so the counter marches to 6 and hard-stops the tab within milliseconds instead of
+looping ~1,158/s. A legitimate concurrent edit resolves in ≤2 conflicts then
+SUCCEEDS (resetting the counter to 0), so the cap can't false-positive on real
+editing. Covered by `src/lib/__tests__/conflictBreaker.test.ts` ("absolute conflict
+cap" describe block), incl. the reset-race that defeats the windowed breaker.
+
+**Containment used live** (still the right first move on recurrence): session-scoped
+`session_save_blocks` **noop** on the offending JWT session (`78e32499`) → rollbacks
+`1,158→0` in one sweep. Chose SESSION scope, not RECORD scope, on purpose:
+`851ee772` is a live two-writer automation record, so a record-noop would also
+silently discard the WhatsApp bridge's legit writes; a session-noop silences only
+the one stale browser tab (service_role automation carries no JWT session). Expires
++3h. The code fix above is what prevents the *next* one without an operator.
+
+**Plain version.** A single browser tab had an out-of-date copy of one follow-up
+(it thought the row was at "version 2"; the system had already moved it to "version
+3" because our automation touched it). The tab kept trying to save its stale copy,
+the database kept refusing, and the tab kept retrying — about 1,158 times a second,
+700 thousand times total — which is what spiked the database to 76%. We already had
+a "stop after a few failures" brake, but it had loopholes: a couple of the counters
+that feed the brake got quietly reset each retry, so the brake never engaged. The
+fix adds one counter that CANNOT be reset except by an actual successful save — and
+during this kind of jam there are no successful saves — so after 6 straight failures
+on the same record the tab now slams the brake on itself and reloads, ending the jam
+almost instantly instead of grinding for ten minutes.

@@ -18,6 +18,25 @@ export const RECORD_CONFLICT_LIMIT = 4;
 export const RECORD_CONFLICT_WINDOW_MS = 10_000;
 /** Reloads-on-conflict allowed per record before it is treated as WEDGED. */
 export const MAX_RELOAD_RETRIES = 1;
+/**
+ * Absolute, monotonic conflict cap per record (2026-08-29 followups storm).
+ *
+ * The windowed `recordConflicts` count and the `recordReloadAttempts` cap both
+ * have RESET paths: `releaseBreakerForRetry` DELETES the window count on every
+ * reload-and-retry, and the reload cap is only a single-shot backstop. On a hot
+ * TWO-WRITER record — a `followups` row that server automation (the WhatsApp
+ * activity bridge / no-response escalation) bumps version-unaware while a browser
+ * tab also auto-saves it — those resets can keep firing so that NEITHER hard-stop
+ * trigger ever latches, and a stale tab loops `record_save` forever (measured
+ * ~1,158 rejects/sec, 697k conflicts, on the CURRENT prod build, expected=2 fixed
+ * because the tab never re-read a version it would accept). This counter has NO
+ * window and only ONE reset — a genuinely SUCCESSFUL save (`clearRecordConflict`).
+ * During a real storm there is no success (the version never advances), so this
+ * marches to the cap and latches the tab-wide hard write-stop deterministically.
+ * A legitimate concurrent edit resolves in ≤2 conflicts then SUCCEEDS (resetting
+ * to 0), so a small cap here can never false-positive on real editing.
+ */
+export const RECORD_ABSOLUTE_CONFLICT_LIMIT = 6;
 
 interface ConflictState {
   count: number;
@@ -27,6 +46,11 @@ interface ConflictState {
 
 const recordConflicts = new Map<string, ConflictState>();
 const recordReloadAttempts = new Map<string, number>();
+/** Total version-conflicts on a record since its last SUCCESSFUL save. Only
+ *  `clearRecordConflict` (a real success) resets it — no re-fetch/retry path
+ *  does — so it cannot be zeroed by the reset races that defeat the windowed
+ *  count + reload cap. */
+const recordAbsoluteConflicts = new Map<string, number>();
 
 /** Returns true the moment a record crosses the conflict threshold (so the
  *  caller can fire exactly one toast). Once tripped the breaker is PERMANENT
@@ -71,11 +95,28 @@ export function releaseBreakerForRetry(id: string): void {
   recordConflicts.delete(id);
 }
 
-/** Clear the breaker AND the reload-attempt counter — called after any
- *  SUCCESSFUL save, restoring the fresh one-reload allowance. */
+/** Clear the breaker AND both conflict counters — called after any SUCCESSFUL
+ *  save, restoring the fresh one-reload allowance. This is the ONLY reset for
+ *  the absolute counter, so a storm (which never succeeds) can't escape it. */
 export function clearRecordConflict(id: string): void {
   recordConflicts.delete(id);
   recordReloadAttempts.delete(id);
+  recordAbsoluteConflicts.delete(id);
+}
+
+/** Record one version-conflict on a record and return the running total since
+ *  its last successful save. Monotonic — no window, reset ONLY by a successful
+ *  save. Once the return value reaches RECORD_ABSOLUTE_CONFLICT_LIMIT the caller
+ *  must latch the tab-wide hard write-stop (a reset race can't undo it). */
+export function noteAbsoluteConflict(id: string): number {
+  const n = (recordAbsoluteConflicts.get(id) ?? 0) + 1;
+  recordAbsoluteConflicts.set(id, n);
+  return n;
+}
+
+/** True once a record has hit the absolute conflict cap since its last success. */
+export function reachedAbsoluteConflictCap(id: string): boolean {
+  return (recordAbsoluteConflicts.get(id) ?? 0) >= RECORD_ABSOLUTE_CONFLICT_LIMIT;
 }
 
 /** How many reload-and-retry passes this record has consumed since its last
@@ -113,4 +154,5 @@ export function shouldAdoptResync(
 export function __resetConflictBreaker(): void {
   recordConflicts.clear();
   recordReloadAttempts.clear();
+  recordAbsoluteConflicts.clear();
 }

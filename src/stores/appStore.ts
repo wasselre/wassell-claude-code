@@ -13,6 +13,8 @@ import {
   clearRecordConflict,
   noteReloadAttempt,
   reachedReloadCap,
+  noteAbsoluteConflict,
+  RECORD_ABSOLUTE_CONFLICT_LIMIT,
 } from '@/lib/conflictBreaker';
 import { getSession, getSessionEmail, getSessionUid, onAuthChange, signOut as authSignOut, isAuthAvailable } from '@/lib/auth';
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
@@ -1094,6 +1096,19 @@ async function supabaseRecordUpsert(
 
           if (isVersionConflict) {
             const tripped = noteRecordConflict(id);
+            // 2026-08-29 followups storm: a monotonic per-record counter that
+            // ONLY a successful save resets. The windowed `tripped` count is
+            // deleted by every reload-and-retry (`releaseBreakerForRetry`) and
+            // the reload cap is a single-shot backstop — on a hot two-writer
+            // record (followups + the WhatsApp bridge) those resets can keep
+            // firing so neither latches and a stale tab loops record_save
+            // ~1,158/s. This counter can't be zeroed by any re-fetch race, so
+            // it latches the hard write-stop deterministically once a record
+            // has conflicted RECORD_ABSOLUTE_CONFLICT_LIMIT times with no
+            // intervening success (a real concurrent edit succeeds in ≤2, so
+            // this never false-positives on legitimate editing).
+            const absoluteConflicts = noteAbsoluteConflict(id);
+            const absoluteTrip = absoluteConflicts >= RECORD_ABSOLUTE_CONFLICT_LIMIT;
             // Report this conflict to the backend auto-throttle (fire-and-forget).
             // Once one (record, session) crosses the server threshold the record
             // is auto-blocked, so even a re-render retry loop becomes a cheap
@@ -1104,14 +1119,18 @@ async function supabaseRecordUpsert(
                 if (reportErr) console.warn('[conflict] record_conflict_report failed:', reportErr.message);
               });
             const msg = 'Another user just edited this record. Reload to see their changes before re-saving.';
-            if (tripped) {
+            if (tripped || absoluteTrip) {
               // req 6 (T1): a tripped per-record breaker means this tab is
               // storming one record — escalate to the BUILD-INDEPENDENT hard
               // write-stop (previously this only happened when the build was
               // already outdated, so a storming tab on the CURRENT build never
               // stopped). The reload-on-conflict re-sync (req 5) keeps a LEGIT
-              // single concurrent edit from ever reaching the trip, so reaching
-              // it here means a genuinely wedged client.
+              // single concurrent edit from ever reaching the trip; reaching
+              // either the windowed trip OR the absolute cap means a genuinely
+              // wedged client. Also wedge the per-record breaker so subsequent
+              // saves short-circuit locally even if a racing re-fetch deletes
+              // the windowed count (the absolute path's whole reason to exist).
+              markRecordWedged(id);
               engageHardWriteStop('record-storm');
               // Repeated conflicts in a short window = a stuck client (stale
               // local version), not a one-off race. Fire ONE strong toast and

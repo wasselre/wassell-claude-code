@@ -9,9 +9,12 @@ import {
   noteReloadAttempt,
   reachedReloadCap,
   shouldAdoptResync,
+  noteAbsoluteConflict,
+  reachedAbsoluteConflictCap,
   __resetConflictBreaker,
   RECORD_CONFLICT_LIMIT,
   MAX_RELOAD_RETRIES,
+  RECORD_ABSOLUTE_CONFLICT_LIMIT,
 } from '../conflictBreaker';
 
 beforeEach(() => __resetConflictBreaker());
@@ -95,6 +98,50 @@ describe('counting window rollover', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('absolute conflict cap (2026-08-29 followups two-writer storm)', () => {
+  it('latches after RECORD_ABSOLUTE_CONFLICT_LIMIT conflicts even when the window count is repeatedly cleared', () => {
+    // The storm signature: every reload-and-retry deletes the windowed count
+    // (releaseBreakerForRetry), so noteRecordConflict NEVER trips — yet the
+    // absolute counter marches on because no SUCCESS ever resets it.
+    const id = 'followup-storm';
+    let cap = false;
+    for (let i = 1; i <= RECORD_ABSOLUTE_CONFLICT_LIMIT; i++) {
+      noteRecordConflict(id);
+      const n = noteAbsoluteConflict(id);
+      cap = n >= RECORD_ABSOLUTE_CONFLICT_LIMIT;
+      // simulate the reset race that defeats the windowed breaker + reload cap
+      releaseBreakerForRetry(id);
+      expect(recordSaveBlocked(id)).toBe(false); // window breaker keeps getting cleared
+    }
+    // ...but the absolute counter latched on the LIMIT-th conflict.
+    expect(cap).toBe(true);
+    expect(reachedAbsoluteConflictCap(id)).toBe(true);
+  });
+
+  it('a genuine concurrent edit (conflict then SUCCESS) resets the absolute counter — no false positive', () => {
+    const id = 'legit-edit';
+    // one or two conflicts while the user is behind, then their reload+resave succeeds
+    noteAbsoluteConflict(id);
+    noteAbsoluteConflict(id);
+    expect(reachedAbsoluteConflictCap(id)).toBe(false);
+    clearRecordConflict(id); // successful save
+    expect(reachedAbsoluteConflictCap(id)).toBe(false);
+    // and it takes the FULL cap again from zero after the reset
+    for (let i = 1; i < RECORD_ABSOLUTE_CONFLICT_LIMIT; i++) noteAbsoluteConflict(id);
+    expect(reachedAbsoluteConflictCap(id)).toBe(false);
+    noteAbsoluteConflict(id);
+    expect(reachedAbsoluteConflictCap(id)).toBe(true);
+  });
+
+  it('releaseBreakerForRetry does NOT reset the absolute counter (only success does)', () => {
+    const id = 'no-reset-on-refetch';
+    noteAbsoluteConflict(id);
+    noteAbsoluteConflict(id);
+    releaseBreakerForRetry(id);
+    expect(noteAbsoluteConflict(id)).toBe(3); // continued, not reset to 1
   });
 });
 
