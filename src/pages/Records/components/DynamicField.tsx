@@ -92,7 +92,13 @@ export default function DynamicField({
   field, value, onChange, recordData, compact, modelId, recordId, onPatch,
 }: DynamicFieldProps) {
   const { t } = useTranslation();
-  const { language, models, records, saveModel } = useAppStore();
+  // Narrow selectors — DynamicField renders once per form field; a whole-store
+  // subscription re-rendered every field on every store write. (2026-08 perf
+  // audit, Symptom B1.)
+  const language = useAppStore((s) => s.language);
+  const models = useAppStore((s) => s.models);
+  const records = useAppStore((s) => s.records);
+  const saveModel = useAppStore((s) => s.saveModel);
   const isAr = language === 'ar';
 
   /**

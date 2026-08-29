@@ -86,29 +86,37 @@ export function mergeRecord(
     if (!id) return 'noop';
     let outcome: RealtimeOutcome = 'noop';
     setState((s) => {
-      const next: Record<string, AppRecord[]> = {};
-      let removed = false;
+      // A record id is unique across models, so exactly one bucket owns it.
+      // Rebuild ONLY that bucket and keep every other array by reference.
+      // (This used to `.filter` EVERY model's array into a fresh object on
+      // every delete — allocating new arrays for all ~60k in-memory rows incl.
+      // the ~46k market_listings slice — per the 2026-08 perf audit, B3. The
+      // `.some` scan short-circuits and allocates nothing for non-owning
+      // buckets.)
+      let nextRecords = s.records;
       for (const [modelId, list] of Object.entries(s.records)) {
-        const filtered = list.filter((r) => r.id !== id);
-        if (filtered.length !== list.length) removed = true;
-        next[modelId] = filtered;
-      }
-      // Tee into the paginated cache (audit H9). We don't know which
-      // model the deleted row belonged to without payload.old.model_id,
-      // so sweep every cached model — `removeRow` is a cheap no-op
-      // when the id isn't present.
-      const nextRBM = { ...s.recordsByModel };
-      let cacheTouched = false;
-      for (const [mid, cache] of Object.entries(nextRBM)) {
-        const updated = removeCachedRow(cache, id);
-        if (updated !== cache) {
-          nextRBM[mid] = updated;
-          cacheTouched = true;
+        if (list.some((r) => r.id === id)) {
+          nextRecords = { ...s.records, [modelId]: list.filter((r) => r.id !== id) };
+          break;
         }
       }
+      const removed = nextRecords !== s.records;
+      // Tee into the paginated cache (audit H9) — same one-bucket approach.
+      let nextRBM = s.recordsByModel;
+      for (const [mid, cache] of Object.entries(s.recordsByModel)) {
+        const updated = removeCachedRow(cache, id);
+        if (updated !== cache) {
+          nextRBM = { ...s.recordsByModel, [mid]: updated };
+          break;
+        }
+      }
+      const cacheTouched = nextRBM !== s.recordsByModel;
       if (!removed && !cacheTouched) return s;
       outcome = 'applied';
-      return cacheTouched ? { records: next, recordsByModel: nextRBM } : { records: next };
+      const updates: Partial<AppState> = {};
+      if (removed) updates.records = nextRecords;
+      if (cacheTouched) updates.recordsByModel = nextRBM;
+      return updates;
     });
     return outcome;
   }

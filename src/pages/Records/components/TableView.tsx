@@ -75,7 +75,21 @@ interface TableViewProps {
 
 export default function TableView({ model, records, onRowClick, onDelete, view, selectedIds, onToggleSelect, onToggleSelectAll, readOnly = false, sortField: controlledSortField, sortDir: controlledSortDir, onToggleSort, rowBadge }: TableViewProps) {
   const { t } = useTranslation();
-  const { language, records: allRecords, saveRecord, addToast, models, currentUserId, users, profiles, roles, previewProfileId } = useAppStore();
+  // Narrow per-field selectors (not a whole-store `useAppStore()`): this
+  // component and its ~pageSize×columns DynamicCell children used to re-render
+  // on EVERY store write (a WhatsApp message, a workflow tick, anything). Now
+  // it re-renders only when a slice it actually reads changes. (2026-08 perf
+  // audit, Symptom B1.)
+  const language = useAppStore((s) => s.language);
+  const allRecords = useAppStore((s) => s.records);
+  const saveRecord = useAppStore((s) => s.saveRecord);
+  const addToast = useAppStore((s) => s.addToast);
+  const models = useAppStore((s) => s.models);
+  const currentUserId = useAppStore((s) => s.currentUserId);
+  const users = useAppStore((s) => s.users);
+  const profiles = useAppStore((s) => s.profiles);
+  const roles = useAppStore((s) => s.roles);
+  const previewProfileId = useAppStore((s) => s.previewProfileId);
   const isAr = language === 'ar';
   // Edit eligibility per row (canEditRecord = model.edit perm AND view_scope AND
   // edit_scope). Per-field permission for each cell. Both bypass for admins.

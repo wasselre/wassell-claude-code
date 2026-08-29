@@ -16,7 +16,8 @@
  */
 import { useEffect, useState } from 'react';
 import { FolderIcon, Loader2 } from 'lucide-react';
-import { signViewUrl, getFolder } from '@/lib/files/client';
+import { getFolder } from '@/lib/files/client';
+import { useSignedViewUrl } from '@/lib/files/signedViewUrlBatch';
 import { kindAccent, kindIcon } from '@/lib/files/format';
 import FilePreviewModal from '@/pages/Files/components/FilePreviewModal';
 import type { AttachmentRef, FileRow, FolderRow } from '@/types';
@@ -410,26 +411,11 @@ export function AttachmentCell({ refs }: { refs: AttachmentRef[]; isAr?: boolean
  * ──────────────────────────────────────────────────────────────────────── */
 
 function SignedThumb({ fileId }: { fileId: string }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    // Legacy public-URL value — already a fetchable src; signing would 400
-    // (the endpoint expects a files.id UUID).
-    if (/^https?:\/\//i.test(fileId)) {
-      setUrl(fileId);
-      return;
-    }
-    let cancelled = false;
-    void signViewUrl(fileId)
-      .then((res) => {
-        if (!cancelled) setUrl(res.url);
-      })
-      .catch(() => {
-        if (!cancelled) setUrl(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fileId]);
+  // Batched + TTL-cached signer: every thumbnail on screen coalesces into ONE
+  // signViewUrls request instead of one round-trip per cell, and a remount
+  // reuses the cache. Legacy raw-URL values are returned verbatim by the hook.
+  // (2026-08 perf audit, B4.)
+  const url = useSignedViewUrl(fileId);
   if (!url) {
     return (
       <div className="w-10 h-10 rounded border border-sand/30 bg-cream/40 flex items-center justify-center">

@@ -175,7 +175,10 @@ interface CardViewProps {
 
 export default function CardView({ model, records, onCardClick, selectedIds, onToggleSelect, onToggleSelectAll }: CardViewProps) {
   const { t } = useTranslation();
-  const { language, records: allRecords, models } = useAppStore();
+  // Narrow selectors — see TableView. (2026-08 perf audit, Symptom B1.)
+  const language = useAppStore((s) => s.language);
+  const allRecords = useAppStore((s) => s.records);
+  const models = useAppStore((s) => s.models);
   const isAr = language === 'ar';
   // Re-render when async translations arrive (titles/subtitles resolve).
   useFieldDisplayVersion();

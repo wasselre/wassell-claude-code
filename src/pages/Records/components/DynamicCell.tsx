@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Phone, Copy, StickyNote, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
@@ -33,9 +34,17 @@ interface DynamicCellProps {
   recordId?: string;
 }
 
-export default function DynamicCell({ field, value, allRecords, recordData, recordId }: DynamicCellProps) {
+function DynamicCell({ field, value, allRecords, recordData, recordId }: DynamicCellProps) {
   const { t } = useTranslation();
-  const { language, addToast, models, openChatComposer } = useAppStore();
+  // Narrow per-field selectors + React.memo below: a table renders up to
+  // ~pageSize×columns of these. Whole-store `useAppStore()` made every one
+  // re-render on every store write; now each re-renders only when a slice it
+  // reads changes, and memo skips re-renders when the parent re-renders with
+  // unchanged props (selection/sort/pagination). (2026-08 perf audit, B2.)
+  const language = useAppStore((s) => s.language);
+  const addToast = useAppStore((s) => s.addToast);
+  const models = useAppStore((s) => s.models);
+  const openChatComposer = useAppStore((s) => s.openChatComposer);
   const isAr = language === 'ar';
   const lang = isAr ? ('ar' as const) : ('en' as const);
   // Re-render when async translations arrive (record-store hydration or the
@@ -601,3 +610,5 @@ export default function DynamicCell({ field, value, allRecords, recordData, reco
       return <span>{String(value)}</span>;
   }
 }
+
+export default memo(DynamicCell);

@@ -11,19 +11,20 @@ interface HeaderProps {
 
 export default function Header({ onMenuClick }: HeaderProps = {}) {
   const { t } = useTranslation();
-  const {
-    language,
-    setLanguage,
-    models,
-    users,
-    profiles,
-    currentUserId,
-    setCurrentUser,
-    previewProfileId,
-    setPreviewProfile,
-    authEmail,
-    signOutAndClear,
-  } = useAppStore();
+  // Narrow selectors: the Header is ALWAYS mounted; a whole-store
+  // `useAppStore()` re-rendered it on every store write app-wide. (2026-08
+  // perf audit, Symptom B1.)
+  const language = useAppStore((s) => s.language);
+  const setLanguage = useAppStore((s) => s.setLanguage);
+  const models = useAppStore((s) => s.models);
+  const users = useAppStore((s) => s.users);
+  const profiles = useAppStore((s) => s.profiles);
+  const currentUserId = useAppStore((s) => s.currentUserId);
+  const setCurrentUser = useAppStore((s) => s.setCurrentUser);
+  const previewProfileId = useAppStore((s) => s.previewProfileId);
+  const setPreviewProfile = useAppStore((s) => s.setPreviewProfile);
+  const authEmail = useAppStore((s) => s.authEmail);
+  const signOutAndClear = useAppStore((s) => s.signOutAndClear);
   const location = useLocation();
   const params = useParams();
   const navigate = useNavigate();

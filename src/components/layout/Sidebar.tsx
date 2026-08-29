@@ -106,7 +106,17 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { models, groups, language, currentUserId, users, profiles, previewProfileId } = useAppStore();
+  // Narrow selectors: the Sidebar is ALWAYS mounted, so a whole-store
+  // `useAppStore()` made it re-filter + re-sort the model tree on every store
+  // write app-wide (a WhatsApp message, a record edit). Now it re-renders only
+  // when a slice it reads changes. (2026-08 perf audit, Symptom B1.)
+  const models = useAppStore((s) => s.models);
+  const groups = useAppStore((s) => s.groups);
+  const language = useAppStore((s) => s.language);
+  const currentUserId = useAppStore((s) => s.currentUserId);
+  const users = useAppStore((s) => s.users);
+  const profiles = useAppStore((s) => s.profiles);
+  const previewProfileId = useAppStore((s) => s.previewProfileId);
   const currentUser = users.find((u) => u.id === currentUserId);
   // Preview-aware: when "view app as" is active the sidebar reflects the
   // previewed profile (incl. its admin flag), not the user's own.
