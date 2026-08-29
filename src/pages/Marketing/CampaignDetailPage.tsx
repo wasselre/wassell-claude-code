@@ -46,6 +46,7 @@ import ProjectLink from './components/ProjectLink';
 import { IconBack, IconForward } from './components/icons';
 import { money, monthOf, num, shortDate, whole } from './lib/format';
 import { measureActual, pickVolumeMeasure } from './lib/measure';
+import { executionAutoName } from './lib/autoName';
 import './styles/campaign-detail.css';
 
 type Tab = 'overview' | 'executions' | 'content' | 'results' | 'notes';
@@ -2297,6 +2298,7 @@ export default function CampaignDetailPage() {
       {(execEditing || execAdding) && campaignId && (
         <ExecutionModal
           campaignId={campaignId}
+          campaignName={item.name}
           execution={execEditing}
           isAr={isAr}
           onClose={() => { setExecEditing(null); setExecAdding(false); }}
@@ -2320,6 +2322,7 @@ export default function CampaignDetailPage() {
         <CampaignTreeModal
           executionId={treeForExec.id}
           platform={treeForExec.platform}
+          campaignName={item.name}
           onClose={() => setTreeForExec(null)}
           onSaved={() => { void load(); }}
         />
@@ -2465,9 +2468,10 @@ function BriefModal({
 /* ------------------------------------------------------------------ */
 
 function ExecutionModal({
-  campaignId, execution, isAr, onClose, onSaved,
+  campaignId, campaignName, execution, isAr, onClose, onSaved,
 }: {
   campaignId: string;
+  campaignName: string;
   execution: MosExecution | null;
   isAr: boolean;
   onClose: () => void;
@@ -2487,7 +2491,20 @@ function ExecutionModal({
     }
     return '';
   });
+  // The execution's lineage name — auto «Paid ad campaign {platform} - {campaign}»,
+  // seeded for a NEW execution and editable; an existing one keeps its label.
   const [label, setLabel] = useState(execution?.label ?? '');
+  const [labelEdited, setLabelEdited] = useState(Boolean(execution));
+  const execNameSuggest = executionAutoName({
+    platformLabel: (isAr ? PLATFORM_LABELS[platform]?.ar : PLATFORM_LABELS[platform]?.en) ?? platform,
+    parentName: campaignName,
+    isAr,
+  });
+  useEffect(() => {
+    if (!labelEdited) setLabel(execNameSuggest);
+    // execNameSuggest folds in platform/campaignName/isAr; labelEdited gates it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [platform, campaignName, isAr, labelEdited]);
   const [status, setStatus] = useState<MosExecution['status']>(execution?.status ?? 'draft');
   const [purpose, setPurpose] = useState<string>(execution?.purpose ?? '');
   const [platformCampaignId, setPlatformCampaignId] = useState(execution?.platform_campaign_id ?? '');
@@ -2658,9 +2675,25 @@ function ExecutionModal({
         })()}
         <Field
           label={isAr ? 'اسم الحملة الإعلانية' : 'Ad campaign name'}
-          hint={isAr ? 'اسمها عندك — لا يؤثّر على المطابقة مع ميتا' : 'your own label — does not affect Meta matching'}
+          hint={isAr ? 'يُولَّد تلقائيًا — لا يؤثّر على المطابقة مع ميتا' : 'auto-generated — does not affect Meta matching'}
         >
-          <input className="inp" value={label} onChange={(e) => setLabel(e.target.value)} />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              className="inp"
+              style={{ flex: 1 }}
+              value={label}
+              onChange={(e) => { setLabel(e.target.value); setLabelEdited(true); }}
+            />
+            <button
+              type="button"
+              className="fbtn"
+              style={{ padding: '0 10px' }}
+              title={isAr ? 'توليد الاسم تلقائيًا' : 'Auto-generate the name'}
+              onClick={() => { setLabelEdited(false); setLabel(execNameSuggest); }}
+            >
+              ↻
+            </button>
+          </div>
         </Field>
         <Field
           label={isAr ? 'الحالة' : 'Status'}

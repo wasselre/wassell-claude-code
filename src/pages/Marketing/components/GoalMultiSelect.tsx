@@ -17,9 +17,11 @@ interface Props {
   onChange: (ids: string[]) => void;
   isAr: boolean;
   disabled?: boolean;
+  /** Fired once the goals load, so a parent can resolve id → name (auto-naming). */
+  onLoaded?: (goals: MosGoal[]) => void;
 }
 
-export default function GoalMultiSelect({ value, onChange, isAr, disabled = false }: Props): JSX.Element {
+export default function GoalMultiSelect({ value, onChange, isAr, disabled = false, onLoaded }: Props): JSX.Element {
   const [goals, setGoals] = useState<MosGoal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +32,7 @@ export default function GoalMultiSelect({ value, onChange, isAr, disabled = fals
     void (async () => {
       try {
         const g = (await fetchGoals()).goals;
-        if (alive) setGoals(g);
+        if (alive) { setGoals(g); onLoaded?.(g); }
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -38,6 +40,9 @@ export default function GoalMultiSelect({ value, onChange, isAr, disabled = fals
       }
     })();
     return () => { alive = false; };
+    // onLoaded is a stable callback from the parent; re-running the fetch on its
+    // identity change is neither wanted nor expected.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Show active goals, plus any already-selected goal even if it went inactive.

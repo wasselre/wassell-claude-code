@@ -27,6 +27,7 @@ import {
   fetchCampaignTree, fetchContentList, saveCampaignTree,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from '../MarketingWorkspace';
+import { adSetAutoName, adAutoName, executionAutoName } from '../lib/autoName';
 import { LoadError, Modal, Pill, Skeleton } from './kit';
 import { IconPlus, IconTrash } from './icons';
 import ContentPicker, { PickedAsset, ContentPickerValue } from './ContentPicker';
@@ -83,12 +84,14 @@ function midLevel(platform: string): {
 interface CampaignTreeModalProps {
   executionId: string;
   platform: string;
+  /** The parent campaign's name — embedded in the seeded ad set / ad names. */
+  campaignName?: string;
   onClose: () => void;
   onSaved?: () => void;
 }
 
 export default function CampaignTreeModal({
-  executionId, platform, onClose, onSaved,
+  executionId, platform, campaignName = '', onClose, onSaved,
 }: CampaignTreeModalProps): JSX.Element {
   const addToast = useAppStore((s) => s.addToast);
   const { isAr } = useWorkspace();
@@ -235,6 +238,59 @@ export default function CampaignTreeModal({
   };
 
   const dups = useMemo(computeDupKeys, [adSets, looseAds]);
+
+  /* ── auto-naming (lineage) — seed blanks, never clobber edits ────── */
+
+  const platLabel = (isAr ? PLATFORM_LABELS[platform]?.ar : PLATFORM_LABELS[platform]?.en) ?? platform;
+  // Prefer the execution's real saved label as the lineage parent; fall back to
+  // a generated one from the campaign name when the execution is unnamed.
+  const execName = (tree?.execution.label || '').trim()
+    || executionAutoName({ platformLabel: platLabel, parentName: campaignName, isAr });
+  const setSuggest = (): string => adSetAutoName({
+    conversionLabel: null, audienceLabel: null, executionName: execName, isAr,
+  });
+  const contentTypeLabel = (contentId: string): string | null => {
+    const c = content.find((x) => x.id === contentId);
+    return c ? (isAr ? c.content_type_label_ar : c.content_type_label_en) : null;
+  };
+  const adSuggest = (setName: string, contentId: string): string => adAutoName({
+    creativeLabel: contentTypeLabel(contentId),
+    adSetName: setName.trim() || setSuggest(),
+    isAr,
+  });
+
+  // Fill EMPTY ad-set / ad names with the current lineage suggestion. Keyed off
+  // structure + inputs (not the name values), so it seeds new blank rows and a
+  // content pick on a still-blank ad, but never overwrites a typed name.
+  const structSig = `${execName}#`
+    + adSets.map((s) => `${s.key}:${s.ads.map((a) => `${a.key}=${a.contentId}`).join(',')}`).join('|')
+    + '##' + looseAds.map((a) => `${a.key}=${a.contentId}`).join(',');
+  useEffect(() => {
+    setAdSets((cur) => {
+      let changed = false;
+      const next = cur.map((s) => {
+        const name = s.name.trim() === '' ? setSuggest() : s.name;
+        if (name !== s.name) changed = true;
+        const ads = s.ads.map((a) => {
+          if (a.label.trim() !== '') return a;
+          changed = true;
+          return { ...a, label: adSuggest(name, a.contentId) };
+        });
+        return name !== s.name || ads !== s.ads ? { ...s, name, ads } : s;
+      });
+      return changed ? next : cur;
+    });
+    setLooseAds((cur) => {
+      let changed = false;
+      const next = cur.map((a) => {
+        if (a.label.trim() !== '') return a;
+        changed = true;
+        return { ...a, label: adSuggest('', a.contentId) };
+      });
+      return changed ? next : cur;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structSig, platform, campaignName, isAr]);
 
   const save = async (): Promise<void> => {
     // Names required per set and per ad.
@@ -414,11 +470,23 @@ export default function CampaignTreeModal({
                   >
                     <label style={{ display: 'grid', gap: 3 }}>
                       <span className="lbl">{isAr ? 'اسم الإعلان' : 'Ad name'}</span>
-                      <input
-                        className="inp"
-                        value={a.label}
-                        onChange={(e) => patchLoose(a.key, { label: e.target.value })}
-                      />
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <input
+                          className="inp"
+                          style={{ flex: 1 }}
+                          value={a.label}
+                          onChange={(e) => patchLoose(a.key, { label: e.target.value })}
+                        />
+                        <button
+                          type="button"
+                          className="fbtn"
+                          style={{ padding: '0 10px' }}
+                          title={isAr ? 'توليد الاسم تلقائيًا' : 'Auto-generate the name'}
+                          onClick={() => patchLoose(a.key, { label: adSuggest('', a.contentId) })}
+                        >
+                          ↻
+                        </button>
+                      </div>
                     </label>
                     <label style={{ display: 'grid', gap: 3 }}>
                       <span className="lbl">{isAr ? 'معرّف الإعلان' : 'Ad ID'}</span>
@@ -495,11 +563,23 @@ export default function CampaignTreeModal({
                       push, not entered here — only the name is a planning input. */}
                   <label style={{ display: 'grid', gap: 3 }}>
                     <span className="lbl">{isAr ? `اسم ${term.one_ar}` : `${term.one_en} name`}</span>
-                    <input
-                      className="inp"
-                      value={s.name}
-                      onChange={(e) => patchAdSet(s.key, { name: e.target.value })}
-                    />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input
+                        className="inp"
+                        style={{ flex: 1 }}
+                        value={s.name}
+                        onChange={(e) => patchAdSet(s.key, { name: e.target.value })}
+                      />
+                      <button
+                        type="button"
+                        className="fbtn"
+                        style={{ padding: '0 10px' }}
+                        title={isAr ? 'توليد الاسم تلقائيًا' : 'Auto-generate the name'}
+                        onClick={() => patchAdSet(s.key, { name: setSuggest() })}
+                      >
+                        ↻
+                      </button>
+                    </div>
                   </label>
                   <button
                     type="button"
@@ -536,11 +616,23 @@ export default function CampaignTreeModal({
                       >
                         <label style={{ display: 'grid', gap: 3 }}>
                           <span className="lbl">{isAr ? 'اسم الإعلان' : 'Ad name'}</span>
-                          <input
-                            className="inp"
-                            value={a.label}
-                            onChange={(e) => patchAd(s.key, a.key, { label: e.target.value })}
-                          />
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <input
+                              className="inp"
+                              style={{ flex: 1 }}
+                              value={a.label}
+                              onChange={(e) => patchAd(s.key, a.key, { label: e.target.value })}
+                            />
+                            <button
+                              type="button"
+                              className="fbtn"
+                              style={{ padding: '0 10px' }}
+                              title={isAr ? 'توليد الاسم تلقائيًا' : 'Auto-generate the name'}
+                              onClick={() => patchAd(s.key, a.key, { label: adSuggest(s.name, a.contentId) })}
+                            >
+                              ↻
+                            </button>
+                          </div>
                         </label>
                         <button
                           type="button"

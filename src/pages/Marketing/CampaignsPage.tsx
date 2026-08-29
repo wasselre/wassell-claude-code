@@ -31,6 +31,7 @@ import SuccessMeasuresEditor, {
 } from './components/SuccessMeasuresEditor';
 import { money, num, shortDate, whole } from './lib/format';
 import { measureActual, pickMainMeasure } from './lib/measure';
+import { campaignAutoName, executionAutoName } from './lib/autoName';
 import './styles/mobile-m4.css';
 
 const AR_MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
@@ -837,7 +838,7 @@ export function CampaignModal({
   onClose: () => void;
   onSaved: (campaign: MosCampaign) => void;
 }) {
-  const { projects, contentTypes } = useWorkspace();
+  const { projects, projectName, contentTypes } = useWorkspace();
   const addToast = useAppStore((s) => s.addToast);
   const isNew = !campaign;
 
@@ -845,6 +846,16 @@ export function CampaignModal({
   const [goal, setGoal] = useState(campaign?.goal ?? campaign?.name ?? '');
   const [goalIds, setGoalIds] = useState<string[]>(campaign?.goal_ids ?? []);
   const [projectIds, setProjectIds] = useState<string[]>(campaign?.project_ids ?? []);
+  // The campaign's identity — auto-generated from type + goals + projects + date,
+  // but fully editable. A blank name on a NEW campaign follows the live values
+  // (see the sync effect); on edit it starts from the saved name and is left
+  // alone. `nameEdited` flips once a human types or the record is an edit, so the
+  // auto-sync never clobbers a hand-picked name.
+  const [name, setName] = useState(campaign?.name ?? '');
+  const [nameEdited, setNameEdited] = useState(!isNew);
+  // Goals loaded by GoalMultiSelect — kept here to resolve id → name for the
+  // auto-generated campaign name.
+  const [goalsList, setGoalsList] = useState<MosGoal[]>([]);
   // Bulk content planned alongside a NEW campaign (created on save; empty for edit).
   const [drafts, setDrafts] = useState<ContentDraft[]>([]);
   const [ownerRole, setOwnerRole] = useState<string>(campaign?.owner_role ?? 'marketing_manager');
@@ -867,6 +878,7 @@ export function CampaignModal({
   // ad campaign already counts as dirty.
   const initial = useRef({
     kind: campaign?.kind ?? 'paid',
+    name: campaign?.name ?? '',
     goal: campaign?.goal ?? campaign?.name ?? '',
     goalIds: JSON.stringify(campaign?.goal_ids ?? []),
     projectIds: JSON.stringify(campaign?.project_ids ?? []),
@@ -879,6 +891,7 @@ export function CampaignModal({
   }).current;
 
   const dirty = kind !== initial.kind
+    || name !== initial.name
     || goal !== initial.goal
     || JSON.stringify(goalIds) !== initial.goalIds
     || JSON.stringify(projectIds) !== initial.projectIds
@@ -890,6 +903,31 @@ export function CampaignModal({
     || JSON.stringify(measures) !== initial.measures
     || drafts.length > 0
     || execDrafts.length > 0;
+
+  // The auto-generated name from the current type + goals + projects + today.
+  // Goal / project labels resolve from the loaded goals list + the workspace's
+  // projectName; missing labels are simply dropped from the name.
+  const goalLabels = useMemo(
+    () => goalIds.map((id) => goalsList.find((g) => g.id === id)?.name ?? '').filter(Boolean),
+    [goalIds, goalsList],
+  );
+  const projectLabels = useMemo(
+    () => projectIds.map((id) => projectName(id)).filter(Boolean),
+    [projectIds, projectName],
+  );
+  const computedName = useMemo(
+    () => campaignAutoName({ kind, goalLabels, projectLabels, date: new Date(), isAr }),
+    [kind, goalLabels, projectLabels, isAr],
+  );
+
+  // Keep the name in step with the live values until a human takes it over. The
+  // date is captured once per mount (a re-render must not bump it), so only the
+  // type / goals / projects drive the refresh here.
+  useEffect(() => {
+    if (!nameEdited) setName(computedName);
+    // computedName already folds in kind/goals/projects; nameEdited gates it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, goalLabels.join('|'), projectLabels.join('|'), nameEdited]);
 
   // Guarded close: while saving, ignore the request entirely; with unsaved
   // changes, confirm before discarding. Wired to the backdrop click, Escape, the
@@ -911,9 +949,9 @@ export function CampaignModal({
     || (execDrafts.length > 0 && execDrafts.every(execDraftComplete));
 
   const submit = async (): Promise<void> => {
-    if (!goal.trim()) {
+    if (!name.trim()) {
       addToast(
-        isAr ? 'اكتب وصفًا للحملة — هو اسمها في القوائم.' : 'Write a description — it is the campaign’s name in lists.',
+        isAr ? 'الحملة تحتاج اسمًا — وّلده تلقائيًا أو اكتبه.' : 'The campaign needs a name — auto-generate one or type it.',
         'error',
       );
       return;
@@ -956,8 +994,9 @@ export function CampaignModal({
       const res = await saveCampaign(
         {
           id: campaign?.id,
-          // The goal doubles as the list's short handle — no separate name.
-          name: goal.trim(),
+          // The name is the campaign's identity (auto-generated, editable); the
+          // goal is now a separate human-readable description.
+          name: name.trim(),
           goal: goal.trim(),
           // The goals this campaign serves (many-to-many; required, ≥1).
           goal_ids: goalIds,
@@ -988,8 +1027,11 @@ export function CampaignModal({
       if (isNew && kind === 'paid' && res.item?.id) {
         for (const d of execDrafts) {
           try {
+            const platformLabel = (isAr ? PLATFORM_LABELS[d.platform]?.ar : PLATFORM_LABELS[d.platform]?.en) ?? d.platform;
             const execRes = await saveExecution(res.item.id, {
               platform: d.platform,
+              // Lineage label: «Paid ad campaign Meta - {campaign name}».
+              label: executionAutoName({ platformLabel, parentName: name.trim(), isAr }),
               status: 'draft',
               budget: execPlanBudget(d),
               platform_settings: d.settings,
@@ -1144,20 +1186,46 @@ export function CampaignModal({
       </div>
 
       <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+          <div className="lbl">{isAr ? 'اسم الحملة' : 'Campaign name'}</div>
+          <button
+            type="button"
+            className="fbtn"
+            style={{ fontSize: 11, padding: '3px 9px' }}
+            onClick={() => { setNameEdited(false); setName(computedName); }}
+            title={isAr ? 'إعادة توليد الاسم من الحقول' : 'Regenerate from the fields'}
+          >
+            ↻ {isAr ? 'توليد تلقائي' : 'Auto'}
+          </button>
+        </div>
+        <input
+          className="inp"
+          value={name}
+          onChange={(e) => { setName(e.target.value); setNameEdited(true); }}
+          autoFocus={isNew}
+          placeholder={computedName}
+        />
+        <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 5 }}>
+          {isAr
+            ? 'يُولَّد تلقائيًا من النوع والأهداف والمشروع والتاريخ، ويمكنك تعديله. تُسمّى الحملات الإعلانية ومجموعاتها وإعلاناتها تلقائيًا تبعًا له.'
+            : 'Auto-generated from type, goals, project and date — editable. Ad campaigns, ad sets and ads are named automatically from it.'}
+        </div>
+      </div>
+
+      <div>
         <div className="lbl" style={{ marginBottom: 6 }}>
-          {isAr ? 'الوصف — بماذا تُعرَّف الحملة' : 'Description — what the campaign is'}
+          {isAr ? 'الوصف — اختياري' : 'Description — optional'}
         </div>
         <input
           className="inp"
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
-          autoFocus={isNew}
           placeholder={isAr ? 'حملة مينا ٥٢ لعملاء أغسطس' : 'Mina 52 campaign for August leads'}
         />
         <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 5 }}>
           {isAr
-            ? 'وصف يقرأه البشر ويميّز الحملة في القوائم. الأرقام والحكم على النجاح يأتيان من معايير النجاح أدناه.'
-            : 'A human-readable label that identifies the campaign in lists. The numbers and the success verdict come from the success measures below.'}
+            ? 'وصف حر يقرأه البشر. الأرقام والحكم على النجاح يأتيان من معايير النجاح أدناه.'
+            : 'A free-text, human-readable note. The numbers and the success verdict come from the success measures below.'}
         </div>
       </div>
 
@@ -1165,7 +1233,7 @@ export function CampaignModal({
         <div className="lbl" style={{ marginBottom: 6 }}>
           {isAr ? 'الأهداف — ما الذي تخدمه الحملة' : 'Goals — what the campaign serves'}
         </div>
-        <GoalMultiSelect value={goalIds} onChange={setGoalIds} isAr={isAr} />
+        <GoalMultiSelect value={goalIds} onChange={setGoalIds} isAr={isAr} onLoaded={setGoalsList} />
         <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 5 }}>
           {isAr
             ? 'كل حملة تُربط بهدف واحد على الأقل. يمكن أن تخدم عدة أهداف.'
@@ -1217,7 +1285,7 @@ export function CampaignModal({
       </div>
 
       {kind === 'paid' && isNew && (
-        <CampaignExecutionsBuilder drafts={execDrafts} onChange={setExecDrafts} isAr={isAr} />
+        <CampaignExecutionsBuilder drafts={execDrafts} onChange={setExecDrafts} isAr={isAr} campaignName={name} />
       )}
 
       <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />

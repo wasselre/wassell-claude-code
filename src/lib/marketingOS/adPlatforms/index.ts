@@ -77,6 +77,23 @@ const optionLabel = (
 };
 
 /**
+ * The human label of a select field's chosen value, for a given platform — e.g.
+ * `destination_type='WHATSAPP'` → «WhatsApp» / «واتساب». Used by the auto-naming
+ * builders to put a settings value into an ad set's name. Returns null when the
+ * platform has no structured schema.
+ */
+export const platformOptionLabel = (
+  platform: string,
+  fieldKey: string,
+  value: string,
+  isAr: boolean,
+): string | null => {
+  const schema = getPlatformSchema(platform);
+  if (!schema) return null;
+  return optionLabel(schema, fieldKey, value, isAr);
+};
+
+/**
  * A one-line human summary of an execution's platform settings — for header
  * chips and campaign cards. Objective · goal · budget · first geo.
  */

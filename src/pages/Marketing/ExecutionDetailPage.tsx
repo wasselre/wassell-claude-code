@@ -714,6 +714,7 @@ export default function ExecutionDetailPage() {
         <CampaignTreeModal
           executionId={execution.id}
           platform={execution.platform}
+          campaignName={campaign?.name ?? ''}
           onClose={() => setTreeOpen(false)}
           onSaved={() => void load()}
         />

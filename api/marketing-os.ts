@@ -4195,8 +4195,9 @@ export default async function handler(req: Request): Promise<Response> {
           return jsonError(400, 'at least one goal is required');
         }
 
-        // The design has no name field — the goal sentence IS the identity.
-        // The list still wants a short handle, so the name falls back to it.
+        // The campaign's identity is its `name` (auto-generated, editable in the
+        // UI); `goal` is now an optional free-text description. For back-compat
+        // with any caller that still sends only a goal, the name falls back to it.
         if (!str(patch.name) && str(patch.goal)) patch.name = patch.goal;
         if (!str(patch.name)) return jsonError(400, 'goal or name is required');
         const newBudget = budgetOf(patch.budget_total);

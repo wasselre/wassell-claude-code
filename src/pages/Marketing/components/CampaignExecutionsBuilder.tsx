@@ -22,7 +22,9 @@ import {
 } from '@/lib/marketingOS/client';
 import {
   PlatformSettings, defaultPlatformSettings, getPlatformSchema, objectiveKeyOf,
+  platformOptionLabel,
 } from '@/lib/marketingOS/adPlatforms';
+import { adSetAutoName, adAutoName, executionAutoName } from '../lib/autoName';
 import { Modal } from './kit';
 import { PlatformFieldsGrid } from './PlatformSettingsForm';
 import ContentPicker, { PickedAsset, ContentPickerValue } from './ContentPicker';
@@ -128,9 +130,12 @@ interface Props {
   drafts: ExecDraft[];
   onChange: (drafts: ExecDraft[]) => void;
   isAr: boolean;
+  /** The parent campaign's (auto/edited) name — embedded in the lineage names
+   *  seeded for each execution's ad sets and ads. */
+  campaignName?: string;
 }
 
-export default function CampaignExecutionsBuilder({ drafts, onChange, isAr }: Props): JSX.Element {
+export default function CampaignExecutionsBuilder({ drafts, onChange, isAr, campaignName = '' }: Props): JSX.Element {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [content, setContent] = useState<MosContentRow[]>([]);
@@ -234,6 +239,7 @@ export default function CampaignExecutionsBuilder({ drafts, onChange, isAr }: Pr
           draft={editing}
           content={content}
           isAr={isAr}
+          campaignName={campaignName}
           onClose={() => setEditingKey(null)}
           onSave={(next) => { replace(next); setEditingKey(null); }}
         />
@@ -343,11 +349,12 @@ function ExecStartChooser({
 /* ------------------------------------------------------------------ */
 
 function ExecDraftEditor({
-  draft, content, isAr, onClose, onSave,
+  draft, content, isAr, campaignName, onClose, onSave,
 }: {
   draft: ExecDraft;
   content: MosContentRow[];
   isAr: boolean;
+  campaignName: string;
   onClose: () => void;
   onSave: (d: ExecDraft) => void;
 }) {
@@ -356,6 +363,54 @@ function ExecDraftEditor({
   const [adSets, setAdSets] = useState<ExecAdSetDraft[]>(draft.adSets);
 
   const schema = getPlatformSchema(platform);
+
+  /* ── auto-naming (lineage) — seed blanks, never clobber edits ────── */
+
+  const platformLabel = (isAr ? PLATFORM_LABELS[platform]?.ar : PLATFORM_LABELS[platform]?.en) ?? platform;
+  const execName = executionAutoName({ platformLabel, parentName: campaignName, isAr });
+  const conversion = typeof settings.destination_type === 'string' && settings.destination_type
+    ? platformOptionLabel(platform, 'destination_type', settings.destination_type, isAr)
+    : null;
+  const setSuggest = (): string => adSetAutoName({
+    conversionLabel: conversion, audienceLabel: null, executionName: execName, isAr,
+  });
+  const contentTypeLabel = (contentId: string): string | null => {
+    const c = content.find((x) => x.id === contentId);
+    return c ? (isAr ? c.content_type_label_ar : c.content_type_label_en) : null;
+  };
+  const adSuggest = (setName: string, contentId: string): string => adAutoName({
+    creativeLabel: contentTypeLabel(contentId),
+    adSetName: setName.trim() || setSuggest(),
+    isAr,
+  });
+
+  // Fill EMPTY ad-set / ad names with the current lineage suggestion. Keyed off
+  // STRUCTURE + inputs (platform, conversion, content picks, parent name) — NOT
+  // the name values — so it never re-runs when a human clears a name to retype,
+  // and never overwrites a name someone typed. Picking content for a still-blank
+  // ad refreshes its suggested creative type in place.
+  const structSig = adSets
+    .map((s) => `${s.key}:${s.ads.map((a) => `${a.key}=${a.contentId}`).join(',')}`)
+    .join('|');
+  useEffect(() => {
+    setAdSets((cur) => {
+      let changed = false;
+      const next = cur.map((s) => {
+        const name = s.name.trim() === '' ? setSuggest() : s.name;
+        if (name !== s.name) changed = true;
+        const ads = s.ads.map((a) => {
+          if (a.label.trim() !== '') return a;
+          changed = true;
+          return { ...a, label: adSuggest(name, a.contentId) };
+        });
+        return name !== s.name || ads !== s.ads ? { ...s, name, ads } : s;
+      });
+      return changed ? next : cur;
+    });
+    // setSuggest/adSuggest close over platform/conversion/content/campaignName,
+    // all captured in structSig + the primitive deps below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structSig, platform, conversion, campaignName, isAr]);
 
   const patchSet = (key: string, over: Partial<Omit<ExecAdSetDraft, 'key' | 'ads'>>): void =>
     setAdSets((cur) => cur.map((s) => (s.key === key ? { ...s, ...over } : s)));
@@ -466,7 +521,18 @@ function ExecDraftEditor({
               }}>
                 <label style={{ display: 'grid', gap: 3 }}>
                   <span className="lbl">{isAr ? 'اسم المجموعة الإعلانية' : 'Ad set name'}</span>
-                  <input className="inp" value={s.name} onChange={(e) => patchSet(s.key, { name: e.target.value })} />
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input className="inp" style={{ flex: 1 }} value={s.name} onChange={(e) => patchSet(s.key, { name: e.target.value })} />
+                    <button
+                      type="button"
+                      className="fbtn"
+                      style={{ padding: '0 10px' }}
+                      title={isAr ? 'توليد الاسم تلقائيًا' : 'Auto-generate the name'}
+                      onClick={() => patchSet(s.key, { name: setSuggest() })}
+                    >
+                      ↻
+                    </button>
+                  </div>
                 </label>
                 <button
                   type="button"
@@ -486,7 +552,18 @@ function ExecDraftEditor({
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(110px,1fr) 34px', gap: 8, alignItems: 'end' }}>
                       <label style={{ display: 'grid', gap: 3 }}>
                         <span className="lbl">{isAr ? 'اسم الإعلان' : 'Ad name'}</span>
-                        <input className="inp" value={a.label} onChange={(e) => patchAd(s.key, a.key, { label: e.target.value })} />
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <input className="inp" style={{ flex: 1 }} value={a.label} onChange={(e) => patchAd(s.key, a.key, { label: e.target.value })} />
+                          <button
+                            type="button"
+                            className="fbtn"
+                            style={{ padding: '0 10px' }}
+                            title={isAr ? 'توليد الاسم تلقائيًا' : 'Auto-generate the name'}
+                            onClick={() => patchAd(s.key, a.key, { label: adSuggest(s.name, a.contentId) })}
+                          >
+                            ↻
+                          </button>
+                        </div>
                       </label>
                       <button
                         type="button"
