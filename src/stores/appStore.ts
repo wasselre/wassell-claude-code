@@ -45,7 +45,7 @@ import {
   setError as setCacheError,
 } from '@/lib/recordsCache';
 import type { PaginatedRecordsByModel, RecordsPageCache } from '@/lib/recordsCache';
-import { bootExcludedModelIds, isSummaryModelName, summaryViewName } from '@/lib/lazyModels';
+import { bootExcludedModelIds, bootDeferredModelIds, isSummaryModelName, summaryViewName } from '@/lib/lazyModels';
 import type {
   AppState,
   AppModel,
@@ -1263,7 +1263,7 @@ function workflowToSupabaseRow(w: Workflow): Record<string, unknown> {
 
 async function supabaseLoad<T>(
   table: string,
-  opts?: { excludeModelIds?: string[]; idColumn?: string },
+  opts?: { excludeModelIds?: string[]; includeModelIds?: string[]; idColumn?: string },
 ): Promise<T[] | null> {
   if (!supabase) return null;
   // The keyset cursor column. Defaults to `id` (every models-owned table has a
@@ -1280,6 +1280,10 @@ async function supabaseLoad<T>(
   // supabaseLoad call passes nothing and behaves exactly as before).
   const excludeIds = opts?.excludeModelIds ?? [];
   const excludeInList = excludeIds.length > 0 ? `(${excludeIds.join(',')})` : null;
+  // The INVERSE of excludeModelIds: load ONLY these model_ids (used by the
+  // second boot wave to fetch the deferred models — e.g. units — on their own).
+  const includeIds = opts?.includeModelIds ?? [];
+  const includeInList = includeIds.length > 0 ? `(${includeIds.join(',')})` : null;
   // KEYSET pagination (id > cursor ORDER BY id), sharded for parallelism.
   //
   // Why not OFFSET: every read of `unified_records` (and the RLS tables) runs
@@ -1318,6 +1322,7 @@ async function supabaseLoad<T>(
         .order(idCol, { ascending: true })
         .limit(pageSize);
       if (excludeInList) q = q.not('model_id', 'in', excludeInList);
+      if (includeInList) q = q.filter('model_id', 'in', includeInList);
       const { data, error } = await q;
       if (error) return error.message ?? String(error);
       const batch = (data ?? []) as T[];
@@ -1338,6 +1343,7 @@ async function supabaseLoad<T>(
       .order(idCol, { ascending: true })
       .limit(pageSize);
     if (excludeInList) headQ = headQ.not('model_id', 'in', excludeInList);
+    if (includeInList) headQ = headQ.filter('model_id', 'in', includeInList);
     const { data: headData, error: headError } = await headQ;
     if (headError) {
       reportSupabaseError(table, 'load', headError.message ?? String(headError));
@@ -1740,6 +1746,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Background slim-full-load state for SUMMARY models (market_listings).
   // Populated by loadSummaryRecords after boot.
   summaryLoadState: {},
+  // Deferred full-load models (units) still loading in the second boot wave.
+  bootPendingModelIds: [],
 
   // --- Initialize ---
   initialize: async () => {
@@ -1808,6 +1816,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       const loadedModels = await modelsP;
       const excludeModelIds = loadedModels ? bootExcludedModelIds(loadedModels) : [];
       return supabaseLoad<AppRecord>('unified_records', { excludeModelIds });
+    })();
+    // SECOND BOOT WAVE: the heavy deferred models (units, ~7.9k heavy rows —
+    // ~60% of the boot record count) are pulled OUT of the wave-1 payload above
+    // (via bootExcludedModelIds) so the light user-facing models paint first,
+    // then loaded on their own here in parallel and merged in a moment later.
+    // The rows are NOT slimmed — units end up fully in memory, same as before;
+    // only the ARRIVAL ORDER changes so units no longer gate clients/projects.
+    const deferredModelIdsForBoot = (async () => {
+      const loadedModels = await modelsP;
+      return loadedModels ? bootDeferredModelIds(loadedModels) : [];
+    })();
+    const deferredRecordsP   = (async () => {
+      const includeModelIds = await deferredModelIdsForBoot;
+      if (includeModelIds.length === 0) return [] as AppRecord[];
+      return supabaseLoad<AppRecord>('unified_records', { includeModelIds });
     })();
     const workflowsP         = supabaseLoad<Workflow>('workflows');
     const workflowGroupsP    = (async () => {
@@ -2618,7 +2641,46 @@ export const useAppStore = create<AppState>((set, get) => ({
       whiteboards,
       currentUserId,
       initialized: true,
+      // Deferred models (units) are NOT in `migratedRecords` yet — they load in
+      // the second wave below. Mark them pending so their list page shows a
+      // loading skeleton instead of an empty state during the brief gap.
+      bootPendingModelIds: bootDeferredModelIds(models),
     });
+
+    // ─── SECOND BOOT WAVE: merge the deferred models (units) ──────────
+    // Kicked off in parallel at the top of init(); awaiting here runs AFTER the
+    // light models are already on screen. Merge them into the live store and
+    // clear the pending flag so the units list flips from skeleton to data.
+    // A failed/empty load leaves the model absent (list shows its normal empty
+    // state) rather than blocking — same fail-open posture as the main tail.
+    void (async () => {
+      const deferredRows = await deferredRecordsP;
+      const deferredIds = bootDeferredModelIds(models);
+      set((s) => {
+        const clearPending = s.bootPendingModelIds.filter((id) => !deferredIds.includes(id));
+        if (!deferredRows) return { bootPendingModelIds: clearPending };
+        // Group the wave-2 snapshot by model.
+        const snap: Record<string, AppRecord[]> = {};
+        for (const rec of deferredRows) (snap[rec.model_id] ??= []).push(rec);
+        const nextRecords = { ...s.records };
+        for (const id of deferredIds) {
+          const snapshotRows = snap[id] ?? [];
+          const existing = nextRecords[id] ?? [];
+          // `existing` can only be rows a realtime event landed during the load
+          // gap (units were absent from wave 1) — those are FRESHER than the
+          // snapshot, so union by id with existing winning on conflict. Avoids
+          // the "hard reset drops a concurrently-created unit" race.
+          if (existing.length === 0) {
+            nextRecords[id] = snapshotRows;
+          } else {
+            const seen = new Set(existing.map((r) => r.id));
+            nextRecords[id] = [...existing, ...snapshotRows.filter((r) => !seen.has(r.id))];
+          }
+        }
+        return { records: nextRecords, bootPendingModelIds: clearPending };
+      });
+      if (deferredRows) saveLocalRecordsMap(get().records);
+    })();
 
     // ─── SUMMARY models (market_listings) load ON DEMAND, not on boot ──
     // The eager background slim-full-load used to fire here for every session —

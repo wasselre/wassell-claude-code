@@ -2274,7 +2274,16 @@ async function marketingPollLoop(): Promise<void> {
 // stopped collecting" surfaces as org_stale / provider_no_data alerts.
 // ─────────────────────────────────────────────────────────────────────────
 const OPS_HEARTBEAT_MS = 60_000;
-const OPS_EVAL_MS = Math.max(env.WATCHDOG_INTERVAL_MS, 60_000);
+// mkt_ops_evaluate() is HEAVY (runs mkt_run_diagnostics + freshness_scan +
+// cost_summary + queue_health; measured mean ~794 ms, occasionally hitting the
+// 8 s statement timeout). It was floored at 60 s, and this worker app runs ~5
+// machines, so the fleet called it ~5×/min → ~9% of ALL database time (2026-08
+// perf audit). Nothing it produces is minute-fresh (daily KPIs + freshness/cost
+// alerts), so a 5-minute floor cuts that ~5× with no operational loss. The
+// heartbeat + live storage check below stay at 60 s (they're cheap and are the
+// real "worker is alive / storage reachable" signal). Follow-up: gate the eval
+// to a single leader machine to drop the remaining fleet multiplier.
+const OPS_EVAL_MS = Math.max(env.WATCHDOG_INTERVAL_MS, 300_000);
 const OPS_CLEANUP_MS = 86_400_000; // orphan-creative cleanup, dry-run, once/day
 async function marketingOpsPollLoop(): Promise<void> {
   let lastEval = 0;

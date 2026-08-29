@@ -2658,6 +2658,12 @@ export interface AppState {
    *  brief "loading listings…" state on first visit before the
    *  background load lands. Models not background-loaded are absent. */
   summaryLoadState: Record<string, SummaryLoadState>;
+  /** Model ids whose records are still loading in the SECOND boot wave
+   *  (deferred full load, e.g. units). Non-empty only during the brief gap
+   *  between the light models painting and the heavy models landing. A list
+   *  page for one of these ids shows a loading skeleton instead of its empty
+   *  state until the id clears. */
+  bootPendingModelIds: string[];
   workflows: Workflow[];
   workflowGroups: WorkflowGroup[];
   workflowRuns: WorkflowRun[];

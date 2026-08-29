@@ -48,7 +48,7 @@ export default function RecordListPage() {
   const { modelName } = useParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { models, records, summaryLoadState, loadSummaryRecords, views, language, currentUserId, users, deleteRecord, addToast, setRecordNavContext, loadChatsFromHaberchat } = useAppStore();
+  const { models, records, summaryLoadState, loadSummaryRecords, views, language, currentUserId, users, deleteRecord, addToast, setRecordNavContext, loadChatsFromHaberchat, initialized, bootPendingModelIds } = useAppStore();
   const isAr = language === 'ar';
   // Rebuilds the search index when record translations arrive (W5).
   const translationVersion = useRecordTranslationVersion();
@@ -61,6 +61,14 @@ export default function RecordListPage() {
   // background load finishes.
   const isSummary = isSummaryModel(model);
   const summaryState = model && isSummary ? summaryLoadState[model.id] : undefined;
+  // Boot loads records in two waves: the light user-facing models first, then
+  // the heavy deferred models (units). For a NORMAL model, records are still
+  // loading while boot hasn't finished OR while this model is in the deferred
+  // wave — show a skeleton instead of the "no records" empty state so an
+  // in-progress load never reads as "nothing here". (Summary models have their
+  // own loading banner below, keyed on summaryState.)
+  const recordsPending =
+    !!model && !isSummary && (!initialized || bootPendingModelIds.includes(model.id));
   const rawModelRecords = model ? (records[model.id] ?? EMPTY_RECORDS) : EMPTY_RECORDS;
   // Inject cross-record rollup values (our_projects → units stats) BEFORE
   // view-scope / search / filters run, so a profile can filter or sort by
@@ -675,8 +683,19 @@ export default function RecordListPage() {
         </div>
       )}
 
+      {/* Normal models: loading skeleton while boot records are still landing
+          (either boot in progress, or this model is in the deferred wave). This
+          replaces the empty "no records" state so an in-progress load doesn't
+          read as "nothing here". */}
+      {recordsPending && modelRecords.length === 0 && (
+        <div className="flex items-center justify-center gap-2 py-16 text-charcoal/50">
+          <Loader2 size={18} className="animate-spin" />
+          <span className="text-sm">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</span>
+        </div>
+      )}
+
       {/* Content */}
-      {viewMode === 'table' && (
+      {!(recordsPending && modelRecords.length === 0) && viewMode === 'table' && (
         <TableView
           model={model}
           records={pagedRecords}
@@ -724,7 +743,7 @@ export default function RecordListPage() {
           }
         />
       )}
-      {viewMode === 'cards' && (
+      {!(recordsPending && modelRecords.length === 0) && viewMode === 'cards' && (
         <CardView
           model={model}
           records={pagedRecords}
@@ -734,7 +753,7 @@ export default function RecordListPage() {
           onToggleSelectAll={toggleSelectAll}
         />
       )}
-      {viewMode === 'maps' && (
+      {!(recordsPending && modelRecords.length === 0) && viewMode === 'maps' && (
         // Full-bleed map: negative margins escape AppLayout's `<main>` padding
         // (`px-4 md:px-8 py-6`); explicit height fills the viewport minus the
         // sticky header (~64px). MapsView fills this container via height:100%.

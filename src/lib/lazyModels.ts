@@ -35,6 +35,27 @@ export const SUMMARY_MODEL_NAMES = new Set<string>(['market_listings']);
  *  uses this today — the machinery is kept for a future huge model). */
 export const LAZY_MODEL_NAMES = new Set<string>([]);
 
+/** Model `name` slugs loaded as a FULL set into the normal store, but in a
+ *  SECOND boot wave — excluded from the main `unified_records` boot payload so
+ *  the light user-facing models (clients, projects, followups) paint first,
+ *  then merged in a moment later. Unlike SUMMARY models the rows are NOT
+ *  slimmed: the model is used cross-app (project pages enumerate units,
+ *  unit-sheet PDFs, mirrors), so it must end up fully in memory. Deferring only
+ *  shifts WHEN it lands — the same rows arrive, just after the small models
+ *  instead of gating them. `units` is ~7.9k heavy rows (~60% of the boot record
+ *  count), so it dominates the "blank then everything appears" boot window. */
+export const BOOT_DEFERRED_MODEL_NAMES = new Set<string>(['units']);
+
+/** True if a model NAME loads as a full set in the second boot wave. Null-safe. */
+export function isBootDeferredModelName(name?: string | null): boolean {
+  return !!name && BOOT_DEFERRED_MODEL_NAMES.has(name);
+}
+
+/** Ids of the models loaded in the second boot wave (deferred full load). */
+export function bootDeferredModelIds(models: { id: string; name: string }[]): string[] {
+  return models.filter((m) => isBootDeferredModelName(m.name)).map((m) => m.id);
+}
+
 // ─── Summary models ──────────────────────────────────────────────
 
 /** True if a model NAME loads as a background slim full set. Null-safe. */
@@ -127,12 +148,12 @@ export function isLazyModel(model?: { name?: string } | null): boolean {
 // ─── Shared: boot exclusion ──────────────────────────────────────
 
 /** Ids of every model that must be EXCLUDED from the bulk boot
- *  `unified_records` load — both summary (background slim-loaded) and
- *  lazy (on-demand paged) models. Keeps their rows out of the main
- *  records tail that gates the rest of the app's data. */
+ *  `unified_records` load — summary (background slim-loaded), lazy (on-demand
+ *  paged), AND boot-deferred (loaded full in a second wave) models. Keeps their
+ *  rows out of the main records tail that gates the rest of the app's data. */
 export function bootExcludedModelIds(models: { id: string; name: string }[]): string[] {
   return models
-    .filter((m) => isSummaryModelName(m.name) || isLazyModelName(m.name))
+    .filter((m) => isSummaryModelName(m.name) || isLazyModelName(m.name) || isBootDeferredModelName(m.name))
     .map((m) => m.id);
 }
 
