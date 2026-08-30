@@ -441,14 +441,29 @@ export async function fetchAiReviewQueue(limit = 200, offset = 0): Promise<AiRev
 
 /** Live enrichment status + AI results for a set of files — powers the
  *  post-upload modal's "AI is analysing…" progress + inline results. */
+export interface EnrichmentLinkSuggestion {
+  model_id: string;
+  model_name?: string;
+  record_id: string;
+  label?: string;
+  matched_name?: string;
+}
 export interface EnrichmentPeek {
   file_id: string;
   status: 'none' | 'queued' | 'running' | 'completed' | 'failed';
   ai_description: string | null;
   asset_nature: string | null;
+  /** The three axes the AI now proposes too (مصدر الحصول / حقوق الاستخدام / حالة الإنتاج). */
+  acquisition_source: string | null;
+  usage_rights: string | null;
+  production_state: string | null;
+  /** A short AI-suggested title, STAGED (never overwrites files.title). */
+  ai_title: string | null;
   tags: string[];
   ai_subjects: string[];
   has_link_suggestions: boolean;
+  /** The single top link suggestion (unlinked files only) — for the modal to prefill. */
+  link_suggestion: EnrichmentLinkSuggestion | null;
 }
 export async function peekEnrichment(fileIds: string[]): Promise<EnrichmentPeek[]> {
   if (fileIds.length === 0) return [];

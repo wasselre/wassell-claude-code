@@ -73,17 +73,32 @@ export async function runEnrichmentJob(
   }
 
   // ── Allowlists (the model may ONLY choose from these) ─────────────────────
-  const [subjRes, natureRes] = await Promise.all([
+  const VOCAB_DIMS = ['asset_nature', 'acquisition_source', 'usage_rights', 'production_state'];
+  const [subjRes, vocabRes] = await Promise.all([
     supabase.from('file_document_types')
       .select('value,label_ar,label_en,applies_to_kinds').eq('active', true),
     supabase.from('file_vocabularies')
-      .select('value,label_ar').eq('dimension', 'asset_nature').eq('active', true),
+      .select('dimension,value,label_ar').in('dimension', VOCAB_DIMS).eq('active', true),
   ]);
   const subjectRows = (subjRes.data ?? []) as Array<{ value: string; label_ar: string; label_en: string; applies_to_kinds: string[] }>;
   const applicable = subjectRows.filter((r) => !r.applies_to_kinds?.length || r.applies_to_kinds.includes(kind));
   const subjectValues = applicable.map((r) => r.value);
-  const natureRows = (natureRes.data ?? []) as Array<{ value: string; label_ar: string }>;
+  // Group the vocabulary rows by dimension — one allowlist per structured field.
+  const vocabByDim = new Map<string, Array<{ value: string; label_ar: string }>>();
+  for (const r of (vocabRes.data ?? []) as Array<{ dimension: string; value: string; label_ar: string }>) {
+    const arr = vocabByDim.get(r.dimension) ?? [];
+    arr.push({ value: r.value, label_ar: r.label_ar });
+    vocabByDim.set(r.dimension, arr);
+  }
+  const dim = (d: string) => vocabByDim.get(d) ?? [];
+  const natureRows = dim('asset_nature');
   const natureValues = natureRows.map((r) => r.value);
+  const acqRows = dim('acquisition_source');
+  const acqValues = acqRows.map((r) => r.value);
+  const rightsRows = dim('usage_rights');
+  const rightsValues = rightsRows.map((r) => r.value);
+  const stateRows = dim('production_state');
+  const stateValues = stateRows.map((r) => r.value);
   if (subjectValues.length === 0) { console.log(`[enrich] job=${job.id} no applicable subjects — no-op`); return {}; }
 
   // ── Gather what the model will see (blocks) + heard (transcript) ──────────
@@ -134,32 +149,37 @@ export async function runEnrichmentJob(
   }
 
   // ── Ask the model ─────────────────────────────────────────────────────────
+  const menu = (rows: Array<{ value: string; label_ar: string }>) => rows.map((r) => `${r.value} (${r.label_ar})`).join('، ');
   const subjectMenu = applicable.map((r) => `${r.value} (${r.label_ar})`).join('، ');
-  const natureMenu = natureRows.map((r) => `${r.value} (${r.label_ar})`).join('، ');
+  const props: Record<string, unknown> = {
+    description: { type: 'string', description: 'جملة أو جملتان بالعربية تصف محتوى الملف بدقة.' },
+    title: { type: 'string', description: 'عنوان عربي قصير ووصفي للملف (٣–٨ كلمات) بدل اسم الملف التقني.' },
+    subjects: { type: 'array', items: { type: 'string', enum: subjectValues }, description: 'التصنيفات المنطبقة — من القائمة فقط.' },
+    asset_nature: { type: 'string', enum: natureValues, description: 'طبيعة الأصل — من القائمة فقط.' },
+    tags: { type: 'array', items: { type: 'string' }, description: 'وسوم قصيرة بالعربية للسمات الظاهرة.' },
+    detected_names: {
+      type: 'array', items: { type: 'string' },
+      description: 'أسماء المشاريع العقارية أو المطوّرين الظاهرة نصياً في الملف، كما هي بالضبط (مثل «مينا 52»). اتركها فارغة إن لم يظهر اسم واضح — لا تخمّن.',
+    },
+  };
+  if (acqValues.length) props.acquisition_source = { type: 'string', enum: acqValues, description: 'مصدر الحصول — من القائمة فقط.' };
+  if (rightsValues.length) props.usage_rights = { type: 'string', enum: rightsValues, description: 'حقوق الاستخدام — من القائمة فقط.' };
+  if (stateValues.length) props.production_state = { type: 'string', enum: stateValues, description: 'حالة الإنتاج — من القائمة فقط.' };
+
   const tool = {
     name: 'propose_metadata',
     description: 'Propose metadata for a Wassel real-estate marketing file.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        description: { type: 'string', description: 'جملة أو جملتان بالعربية تصف محتوى الملف بدقة.' },
-        subjects: { type: 'array', items: { type: 'string', enum: subjectValues }, description: 'التصنيفات المنطبقة — من القائمة فقط.' },
-        asset_nature: { type: 'string', enum: natureValues, description: 'طبيعة الأصل — من القائمة فقط.' },
-        tags: { type: 'array', items: { type: 'string' }, description: 'وسوم قصيرة بالعربية للسمات الظاهرة.' },
-        detected_names: {
-          type: 'array', items: { type: 'string' },
-          description: 'أسماء المشاريع العقارية أو المطوّرين الظاهرة نصياً في الملف، كما هي بالضبط (مثل «مينا 52»). اتركها فارغة إن لم يظهر اسم واضح — لا تخمّن.',
-        },
-      },
-      required: ['description'],
-    },
+    input_schema: { type: 'object' as const, properties: props, required: ['description'] },
   };
   let prompt =
-    `أنت تصنّف ملفاً تسويقياً عقارياً لشركة وصل العقارية. استدعِ الأداة propose_metadata.\n` +
+    `أنت تصنّف ملفاً تسويقياً عقارياً لشركة وصل العقارية. استدعِ الأداة propose_metadata واملأ كل الحقول التي تستطيع الاستدلال عليها من محتوى الملف.\n` +
     `- التصنيفات المسموحة (استخدم القيمة الإنجليزية فقط): ${subjectMenu}.\n` +
-    `- طبيعة الأصل المسموحة (القيمة الإنجليزية فقط): ${natureMenu}.\n` +
+    `- طبيعة الأصل المسموحة (القيمة الإنجليزية فقط): ${menu(natureRows)}.\n` +
+    (acqValues.length ? `- مصدر الحصول المسموح (القيمة الإنجليزية فقط): ${menu(acqRows)}. استدلّ منه: تصميم/لقطة من أنظمتنا → internal؛ علامة أو شعار منافس → competitor؛ كتيّب أو رندر مطوّر → developer؛ صورة من عميل → client؛ مصدر عام/سوشيال بلا مالك واضح → public؛ غير واضح → unknown.\n` : '') +
+    (stateValues.length ? `- حالة الإنتاج المسموحة (القيمة الإنجليزية فقط): ${menu(stateRows)}. لقطة شاشة أو ملف غير مصقول → raw؛ تصميم مصقول بعلامة الشركة → final؛ عليه آثار تعديل بيني → edited.\n` : '') +
+    (rightsValues.length ? `- حقوق الاستخدام المسموحة (القيمة الإنجليزية فقط): ${menu(rightsRows)}. كن متحفظاً: محتوى واضح أنه من إنتاجنا → approved؛ محتوى منافس أو عليه علامة طرف آخر → do_not_use؛ أي شكّ في الملكية → needs_review.\n` : '') +
     `- في detected_names: ضع أسماء المشاريع العقارية أو المطوّرين الظاهرة نصياً داخل الملف كما هي بالضبط (مثل «مينا 52»)، دون تخمين أو إضافة.\n` +
-    `لا تخترع أي قيمة خارج القوائم. الوصف والوسوم بالعربية.`;
+    `لا تخترع أي قيمة خارج القوائم. حيثما لا تستطيع الاستدلال بثقة على حقلٍ اختياري، اتركه فارغاً. الوصف والعنوان والوسوم بالعربية.`;
   if (transcript) prompt += `\n\nنص الكلام في الملف (منسوخ آلياً):\n${transcript}`;
   if (kind === 'audio') prompt += `\n\n(هذا ملف صوتي — اعتمد على النص أعلاه.)`;
 

@@ -16,7 +16,7 @@
  * classification + tags, applied to that file instead of the batch; untouched
  * files keep the batch values. Title is always per-file.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle, Link2, Loader2, Pencil, RotateCcw, Search, Sparkles, X,
@@ -143,6 +143,55 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
     void tick();
     return () => { stopped = true; };
   }, [enrichable]);
+
+  // ── Pre-fill the form from the AI's proposal ──────────────────────────────
+  // The AI now proposes every structured field. As each file's analysis lands we
+  // fill the batch axes, subjects, per-file title and the record link — ONCE per
+  // field, and only while it is still at its default, so a value the operator has
+  // already chosen is never overwritten. The «حفظ» is still the human confirm.
+  const prefilled = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const rows = Object.values(ai).filter((r) => r.status === 'completed');
+    if (rows.length === 0) return;
+
+    setAxes((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const dim of ['asset_nature', 'acquisition_source', 'usage_rights', 'production_state'] as FileVocabDimension[]) {
+        if (prefilled.current.has(`axis:${dim}`) || prev[dim]) continue;
+        const val = rows.map((r) => r[dim]).find((v): v is string => Boolean(v));
+        if (val) { next[dim] = val; prefilled.current.add(`axis:${dim}`); changed = true; }
+      }
+      return changed ? next : prev;
+    });
+
+    if (!prefilled.current.has('subjects')) {
+      const subs = [...new Set(rows.flatMap((r) => r.ai_subjects ?? []))];
+      if (subs.length) { prefilled.current.add('subjects'); setSubjects((prev) => (prev.length ? prev : subs)); }
+    }
+
+    setTitles((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const r of rows) {
+        const key = `title:${r.file_id}`;
+        if (prefilled.current.has(key) || !r.ai_title) continue;
+        if ((next[r.file_id] ?? '') === (initialTitles[r.file_id] ?? '')) {
+          next[r.file_id] = r.ai_title; prefilled.current.add(key); changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    if (!prefilled.current.has('link') && !recordId && !modelId) {
+      const sugg = rows.map((r) => r.link_suggestion).find(Boolean);
+      if (sugg?.model_id && sugg.record_id) {
+        prefilled.current.add('link');
+        setModelId(sugg.model_id);
+        setRecordId(sugg.record_id);
+      }
+    }
+  }, [ai, initialTitles, recordId, modelId]);
 
   const aiDone = enrichable.filter((id) => {
     const s = ai[id]?.status;
