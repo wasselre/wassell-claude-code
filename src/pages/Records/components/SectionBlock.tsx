@@ -256,6 +256,10 @@ export default function SectionBlock({
   // Builder) but never renders in the user form.
   const sortedFields = [...section.fields]
     .filter((f) => f.name !== 'fired_at')
+    // Unconditionally hidden fields (schema `hidden: true`) never render — they
+    // stay in the schema + record data but are retired from the form (e.g. the
+    // legacy market_listings `title_ar`/`description_ar` duplicates).
+    .filter((f) => !f.hidden)
     // Field-level conditional visibility — drop fields whose `visible_when`
     // rule doesn't match the current record. Done here (not inside
     // renderFieldNodes) so the grouped/ungrouped split and empty-group

@@ -40,6 +40,7 @@ import RecordFilesPanel from './components/RecordFilesPanel';
 import { recordFilesEnabled } from '@/lib/files/flags';
 import ListingMessagePanel from './components/ListingMessagePanel';
 import ContactAdvertiserPanel from './components/ContactAdvertiserPanel';
+import TranslateListingPanel from './components/TranslateListingPanel';
 import ClientAcquisitionPanel from './components/ClientAcquisitionPanel';
 import RelatedRecordsPanel from './components/RelatedRecordsPanel';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
@@ -1046,6 +1047,8 @@ export default function RecordFormPage() {
       if (!f.required) return false;
       if (f.type === 'mirror') return false;
       if (deferredLookupNames.has(f.name)) return false;
+      // An unconditionally hidden field isn't rendered, so it can't block save.
+      if (f.hidden) return false;
       // A field hidden by its `visible_when` rule can't be filled, so it must
       // not block the save (mirrors the form, which doesn't render it).
       if (!isFieldVisible(f, formData, model)) return false;
@@ -1619,6 +1622,18 @@ export default function RecordFormPage() {
         * and when the client has no recorded acquisition. */}
       {model && existingRecord?.id && (
         <ClientAcquisitionPanel modelId={model.id} recordId={existingRecord.id} />
+      )}
+
+      {/* On-demand English translation of a market listing's Arabic
+        * title/description (title_en/description_en). Renders nothing on every
+        * other model. onTranslated pushes the result into formData so the
+        * read-only English fields update and a later save can't null them. */}
+      {model && existingRecord?.id && (
+        <TranslateListingPanel
+          modelId={model.id}
+          recordId={existingRecord.id}
+          onTranslated={(patch) => setFormData((prev) => ({ ...prev, ...patch }))}
+        />
       )}
 
       {/* Generate a reusable WhatsApp message (AI text + text-removed photos)

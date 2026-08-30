@@ -384,6 +384,14 @@ export interface ModelField {
   is_rollup?: boolean;
   rollup_kind?: OurProjectsComputedKind;
   read_only?: boolean;
+  // Unconditionally hide this field from the record form (and required-field
+  // validation), while KEEPING it in the schema and in the record data. Unlike
+  // `visible_when` (which fails open and never hides a field that already holds
+  // a value), `hidden` always removes the input. Used to retire redundant
+  // duplicate columns from the form without deleting them — e.g. the legacy
+  // market_listings `title_ar`/`description_ar` copies once the model gained a
+  // single Arabic source field + on-demand English (title_en/description_en).
+  hidden?: boolean;
   // Conditional units-derived field (distinct from the unconditional
   // `is_rollup` aggregates above). When `auto_from_units` is true the field is
   // derived from this project's linked units ONLY while at least one unit is
