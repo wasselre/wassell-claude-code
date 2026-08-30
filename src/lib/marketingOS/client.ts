@@ -34,7 +34,14 @@ export type SurfaceKey =
   // cross-platform Publishing Board.
   | 'organic' | 'publishing'
   // Performance & load system: own profile + the manager desk.
-  | 'myperf' | 'performance';
+  | 'myperf' | 'performance'
+  // Content inventory (per-project media/content rollup). NOTE: intentionally
+  // absent from the server-side SURFACES list, so it is not seeded into
+  // surface_access and defaults to VISIBLE for every marketing role (the rail's
+  // navVisible treats an absent surface as shown). Data access is gated on the
+  // `read` capability server-side. Add it to the API SURFACES const + a seed
+  // migration later if per-role hiding is ever wanted.
+  | 'content_inventory';
 
 export type SurfaceLevel = 'full' | 'read' | 'hidden';
 
@@ -1280,6 +1287,60 @@ export const fetchWork = (scope: 'mine' | 'team') =>
     upcoming: MosUpcoming[];
     manual_tasks: MosManualTask[];
   }>('work_list', { scope });
+
+/* ------------------------------------------------------------------ */
+/* Content inventory — per-project media/content rollup                */
+/* ------------------------------------------------------------------ */
+
+/** Media-kind counts for one project (distinct files). */
+export interface ContentByKind {
+  image: number; video: number; pdf: number; document: number; other: number;
+}
+/** Asset-nature counts: real photos vs AI/CGI vs graphic design vs the rest. */
+export interface ContentByNature {
+  real: number; ai: number; graphic: number; screenshot: number; unknown: number;
+}
+/** Link-role counts (distinct files per role). */
+export interface ContentByRole {
+  gallery: number; marketing: number; main: number; developer: number; other: number;
+}
+
+/** One project's content rollup — everything the inventory card renders. */
+export interface ContentInventoryProject {
+  id: string;
+  name: string;
+  files: number;
+  storage_bytes: number;
+  by_kind: ContentByKind;
+  by_nature: ContentByNature;
+  by_role: ContentByRole;
+  /** The most frequent subject tags on this project's files (kitchens, bedrooms,
+   *  interiors, floor plans…), highest first. */
+  top_tags: Array<{ tag: string; n: number }>;
+}
+
+export interface ContentInventoryTotals {
+  projects: number;
+  projects_with_content: number;
+  files: number;
+  storage_bytes: number;
+  images: number;
+  videos: number;
+  pdfs: number;
+  documents: number;
+  real: number;
+  ai: number;
+  graphic: number;
+}
+
+/**
+ * The per-project content inventory across OUR marketed projects (is_public
+ * all_projects). Read-only planning view — how much content, of which kinds,
+ * and how much storage each project carries. Projects with zero content are
+ * included on purpose (a gap is what the view is for).
+ */
+export const fetchContentInventory = () =>
+  call<{ projects: ContentInventoryProject[]; totals: ContentInventoryTotals }>('content_inventory');
 
 /* ------------------------------------------------------------------ */
 /* Manual tasks — hand-assigned work no workflow generates             */

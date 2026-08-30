@@ -61,6 +61,9 @@ const iconCalendar = (
 const iconLibrary = (
   <svg {...base}><rect x="3" y="4" width="18" height="14" rx="2.5" /><path d="M3 14l4.5-4 4 3.5L15 10l6 5.5" /></svg>
 );
+const iconInventory = (
+  <svg {...base}><path d="M12 3l9 4.5-9 4.5-9-4.5L12 3z" /><path d="M3 12l9 4.5 9-4.5" /><path d="M3 16.5L12 21l9-4.5" /></svg>
+);
 const iconNumbers = <svg {...base}><path d="M3 17l5-6 4 3 4-6 5 5" /><path d="M3 21h18" /></svg>;
 const iconGoals = (
   <svg {...base}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.4" /></svg>
@@ -138,6 +141,7 @@ const SHEET_GROUPS: SheetGroup[] = [
       { to: '/m/search', ar: 'البحث', en: 'Search', surface: 'search', icon: iconSearch },
       { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', surface: 'calendar', icon: iconCalendar },
       { to: marketingLibraryHref(), ar: 'مكتبة المواد', en: 'Asset library', surface: 'library', icon: iconLibrary },
+      { to: '/m/content-inventory', ar: 'جرد المحتوى', en: 'Content inventory', surface: 'content_inventory', icon: iconInventory },
     ],
   },
   {

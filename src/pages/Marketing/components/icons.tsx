@@ -109,6 +109,15 @@ export const IconPulse = (p: P) => (
   </svg>
 );
 
+/** Content inventory — stacked media layers (how much content we hold). */
+export const IconInventory = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M12 3l9 4.5-9 4.5-9-4.5L12 3z" />
+    <path d="M3 12l9 4.5 9-4.5" />
+    <path d="M3 16.5L12 21l9-4.5" />
+  </svg>
+);
+
 export const IconRoles = (p: P) => (
   <svg {...base} {...p}>
     <path d="M12 3l7 3v5.5c0 4.2-2.9 7.7-7 8.5-4.1-.8-7-4.3-7-8.5V6l7-3z" />

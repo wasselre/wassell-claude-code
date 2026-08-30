@@ -89,6 +89,7 @@ const MarketingMyPerfPage = lazy(() => import('@/pages/Marketing/MyPerfPage'));
 const MarketingPerformanceDeskPage = lazy(() => import('@/pages/Marketing/PerformanceDeskPage'));
 const MarketingCampaignsPage = lazy(() => import('@/pages/Marketing/CampaignsPage'));
 const MarketingGoalsPage = lazy(() => import('@/pages/Marketing/GoalsPage'));
+const MarketingContentInventoryPage = lazy(() => import('@/pages/Marketing/ContentInventoryPage'));
 const MarketingCampaignDetailPage = lazy(() => import('@/pages/Marketing/CampaignDetailPage'));
 const MarketingExecutionDetailPage = lazy(() => import('@/pages/Marketing/ExecutionDetailPage'));
 const MarketingUploadPage = lazy(() => import('@/pages/Marketing/UploadPage'));
@@ -534,6 +535,7 @@ export default function App() {
           <Route path="/m/numbers" element={<MarketingNumbersPage />} />
           <Route path="/m/organic" element={<MarketingOrganicPulsePage />} />
           <Route path="/m/publishing" element={<MarketingPublishingBoardPage />} />
+          <Route path="/m/content-inventory" element={<MarketingContentInventoryPage />} />
           <Route path="/m/settings" element={<MarketingSettingsPage />} />
           <Route path="/m/settings/:section" element={<SettingsSectionPage />} />
           {/* A wrong /m/* path lands on the workspace's own front door rather

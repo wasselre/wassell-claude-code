@@ -3294,6 +3294,159 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
+      /* Content inventory — per-project rollup of the files/media */
+      /* linked to OUR projects (is_public all_projects), broken   */
+      /* down by media kind, asset nature (real vs AI/CGI vs       */
+      /* graphic), link role and top subject tags, plus storage.   */
+      /* Read-only planning view; no writes.                       */
+      /* -------------------------------------------------------- */
+      case 'content_inventory': {
+        // Visible to anyone with the marketing read floor. The numbers span
+        // files across every project regardless of the caller's own file RLS,
+        // so we read them with the service client AFTER the capability gate.
+        const capFail = await requireCap(sb, 'read');
+        if (capFail) return capFail;
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+
+        // all_projects model id — file_links reference it as (model_id, record_id).
+        const modelRes = await svc.from('models').select('id').eq('name', 'all_projects').single();
+        const modelFail = dbFail(modelRes.error);
+        if (modelFail) return modelFail;
+        const apId = (modelRes.data as { id: string }).id;
+
+        // OUR projects = all_projects rows flagged is_public (the marketed set,
+        // ~99). The is_public filter keeps this to ~99 rows, well under the
+        // 1000-row PostgREST cap, so no pagination is needed here.
+        const projRes = await svc
+          .from('records')
+          .select('id, data')
+          .eq('model_id', apId)
+          .eq('data->>is_public', 'true');
+        const projFail = dbFail(projRes.error);
+        if (projFail) return projFail;
+        const ours = ((projRes.data ?? []) as Array<{ id: string; data: Record<string, unknown> }>)
+          .map((r) => ({ id: r.id, name: typeof r.data?.project_name === 'string' ? r.data.project_name : '' }));
+
+        // Per-project accumulator, seeded so a project with ZERO content still
+        // shows — a content gap is exactly what this planning view is for.
+        interface Agg {
+          id: string; name: string;
+          files: number; storage_bytes: number;
+          kind: { image: number; video: number; pdf: number; document: number; other: number };
+          nature: { real: number; ai: number; graphic: number; screenshot: number; unknown: number };
+          role: { gallery: number; marketing: number; main: number; developer: number; other: number };
+          seen: Set<string>;
+          tags: Map<string, number>;
+        }
+        const agg = new Map<string, Agg>();
+        for (const p of ours) {
+          agg.set(p.id, {
+            id: p.id, name: p.name,
+            files: 0, storage_bytes: 0,
+            kind: { image: 0, video: 0, pdf: 0, document: 0, other: 0 },
+            nature: { real: 0, ai: 0, graphic: 0, screenshot: 0, unknown: 0 },
+            role: { gallery: 0, marketing: 0, main: 0, developer: 0, other: 0 },
+            seen: new Set(), tags: new Map(),
+          });
+        }
+        const ourIds = ours.map((p) => p.id);
+
+        // file_links → files, business-class only, our projects only. Paginate:
+        // our projects hold ~3.9k links, well over the 1000-row cap, and a bare
+        // select would silently truncate (the repo's documented footgun).
+        type LinkRow = {
+          record_id: string; role: string | null;
+          file: {
+            id: string; kind: string | null; size_bytes: number | null;
+            asset_nature: string | null; tags: string[] | null;
+          } | null;
+        };
+        if (ourIds.length > 0) {
+          for (let from = 0; ; from += 1000) {
+            const linkRes = await svc
+              .from('file_links')
+              .select('record_id, role, file:files!inner(id, kind, size_bytes, asset_nature, tags, file_class)')
+              .eq('model_id', apId)
+              .in('record_id', ourIds)
+              .eq('file.file_class', 'business')
+              .range(from, from + 999);
+            const linkFail = dbFail(linkRes.error);
+            if (linkFail) return linkFail;
+            const rows = (linkRes.data ?? []) as unknown as LinkRow[];
+            for (const row of rows) {
+              const a = agg.get(row.record_id);
+              if (!a || !row.file) continue;
+              // Role breakdown counts every (file, role) edge = distinct files
+              // per role (file_links is unique on file + project + role).
+              switch (row.role) {
+                case 'gallery_image': a.role.gallery += 1; break;
+                case 'marketing_asset': a.role.marketing += 1; break;
+                case 'main_image': a.role.main += 1; break;
+                case 'developer_content': a.role.developer += 1; break;
+                default: a.role.other += 1; break;
+              }
+              // Scalar aggregates count each file ONCE per project — a photo
+              // linked under two roles is one photo, not two.
+              const fid = row.file.id;
+              if (a.seen.has(fid)) continue;
+              a.seen.add(fid);
+              a.files += 1;
+              a.storage_bytes += Number(row.file.size_bytes) || 0;
+              switch (row.file.kind) {
+                case 'image': a.kind.image += 1; break;
+                case 'video': a.kind.video += 1; break;
+                case 'pdf': a.kind.pdf += 1; break;
+                case 'document': case 'wassel_doc': a.kind.document += 1; break;
+                default: a.kind.other += 1; break;
+              }
+              switch (row.file.asset_nature) {
+                case 'real': a.nature.real += 1; break;
+                case 'ai_generated': case 'ai_edited': case 'cgi_render': a.nature.ai += 1; break;
+                case 'graphic_design': a.nature.graphic += 1; break;
+                case 'screenshot': a.nature.screenshot += 1; break;
+                default: a.nature.unknown += 1; break;
+              }
+              for (const tag of row.file.tags ?? []) {
+                if (typeof tag !== 'string' || tag.trim() === '') continue;
+                a.tags.set(tag, (a.tags.get(tag) ?? 0) + 1);
+              }
+            }
+            if (rows.length < 1000) break;
+          }
+        }
+
+        // Shape the response: drop the Sets/Maps, emit top tags, sort by volume.
+        const projects = [...agg.values()]
+          .map((a) => ({
+            id: a.id, name: a.name,
+            files: a.files, storage_bytes: a.storage_bytes,
+            by_kind: a.kind, by_nature: a.nature, by_role: a.role,
+            top_tags: [...a.tags.entries()]
+              .sort((x, y) => y[1] - x[1]).slice(0, 8)
+              .map(([tag, n]) => ({ tag, n })),
+          }))
+          .sort((x, y) => y.files - x.files || x.name.localeCompare(y.name));
+
+        const totals = projects.reduce(
+          (t, p) => {
+            t.files += p.files; t.storage_bytes += p.storage_bytes;
+            t.images += p.by_kind.image; t.videos += p.by_kind.video;
+            t.pdfs += p.by_kind.pdf; t.documents += p.by_kind.document;
+            t.real += p.by_nature.real; t.ai += p.by_nature.ai; t.graphic += p.by_nature.graphic;
+            if (p.files > 0) t.projects_with_content += 1;
+            return t;
+          },
+          {
+            projects: projects.length, projects_with_content: 0, files: 0, storage_bytes: 0,
+            images: 0, videos: 0, pdfs: 0, documents: 0, real: 0, ai: 0, graphic: 0,
+          },
+        );
+
+        return jsonOk({ projects, totals });
+      }
+
+      /* -------------------------------------------------------- */
       /* Roles — canonical roles 'mos_*' × users.role_assignments  */
       /* -------------------------------------------------------- */
       case 'roles_list': {
