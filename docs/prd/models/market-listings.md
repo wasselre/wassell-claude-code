@@ -5,7 +5,7 @@
 # Model: Market Listings / إعلانات السوق  `market_listings`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-23
+**Last updated (from DB):** 2026-08-30
 **Model id:** `8f06bc39-4bee-42e9-9fab-77023fb89ede`
 **Storage:** frozen table `market_listings`
 **Group:** (ungrouped)
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **8** (1 base, 7 non-base)
-- Fields: **84**
+- Fields: **86**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -49,8 +49,10 @@
 | `location` | Location / الموقع | location | no | full | yes |  |
 | `title_ar` | Title (AR) / العنوان (عربي) | Text | no | half | no |  |
 | `description_ar` | Description (AR) / الوصف (عربي) | Text area | no | half | no |  |
+| `title_en` | Title (EN) / العنوان (إنجليزي) | Text | no | full | no |  |
 | `plot_area` | Plot Area (m²) / مساحة الأرض (م²) | Number | no | half | no |  |
 | `furnished` | Furnishing / التأثيث | Text | no | half | no |  |
+| `description_en` | Description (EN) / الوصف (إنجليزي) | Text area | no | full | no |  |
 | `completion_status` | Completion Status / حالة الإنجاز | Text | no | half | no |  |
 | `emirate` | Emirate / الإمارة | Text | no | half | no |  |
 | `community` | Community / المجتمع | Text | no | half | no |  |

@@ -31,7 +31,7 @@
 | [Follow-ups](followups.md) | `followups` | JSONB | New Group | 3 | 44 | no | 2026-08-20 |
 | [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-08-20 |
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
-| [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 84 | no | 2026-08-23 |
+| [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 86 | no | 2026-08-30 |
 | [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 17 | yes | 2026-08-20 |
 | [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-08-20 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
