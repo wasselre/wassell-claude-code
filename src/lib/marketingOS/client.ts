@@ -95,6 +95,10 @@ export interface BootstrapMe {
   active_role: MosRole;
   surfaces: Record<SurfaceKey, SurfaceLevel>;
   prefs: Record<string, unknown>;
+  /** True when the caller is a platform admin — may preview other roles' views. */
+  is_admin?: boolean;
+  /** The role whose view is being previewed (admin-only "view as"); null normally. */
+  preview_role?: MosRole | null;
 }
 
 export interface BootstrapResponse {
@@ -360,6 +364,28 @@ function activeRoleHeader(): Record<string, string> {
 }
 
 /**
+ * Admin-only "view as": preview another role's interface to test what they see.
+ * The SERVER ignores this header unless the caller is a platform admin, and it
+ * only shapes what the UI SHOWS (surfaces + capabilities) — RLS still runs under
+ * the admin's real identity, so it previews the VIEW, not data-level access.
+ */
+const PREVIEW_ROLE_KEY = 'mos_preview_role';
+
+export function getPreviewRole(): string | null {
+  return window.localStorage.getItem(PREVIEW_ROLE_KEY);
+}
+
+export function setPreviewRole(role: string | null): void {
+  if (role) window.localStorage.setItem(PREVIEW_ROLE_KEY, role);
+  else window.localStorage.removeItem(PREVIEW_ROLE_KEY);
+}
+
+function previewRoleHeader(): Record<string, string> {
+  const role = getPreviewRole();
+  return role ? { 'x-mos-preview-role': role } : {};
+}
+
+/**
  * Client-side ceiling on one marketing-os call. Vercel kills an edge function
  * at 25s and returns a bare 504; aborting a touch earlier lets us surface a
  * friendly, retryable message instead of that raw gateway code (the transient
@@ -379,6 +405,7 @@ async function call<T>(action: string, payload: Record<string, unknown> = {}): P
         'Content-Type': 'application/json',
         ...(await authHeader()),
         ...activeRoleHeader(),
+        ...previewRoleHeader(),
       },
       body: JSON.stringify({ action, ...payload }),
       signal: controller.signal,

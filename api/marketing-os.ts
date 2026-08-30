@@ -1525,6 +1525,41 @@ export default async function handler(req: Request): Promise<Response> {
         const requestedRole = (req.headers.get('x-mos-active-role') ?? '').trim();
         const activeRole = held.includes(requestedRole) ? requestedRole : (held[0] ?? 'viewer');
 
+        // Admin-only "view as": preview ANOTHER role's interface to test what
+        // they see. Gated on the caller actually being a platform admin — a
+        // non-admin sending the header is ignored. This only shapes what the UI
+        // SHOWS (roles/capabilities/surfaces); RLS still runs under the admin's
+        // real identity, so it previews the VIEW, not data-level access.
+        const isAdmin = held.includes('administrator');
+        const PREVIEWABLE = new Set(['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage', 'viewer']);
+        const rawPreview = (req.headers.get('x-mos-preview-role') ?? '').trim();
+        const previewRole = isAdmin && PREVIEWABLE.has(rawPreview) ? rawPreview : null;
+
+        let effRoles: string[] = held;
+        let effCaps: string[] = capabilities;
+        let effActive = activeRole;
+        let effSurfaces = computeSurfaces(held, accessRes.data ?? []);
+
+        if (previewRole) {
+          effRoles = [previewRole];
+          effActive = previewRole;
+          effSurfaces = computeSurfaces([previewRole], accessRes.data ?? []);
+          if (previewRole === 'viewer') {
+            effCaps = [];
+          } else {
+            // A previewed role's capabilities are exactly its role_capabilities
+            // rows (the marketing_manager row already carries the full registry,
+            // matching wassell_mos_can's manager special-case). RLS on
+            // role_capabilities is read-open to any authenticated user.
+            const capQ = await sb.from('role_capabilities')
+              .select('capability, roles!inner(key)')
+              .eq('roles.key', `mos_${previewRole}`);
+            const capFail = dbFail(capQ.error);
+            if (capFail) return capFail;
+            effCaps = ((capQ.data ?? []) as Array<{ capability: string }>).map((r) => r.capability);
+          }
+        }
+
         const settings: Record<string, unknown> = {};
         for (const row of (settingsRes.data ?? []) as Array<{ key: string; value: unknown }>) {
           settings[row.key] = row.value;
@@ -1533,13 +1568,15 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({
           me: {
             user_id: appUserId,
-            roles: held,
-            capabilities,
-            active_role: activeRole,
-            surfaces: computeSurfaces(held, accessRes.data ?? []),
+            roles: effRoles,
+            capabilities: effCaps,
+            active_role: effActive,
+            surfaces: effSurfaces,
             // Notification prefs arrive with the notifications migration (…_04),
             // which is not in this build yet.
             prefs: {},
+            is_admin: isAdmin,
+            preview_role: previewRole,
           },
           content_types: typesRes.data ?? [],
           workflows: assembleWorkflowDefs(wfRes.data ?? [], verRes.data ?? []),

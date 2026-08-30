@@ -34,6 +34,7 @@ import {
   fetchRoles,
   fetchWork,
   persistActiveRole,
+  setPreviewRole,
 } from '@/lib/marketingOS/client';
 import { initial, num } from './lib/format';
 import {
@@ -282,6 +283,10 @@ export default function MarketingWorkspace() {
     () => ({}) as Record<SurfaceKey, SurfaceLevel>,
   );
   const [appUserId, setAppUserId] = useState<string | null>(null);
+  // Admin-only "view as": is the caller a platform admin, and which role (if any)
+  // is currently being previewed. Both come from the server bootstrap.
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [previewRole, setPreviewRoleState] = useState<MosRole | null>(null);
   const [contentTypes, setContentTypes] = useState<MosContentType[]>([]);
   const [projects, setProjects] = useState<MosProject[]>([]);
   const [people, setPeople] = useState<RolePerson[]>([]);
@@ -344,6 +349,8 @@ export default function MarketingWorkspace() {
       setCapabilities(new Set(bootstrap.me.capabilities as Capability[]));
       setSurfaces(bootstrap.me.surfaces);
       setAppUserId(bootstrap.me.user_id);
+      setIsAdmin(bootstrap.me.is_admin ?? false);
+      setPreviewRoleState((bootstrap.me.preview_role as MosRole | null) ?? null);
       setContentTypes(bootstrap.content_types);
       setProjects(projectsResult.projects);
       setPeople(rolesResult.people);
@@ -391,6 +398,14 @@ export default function MarketingWorkspace() {
     // after a role switch (persistActiveRole above sets the header first).
     void loadBadges();
   }, [loadBadges]);
+
+  // Admin "view as": persist the preview choice and hard-reload so the whole
+  // workspace re-bootstraps with the new header — every surface, badge and
+  // gated control then reflects the previewed role in one clean pass.
+  const viewAs = useCallback((next: MosRole | null) => {
+    setPreviewRole(next && next !== 'administrator' ? next : null);
+    window.location.reload();
+  }, []);
 
   const ctx: WorkspaceCtx = useMemo(() => ({
     role,
@@ -487,6 +502,33 @@ export default function MarketingWorkspace() {
             );
           })}
 
+          {isAdmin && (
+            <div style={{ padding: '10px 14px 0' }}>
+              <label
+                htmlFor="mos-view-as"
+                style={{ fontSize: 10.5, color: 'rgba(255,255,255,.6)', display: 'block', marginBottom: 4 }}
+              >
+                {isAr ? '👁 معاينة كـ (اختبار)' : '👁 View as (test)'}
+              </label>
+              <select
+                id="mos-view-as"
+                value={previewRole ?? ''}
+                onChange={(e) => viewAs((e.target.value || null) as MosRole | null)}
+                style={{
+                  width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 8,
+                  background: previewRole ? 'var(--copper)' : 'rgba(255,255,255,.06)',
+                  color: previewRole ? '#fff' : 'var(--rail-ink)',
+                  border: '1px solid rgba(255,255,255,.2)', cursor: 'pointer',
+                }}
+              >
+                <option value="">{isAr ? 'حسابي (مدير النظام)' : 'My account (Admin)'}</option>
+                {(['marketing_manager', 'ops_supervisor', 'writer', 'montage', 'ceo', 'viewer'] as MosRole[]).map((r) => (
+                  <option key={r} value={r}>{isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="rail-foot">
             <div className="av">{initial(roleLabel)}</div>
             <div style={{ minWidth: 0 }}>
@@ -529,7 +571,27 @@ export default function MarketingWorkspace() {
             </div>
           )}
 
-          {role === 'viewer' && ready && !bootError && (
+          {isAdmin && previewRole && ready && !bootError && (
+            <div style={{ padding: '14px 26px 0' }}>
+              <div className="notice" style={{ borderInlineStart: '4px solid var(--copper)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span>
+                  {isAr
+                    ? `👁 تعاين الآن كـ «${ROLE_LABELS[previewRole]?.ar ?? previewRole}» — هذه هي واجهته. أنت لا تزال مدير النظام.`
+                    : `👁 Previewing as “${ROLE_LABELS[previewRole]?.en ?? previewRole}” — this is their view. You are still the Admin.`}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  style={{ marginInlineStart: 'auto' }}
+                  onClick={() => viewAs(null)}
+                >
+                  {isAr ? 'العودة لحسابك' : 'Back to your account'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {role === 'viewer' && !previewRole && ready && !bootError && (
             <div style={{ padding: '14px 26px 0' }}>
               <div className="notice">
                 {isAr
