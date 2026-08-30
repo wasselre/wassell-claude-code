@@ -1340,7 +1340,9 @@ export interface ContentInventoryTotals {
  * included on purpose (a gap is what the view is for).
  */
 export const fetchContentInventory = () =>
-  call<{ projects: ContentInventoryProject[]; totals: ContentInventoryTotals }>('content_inventory');
+  call<{ projects: ContentInventoryProject[]; totals: ContentInventoryTotals; model_id: string }>(
+    'content_inventory',
+  );
 
 /* ------------------------------------------------------------------ */
 /* Manual tasks — hand-assigned work no workflow generates             */

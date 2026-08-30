@@ -3443,7 +3443,9 @@ export default async function handler(req: Request): Promise<Response> {
           },
         );
 
-        return jsonOk({ projects, totals });
+        // model_id lets the client deep-link into the Files library filtered to
+        // one project (business_files_search needs model_id + record_id).
+        return jsonOk({ projects, totals, model_id: apId });
       }
 
       /* -------------------------------------------------------- */
