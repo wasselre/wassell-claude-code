@@ -166,20 +166,27 @@ export async function runEnrichmentJob(
   if (rightsValues.length) props.usage_rights = { type: 'string', enum: rightsValues, description: 'حقوق الاستخدام — من القائمة فقط.' };
   if (stateValues.length) props.production_state = { type: 'string', enum: stateValues, description: 'حالة الإنتاج — من القائمة فقط.' };
 
+  // The three axes are REQUIRED best-guesses — the operator wants every field
+  // filled (they can override any). asset_nature/subjects/detected_names stay
+  // optional (asset_nature already fills; names must never be guessed).
+  const required = ['description', 'asset_nature',
+    ...(acqValues.length ? ['acquisition_source'] : []),
+    ...(rightsValues.length ? ['usage_rights'] : []),
+    ...(stateValues.length ? ['production_state'] : [])];
   const tool = {
     name: 'propose_metadata',
     description: 'Propose metadata for a Wassel real-estate marketing file.',
-    input_schema: { type: 'object' as const, properties: props, required: ['description'] },
+    input_schema: { type: 'object' as const, properties: props, required },
   };
   let prompt =
-    `أنت تصنّف ملفاً تسويقياً عقارياً لشركة وصل العقارية. استدعِ الأداة propose_metadata واملأ كل الحقول التي تستطيع الاستدلال عليها من محتوى الملف.\n` +
+    `أنت تصنّف ملفاً تسويقياً عقارياً لشركة وصل العقارية. استدعِ الأداة propose_metadata واملأ كل الحقول.\n` +
     `- التصنيفات المسموحة (استخدم القيمة الإنجليزية فقط): ${subjectMenu}.\n` +
     `- طبيعة الأصل المسموحة (القيمة الإنجليزية فقط): ${menu(natureRows)}.\n` +
-    (acqValues.length ? `- مصدر الحصول المسموح (القيمة الإنجليزية فقط): ${menu(acqRows)}. استدلّ منه: تصميم/لقطة من أنظمتنا → internal؛ علامة أو شعار منافس → competitor؛ كتيّب أو رندر مطوّر → developer؛ صورة من عميل → client؛ مصدر عام/سوشيال بلا مالك واضح → public؛ غير واضح → unknown.\n` : '') +
-    (stateValues.length ? `- حالة الإنتاج المسموحة (القيمة الإنجليزية فقط): ${menu(stateRows)}. لقطة شاشة أو ملف غير مصقول → raw؛ تصميم مصقول بعلامة الشركة → final؛ عليه آثار تعديل بيني → edited.\n` : '') +
-    (rightsValues.length ? `- حقوق الاستخدام المسموحة (القيمة الإنجليزية فقط): ${menu(rightsRows)}. كن متحفظاً: محتوى واضح أنه من إنتاجنا → approved؛ محتوى منافس أو عليه علامة طرف آخر → do_not_use؛ أي شكّ في الملكية → needs_review.\n` : '') +
+    (acqValues.length ? `- مصدر الحصول (إلزامي — اختر الأقرب دائماً، لا تتركه فارغاً): ${menu(acqRows)}. استدلّ: تصميم/لقطة من أنظمتنا → internal؛ علامة أو شعار منافس → competitor؛ كتيّب أو رندر أو مخطط مطوّر → developer؛ صورة من عميل → client؛ مصدر عام/سوشيال بلا مالك واضح → public؛ إن لم يتّضح فاختر internal إن بدا من إنتاجنا وإلا unknown.\n` : '') +
+    (stateValues.length ? `- حالة الإنتاج (إلزامي — اختر الأقرب دائماً): ${menu(stateRows)}. لقطة شاشة أو ملف غير مصقول → raw؛ تصميم/مخطط مصقول جاهز → final؛ عليه آثار تعديل بيني → edited؛ إن لم يتّضح فاختر raw.\n` : '') +
+    (rightsValues.length ? `- حقوق الاستخدام (إلزامي — اختر الأقرب دائماً): ${menu(rightsRows)}. محتوى يبدو من إنتاجنا → approved؛ محتوى منافس أو عليه علامة طرف آخر → do_not_use؛ عند أي شكّ في الملكية → needs_review.\n` : '') +
     `- في detected_names: ضع أسماء المشاريع العقارية أو المطوّرين الظاهرة نصياً داخل الملف كما هي بالضبط (مثل «مينا 52»)، دون تخمين أو إضافة.\n` +
-    `لا تخترع أي قيمة خارج القوائم. حيثما لا تستطيع الاستدلال بثقة على حقلٍ اختياري، اتركه فارغاً. الوصف والعنوان والوسوم بالعربية.`;
+    `لا تخترع أي قيمة خارج القوائم. الحقول الإلزامية أعلاه يجب أن تحمل دائماً أقرب قيمة (لا تتركها فارغة). الوصف والعنوان والوسوم بالعربية.`;
   if (transcript) prompt += `\n\nنص الكلام في الملف (منسوخ آلياً):\n${transcript}`;
   if (kind === 'audio') prompt += `\n\n(هذا ملف صوتي — اعتمد على النص أعلاه.)`;
 
@@ -195,11 +202,17 @@ export async function runEnrichmentJob(
   const toolUse = msg.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
   if (!toolUse) { console.log(`[enrich] job=${job.id} no tool call — no-op`); return {}; }
   const out = (toolUse.input ?? {}) as {
-    description?: unknown; subjects?: unknown; asset_nature?: unknown; tags?: unknown; detected_names?: unknown;
+    description?: unknown; title?: unknown; subjects?: unknown; asset_nature?: unknown; tags?: unknown;
+    acquisition_source?: unknown; usage_rights?: unknown; production_state?: unknown; detected_names?: unknown;
   };
 
   const result: Record<string, unknown> = { model: ENRICH_MODEL };
   if (typeof out.description === 'string' && out.description.trim()) result.description = out.description.trim();
+  if (typeof out.title === 'string' && out.title.trim()) result.title = out.title.trim().slice(0, 200);
+  // The three axes — accept only a value that is in its live allowlist.
+  if (typeof out.acquisition_source === 'string' && acqValues.includes(out.acquisition_source)) result.acquisition_source = out.acquisition_source;
+  if (typeof out.usage_rights === 'string' && rightsValues.includes(out.usage_rights)) result.usage_rights = out.usage_rights;
+  if (typeof out.production_state === 'string' && stateValues.includes(out.production_state)) result.production_state = out.production_state;
   if (Array.isArray(out.subjects)) {
     const subs = out.subjects.filter((s): s is string => typeof s === 'string' && subjectValues.includes(s));
     if (subs.length) result.subjects = [...new Set(subs)];
@@ -236,7 +249,7 @@ export async function runEnrichmentJob(
     }
   }
 
-  console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} subjects=${(result.subjects as string[] | undefined)?.length ?? 0} names=${names.length} linkSugg=${nSugg}`);
+  console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} subjects=${(result.subjects as string[] | undefined)?.length ?? 0} axes=${[result.asset_nature, result.acquisition_source, result.usage_rights, result.production_state].filter(Boolean).length}/4 title=${result.title ? 'y' : 'n'} names=${names.length} linkSugg=${nSugg}`);
   return result;
 }
 
