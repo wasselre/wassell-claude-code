@@ -107,8 +107,12 @@ const manualOverdue = (t: MosManualTask): boolean =>
   Boolean(t.due_at) && new Date(t.due_at as string).getTime() < Date.now();
 
 export default function WorkPage() {
-  const { isAr, typeLabel, projectName, setBadge, people } = useWorkspace();
+  const { isAr, typeLabel, projectName, setBadge, people, surfaces } = useWorkspace();
   const navigate = useNavigate();
+  // The «الجميع» (everyone) view is the team board — visible only to roles whose
+  // `team` surface is not hidden (CEO + marketing manager by default). Without
+  // this gate the toggle let any role click through to everyone's tasks.
+  const canSeeTeam = surfaces.team !== 'hidden';
   const isMobile = useIsMobile();
   const addToast = useAppStore((s) => s.addToast);
 
@@ -681,14 +685,16 @@ export default function WorkPage() {
           ? `${roleLabel} · ${num(mine.length + late.length + manualSorted.length, true)} مفتوحة، ${num(late.length + manualLateCount, true)} متأخرة`
           : `${roleLabel} · ${mine.length + late.length + manualSorted.length} open, ${late.length + manualLateCount} late`}
       >
-        <div className="seg">
-          <button type="button" className="on">
-            {isAr ? 'مهامي' : 'Mine'}
-          </button>
-          <button type="button" onClick={() => navigate('/m/team')}>
-            {isAr ? 'الجميع' : 'Everyone'}
-          </button>
-        </div>
+        {canSeeTeam && (
+          <div className="seg">
+            <button type="button" className="on">
+              {isAr ? 'مهامي' : 'Mine'}
+            </button>
+            <button type="button" onClick={() => navigate('/m/team')}>
+              {isAr ? 'الجميع' : 'Everyone'}
+            </button>
+          </div>
+        )}
         {/* Everyone can give themselves a task; assigning to someone else is
             gated inside the modal by the `assign_task` capability. */}
         <button type="button" className="btn btn-p" onClick={() => setNewTask(true)}>

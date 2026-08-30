@@ -3744,7 +3744,17 @@ export default async function handler(req: Request): Promise<Response> {
       /* My work / Team work — the task queue, by role             */
       /* -------------------------------------------------------- */
       case 'work_list': {
-        const scope = str(body.scope) === 'team' ? 'team' : 'mine';
+        let scope = str(body.scope) === 'team' ? 'team' : 'mine';
+        // The team board (EVERYONE's queue) is gated by the `team` surface —
+        // only roles whose team surface is not 'hidden' (CEO + marketing
+        // manager by default) may pull it. A hidden-surface caller is silently
+        // downgraded to their OWN queue, so a stale client, a direct API call,
+        // or a leftover "الجميع" button can never expose the whole team's tasks.
+        if (scope === 'team') {
+          const surf = await callerSurfaces(sb);
+          if ('fail' in surf) return surf.fail;
+          if (surf.surfaces.team === 'hidden') scope = 'mine';
+        }
         const roleRes = await sb.rpc('wassell_mos_role', { p_auth_uid: user.userId });
         const roleFail = dbFail(roleRes.error);
         if (roleFail) return roleFail;

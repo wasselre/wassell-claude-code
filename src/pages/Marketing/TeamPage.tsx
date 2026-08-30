@@ -50,8 +50,16 @@ function dueLabel(r: MosContentRow, isAr: boolean): string {
 }
 
 export default function TeamPage() {
-  const { isAr, role: myRole, projectName, people, can } = useWorkspace();
+  const { isAr, role: myRole, projectName, people, can, surfaces, ready } = useWorkspace();
   const navigate = useNavigate();
+  // Team work is EVERYONE's queue — gated by the `team` surface (CEO + marketing
+  // manager by default). A role whose team surface is hidden is bounced back to
+  // its own queue, so a direct /m/team URL cannot expose the whole team's tasks.
+  // (The server's work_list also downgrades a hidden-surface caller to 'mine',
+  // so no team data loads even for the instant before this redirect fires.)
+  useEffect(() => {
+    if (ready && surfaces.team === 'hidden') navigate('/m/my-work', { replace: true });
+  }, [ready, surfaces.team, navigate]);
   const addToast = useAppStore((s) => s.addToast);
 
   const [rows, setRows] = useState<MosContentRow[]>([]);
