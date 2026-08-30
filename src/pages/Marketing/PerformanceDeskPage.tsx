@@ -350,11 +350,6 @@ export default function PerformanceDeskPage() {
               </div>
               <div className="card-b" style={{ display: 'grid', gap: 12 }}>
                 <DemandMeter lines={demandLines} isAr={isAr} />
-                <div style={{ fontSize: 10.5, color: 'var(--mute)' }}>
-                  {isAr
-                    ? 'الشريط الأخضر = الإنتاج الفريد المطلوب · الخط العمودي = سقف الطاقة · الأخضر الفاتح = فائض · الأحمر = تجاوز. الطاقة تُقارَن بالإنتاج الفريد لا بالنشر — القطعة الواحدة تُنشر على عدة منصات وإعلانات لكنها تُنتَج مرة واحدة.'
-                    : 'Green bar = unique production needed · the vertical line = capacity ceiling · light green = spare · red = overflow. Capacity is compared to unique production, not distribution — one creative is placed on many platforms and ads but produced once.'}
-                </div>
               </div>
             </div>
 

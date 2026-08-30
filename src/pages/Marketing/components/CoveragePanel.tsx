@@ -189,13 +189,8 @@ export default function CoveragePanel({ isAr }: { isAr: boolean }) {
         {/* ── production demand vs capacity (visual gauges) ──────────── */}
         {cov && cov.demand.length > 0 && (
           <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14, display: 'grid', gap: 12 }}>
-            <b style={{ fontSize: 12.5 }}>{isAr ? 'الإنتاج مقابل الطاقة' : 'Production vs capacity'}</b>
+            <b style={{ fontSize: 12.5 }}>{isAr ? 'كم نحتاج أن نصنع هذا الأسبوع؟' : 'To make this week'}</b>
             <DemandMeter lines={cov.demand} isAr={isAr} />
-            <div style={{ fontSize: 10.5, color: 'var(--mute)' }}>
-              {isAr
-                ? 'الشريط الأخضر = الإنتاج الفريد المطلوب · الخط العمودي = سقف الطاقة · الأخضر الفاتح = فائض · الأحمر = تجاوز. الطاقة تُقارَن بالإنتاج الفريد لا بالنشر — القطعة الواحدة تُنشر على عدة منصات وإعلانات لكنها تُنتَج مرة واحدة. تُضبط من الإعدادات ← طاقة العمل.'
-                : 'Green bar = unique production needed · the vertical line = capacity ceiling · light green = spare · red = overflow. Capacity is compared to unique production, not distribution — one creative is placed on many platforms and ads but produced once. Set it in Settings → Load & SLA.'}
-            </div>
           </div>
         )}
 

@@ -215,8 +215,8 @@ export default function SettingsLoad({
               </div>
               <div className="card-b" style={{ fontSize: 11.5, color: 'var(--mute)' }}>
                 {isAr
-                  ? 'الأولوية: مهلة النوع المحدد ثم «أي مهمة». الفراغ = مهلة خطوة المسار الافتراضية.'
-                  : 'Precedence: the bucket-specific hours, then "any task". Blank = the workflow step\'s default due.'}
+                  ? 'كل مهمة تُمهَل يوم عمل واحد كحد أقصى (٢٤ ساعة)، والساعة تتوقف يوم الجمعة (يوم العطلة) والإجازة المعتمدة — فلا تُحتسب مهمة متأخرة في وقت لا يعمل فيه أحد. القيم هنا لا تتجاوز ٢٤. الأولوية: مهلة النوع المحدد ثم «أي مهمة».'
+                  : 'Every task gets at most one working day (24h); the clock pauses on Friday (the day off) and during approved leave, so nothing counts late in off-hours. Values here are capped at 24. Precedence: the bucket-specific hours, then "any task".'}
               </div>
             </div>
 
