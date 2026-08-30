@@ -22,13 +22,9 @@ import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Skeleton } from './components/kit';
 import { num } from './lib/format';
 import { computeDemand, type CapacityRow, type DemandLine } from './lib/coverage';
+import DemandMeter from './components/DemandMeter';
 
 const BUCKETS: readonly PerfBucket[] = ['post', 'video'];
-
-const ROLE_AR: Record<string, string> = {
-  ceo: 'الرئيس التنفيذي', marketing_manager: 'مدير التسويق', ops_supervisor: 'مشرف العمليات',
-  writer: 'الكاتب', montage: 'المونتاج',
-};
 
 const fmtDate = (iso: string | null | undefined, isAr: boolean): string => {
   if (!iso) return '—';
@@ -139,7 +135,6 @@ export default function PerformanceDeskPage() {
 
   const roleKeyById = (roleId: string): string =>
     (desk?.roles.find((r) => r.id === roleId)?.key ?? '').replace(/^mos_/, '');
-  const roleLabel = (k: string | null): string => (k && isAr ? (ROLE_AR[k] ?? k) : (k ?? ''));
 
   // Distribution demand (placements, Σ platforms) vs PRODUCTION demand (unique
   // creatives, max across platforms — content is reused) vs production capacity
@@ -353,43 +348,12 @@ export default function PerformanceDeskPage() {
                   </tbody>
                 </table>
               </div>
-              <div className="card-b" style={{ fontSize: 11.5, color: 'var(--mute)', display: 'grid', gap: 8 }}>
-                {demandLines.map((d) => {
-                  const bl = d.bucket === 'post' ? (isAr ? 'منشورات' : 'Posts') : (isAr ? 'فيديوهات' : 'Videos');
-                  return (
-                    <div key={d.bucket} style={{ display: 'grid', gap: 2 }}>
-                      <div style={{ fontWeight: 700, color: 'var(--ink)' }}>
-                        {bl}
-                        {d.short && (
-                          <b style={{ color: 'var(--bad, #b3261e)', marginInlineStart: 8 }}>
-                            {isAr ? `— عجز إنتاج ${num(d.productionGapPerWeek, isAr)}/أسبوع` : `— production gap ${d.productionGapPerWeek}/week`}
-                          </b>
-                        )}
-                      </div>
-                      <div>
-                        {isAr
-                          ? `احتياج النشر ${num(d.distributionPerWeek, isAr)}/أسبوع (${num(d.distributionPerDay, isAr)}/يوم موضِعًا)`
-                          : `distribution demand ${d.distributionPerWeek}/week (${d.distributionPerDay}/day placements)`}
-                      </div>
-                      <div style={{ fontWeight: 700, color: 'var(--ink)' }}>
-                        {isAr
-                          ? `احتياج الإنتاج الفعلي ${num(d.productionPerWeek, isAr)}/أسبوع (${num(d.productionPerDay, isAr)}/يوم فريد)`
-                          : `actual production demand ${d.productionPerWeek}/week (${d.productionPerDay}/day unique)`}
-                      </div>
-                      <div style={d.short ? { color: 'var(--bad, #b3261e)', fontWeight: 700 } : { color: 'var(--go, #3f6b52)' }}>
-                        {d.capacityPerWorkingDay > 0
-                          ? (isAr
-                            ? `طاقة الإنتاج ${num(d.capacityPerWeek, isAr)}/أسبوع (${num(d.capacityPerWorkingDay, isAr)}/يوم عمل${d.bottleneckRole ? ` — اختناق: ${roleLabel(d.bottleneckRole)}` : ''})`
-                            : `production capacity ${d.capacityPerWeek}/week (${d.capacityPerWorkingDay}/working-day${d.bottleneckRole ? ` — bottleneck: ${d.bottleneckRole}` : ''})`)
-                          : (isAr ? 'لا طاقة إنتاج مُعدّة' : 'no production capacity set')}
-                      </div>
-                    </div>
-                  );
-                })}
-                <div style={{ fontSize: 10.5 }}>
+              <div className="card-b" style={{ display: 'grid', gap: 12 }}>
+                <DemandMeter lines={demandLines} isAr={isAr} />
+                <div style={{ fontSize: 10.5, color: 'var(--mute)' }}>
                   {isAr
-                    ? 'الطاقة تُقارَن بالإنتاج الفريد لا بالنشر. القطعة الواحدة تُنشر على عدة منصات وإعلانات لكنها تُنتَج مرة واحدة.'
-                    : 'Capacity is compared to unique production, not distribution. One creative is placed on many platforms and ads but produced once.'}
+                    ? 'الشريط الأخضر = الإنتاج الفريد المطلوب · الخط العمودي = سقف الطاقة · الأخضر الفاتح = فائض · الأحمر = تجاوز. الطاقة تُقارَن بالإنتاج الفريد لا بالنشر — القطعة الواحدة تُنشر على عدة منصات وإعلانات لكنها تُنتَج مرة واحدة.'
+                    : 'Green bar = unique production needed · the vertical line = capacity ceiling · light green = spare · red = overflow. Capacity is compared to unique production, not distribution — one creative is placed on many platforms and ads but produced once.'}
                 </div>
               </div>
             </div>

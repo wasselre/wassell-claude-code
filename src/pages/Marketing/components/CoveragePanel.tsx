@@ -16,15 +16,10 @@ import {
   CoverageCell, computeCoverage, periodWindow, ymd, type PeriodKind,
 } from '../lib/coverage';
 import { num } from '../lib/format';
+import DemandMeter from './DemandMeter';
 
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: '#C13584', tiktok: 'var(--ink)', snapchat: '#C8B400', x: 'var(--ink)', youtube: '#C4302B',
-};
-
-/** Marketing role keys → Arabic labels (for the bottleneck line). */
-const ROLE_AR: Record<string, string> = {
-  ceo: 'الرئيس التنفيذي', marketing_manager: 'مدير التسويق', ops_supervisor: 'مشرف العمليات',
-  writer: 'الكاتب', montage: 'المونتاج',
 };
 
 /* One stacked pace bar: published (solid) + planned (light) against the whole
@@ -85,12 +80,6 @@ export default function CoveragePanel({ isAr }: { isAr: boolean }) {
 
   const label = (p: string) => (isAr ? PLATFORM_LABELS[p]?.ar : PLATFORM_LABELS[p]?.en) ?? p;
   const bucketLabel = (b: string) => b === 'post' ? (isAr ? 'منشورات' : 'Posts') : (isAr ? 'فيديو' : 'Videos');
-  const roleLabel = (k: string | null) => (k && isAr ? (ROLE_AR[k] ?? k) : (k ?? ''));
-  /** One-decimal number with Arabic digits when isAr (for the working-day average). */
-  const dec = (n: number): string => {
-    const s = (Math.round(n * 10) / 10).toString();
-    return isAr ? s.replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.charAt(Number(d))).replace('.', '٫') : s;
-  };
 
   const overall = cov?.overall;
   const overallPct = overall && overall.fullTarget > 0
@@ -197,63 +186,15 @@ export default function CoveragePanel({ isAr }: { isAr: boolean }) {
           ))}
         </div>
 
-        {/* ── distribution demand vs production demand vs capacity ──── */}
+        {/* ── production demand vs capacity (visual gauges) ──────────── */}
         {cov && cov.demand.length > 0 && (
           <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14, display: 'grid', gap: 12 }}>
-            <b style={{ fontSize: 12.5 }}>{isAr ? 'النشر مقابل الإنتاج مقابل الطاقة' : 'Distribution vs production vs capacity'}</b>
-            {cov.demand.map((c) => (
-              <div key={c.bucket} style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span className="tag">{bucketLabel(c.bucket)}</span>
-                  {c.short && (
-                    <b style={{ color: 'var(--late)', fontSize: 11.5 }}>
-                      {isAr
-                        ? `عجز إنتاج ${num(c.productionGapPerWeek, true)}/أسبوع`
-                        : `production gap ${c.productionGapPerWeek}/week`}
-                    </b>
-                  )}
-                </div>
-                {/* Distribution demand — placements (every platform separately). */}
-                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                  <span style={{ color: 'var(--mute)', minWidth: 116, display: 'inline-block' }}>
-                    {isAr ? 'احتياج النشر' : 'Distribution demand'}
-                  </span>
-                  <span>
-                    {isAr
-                      ? `${num(c.distributionPerDay, true)}/يوم · ${num(c.distributionPerWeek, true)}/أسبوع موضِعًا`
-                      : `${c.distributionPerDay}/day · ${c.distributionPerWeek}/week placements`}
-                  </span>
-                </div>
-                {/* Production demand — unique creatives (reused across platforms). */}
-                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                  <span style={{ color: 'var(--mute)', minWidth: 116, display: 'inline-block' }}>
-                    {isAr ? 'احتياج الإنتاج الفعلي' : 'Actual production demand'}
-                  </span>
-                  <span style={{ fontWeight: 700 }}>
-                    {isAr
-                      ? `${num(c.productionPerDay, true)}/يوم · ${num(c.productionPerWeek, true)}/أسبوع · متوسط ${dec(c.productionWorkingDayAvg)}/يوم عمل`
-                      : `${c.productionPerDay}/day · ${c.productionPerWeek}/week · ${dec(c.productionWorkingDayAvg)}/working-day avg`}
-                  </span>
-                </div>
-                {/* Production capacity — slowest stage × working days. */}
-                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                  <span style={{ color: 'var(--mute)', minWidth: 116, display: 'inline-block' }}>
-                    {isAr ? 'طاقة الإنتاج' : 'Production capacity'}
-                  </span>
-                  <span style={{ color: c.short ? 'var(--late)' : 'var(--go)' }}>
-                    {c.capacityPerWorkingDay > 0
-                      ? (isAr
-                        ? `${num(c.capacityPerWorkingDay, true)}/يوم عمل · ${num(c.capacityPerWeek, true)}/أسبوع${c.bottleneckRole ? ` (اختناق: ${roleLabel(c.bottleneckRole)})` : ''}`
-                        : `${c.capacityPerWorkingDay}/working-day · ${c.capacityPerWeek}/week${c.bottleneckRole ? ` (bottleneck: ${c.bottleneckRole})` : ''}`)
-                      : (isAr ? 'لا طاقة إنتاج مُعدّة' : 'no production capacity set')}
-                  </span>
-                </div>
-              </div>
-            ))}
+            <b style={{ fontSize: 12.5 }}>{isAr ? 'الإنتاج مقابل الطاقة' : 'Production vs capacity'}</b>
+            <DemandMeter lines={cov.demand} isAr={isAr} />
             <div style={{ fontSize: 10.5, color: 'var(--mute)' }}>
               {isAr
-                ? 'النشر = كل موضِع منصة على حدة. الإنتاج = القطع الفريدة فقط (الفيديو نفسه يُعاد استخدامه على كل المنصات وفي الإعلانات المدفوعة، فيُحسب مرة واحدة). الطاقة تُقارَن بالإنتاج لا بالنشر، وتُضبط من الإعدادات ← طاقة العمل.'
-                : 'Distribution = every platform placement. Production = unique creatives only (the same video is reused on every platform and in paid ads, counted once). Capacity is compared to production, not distribution. Set it in Settings → Load & SLA.'}
+                ? 'الشريط الأخضر = الإنتاج الفريد المطلوب · الخط العمودي = سقف الطاقة · الأخضر الفاتح = فائض · الأحمر = تجاوز. الطاقة تُقارَن بالإنتاج الفريد لا بالنشر — القطعة الواحدة تُنشر على عدة منصات وإعلانات لكنها تُنتَج مرة واحدة. تُضبط من الإعدادات ← طاقة العمل.'
+                : 'Green bar = unique production needed · the vertical line = capacity ceiling · light green = spare · red = overflow. Capacity is compared to unique production, not distribution — one creative is placed on many platforms and ads but produced once. Set it in Settings → Load & SLA.'}
             </div>
           </div>
         )}
