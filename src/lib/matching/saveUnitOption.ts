@@ -83,3 +83,31 @@ export async function saveUnitToClient(
 
   return { unit, project };
 }
+
+/**
+ * Save ONE project to a client's property options — the unified path behind the
+ * in-chat Projects & Units browser's "Add to options" button. Goes through the
+ * SAME `saveClientOption` engine (client_property_options, `source_type:'project'`)
+ * as the Project Finder and the unit save above, so a project saved from a chat
+ * shows up in the Client Options tab like every other option — replacing the old
+ * `addProjectToClient` path that wrote to the `clients.preferred_projects`
+ * lookup (a preference field, invisible to the options tab).
+ */
+export async function saveProjectToClient(
+  clientId: string,
+  projectRec: AppRecord,
+  addedFrom: ClientOptionAddedFrom = 'manual',
+): Promise<SaveOptionResult> {
+  const state = useAppStore.getState();
+  const store = { models: state.models, records: state.records };
+  const projectName = asString((projectRec.data as Record<string, unknown>).project_name);
+  return saveClientOption({
+    clientId,
+    sourceType: 'project',
+    sourceId: projectRec.id,
+    sourceName: projectName,
+    facts: buildOptionFacts(store, 'project', projectRec),
+    addedFrom,
+    status: 'suitable',
+  });
+}

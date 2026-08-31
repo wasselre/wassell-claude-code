@@ -12,7 +12,7 @@ import {
   rollupByKind, asRange, type ProjectView, type NumericRange,
 } from '@/lib/projects/projectView';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
-import { addProjectToClient } from '@/lib/matching/addToClient';
+import { saveProjectToClient } from '@/lib/matching/saveUnitOption';
 import { recordTitle } from '@/lib/documents/links';
 import { normalizePhone } from '@/lib/phone';
 import { chatPdfFromClient, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
@@ -46,7 +46,8 @@ import type { AppModel, AppRecord } from '@/types';
  * recomputed), and the unit table is the SAME `UnitsInventory` component from
  * the project detail page (filters, sort, unit drawer, compare). Actions reuse
  * the existing paths too — `ProjectWhatsAppFlow` for "send this project" and
- * `addProjectToClient` for "save to the client's options".
+ * `saveProjectToClient` (the unified Client Property Options engine, same as the
+ * Project Finder + the unit save) for "save to the client's options".
  *
  * z-index: the sheet sits at z-40, deliberately BELOW the 50/55/60 modal tiers,
  * so everything it launches (UnitsInventory's unit drawer + compare modal at
@@ -232,7 +233,22 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
   const openView = useMemo(() => (openId ? views.find((v) => v.id === openId) ?? null : null), [views, openId]);
   const [sendTarget, setSendTarget] = useState<{ id: string; name: string } | null>(null);
   const [addState, setAddState] = useState<'idle' | 'saving' | 'added'>('idle');
-  useEffect(() => { setAddState('idle'); }, [openId]);
+  // On opening a project, reflect whether it's ALREADY a (non-eliminated) option
+  // for this client, so a saved project shows "In options" instead of "Add".
+  // Keyed on openId only (not records) so an unrelated inbound message can't
+  // clobber the 'saving' state mid-write; addToOptions owns the post-click state.
+  useEffect(() => {
+    if (!clientId || !openId) { setAddState('idle'); return; }
+    const m = modelByName(models, 'client_property_options');
+    const rec = m
+      ? (records[m.id] ?? []).find(
+          (r) => r.data.client_id === clientId && r.data.source_type === 'project' && r.data.source_id === openId,
+        )
+      : undefined;
+    const st = rec ? String(rec.data.status) : null;
+    setAddState(st && st !== 'eliminated' ? 'added' : 'idle');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId]);
 
   // Esc: back to the list from a project, else close the sheet. Ignored while a
   // stacked flow owns the screen (the send flow has its own dismissal).
@@ -249,22 +265,28 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
   const addToOptions = async (v: ProjectView) => {
     if (!clientId) return;
     setAddState('saving');
-    const res = await addProjectToClient(clientId, v.id);
-    if (res.status === 'added') {
+    // Unified path: writes to the client's Client Property Options (same engine
+    // as the Project Finder + the unit save), so it shows in the Client Options
+    // tab — replacing the old preferred_projects lookup write.
+    const res = await saveProjectToClient(clientId, v.raw);
+    if (res.outcome === 'created') {
       setAddState('added');
       addToast(L('أُضيف المشروع إلى خيارات العميل', 'Added to the client’s options'), 'success');
-    } else if (res.status === 'already') {
+    } else if (res.outcome === 'updated') {
       setAddState('added');
       addToast(L('المشروع موجود مسبقاً ضمن خيارات العميل', 'Already in the client’s options'), 'info');
-    } else if (res.status === 'queued') {
+    } else if (res.outcome === 'queued') {
       setAddState('added');
       addToast(L('تعذر الحفظ الآن — سيُعاد الإرسال تلقائياً', 'Saved offline — it will sync automatically'), 'info');
+    } else if (res.outcome === 'eliminated_exists') {
+      setAddState('idle');
+      addToast(L('هذا المشروع مستبعد سابقاً لهذا العميل — أعِد تفعيله من قائمة الخيارات.', 'This project was eliminated for this client — reactivate it from the options list.'), 'error');
     } else {
       // conflict / error — the store already surfaced the Supabase failure; this
       // toast tells the rep what THEIR action did, per the fail-loudly rule.
       setAddState('idle');
       addToast(
-        res.status === 'conflict'
+        res.outcome === 'conflict'
           ? L('تم تعديل بطاقة العميل من مكان آخر — حدّث الصفحة وأعد المحاولة', 'The client was edited elsewhere — reload and retry')
           : L('تعذر إضافة المشروع لخيارات العميل', 'Could not add the project to the client’s options'),
         'error',
