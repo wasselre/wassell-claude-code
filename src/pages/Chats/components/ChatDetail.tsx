@@ -196,6 +196,10 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       /* private mode — remembering the preference is best-effort, not fatal */
     }
   };
+  // The options surface's inner view (list / finder / browse), lifted here so it
+  // SURVIVES a Split↔Full-screen switch — the docked panel and the modal are
+  // two instances, and without a shared mode the switch would reset to the list.
+  const [optionsMode, setOptionsMode] = useState<'options' | 'finder' | 'browse'>('options');
   // Collapse the conversation's top section (CRM actions, meta, preference
   // chips, study card) so the thread owns the height — especially useful in
   // split view where the chat column is narrow. Persisted; desktop-only effect.
@@ -352,7 +356,11 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     onOpenAdvertiser: openAdvertiserRecord,
     // Toggle so the header button also CLOSES the docked split panel (on the
     // modal path it can only be clicked while closed, so toggling is harmless).
-    onClientOptions: () => setShowClientOptions((v) => !v),
+    // Opening fresh starts on the options list.
+    onClientOptions: () => {
+      if (!showClientOptions) setOptionsMode('options');
+      setShowClientOptions((v) => !v);
+    },
     onLogInteraction: () => setShowLogInteraction(true),
     onBookAppointment: () => setShowBookAppointment(true),
     onRecordVisit: () => setShowRecordVisit(true),
@@ -636,6 +644,8 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
             clientId={clientLinkId}
             onClose={() => setShowClientOptions(false)}
             onToggleLayout={isWide ? () => chooseOptionsView('dock') : undefined}
+            mode={optionsMode}
+            onModeChange={setOptionsMode}
           />
         </Suspense>
       )}
@@ -744,6 +754,8 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
             clientId={clientLinkId!}
             onClose={() => setShowClientOptions(false)}
             onToggleLayout={() => chooseOptionsView('modal')}
+            mode={optionsMode}
+            onModeChange={setOptionsMode}
           />
         </Suspense>
       </div>

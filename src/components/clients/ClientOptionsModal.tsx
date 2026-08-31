@@ -40,6 +40,8 @@ export default function ClientOptionsModal({
   onClose,
   variant = 'modal',
   onToggleLayout,
+  mode: controlledMode,
+  onModeChange,
 }: {
   clientId: string;
   onClose: () => void;
@@ -50,6 +52,14 @@ export default function ClientOptionsModal({
    * switch (and persists the choice); this just surfaces the control.
    */
   onToggleLayout?: () => void;
+  /**
+   * Optional CONTROLLED mode. When the host owns this (passing `mode` +
+   * `onModeChange`), the options/finder/browse view survives switching between
+   * the docked panel and the full-screen modal — otherwise each is a fresh
+   * instance that resets to the options list. Omit both for internal state.
+   */
+  mode?: 'options' | 'finder' | 'browse';
+  onModeChange?: (mode: 'options' | 'finder' | 'browse') => void;
 }) {
   const docked = variant === 'docked';
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -65,7 +75,16 @@ export default function ClientOptionsModal({
   const canEdit = useCanEditRecord(clientsModel, client);
   const isMobile = useIsMobile();
 
-  const [mode, setMode] = useState<'options' | 'finder' | 'browse'>('options');
+  // Mode is CONTROLLED when the host passes `mode` + `onModeChange` (so the
+  // view survives a docked↔modal switch); otherwise it's internal. `setMode`
+  // updates both so an uncontrolled host still works and a controlled one is
+  // notified.
+  const [internalMode, setInternalMode] = useState<'options' | 'finder' | 'browse'>('options');
+  const mode = controlledMode ?? internalMode;
+  const setMode = (m: 'options' | 'finder' | 'browse') => {
+    setInternalMode(m);
+    onModeChange?.(m);
+  };
   // A drilled-into option's SOURCE record (project / unit / market listing),
   // shown as an overlay the rep can back out of — closing it returns to the
   // options list (the "give me a back button" fix), instead of the old
@@ -218,6 +237,11 @@ export default function ClientOptionsModal({
                 editPrefsFirst
                 onDone={() => setMode('options')}
                 onOpenSource={onOpenSource}
+                // Surface the Split ↔ Full-screen switch inside the finder too
+                // (incl. the edit-preferences step), so the choice isn't lost
+                // once the rep leaves the options list.
+                onToggleLayout={onToggleLayout}
+                layoutDocked={docked}
               />
             )}
           </div>

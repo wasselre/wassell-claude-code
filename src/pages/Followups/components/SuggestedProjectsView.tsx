@@ -1,6 +1,6 @@
 import { buildGeoNameMap } from '@/lib/geo/geoNameMap';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown, ChevronUp, TimerOff, RefreshCw, CheckSquare, List, Map as MapIcon } from 'lucide-react';
+import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown, ChevronUp, TimerOff, RefreshCw, CheckSquare, List, Map as MapIcon, Maximize2, Columns2 } from 'lucide-react';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
@@ -121,6 +121,15 @@ interface Props {
    *  All Projects list. Absent = the old new-tab behaviour (standalone page /
    *  follow-up workspace). */
   onOpenSource?: (sourceType: 'project' | 'market_listing', sourceId: string) => void;
+  /** When set, a header button lets the rep switch the HOST surface between the
+   *  docked split panel and the full-screen modal — so the Split/Full-screen
+   *  choice is available here too, not only on the options list before entering
+   *  the finder (user request 2026-08-31). Passed only by the in-chat Client
+   *  Options host on a wide screen; the standalone page / workspace omit it. */
+  onToggleLayout?: () => void;
+  /** Whether the host is CURRENTLY docked — picks the button's icon/label
+   *  (docked → "Full screen", modal → "Split"). */
+  layoutDocked?: boolean;
 }
 
 const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
@@ -138,7 +147,7 @@ const PAGE = 24;
 
 export default function SuggestedProjectsView({
   isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName, clientName,
-  defaultPrefsCollapsed, editPrefsFirst, onDone, onOpenSource,
+  defaultPrefsCollapsed, editPrefsFirst, onDone, onOpenSource, onToggleLayout, layoutDocked,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
@@ -750,6 +759,19 @@ export default function SuggestedProjectsView({
               <span className="rounded-full bg-white/25 px-1.5 text-[11px]">{selectedVisible}</span>
             </button>
           </>
+        )}
+        {/* Split ↔ Full-screen — available here too (in the finder, and while
+            editing preferences), not only on the options list. */}
+        {onToggleLayout && (
+          <button
+            type="button"
+            onClick={onToggleLayout}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-copper/30 bg-copper/5 px-3 py-2 text-sm font-bold text-copper transition hover:bg-copper/10"
+            title={layoutDocked ? L('عرض بملء الشاشة', 'Show full screen') : L('تقسيم الشاشة بجانب المحادثة', 'Split beside the chat')}
+          >
+            {layoutDocked ? <Maximize2 size={15} /> : <Columns2 size={15} />}
+            <span className="hidden sm:inline">{layoutDocked ? L('ملء الشاشة', 'Full screen') : L('تقسيم', 'Split')}</span>
+          </button>
         )}
         <button
           type="button"
