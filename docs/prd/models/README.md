@@ -4,13 +4,13 @@
 
 # Models — auto-generated index
 
-**51 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
+**52 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
 
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [Advertisers](advertisers.md) | `advertisers` | JSONB | — | 1 | 10 | no | 2026-07-01 |
 | [AI Agent](ai-chats.md) | `ai_chats` | JSONB | New Group | 1 | 5 | yes | 2026-08-20 |
-| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 70 | no | 2026-08-24 |
+| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 71 | no | 2026-08-31 |
 | [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 11 | no | 2026-08-31 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 13 | yes | 2026-08-20 |
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 15 | yes | 2026-08-20 |
@@ -32,6 +32,7 @@
 | [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-08-20 |
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
 | [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 86 | no | 2026-08-30 |
+| [Marketers](marketers.md) | `marketers` | JSONB | Projects | 1 | 3 | no | 2026-08-31 |
 | [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 17 | yes | 2026-08-20 |
 | [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-08-20 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
@@ -41,7 +42,7 @@
 | [Post Batches](posts-batches.md) | `posts_batches` | JSONB | — | 1 | 13 | no | 2026-07-26 |
 | [Posts Content](posts-content.md) | `posts_content` | JSONB | — | 4 | 30 | no | 2026-07-26 |
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-08-20 |
-| [Project Officers](project-officers.md) | `project_officers` | JSONB | Projects | 1 | 6 | no | 2026-08-31 |
+| [Project Officers](project-officers.md) | `project_officers` | JSONB | Projects | 1 | 7 | no | 2026-08-31 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
 | [Real Estate Offices](real-estate-offices.md) | `real_estate_offices` | JSONB | Unresponded Requests | 1 | 6 | no | 2026-07-30 |
 | [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-08-20 |

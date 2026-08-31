@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-24
+**Last updated (from DB):** 2026-08-31
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **10** (1 base, 9 non-base)
-- Fields: **70**
+- Fields: **71**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 1
@@ -40,6 +40,7 @@
 | `project_type` | Project Type / نوع المشروع | Dropdown | no | half | yes | 3 options |
 | `project_status` | Project Status / حالة المشروع | Dropdown | no | half | yes | 6 options |
 | `project_classification` | Project Classification / تصنيف المشروع | Dropdown | no | half | yes | 4 options |
+| `marketer` | Marketer / المسوّق | Lookup | no | half | yes | → Marketers |
 | `construction_status` | Construction Status / حالة الإنشاء | Dropdown | no | half | yes | 7 options |
 | `unit_types` | Unit Types / أنواع الوحدات | Multi-select | no | half | yes | 13 options · multi |
 | `preferred_amenities` | Preferred Amenities / المرافق | Multi-select | no | half | no | 41 options · multi |
@@ -70,7 +71,11 @@
   - API value `our_projects` → "Our Projects" / "مشاريعنا" · color `#B8734F`
   - API value `general_project` → "General Project" / "مشروع عام" · color `#C09B5F`
   - API value `aqar_platform` → "Aqar Platform" / "منصة عقار" · color `#8E4E3A`
-  - API value `riva_projects` → "Riva Projects" / "مشاريع ريفا" · color `#C09B5F`
+  - API value `riva_projects` → "Project from a Marketer" / "مشروع من مسوّق" · color `#C09B5F`
+- **Marketer / المسوّق** (`marketer`, type `lookup`):
+  - target model: Marketers
+  - shows field: `name`
+  - multiple: no · max in dropdown: 500
 - **Construction Status / حالة الإنشاء** (`construction_status`, type `dropdown`) — options:
   - API value `excavation` → "Excavation" / "الحفر" · color `#8B5CF6`
   - API value `foundations` → "Foundations" / "القواعد" · color `#3B82F6`

@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **6**
+- Fields: **7**
 - Section-selector field: none
 - Duplicate-check field: Phone (`phone`)
 - Custom buttons: 0
@@ -31,6 +31,7 @@
 | `projects` | Projects (optional) / المشاريع (اختياري) | Lookup | no | half | yes | → All Projects · multi |
 | `is_active` | Active / نشط | Checkbox | no | half | yes |  |
 | `notes` | Notes / ملاحظات | Text area | no | full | no |  |
+| `marketer` | Marketer / المسوّق | Lookup | no | half | yes | → Marketers |
 
 **Field details:**
 
@@ -44,3 +45,7 @@
   - target model: All Projects
   - shows field: `project_name`
   - multiple: yes · max in dropdown: 1000
+- **Marketer / المسوّق** (`marketer`, type `lookup`):
+  - target model: Marketers
+  - shows field: `name`
+  - multiple: no · max in dropdown: 500
