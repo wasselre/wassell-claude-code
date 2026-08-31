@@ -140,6 +140,16 @@ export default function CallResultConfirmHost() {
   const syntheticFollowup = useMemo<AppRecord | null>(() => {
     if (!followupModel || !active || linkedFollowup) return null;
     const now = new Date().toISOString();
+    // The client's owner (Sales Consultant) is auto-derived from the newest
+    // assigned follow-up's sales_rep. Recording an off-task call must NOT steal
+    // ownership from the client's rep, so this synthesised follow-up inherits
+    // the client's EXISTING owner — falling back to the caller only when the
+    // client has no owner yet.
+    const ownerRaw = clientRec?.data.client_owner;
+    const existingOwner =
+      Array.isArray(ownerRaw)
+        ? (typeof ownerRaw[0] === 'string' ? ownerRaw[0] : null)
+        : (typeof ownerRaw === 'string' ? ownerRaw : null);
     return {
       id: (() => {
         const existing = synthIds.current.get(active.id);
@@ -153,7 +163,7 @@ export default function CallResultConfirmHost() {
         client_id: active.client_id,
         // section_selector convention: the type is stored as an array.
         followup_type: [typeKey],
-        sales_rep: active.rep_user_id,
+        sales_rep: existingOwner ?? active.rep_user_id,
         scheduled_datetime: (callRec?.data.call_time as string) ?? now,
         completed_by_call_id: active.call_record_id,
       },
@@ -161,7 +171,7 @@ export default function CallResultConfirmHost() {
       updated_at: now,
       version: null,
     } as unknown as AppRecord;
-  }, [followupModel, active, linkedFollowup, callRec, typeKey]);
+  }, [followupModel, active, linkedFollowup, callRec, typeKey, clientRec]);
 
   /** What the outcome picker and the save actually operate on. */
   const followupRec = linkedFollowup ?? syntheticFollowup;
