@@ -222,6 +222,9 @@ export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, 
         <div className="p-4 border-b border-sand/50 flex items-start justify-between gap-3 sticky top-0 bg-white z-10">
           <div>
             <div className="text-lg font-bold text-charcoal">{unit.code ?? `#${unit.id.slice(0, 8)}`}</div>
+            {unit.developerCode && (
+              <div className="text-xs text-charcoal/40">{isAr ? 'رمز المطور' : 'Dev. code'}: {unit.developerCode}</div>
+            )}
             <div className="text-sm text-charcoal/50">{projectName ?? ''}</div>
             <div className="mt-1 flex gap-1.5">
               {unit.type && <Badge label={lab(unit.type)} color={unit.type.color ?? '#C09B5F'} />}

@@ -197,6 +197,7 @@ export async function buildUnitsTablePdf({
       const status = optLabel(u.status, isAr);
       return `<tr style="border-top:1px solid ${BRAND.sand}55;background:${bg}">
         <td style="${num(isAr ? 'right' : 'left')};font-weight:700;color:${BRAND.chocolate}">${esc(u.code) || `#${u.id.slice(0, 6)}`}</td>
+        <td style="${num(isAr ? 'right' : 'left')};color:${BRAND.charcoal}99">${esc(u.developerCode) || '—'}</td>
         <td style="${num(isAr ? 'right' : 'left')}">${esc(optLabel(u.type, isAr)) || '—'}</td>
         <td style="${num(isAr ? 'left' : 'right')}">${u.area != null ? `${fmt(u.area)}` : '—'}</td>
         <td style="${num('center')}">${u.bedrooms ?? '—'}</td>
@@ -220,6 +221,7 @@ export async function buildUnitsTablePdf({
       <table style="width:100%;border-collapse:collapse;font-size:12.5px;border:1px solid ${BRAND.sand}66">
         <thead><tr style="background:${BRAND.cream};color:${BRAND.chocolate};font-weight:700">
           <th style="${th(isAr ? 'right' : 'left')}">${isAr ? 'الكود' : 'Code'}</th>
+          <th style="${th(isAr ? 'right' : 'left')}">${isAr ? 'رمز المطور' : 'Dev. code'}</th>
           <th style="${th(isAr ? 'right' : 'left')}">${isAr ? 'النوع' : 'Type'}</th>
           <th style="${th(isAr ? 'left' : 'right')}">${isAr ? 'المساحة (م²)' : 'Area (m²)'}</th>
           <th style="${th('center')}">${isAr ? 'غرف' : 'Beds'}</th>
@@ -229,7 +231,7 @@ export async function buildUnitsTablePdf({
           <th style="${th(isAr ? 'left' : 'right')}">${isAr ? `سعر المتر` : 'Price/m²'}</th>
           <th style="${th(isAr ? 'right' : 'left')}">${isAr ? 'الحالة' : 'Status'}</th>
         </tr></thead>
-        <tbody>${body || `<tr><td colspan="9" style="padding:14px;text-align:center;color:#999">${isAr ? 'لا توجد وحدات' : 'No units'}</td></tr>`}</tbody>
+        <tbody>${body || `<tr><td colspan="10" style="padding:14px;text-align:center;color:#999">${isAr ? 'لا توجد وحدات' : 'No units'}</td></tr>`}</tbody>
       </table>
       <div style="margin-top:14px;font-size:10.5px;color:${BRAND.charcoal}88">
         ${isAr
@@ -305,7 +307,10 @@ export async function buildUnitPdf({
     ${headerHtml(project, isAr, subtitle)}
     <div style="padding:26px 32px">
       <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-bottom:2px solid ${BRAND.copper};padding-bottom:8px;margin-bottom:14px">
-        <div style="font-size:22px;font-weight:700;color:${BRAND.chocolate}">${esc(unit.code) || `#${unit.id.slice(0, 8)}`}</div>
+        <div>
+          <div style="font-size:22px;font-weight:700;color:${BRAND.chocolate}">${esc(unit.code) || `#${unit.id.slice(0, 8)}`}</div>
+          ${unit.developerCode ? `<div style="font-size:12px;color:${BRAND.charcoal}99;margin-top:2px">${isAr ? 'رمز المطور' : 'Dev. code'}: ${esc(unit.developerCode)}</div>` : ''}
+        </div>
         <div style="text-align:${isAr ? 'left' : 'right'}">
           <div style="font-size:20px;font-weight:700;color:${BRAND.copper}">${esc(sar(unit.totalPrice)) || (isAr ? 'السعر غير متوفر' : 'Price N/A')}</div>
           <div style="font-size:11px;color:${BRAND.charcoal}99">${isAr ? 'سعر المتر' : 'Price/m²'}: ${esc(sar(unit.pricePerM2)) || '—'}</div>

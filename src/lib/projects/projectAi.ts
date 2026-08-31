@@ -188,6 +188,7 @@ export function finderCandidatesForNarration(resp: FinderResponse, perGroup = 3)
 export function unitFacts(u: UnitView, isAr: boolean): Record<string, unknown> {
   return {
     code: u.code,
+    developer_code: u.developerCode,
     type: u.type ? (isAr ? u.type.label_ar : u.type.label_en) : null,
     status: u.status ? (isAr ? u.status.label_ar : u.status.label_en) : null,
     bedrooms: u.bedrooms,

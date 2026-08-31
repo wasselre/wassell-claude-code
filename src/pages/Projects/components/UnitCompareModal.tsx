@@ -19,6 +19,7 @@ export default function UnitCompareModal({ open, onClose, units, isAr }: UnitCom
   const bestPerM2Id = bestUnitBy(units, (u) => u.pricePerM2, 'min');
 
   const rows: { label: string; render: (u: UnitView) => React.ReactNode; bestId?: string | null }[] = [
+    { label: isAr ? 'رمز المطور' : 'Dev. code', render: (u) => u.developerCode ?? dash },
     { label: isAr ? 'النوع' : 'Type', render: (u) => (u.type ? (isAr ? u.type.label_ar : u.type.label_en) : dash) },
     { label: isAr ? 'الحالة' : 'Status', render: (u) => (u.status ? <Badge label={isAr ? u.status.label_ar : u.status.label_en} color={u.status.color ?? undefined} /> : dash) },
     { label: isAr ? 'السعر' : 'Price', render: (u) => SAR(u.totalPrice, isAr) ?? dash, bestId: cheapestId },

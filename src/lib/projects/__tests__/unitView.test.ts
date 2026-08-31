@@ -28,8 +28,9 @@ function unit(id: string, data: Record<string, unknown>, createdAt = '2026-01-01
 
 describe('resolveUnitView', () => {
   it('computes price/m² and resolves options', () => {
-    const v = resolveUnitView(store(), unit('u1', { unit_code: 'U-0001', unit_type: 'apartment', unit_status: 'available', unit_area: 100, total_price: 900000, bedrooms: 3 }));
+    const v = resolveUnitView(store(), unit('u1', { unit_code: 'U-0001', developer_unit_code: 'TY01-AA-1-1', unit_type: 'apartment', unit_status: 'available', unit_area: 100, total_price: 900000, bedrooms: 3 }));
     expect(v.code).toBe('U-0001');
+    expect(v.developerCode).toBe('TY01-AA-1-1');
     expect(v.type?.label_en).toBe('Apartment');
     expect(v.status?.color).toBe('#10B981');
     expect(v.area).toBe(100);
@@ -41,6 +42,7 @@ describe('resolveUnitView', () => {
   it('leaves missing facts null and does not divide by zero', () => {
     const v = resolveUnitView(store(), unit('u2', { unit_area: 0, total_price: 500000 }));
     expect(v.code).toBeNull();
+    expect(v.developerCode).toBeNull();
     expect(v.type).toBeNull();
     expect(v.bedrooms).toBeNull();
     expect(v.pricePerM2).toBeNull(); // area 0 → not computable, never Infinity

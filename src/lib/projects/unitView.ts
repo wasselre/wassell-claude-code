@@ -25,7 +25,8 @@ export interface UnitView {
   id: string;
   raw: AppRecord;
   projectId: string | null;
-  code: string | null;
+  code: string | null; // our internal unit code (unit_code, e.g. U-1234)
+  developerCode: string | null; // the developer's own code for the unit (developer_unit_code)
   unitNumber: string | null;
   model: string | null;
   developer: string | null;
@@ -109,6 +110,7 @@ export function resolveUnitView(
     raw: record,
     projectId,
     code: asString(data.unit_code) ?? asString(data.unit_number),
+    developerCode: asString(data.developer_unit_code),
     unitNumber: data.unit_number != null ? String(data.unit_number) : null,
     model: tr('unit_model', asString(data.unit_model)),
     developer: lookupNameLocalized(store, developerField, developerField ? data[developerField.name] : null, opts),

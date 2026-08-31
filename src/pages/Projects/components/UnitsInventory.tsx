@@ -267,6 +267,7 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
               <tr className="text-charcoal/40 text-xs border-b border-sand/50">
                 <th className="p-2 w-8"></th>
                 <th className="p-2 text-start">{isAr ? 'الكود' : 'Code'}</th>
+                <th className="p-2 text-start">{isAr ? 'رمز المطور' : 'Dev. code'}</th>
                 <th className="p-2 text-start">{isAr ? 'النوع' : 'Type'}</th>
                 <th className="p-2 text-end">{isAr ? 'المساحة' : 'Area'}</th>
                 <th className="p-2 text-center">{isAr ? 'غرف' : 'Beds'}</th>
@@ -284,6 +285,7 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
                     <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} className="rounded border-sand text-copper focus:ring-copper/30" />
                   </td>
                   <td className="p-2 font-medium text-charcoal">{u.code ?? `#${u.id.slice(0, 6)}`}</td>
+                  <td className="p-2 text-charcoal/60">{u.developerCode ?? '—'}</td>
                   <td className="p-2 text-charcoal/70">{u.type ? (isAr ? u.type.label_ar : u.type.label_en) : '—'}</td>
                   <td className="p-2 text-end text-charcoal/70">{u.area !== null ? `${u.area} m²` : '—'}</td>
                   <td className="p-2 text-center text-charcoal/70">{u.bedrooms ?? '—'}</td>
