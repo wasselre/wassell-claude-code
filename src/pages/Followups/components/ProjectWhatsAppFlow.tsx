@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { X, Loader2, Sparkles, MessageCircle, RefreshCw, FileText, ArrowRight, ArrowLeft, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { resolveProjectFacts } from '@/lib/projectMessageFacts';
+import { savedMessageMatchesCurrentFacts } from '@/lib/projectMessage/factsMatch';
 import { generateProjectMessageAi, factCheckProjectMessage } from '@/lib/projectMessage/client';
 import { findProjectTemplate } from '@/lib/matching/sendToClient';
 import Button from '@/components/ui/Button';
@@ -157,6 +158,28 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
     setError(null);
     setWarn(null);
     setPreviewMode('factcheck');
+
+    // Fast path — skip the slow AI fact-check when the saved message already
+    // reflects the project's CURRENT numbers (price / area / bed-bath ranges).
+    // The fact-check only ever rewrites numbers, so if none drifted the call is
+    // pure latency (~1–2 min against the model). Facts resolve from the same
+    // synthetic our_projects record the save path uses. Conservative by design:
+    // any un-provable number (or a now-sold-out project still quoting a price)
+    // falls through to the real fact-check below.
+    const currentFacts = resolveProjectFacts(
+      { id: 'wa-synthetic', data: { project: projectId } } as unknown as AppRecord,
+      models,
+      records,
+    );
+    if (savedMessageMatchesCurrentFacts(currentFacts, savedAr, savedEn)) {
+      setBodyAr(savedAr);
+      setBodyEn(savedEn);
+      setChatBody((isAr ? savedAr : savedEn) || savedAr || savedEn);
+      setGeneratedBy(null);
+      setPhase('preview');
+      return;
+    }
+
     try {
       const { body_ar, body_en, generated_by } = await factCheckProjectMessage(projectId, savedAr, savedEn);
       const ar = body_ar || savedAr;
