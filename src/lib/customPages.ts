@@ -38,7 +38,8 @@ export type CustomPageId =
   | 'marketing_intelligence'
   | 'marketing_management'
   | 'financing_calculator'
-  | 'market_automation';
+  | 'market_automation'
+  | 'competitor_watch';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -165,6 +166,17 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     route: '/marketing-intelligence',
     label_ar: 'ذكاء التسويق',
     label_en: 'Marketing Intelligence',
+    icon: Radar,
+    default_access: 'admin',
+  },
+  {
+    // Competitor Watch — a NEW, from-scratch workspace (deliberately not built on
+    // the old 'marketing_intelligence' page). v1 ships the Content Library; the
+    // monitoring surfaces follow. Admin-only, same posture as the page it succeeds.
+    id: 'competitor_watch',
+    route: '/competitor-watch',
+    label_ar: 'مرصد المنافسين',
+    label_en: 'Competitor Watch',
     icon: Radar,
     default_access: 'admin',
   },

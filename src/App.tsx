@@ -69,6 +69,7 @@ const SalesManagerPage = lazy(() => import('@/pages/Sales/SalesManagerPage'));
 const MarketIntelligencePage = lazy(() => import('@/pages/MarketIntelligence/MarketIntelligencePage'));
 const MarketAutomationPage = lazy(() => import('@/pages/MarketAutomation/MarketAutomationPage'));
 const MarketingIntelligencePage = lazy(() => import('@/pages/MarketingIntelligence/MarketingIntelligencePage'));
+const CompetitorWatchPage = lazy(() => import('@/pages/CompetitorWatch/CompetitorWatchPage'));
 // ── The Marketing WORKSPACE ────────────────────────────────────────────
 // A second workspace, not a page inside the Sales one: it mounts OUTSIDE
 // AppLayout with its own shell, rail and visual system, under /m. The switcher
@@ -414,6 +415,7 @@ export default function App() {
           <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
           <Route path="/market-automation" element={<RequirePageAccess pageId="market_automation"><MarketAutomationPage /></RequirePageAccess>} />
           <Route path="/marketing-intelligence" element={<RequirePageAccess pageId="marketing_intelligence"><MarketingIntelligencePage /></RequirePageAccess>} />
+          <Route path="/competitor-watch" element={<RequirePageAccess pageId="competitor_watch"><CompetitorWatchPage /></RequirePageAccess>} />
           {/* The old in-Sales marketing page is gone. Anyone with a bookmark
               (or a profile whose sidebar still points here) lands in the new
               workspace instead of on a blank route. */}

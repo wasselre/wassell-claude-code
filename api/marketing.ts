@@ -76,6 +76,12 @@ interface Body {
   label?: string;
   src_campaign_id?: string;
   dst_campaign_id?: string;
+  // content library (competitor watch)
+  shelf?: string;
+  format?: string;
+  has_offer?: boolean;
+  q?: string;
+  offset?: number;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined);
@@ -394,6 +400,26 @@ export default async function handler(req: Request): Promise<Response> {
         });
         if (error) return jsonError(500, error.message);
         return jsonOk({ index: data });
+      }
+
+      case 'content_library': {
+        // Competitor Content Library — the "shelves". One assembled row per post
+        // (labels the enrichment AI already computed) + purpose facets. Read-only,
+        // service client like intelligence_index; the route is the access gate.
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const { data, error } = await svc.rpc('mkt_content_library', {
+          p_shelf: str(body.shelf) ?? null,
+          p_org: str(body.organization_id) ?? null,
+          p_format: str(body.format) ?? str(body.post_type) ?? null,
+          p_platform: str(body.platform) ?? null,
+          p_has_offer: typeof body.has_offer === 'boolean' ? body.has_offer : null,
+          p_q: str(body.q) ?? null,
+          p_limit: typeof body.limit === 'number' ? Math.min(100, Math.max(1, body.limit)) : 40,
+          p_offset: typeof body.offset === 'number' ? Math.max(0, body.offset) : 0,
+        });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ library: data });
       }
 
       case 'insight_dismiss': {
