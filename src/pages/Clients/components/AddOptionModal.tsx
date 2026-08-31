@@ -9,6 +9,7 @@ import {
   modelByName, geoName, rollupByKind, asString, asFiniteNumber,
   type ProjectStoreSlices,
 } from '@/lib/projects/projectView';
+import { buildOptionFacts } from '@/lib/matching/optionFacts';
 import type { AppModel, AppRecord } from '@/types';
 
 interface Props {
@@ -49,86 +50,6 @@ function fmtPrice(v: unknown, cur: string): string | null {
     if (min != null || max != null) return `${fmtN((min ?? max)!)} ${cur}`;
   }
   return null;
-}
-
-const scalarRange = (v: unknown): { min: number; max: number } | undefined => {
-  const n = asFiniteNumber(v);
-  return n != null ? { min: n, max: n } : undefined;
-};
-
-/** Facts snapshot per source — same keys the Project Finder puts on its cards
- *  (only present values), so manual options render identically in the tab. */
-function buildFacts(
-  store: ProjectStoreSlices,
-  sourceType: ClientOptionSourceType,
-  rec: AppRecord,
-): Record<string, unknown> {
-  const facts: Record<string, unknown> = {};
-  const put = (k: string, v: unknown) => {
-    if (v === null || v === undefined || v === '') return;
-    if (Array.isArray(v) && v.length === 0) return;
-    facts[k] = v;
-  };
-  const data = rec.data as Record<string, unknown>;
-
-  if (sourceType === 'project') {
-    const ap = modelByName(store.models, 'all_projects');
-    const loc = locOf(data);
-    put('city', geoName(store, 'cities', firstId(loc.city)));
-    put('district', geoName(store, 'districts', firstId(loc.district)));
-    put('unit_types', Array.isArray(data.unit_types) ? data.unit_types : undefined);
-    put('project_status', asString(data.project_status));
-    put('price_range', rollupByKind(ap, data, 'price_range') ?? data.price_range);
-    put('area_range', rollupByKind(ap, data, 'area_range') ?? data.area_range);
-    put('bedroom_range', rollupByKind(ap, data, 'bedroom_range') ?? data.bedroom_range);
-    put('bathroom_range', rollupByKind(ap, data, 'bathroom_range') ?? data.bathroom_range);
-    put('unit_count', asFiniteNumber(rollupByKind(ap, data, 'units_count') ?? data.unit_count));
-    put('available_units', asFiniteNumber(rollupByKind(ap, data, 'units_available_count') ?? data.available_units));
-    const firstImage = Array.isArray(data.project_images)
-      ? (data.project_images.find((x) => typeof x === 'string' && x) as string | undefined)
-      : undefined;
-    put('image', asString(data.main_image) ?? firstImage);
-    return facts;
-  }
-
-  if (sourceType === 'market_listing') {
-    const loc = locOf(data);
-    put('city', geoName(store, 'cities', firstId(loc.city)));
-    put('district', geoName(store, 'districts', firstId(loc.district)));
-    const types = [asString(data.property_type), asString(data.listing_type), asString(data.category)].filter(Boolean);
-    put('unit_types', types);
-    put('price_range', scalarRange(data.price));
-    put('area_range', scalarRange(data.area));
-    put('bedroom_range', scalarRange(data.bedrooms));
-    put('bathroom_range', scalarRange(data.bathrooms));
-    put('available_units', data.is_active === true ? 1 : 0);
-    put('image', asString(data.main_image_url));
-    put('external_id', asString(data.external_id));
-    // DB-computed listing quality — rides in the slim store, snapshotted here
-    // like the finder's facts so the option card shows the same grade chip.
-    put('quality_score', asFiniteNumber(data.quality_score));
-    put('quality_grade', asString(data.quality_grade));
-    return facts;
-  }
-
-  // unit — a single unit; geography comes from its parent project.
-  const project = firstId(data.project_id);
-  if (project) {
-    const ap = modelByName(store.models, 'all_projects');
-    const projRec = ap ? (store.records[ap.id] ?? []).find((r) => r.id === project) : undefined;
-    if (projRec) {
-      const loc = locOf(projRec.data as Record<string, unknown>);
-      put('city', geoName(store, 'cities', firstId(loc.city)));
-      put('district', geoName(store, 'districts', firstId(loc.district)));
-    }
-  }
-  const unitType = asString(data.unit_type);
-  put('unit_types', unitType ? [unitType] : undefined);
-  put('price_range', scalarRange(data.total_price));
-  put('area_range', scalarRange(data.unit_area));
-  put('bedroom_range', scalarRange(data.bedrooms));
-  put('bathroom_range', scalarRange(data.bathrooms));
-  return facts;
 }
 
 /**
@@ -234,7 +155,7 @@ export default function AddOptionModal({ clientId, isAr, onClose }: Props) {
       sourceType: tab,
       sourceId: c.rec.id,
       sourceName: c.name,
-      facts: buildFacts(store, tab, c.rec),
+      facts: buildOptionFacts(store, tab, c.rec),
       addedFrom: 'manual',
       status: 'suitable',
     });

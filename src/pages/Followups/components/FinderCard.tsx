@@ -59,6 +59,10 @@ interface Props {
    *  rep SEND the units-table + single-unit PDFs to the client, not just
    *  download them. Absent → download only. */
   chatPdf?: ChatPdfContext | null;
+  /** The client the finder is scoped to. When set, the project's units popup
+   *  gains a "Save to client options" action per unit (saving the unit + its
+   *  parent project). Absent (standalone discovery) → no unit-save action. */
+  clientId?: string | null;
 }
 
 const fmtNum = (n: number) => n.toLocaleString('en-US');
@@ -118,7 +122,7 @@ const asCoord = (v: unknown): number | null => {
 
 export default function FinderCard({
   item, isAr, onOpenDetails, selected, onToggleSelect, saveState, existingStatus,
-  onSetStatus, onSendToClient, onShowOnMap, hideClientActions, chatPdf,
+  onSetStatus, onSendToClient, onShowOnMap, hideClientActions, chatPdf, clientId,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
@@ -363,7 +367,7 @@ export default function FinderCard({
         </div>
       </div>
 
-      {showUnits && <ProjectUnitsModal item={item} isAr={isAr} chatPdf={chatPdf} onClose={() => setShowUnits(false)} />}
+      {showUnits && <ProjectUnitsModal item={item} isAr={isAr} chatPdf={chatPdf} clientId={clientId} onClose={() => setShowUnits(false)} />}
     </div>
   );
 }

@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
-import { Download, FileText, GitCompare, Loader2, X } from 'lucide-react';
+import { Check, Download, FileText, GitCompare, ListPlus, Loader2, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import DualRangeSlider from '@/components/ui/DualRangeSlider';
 import { modelByName, fieldByCandidates, resolveProjectView, type ProjectView } from '@/lib/projects/projectView';
 import { resolveUnitView, unitsForProject, sortUnits, type UnitView, type UnitSortKey } from '@/lib/projects/unitView';
+import { saveUnitToClient } from '@/lib/matching/saveUnitOption';
+import type { ClientOptionStatus } from '@/lib/matching/clientOptions';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import { buildUnitsTablePdf, unitsPdfFilename } from '@/lib/projects/unitsPdf';
 import { downloadPdf, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
@@ -28,11 +30,18 @@ interface UnitsInventoryProps {
    * into this conversation. When null (project pages), only Download is shown.
    */
   chatPdf?: ChatPdfContext | null;
+  /**
+   * When set (a client is in context — the Finder, the in-chat browser, the
+   * Client Options tab), each unit row + the unit drawer gain a "Save to client
+   * options" action. Saving a unit ALSO saves its parent project (see
+   * saveUnitToClient). Absent (plain project pages) → no save action is shown.
+   */
+  clientId?: string | null;
 }
 
 const SAR = (n: number | null, isAr: boolean) => (n === null ? (isAr ? 'غير متوفر' : 'N/A') : `${n.toLocaleString(isAr ? 'ar-SA' : 'en-US')} ${isAr ? 'ر.س' : 'SAR'}`);
 
-export default function UnitsInventory({ projectId, projectName, isAr, project, chatPdf }: UnitsInventoryProps) {
+export default function UnitsInventory({ projectId, projectName, isAr, project, chatPdf, clientId }: UnitsInventoryProps) {
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
   const addToast = useAppStore((s) => s.addToast);
@@ -68,6 +77,51 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
   // the drawer shut) keeps the drawer live.
   const [drawerUnitId, setDrawerUnitId] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
+  // "Save to client options" (only when a client is in context). Which unit is
+  // mid-save, and this client's already-saved unit options → status, so a saved
+  // unit shows "In options" instead of the Save button.
+  const [savingUnitId, setSavingUnitId] = useState<string | null>(null);
+  const savedUnitStatus = useMemo(() => {
+    const map = new Map<string, ClientOptionStatus>();
+    if (!clientId) return map;
+    const m = models.find((mm) => mm.name === 'client_property_options');
+    if (!m) return map;
+    for (const r of records[m.id] ?? []) {
+      if (r.data.client_id !== clientId || r.data.source_type !== 'unit') continue;
+      map.set(String(r.data.source_id), r.data.status as ClientOptionStatus);
+    }
+    return map;
+  }, [clientId, models, records]);
+
+  const handleSaveUnit = async (u: UnitView) => {
+    if (!clientId || savingUnitId) return;
+    setSavingUnitId(u.id);
+    try {
+      const { unit } = await saveUnitToClient(clientId, u.raw);
+      if (unit.outcome === 'created' || unit.outcome === 'queued' || unit.outcome === 'updated') {
+        addToast(
+          isAr ? 'أُضيفت الوحدة ومشروعها إلى خيارات العميل' : 'Unit (and its project) added to the client’s options',
+          'success',
+        );
+      } else if (unit.outcome === 'eliminated_exists') {
+        addToast(
+          isAr
+            ? 'هذه الوحدة مستبعدة سابقاً لهذا العميل — أعِد تفعيلها من قائمة الخيارات.'
+            : 'This unit was eliminated for this client — reactivate it from the options list.',
+          'error',
+        );
+      } else {
+        // conflict / error — the store already surfaced the Supabase failure;
+        // this toast tells the rep what THEIR action did (fail-loudly rule).
+        addToast(
+          isAr ? 'تعذّر إضافة الوحدة لخيارات العميل' : 'Could not add the unit to the client’s options',
+          'error',
+        );
+      }
+    } finally {
+      setSavingUnitId(null);
+    }
+  };
 
   const filtered = useMemo(() => {
     const pMin = priceMin ? Number(priceMin) : null;
@@ -276,6 +330,7 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
                 <th className="p-2 text-end">{isAr ? 'السعر' : 'Price'}</th>
                 <th className="p-2 text-end">{isAr ? 'سعر المتر' : 'Price/m²'}</th>
                 <th className="p-2 text-start">{isAr ? 'الحالة' : 'Status'}</th>
+                {clientId && <th className="p-2 text-center">{isAr ? 'خيارات العميل' : 'Client options'}</th>}
               </tr>
             </thead>
             <tbody>
@@ -294,6 +349,40 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
                   <td className="p-2 text-end font-medium text-charcoal">{SAR(u.totalPrice, isAr)}</td>
                   <td className="p-2 text-end text-charcoal/70">{u.pricePerM2 !== null ? u.pricePerM2.toLocaleString() : '—'}</td>
                   <td className="p-2">{u.status && <Badge label={isAr ? u.status.label_ar : u.status.label_en} color={u.status.color ?? undefined} />}</td>
+                  {clientId && (
+                    <td className="p-2 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      {(() => {
+                        const st = savedUnitStatus.get(u.id);
+                        const busy = savingUnitId === u.id;
+                        if (st === 'eliminated') {
+                          return (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">
+                              {isAr ? 'مستبعدة' : 'Eliminated'}
+                            </span>
+                          );
+                        }
+                        if (st) {
+                          return (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[11px] font-bold text-green-700">
+                              <Check size={12} /> {isAr ? 'ضمن الخيارات' : 'In options'}
+                            </span>
+                          );
+                        }
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveUnit(u)}
+                            disabled={busy}
+                            className="inline-flex items-center gap-1 rounded-lg border border-copper/30 bg-copper/5 px-2 py-1 text-[11px] font-bold text-copper transition hover:bg-copper/10 disabled:opacity-60"
+                            title={isAr ? 'حفظ الوحدة (ومشروعها) ضمن خيارات العميل' : 'Save this unit (and its project) to the client’s options'}
+                          >
+                            {busy ? <Loader2 size={12} className="animate-spin" /> : <ListPlus size={12} />}
+                            {isAr ? 'حفظ' : 'Save'}
+                          </button>
+                        );
+                      })()}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -308,6 +397,18 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
         isAr={isAr}
         project={projectView}
         chatPdf={chatPdf}
+        onSaveToClient={clientId && drawerUnit ? () => void handleSaveUnit(drawerUnit) : undefined}
+        saveOptionState={
+          !clientId || !drawerUnit
+            ? undefined
+            : savingUnitId === drawerUnit.id
+              ? 'saving'
+              : savedUnitStatus.get(drawerUnit.id) === 'eliminated'
+                ? 'eliminated'
+                : savedUnitStatus.get(drawerUnit.id)
+                  ? 'saved'
+                  : 'idle'
+        }
         onClose={() => setDrawerUnitId(null)}
       />
       <UnitCompareModal open={compareOpen} onClose={() => setCompareOpen(false)} units={selectedUnits} projectName={projectName} isAr={isAr} />

@@ -341,6 +341,7 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
               canAct={!!clientRec}
               addState={addState}
               chatPdf={chatPdf}
+              clientId={clientRec ? clientId ?? null : null}
               onSend={() => setSendTarget({ id: openView.id, name: openView.name ?? '' })}
               onAdd={() => void addToOptions(openView)}
             />
@@ -579,7 +580,7 @@ function ProjectRow({
 
 /** The opened project: facts, rep actions, then the real units inventory. */
 function ProjectDetail({
-  v, isAr, model, canAct, addState, chatPdf, onSend, onAdd,
+  v, isAr, model, canAct, addState, chatPdf, clientId, onSend, onAdd,
 }: {
   v: ProjectView;
   isAr: boolean;
@@ -587,6 +588,7 @@ function ProjectDetail({
   canAct: boolean;
   addState: 'idle' | 'saving' | 'added';
   chatPdf: ChatPdfContext | null;
+  clientId: string | null;
   onSend: () => void;
   onAdd: () => void;
 }) {
@@ -672,7 +674,7 @@ function ProjectDetail({
           horizontally inside the sheet on narrow viewports. */}
       <div>
         <h3 className="mb-2 text-sm font-bold text-chocolate">{L('الوحدات', 'Units')}</h3>
-        <UnitsInventory projectId={v.id} projectName={v.name} isAr={isAr} project={v} chatPdf={chatPdf} />
+        <UnitsInventory projectId={v.id} projectName={v.name} isAr={isAr} project={v} chatPdf={chatPdf} clientId={clientId} />
       </div>
     </div>
   );

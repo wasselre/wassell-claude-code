@@ -1095,7 +1095,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
           title={isAr ? `وحدات المشروع — ${unitsFor.name}` : `Project units — ${unitsFor.name}`}
           maxWidth="max-w-6xl"
         >
-          <UnitsInventory projectId={unitsFor.projectId} projectName={unitsFor.name} isAr={isAr} chatPdf={chatPdf} />
+          <UnitsInventory projectId={unitsFor.projectId} projectName={unitsFor.name} isAr={isAr} chatPdf={chatPdf} clientId={client.id} />
         </Modal>
       )}
 

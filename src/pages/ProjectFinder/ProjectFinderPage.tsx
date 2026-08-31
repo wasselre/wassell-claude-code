@@ -559,6 +559,7 @@ export default function ProjectFinderPage() {
       saveState={selectedClientId ? saveStates[item.project_id] ?? 'idle' : 'idle'}
       existingStatus={selectedClientId ? existingStatusFor(item) : null}
       hideClientActions={!selectedClientId}
+      clientId={selectedClientId}
     />
   );
 

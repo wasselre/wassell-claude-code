@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, ExternalLink, FileText, Loader2, Check, Download } from 'lucide-react';
+import { X, ExternalLink, FileText, Loader2, Check, Download, ListPlus } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
@@ -20,6 +20,14 @@ interface UnitDrawerProps {
   project?: ProjectView | null;
   /** Set → the drawer offers "Send unit PDF" into that conversation. */
   chatPdf?: ChatPdfContext | null;
+  /** Set (a client is in context) → the drawer offers "Save to client options"
+   *  (saving the unit AND its parent project). The parent owns the write; the
+   *  drawer just renders the button state. Absent → no save button. */
+  onSaveToClient?: () => void;
+  /** State of THIS unit's client-option: idle (offer save) / saving / saved
+   *  (already an option) / eliminated (blocked — reactivate from the list).
+   *  Undefined when no client is in context. */
+  saveOptionState?: 'idle' | 'saving' | 'saved' | 'eliminated';
   onClose: () => void;
 }
 
@@ -174,7 +182,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, onClose }: UnitDrawerProps) {
+export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, onSaveToClient, saveOptionState, onClose }: UnitDrawerProps) {
   const addToast = useAppStore((s) => s.addToast);
   // Resolve the plan image: it's a files.id UUID (private wassel-files bucket) →
   // batch-sign a view URL; legacy http values are used directly.
@@ -250,6 +258,27 @@ export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, 
                 </Button>
               )}
             </div>
+          )}
+
+          {/* Save this unit (and its parent project) to the client's options —
+              only when a client is in context (finder / chat / options tab). */}
+          {onSaveToClient && saveOptionState && (
+            saveOptionState === 'saved' ? (
+              <div className="inline-flex items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-1.5 text-sm font-bold text-green-700">
+                <Check size={14} /> {isAr ? 'ضمن خيارات العميل' : 'In client’s options'}
+              </div>
+            ) : saveOptionState === 'eliminated' ? (
+              <div className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-bold text-red-700">
+                {isAr ? 'مستبعدة — أعِد تفعيلها من قائمة الخيارات' : 'Eliminated — reactivate from the options list'}
+              </div>
+            ) : (
+              <Button variant="secondary" className="text-sm !py-1.5" disabled={saveOptionState === 'saving'} onClick={onSaveToClient}>
+                {saveOptionState === 'saving'
+                  ? <Loader2 size={14} className="inline -mt-0.5 me-1 animate-spin" />
+                  : <ListPlus size={14} className="inline -mt-0.5 me-1" />}
+                {isAr ? 'حفظ ضمن خيارات العميل' : 'Save to client options'}
+              </Button>
+            )
           )}
 
           {/* Status — editable in place (one click to mark sold/reserved). */}

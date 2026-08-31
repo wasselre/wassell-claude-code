@@ -1218,6 +1218,7 @@ export default function SuggestedProjectsView({
                   saveState={saveStates[item.project_id] ?? 'idle'}
                   existingStatus={existingStatusFor(item)}
                   chatPdf={chatPdf}
+                  clientId={clientRec?.id ?? null}
                 />
               )}
             />
@@ -1245,6 +1246,7 @@ export default function SuggestedProjectsView({
                     saveState={saveStates[item.project_id] ?? 'idle'}
                     existingStatus={existingStatusFor(item)}
                     chatPdf={chatPdf}
+                    clientId={clientRec?.id ?? null}
                   />
                 ))}
               </div>
@@ -1273,6 +1275,7 @@ export default function SuggestedProjectsView({
                     saveState={saveStates[item.project_id] ?? 'idle'}
                     existingStatus={existingStatusFor(item)}
                     chatPdf={chatPdf}
+                    clientId={clientRec?.id ?? null}
                   />
                 ))}
               </div>
