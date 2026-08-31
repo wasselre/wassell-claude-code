@@ -47,9 +47,21 @@ export async function imageToBoundedJpeg(bytes: Buffer, srcExt: string): Promise
   const outPath = join(dir, 'out.jpg');
   try {
     await writeFile(inPath, bytes);
-    // scale down only when larger than 1600 on the long edge; -2 keeps dims even.
-    await run('ffmpeg', ['-y', '-i', inPath, '-vf', "scale='min(1600,iw)':'min(1600,ih)':force_original_aspect_ratio=decrease", '-q:v', '4', outPath], 60_000);
-    return await readFile(outPath);
+    // Fit within 1600x1600 (no upscale beyond it), then force a baseline
+    // yuvj420p JPEG the vision API accepts. NOTE: no min()/commas inside a single
+    // -vf token — a comma is a filter-chain separator, so `min(1600,iw)` produces
+    // a broken graph and garbage output (measured live 2026-08-31). The comma
+    // between `scale=...` and `format=...` below is a legitimate chain of two.
+    await run('ffmpeg', ['-y', '-i', inPath,
+      '-vf', 'scale=1600:1600:force_original_aspect_ratio=decrease,format=yuvj420p',
+      '-q:v', '4', outPath], 60_000);
+    const out = await readFile(outPath);
+    // Guard against ffmpeg exiting 0 with empty/non-JPEG output — send only a
+    // real JPEG (SOI marker FF D8), else let the caller apply a kind-default.
+    if (out.length < 4 || out[0] !== 0xFF || out[1] !== 0xD8) {
+      throw new Error(`ffmpeg produced non-JPEG output (${out.length} bytes)`);
+    }
+    return out;
   } finally { await cleanup(dir); }
 }
 
