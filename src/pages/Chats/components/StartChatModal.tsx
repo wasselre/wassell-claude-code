@@ -168,26 +168,41 @@ export default function StartChatModal({
         clientRecordId: mode === 'client' ? client?.recordId : undefined,
         deliverAt,
       });
+      // startNewChat now resolves as soon as the conversation record + the
+      // optimistic bubble exist — the actual network send runs in the
+      // BACKGROUND (result.sent). So hand off / close the modal IMMEDIATELY;
+      // the user should never wait in this popup for the message to go out.
+      if (onSent) {
+        // Caller (e.g. the Follow-up Workspace) takes over — it closes this
+        // modal and shows the thread in a popup, no navigation.
+        onSent(result.recordId);
+      } else {
+        onClose();
+        navigate(`/model/chats/${result.recordId}`);
+      }
       // Send the project gallery (if any) into the just-created conversation —
-      // each image as its own WhatsApp message after the first text message
-      // (scheduled sends stagger them after the text's delivery time).
-      // NOT awaited: the modal closes right after the text message and the
-      // media fan-out continues in the BACKGROUND (a beforeunload guard in
-      // sendProjectImageMessages protects against closing the tab mid-send;
-      // failures toast from inside the fan-out).
+      // each image as its own WhatsApp message, chained AFTER the first text
+      // message dispatches (result.sent) so the intro text lands before the
+      // images. Fully backgrounded: the modal is already gone (a beforeunload
+      // guard in sendProjectImageMessages protects against closing the tab
+      // mid-send; failures toast from inside the fan-out).
       // chatWid mirrors startNewChat's derivation from the canonical E.164.
       const galleryCount = initialImageFileIds?.length ?? 0;
       if (initialImageFileIds && galleryCount > 0) {
         const chatWid = `${normalizedRecipient.slice(1)}@c.us`;
-        void sendProjectImageMessages(chatWid, initialImageFileIds, { deliverAt }).then(({ sent, failed }) => {
-          if (sent > 0 && failed === 0) {
-            addToast(
-              deliverAt
-                ? (isAr ? `تمت جدولة ${sent} من الوسائط` : `${sent} media message(s) scheduled`)
-                : (isAr ? `أُرسلت ${sent} من الوسائط` : `${sent} media message(s) sent`),
-              'success',
-            );
-          }
+        void result.sent.then(({ ok }) => {
+          // Text send failed (already toasted) — don't pile images onto it.
+          if (!ok) return;
+          return sendProjectImageMessages(chatWid, initialImageFileIds, { deliverAt }).then(({ sent, failed }) => {
+            if (sent > 0 && failed === 0) {
+              addToast(
+                deliverAt
+                  ? (isAr ? `تمت جدولة ${sent} من الوسائط` : `${sent} media message(s) scheduled`)
+                  : (isAr ? `أُرسلت ${sent} من الوسائط` : `${sent} media message(s) sent`),
+                'success',
+              );
+            }
+          });
         });
       }
       if (deliverAt) {
@@ -204,14 +219,6 @@ export default function StartChatModal({
             : `Sending ${galleryCount} media message(s) in the background — keep working`,
           'info',
         );
-      }
-      if (onSent) {
-        // Caller (e.g. the Follow-up Workspace) takes over — it closes this
-        // modal and shows the thread in a popup, no navigation.
-        onSent(result.recordId);
-      } else {
-        onClose();
-        navigate(`/model/chats/${result.recordId}`);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

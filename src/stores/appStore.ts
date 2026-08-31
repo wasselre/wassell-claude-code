@@ -5431,21 +5431,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     // created (so the user can open it and see the scheduled chip), but the
     // message goes to Haberchat's delivery queue instead of out now. No
     // optimistic bubble; the webhook echoes it at delivery time.
+    //
+    // Fire-and-forget so the caller's modal closes instantly. The `sent`
+    // promise resolves once the gateway has accepted (or rejected) the
+    // scheduled message; it NEVER rejects (failures toast here).
     if (input.deliverAt) {
-      try {
-        await sendHaberchatMessage({
-          deviceId,
-          phone: e164,
-          body,
-          reference: uuid(),
-          deliverAt: input.deliverAt,
+      const sent = sendHaberchatMessage({
+        deviceId,
+        phone: e164,
+        body,
+        reference: uuid(),
+        deliverAt: input.deliverAt,
+      })
+        .then(() => ({ ok: true }))
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          get().addToast(msg, 'error');
+          return { ok: false };
         });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        get().addToast(msg, 'error');
-        throw err;
-      }
-      return { recordId: record.id, chatWid };
+      return { recordId: record.id, chatWid, sent };
     }
 
     // Now send the first message — use the same optimistic+proxy flow as
@@ -5479,42 +5483,49 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
     }));
 
-    try {
-      const result = await sendHaberchatMessage({
-        deviceId,
-        phone: e164,
-        body,
-        reference: clientId,
+    // Fire-and-forget the network send so the caller's modal closes instantly
+    // (same non-blocking posture as the in-thread Composer). The optimistic
+    // bubble above already shows the message; the background send reconciles it
+    // to `sent`/`failed` and toasts on failure. The returned `sent` promise
+    // NEVER rejects — the caller chains on it only to order follow-up sends.
+    const sent = sendHaberchatMessage({
+      deviceId,
+      phone: e164,
+      body,
+      reference: clientId,
+    })
+      .then((result) => {
+        set((s) => {
+          const existing = s.chatMessages[chatWid] ?? [];
+          const next = existing.map((m) =>
+            m.client_id === clientId
+              ? {
+                  ...m,
+                  id: result.wid,
+                  pending: false,
+                  ack: 'sent' as const,
+                  reference: result.reference ?? m.reference,
+                }
+              : m,
+          );
+          return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
+        });
+        return { ok: true };
+      })
+      .catch((err) => {
+        set((s) => {
+          const existing = s.chatMessages[chatWid] ?? [];
+          const next = existing.map((m) =>
+            m.client_id === clientId ? { ...m, pending: false, ack: 'failed' as const } : m,
+          );
+          return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
+        });
+        const msg = err instanceof Error ? err.message : String(err);
+        get().addToast(msg, 'error');
+        return { ok: false };
       });
-      set((s) => {
-        const existing = s.chatMessages[chatWid] ?? [];
-        const next = existing.map((m) =>
-          m.client_id === clientId
-            ? {
-                ...m,
-                id: result.wid,
-                pending: false,
-                ack: 'sent' as const,
-                reference: result.reference ?? m.reference,
-              }
-            : m,
-        );
-        return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
-      });
-    } catch (err) {
-      set((s) => {
-        const existing = s.chatMessages[chatWid] ?? [];
-        const next = existing.map((m) =>
-          m.client_id === clientId ? { ...m, pending: false, ack: 'failed' as const } : m,
-        );
-        return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
-      });
-      const msg = err instanceof Error ? err.message : String(err);
-      get().addToast(msg, 'error');
-      throw err;
-    }
 
-    return { recordId: record.id, chatWid };
+    return { recordId: record.id, chatWid, sent };
   },
 
   subscribeToChat: (chatWid: string) => {

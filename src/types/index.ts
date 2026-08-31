@@ -3060,7 +3060,20 @@ export interface AppState {
      *  now. The conversation record is still created immediately; the
      *  message waits in Haberchat's delivery queue. */
     deliverAt?: string;
-  }) => Promise<{ recordId: string; chatWid: string }>;
+  }) => Promise<{
+    recordId: string;
+    chatWid: string;
+    /**
+     * Resolves once the first-message network send has been dispatched to the
+     * gateway (`{ ok: true }`) or has failed (`{ ok: false }` — the store has
+     * already reconciled the optimistic bubble to `failed` and toasted). NEVER
+     * rejects. The promise returned by `startNewChat` itself resolves as soon
+     * as the conversation record + optimistic bubble exist (near-instant), so
+     * the caller can close its modal immediately; chain on `sent` only to order
+     * follow-up sends (e.g. the project gallery) strictly after the text.
+     */
+    sent: Promise<{ ok: boolean }>;
+  }>;
   /**
    * Subscribe to Supabase Realtime INSERT/UPDATE events on `chat_messages`
    * for one conversation. Idempotent — calling twice for the same chatWid

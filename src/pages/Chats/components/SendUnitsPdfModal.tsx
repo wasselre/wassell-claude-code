@@ -73,29 +73,36 @@ export default function SendUnitsPdfModal({
     }
   };
 
-  const handleSend = async (deliverAt?: string) => {
+  const handleSend = (deliverAt?: string) => {
     if (!canSend) return;
-    setBusy('send');
     setShowSchedule(false);
-    try {
-      const blob = await ensureBlob();
-      const res = await sendPdfToChat(chatWid, blob, filename, caption, { deliverAt });
-      if (res.ok) {
-        addToast(
-          deliverAt
-            ? L(`تمت جدولة الملف — سيُرسل ${formatScheduleTime(deliverAt, true)}`, `Scheduled — will send ${formatScheduleTime(deliverAt, false)}`)
-            : L('تم إرسال الملف إلى العميل', 'Sent to the client'),
-          'success',
-        );
-        onClose();
+    // Close the popup IMMEDIATELY — the whole build+upload+send runs in the
+    // BACKGROUND. Building the PDF (html2canvas + jsPDF, plus signing/fetching
+    // a plan image for a unit sheet) and the gateway upload take several
+    // seconds; the user should never wait in this dialog for that. The PDF
+    // build is self-contained (rasterizeToPdf renders into its own detached
+    // container on document.body), so it survives this modal unmounting.
+    // Progress + failures surface globally via the job center + toasts.
+    const cap = caption;
+    onClose();
+    void (async () => {
+      try {
+        const blob = await ensureBlob();
+        const res = await sendPdfToChat(chatWid, blob, filename, cap, { deliverAt });
+        if (res.ok) {
+          addToast(
+            deliverAt
+              ? L(`تمت جدولة الملف — سيُرسل ${formatScheduleTime(deliverAt, true)}`, `Scheduled — will send ${formatScheduleTime(deliverAt, false)}`)
+              : L('تم إرسال الملف إلى العميل', 'Sent to the client'),
+            'success',
+          );
+        }
+        // On failure sendPdfToChat already toasted.
+      } catch (err) {
+        // Build failure, or scheduled-path identity failure — surface it.
+        addToast(err instanceof Error ? err.message : String(err), 'error');
       }
-      // On failure sendPdfToChat already toasted; keep the dialog open to retry.
-    } catch (err) {
-      // Scheduled-path identity failure throws — surface it, don't crash.
-      addToast(err instanceof Error ? err.message : String(err), 'error');
-    } finally {
-      setBusy(null);
-    }
+    })();
   };
 
   return (
