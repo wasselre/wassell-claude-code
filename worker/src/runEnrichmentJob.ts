@@ -73,12 +73,12 @@ export async function runEnrichmentJob(
   }
 
   // ── Allowlists (the model may ONLY choose from these) ─────────────────────
-  const VOCAB_DIMS = ['asset_nature', 'acquisition_source', 'usage_rights', 'production_state'];
+  const VOCAB_DIMS = ['asset_nature', 'acquisition_source', 'usage_rights', 'production_state', 'primary_category'];
   const [subjRes, vocabRes] = await Promise.all([
     supabase.from('file_document_types')
       .select('value,label_ar,label_en,applies_to_kinds').eq('active', true),
     supabase.from('file_vocabularies')
-      .select('dimension,value,label_ar').in('dimension', VOCAB_DIMS).eq('active', true),
+      .select('dimension,value,label_ar,applies_to_kinds').in('dimension', VOCAB_DIMS).eq('active', true),
   ]);
   const subjectRows = (subjRes.data ?? []) as Array<{ value: string; label_ar: string; label_en: string; applies_to_kinds: string[] }>;
   const applicable = subjectRows.filter((r) => !r.applies_to_kinds?.length || r.applies_to_kinds.includes(kind));
@@ -99,6 +99,16 @@ export async function runEnrichmentJob(
   const rightsValues = rightsRows.map((r) => r.value);
   const stateRows = dim('production_state');
   const stateValues = stateRows.map((r) => r.value);
+  // The required primary "Document Type" — scoped to this file's kind so a PDF is
+  // offered brochure/unit_plan and a video raw_video/ready_video.
+  const pcatAll = vocabByDim.get('primary_category') ?? [];
+  const pcatRowsRaw = (vocabRes.data ?? []) as Array<{ dimension: string; value: string; label_ar: string; applies_to_kinds?: string[] }>;
+  const pcatKinds = new Map(pcatRowsRaw.filter((r) => r.dimension === 'primary_category').map((r) => [r.value, r.applies_to_kinds ?? []]));
+  const pcatRows = pcatAll.filter((r) => {
+    const k = pcatKinds.get(r.value) ?? [];
+    return k.length === 0 || k.includes(kind);
+  });
+  const pcatValues = pcatRows.map((r) => r.value);
   if (subjectValues.length === 0) { console.log(`[enrich] job=${job.id} no applicable subjects — no-op`); return {}; }
 
   // ── Gather what the model will see (blocks) + heard (transcript) ──────────
@@ -154,7 +164,29 @@ export async function runEnrichmentJob(
   const props: Record<string, unknown> = {
     description: { type: 'string', description: 'جملة أو جملتان بالعربية تصف محتوى الملف بدقة.' },
     title: { type: 'string', description: 'عنوان عربي قصير ووصفي للملف (٣–٨ كلمات) بدل اسم الملف التقني.' },
-    subjects: { type: 'array', items: { type: 'string', enum: subjectValues }, description: 'التصنيفات المنطبقة — من القائمة فقط.' },
+    // The ONE required primary "Document Type". Free string (so a new value can be
+    // proposed), but the model is told to pick from the list unless nothing fits.
+    primary_category: { type: 'string', description: 'النوع الرئيسي الوحيد للملف — اختر أنسب قيمة من القائمة. إن لم يناسب أيٌّ منها فعلاً، اكتب قيمة جديدة موجزة هنا واملأ new_primary_category.' },
+    new_primary_category: {
+      type: 'object',
+      properties: {
+        value: { type: 'string', description: 'مُعرّف إنجليزي قصير snake_case للنوع الجديد.' },
+        label_ar: { type: 'string', description: 'اسم النوع بالعربية.' },
+        label_en: { type: 'string', description: 'اسم النوع بالإنجليزية.' },
+      },
+      description: 'املأه فقط إذا كان primary_category قيمةً جديدة غير موجودة في القائمة.',
+    },
+    subjects: { type: 'array', items: { type: 'string', enum: subjectValues }, description: 'التصنيفات الفرعية المنطبقة — من القائمة فقط.' },
+    new_subjects: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          label_ar: { type: 'string' }, label_en: { type: 'string' },
+        },
+      },
+      description: 'تصنيفات فرعية جديدة غير موجودة في القائمة تريد إضافتها (اتركها فارغة عادةً).',
+    },
     asset_nature: { type: 'string', enum: natureValues, description: 'طبيعة الأصل — من القائمة فقط.' },
     tags: { type: 'array', items: { type: 'string' }, description: 'وسوم قصيرة بالعربية للسمات الظاهرة.' },
     detected_names: {
@@ -169,7 +201,7 @@ export async function runEnrichmentJob(
   // The three axes are REQUIRED best-guesses — the operator wants every field
   // filled (they can override any). asset_nature/subjects/detected_names stay
   // optional (asset_nature already fills; names must never be guessed).
-  const required = ['description', 'asset_nature',
+  const required = ['description', 'primary_category', 'asset_nature',
     ...(acqValues.length ? ['acquisition_source'] : []),
     ...(rightsValues.length ? ['usage_rights'] : []),
     ...(stateValues.length ? ['production_state'] : [])];
@@ -178,9 +210,11 @@ export async function runEnrichmentJob(
     description: 'Propose metadata for a Wassel real-estate marketing file.',
     input_schema: { type: 'object' as const, properties: props, required },
   };
+  const pcatMenu = menu(pcatRows);
   let prompt =
     `أنت تصنّف ملفاً تسويقياً عقارياً لشركة وصل العقارية. استدعِ الأداة propose_metadata واملأ كل الحقول.\n` +
-    `- التصنيفات المسموحة (استخدم القيمة الإنجليزية فقط): ${subjectMenu}.\n` +
+    `- النوع الرئيسي primary_category (إلزامي — قيمة واحدة فقط): ${pcatMenu}. اختر الأنسب دائماً. إن لم يناسب أيٌّ منها فعلاً فاكتب قيمة جديدة موجزة في primary_category واملأ new_primary_category (value إنجليزي snake_case + label_ar + label_en).\n` +
+    `- التصنيفات الفرعية المسموحة (استخدم القيمة الإنجليزية فقط): ${subjectMenu}.\n` +
     `- طبيعة الأصل المسموحة (القيمة الإنجليزية فقط): ${menu(natureRows)}.\n` +
     (acqValues.length ? `- مصدر الحصول (إلزامي — اختر الأقرب دائماً، لا تتركه فارغاً): ${menu(acqRows)}. استدلّ: تصميم/لقطة من أنظمتنا → internal؛ علامة أو شعار منافس → competitor؛ كتيّب أو رندر أو مخطط مطوّر → developer؛ صورة من عميل → client؛ مصدر عام/سوشيال بلا مالك واضح → public؛ إن لم يتّضح فاختر internal إن بدا من إنتاجنا وإلا unknown.\n` : '') +
     (stateValues.length ? `- حالة الإنتاج (إلزامي — اختر الأقرب دائماً): ${menu(stateRows)}. لقطة شاشة أو ملف غير مصقول → raw؛ تصميم/مخطط مصقول جاهز → final؛ عليه آثار تعديل بيني → edited؛ إن لم يتّضح فاختر raw.\n` : '') +
@@ -204,11 +238,41 @@ export async function runEnrichmentJob(
   const out = (toolUse.input ?? {}) as {
     description?: unknown; title?: unknown; subjects?: unknown; asset_nature?: unknown; tags?: unknown;
     acquisition_source?: unknown; usage_rights?: unknown; production_state?: unknown; detected_names?: unknown;
+    primary_category?: unknown; new_primary_category?: unknown; new_subjects?: unknown;
   };
 
   const result: Record<string, unknown> = { model: ENRICH_MODEL };
   if (typeof out.description === 'string' && out.description.trim()) result.description = out.description.trim();
   if (typeof out.title === 'string' && out.title.trim()) result.title = out.title.trim().slice(0, 200);
+
+  // ── primary "Document Type" ──────────────────────────────────────────────
+  // A value already in the allowlist → apply it directly. Otherwise, if the
+  // model proposed a new type, forward it for create-and-apply (the complete RPC
+  // dedups + creates). A bare unknown string with no new-type payload is dropped.
+  if (typeof out.primary_category === 'string' && pcatValues.includes(out.primary_category)) {
+    result.primary_category = out.primary_category;
+  } else if (out.new_primary_category && typeof out.new_primary_category === 'object') {
+    const np = out.new_primary_category as { value?: unknown; label_ar?: unknown; label_en?: unknown };
+    const labelAr = typeof np.label_ar === 'string' ? np.label_ar.trim() : '';
+    const labelEn = typeof np.label_en === 'string' ? np.label_en.trim() : '';
+    const val = typeof np.value === 'string' ? np.value.trim()
+      : (typeof out.primary_category === 'string' ? out.primary_category.trim() : '');
+    if (labelAr || labelEn || val) {
+      result.new_primary_category = { value: val, label_ar: labelAr, label_en: labelEn };
+    }
+  }
+  // New secondary types the AI wants to add (kept small; the RPC creates + dedups).
+  if (Array.isArray(out.new_subjects)) {
+    const ns = out.new_subjects
+      .filter((x): x is { label_ar?: string; label_en?: string } => Boolean(x) && typeof x === 'object')
+      .map((x) => ({
+        label_ar: typeof x.label_ar === 'string' ? x.label_ar.trim() : '',
+        label_en: typeof x.label_en === 'string' ? x.label_en.trim() : '',
+      }))
+      .filter((x) => x.label_ar || x.label_en)
+      .slice(0, 4);
+    if (ns.length) result.new_subjects = ns;
+  }
   // The three axes — accept only a value that is in its live allowlist.
   if (typeof out.acquisition_source === 'string' && acqValues.includes(out.acquisition_source)) result.acquisition_source = out.acquisition_source;
   if (typeof out.usage_rights === 'string' && rightsValues.includes(out.usage_rights)) result.usage_rights = out.usage_rights;
@@ -249,7 +313,9 @@ export async function runEnrichmentJob(
     }
   }
 
-  console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} subjects=${(result.subjects as string[] | undefined)?.length ?? 0} axes=${[result.asset_nature, result.acquisition_source, result.usage_rights, result.production_state].filter(Boolean).length}/4 title=${result.title ? 'y' : 'n'} names=${names.length} linkSugg=${nSugg}`);
+  const pcatLog = result.primary_category ? String(result.primary_category)
+    : (result.new_primary_category ? `NEW:${(result.new_primary_category as { value?: string }).value ?? '?'}` : 'n');
+  console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} pcat=${pcatLog} subjects=${(result.subjects as string[] | undefined)?.length ?? 0} newSubs=${(result.new_subjects as unknown[] | undefined)?.length ?? 0} axes=${[result.asset_nature, result.acquisition_source, result.usage_rights, result.production_state].filter(Boolean).length}/4 title=${result.title ? 'y' : 'n'} names=${names.length} linkSugg=${nSugg}`);
   return result;
 }
 

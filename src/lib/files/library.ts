@@ -294,6 +294,8 @@ export async function listDocumentTypes(): Promise<FileDocumentTypeRow[]> {
 export interface FileMetadataPatch {
   title?: string;
   document_type?: string;
+  /** The required primary "Document Type" (files.primary_category). */
+  primary_category?: string | null;
   description?: string | null;
   tags?: string[];
   status?: BusinessFileRow['status'];
@@ -453,6 +455,8 @@ export interface EnrichmentPeek {
   status: 'none' | 'queued' | 'running' | 'completed' | 'failed';
   ai_description: string | null;
   asset_nature: string | null;
+  /** The required primary "Document Type" the AI proposes + auto-applies. */
+  primary_category: string | null;
   /** The three axes the AI now proposes too (مصدر الحصول / حقوق الاستخدام / حالة الإنتاج). */
   acquisition_source: string | null;
   usage_rights: string | null;

@@ -61,6 +61,8 @@ interface Props {
 
 interface Draft {
   title: string;
+  /** The required, single-select primary "Document Type". */
+  primary_category: string;
   document_type: string;
   description: string;
   tagsText: string;
@@ -87,6 +89,7 @@ function fromDateInput(v: string): string | null {
 function draftFrom(file: BusinessFileRow): Draft {
   return {
     title: file.title,
+    primary_category: file.primary_category ?? '',
     document_type: file.document_type,
     description: file.description ?? '',
     tagsText: (file.tags ?? []).join(', '),
@@ -199,6 +202,7 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
       const cleared = { ...file } as BusinessFileRow;
       if (aiFields.has('ai_description')) cleared.ai_description = null;
       if (aiFields.has('asset_nature')) { cleared.asset_nature = null; setDraft((d) => ({ ...d, asset_nature: '' })); }
+      if (aiFields.has('primary_category')) { cleared.primary_category = null; setDraft((d) => ({ ...d, primary_category: '' })); }
       onSaved(cleared);
       await fetchFileSubjects(file.id).then((list) => { setSubjects(list); setSubjectsInit(list); }).catch(() => {});
       setAiFields(new Set());
@@ -258,6 +262,10 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
     // column) is the PRIMARY subject, derived from the set: keep the existing
     // primary if it is still selected, else the first chosen. At least one
     // subject is required.
+    if (!draft.primary_category) {
+      setSaveError(t('files.library.meta.primary_required'));
+      return;
+    }
     if (subjects.length === 0) {
       setSaveError(t('files.library.meta.subject_required'));
       return;
@@ -268,6 +276,7 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
     try {
       const patch: FileMetadataPatch = {
         title: draft.title.trim(),
+        primary_category: draft.primary_category,
         document_type: primary,
         description: draft.description.trim() || null,
         tags: draft.tagsText.split(',').map((s) => s.trim()).filter(Boolean),
@@ -432,11 +441,34 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
                  value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
         </div>
 
+        {/* The ONE required primary "Document Type" — single-select, from the
+            kind-scoped primary_category vocabulary. Distinct from the secondary
+            multi-select below. */}
         <div>
-          <label className={labelCls}>{t('files.library.meta.subjects')}</label>
-          {/* One MULTISELECT for classification. The set is the file's subjects;
-              the primary document_type is derived from it on save. Replaces the
-              old single-value type dropdown + the separate chip row. */}
+          <label className={`${labelCls} flex items-center gap-1`} htmlFor="md-primary-category">
+            {t('files.library.meta.primary_category')}
+            <span className="text-red-500" aria-hidden>*</span>
+            {aiFields.has('primary_category') && <Sparkles size={9} className="text-copper" aria-hidden />}
+          </label>
+          <select id="md-primary-category" className={field} disabled={!canEdit}
+                  value={draft.primary_category}
+                  onChange={(e) => setDraft({ ...draft, primary_category: e.target.value })}>
+            <option value="">{t('files.library.meta.unset')}</option>
+            {/* A since-deactivated value stays selectable-as-current. */}
+            {draft.primary_category && !vocabFor('primary_category').some((o) => o.value === draft.primary_category) && (
+              <option value={draft.primary_category}>{draft.primary_category}</option>
+            )}
+            {vocabFor('primary_category').map((o) => (
+              <option key={o.value} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className={labelCls}>{t('files.library.meta.secondary_types')}</label>
+          {/* One MULTISELECT for the SECONDARY / detailed classification. The set
+              is the file's subjects; the primary document_type is derived from it
+              on save. This is the old "document type" field, now secondary. */}
           <ClassificationSelect
             options={types.filter((x) => x.applies_to_kinds.length === 0 || x.applies_to_kinds.includes(file.kind))}
             selected={subjects}
@@ -664,7 +696,7 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
               {t('files.library.discard')}
             </Button>
             <Button type="submit" className="!px-3 !py-2 text-xs"
-                    disabled={!dirty || saving || subjects.length === 0}>
+                    disabled={!dirty || saving || subjects.length === 0 || !draft.primary_category}>
               {saving ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <Save size={13} aria-hidden />}
               {t('common.save')}
             </Button>

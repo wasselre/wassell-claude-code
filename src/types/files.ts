@@ -55,6 +55,8 @@ export interface FileRow {
   created_at: string;
   updated_at: string;
   // Metadata Intelligence layers (Phase A/B). Optional; see BusinessFileRow.
+  /** The one required primary "Document Type" (vocab: primary_category). */
+  primary_category?: string | null;
   asset_nature?: string | null;
   acquisition_source?: string | null;
   usage_rights?: string | null;
@@ -71,7 +73,11 @@ export interface FileRow {
  *  data-driven picklist for one of the new scalar axes. Same shape idea as
  *  FileDocumentTypeRow. Readable by any authenticated user; admin-only writes. */
 export type FileVocabDimension =
-  | 'asset_nature' | 'acquisition_source' | 'usage_rights' | 'production_state';
+  | 'asset_nature' | 'acquisition_source' | 'usage_rights' | 'production_state'
+  /** The required, single-select primary "Document Type" (brochure / unit_plan /
+   *  design / ai_content / raw_photo / raw_video / ready_video / voiceover / music
+   *  … editable data). Distinct from the multi-value subject (document_type). */
+  | 'primary_category';
 
 export interface FileVocabRow {
   dimension: FileVocabDimension;
@@ -277,6 +283,11 @@ export interface BusinessFileRow {
   content_etag?: string | null;
   // ── Metadata Intelligence layers (Phase A/B, 2026-08-23). All optional: a
   //    file with none set is still valid. See docs/files-metadata-intelligence-plan.md.
+  /** The required, single-select primary "Document Type" (vocab: primary_category).
+   *  brochure / unit_plan / design / ai_content / raw_photo / raw_video /
+   *  ready_video / voiceover / music (+ AI/admin additions). NULL only until the
+   *  corpus backfill fills it. */
+  primary_category?: string | null;
   /** Asset nature — real / ai_generated / cgi_render / screenshot … (vocab). */
   asset_nature?: string | null;
   /** Where we obtained it — developer / competitor / client … (vocab). */
@@ -357,6 +368,8 @@ export interface BusinessFilesSearchResult {
  * where a saved view silently loses a filter.
  */
 export interface LibraryFilters {
+  /** Primary "Document Type" (single-select axis; multiple values = OR). */
+  primary_category?: string[];
   document_type?: string[];
   /** Multi-value subject (file_subjects). ANY listed subject matches. */
   subject?: string[];

@@ -137,6 +137,63 @@ function FacetMenu({
   );
 }
 
+/** A multi-select dropdown sourced from a fixed OPTION list (value + label)
+ *  rather than from facet counts. Used for the primary "Document Type", whose
+ *  facet counts are deliberately not computed (the statement-timeout lesson), so
+ *  its options come from the vocabulary and are always offered. */
+function OptionMenu({
+  label, options, selected, onToggle,
+}: {
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  selected: string[];
+  onToggle: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  if (options.length === 0) return null;
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-bold transition-colors ${
+          selected.length ? 'bg-copper/10 border-copper/30 text-copper' : 'bg-white border-sand/40 text-charcoal/70 hover:bg-cream'
+        }`}
+      >
+        {label}
+        {selected.length > 0 && <span className="tabular-nums">({selected.length})</span>}
+        <ChevronDown size={13} aria-hidden />
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 min-w-[15rem] max-h-72 overflow-auto rounded-xl bg-white border border-sand/40 shadow-lg p-1 start-0">
+          {options.map((o) => {
+            const on = selected.includes(o.value);
+            return (
+              <button key={o.value} type="button" onClick={() => onToggle(o.value)}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-charcoal hover:bg-cream text-start">
+                <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-copper border-copper' : 'border-sand/60'}`}>
+                  {on && <Check size={10} className="text-white" aria-hidden />}
+                </span>
+                <span className="flex-1 truncate" dir="auto">{o.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function LibraryFilterBar({
   searchInput, onSearchInput, filters, onFilters, facets, types, vocab,
   sort, onSort, grouping, onGrouping, layout, onLayout,
@@ -255,6 +312,15 @@ export default function LibraryFilterBar({
 
       {/* Facet dropdowns */}
       <div className="flex flex-wrap items-center gap-2">
+        {/* Primary "Document Type" — options from the vocabulary (no facet count). */}
+        <OptionMenu
+          label={t('files.library.meta.primary_category')}
+          options={vocab
+            .filter((v) => v.dimension === 'primary_category')
+            .map((v) => ({ value: v.value, label: isAr ? v.label_ar : v.label_en }))}
+          selected={filters.primary_category ?? []}
+          onToggle={(v) => toggleIn('primary_category', v)}
+        />
         <FacetMenu
           label={t('files.library.filter.document_type')}
           bucket={facets?.document_type ?? {}}
@@ -263,7 +329,7 @@ export default function LibraryFilterBar({
           renderOption={(v) => documentTypeLabel(v, types, isAr)}
         />
         <FacetMenu
-          label={t('files.library.meta.subjects')}
+          label={t('files.library.meta.secondary_types')}
           bucket={facets?.subject ?? {}}
           selected={filters.subject ?? []}
           onToggle={(v) => toggleIn('subject', v)}

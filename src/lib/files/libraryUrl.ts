@@ -101,6 +101,7 @@ const LAYOUTS: LibraryLayout[] = ['grid', 'list'];
 /** Every multi-value filter, as `url parameter` → `filters key`. One table so
  *  encode and decode can never drift apart by editing only one of them. */
 const LIST_PARAMS = {
+  pcat: 'primary_category',
   type: 'document_type',
   subject: 'subject',
   nature: 'asset_nature',

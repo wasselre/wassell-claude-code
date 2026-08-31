@@ -57,6 +57,9 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
   const records = useAppStore((s) => s.records);
 
   // ── Batch defaults ──────────────────────────────────────────────────────
+  /** The primary "Document Type". Blank = leave each file's AI-applied value
+   *  (the AI fills this required field per file); setting it overrides all. */
+  const [primaryCat, setPrimaryCat] = useState('');
   const [subjects, setSubjects] = useState<string[]>([]);
   const [tagsText, setTagsText] = useState('');
   const [recordId, setRecordId] = useState('');
@@ -64,8 +67,11 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
   const [recordQuery, setRecordQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Only the four secondary axes live here; the primary "Document Type" is its
+  // own `primaryCat` state. `primary_category:''` keeps the record exhaustive
+  // (it is never rendered or set from this object).
   const [axes, setAxes] = useState<Record<FileVocabDimension, string>>({
-    asset_nature: '', acquisition_source: '', usage_rights: '', production_state: '',
+    asset_nature: '', acquisition_source: '', usage_rights: '', production_state: '', primary_category: '',
   });
   const [vocab, setVocab] = useState<FileVocabRow[]>([]);
 
@@ -164,6 +170,14 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
       }
       return changed ? next : prev;
     });
+
+    // Primary category: only pre-fill the BATCH box when every analysed file
+    // agrees on ONE value — a mixed batch (a brochure + a raw photo) keeps the
+    // box blank so each file's own AI-applied value stands untouched.
+    if (!prefilled.current.has('primary')) {
+      const cats = [...new Set(rows.map((r) => r.primary_category).filter((v): v is string => Boolean(v)))];
+      if (cats.length === 1) { prefilled.current.add('primary'); setPrimaryCat((prev) => (prev ? prev : cats[0]!)); }
+    }
 
     if (!prefilled.current.has('subjects')) {
       const subs = [...new Set(rows.flatMap((r) => r.ai_subjects ?? []))];
@@ -264,7 +278,7 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
   );
 
   const batchPrimary = subjects[0] ?? null;
-  const nothingToDo = subjects.length === 0 && !anyAxis && batchTags.length === 0
+  const nothingToDo = subjects.length === 0 && !anyAxis && !primaryCat && batchTags.length === 0
     && !recordId && changedTitles.length === 0 && Object.keys(overrides).length === 0;
 
   const optionsFor = (kind: FileRow['kind']) =>
@@ -289,6 +303,9 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
     try {
       const { bulkEditTags } = await import('@/lib/files/bulkEdit');
       const axisPatch: Omit<BulkPatch, 'addTags' | 'removeTags'> = {};
+      // The primary "Document Type" applies to EVERY file when set (a manual
+      // override); left blank, each file keeps the value the AI auto-applied.
+      if (primaryCat) axisPatch.primary_category = primaryCat;
       if (axes.asset_nature) axisPatch.asset_nature = axes.asset_nature;
       if (axes.acquisition_source) axisPatch.acquisition_source = axes.acquisition_source;
       if (axes.usage_rights) axisPatch.usage_rights = axes.usage_rights;
@@ -328,7 +345,7 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
     } finally {
       setBusy(false);
     }
-  }, [files, subjects, batchPrimary, axes, batchTags, overrides, changedTitles, titles, recordId, effModel, onApplied]);
+  }, [files, subjects, batchPrimary, primaryCat, axes, batchTags, overrides, changedTitles, titles, recordId, effModel, onApplied]);
 
   const field = 'w-full px-3 py-2 rounded-lg bg-white border border-sand/40 text-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-copper/30';
   const label = 'block text-[11px] font-bold text-charcoal/60 mb-1';
@@ -364,9 +381,21 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
         )}
 
         {/* ── Batch defaults ───────────────────────────────────────────── */}
+        {/* Primary "Document Type" — the AI fills this per file; setting it here
+            overrides every file in the batch. */}
+        <div>
+          <label className={label}>{t('files.library.meta.primary_category')}</label>
+          <select className={field} value={primaryCat} onChange={(e) => setPrimaryCat(e.target.value)}>
+            <option value="">{t('files.post_upload.keep_primary')}</option>
+            {vocabFor('primary_category').map((o) => (
+              <option key={o.value} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>
+            ))}
+          </select>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className={label}>{t('files.library.meta.subjects')}</label>
+            <label className={label}>{t('files.library.meta.secondary_types')}</label>
             <ClassificationSelect
               options={optionsFor(files[0]?.kind ?? 'other')}
               selected={subjects}
