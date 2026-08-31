@@ -21,7 +21,7 @@ import { getWahaSessionState, restartWahaSession, getWahaQrBlob, type WahaSessio
  * is fetched with the auth header (the endpoint is admin-only), so a plain
  * <img src> can't be used — object URLs are created and revoked here.
  */
-export default function WahaConnectionCard({ session }: { session: string }) {
+export default function WahaConnectionCard({ session, label, phone }: { session: string; label?: string; phone?: string }) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
 
@@ -170,7 +170,9 @@ export default function WahaConnectionCard({ session }: { session: string }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="font-bold text-charcoal">
-              {isAr ? 'اتصال واتساب (الخادم)' : 'WhatsApp Connection (server)'}
+              {label
+                ? (isAr ? `اتصال واتساب — ${label}` : `WhatsApp — ${label}`)
+                : (isAr ? 'اتصال واتساب (الخادم)' : 'WhatsApp Connection (server)')}
             </h3>
             <StatusPill status={status} error={error} isAr={isAr} />
           </div>
@@ -179,9 +181,13 @@ export default function WahaConnectionCard({ session }: { session: string }) {
               ? (isAr
                   ? `متصل كـ ${state.me.pushName ?? ''} (${state.me.id.replace('@c.us', '')})`
                   : `Connected as ${state.me.pushName ?? ''} (${state.me.id.replace('@c.us', '')})`)
-              : isAr
-                ? 'إذا فشل الإرسال برسالة 422، الجلسة منقطعة — أعد الإقران من هنا.'
-                : 'If sends fail with a 422, the session dropped — re-pair from here.'}
+              : phone
+                ? (isAr
+                    ? `${phone} — إذا فشل الإرسال برسالة 422، الجلسة منقطعة، أعد الإقران من هنا.`
+                    : `${phone} — if sends fail with a 422, the session dropped; re-pair from here.`)
+                : isAr
+                  ? 'إذا فشل الإرسال برسالة 422، الجلسة منقطعة — أعد الإقران من هنا.'
+                  : 'If sends fail with a 422, the session dropped — re-pair from here.'}
           </p>
           {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
         </div>

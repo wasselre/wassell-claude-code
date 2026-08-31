@@ -173,6 +173,39 @@ export async function resolveDefaultDeviceId(): Promise<string | null> {
   }
 }
 
+/**
+ * The device id of the ACTIVE OPERATIONS number, or null if none is designated.
+ *
+ * The operations line is for INTERNAL operational outreach (notifying project
+ * officers that a customer wants to visit) — deliberately a DIFFERENT number
+ * from the sales/customer default so the two inboxes and the two outbound
+ * identities stay separate. Marked by `is_operations` on whatsapp_numbers so
+ * swapping which SIM is "operations" is a one-row change, not a code edit.
+ *
+ * Returns null (never the sales default) when no ops line is configured — the
+ * caller must decide what to do, because silently falling back to the sales
+ * number is exactly the mix-up this whole separation exists to prevent.
+ */
+export async function resolveOperationsDeviceId(): Promise<string | null> {
+  const svc = svcClient();
+  if (!svc) return null;
+  try {
+    return await withTimeout((async (): Promise<string | null> => {
+      const { data } = await svc
+        .from('whatsapp_numbers')
+        .select('device_id')
+        .eq('is_active', true)
+        .eq('is_operations', true)
+        .maybeSingle();
+      const id = (data as { device_id?: string } | null)?.device_id;
+      return (typeof id === 'string' && id) ? id : null;
+    })(), 2500, null);
+  } catch {
+    // Never let device resolution throw into a caller — no ops line resolvable.
+    return null;
+  }
+}
+
 /** Merge devices from both providers. One provider failing never kills the list. */
 export async function listDevices(): Promise<HaberchatDevice[]> {
   try {

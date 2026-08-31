@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X, CalendarPlus, MapPin } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, UserCheck, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X, CalendarPlus, MapPin } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
@@ -21,6 +21,7 @@ import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
 import LeadIntakeModal from './LeadIntakeModal';
 import ContactIntakeModal from './ContactIntakeModal';
 import LogInteractionModal from './LogInteractionModal';
+import NotifyOfficerModal from './NotifyOfficerModal';
 import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointmentModal';
 import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
 import StudyJobCard from './StudyJobCard';
@@ -138,6 +139,15 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     () => (linkedClientData ? buildDetailedClientPrefChips(linkedClientData, clientsModel, geoNames, isAr) : []),
     [linkedClientData, clientsModel, geoNames, isAr],
   );
+  // The linked client's preferred projects (multi-lookup → array of project ids),
+  // used to prefill the "Notify officer" project picker when there's exactly one.
+  const preferredProjectIds = useMemo<string[]>(() => {
+    const pp = linkedClientData?.preferred_projects;
+    if (!Array.isArray(pp)) return [];
+    return pp
+      .map((x) => (typeof x === 'string' ? x : x && typeof x === 'object' && 'id' in x ? String((x as { id: unknown }).id) : ''))
+      .filter(Boolean);
+  }, [linkedClientData]);
 
 
   // Advertiser whose phone matches this chat — computed live (nothing is
@@ -185,6 +195,8 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   // same Quick modals the Follow-up Workspace uses, minus a source follow-up.
   const [showBookAppointment, setShowBookAppointment] = useState(false);
   const [showRecordVisit, setShowRecordVisit] = useState(false);
+  // Notify the project's officer FROM THE OPS LINE that a customer wants to visit.
+  const [showNotifyOfficer, setShowNotifyOfficer] = useState(false);
   // In-chat record popup for a matched CONTACT / ADVERTISER (a plain record with
   // no bespoke page). Opening it never navigates away — RecordFormModal overlay
   // with an "Open full page" escape hatch.
@@ -305,6 +317,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     onLogInteraction: () => setShowLogInteraction(true),
     onBookAppointment: () => setShowBookAppointment(true),
     onRecordVisit: () => setShowRecordVisit(true),
+    onNotifyOfficer: () => setShowNotifyOfficer(true),
     onLeadIntake: () => setShowLeadIntake(true),
     onContactIntake: () => setShowContactIntake(true),
   };
@@ -613,6 +626,18 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         />
       )}
 
+      {/* Notify project officer — sends a visit heads-up to the project's
+          officer FROM THE OPS LINE (never sales). Officer resolved server-side. */}
+      {showNotifyOfficer && (
+        <NotifyOfficerModal
+          clientId={clientLinkId}
+          clientName={linkedClientName ?? name}
+          clientPhone={phone}
+          preferredProjectIds={preferredProjectIds}
+          onClose={() => setShowNotifyOfficer(false)}
+        />
+      )}
+
       {/* Complete WhatsApp Follow-Up — records the outcome on the existing
           follow-up (workflow moves the client), then resolves the chat. */}
       {showCompleteFollowup && activeWaFollowup && followupsModel && (
@@ -697,6 +722,7 @@ function CrmActions({
   onLogInteraction,
   onBookAppointment,
   onRecordVisit,
+  onNotifyOfficer,
   onLeadIntake,
   onContactIntake,
   layout,
@@ -717,6 +743,7 @@ function CrmActions({
   onLogInteraction: () => void;
   onBookAppointment: () => void;
   onRecordVisit: () => void;
+  onNotifyOfficer: () => void;
   onLeadIntake: () => void;
   onContactIntake: () => void;
   layout: 'inline' | 'sheet';
@@ -809,6 +836,14 @@ function CrmActions({
           >
             <MapPin size={12} />
             {isAr ? 'تسجيل زيارة' : 'Record a visit'}
+          </button>
+          <button
+            onClick={run(onNotifyOfficer)}
+            className={`inline-flex items-center gap-1 rounded-full border border-terracotta/40 bg-terracotta/5 ${pad} font-medium text-terracotta transition-colors hover:bg-terracotta/10`}
+            title={isAr ? 'إشعار مسؤول المشروع من رقم العمليات' : 'Notify the project officer from the ops number'}
+          >
+            <UserCheck size={12} />
+            {isAr ? 'إشعار المسؤول' : 'Notify officer'}
           </button>
           {/* AI handover is a self-contained toggle (a fetch, no overlay) — it
               stays mounted in the sheet so its busy spinner + result toast show;

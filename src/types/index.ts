@@ -2459,6 +2459,9 @@ export interface WhatsAppNumber {
   friendly_name_ar: string | null;
   friendly_name_en: string | null;
   is_default: boolean;
+  /** The OPERATIONS line — used for internal outreach (project officers), kept
+   *  separate from the sales/customer default. See resolveOperationsDeviceId. */
+  is_operations?: boolean;
   is_active: boolean;
   created_at: string;
   updated_at: string;

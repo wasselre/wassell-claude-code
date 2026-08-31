@@ -145,6 +145,13 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   }
   const flow: 'in' | 'out' = p.fromMe ? 'out' : 'in';
 
+  // Sales/ops separation: a message on the OPERATIONS line (internal outreach to
+  // project officers) is stored + shown in its own inbox, but must NOT enter the
+  // sales funnel — no AI auto-reply, no lead capture, no follow-up reconcile, no
+  // ad attribution. Everything below gates on this. Defaults to false (normal
+  // sales behavior) if the role can't be resolved.
+  const isOps = await isOperationsSession(session);
+
   // WhatsApp Status posts and broadcasts are not conversations. Ingesting them
   // created customer-looking chats in the list — 9 of them — and one shadowed a
   // real contact's phone, so the same person appeared twice with the status row
@@ -211,7 +218,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // so it is NOT a safe home for attribution). We resolve the Paid Ads chain here
   // too; resolved stays null until the ad exists, then mos_reresolve_first_touch
   // back-fills it onto this same meta.
-  const adReferral = flow === 'in' ? extractAdReferral(p) : null;
+  const adReferral = flow === 'in' && !isOps ? extractAdReferral(p) : null;
   const adMeta = adReferral ? await attachAdResolution(adReferral) : null;
 
   const row: ChatMessageRow = {
@@ -273,7 +280,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     adMeta && typeof adMeta.resolved === 'object' && adMeta.resolved !== null
       ? (adMeta.resolved as Record<string, unknown>)
       : null;
-  if (flow === 'in' && isNew && counterpartyPhone && resolvedAd) {
+  if (flow === 'in' && isNew && counterpartyPhone && resolvedAd && !isOps) {
     try {
       const pushName = p._data?.Info?.PushName ?? null;
       const { error } = await getServiceSupabase().rpc('mos_capture_ad_acquisition', {
@@ -300,6 +307,8 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     // Only a genuinely new inbound message bumps unread (retry-safe).
     incrementUnread: flow === 'in' && isNew,
     // No reopen push-back for WAHA — chat status is fully CRM-owned.
+    // Operations-line threads skip client-linking + the sales-funnel reconcile.
+    isOperations: isOps,
   });
 
   // AI auto-reply (outside working hours only). The RPC is the single gate —
@@ -314,7 +323,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // Requires a phone: the agent qualifies the lead against the client record,
   // which is matched by number. A LID-only chat has nothing to match on, so
   // storing the message (above) is the whole job here.
-  if (flow === 'in' && isNew && counterpartyPhone) {
+  if (flow === 'in' && isNew && counterpartyPhone && !isOps) {
     // Route to the BASIC responder (fast, deterministic + one Kimi fallback — no
     // Claude session). It internally delegates to the heavy Claude-session queue
     // (whatsapp_ai_enqueue) only when responder_mode='agent'. The isNew guard
@@ -540,6 +549,38 @@ async function warnIfForeignSession(session: string): Promise<void> {
     }
   } catch (err) {
     console.error('[webhook.waha] foreign-session check failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Is this WAHA session the OPERATIONS line? (whatsapp_numbers.is_operations)
+ *
+ * Cached per warm instance with a short TTL: toggling the flag in the app takes
+ * effect within ~30s without a redeploy, but we don't hit the DB on every
+ * message. On error we default to `false` (normal sales behavior) and do NOT
+ * cache the guess, so the next message re-checks — the ops line is the
+ * exception, and briefly treating it as sales is safer than the reverse
+ * silently disabling the sales funnel for a lookup blip.
+ */
+const opsRoleCache = new Map<string, { isOps: boolean; ts: number }>();
+const OPS_ROLE_TTL_MS = 30_000;
+async function isOperationsSession(session: string): Promise<boolean> {
+  if (!session) return false;
+  const now = Date.now();
+  const cached = opsRoleCache.get(session);
+  if (cached && now - cached.ts < OPS_ROLE_TTL_MS) return cached.isOps;
+  try {
+    const { data } = await getServiceSupabase()
+      .from('whatsapp_numbers')
+      .select('is_operations')
+      .eq('device_id', session)
+      .maybeSingle();
+    const isOps = (data as { is_operations?: boolean } | null)?.is_operations === true;
+    opsRoleCache.set(session, { isOps, ts: now });
+    return isOps;
+  } catch (err) {
+    console.error('[webhook.waha] ops-role check failed:', err instanceof Error ? err.message : String(err));
+    return false;
   }
 }
 

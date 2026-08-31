@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MessageCircle, RefreshCw, Star, Eye, EyeOff, Check, X } from 'lucide-react';
+import { MessageCircle, RefreshCw, Star, Wrench, Eye, EyeOff, Check, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import BackToSettings from './components/BackToSettings';
@@ -59,12 +59,30 @@ export default function WhatsAppNumbersPage() {
   // overlay wins for friendly_name / default / active.
   const merged = useMemo(() => mergeDevicesAndOverlay(waDevicesLive, waDevices), [waDevicesLive, waDevices]);
 
-  // WAHA session powering the gateway — from the overlay row when present so a
-  // renamed session follows the DB; falls back to the deployed default.
-  const wahaSession = useMemo(
-    () => waDevices.find((d) => d.provider === 'waha' && d.session_name)?.session_name ?? 'wassel_main',
-    [waDevices],
-  );
+  // Every ACTIVE WAHA session gets its own live-status / re-pair card. Each
+  // number is an independent linked device on the gateway, so a single card is
+  // wrong the moment there's more than one (sales + ops). Deduped by session,
+  // default first. Falls back to the deployed default when the overlay is empty.
+  const wahaSessions = useMemo(() => {
+    const seen = new Set<string>();
+    const rows = waDevices
+      .filter((d) => d.provider === 'waha' && d.session_name && d.is_active)
+      .sort((a, b) => (a.is_default === b.is_default ? 0 : a.is_default ? -1 : 1))
+      .map((d) => {
+        const session = d.session_name!;
+        if (seen.has(session)) return null;
+        seen.add(session);
+        return {
+          session,
+          label: isAr
+            ? (d.friendly_name_ar || d.friendly_name_en || d.phone)
+            : (d.friendly_name_en || d.friendly_name_ar || d.phone),
+          phone: d.phone,
+        };
+      })
+      .filter((x): x is { session: string; label: string; phone: string } => x !== null);
+    return rows.length > 0 ? rows : [{ session: 'wassel_main', label: '', phone: '' }];
+  }, [waDevices, isAr]);
 
   return (
     <div className="p-6 md:p-8 max-w-5xl mx-auto">
@@ -89,7 +107,9 @@ export default function WhatsAppNumbersPage() {
         </Button>
       </div>
 
-      <WahaConnectionCard session={wahaSession} />
+      {wahaSessions.map((s) => (
+        <WahaConnectionCard key={s.session} session={s.session} label={s.label || undefined} phone={s.phone || undefined} />
+      ))}
 
       {refreshError && (
         <div className="card p-4 mb-4 border-red-300 bg-red-50">
@@ -145,6 +165,7 @@ interface MergedRow {
   friendly_name_ar: string | null;
   friendly_name_en: string | null;
   is_default: boolean;
+  is_operations: boolean;
   is_active: boolean;
   // True when the overlay row exists in waDevices (vs synthesized from live only).
   has_overlay: boolean;
@@ -181,6 +202,7 @@ function NumberRow({
         friendly_name_ar: row.friendly_name_ar,
         friendly_name_en: row.friendly_name_en,
         is_default: row.is_default,
+        is_operations: row.is_operations,
         is_active: row.is_active,
         created_at: row.overlay_created_at ?? now,
         updated_at: now,
@@ -222,6 +244,12 @@ function NumberRow({
                 <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-copper/10 text-copper">
                   <Star size={12} fill="currentColor" />
                   {isAr ? 'افتراضي' : 'Default'}
+                </span>
+              )}
+              {row.is_operations && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-terracotta/10 text-terracotta">
+                  <Wrench size={12} />
+                  {isAr ? 'العمليات' : 'Operations'}
                 </span>
               )}
               {row.live_status && (
@@ -295,7 +323,7 @@ function NumberRow({
           {!row.is_default && (
             <Button
               variant="secondary"
-              onClick={() => persist({ is_default: true })}
+              onClick={() => persist({ is_default: true, is_operations: false })}
               className="!px-3 !text-xs"
               disabled={saving || !row.is_active}
               title={!row.is_active ? (isAr ? 'يجب التفعيل أولاً' : 'Activate first') : undefined}
@@ -304,6 +332,26 @@ function NumberRow({
               {isAr ? 'اجعله افتراضي' : 'Set default'}
             </Button>
           )}
+          {/* Operations line — internal outreach (project officers). A number can't
+              be both the sales default and the operations line. */}
+          <Button
+            variant="secondary"
+            onClick={() => persist({ is_operations: !row.is_operations })}
+            className="!px-3 !text-xs"
+            disabled={saving || !row.is_active || (!row.is_operations && row.is_default)}
+            title={
+              row.is_default
+                ? (isAr ? 'الرقم الافتراضي للمبيعات لا يصلح لخط العمليات' : "The sales default can't also be the operations line")
+                : !row.is_active
+                  ? (isAr ? 'يجب التفعيل أولاً' : 'Activate first')
+                  : (isAr ? 'استخدمه لإشعار مسؤولي المشاريع' : 'Use it to notify project officers')
+            }
+          >
+            <Wrench size={12} />
+            {row.is_operations
+              ? (isAr ? 'إلغاء العمليات' : 'Unset operations')
+              : (isAr ? 'اجعله للعمليات' : 'Set as operations')}
+          </Button>
           <Button
             variant="secondary"
             onClick={() => persist({ is_active: !row.is_active, is_default: row.is_active ? false : row.is_default })}
@@ -339,6 +387,7 @@ function mergeDevicesAndOverlay(live: HaberchatDevice[], overlay: WhatsAppNumber
       friendly_name_ar: o?.friendly_name_ar ?? null,
       friendly_name_en: o?.friendly_name_en ?? null,
       is_default: o?.is_default ?? false,
+      is_operations: o?.is_operations ?? false,
       is_active: o?.is_active ?? true,
       has_overlay: !!o,
       overlay_created_at: o?.created_at ?? null,
@@ -357,6 +406,7 @@ function mergeDevicesAndOverlay(live: HaberchatDevice[], overlay: WhatsAppNumber
       friendly_name_ar: o.friendly_name_ar,
       friendly_name_en: o.friendly_name_en,
       is_default: o.is_default,
+      is_operations: o.is_operations ?? false,
       is_active: o.is_active,
       has_overlay: true,
       overlay_created_at: o.created_at,

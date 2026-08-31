@@ -253,6 +253,13 @@ export async function bumpConversationRecord(args: {
   lastFlow: 'in' | 'out';
   incrementUnread: boolean;
   reopenPushBack?: (deviceId: string, chatWid: string) => Promise<void>;
+  /** When true, this thread arrived on the OPERATIONS line (internal outreach to
+   *  project officers), NOT the sales/customer line. We still record the
+   *  conversation so it shows in its own inbox, but we do NOT resolve a
+   *  client_link or run the sales-funnel reconcile RPCs — an officer is not a
+   *  lead, and creating "your turn" follow-up tasks off their replies would be
+   *  wrong. See the ops/sales separation in api/webhook/waha.ts. */
+  isOperations?: boolean;
 }): Promise<void> {
   if (!isValidChatWid(args.chatWid)) {
     // Loud, not silent: a wid we cannot parse means an upstream shape changed,
@@ -301,6 +308,11 @@ export async function bumpConversationRecord(args: {
       console.error('[chatIngest] auto-reopen push-back failed:', err instanceof Error ? err.message : String(err));
     }
   }
+
+  // Operations-line thread: the conversation record above is all we do. No
+  // client-link resolution, no sales-funnel reconcile — an officer is not a
+  // lead. This is the inbound half of the sales/ops separation.
+  if (args.isOperations) return;
 
   // WhatsApp activity bridge (2026-07-21) — the follow-up engine tracks the
   // real conversation on a client-linked chat:
