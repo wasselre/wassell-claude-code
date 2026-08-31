@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X, CalendarPlus, MapPin } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
@@ -21,6 +21,8 @@ import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
 import LeadIntakeModal from './LeadIntakeModal';
 import ContactIntakeModal from './ContactIntakeModal';
 import LogInteractionModal from './LogInteractionModal';
+import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointmentModal';
+import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
 import StudyJobCard from './StudyJobCard';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
@@ -55,6 +57,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const records = useAppStore((s) => s.records);
   const markChatAsRead = useAppStore((s) => s.markChatAsRead);
   const patchChat = useAppStore((s) => s.patchChat);
+  const currentUserId = useAppStore((s) => s.currentUserId);
 
   const chatsModel = useMemo(() => models.find((m) => m.name === 'chats'), [models]);
   const record = useMemo(() => {
@@ -174,6 +177,10 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const [showContactIntake, setShowContactIntake] = useState(false);
   // "Log an interaction" — record an off-task call/visit result.
   const [showLogInteraction, setShowLogInteraction] = useState(false);
+  // Book an appointment / record a visit straight from the conversation — the
+  // same Quick modals the Follow-up Workspace uses, minus a source follow-up.
+  const [showBookAppointment, setShowBookAppointment] = useState(false);
+  const [showRecordVisit, setShowRecordVisit] = useState(false);
   // In-chat record popup for a matched CONTACT / ADVERTISER (a plain record with
   // no bespoke page). Opening it never navigates away — RecordFormModal overlay
   // with an "Open full page" escape hatch.
@@ -290,6 +297,8 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     onOpenAdvertiser: openAdvertiserRecord,
     onClientOptions: () => setShowClientOptions(true),
     onLogInteraction: () => setShowLogInteraction(true),
+    onBookAppointment: () => setShowBookAppointment(true),
+    onRecordVisit: () => setShowRecordVisit(true),
     onLeadIntake: () => setShowLeadIntake(true),
     onContactIntake: () => setShowContactIntake(true),
   };
@@ -562,6 +571,32 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         />
       )}
 
+      {/* Book an appointment — the Workspace's Quick modal, sans source
+          follow-up. Fires the appointment workflows via saveRecord. */}
+      {showBookAppointment && (
+        <QuickAppointmentModal
+          clientId={clientLinkId}
+          phone={phone}
+          salesRep={currentUserId}
+          followupId={activeWaFollowup?.id ?? null}
+          onClose={() => setShowBookAppointment(false)}
+          onSaved={() => setShowBookAppointment(false)}
+        />
+      )}
+
+      {/* Record a visit — the Workspace's Quick modal, sans source follow-up.
+          Fires the Visit → After-Visit workflow via saveRecord. */}
+      {showRecordVisit && (
+        <QuickVisitModal
+          clientId={clientLinkId}
+          clientName={linkedClientName ?? name}
+          phone={phone}
+          salesRep={currentUserId}
+          followupId={activeWaFollowup?.id ?? null}
+          onClose={() => setShowRecordVisit(false)}
+        />
+      )}
+
       {/* Complete WhatsApp Follow-Up — records the outcome on the existing
           follow-up (workflow moves the client), then resolves the chat. */}
       {showCompleteFollowup && activeWaFollowup && followupsModel && (
@@ -622,6 +657,8 @@ function CrmActions({
   onOpenAdvertiser,
   onClientOptions,
   onLogInteraction,
+  onBookAppointment,
+  onRecordVisit,
   onLeadIntake,
   onContactIntake,
   layout,
@@ -640,6 +677,8 @@ function CrmActions({
   onOpenAdvertiser: (() => void) | null;
   onClientOptions: () => void;
   onLogInteraction: () => void;
+  onBookAppointment: () => void;
+  onRecordVisit: () => void;
   onLeadIntake: () => void;
   onContactIntake: () => void;
   layout: 'inline' | 'sheet';
@@ -716,6 +755,22 @@ function CrmActions({
           >
             <NotebookPen size={12} />
             {isAr ? 'تسجيل تواصل' : 'Log interaction'}
+          </button>
+          <button
+            onClick={run(onBookAppointment)}
+            className={`inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 ${pad} font-medium text-copper transition-colors hover:bg-copper/10`}
+            title={isAr ? 'حجز موعد لهذا العميل' : 'Book an appointment for this client'}
+          >
+            <CalendarPlus size={12} />
+            {isAr ? 'حجز موعد' : 'Book appointment'}
+          </button>
+          <button
+            onClick={run(onRecordVisit)}
+            className={`inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 ${pad} font-medium text-copper transition-colors hover:bg-copper/10`}
+            title={isAr ? 'تسجيل زيارة قام بها العميل' : 'Record a visit this client made'}
+          >
+            <MapPin size={12} />
+            {isAr ? 'تسجيل زيارة' : 'Record a visit'}
           </button>
           {/* AI handover is a self-contained toggle (a fetch, no overlay) — it
               stays mounted in the sheet so its busy spinner + result toast show;

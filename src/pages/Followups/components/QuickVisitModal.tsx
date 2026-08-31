@@ -20,7 +20,9 @@ interface QuickVisitModalProps {
   clientName: string | null;
   phone: string | null;
   salesRep: unknown;
-  followupId: string;
+  /** Source follow-up to link back to. Null when recorded outside a follow-up
+      (e.g. straight from a chat) — no `source_followup_id` is then stamped. */
+  followupId: string | null;
   onClose: () => void;
   onSaved?: (visitId: string) => void;
 }
@@ -35,8 +37,8 @@ export default function QuickVisitModal({ clientId, clientName, phone, salesRep,
     const p: Record<string, unknown> = {
       scheduled_datetime: new Date().toISOString(),
       sales_representative: salesRep ?? currentUserId ?? undefined,
-      source_followup_id: followupId,
     };
+    if (followupId) p.source_followup_id = followupId;
     if (clientId) p.client_id = clientId;
     if (clientName) p.name = clientName;
     if (phone) p.phone = phone;

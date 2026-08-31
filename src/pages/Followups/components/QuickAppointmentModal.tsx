@@ -18,7 +18,9 @@ interface QuickAppointmentModalProps {
   clientId: string | null;
   phone: string | null;
   salesRep: unknown;
-  followupId: string;
+  /** Source follow-up to link back to. Null when booked outside a follow-up
+      (e.g. straight from a chat) — no `source_followup_id` is then stamped. */
+  followupId: string | null;
   onClose: () => void;
   onSaved: (appointmentId: string) => void;
 }
@@ -33,8 +35,8 @@ export default function QuickAppointmentModal({ clientId, phone, salesRep, follo
     const p: Record<string, unknown> = {
       appointment_date: new Date().toISOString(),
       sales_rep: salesRep,
-      source_followup_id: followupId,
     };
+    if (followupId) p.source_followup_id = followupId;
     if (clientId) p.client_id = clientId;
     if (phone) p.phone_number = phone;
     return p;
