@@ -61,6 +61,26 @@ export interface RunEnrichmentJobArgs {
   job: EnrichmentJob;
 }
 
+/** Deterministic best-guess primary "Document Type" from the fields the model
+ *  DOES fill reliably (kind + asset_nature + production_state), used only when
+ *  the model failed to return a valid one. Always returns an in-allowlist value
+ *  (falls back to the first offered), so the required field is never left empty. */
+function fallbackPrimary(
+  kind: string, nature: string | undefined, pstate: string | undefined, allowed: string[],
+): string {
+  const pick = (arr: string[]) => arr.find((v) => allowed.includes(v)) ?? allowed[0]!;
+  if (kind === 'audio') return pick(['voiceover', 'music']);
+  if (kind === 'video') {
+    if (nature === 'ai_generated' || nature === 'ai_edited') return pick(['ai_content', 'ready_video', 'raw_video']);
+    return pick(pstate === 'raw' ? ['raw_video', 'ready_video'] : ['ready_video', 'raw_video']);
+  }
+  // image / pdf / document
+  if (nature === 'ai_generated' || nature === 'ai_edited') return pick(['ai_content', 'design']);
+  if (nature === 'graphic_design' || nature === 'cgi_render' || nature === 'screenshot') return pick(['design', 'raw_photo', 'brochure']);
+  if (nature === 'real') return pick(kind === 'image' ? ['raw_photo', 'brochure'] : ['brochure', 'unit_plan']);
+  return pick(kind === 'image' ? ['raw_photo', 'design', 'brochure'] : ['brochure', 'unit_plan']);
+}
+
 /** Returns the result jsonb for file_enrichment_complete ({} = no-op). Throws
  *  on a genuine failure — index.ts routes that to file_enrichment_fail. */
 export async function runEnrichmentJob(
@@ -287,6 +307,19 @@ export async function runEnrichmentJob(
     if (tags.length) result.tags = [...new Set(tags)];
   }
 
+  // ── primary_category SAFETY NET ───────────────────────────────────────────
+  // primary_category is REQUIRED, but a model sometimes returns a word outside
+  // the list (e.g. an asset_nature like "screenshot") and no new-type proposal,
+  // which the guard above drops → the required field would stay NULL (measured
+  // ~33% on the newest/edge files). It DOES reliably fill asset_nature/kind, so
+  // derive the closest in-allowlist primary from those rather than leave it empty.
+  if (!result.primary_category && !result.new_primary_category && pcatValues.length) {
+    const nat = typeof result.asset_nature === 'string' ? result.asset_nature : undefined;
+    const pstate = typeof result.production_state === 'string' ? result.production_state : undefined;
+    result.primary_category = fallbackPrimary(kind, nat, pstate, pcatValues);
+    result.primary_category_fallback = true;
+  }
+
   // ── Link suggestions (UNLINKED files only) ────────────────────────────────
   // The AI extracts the project/developer names it can read; matching to a real
   // record is deterministic (file_link_suggest). Skip the whole step when the
@@ -313,7 +346,7 @@ export async function runEnrichmentJob(
     }
   }
 
-  const pcatLog = result.primary_category ? String(result.primary_category)
+  const pcatLog = result.primary_category ? `${String(result.primary_category)}${result.primary_category_fallback ? '(fb)' : ''}`
     : (result.new_primary_category ? `NEW:${(result.new_primary_category as { value?: string }).value ?? '?'}` : 'n');
   console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} pcat=${pcatLog} subjects=${(result.subjects as string[] | undefined)?.length ?? 0} newSubs=${(result.new_subjects as unknown[] | undefined)?.length ?? 0} axes=${[result.asset_nature, result.acquisition_source, result.usage_rights, result.production_state].filter(Boolean).length}/4 title=${result.title ? 'y' : 'n'} names=${names.length} linkSugg=${nSugg}`);
   return result;
