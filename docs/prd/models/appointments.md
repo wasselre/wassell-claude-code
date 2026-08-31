@@ -5,7 +5,7 @@
 # Model: Appointments / المواعيد  `appointments`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-08-31
 **Model id:** `b032a675-6237-4436-9783-a1a253855f74`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **10**
+- Fields: **11**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -36,6 +36,7 @@
 | `app_id` | Appointment ID / معرف الموعد | Auto ID | no | half | yes | م ع### |
 | `appointment_date` | Appointment Date / تاريخ الموعد | Date & time | yes | half | yes |  |
 | `project_id` | Project / المشروع | Lookup | no | half | yes | → All Projects |
+| `units` | Units / الوحدات | unit_picker | no | full | yes |  |
 | `sales_rep` | Sales Rep / مندوب المبيعات | Assignee | no | half | yes | any user |
 | `appointment_status` | Appointment Status / حالة الموعد | Dropdown | no | half | yes | 6 options |
 | `notes` | Notes / ملاحظات | Text area | no | full | no |  |

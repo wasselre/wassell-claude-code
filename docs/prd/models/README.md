@@ -4,19 +4,19 @@
 
 # Models — auto-generated index
 
-**50 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
+**51 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
 
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [Advertisers](advertisers.md) | `advertisers` | JSONB | — | 1 | 10 | no | 2026-07-01 |
 | [AI Agent](ai-chats.md) | `ai_chats` | JSONB | New Group | 1 | 5 | yes | 2026-08-20 |
 | [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 70 | no | 2026-08-24 |
-| [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 10 | no | 2026-08-20 |
+| [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 11 | no | 2026-08-31 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 13 | yes | 2026-08-20 |
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 15 | yes | 2026-08-20 |
 | [Cities](cities.md) | `cities` | frozen `cities` | Geography | 1 | 12 | no | 2026-07-30 |
 | [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-08-20 |
-| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 26 | no | 2026-08-20 |
+| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 27 | no | 2026-08-31 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-08-20 |
 | [Contacts](contacts.md) | `contacts` | JSONB | — | 1 | 6 | no | 2026-08-10 |
 | [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | Designs | 1 | 6 | no | 2026-08-20 |
@@ -41,6 +41,7 @@
 | [Post Batches](posts-batches.md) | `posts_batches` | JSONB | — | 1 | 13 | no | 2026-07-26 |
 | [Posts Content](posts-content.md) | `posts_content` | JSONB | — | 4 | 30 | no | 2026-07-26 |
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-08-20 |
+| [Project Officers](project-officers.md) | `project_officers` | JSONB | Projects | 1 | 6 | no | 2026-08-31 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
 | [Real Estate Offices](real-estate-offices.md) | `real_estate_offices` | JSONB | Unresponded Requests | 1 | 6 | no | 2026-07-30 |
 | [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-08-20 |
