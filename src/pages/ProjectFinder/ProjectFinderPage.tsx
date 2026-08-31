@@ -26,6 +26,8 @@ import FinderMapView from '@/pages/Followups/components/FinderMapView';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import LeaveWithoutSavingModal from '@/components/matching/LeaveWithoutSavingModal';
+import ProjectDetailPage from '@/pages/Projects/ProjectDetailPage';
+import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 
@@ -175,6 +177,18 @@ export default function ProjectFinderPage() {
   const [eliminating, setEliminating] = useState(false);
   // "Send to client" from a card — only offered while a client is selected.
   const [sendTarget, setSendTarget] = useState<FinderMatch | null>(null);
+  // A result's SOURCE opened as an IN-PAGE overlay (project → rich detail page;
+  // market listing → record form) instead of a new browser tab. The old
+  // `window.open('_blank')` spawned a fresh document that cold-booted the whole
+  // app (full unified_records + units load) just to show one project — the
+  // reported "takes a very long time to load". An overlay reuses THIS session's
+  // already-hydrated store, so the record is in memory and paints instantly, and
+  // closing it returns to the finder with its results intact.
+  const [sourceView, setSourceView] = useState<{ type: 'project' | 'market_listing'; id: string } | null>(null);
+  const marketModelId = useMemo(
+    () => models.find((m) => m.name === 'market_listings')?.id ?? null,
+    [models],
+  );
   // Whether at least ONE option was saved for the selected client this session —
   // clearing the client (or closing the tab) without it triggers a confirmation.
   const [savedAny, setSavedAny] = useState(false);
@@ -389,8 +403,13 @@ export default function ProjectFinderPage() {
   useEffect(() => () => controllerRef.current?.abort(), []);
 
   function onOpenDetails(item: FinderMatch) {
-    const model = item.source === 'market_listings' ? 'market_listings' : 'all_projects';
-    window.open(`/model/${model}/${item.project_id}`, '_blank', 'noopener');
+    // Open the source as an in-page overlay (reuses the warm store → instant),
+    // NOT a new tab (which cold-boots the whole app per click). Closing it
+    // returns to THIS finder with its results intact.
+    setSourceView({
+      type: item.source === 'market_listings' ? 'market_listing' : 'project',
+      id: item.project_id,
+    });
   }
 
   // ── Client-option actions (mirrors the Follow-up finder). Guarded by a selected client. ──
@@ -1062,6 +1081,27 @@ export default function ProjectFinderPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Source overlay — a project opens the rich detail page, a market listing
+          the record form. In-page (warm store) instead of a cold-boot new tab;
+          closing returns to the finder with its results intact. */}
+      {sourceView?.type === 'project' && (
+        <div className="fixed inset-0 z-40 overflow-y-auto bg-cream" dir={isAr ? 'rtl' : 'ltr'}>
+          <ProjectDetailPage
+            recordId={sourceView.id}
+            modelName="all_projects"
+            onClose={() => setSourceView(null)}
+          />
+        </div>
+      )}
+      {sourceView?.type === 'market_listing' && marketModelId && (
+        <RecordFormModal
+          modelId={marketModelId}
+          recordId={sourceView.id}
+          openInPageHref={`/model/market_listings/${sourceView.id}`}
+          onClose={() => setSourceView(null)}
+        />
       )}
     </div>
   );
