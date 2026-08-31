@@ -115,6 +115,18 @@ export default function LogInteractionModal({
     const nowISO = new Date().toISOString();
     const clientData = clientsModel ? (records[clientsModel.id] ?? []).find((r) => r.id === clientId)?.data as Record<string, unknown> | undefined : undefined;
 
+    // The client's owner (Sales Consultant) is auto-derived from the newest
+    // assigned follow-up's sales_rep. Logging an interaction — e.g. an admin
+    // recording a chat/call on a rep's client — must NOT steal that ownership,
+    // so any follow-up we create here inherits the client's EXISTING owner.
+    // Only when the client has no owner yet does the logger take it.
+    const ownerRaw = clientData?.client_owner;
+    const existingOwner =
+      Array.isArray(ownerRaw)
+        ? (typeof ownerRaw[0] === 'string' ? ownerRaw[0] : null)
+        : (typeof ownerRaw === 'string' ? ownerRaw : null);
+    const assignedRep = existingOwner || currentUserId;
+
     const completion: Record<string, unknown> = {
       call_result: outcome,
       outcome_notes: notes.trim() || null,
@@ -174,7 +186,7 @@ export default function LogInteractionModal({
         const id = uuid();
         const base: Record<string, unknown> = {
           client_id: clientId,
-          sales_rep: currentUserId,
+          sales_rep: assignedRep,
           followup_type: [effectiveType],
           followup_status: 'open',
           followup_number: 1,
