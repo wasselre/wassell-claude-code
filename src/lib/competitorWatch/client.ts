@@ -35,6 +35,8 @@ export interface LibraryRow {
   is_video: boolean;
   has_transcript: boolean;
   project_name: string | null;
+  thumb_url: string | null;                         // best poster / first image
+  media: Array<{ kind: string; url: string }> | null; // every stored image/video
 }
 
 export interface LibraryResult {

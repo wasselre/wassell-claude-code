@@ -62,8 +62,13 @@
 
 .cw-root .cw-entry{background:var(--cw-card); border:1px solid var(--cw-line); border-radius:14px; box-shadow:var(--cw-shadow); margin-bottom:12px; overflow:hidden}
 .cw-root .cw-top{display:flex; gap:14px; padding:15px 16px}
-.cw-root .cw-thumb{flex:0 0 72px; height:72px; border-radius:10px; background:var(--cw-card2); border:1px solid var(--cw-line2); display:grid; place-items:center; color:var(--cw-ink3); position:relative}
+.cw-root .cw-thumb{flex:0 0 72px; height:72px; border-radius:10px; background:var(--cw-card2); border:1px solid var(--cw-line2); display:grid; place-items:center; color:var(--cw-ink3); position:relative; overflow:hidden}
+.cw-root .cw-thumbimg{width:100%; height:100%; object-fit:cover; display:block}
+.cw-root .cw-playbadge{position:absolute; inset:0; display:grid; place-items:center; color:#fff; font-size:20px; text-shadow:0 1px 5px rgba(0,0,0,.7); pointer-events:none}
 .cw-root .cw-fmt{position:absolute; inset-block-end:5px; inset-inline-end:5px; font-size:9px; background:var(--cw-choco); color:var(--cw-choco-ink); border-radius:5px; padding:1px 5px; text-transform:uppercase; letter-spacing:.03em}
+.cw-root .cw-media{display:flex; gap:8px; flex-wrap:wrap}
+.cw-root .cw-mi{width:150px; height:150px; object-fit:cover; border-radius:9px; border:1px solid var(--cw-line2); background:#000}
+.cw-root .cw-mv{width:230px; height:150px; border-radius:9px; border:1px solid var(--cw-line2); background:#000; object-fit:cover}
 .cw-root .cw-body{flex:1; min-width:0}
 .cw-root .cw-metaline{display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; color:var(--cw-ink3)}
 .cw-root .cw-co{font-weight:600; color:var(--cw-ink); font-size:13px; background:transparent; border:0; cursor:pointer; padding:0; font-family:inherit}

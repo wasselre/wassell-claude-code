@@ -219,9 +219,12 @@ function Entry({ row, isAr, open, onToggle, onOrg }: {
     <div className="cw-entry">
       <div className="cw-top">
         <div className="cw-thumb">
-          {row.is_video
-            ? <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-            : <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></svg>}
+          {row.thumb_url
+            ? <img className="cw-thumbimg" src={row.thumb_url} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+            : row.is_video
+              ? <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+              : <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></svg>}
+          {row.is_video && row.thumb_url && <span className="cw-playbadge" aria-hidden="true">▶</span>}
           {row.format && <span className="cw-fmt">{row.format}</span>}
         </div>
         <div className="cw-body">
@@ -255,6 +258,18 @@ function Entry({ row, isAr, open, onToggle, onOrg }: {
 
       {open && (
         <div className="cw-detail">
+          {row.media && row.media.length > 0 && (
+            <div className="cw-dblock">
+              <div className="cw-k">{isAr ? 'الوسائط' : 'Media'}</div>
+              <div className="cw-media">
+                {row.media.slice(0, 8).map((m, i) => (
+                  m.kind === 'video'
+                    ? <video key={i} className="cw-mv" controls preload="none" poster={row.thumb_url ?? undefined} src={m.url} />
+                    : <img key={i} className="cw-mi" src={m.url} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                ))}
+              </div>
+            </div>
+          )}
           {row.caption && (
             <div className="cw-dblock">
               <div className="cw-k">{isAr ? 'التعليق' : 'Caption'}</div>
