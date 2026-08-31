@@ -3,10 +3,9 @@ import { X, Loader2, Image as ImageIcon, Video, FileText, Check, FolderOpen, Pla
 import { useAppStore } from '@/stores/appStore';
 import { listRecordFiles } from '@/lib/files/recordFiles';
 import { signViewUrls, signViewUrl } from '@/lib/files/client';
-import { directVideoUrls } from '@/lib/matching/sendToClient';
 import Button from '@/components/ui/Button';
 import {
-  buildPickerItems, orderSelectedRefs, type PickerGroup, type PickerItem,
+  buildPickerItems, isUnitPlanFile, orderSelectedRefs, type PickerGroup, type PickerItem,
 } from '@/pages/Chats/lib/projectFilePicker';
 
 // pdf.js (~1 MB) loads only when a PDF is opened — keeps it out of the main bundle.
@@ -45,13 +44,8 @@ export default function ProjectFilePickerModal({
 }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
-  const records = useAppStore((s) => s.records);
 
   const allProjectsModel = useMemo(() => models.find((m) => m.name === 'all_projects'), [models]);
-  const projectRecord = useMemo(() => {
-    if (!allProjectsModel) return null;
-    return (records[allProjectsModel.id] ?? []).find((r) => r.id === allProjectId) ?? null;
-  }, [allProjectsModel, records, allProjectId]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -71,8 +65,14 @@ export default function ProjectFilePickerModal({
       setError(null);
       try {
         const entries = await listRecordFiles(allProjectsModel.id, allProjectId);
-        const videoUrls = directVideoUrls((projectRecord?.data as Record<string, unknown> | undefined)?.project_videos);
-        const fileItems = buildPickerItems(entries, videoUrls);
+        // Exclude unit-plan / floor-plan files — they are the bulk of a project's
+        // linked images and are internal drawings, not something a rep sends in a
+        // project intro. Filtering BEFORE signing is the speed win: we never sign
+        // a thumbnail for a file that will not be shown.
+        const sendable = entries.filter((e) => !isUnitPlanFile(e.file));
+        // External hosted video LINKS (project_videos URLs) are intentionally not
+        // offered here — only real CRM files (photos / videos / PDFs) are.
+        const fileItems = buildPickerItems(sendable, []);
 
         // Sign thumbnails for image files (best-effort — icon fallback on fail).
         const imageIds = fileItems.filter((it) => it.group === 'photo' && !it.isUrl).map((it) => it.ref);
@@ -214,7 +214,7 @@ export default function ProjectFilePickerModal({
                             >
                               <div className="relative w-full h-24 bg-charcoal/5 flex items-center justify-center">
                                 {it.group === 'photo' && it.thumb ? (
-                                  <img src={it.thumb} alt={it.name} className="w-full h-full object-cover" />
+                                  <img src={it.thumb} alt={it.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                                 ) : it.group === 'photo' ? (
                                   <ImageIcon size={24} className="text-charcoal/40" />
                                 ) : it.group === 'video' ? (

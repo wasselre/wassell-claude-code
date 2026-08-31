@@ -2,10 +2,28 @@
  * Pure helpers for ProjectFilePickerModal — kept free of React / store / I/O so
  * the grouping + merge + ordering logic is unit-testable in isolation.
  */
-import type { FilePreviewKind } from '@/types';
+import type { BusinessFileRow, FilePreviewKind } from '@/types';
 import type { RecordFileEntry } from '@/lib/files/recordFiles';
 
 export type PickerGroup = 'photo' | 'video' | 'document';
+
+/**
+ * Unit-plan / floor-plan files are excluded from the send-to-customer picker:
+ * they are the bulk of a project's linked images (4,002 floor_plan vs 2,735
+ * gallery corpus-wide) and are internal drawings a rep does not send in a
+ * project intro — signing a thumbnail for each one is what made this step slow.
+ *
+ * Keyed off what the file IS (`document_type` — authoritative, and it can differ
+ * from the link role: a floor plan linked as a marketing asset is still a floor
+ * plan) plus the new required primary type (`unit_plan`). Kept here, pure and
+ * tested, so the rule has one home.
+ */
+const UNIT_PLAN_DOC_TYPES = new Set(['floor_plan']);
+export function isUnitPlanFile(
+  file: Pick<BusinessFileRow, 'document_type' | 'primary_category'>,
+): boolean {
+  return UNIT_PLAN_DOC_TYPES.has(file.document_type) || file.primary_category === 'unit_plan';
+}
 
 export interface PickerItem {
   /** files.id for CRM files, or the raw http URL for an external video. */
