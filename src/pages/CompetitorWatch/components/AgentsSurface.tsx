@@ -49,14 +49,14 @@ export default function AgentsSurface({ isAr }: { isAr: boolean }) {
             <div className="cw-acname">{isAr ? 'التجميع' : 'Collection'}<small>{isAr ? 'يسحب المنشورات والإعلانات' : 'pulls new posts & ads'}</small></div>
             <span className={`cw-tag ${c.paused ? 'warn' : 'ok'}`}><span className="cw-d" />{c.paused ? (isAr ? 'متوقّف' : 'Paused') : (isAr ? 'نشط' : 'Live')}</span>
           </div>
-          <div className="cw-big">{num(c.received_today)}<small> {isAr ? 'سُحب اليوم' : 'pulled today'}</small></div>
+          <div className="cw-big">{num(c.received_today)}<small> {isAr ? 'فُحص اليوم' : 'checked today'}</small></div>
           <div className="cw-acfacts">
             <div><b>{num(c.runs_today)}</b><span>{isAr ? 'تشغيلة' : 'runs'}</span></div>
-            <div><b>{num(c.inserted_today)}</b><span>{isAr ? 'جديد' : 'new'}</span></div>
+            <div><b>{num(c.inserted_today)}</b><span>{isAr ? 'جديد فعليًا' : 'genuinely new'}</span></div>
             <div><b>{c.enabled_accounts}</b><span>{isAr ? 'حساب' : 'accounts'}</span></div>
           </div>
           <Sparkline points={c.daily.map((x) => x.inserted)} />
-          <div className="cw-accap">{isAr ? 'منشورات جديدة/يوم · آخر ٧ أيام' : 'new posts / day · last 7 days'}</div>
+          <div className="cw-accap">{isAr ? 'منشورات جديدة فعليًا/يوم — الباقي إعادة فحص لالتقاط الجديد وتحديث الأرقام' : 'genuinely new posts / day — the rest is re-checking to catch new ones & refresh counts'}</div>
         </div>
 
         <div className="cw-agentcard work">
