@@ -32,13 +32,17 @@ const MAX_BATCH = 200;
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
   return withAuth(req, async () => {
-    let body: { fileIds?: unknown };
+    let body: { fileIds?: unknown; thumb?: unknown };
     try {
-      body = (await req.json()) as { fileIds?: unknown };
+      body = (await req.json()) as { fileIds?: unknown; thumb?: unknown };
     } catch {
       return jsonError(400, 'invalid JSON body');
     }
     if (!Array.isArray(body.fileIds)) return jsonError(400, 'fileIds (array) is required');
+    // Thumbnail mode: also return a small transformed URL per file. The caller
+    // renders `thumb` and falls back to `full` on error, so a project without
+    // Storage image transformation still works (just downloads the original).
+    const wantThumb = body.thumb === true;
 
     // De-dupe + validate to uuid-shaped ids, cap the batch. Non-UUID values
     // (e.g. legacy public-URL strings from record image fields) are dropped —
@@ -64,8 +68,16 @@ export default async function handler(req: Request): Promise<Response> {
     const entries = await Promise.all(
       rows.map(async (r) => {
         try {
-          const url = await signFileUrl(r.storage_bucket, r.storage_path, VIEW_URL_TTL_SECONDS);
-          return [r.id, url] as const;
+          const full = await signFileUrl(r.storage_bucket, r.storage_path, VIEW_URL_TTL_SECONDS);
+          if (!wantThumb) return { id: r.id, url: full } as const;
+          // Small, web-quality thumbnail. Falls back to `full` client-side.
+          let thumb = full;
+          try {
+            thumb = await signFileUrl(r.storage_bucket, r.storage_path, VIEW_URL_TTL_SECONDS, undefined, {
+              width: 320, height: 320, resize: 'cover', quality: 55,
+            });
+          } catch { /* transform unsupported → use full as the thumb too */ }
+          return { id: r.id, url: thumb, full } as const;
         } catch {
           return null;
         }
@@ -73,9 +85,12 @@ export default async function handler(req: Request): Promise<Response> {
     );
 
     const urls: Record<string, string> = {};
+    const full: Record<string, string> = {};
     for (const e of entries) {
-      if (e) urls[e[0]] = e[1];
+      if (!e) continue;
+      urls[e.id] = e.url;
+      if ('full' in e && e.full) full[e.id] = e.full;
     }
-    return jsonOk({ urls });
+    return jsonOk(wantThumb ? { urls, full } : { urls });
   });
 }

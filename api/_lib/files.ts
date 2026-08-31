@@ -203,16 +203,31 @@ export function downloadFilenameFor(meta: { original_name: string; storage_path:
  * RLS so a permission-grantee can read a file under another user's `auth.uid()`
  * prefix. Caller must have already done the permission check.
  */
+export interface SignTransform {
+  width?: number;
+  height?: number;
+  resize?: 'cover' | 'contain' | 'fill';
+  quality?: number;
+}
+
 export async function signFileUrl(
   bucket: string,
   path: string,
   ttlSeconds: number,
   download?: string,
+  /** Image transform (thumbnails). Supabase serves a resized image at the signed
+   *  render URL — hugely smaller bytes for a tile. Only meaningful for images,
+   *  and only when the project has Storage image transformation enabled; callers
+   *  that use it must be able to fall back to the untransformed URL. */
+  transform?: SignTransform,
 ): Promise<string> {
   const svc = getServiceClient();
+  const opts: { download?: string; transform?: SignTransform } = {};
+  if (download) opts.download = download;
+  if (transform) opts.transform = transform;
   const { data, error } = await svc.storage
     .from(bucket)
-    .createSignedUrl(path, ttlSeconds, download ? { download } : undefined);
+    .createSignedUrl(path, ttlSeconds, Object.keys(opts).length ? opts : undefined);
   if (error || !data?.signedUrl) {
     throw new AuthError(500, `signed url failed: ${error?.message ?? 'unknown'}`);
   }

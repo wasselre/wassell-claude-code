@@ -176,6 +176,47 @@ export async function listRecordFiles(
   return out;
 }
 
+/** A file as the send-to-customer picker needs it — the few columns to group,
+ *  name, filter and thumbnail it, nothing more. */
+export type SendableFile = Pick<
+  BusinessFileRow,
+  'id' | 'kind' | 'title' | 'original_name' | 'document_type' | 'primary_category'
+>;
+
+/**
+ * Lean sibling of listRecordFiles for the project→customer file picker.
+ *
+ * The picker does not use provenance (role / removable / source field), so this
+ * SKIPS the `file_link_sources` query entirely, and selects only the handful of
+ * columns the tiles need instead of `select('*')` — a project linked to hundreds
+ * of files (one reached 412) was pulling every full row + a second provenance
+ * query just to render a grid. RLS on `files` still gates what comes back.
+ * Returns `{ file }` so it drops straight into buildPickerItems / isUnitPlanFile.
+ */
+export async function listSendableProjectFiles(
+  modelId: string,
+  recordId: string,
+): Promise<Array<{ file: SendableFile }>> {
+  if (!supabase) return [];
+
+  const { data: links, error: linkErr } = await supabase
+    .from('file_links')
+    .select('file_id')
+    .eq('model_id', modelId)
+    .eq('record_id', recordId);
+  if (linkErr) throw surfaceError('load project files', linkErr);
+  const ids = [...new Set((links ?? []).map((l) => (l as { file_id: string }).file_id))];
+  if (ids.length === 0) return [];
+
+  const { data: files, error: fileErr } = await supabase
+    .from('files')
+    .select('id, kind, title, original_name, document_type, primary_category')
+    .in('id', ids);
+  if (fileErr) throw surfaceError('load project files', fileErr);
+
+  return ((files ?? []) as SendableFile[]).map((file) => ({ file }));
+}
+
 /**
  * Link an existing file to a record.
  *

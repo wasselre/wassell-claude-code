@@ -925,6 +925,30 @@ export async function signViewUrls(fileIds: string[]): Promise<Record<string, st
   return body.urls ?? {};
 }
 
+/**
+ * Like signViewUrls, but returns a SMALL transformed thumbnail per file plus the
+ * full-size URL as a fallback. Use for tiled thumbnail grids where downloading
+ * full-resolution originals is the bottleneck; render `thumb`, and on an image
+ * error swap to `full` (covers projects without Storage image transformation).
+ */
+export async function signThumbUrls(
+  fileIds: string[],
+): Promise<{ thumb: Record<string, string>; full: Record<string, string> }> {
+  if (fileIds.length === 0) return { thumb: {}, full: {} };
+  const res = await fetch('/api/files/sign-view-urls', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ fileIds, thumb: true }),
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    urls?: Record<string, string>; full?: Record<string, string>; error?: string;
+  };
+  if (!res.ok) {
+    throw surfaceError('sign thumb urls', new Error(body.error ?? `HTTP ${res.status}`));
+  }
+  return { thumb: body.urls ?? {}, full: body.full ?? {} };
+}
+
 export async function signDownloadUrl(fileId: string): Promise<{ url: string }> {
   const res = await fetch('/api/files/sign-download-url', {
     method: 'POST',

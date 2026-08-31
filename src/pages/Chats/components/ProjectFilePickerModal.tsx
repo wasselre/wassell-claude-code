@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { X, Loader2, Image as ImageIcon, Video, FileText, Check, FolderOpen, Play, Eye, ExternalLink } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import { listRecordFiles } from '@/lib/files/recordFiles';
-import { signViewUrls, signViewUrl } from '@/lib/files/client';
+import { listSendableProjectFiles } from '@/lib/files/recordFiles';
+import { signThumbUrls, signViewUrl } from '@/lib/files/client';
 import Button from '@/components/ui/Button';
 import {
   buildPickerItems, isUnitPlanFile, orderSelectedRefs, type PickerGroup, type PickerItem,
@@ -64,27 +64,30 @@ export default function ProjectFilePickerModal({
       setLoading(true);
       setError(null);
       try {
-        const entries = await listRecordFiles(allProjectsModel.id, allProjectId);
-        // Exclude unit-plan / floor-plan files — they are the bulk of a project's
-        // linked images and are internal drawings, not something a rep sends in a
-        // project intro. Filtering BEFORE signing is the speed win: we never sign
-        // a thumbnail for a file that will not be shown.
+        // Lean fetch: minimal columns, no provenance query — the picker only
+        // needs to group / name / filter / thumbnail. Exclude unit-plan /
+        // floor-plan files (internal drawings, and the bulk of a project's images).
+        const entries = await listSendableProjectFiles(allProjectsModel.id, allProjectId);
         const sendable = entries.filter((e) => !isUnitPlanFile(e.file));
         // External hosted video LINKS (project_videos URLs) are intentionally not
         // offered here — only real CRM files (photos / videos / PDFs) are.
         const fileItems = buildPickerItems(sendable, []);
 
-        // Sign thumbnails for image files (best-effort — icon fallback on fail).
+        // Sign SMALL transformed thumbnails (with a full-size fallback) for image
+        // files — downloading full-resolution originals into tiles was the drag.
         const imageIds = fileItems.filter((it) => it.group === 'photo' && !it.isUrl).map((it) => it.ref);
-        let thumbs: Record<string, string> = {};
+        let thumb: Record<string, string> = {};
+        let full: Record<string, string> = {};
         if (imageIds.length > 0) {
           try {
-            thumbs = await signViewUrls(imageIds);
+            ({ thumb, full } = await signThumbUrls(imageIds));
           } catch {
-            thumbs = {}; // non-fatal — tiles fall back to the image icon
+            thumb = {}; full = {}; // non-fatal — tiles fall back to the image icon
           }
         }
-        const withThumbs = fileItems.map((it) => (thumbs[it.ref] ? { ...it, thumb: thumbs[it.ref] } : it));
+        const withThumbs = fileItems.map((it) =>
+          thumb[it.ref] ? { ...it, thumb: thumb[it.ref], thumbFull: full[it.ref] ?? thumb[it.ref] } : it,
+        );
 
         if (cancelled) return;
         setItems(withThumbs);
@@ -214,7 +217,19 @@ export default function ProjectFilePickerModal({
                             >
                               <div className="relative w-full h-24 bg-charcoal/5 flex items-center justify-center">
                                 {it.group === 'photo' && it.thumb ? (
-                                  <img src={it.thumb} alt={it.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
+                                  <img
+                                    src={it.thumb}
+                                    alt={it.name}
+                                    loading="lazy"
+                                    decoding="async"
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                      // Transformed thumb failed (e.g. image
+                                      // transformation not enabled) → full-size URL.
+                                      const img = e.currentTarget;
+                                      if (it.thumbFull && img.src !== it.thumbFull) img.src = it.thumbFull;
+                                    }}
+                                  />
                                 ) : it.group === 'photo' ? (
                                   <ImageIcon size={24} className="text-charcoal/40" />
                                 ) : it.group === 'video' ? (

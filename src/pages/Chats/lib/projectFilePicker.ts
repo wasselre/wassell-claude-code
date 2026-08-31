@@ -3,7 +3,6 @@
  * the grouping + merge + ordering logic is unit-testable in isolation.
  */
 import type { BusinessFileRow, FilePreviewKind } from '@/types';
-import type { RecordFileEntry } from '@/lib/files/recordFiles';
 
 export type PickerGroup = 'photo' | 'video' | 'document';
 
@@ -34,8 +33,12 @@ export interface PickerItem {
   kind: FilePreviewKind;
   name: string;
   isUrl: boolean;
-  /** Signed thumbnail URL for image items (filled in later, best-effort). */
+  /** Signed thumbnail URL for image items (filled in later, best-effort). Small
+   *  transformed image when Storage transforms are on, else the full URL. */
   thumb?: string;
+  /** Full-size signed URL — the onError fallback if the transformed thumb fails
+   *  (e.g. image transformation not enabled on the project). */
+  thumbFull?: string;
 }
 
 export function groupOfKind(kind: FilePreviewKind): PickerGroup {
@@ -63,7 +66,11 @@ export function nameFromUrl(url: string): string {
  *   - external video URLs (project_videos hosted links) have no files row, so
  *     they never appear in file_links and are appended as their own tiles.
  */
-export function buildPickerItems(entries: RecordFileEntry[], externalVideoUrls: string[]): PickerItem[] {
+/** The minimal file shape the picker tiles need — satisfied by both the full
+ *  RecordFileEntry and the lean SendableFile path (listSendableProjectFiles). */
+type PickerSource = { file: Pick<BusinessFileRow, 'id' | 'kind' | 'title' | 'original_name'> };
+
+export function buildPickerItems(entries: PickerSource[], externalVideoUrls: string[]): PickerItem[] {
   const seen = new Set<string>();
   const out: PickerItem[] = [];
   for (const e of entries) {
