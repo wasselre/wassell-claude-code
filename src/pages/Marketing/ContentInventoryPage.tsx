@@ -47,6 +47,32 @@ const NATURE = {
   other: '#9AA0A6',
 } as const;
 
+/* Bilingual labels for files.document_type — "what the file IS". Matches the
+ * Files library vocabulary; an unknown/absent type falls back to its raw key. */
+const DOC_TYPE_LABELS: Record<string, { ar: string; en: string }> = {
+  floor_plan: { ar: 'مخططات', en: 'Floor plans' },
+  gallery_image: { ar: 'صور المعرض', en: 'Gallery' },
+  main_image: { ar: 'صورة رئيسية', en: 'Main image' },
+  hero_image: { ar: 'صورة الغلاف', en: 'Hero image' },
+  marketing_asset: { ar: 'مواد تسويقية', en: 'Marketing' },
+  brochure: { ar: 'كتيبات', en: 'Brochures' },
+  developer_content: { ar: 'محتوى المطوّر', en: 'Developer content' },
+  video: { ar: 'فيديو', en: 'Video' },
+  price_list: { ar: 'قوائم أسعار', en: 'Price lists' },
+  reservation_form: { ar: 'نماذج حجز', en: 'Reservation forms' },
+  contract: { ar: 'عقود', en: 'Contracts' },
+  id_document: { ar: 'وثائق هوية', en: 'ID documents' },
+  supporting_document: { ar: 'مستندات داعمة', en: 'Supporting docs' },
+  reference: { ar: 'مراجع', en: 'Reference' },
+  task_attachment: { ar: 'مرفقات مهام', en: 'Task attachments' },
+  other: { ar: 'أخرى', en: 'Other' },
+};
+
+function docTypeLabel(type: string, isAr: boolean): string {
+  const l = DOC_TYPE_LABELS[type];
+  return l ? (isAr ? l.ar : l.en) : type;
+}
+
 type SortKey = 'files' | 'storage' | 'name';
 
 export default function ContentInventoryPage() {
@@ -256,13 +282,6 @@ function ProjectCard({
     [isAr ? 'مستندات' : 'Docs', p.by_kind.document, { kind: 'document,wassel_doc' }],
     [isAr ? 'أخرى' : 'Other', p.by_kind.other, { kind: 'audio,archive,other' }],
   ];
-  const roles: Array<[string, number, Record<string, string>]> = [
-    [isAr ? 'المعرض' : 'Gallery', p.by_role.gallery, { role: 'gallery_image' }],
-    [isAr ? 'تسويقية' : 'Marketing', p.by_role.marketing, { role: 'marketing_asset' }],
-    [isAr ? 'رئيسية' : 'Main', p.by_role.main, { role: 'main_image' }],
-    [isAr ? 'من المطوّر' : 'Developer', p.by_role.developer, { role: 'developer_content' }],
-  ];
-
   const empty = p.files === 0;
 
   return (
@@ -336,19 +355,25 @@ function ProjectCard({
             </div>
           )}
 
-          {/* role split (each role opens the library filtered to it) */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {roles.filter(([, n]) => n > 0).map(([label, n, f]) => (
-              <Chip
-                key={label}
-                tone="soft"
-                onClick={() => open(p.id, f)}
-                title={isAr ? `افتح ${label} (${num(n, isAr)})` : `Open ${label} (${n})`}
-              >
-                {label} · {num(n, isAr)}
-              </Chip>
-            ))}
-          </div>
+          {/* content-type split (what the files ARE). Each type opens the Files
+              library filtered to exactly that type — matching what's shown. */}
+          {p.by_type.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {p.by_type.map(({ type, n }) => {
+                const label = docTypeLabel(type, isAr);
+                return (
+                  <Chip
+                    key={type}
+                    tone="soft"
+                    onClick={() => open(p.id, { type })}
+                    title={isAr ? `افتح ${label} (${num(n, isAr)})` : `Open ${label} (${n})`}
+                  >
+                    {label} · {num(n, isAr)}
+                  </Chip>
+                );
+              })}
+            </div>
+          )}
 
           {/* top subject tags */}
           {p.top_tags.length > 0 && (

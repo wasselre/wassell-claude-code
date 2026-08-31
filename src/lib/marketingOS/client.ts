@@ -1300,10 +1300,6 @@ export interface ContentByKind {
 export interface ContentByNature {
   real: number; ai: number; graphic: number; screenshot: number; unknown: number;
 }
-/** Link-role counts (distinct files per role). */
-export interface ContentByRole {
-  gallery: number; marketing: number; main: number; developer: number; other: number;
-}
 
 /** One project's content rollup — everything the inventory card renders. */
 export interface ContentInventoryProject {
@@ -1313,7 +1309,11 @@ export interface ContentInventoryProject {
   storage_bytes: number;
   by_kind: ContentByKind;
   by_nature: ContentByNature;
-  by_role: ContentByRole;
+  /** Content type breakdown by files.document_type (what each file IS —
+   *  floor_plan / gallery_image / marketing_asset / brochure…), highest first.
+   *  This matches the Files library's own grouping, so a drill-down lands on the
+   *  same set. */
+  by_type: Array<{ type: string; n: number }>;
   /** The most frequent subject tags on this project's files (kitchens, bedrooms,
    *  interiors, floor plans…), highest first. */
   top_tags: Array<{ tag: string; n: number }>;
