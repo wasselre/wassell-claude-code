@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, ListChecks, Building2 } from 'lucide-react';
+import { X, ListChecks, Building2, Maximize2, Columns2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanEditRecord } from '@/hooks/usePermission';
 import type { AppRecord } from '@/types';
@@ -39,10 +39,17 @@ export default function ClientOptionsModal({
   clientId,
   onClose,
   variant = 'modal',
+  onToggleLayout,
 }: {
   clientId: string;
   onClose: () => void;
   variant?: 'modal' | 'docked';
+  /**
+   * When provided, a button in the header lets the user switch between the
+   * docked side-panel and the full-screen modal. The host owns the actual
+   * switch (and persists the choice); this just surfaces the control.
+   */
+  onToggleLayout?: () => void;
 }) {
   const docked = variant === 'docked';
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -152,6 +159,19 @@ export default function ClientOptionsModal({
                 <Building2 size={13} />
                 <span className="hidden sm:inline">{L('تصفح المشاريع', 'Browse projects')}</span>
               </button>
+              {/* Switch between the docked split panel and the full-screen
+                  modal — the host persists the choice. */}
+              {onToggleLayout && (
+                <button
+                  type="button"
+                  onClick={onToggleLayout}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-copper/30 bg-copper/5 px-2.5 py-1 text-xs font-medium text-copper transition-colors hover:bg-copper/10"
+                  title={docked ? L('عرض بملء الشاشة', 'Show full screen') : L('تقسيم الشاشة بجانب المحادثة', 'Split beside the chat')}
+                >
+                  {docked ? <Maximize2 size={13} /> : <Columns2 size={13} />}
+                  <span className="hidden sm:inline">{docked ? L('ملء الشاشة', 'Full screen') : L('تقسيم', 'Split')}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onClose}

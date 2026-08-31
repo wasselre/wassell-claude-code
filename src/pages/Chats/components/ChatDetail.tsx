@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, UserCheck, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X, CalendarPlus, MapPin } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, UserCheck, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X, CalendarPlus, MapPin, ChevronUp, ChevronDown } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
@@ -177,6 +177,45 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
 
   // Client-options popup (options list + embedded Project Finder).
   const [showClientOptions, setShowClientOptions] = useState(false);
+  // How the client-options surface opens: DOCKED beside the chat (split view)
+  // or as a full-screen MODAL. Persisted + switchable both ways, so the split
+  // is a choice, never forced. (Only honoured on a wide screen; below xl the
+  // modal is always used.)
+  const [optionsView, setOptionsView] = useState<'dock' | 'modal'>(() => {
+    try {
+      return localStorage.getItem('wassell_chat_options_view') === 'modal' ? 'modal' : 'dock';
+    } catch {
+      return 'dock';
+    }
+  });
+  const chooseOptionsView = (v: 'dock' | 'modal') => {
+    setOptionsView(v);
+    try {
+      localStorage.setItem('wassell_chat_options_view', v);
+    } catch {
+      /* private mode — remembering the preference is best-effort, not fatal */
+    }
+  };
+  // Collapse the conversation's top section (CRM actions, meta, preference
+  // chips, study card) so the thread owns the height — especially useful in
+  // split view where the chat column is narrow. Persisted; desktop-only effect.
+  const [headerCollapsed, setHeaderCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('wassell_chat_header_collapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleHeaderCollapsed = () =>
+    setHeaderCollapsed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem('wassell_chat_header_collapsed', next ? '1' : '0');
+      } catch {
+        /* non-fatal */
+      }
+      return next;
+    });
   // Mobile-only: the CRM actions live in a bottom sheet (keeps the header
   // compact so the thread owns the screen), and conversation-state actions
   // (status / Done / Reopen) live in a ⋯ overflow menu.
@@ -322,8 +361,13 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     onContactIntake: () => setShowContactIntake(true),
   };
 
-  // Whether the client-options panel should dock beside the chat right now.
-  const dockOptions = showClientOptions && !!clientLinkId && isWide;
+  // Whether the client-options panel should dock beside the chat right now:
+  // asked for, has a client, wide enough, AND the user's choice is "dock".
+  const dockOptions = showClientOptions && !!clientLinkId && isWide && optionsView === 'dock';
+  // The header-collapse only takes effect on desktop (the mobile header is
+  // already a slim bar with the CRM actions in a sheet), so a choice made on a
+  // laptop can't blank the mobile header via the shared localStorage flag.
+  const collapsedHeader = headerCollapsed && !isMobile;
 
   return (
     <div className="flex h-full min-h-0 bg-white">
@@ -382,31 +426,37 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
               {phone}
             </p>
           )}
-          {/* Kind / last-message meta — desktop only; it's noise on a phone. */}
-          <div className="hidden md:flex items-center gap-3 mt-1 text-[11px] text-charcoal/50 flex-wrap">
-            <span className="inline-flex items-center gap-1">
-              <Hash size={10} />
-              {kindLabel(kind, isAr)}
-            </span>
-            {lastMessageAt && (
-              <span>
-                {isAr ? 'آخر رسالة: ' : 'Last: '}
-                {formatDateTime(lastMessageAt, isAr)}
+          {/* Kind / last-message meta — desktop only; it's noise on a phone.
+              Hidden when the header is collapsed to focus the chat. */}
+          {!collapsedHeader && (
+            <div className="hidden md:flex items-center gap-3 mt-1 text-[11px] text-charcoal/50 flex-wrap">
+              <span className="inline-flex items-center gap-1">
+                <Hash size={10} />
+                {kindLabel(kind, isAr)}
               </span>
-            )}
-          </div>
+              {lastMessageAt && (
+                <span>
+                  {isAr ? 'آخر رسالة: ' : 'Last: '}
+                  {formatDateTime(lastMessageAt, isAr)}
+                </span>
+              )}
+            </div>
+          )}
           {/* CRM actions inline — DESKTOP ONLY. On mobile these live in the
-              bottom sheet opened from the header's grid button. */}
-          <CrmActions
-            {...crmActionProps}
-            layout="inline"
-            className="hidden md:flex items-center gap-2 mt-1.5 text-xs flex-wrap"
-          />
+              bottom sheet opened from the header's grid button. Hidden when the
+              header is collapsed (re-clicking the chevron brings them back). */}
+          {!collapsedHeader && (
+            <CrmActions
+              {...crmActionProps}
+              layout="inline"
+              className="hidden md:flex items-center gap-2 mt-1.5 text-xs flex-wrap"
+            />
+          )}
           {/* Client preference chips — the full preference picture (unit type,
               budget, bedrooms, area, location, direction, amenities, notes…).
               On mobile: a single horizontally-scrollable row so a long list never
               pushes the thread down. Desktop: wraps as before. */}
-          {prefChips.length > 0 && (
+          {prefChips.length > 0 && !collapsedHeader && (
             <div className="flex items-center gap-1 mt-2 flex-nowrap overflow-x-auto md:flex-wrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {prefChips.map((chip) => (
                 <span
@@ -420,6 +470,21 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
             </div>
           )}
         </div>
+
+        {/* Desktop-only: collapse the header's client section so the thread
+            gets the height (handy in split view). */}
+        <button
+          onClick={toggleHeaderCollapsed}
+          className="hidden md:inline-flex self-start shrink-0 items-center justify-center rounded-lg p-1.5 text-charcoal/50 hover:text-copper hover:bg-cream transition-colors"
+          title={
+            collapsedHeader
+              ? (isAr ? 'إظهار معلومات العميل والإجراءات' : 'Show client info & actions')
+              : (isAr ? 'إخفاء القسم العلوي لعرض المحادثة فقط' : 'Hide the top section — show only the chat')
+          }
+          aria-pressed={collapsedHeader}
+        >
+          {collapsedHeader ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+        </button>
 
         {/* Desktop trailing action: Done / Reopen. */}
         <DoneButton
@@ -474,8 +539,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       </div>
 
       {/* App-triggered client study (claude_jobs) — button + status/review
-          strip. Client-linked chats only: a study is a client deliverable. */}
-      {clientLinkId && <StudyJobCard chatRecordId={recordId} />}
+          strip. Client-linked chats only: a study is a client deliverable.
+          Hidden when the header is collapsed (desktop focus-the-chat mode). */}
+      {clientLinkId && !collapsedHeader && <StudyJobCard chatRecordId={recordId} />}
 
       {/* Thread — full-bleed scroll area on mobile, framed card on desktop
           (MessageThread drops its own card chrome below md). */}
@@ -559,13 +625,18 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       )}
 
       {/* Client-options popup — the client's saved options with the Project
-          Finder embedded, without leaving the conversation. On a wide screen it
-          DOCKS beside the chat instead (rendered after this column, below); here
-          it's the full-screen modal for narrower screens where a split won't
-          fit. */}
-      {showClientOptions && clientLinkId && !isWide && (
+          Finder embedded, without leaving the conversation. Shown as the
+          full-screen MODAL when the screen is too narrow to split OR the user
+          chose full-screen. On a wide screen with the "dock" choice it renders
+          as the docked side panel after this column (below). The header's
+          Split/Full-screen button switches between the two and remembers it. */}
+      {showClientOptions && clientLinkId && (!isWide || optionsView === 'modal') && (
         <Suspense fallback={<OverlayFallback />}>
-          <ClientOptionsModal clientId={clientLinkId} onClose={() => setShowClientOptions(false)} />
+          <ClientOptionsModal
+            clientId={clientLinkId}
+            onClose={() => setShowClientOptions(false)}
+            onToggleLayout={isWide ? () => chooseOptionsView('dock') : undefined}
+          />
         </Suspense>
       )}
 
@@ -672,6 +743,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
             variant="docked"
             clientId={clientLinkId!}
             onClose={() => setShowClientOptions(false)}
+            onToggleLayout={() => chooseOptionsView('modal')}
           />
         </Suspense>
       </div>
