@@ -487,7 +487,7 @@ export default function DynamicField({
       }
 
       case 'unit_picker':
-        return <UnitPickerField field={field} value={value} onChange={onChange} />;
+        return <UnitPickerField field={field} value={value} onChange={onChange} recordData={recordData} />;
 
       case 'mirror': {
         const res = resolveMirror(field, recordData ?? null, records, models);

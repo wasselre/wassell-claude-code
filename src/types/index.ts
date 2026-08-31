@@ -188,6 +188,12 @@ export interface ModelField {
   // lookup_model_id, so only these two need configuring:
   unit_picker_unit_model_id?: string | null; // model holding the units (default: the `units` model)
   unit_picker_project_link_field?: string; // slug on the unit model whose lookup points at the project (default 'project_id')
+  // Optional: slug of a sibling field ON THE SAME record whose value is a project id
+  // (e.g. the appointment's own `project_id`). When set and populated, the picker
+  // lands directly on that project's units — so units are chosen "after selecting a
+  // project" in the form, with no redundant re-pick. Still allows browsing other
+  // projects via "All projects". No-op when unset or the sibling is empty.
+  unit_picker_project_from_field?: string;
   assignee_role_ids?: string[];
   assignee_profile_ids?: string[];
   // 'all'        — any active user is eligible (role/profile lists ignored)

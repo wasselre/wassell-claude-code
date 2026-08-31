@@ -12,7 +12,10 @@ import DynamicField from '@/pages/Records/components/DynamicField';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord, ModelField } from '@/types';
 
-const APPT_FIELDS = ['project_id', 'appointment_date'] as const;
+// `units` sits right after `project_id` so the rep picks the project, then its
+// units. The field self-hides if the appointments model has no `units` field
+// (filtered out below), so this is safe before the migration lands.
+const APPT_FIELDS = ['project_id', 'units', 'appointment_date'] as const;
 
 interface QuickAppointmentModalProps {
   clientId: string | null;

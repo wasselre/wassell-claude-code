@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Search, X, ChevronRight, Building2, Home } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Modal from '@/components/ui/Modal';
@@ -10,6 +10,13 @@ interface UnitPickerFieldProps {
   field: ModelField;
   value: unknown;
   onChange: (value: unknown) => void;
+  /**
+   * The live form data of the owning record. Only read to resolve
+   * `unit_picker_project_from_field` — the sibling field (e.g. the appointment's
+   * own `project_id`) whose project the picker should land on. Optional; when
+   * absent the picker behaves as a plain project→unit cascade.
+   */
+  recordData?: Record<string, unknown>;
 }
 
 /** First non-empty string among the given slugs, else null. */
@@ -36,13 +43,28 @@ function firstString(data: Record<string, unknown>, keys: string[]): string | nu
  * slug whose lookup points at the project, default `project_id`). The project
  * model is derived from that link field's `lookup_model_id`.
  */
-export default function UnitPickerField({ field, value, onChange }: UnitPickerFieldProps) {
+export default function UnitPickerField({ field, value, onChange, recordData }: UnitPickerFieldProps) {
   const { models, records, language } = useAppStore();
   const isAr = language === 'ar';
 
+  // Sibling project id (e.g. the appointment's own `project_id`) the picker
+  // should default to, so the user selects units "after selecting a project"
+  // without a redundant re-pick. Null when unconfigured or the sibling is empty.
+  const projectFromField = field.unit_picker_project_from_field;
+  const siblingProjectId =
+    projectFromField && typeof recordData?.[projectFromField] === 'string' && recordData[projectFromField]
+      ? (recordData[projectFromField] as string)
+      : null;
+
   const [open, setOpen] = useState(false);
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(siblingProjectId);
   const [projQuery, setProjQuery] = useState('');
+
+  // Follow the form's chosen project: when the sibling project changes, land the
+  // picker on it. The user can still browse other projects via "All projects".
+  useEffect(() => {
+    if (siblingProjectId) setProjectId(siblingProjectId);
+  }, [siblingProjectId]);
 
   // ── Resolve config → unit model, project link field, project model ──
   const unitModelId = field.unit_picker_unit_model_id ?? models.find((m) => m.name === 'units')?.id ?? null;
@@ -117,7 +139,13 @@ export default function UnitPickerField({ field, value, onChange }: UnitPickerFi
     ? projectsWithUnits.filter((p) => projectLabel(p).toLowerCase().includes(projQuery.trim().toLowerCase()))
     : projectsWithUnits;
 
-  const selectedProject = projectId ? projectsWithUnits.find((p) => p.id === projectId) ?? null : null;
+  // Resolve from projectsWithUnits first, then the full project list — the
+  // sibling-default project may own zero units yet still needs a header label.
+  const selectedProject = projectId
+    ? projectsWithUnits.find((p) => p.id === projectId)
+        ?? (projectModelId ? (records[projectModelId] ?? []).find((p) => p.id === projectId) : undefined)
+        ?? null
+    : null;
 
   return (
     <div>
