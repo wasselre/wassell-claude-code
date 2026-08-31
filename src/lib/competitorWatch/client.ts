@@ -69,3 +69,54 @@ export async function fetchContentLibrary(f: LibraryFilters = {}): Promise<Libra
   const j = (await res.json()) as { library: LibraryResult };
   return j.library;
 }
+
+// ── Monitoring surfaces (Agents / Pipeline / Storage / Companies) ──────────
+async function callAction<T>(action: string, field: string): Promise<T> {
+  const res = await fetch('/api/marketing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ action }),
+  });
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(b?.error ?? `${action} failed (${res.status})`);
+  }
+  const j = (await res.json()) as Record<string, unknown>;
+  return j[field] as T;
+}
+
+export interface AgentActivity {
+  collection: {
+    paused: boolean; enabled_accounts: number; total_accounts: number;
+    runs_today: number; received_today: number; inserted_today: number;
+    last_activity: string | null; daily: Array<{ day: string; inserted: number }>;
+  };
+  understanding: { processed_24h: number; queued: number; all_time: number };
+  discovery: { last_run: string | null; runs: number; confirmed: number };
+  runs: Array<{ provider: string | null; platform: string | null; handle: string | null; received: number | null; inserted: number | null; started_at: string; status: string }>;
+}
+export interface PipelineHealth {
+  collected: number; media_stored: number; media_failed: number; ocr_done: number;
+  transcribed: number; enriched: number; facts: number; attributed: number;
+  by_status: Record<string, number>;
+}
+export interface StorageUsage {
+  media_bytes: number; media_rows: number; raw_asset_bytes: number;
+  by_kind: Record<string, { count: number; bytes: number }>;
+  by_company: Array<{ org: string | null; files: number; bytes: number }>;
+}
+export interface CompanyAccount {
+  platform: string | null; handle: string | null; followers: number | null;
+  enabled: boolean; last_pull: string | null; posts: number | null;
+}
+export interface CompanyRow {
+  id: string; name: string | null; org_type: string | null; facts: number;
+  accounts: number; posts: number; followers: number; last_pull: string | null;
+  account_list: CompanyAccount[];
+}
+export interface CompanyRoster { companies: CompanyRow[]; }
+
+export const fetchAgentActivity = () => callAction<AgentActivity>('agent_activity', 'activity');
+export const fetchPipelineHealth = () => callAction<PipelineHealth>('pipeline_health', 'pipeline');
+export const fetchStorageUsage = () => callAction<StorageUsage>('storage_usage', 'storage');
+export const fetchCompanyRoster = () => callAction<CompanyRoster>('company_roster', 'roster');

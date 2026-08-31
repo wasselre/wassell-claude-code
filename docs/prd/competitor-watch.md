@@ -1,6 +1,6 @@
 # PRD: Competitor Watch (مرصد المنافسين)
 
-**Status:** Live (v1 — Content Library surface only)
+**Status:** Live (all five surfaces: Content Library + Agents & runs, Content pipeline, Storage, Companies)
 **Last updated:** 2026-08-31
 
 > A NEW, from-scratch workspace that succeeds the **Marketing Intelligence**
@@ -12,9 +12,13 @@
 ## What it is (in plain English)
 
 A control-room workspace for watching competitors' marketing, at `/competitor-watch`
-(admin-only). It is planned as five surfaces; **v1 ships one — the Content
-Library ("the shelves")** — with the other four (Agents & runs, Content pipeline,
-Storage, Companies) stubbed in the sub-nav as "soon".
+(admin-only), with five surfaces switched from a sub-nav: the **Content Library**
+("the shelves") plus four monitoring surfaces — **Agents & runs** (what's running,
+what it did today, from which accounts), **Content pipeline** (each stage's counts +
+where posts stand), **Storage** (bytes by media type and by company), and
+**Companies** (every competitor, their accounts, and how much we've collected,
+expand a row for the per-account breakdown). Each surface is backed by its own
+read-only gathering RPC.
 
 The **Content Library** surfaces the labels the file/enrichment AI has *already*
 computed for every scraped competitor post — but which sit scattered across
@@ -88,10 +92,14 @@ Reads only. No write path.
 
 ## Open questions / known limitations
 
-- **Only the Content Library ships in v1.** Agents & runs, Content pipeline,
-  Storage, and Companies are designed (mockups) but not built — they need their
-  own gathering RPCs (`mkt_agent_activity`, `mkt_pipeline_health`,
-  `mkt_storage_usage`, `mkt_company_account_roster`).
+- **All five surfaces now ship.** The four monitoring surfaces are backed by
+  `mkt_agent_activity`, `mkt_pipeline_health`, `mkt_storage_usage`, and
+  `mkt_company_roster` (migration `2026-08-31_05`), exposed as the `agent_activity`
+  / `pipeline_health` / `storage_usage` / `company_roster` actions on
+  `/api/marketing`. All read-only — there are no write actions yet (e.g. "run
+  discovery", pause/enable an account, dismiss). Storage/company byte + fact totals
+  are exact (not sampled); the Companies list covers organizations that have at
+  least one active social account.
 - **Full transcript text is not inlined yet** — only a presence flag. A per-post
   "load transcript" fetch is the follow-up.
 - **Competitor filter is click-to-filter** (from a row); no standalone competitor

@@ -422,6 +422,31 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ library: data });
       }
 
+      case 'agent_activity':
+      case 'pipeline_health':
+      case 'storage_usage':
+      case 'company_roster': {
+        // Competitor Watch monitoring surfaces — read-only composites, service
+        // client like intelligence_index; the /competitor-watch route gates access.
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const fn = ({
+          agent_activity: 'mkt_agent_activity',
+          pipeline_health: 'mkt_pipeline_health',
+          storage_usage: 'mkt_storage_usage',
+          company_roster: 'mkt_company_roster',
+        } as const)[action];
+        const field = ({
+          agent_activity: 'activity',
+          pipeline_health: 'pipeline',
+          storage_usage: 'storage',
+          company_roster: 'roster',
+        } as const)[action];
+        const { data, error } = await svc.rpc(fn);
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ [field]: data });
+      }
+
       case 'insight_dismiss': {
         // Clear a handled insight from the feed. Sets a flag — never deletes,
         // because the evidence trail is the point of the insight engine.

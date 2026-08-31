@@ -7,8 +7,13 @@
  * The four monitoring surfaces (Agents / Pipeline / Storage / Companies) are
  * stubbed in the sub-nav as "soon" and land in the next batch.
  */
+import { useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import ContentLibrary from './components/ContentLibrary';
+import AgentsSurface from './components/AgentsSurface';
+import PipelineSurface from './components/PipelineSurface';
+import StorageSurface from './components/StorageSurface';
+import CompaniesSurface from './components/CompaniesSurface';
 import './watch.css';
 
 type Surface = 'library' | 'agents' | 'pipeline' | 'storage' | 'companies';
@@ -16,14 +21,14 @@ type Surface = 'library' | 'agents' | 'pipeline' | 'storage' | 'companies';
 export default function CompetitorWatchPage() {
   const { language } = useAppStore();
   const isAr = language === 'ar';
-  const surface: Surface = 'library';
+  const [surface, setSurface] = useState<Surface>('library');
 
-  const NAV: Array<{ id: Surface; ar: string; en: string; soon?: boolean }> = [
+  const NAV: Array<{ id: Surface; ar: string; en: string }> = [
     { id: 'library', ar: 'مكتبة المحتوى', en: 'Content library' },
-    { id: 'agents', ar: 'الوكلاء والتشغيل', en: 'Agents & runs', soon: true },
-    { id: 'pipeline', ar: 'مسار المحتوى', en: 'Content pipeline', soon: true },
-    { id: 'storage', ar: 'التخزين', en: 'Storage', soon: true },
-    { id: 'companies', ar: 'الشركات', en: 'Companies', soon: true },
+    { id: 'agents', ar: 'الوكلاء والتشغيل', en: 'Agents & runs' },
+    { id: 'pipeline', ar: 'مسار المحتوى', en: 'Content pipeline' },
+    { id: 'storage', ar: 'التخزين', en: 'Storage' },
+    { id: 'companies', ar: 'الشركات', en: 'Companies' },
   ];
 
   return (
@@ -42,16 +47,19 @@ export default function CompetitorWatchPage() {
           <button
             key={n.id}
             type="button"
-            className={`cw-navbtn${surface === n.id ? ' on' : ''}${n.soon ? ' soon' : ''}`}
-            disabled={n.soon}
+            className={`cw-navbtn${surface === n.id ? ' on' : ''}`}
+            onClick={() => setSurface(n.id)}
           >
             {isAr ? n.ar : n.en}
-            {n.soon && <span className="cw-soon">{isAr ? 'قريباً' : 'soon'}</span>}
           </button>
         ))}
       </nav>
 
       {surface === 'library' && <ContentLibrary isAr={isAr} />}
+      {surface === 'agents' && <AgentsSurface isAr={isAr} />}
+      {surface === 'pipeline' && <PipelineSurface isAr={isAr} />}
+      {surface === 'storage' && <StorageSurface isAr={isAr} />}
+      {surface === 'companies' && <CompaniesSurface isAr={isAr} />}
     </div>
   );
 }
