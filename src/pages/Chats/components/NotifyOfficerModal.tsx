@@ -252,6 +252,11 @@ export default function NotifyOfficerModal({
                           {isAr ? 'عبر المطور' : 'via developer'}
                         </span>
                       )}
+                      {o.coverage === 'marketer' && (
+                        <span className="ms-auto rounded-full bg-terracotta/15 px-2 py-0.5 text-[10px] text-terracotta">
+                          {isAr ? 'عبر المسوّق' : 'via marketer'}
+                        </span>
+                      )}
                     </label>
                   ))}
                 </div>

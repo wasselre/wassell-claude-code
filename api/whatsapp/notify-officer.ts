@@ -52,41 +52,62 @@ async function modelIdsByName(svc: ReturnType<typeof makeServiceClient>, names: 
   return out;
 }
 
+type Covering = { id: string; name: string; phone: string; coverage: 'explicit' | 'developer' | 'marketer'; party: 'developer' | 'marketer' | null };
+
 async function resolveOfficers(
   svc: ReturnType<typeof makeServiceClient>,
   projectId: string,
-): Promise<{ id: string; name: string; phone: string; coverage: 'explicit' | 'developer' }[]> {
+): Promise<{ id: string; name: string; phone: string; coverage: 'explicit' | 'developer' | 'marketer' }[]> {
   const ids = await modelIdsByName(svc, ['project_officers', 'all_projects']);
   const officersModelId = ids['project_officers'];
   if (!officersModelId) return [];
 
-  // The project's developer (for the "whole developer" coverage branch).
+  // A project can carry BOTH a developer and a marketer (a marketing company
+  // reselling a developer's project). We resolve officers on either side.
   const { data: projRow } = await svc!.from('unified_records').select('data').eq('id', projectId).maybeSingle();
-  const developerId = idList((projRow as Rec | null)?.data?.developer)[0] ?? null;
+  const pdata = (projRow as Rec | null)?.data ?? {};
+  const developerId = idList(pdata.developer)[0] ?? null;
+  const marketerId = idList(pdata.marketer)[0] ?? null;
 
   const { data: offRows } = await svc!
     .from('unified_records')
     .select('id, data')
     .eq('model_id', officersModelId);
 
-  const out: { id: string; name: string; phone: string; coverage: 'explicit' | 'developer' }[] = [];
+  const covering: Covering[] = [];
   for (const o of (offRows ?? []) as Rec[]) {
     const d = o.data ?? {};
     if (d.is_active === false) continue;
     const phone = typeof d.phone === 'string' ? d.phone : '';
     if (!phone) continue;
+    const offDev = idList(d.developer)[0] ?? null;
+    const offMkt = idList(d.marketer)[0] ?? null;
+    // An officer is tied to a developer OR a marketer; that is their "party".
+    const party: 'developer' | 'marketer' | null = offDev ? 'developer' : offMkt ? 'marketer' : null;
     const projs = idList(d.projects);
+
+    let coverage: Covering['coverage'] | null = null;
     if (projs.includes(projectId)) {
-      out.push({ id: o.id, name: String(d.name ?? ''), phone, coverage: 'explicit' });
-      continue;
+      coverage = 'explicit';
+    } else if (projs.length === 0) {
+      if (offDev && developerId && offDev === developerId) coverage = 'developer';
+      else if (offMkt && marketerId && offMkt === marketerId) coverage = 'marketer';
     }
-    if (projs.length === 0 && developerId && idList(d.developer)[0] === developerId) {
-      out.push({ id: o.id, name: String(d.name ?? ''), phone, coverage: 'developer' });
-    }
+    if (!coverage) continue;
+    covering.push({ id: o.id, name: String(d.name ?? ''), phone, coverage, party });
   }
-  // Explicit matches first — a subset assignment is a stronger signal than "covers the whole developer".
-  out.sort((a, b) => (a.coverage === b.coverage ? 0 : a.coverage === 'explicit' ? -1 : 1));
-  return out;
+
+  // Developer-officer-wins (the operator's rule): if ANY covering officer is on
+  // the DEVELOPER side, we treat the project as ours and contact only the
+  // developer's officer(s) — the marketer is a fallback used only when we have no
+  // developer contact. This is evaluated live per send, so it self-corrects when
+  // an officer is added or removed (no stale reclassification of the project).
+  const devSide = covering.filter((o) => o.party === 'developer');
+  const chosen = devSide.length > 0 ? devSide : covering.filter((o) => o.party !== 'developer');
+
+  // Explicit subset assignment is a stronger signal than a whole-entity match.
+  chosen.sort((a, b) => (a.coverage === b.coverage ? 0 : a.coverage === 'explicit' ? -1 : 1));
+  return chosen.map(({ id, name, phone, coverage }) => ({ id, name, phone, coverage }));
 }
 
 export default async function handler(req: Request): Promise<Response> {

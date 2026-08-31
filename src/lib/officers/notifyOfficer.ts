@@ -18,7 +18,9 @@ export interface CoveringOfficer {
   id: string;
   name: string;
   phone: string;
-  coverage: 'explicit' | 'developer';
+  /** How this officer was matched: an explicit project assignment, or the
+   *  project's whole developer / whole marketer. */
+  coverage: 'explicit' | 'developer' | 'marketer';
 }
 
 async function authHeader(): Promise<Record<string, string>> {
