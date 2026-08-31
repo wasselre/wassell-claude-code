@@ -6,7 +6,7 @@ import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
-import { useIsMobile } from '@/hooks/useIsMobile';
+import { useIsMobile, useIsWideScreen } from '@/hooks/useIsMobile';
 // Heavy, only-when-opened overlays are lazy-loaded so the chats chunk stays
 // lean — the Project Finder (Google Maps), the client 360 cockpit, the
 // projects/units browser and the record form load on demand, not with the
@@ -52,6 +52,10 @@ function firstId(v: unknown): string | null {
 export default function ChatDetail({ recordId }: { recordId: string }) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
+  // On a wide screen the client-options / Project-Finder panel DOCKS beside the
+  // conversation (split view) instead of covering it; below `lg` there isn't
+  // room, so it falls back to the full-screen modal.
+  const isWide = useIsWideScreen();
   const isAr = useAppStore((s) => s.language === 'ar');
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
@@ -295,7 +299,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     onOpenClient: openClientProfile,
     onOpenContact: openContactRecord,
     onOpenAdvertiser: openAdvertiserRecord,
-    onClientOptions: () => setShowClientOptions(true),
+    // Toggle so the header button also CLOSES the docked split panel (on the
+    // modal path it can only be clicked while closed, so toggling is harmless).
+    onClientOptions: () => setShowClientOptions((v) => !v),
     onLogInteraction: () => setShowLogInteraction(true),
     onBookAppointment: () => setShowBookAppointment(true),
     onRecordVisit: () => setShowRecordVisit(true),
@@ -303,8 +309,15 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     onContactIntake: () => setShowContactIntake(true),
   };
 
+  // Whether the client-options panel should dock beside the chat right now.
+  const dockOptions = showClientOptions && !!clientLinkId && isWide;
+
   return (
-    <div className="flex flex-col h-full min-h-0 bg-white">
+    <div className="flex h-full min-h-0 bg-white">
+    {/* Conversation column — shrinks to make room when the client-options /
+        Project-Finder panel docks beside it (split view), so the rep keeps
+        reading the chat while working the options. */}
+    <div className="flex flex-1 min-w-0 flex-col h-full min-h-0">
       {/* Header — compact messaging-style bar. On mobile the heavy CRM stack and
           the Done button move OUT of the bar (into the ⋯ menu + the CRM sheet)
           so the thread owns the screen; desktop keeps the full inline header. */}
@@ -533,8 +546,11 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       )}
 
       {/* Client-options popup — the client's saved options with the Project
-          Finder embedded, without leaving the conversation. */}
-      {showClientOptions && clientLinkId && (
+          Finder embedded, without leaving the conversation. On a wide screen it
+          DOCKS beside the chat instead (rendered after this column, below); here
+          it's the full-screen modal for narrower screens where a split won't
+          fit. */}
+      {showClientOptions && clientLinkId && !isWide && (
         <Suspense fallback={<OverlayFallback />}>
           <ClientOptionsModal clientId={clientLinkId} onClose={() => setShowClientOptions(false)} />
         </Suspense>
@@ -613,6 +629,28 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           onClose={() => setShowCompleteFollowup(false)}
         />
       )}
+    </div>{/* /conversation column */}
+
+    {/* Docked client-options / Project-Finder panel — wide screen only. Splits
+        the pane so the conversation stays visible beside the options and the
+        finder. Narrower screens use the full-screen modal above instead. */}
+    {dockOptions && (
+      <div className="flex h-full min-h-0 w-[400px] 2xl:w-[500px] shrink-0 flex-col border-s border-sand/20">
+        <Suspense
+          fallback={
+            <div className="flex flex-1 items-center justify-center">
+              <Loader2 size={20} className="animate-spin text-copper" />
+            </div>
+          }
+        >
+          <ClientOptionsModal
+            variant="docked"
+            clientId={clientLinkId!}
+            onClose={() => setShowClientOptions(false)}
+          />
+        </Suspense>
+      </div>
+    )}
     </div>
   );
 }

@@ -26,8 +26,25 @@ import { useIsMobile } from '@/hooks/useIsMobile';
  * client's stated preferences. It REPLACES this modal while it is open (rather
  * than stacking on top of it) so the browser's own stacked surfaces — the unit
  * drawer, unit compare, the send-to-client flow — keep their z-order.
+ *
+ * `variant` controls the shell:
+ * - `'modal'` (default) — the centered full-screen overlay described above.
+ * - `'docked'` — renders inline and fills its parent, WITHOUT a fixed
+ *   backdrop, so a host (the WhatsApp conversation) can dock it as a side
+ *   panel and keep the chat visible next to it (split view). The host owns
+ *   the width/border; Esc no longer closes it (it's a persistent panel, not a
+ *   transient popup).
  */
-export default function ClientOptionsModal({ clientId, onClose }: { clientId: string; onClose: () => void }) {
+export default function ClientOptionsModal({
+  clientId,
+  onClose,
+  variant = 'modal',
+}: {
+  clientId: string;
+  onClose: () => void;
+  variant?: 'modal' | 'docked';
+}) {
+  const docked = variant === 'docked';
   const isAr = useAppStore((s) => s.language === 'ar');
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
@@ -74,13 +91,15 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
 
   // Esc closes the popup in options mode only — the embedded finder installs its
   // own Esc handler (→ back to the options list). Suppressed while a source
-  // overlay is open on top (its own close/Back handles Esc).
+  // overlay is open on top (its own close/Back handles Esc). The DOCKED panel
+  // is persistent — Esc there would fight with typing in the chat, so it never
+  // closes on Esc (the header X / the toggle button close it).
   useEffect(() => {
-    if (mode !== 'options' || sourceView) return;
+    if (docked || mode !== 'options' || sourceView) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, sourceView, onClose]);
+  }, [docked, mode, sourceView, onClose]);
 
   // Catalogue browsing takes over the screen; closing it comes back here.
   if (mode === 'browse') {
@@ -102,16 +121,16 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
   // need to clear it — eliminate / send-to-client — use z-60. While a source is
   // open the popup drops to z-30 so the source (project overlay z-40 /
   // RecordFormModal z-50) sits above it.
-  return (
-    <>
+  // The card contents — identical in both shells; only the surrounding wrapper
+  // (fixed overlay vs. inline docked panel) differs.
+  const card = (
     <div
-      role="dialog"
-      aria-modal="true"
-      className={`fixed inset-0 ${sourceView ? 'z-30' : 'z-40'} flex items-center justify-center bg-charcoal/40 p-2 sm:p-4`}
-      onMouseDown={(e) => { if (e.target === e.currentTarget && mode === 'options' && !sourceView) onClose(); }}
-      dir={isAr ? 'rtl' : 'ltr'}
+      className={
+        docked
+          ? 'flex h-full w-full flex-col overflow-hidden bg-cream'
+          : 'flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-cream shadow-2xl'
+      }
     >
-      <div className="flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-cream shadow-2xl">
         {mode === 'options' ? (
           <>
             <div className="flex shrink-0 items-center gap-2.5 border-b border-sand/40 bg-white px-4 py-3">
@@ -184,7 +203,27 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
           </div>
         )}
       </div>
-    </div>
+  );
+
+  return (
+    <>
+    {docked ? (
+      // Inline docked panel — fills the host's slot; the host owns the border
+      // and width. No fixed backdrop, so the chat stays visible beside it.
+      <div className="flex h-full w-full flex-col overflow-hidden bg-cream" dir={isAr ? 'rtl' : 'ltr'}>
+        {card}
+      </div>
+    ) : (
+      <div
+        role="dialog"
+        aria-modal="true"
+        className={`fixed inset-0 ${sourceView ? 'z-30' : 'z-40'} flex items-center justify-center bg-charcoal/40 p-2 sm:p-4`}
+        onMouseDown={(e) => { if (e.target === e.currentTarget && mode === 'options' && !sourceView) onClose(); }}
+        dir={isAr ? 'rtl' : 'ltr'}
+      >
+        {card}
+      </div>
+    )}
 
     {/* Source overlay — stacks above the popup; close returns to it. PROJECT →
         the rich Project detail page; UNIT / MARKET LISTING → the record form. */}
