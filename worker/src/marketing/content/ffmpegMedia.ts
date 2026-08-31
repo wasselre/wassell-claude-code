@@ -33,6 +33,26 @@ export async function toTempFile(bytes: Buffer, ext: string): Promise<{ dir: str
 }
 export async function cleanup(dir: string): Promise<void> { await rm(dir, { recursive: true, force: true }).catch(() => {}); }
 
+/**
+ * Re-encode an image to a bounded JPEG (max 1600px on the long edge, moderate
+ * quality) so it fits comfortably under the vision API's ~10 MB per-image limit,
+ * and so unsupported source formats (e.g. HEIC) become a plain JPEG the model
+ * accepts. Throws if ffmpeg cannot decode the source — the caller then treats the
+ * file as un-analysable and applies a kind-based default. Same process-group
+ * kill posture as every other ffmpeg call here.
+ */
+export async function imageToBoundedJpeg(bytes: Buffer, srcExt: string): Promise<Buffer> {
+  const dir = await mkdtemp(join(tmpdir(), 'mkt-img-'));
+  const inPath = join(dir, `in.${srcExt || 'img'}`);
+  const outPath = join(dir, 'out.jpg');
+  try {
+    await writeFile(inPath, bytes);
+    // scale down only when larger than 1600 on the long edge; -2 keeps dims even.
+    await run('ffmpeg', ['-y', '-i', inPath, '-vf', "scale='min(1600,iw)':'min(1600,ih)':force_original_aspect_ratio=decrease", '-q:v', '4', outPath], 60_000);
+    return await readFile(outPath);
+  } finally { await cleanup(dir); }
+}
+
 /** Video duration in ms via ffprobe, or null if unprobeable. */
 export async function probeDurationMs(videoPath: string): Promise<number | null> {
   try {

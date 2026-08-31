@@ -23,6 +23,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
 import {
   toTempFile, cleanup, probeDurationMs, hasAudioStream, extractAudio, sampleFrames,
+  imageToBoundedJpeg,
 } from './marketing/content/ffmpegMedia.js';
 import { transcribeAudioUrl } from './marketing/content/falTranscribe.js';
 import { uploadBytes } from './marketing/content/contentStore.js';
@@ -43,12 +44,28 @@ export interface EnrichmentJob {
 
 /** Cheap, fast, vision-capable — enrichment is high-volume. */
 const ENRICH_MODEL = 'claude-haiku-4-5-20251001';
-/** Under Anthropic's ~32 MB request cap once base64-inflated (image/pdf sent
- *  whole). Video is NOT sent whole — only its frames + transcript go to the
- *  model — so a bigger cap applies to video (ffmpeg reads it locally). */
-const MAX_DIRECT_BYTES = 24 * 1024 * 1024;
+/** Anthropic rejects any single image whose base64 exceeds 10 MB, so an image
+ *  over ~6 MB RAW (≈8.2 MB base64) is downscaled via ffmpeg before sending
+ *  rather than sent whole (which 400s — measured live 2026-08-31). */
+const SAFE_IMAGE_BYTES = 6 * 1024 * 1024;
+/** PDFs go whole as a document block; keep the base64 comfortably under the
+ *  ~32 MB request cap. Larger PDFs get a kind-based default instead. */
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 400 * 1024 * 1024;
 const MAX_FRAMES = 6;
+
+/** Blind, content-free best guess used only when a file cannot be READ at all
+ *  (unsupported/oversized/undecodable). primary_category is REQUIRED, so an
+ *  un-analysable file still gets a reasonable in-vocabulary value rather than
+ *  NULL; a human can correct it from the AI-review queue. All values are seeded
+ *  primary_category vocab rows. */
+const KIND_DEFAULT_PRIMARY: Record<string, string> = {
+  image: 'raw_photo', pdf: 'brochure', document: 'brochure', video: 'raw_video', audio: 'voiceover',
+};
+function noopDefault(kind: string): Record<string, unknown> {
+  const v = KIND_DEFAULT_PRIMARY[kind];
+  return v ? { model: 'kind-default', primary_category: v, primary_category_fallback: true } : {};
+}
 
 const IMAGE_MIMES: Record<string, 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'> = {
   'image/jpeg': 'image/jpeg', 'image/jpg': 'image/jpeg', 'image/png': 'image/png',
@@ -88,8 +105,10 @@ export async function runEnrichmentJob(
 ): Promise<Record<string, unknown>> {
   const kind = job.kind;
   if (!['image', 'pdf', 'video', 'audio'].includes(kind)) {
-    console.log(`[enrich] job=${job.id} kind=${kind} not handled — no-op`);
-    return {};
+    // e.g. kind='document' (DOCX/PPTX) — not vision-readable here. Give it the
+    // required field a kind-based default rather than leaving it NULL.
+    console.log(`[enrich] job=${job.id} kind=${kind} not readable — kind-default`);
+    return noopDefault(kind);
   }
 
   // ── Allowlists (the model may ONLY choose from these) ─────────────────────
@@ -135,16 +154,27 @@ export async function runEnrichmentJob(
   const blocks: Anthropic.ContentBlockParam[] = [];
   let transcript = '';
 
-  if (kind === 'image' || kind === 'pdf') {
-    if (job.sizeBytes > MAX_DIRECT_BYTES) { console.log(`[enrich] job=${job.id} too large — no-op`); return {}; }
-    if (kind === 'image' && !IMAGE_MIMES[(job.mimeType || '').toLowerCase()]) {
-      console.log(`[enrich] job=${job.id} image mime ${job.mimeType} unsupported — no-op`); return {};
-    }
+  if (kind === 'image') {
     const bytes = await download(supabase, job);
-    const b64 = bytes.toString('base64');
-    blocks.push(kind === 'image'
-      ? { type: 'image', source: { type: 'base64', media_type: IMAGE_MIMES[(job.mimeType || '').toLowerCase()]!, data: b64 } }
-      : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } });
+    const supported = IMAGE_MIMES[(job.mimeType || '').toLowerCase()];
+    // Downscale when the source is too big for the 10 MB per-image cap OR is a
+    // format the model won't accept (HEIC, etc.). A decode failure (ffmpeg can't
+    // read it) → kind-default rather than a hard job failure.
+    if (!supported || bytes.length > SAFE_IMAGE_BYTES) {
+      try {
+        const jpeg = await imageToBoundedJpeg(bytes, (job.mimeType || '').split('/')[1] || 'img');
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: jpeg.toString('base64') } });
+      } catch (e) {
+        console.log(`[enrich] job=${job.id} image undecodable (${job.mimeType}, ${(bytes.length / 1048576).toFixed(1)}MB): ${e instanceof Error ? e.message : String(e)} — kind-default`);
+        return noopDefault(kind);
+      }
+    } else {
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: supported, data: bytes.toString('base64') } });
+    }
+  } else if (kind === 'pdf') {
+    if (job.sizeBytes > MAX_PDF_BYTES) { console.log(`[enrich] job=${job.id} pdf too large (${(job.sizeBytes / 1048576).toFixed(1)}MB) — kind-default`); return noopDefault(kind); }
+    const bytes = await download(supabase, job);
+    blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: bytes.toString('base64') } });
   } else {
     // video / audio — process locally with ffmpeg, transcribe with fal Whisper.
     if (job.sizeBytes > MAX_VIDEO_BYTES) { console.log(`[enrich] job=${job.id} media too large — no-op`); return {}; }
@@ -175,7 +205,7 @@ export async function runEnrichmentJob(
     } finally {
       await cleanup(tmp.dir).catch(() => {});
     }
-    if (blocks.length === 0 && !transcript) { console.log(`[enrich] job=${job.id} nothing to analyse — no-op`); return {}; }
+    if (blocks.length === 0 && !transcript) { console.log(`[enrich] job=${job.id} nothing to analyse — kind-default`); return noopDefault(kind); }
   }
 
   // ── Ask the model ─────────────────────────────────────────────────────────
