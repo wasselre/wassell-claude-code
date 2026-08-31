@@ -6,6 +6,8 @@ import Header from './Header';
 import GlobalChatComposer from '@/pages/Chats/components/GlobalChatComposer';
 import JobsIndicator from '@/components/JobsIndicator';
 import SalesNotifications from '@/components/SalesNotifications';
+import WhatsAppOwnerAlerts from '@/components/WhatsAppOwnerAlerts';
+import PushAutoPrompt from '@/components/PushAutoPrompt';
 import CallResultConfirmHost from '@/pages/Followups/components/CallResultConfirmHost';
 import { useAppStore } from '@/stores/appStore';
 import { ensurePushSubscription } from '@/lib/push/client';
@@ -85,9 +87,17 @@ export default function AppLayout() {
       {/* Floating background-jobs circle + panel (listing messages, media
           fan-outs, …). Hidden until a job exists. */}
       <JobsIndicator />
-      {/* Pop-up notifications for hot new leads + customer replies (toast +
-          browser Notification). Renders nothing. */}
+      {/* Pop-up notifications for hot new leads (toast + browser Notification).
+          Renders nothing. Inbound-WhatsApp alerts moved to WhatsAppOwnerAlerts. */}
       <SalesNotifications />
+      {/* In-app alert the moment a client YOU own sends a WhatsApp message —
+          toast + browser Notification, wherever you are in the app. Pairs with
+          the header bell (WhatsAppOwnerBell) and the device push pipeline. */}
+      <WhatsAppOwnerAlerts />
+      {/* One-time, gesture-gated prompt to turn on device push after login, so
+          reps who never visited /profile still receive owner alerts on their
+          phone/laptop. Renders nothing. */}
+      <PushAutoPrompt />
       {/* Full-page "confirm what happened on that call" popup. Realtime-driven,
           scoped to this rep by RLS, and self-minimising when they are mid-task.
           Renders nothing until a suggestion is ready. */}

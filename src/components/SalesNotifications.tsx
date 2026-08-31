@@ -157,15 +157,14 @@ export default function SalesNotifications() {
         continue;
       }
 
-      // Transition → customer replied / messaged.
-      if (prev !== undefined && prev !== 'replied' && sig === 'replied') {
-        const name = typeof d.client_name === 'string' && d.client_name ? d.client_name : (isAr ? 'عميل' : 'A client');
-        notify(
-          isAr ? '💬 العميل رد — دورك الآن' : '💬 Customer replied — your turn',
-          name,
-          r.id,
-        );
-      }
+      // NOTE (2026-08-31): the "customer replied — your turn" alert moved to
+      // WhatsAppOwnerAlerts, which watches the chat directly (fires for every
+      // inbound message on a client you own, deep-links to the thread). Firing
+      // it here too — off the follow-up flipping to `replied` — would double-buzz
+      // the owner for the same inbound message. The signal is still tracked
+      // above so the hot-lead diff baseline stays intact; only the notify call
+      // is gone. Hot-lead (a brand-new first-call task) stays here — it's a
+      // lead/task moment, not an inbound message.
     }
 
     // Drop rows that vanished (deleted) so the map doesn't grow forever.

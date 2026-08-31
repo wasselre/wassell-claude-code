@@ -202,6 +202,16 @@ Real estate sales pipelines in Saudi run on WhatsApp. Before this module, staff 
 | `src/components/NotificationSettings.tsx` | `/profile` card: per-device push enable + the admin built-in switches (incl. the WhatsApp one). |
 | `worker/src/runPushJob.ts` | Delivers every `push_outbox` row as encrypted Web Push; blind to which trigger produced it. |
 
+### Owner alerts — in-app + device, on every inbound message (added 2026-08-31)
+When a client's WhatsApp message arrives, the client's **owner** (`client_owner` — the Sales Consultant, mirrored onto the conversation record) is alerted three ways, wherever they are:
+
+- **Device push (existing).** The `chat_messages_enqueue_push` trigger enqueues a `push_outbox` row targeted at the owner; the Fly worker sends an encrypted Web Push — reaches the owner's phone/laptop even with the app closed. Only reaches devices that opted in.
+- **In-app toast (`src/components/WhatsAppOwnerAlerts.tsx`).** An app-level watcher on the live `records[chats]` slice (kept current app-wide by the realtime `records` channel) fires a toast the instant a chat **you own** gets a new **inbound** message — from any page. Suppresses the local OS `Notification` when this device is already push-subscribed (the push covers the OS layer; the toast is not a duplicate of it). It **replaces** the old `SalesNotifications` "customer replied — your turn" toast (which fired off a follow-up flip — an indirect proxy that double-buzzed the owner); hot-lead alerts stay in `SalesNotifications`.
+- **Header bell (`src/components/WhatsAppOwnerBell.tsx`).** A persistent bell in the top bar with a badge + dropdown of "clients waiting for your reply" — every conversation you own whose customer messaged last and is still unread. Pure projection of the in-memory chats slice (no new table). Opening a row marks it read and deep-links to the thread, dropping it from the list.
+- **Push auto-prompt (`src/components/PushAutoPrompt.tsx`).** Because a push only reaches a device that opted in — and most reps never visited `/profile` to turn it on — this asks once per device, on the rep's first interaction after login (the gesture browsers require for `Notification.requestPermission()`). Engages only from the `default` permission state; never re-prompts a denial, never nags. `/profile` (`NotificationSettings`) remains the manual on/off + repair surface.
+
+The owner predicate and name/url resolution shared by the toast and bell live in `src/components/whatsappOwner.ts` so the two surfaces can't drift.
+
 ## WhatsApp AI reply agent (basic + full) — added to this PRD 2026-08-24
 There are TWO responders, selected by **`whatsapp_ai_settings.responder_mode`** (`basic` default | `agent`):
 

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { isAuthAvailable } from '@/lib/auth';
+import WhatsAppOwnerBell from '@/components/WhatsAppOwnerBell';
 import { Languages, Menu, User, LogOut, Loader2, Eye, X } from 'lucide-react';
 
 interface HeaderProps {
@@ -191,6 +192,9 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
               {signingOut ? <Loader2 size={15} className="animate-spin" /> : <LogOut size={15} />}
             </button>
           )}
+
+          {/* ── Clients-waiting bell (owner WhatsApp inbox) ───────── */}
+          <WhatsAppOwnerBell />
 
           {/* ── Language toggle ───────────────────────────────────── */}
           <button onClick={toggleLanguage} className="pill">
