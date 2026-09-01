@@ -37,7 +37,7 @@ import {
 import { pullPublicationMetrics, runBundleMetricsSync } from './_lib/marketing/bundleMetrics.js';
 import { runBundleAccountMetricsSync } from './_lib/marketing/bundleAccountMetrics.js';
 import { runBundleStatusSweep } from './_lib/marketing/bundleStatusSync.js';
-import { generateScript, loadProjectData, loadTranscripts, buildFactsSheet, isScriptRecipe } from './_lib/marketing/videoScript.js';
+import { isScriptRecipe } from './_lib/marketing/videoScript.js';
 // Pure shared rulebook — same blessed src↔api cross-import as localizedName.ts.
 import { preflightPublishSet } from '../src/lib/marketingOS/platformRules.js';
 
@@ -82,6 +82,17 @@ async function requireCap(sb: SupabaseClient, capability: string): Promise<Respo
   if (res.error) return jsonError(500, res.error.message);
   if (res.data !== true) return jsonError(403, `${capability} capability required`);
   return null;
+}
+
+/** Fire-and-forget /wake ping to the Fly worker so a freshly enqueued job skips
+ *  the poll latency. Missing env or a dead worker is fine — the worker's poll
+ *  loop is the reliable path (same posture as /api/generate-deck). */
+function wakeWorker(): void {
+  const base = process.env.WASSEL_DECK_WORKER_URL;
+  if (!base) return;
+  void fetch(`${base.replace(/\/$/, '')}/wake`, { method: 'POST' }).catch(() => {
+    /* best-effort by design */
+  });
 }
 
 /** Human-readable one-liner from a Meta Graph error (or any thrown value). */
@@ -2225,31 +2236,66 @@ export default async function handler(req: Request): Promise<Response> {
       /* Scenes — the shoot list is derived from these             */
       /* -------------------------------------------------------- */
       case 'write_video_script': {
-        // Generate a video-ad script from the record's project + competitor
-        // transcripts. Returns a DRAFT only — nothing is saved until video_script_apply.
+        // ENQUEUE a background job. The Fly worker's script lane runs the
+        // ~30-40s Anthropic write OFF the HTTP request (the rule shared with
+        // decks/image/documents — never hold a request open for the AI call)
+        // and appends the scenes to mos_scenes when done. Returns fast with the
+        // job row; the SPA drives a progress bar from script_job_status.
         const contentId = str(body.content_id);
         if (!contentId) return jsonError(400, 'content_id is required');
         const recipe = isScriptRecipe(body.recipe) ? body.recipe : 'walkthrough';
         const gate = await requireCap(sb, 'write_content');
         if (gate) return gate;
-        const c = await sb.from('mos_content_v').select('id, project_id, content_type_key').eq('id', contentId).maybeSingle();
+        // Fail fast before burning a worker slot: the item must exist and have a
+        // project linked (the worker needs it to load facts).
+        const c = await sb.from('mos_content_v').select('id, project_id').eq('id', contentId).maybeSingle();
         const cf = dbFail(c.error); if (cf) return cf;
         if (!c.data) return jsonError(404, 'content item not found');
-        const projectId = (c.data as { project_id: string | null }).project_id;
-        if (!projectId) return jsonError(400, 'link a project to this content first');
+        if (!(c.data as { project_id: string | null }).project_id) {
+          return jsonError(400, 'link a project to this content first');
+        }
         const svc = makeServiceClient('api:marketing-os:video-script');
         if (!svc) return jsonError(500, 'service unavailable');
-        const pdata = await loadProjectData(svc, projectId);
-        if (!pdata) return jsonError(404, 'project not found in catalog');
-        const facts = buildFactsSheet(pdata);
-        if (!facts.hasFacts) return jsonError(422, 'not enough project facts to write a script');
-        const transcripts = await loadTranscripts(svc);
-        try {
-          const { scenes, hooks } = await generateScript(recipe, facts.sheet, transcripts);
-          return jsonOk({ draft: { scenes, hooks, recipe, project_name: facts.projectName } });
-        } catch (e) {
-          return jsonError(502, e instanceof Error ? e.message : 'script generation failed');
+        // One active (queued|running) job per content item (partial unique
+        // index). If one already runs, return it rather than fanning out a dup.
+        const existing = await svc.from('mos_script_jobs')
+          .select('id, status, recipe, created_at')
+          .eq('content_id', contentId).in('status', ['queued', 'running'])
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        if (existing.data) return jsonOk({ job: existing.data });
+
+        const requestedBy = await resolveAppUserId(sb, user.userId);
+        const insert = await svc.from('mos_script_jobs')
+          .insert({ content_id: contentId, recipe, requested_by: requestedBy })
+          .select('id, status, recipe, created_at').maybeSingle();
+        if (insert.error) {
+          // Lost the unique-index race with a concurrent enqueue — return the winner.
+          const again = await svc.from('mos_script_jobs')
+            .select('id, status, recipe, created_at')
+            .eq('content_id', contentId).in('status', ['queued', 'running'])
+            .order('created_at', { ascending: false }).limit(1).maybeSingle();
+          if (again.data) return jsonOk({ job: again.data });
+          return jsonError(500, insert.error.message);
         }
+        wakeWorker();
+        return jsonOk({ job: insert.data });
+      }
+
+      case 'script_job_status': {
+        // Latest script job for a content item — drives the SPA's progress bar
+        // and survives a reload / navigating away (the job lives in the DB).
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        const gate = await requireCap(sb, 'read');
+        if (gate) return gate;
+        const svc = makeServiceClient('api:marketing-os:video-script');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const j = await svc.from('mos_script_jobs')
+          .select('id, status, recipe, scene_count, error, created_at, finished_at')
+          .eq('content_id', contentId)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        const jf = dbFail(j.error); if (jf) return jf;
+        return jsonOk({ job: j.data ?? null });
       }
 
       case 'video_script_apply': {

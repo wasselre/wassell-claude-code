@@ -646,45 +646,36 @@ export const saveScene = (contentId: string, scene: Record<string, unknown>) =>
 export const deleteScene = (contentId: string, id: string) =>
   call<{ scenes: MosScene[] }>('scene_delete', { content_id: contentId, id });
 
-// ── Video-script generator (AI: learn from competitors → scenes) ───────────
+// ── Video-script generator (background job: learn from competitors → scenes) ──
 export type ScriptRecipeKey = 'walkthrough' | 'offer' | 'rent_vs_own' | 'product_explainer' | 'launch';
-export interface ScriptSceneDraft {
-  visual: string;
-  voiceover: string;
-  on_screen_text: string;
-  start_sec: number | null;
-  end_sec: number | null;
+export type ScriptJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+export interface ScriptJobRow {
+  id: string;
+  status: ScriptJobStatus;
+  recipe?: ScriptRecipeKey;
+  scene_count?: number | null;
+  error?: string | null;
+  created_at?: string;
+  finished_at?: string | null;
 }
-export interface VideoScriptDraft {
-  scenes: ScriptSceneDraft[];
-  hooks: string[];
-  recipe: ScriptRecipeKey;
-  project_name: string;
-}
-// Generation is a ~30–40s AI call — well past the shared 23s `call` abort — so
-// this uses its own fetch with a 90s timeout. (A proper background job +
-// notification is the real fix; this keeps the button working meanwhile.)
-export async function writeVideoScript(contentId: string, recipe: ScriptRecipeKey): Promise<{ draft: VideoScriptDraft }> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 90_000);
-  try {
-    const res = await fetch('/api/marketing-os', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-      body: JSON.stringify({ action: 'write_video_script', content_id: contentId, recipe }),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      const b = (await res.json().catch(() => ({}))) as { error?: string; error_ar?: string };
-      throw new Error(b?.error ?? `write_video_script failed (${res.status})`);
-    }
-    return (await res.json()) as { draft: VideoScriptDraft };
-  } finally {
-    clearTimeout(t);
-  }
-}
-export const applyVideoScript = (contentId: string, scenes: ScriptSceneDraft[]) =>
-  call<{ scenes: MosScene[] }>('video_script_apply', { content_id: contentId, scenes });
+
+/**
+ * Enqueue a background video-script job. Returns fast (<1s) with the job row —
+ * the Fly worker runs the ~30-40s AI write OFF the request, appends the scenes
+ * to mos_scenes, and fires a completion notification. The old synchronous path
+ * was killed by the 23s client / 25s edge timeout; this never holds a request
+ * open for the AI call (the rule shared with decks/image/documents).
+ */
+export const writeVideoScript = (contentId: string, recipe: ScriptRecipeKey) =>
+  call<{ job: ScriptJobRow }>('write_video_script', { content_id: contentId, recipe });
+
+/**
+ * Latest script job for a content item — drives the progress bar and survives a
+ * reload / navigating away (the job lives in the DB, not the tab). Returns null
+ * when no job has ever been enqueued for the item.
+ */
+export const scriptJobStatus = (contentId: string) =>
+  call<{ job: ScriptJobRow | null }>('script_job_status', { content_id: contentId });
 
 export const fetchPublications = (contentId?: string) =>
   call<{ publications: MosPublication[]; accounts: MosAccount[] }>('publication_list',

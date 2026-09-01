@@ -28,6 +28,7 @@ import {
   addComment, completeTask, fetchAssets, fetchCampaigns, fetchComments,
   fetchContentDetail, fetchContentVersions, fetchPublications,
   fieldSchemaEntries, fieldSchemaKeys, isOverdue, updateContent,
+  scriptJobStatus, type ScriptJobRow,
 } from '@/lib/marketingOS/client';
 import { useAppStore } from '@/stores/appStore';
 import { useWorkspace, type Capability } from './MarketingWorkspace';
@@ -127,6 +128,7 @@ export default function ContentDetailPage() {
   const [approveOpen, setApproveOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
   const [scriptOpen, setScriptOpen] = useState(false);
+  const [scriptJob, setScriptJob] = useState<ScriptJobRow | null>(null);
   const [versions, setVersions] = useState<MosContentVersion[] | null>(null);
 
   const load = useCallback(async () => {
@@ -156,6 +158,46 @@ export default function ContentDetailPage() {
   }, [contentId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Background video-script job — poll while it runs so a progress bar shows on
+  // the scenes table (and survives a reload / navigating back). On completion
+  // the worker has already inserted the scenes, so we refetch the item; a bell
+  // notification also fires server-side. Keyed on the job's id+status so the
+  // interval stays stable while 'running' and tears down on a terminal status.
+  useEffect(() => {
+    if (!contentId) return;
+    // No job in state yet → fetch the latest once (covers a fresh mount while a
+    // job enqueued elsewhere is still running).
+    if (!scriptJob) {
+      let cancelled = false;
+      void scriptJobStatus(contentId)
+        .then((r) => { if (!cancelled) setScriptJob(r.job); })
+        .catch(() => { /* transient — the button can still enqueue */ });
+      return () => { cancelled = true; };
+    }
+    if (scriptJob.status !== 'queued' && scriptJob.status !== 'running') return;
+    let cancelled = false;
+    const iv = setInterval(() => {
+      void scriptJobStatus(contentId).then((r) => {
+        if (cancelled || !r.job) return;
+        setScriptJob(r.job);
+        if (r.job.status === 'completed') {
+          addToast(
+            isAr ? `تمت كتابة السكربت (${r.job.scene_count ?? 0} مشهد)` : `Script ready (${r.job.scene_count ?? 0} scenes)`,
+            'success',
+          );
+          void load();
+        } else if (r.job.status === 'failed') {
+          addToast(
+            isAr ? `تعذّرت كتابة السكربت: ${r.job.error ?? ''}` : `Script failed: ${r.job.error ?? ''}`,
+            'error',
+          );
+        }
+      }).catch(() => { /* transient — keep polling */ });
+    }, 4000);
+    return () => { cancelled = true; clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentId, scriptJob?.id, scriptJob?.status, isAr, addToast, load]);
 
   // The campaign tag («أغسطس العضوي») needs one extra lookup, only when the
   // item is actually linked. A failure hides the tag — and is logged, never
@@ -700,6 +742,23 @@ export default function ContentDetailPage() {
               />
               {/* Captions + paid ad copy moved to the Placements tab (2026-08-28):
                   a creative is neutral; where it runs lives on its placements. */}
+              {/* Background video-script job in flight → progress bar on top of
+                  the scenes table. Indeterminate (one AI call, no granular %);
+                  the user can leave the page and gets a bell notification when
+                  the scenes land. */}
+              {scriptJob && (scriptJob.status === 'queued' || scriptJob.status === 'running') && (
+                <div style={{ margin: '4px 0 12px', border: '1px solid var(--line)', borderRadius: 8, padding: '10px 12px' }}>
+                  <style>{'@keyframes wsScriptBar{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}'}</style>
+                  <div style={{ position: 'relative', height: 6, borderRadius: 99, background: 'var(--line)', overflow: 'hidden' }}>
+                    <span style={{ position: 'absolute', top: 0, bottom: 0, width: '30%', borderRadius: 99, background: 'var(--copper)', animation: 'wsScriptBar 1.2s ease-in-out infinite' }} />
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--mute)' }}>
+                    {isAr
+                      ? 'يكتب سكربت الفيديو… يمكنك مغادرة الصفحة، وسنُعلمك عند الانتهاء'
+                      : "Writing the video script… you can leave this page — we'll notify you when it's done"}
+                  </div>
+                </div>
+              )}
               {/* Screen 29, phone 2: on the phone the scenes render as a
                   READABLE list with a duration bar, not a compressed table. */}
               {(item.content_type_key === 'video' || scenes.length > 0) && (
@@ -872,7 +931,7 @@ export default function ContentDetailPage() {
           contentId={item.id}
           isAr={isAr}
           onClose={() => setScriptOpen(false)}
-          onApplied={() => void load()}
+          onStarted={(job) => setScriptJob(job)}
         />
       )}
       {compareOpen && (

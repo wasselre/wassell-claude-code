@@ -1,15 +1,15 @@
 /**
- * Write video script — the in-app «اكتب سكربت» button's modal. Pick a recipe,
- * generate a draft (learns from competitor transcripts + the record's project),
- * review, then Apply → inserts the scenes into the record. Non-destructive:
- * nothing is written until the operator hits Apply.
+ * Write video script — the in-app «اكتب سكربت» launcher. Pick a recipe and
+ * start; generation runs in the BACKGROUND (the Fly worker's script lane), so
+ * this modal just enqueues and closes. A progress bar then sits on top of the
+ * scenes table (driven by the job status on the content page), the operator can
+ * leave the page, and a bell notification fires when the scenes land in the
+ * table. No waiting, no held-open request (the old synchronous path hit the
+ * 23s client / 25s edge timeout).
  */
 import { useState } from 'react';
 import { Modal } from './kit';
-import {
-  writeVideoScript, applyVideoScript,
-  type VideoScriptDraft, type ScriptRecipeKey,
-} from '@/lib/marketingOS/client';
+import { writeVideoScript, type ScriptRecipeKey, type ScriptJobRow } from '@/lib/marketingOS/client';
 
 const RECIPES: Array<{ key: ScriptRecipeKey; ar: string; en: string }> = [
   { key: 'walkthrough', ar: 'جولة', en: 'Walkthrough' },
@@ -19,43 +19,26 @@ const RECIPES: Array<{ key: ScriptRecipeKey; ar: string; en: string }> = [
   { key: 'launch', ar: 'إطلاق', en: 'Launch' },
 ];
 
-export default function VideoScriptModal({ contentId, isAr, onClose, onApplied }: {
+export default function VideoScriptModal({ contentId, isAr, onClose, onStarted }: {
   contentId: string;
   isAr: boolean;
   onClose: () => void;
-  onApplied: () => void;
+  onStarted: (job: ScriptJobRow) => void;
 }) {
   const [recipe, setRecipe] = useState<ScriptRecipeKey>('walkthrough');
   const [loading, setLoading] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [draft, setDraft] = useState<VideoScriptDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const generate = async () => {
+  const start = async () => {
     setLoading(true);
     setError(null);
-    setDraft(null);
     try {
       const r = await writeVideoScript(contentId, recipe);
-      setDraft(r.draft);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const apply = async () => {
-    if (!draft) return;
-    setApplying(true);
-    setError(null);
-    try {
-      await applyVideoScript(contentId, draft.scenes);
-      onApplied();
+      onStarted(r.job);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      setApplying(false);
+      setLoading(false);
     }
   };
 
@@ -64,65 +47,23 @@ export default function VideoScriptModal({ contentId, isAr, onClose, onApplied }
       title={isAr ? 'اكتب سكربت الفيديو' : 'Write video script'}
       sub={isAr ? 'يتعلّم من فيديوهات المنافسين ويكتب بحقائق المشروع' : "Learns from competitors' videos, grounded in the project's facts"}
       onClose={onClose}
-      wide
-      footer={draft ? (
-        <button className="btn btn-go" onClick={apply} disabled={applying}>
-          {applying
-            ? (isAr ? 'جارٍ الإضافة…' : 'Adding…')
-            : (isAr ? `اعتماد وإضافة ${draft.scenes.length} مشهد` : `Apply ${draft.scenes.length} scenes`)}
-        </button>
-      ) : null}
     >
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
         <select className="fsel" value={recipe} onChange={(e) => setRecipe(e.target.value as ScriptRecipeKey)}>
           {RECIPES.map((r) => <option key={r.key} value={r.key}>{isAr ? r.ar : r.en}</option>)}
         </select>
-        <button className="btn btn-p" onClick={generate} disabled={loading}>
-          {loading ? (isAr ? 'يكتب…' : 'Writing…') : (isAr ? 'توليد' : 'Generate')}
+        <button className="btn btn-p" onClick={start} disabled={loading}>
+          {loading ? (isAr ? 'يبدأ…' : 'Starting…') : (isAr ? 'ابدأ الكتابة' : 'Start writing')}
         </button>
-        {draft && <span style={{ color: 'var(--mute)', fontSize: 12 }}>{draft.project_name}</span>}
       </div>
 
       {error && <div className="notice bad" style={{ marginBottom: 10 }}>{error}</div>}
-      {loading && (
-        <div style={{ color: 'var(--mute)', padding: '18px 0', fontSize: 13 }}>
-          {isAr ? 'يدرس فيديوهات المنافسين ويكتب السكربت…' : 'Studying competitor videos & writing the script…'}
-        </div>
-      )}
 
-      {draft && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {draft.scenes.map((s, i) => (
-            <div key={i} style={{ border: '1px solid var(--line)', borderRadius: 8, padding: '10px 12px' }}>
-              <div style={{ fontSize: 11, color: 'var(--mute)', marginBottom: 4 }}>
-                {isAr ? 'مشهد' : 'Scene'} {i + 1}
-                {s.start_sec != null ? ` · ${s.start_sec}–${s.end_sec ?? ''}s` : ''}
-              </div>
-              <div style={{ fontSize: 13, marginBottom: 3 }}>
-                <b>{isAr ? 'الصوت: ' : 'VO: '}</b>{s.voiceover}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--ink-2)' }}>
-                <b>{isAr ? 'اللقطة: ' : 'Visual: '}</b>{s.visual}
-              </div>
-              {s.on_screen_text && (
-                <div style={{ fontSize: 12, color: 'var(--copper)' }}>
-                  <b>{isAr ? 'على الشاشة: ' : 'On-screen: '}</b>{s.on_screen_text}
-                </div>
-              )}
-            </div>
-          ))}
-          {draft.hooks.length > 0 && (
-            <div style={{ marginTop: 6 }}>
-              <div style={{ fontSize: 11, color: 'var(--mute)', marginBottom: 4 }}>
-                {isAr ? 'خطّافات بديلة' : 'Alternative hooks'}
-              </div>
-              <ul style={{ margin: 0, paddingInlineStart: 18, fontSize: 12.5, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {draft.hooks.map((h, i) => <li key={i}>{h}</li>)}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+      <div style={{ fontSize: 12.5, color: 'var(--mute)', lineHeight: 1.7 }}>
+        {isAr
+          ? 'تعمل الكتابة في الخلفية — لا حاجة للانتظار هنا. سيظهر شريط تقدّم فوق جدول المشاهد، ويمكنك التنقّل بين الصفحات، وسيصلك إشعار عند جاهزية السكربت وإضافة المشاهد تلقائياً.'
+          : "It writes in the background — no need to wait here. A progress bar appears on top of the scenes table, you can move between pages, and you'll get a notification when the script is ready and the scenes are added automatically."}
+      </div>
     </Modal>
   );
 }

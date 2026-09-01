@@ -37,6 +37,7 @@ import { configurePush, runPushJob, type PushOutboxRow } from './runPushJob.js';
 import { runNotificationDelivery, type NotificationDeliveryRow } from './runNotificationDelivery.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
 import { runDocumentJob, type DocumentJob } from './runDocumentJob.js';
+import { runScriptJob, type ScriptJob } from './runScriptJob.js';
 import { runImageJob, type ImageJob } from './runImageJob.js';
 import { runMigrationJob, type MigrationJob } from './runMigrationJob.js';
 import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
@@ -171,6 +172,11 @@ let wahaWatchdogBusy = false;
 // search-doc rebuild every ~5 min; GC daily).
 let translationBusy = false;
 let translationWakeRequested = false;
+// Video-script generation (mos_script_jobs, in-app «اكتب سكربت» button). Own
+// loop so a 30-40s Anthropic write never head-of-line-blocks behind a deck (and
+// vice-versa). Always registered — the worker already holds ANTHROPIC_API_KEY.
+let scriptBusy = false;
+let scriptWakeRequested = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -639,6 +645,116 @@ async function listingMirrorPollLoop(): Promise<void> {
     }
     const wokeAt = Date.now();
     while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !mirrorWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Video-script generation — mos_script_jobs queue (in-app «اكتب سكربت»).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued script job (if any) and run it to completion. Mirrors the
+ * deck/image claim-run-complete shape against mos_script_jobs. Returns true if a
+ * job was claimed. complete/fail only touch 'running' rows (a late finish after
+ * the watchdog failed it is a harmless no-op).
+ */
+async function claimAndRunOneScript(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('mos_script_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] script claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string; content_id: string; recipe: string;
+    requested_by: string | null; attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: ScriptJob = {
+    id: row.job_id,
+    contentId: row.content_id,
+    recipe: row.recipe,
+    requestedBy: row.requested_by ?? null,
+    attempts: row.attempts,
+  };
+  console.log(
+    `[worker] claimed script job=${job.id} content=${job.contentId} recipe=${job.recipe} attempts=${job.attempts}`,
+  );
+
+  try {
+    const result = await runScriptJob({ supabase, env, job });
+    const { error: doneErr } = await supabase.rpc('mos_script_job_complete', {
+      p_job_id: job.id,
+      p_scene_count: result.scene_count,
+      p_hooks: result.hooks,
+    });
+    if (doneErr) {
+      console.error(`[worker] mos_script_job_complete RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(`[worker] completed script job=${job.id} scenes=${result.scene_count}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] script job=${job.id} FAILED:`, msg);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    try {
+      const { error: failErr } = await supabase.rpc('mos_script_job_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) {
+        console.error(`[worker] mos_script_job_fail RPC failed: ${failErr.message}`);
+      }
+    } catch (innerErr) {
+      console.error(`[worker] could not mark script job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true;
+}
+
+async function runScriptWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('mos_script_jobs_watchdog');
+    if (error) {
+      console.error(`[worker] script watchdog RPC error: ${error.message}`);
+      return;
+    }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) {
+      console.warn(`[worker] script watchdog swept ${swept} stale job(s)`);
+    }
+  } catch (err) {
+    console.error('[worker] script watchdog threw:', err);
+  }
+}
+
+/** Video-script twin of the other poll loops, with its own busy/wake flags. */
+async function scriptPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    scriptBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneScript();
+    } catch (err) {
+      console.error('[worker] script poll iteration error:', err);
+    }
+    scriptBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runScriptWatchdog();
+    }
+    if (didClaim || scriptWakeRequested) {
+      scriptWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !scriptWakeRequested && !shuttingDown) {
       await sleep(200);
     }
   }
@@ -2430,6 +2546,7 @@ const server = http.createServer((req, res) => {
         marketing_ops_busy: marketingOpsBusy,
         translation_busy: translationBusy,
         translation_enabled: Boolean(env.DEEPSEEK_API_KEY),
+        script_busy: scriptBusy,
         worker_id: env.WORKER_ID,
         uptime_s: Math.round(process.uptime()),
       }),
@@ -2457,6 +2574,7 @@ const server = http.createServer((req, res) => {
     scheduledWaWakeRequested = true;
     marketingWakeRequested = true;
     translationWakeRequested = true;
+    scriptWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
     return;
@@ -3033,6 +3151,7 @@ if (env.WORKFLOW_PROOF_ONLY) {
     compressPollLoop(),
     documentPollLoop(),
     migrationPollLoop(),
+    scriptPollLoop(), // always-on: worker already holds ANTHROPIC_API_KEY
     conflictWatchdogLoop(),
     marketingOpsPollLoop(), // always-on: ops monitoring runs even when collection is disabled
   ];
