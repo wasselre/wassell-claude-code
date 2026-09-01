@@ -205,18 +205,10 @@ export async function runEnrichmentJob(
   const props: Record<string, unknown> = {
     description: { type: 'string', description: 'جملة أو جملتان بالعربية تصف محتوى الملف بدقة.' },
     title: { type: 'string', description: 'عنوان عربي قصير ووصفي للملف (٣–٨ كلمات) بدل اسم الملف التقني.' },
-    // The ONE required primary "Document Type". Free string (so a new value can be
-    // proposed), but the model is told to pick from the list unless nothing fits.
-    primary_category: { type: 'string', description: 'النوع الرئيسي الوحيد للملف — اختر أنسب قيمة من القائمة. إن لم يناسب أيٌّ منها فعلاً، اكتب قيمة جديدة موجزة هنا واملأ new_primary_category.' },
-    new_primary_category: {
-      type: 'object',
-      properties: {
-        value: { type: 'string', description: 'مُعرّف إنجليزي قصير snake_case للنوع الجديد.' },
-        label_ar: { type: 'string', description: 'اسم النوع بالعربية.' },
-        label_en: { type: 'string', description: 'اسم النوع بالإنجليزية.' },
-      },
-      description: 'املأه فقط إذا كان primary_category قيمةً جديدة غير موجودة في القائمة.',
-    },
+    // The ONE required primary "Document Type" — a CLOSED list. enum forces the
+    // model to pick the closest existing value; it can no longer invent new main
+    // types (that produced sprawl like "exam_paper" / "marketing_presentation").
+    primary_category: { type: 'string', enum: pcatValues, description: 'النوع الرئيسي الوحيد للملف — اختر أنسب قيمة من القائمة فقط. لا تخترع قيمة جديدة.' },
     subjects: { type: 'array', items: { type: 'string', enum: subjectValues }, description: 'التصنيفات الفرعية المنطبقة — من القائمة فقط.' },
     new_subjects: {
       type: 'array',
@@ -254,7 +246,7 @@ export async function runEnrichmentJob(
   const pcatMenu = menu(pcatRows);
   let prompt =
     `أنت تصنّف ملفاً تسويقياً عقارياً لشركة وصل العقارية. استدعِ الأداة propose_metadata واملأ كل الحقول.\n` +
-    `- النوع الرئيسي primary_category (إلزامي — قيمة واحدة فقط): ${pcatMenu}. اختر الأنسب دائماً. إن لم يناسب أيٌّ منها فعلاً فاكتب قيمة جديدة موجزة في primary_category واملأ new_primary_category (value إنجليزي snake_case + label_ar + label_en).\n` +
+    `- النوع الرئيسي primary_category (إلزامي — قيمة واحدة فقط من القائمة): ${pcatMenu}. اختر الأنسب دائماً — لا تخترع قيمة جديدة خارج القائمة.\n` +
     `- التصنيفات الفرعية المسموحة (استخدم القيمة الإنجليزية فقط): ${subjectMenu}.\n` +
     `- طبيعة الأصل المسموحة (القيمة الإنجليزية فقط): ${menu(natureRows)}.\n` +
     (acqValues.length ? `- مصدر الحصول (إلزامي — اختر الأقرب دائماً، لا تتركه فارغاً): ${menu(acqRows)}. استدلّ: تصميم/لقطة من أنظمتنا → internal؛ علامة أو شعار منافس → competitor؛ كتيّب أو رندر أو مخطط مطوّر → developer؛ صورة من عميل → client؛ مصدر عام/سوشيال بلا مالك واضح → public؛ إن لم يتّضح فاختر internal إن بدا من إنتاجنا وإلا unknown.\n` : '') +
@@ -279,7 +271,7 @@ export async function runEnrichmentJob(
   const out = (toolUse.input ?? {}) as {
     description?: unknown; title?: unknown; subjects?: unknown; asset_nature?: unknown; tags?: unknown;
     acquisition_source?: unknown; usage_rights?: unknown; production_state?: unknown; detected_names?: unknown;
-    primary_category?: unknown; new_primary_category?: unknown; new_subjects?: unknown;
+    primary_category?: unknown; new_subjects?: unknown;
   };
 
   const result: Record<string, unknown> = { model: ENRICH_MODEL };
@@ -287,20 +279,10 @@ export async function runEnrichmentJob(
   if (typeof out.title === 'string' && out.title.trim()) result.title = out.title.trim().slice(0, 200);
 
   // ── primary "Document Type" ──────────────────────────────────────────────
-  // A value already in the allowlist → apply it directly. Otherwise, if the
-  // model proposed a new type, forward it for create-and-apply (the complete RPC
-  // dedups + creates). A bare unknown string with no new-type payload is dropped.
+  // Closed list: accept only a value in the allowlist. Anything else falls through
+  // to the deterministic fallback below — the AI can no longer mint new main types.
   if (typeof out.primary_category === 'string' && pcatValues.includes(out.primary_category)) {
     result.primary_category = out.primary_category;
-  } else if (out.new_primary_category && typeof out.new_primary_category === 'object') {
-    const np = out.new_primary_category as { value?: unknown; label_ar?: unknown; label_en?: unknown };
-    const labelAr = typeof np.label_ar === 'string' ? np.label_ar.trim() : '';
-    const labelEn = typeof np.label_en === 'string' ? np.label_en.trim() : '';
-    const val = typeof np.value === 'string' ? np.value.trim()
-      : (typeof out.primary_category === 'string' ? out.primary_category.trim() : '');
-    if (labelAr || labelEn || val) {
-      result.new_primary_category = { value: val, label_ar: labelAr, label_en: labelEn };
-    }
   }
   // New secondary types the AI wants to add (kept small; the RPC creates + dedups).
   if (Array.isArray(out.new_subjects)) {
@@ -334,7 +316,7 @@ export async function runEnrichmentJob(
   // which the guard above drops → the required field would stay NULL (measured
   // ~33% on the newest/edge files). It DOES reliably fill asset_nature/kind, so
   // derive the closest in-allowlist primary from those rather than leave it empty.
-  if (!result.primary_category && !result.new_primary_category && pcatValues.length) {
+  if (!result.primary_category && pcatValues.length) {
     const nat = typeof result.asset_nature === 'string' ? result.asset_nature : undefined;
     const pstate = typeof result.production_state === 'string' ? result.production_state : undefined;
     result.primary_category = fallbackPrimary(kind, nat, pstate, pcatValues);
@@ -367,8 +349,7 @@ export async function runEnrichmentJob(
     }
   }
 
-  const pcatLog = result.primary_category ? `${String(result.primary_category)}${result.primary_category_fallback ? '(fb)' : ''}`
-    : (result.new_primary_category ? `NEW:${(result.new_primary_category as { value?: string }).value ?? '?'}` : 'n');
+  const pcatLog = result.primary_category ? `${String(result.primary_category)}${result.primary_category_fallback ? '(fb)' : ''}` : 'n';
   console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} pcat=${pcatLog} subjects=${(result.subjects as string[] | undefined)?.length ?? 0} newSubs=${(result.new_subjects as unknown[] | undefined)?.length ?? 0} axes=${[result.asset_nature, result.acquisition_source, result.usage_rights, result.production_state].filter(Boolean).length}/4 title=${result.title ? 'y' : 'n'} names=${names.length} linkSugg=${nSugg}`);
   return result;
 }
