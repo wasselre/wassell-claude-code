@@ -455,7 +455,11 @@ This workspace answers the three questions the old process could not:
   cannot sync until it is published** (the buyer must publish, not leave it in the
   Ads-Manager draft workspace). Non-Meta platforms have no sync, so they keep the
   manual **Add an ad** / **Ad sets & ads** flow and the honest "sync is not real
-  here" note.
+  here" note. **Attaching the creative is VISUAL** — the ad modal's content field
+  is a searchable thumbnail grid (`CreativePicker`), not a `<select>` of codes:
+  each content record shows its preview (the `thumb_url` / signed `preview_file_id`
+  that `content_list` already computes), code, title, a typed placeholder when it
+  has no renderable preview, and a "no creative" tile.
 - **The campaigns list's platform sub-line is computed server-side.** Under each
   campaign name the list shows its platforms — a paid campaign's executions' ad
   platforms, or (organic, or a paid campaign not launched yet) the feeds its
