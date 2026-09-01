@@ -12,15 +12,15 @@
  * Same three-terminal-state discipline as the Library (loading / error / empty
  * are distinct screens) — a failed load must never read as "nothing to review".
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  AlertTriangle, Check, FileText, Film, Image as ImageIcon, Link2, Loader2, Music, Sparkles, Unlink, X,
+  AlertTriangle, Check, ExternalLink, FileText, Film, Image as ImageIcon, Link2, Loader2, Music, Sparkles, Unlink, X,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import type {
-  AiReviewRow, FileDocumentTypeRow, FileVocabRow, FileRow, FileLinkedRecord,
+  AiReviewRow, AppRecord, FileDocumentTypeRow, FileVocabRow, FileRow, FileLinkedRecord,
 } from '@/types';
 import {
   approveAiSuggestions, dismissAiSuggestions, errorText, fetchAiReviewCount,
@@ -52,6 +52,47 @@ export default function FilesAiReviewPage() {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
+  const models = useAppStore((s) => s.models);
+  const records = useAppStore((s) => s.records);
+
+  // Resolve a linked UNIT to its parent project so the reviewer sees "which unit
+  // in what project", not just "2 units". A unit references its project via
+  // data.project_id → an all_projects record. Built once from the warm store.
+  const projectNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    const apModel = models.find((m) => m.name === 'all_projects');
+    if (apModel) {
+      for (const r of records[apModel.id] ?? []) {
+        const pn = (r.data as Record<string, unknown>)?.project_name;
+        if (typeof pn === 'string' && pn) map.set(r.id, pn);
+      }
+    }
+    return map;
+  }, [models, records]);
+  const unitById = useMemo(() => {
+    const map = new Map<string, AppRecord>();
+    const um = models.find((m) => m.name === 'units');
+    if (um) for (const r of records[um.id] ?? []) map.set(r.id, r);
+    return map;
+  }, [models, records]);
+  /** The best display label for a linked record — a unit's own code, else the
+   *  resolved title. */
+  const linkLabel = useCallback((l: FileLinkedRecord): string => {
+    if (l.model_name === 'units') {
+      const u = unitById.get(l.record_id);
+      const code = (u?.data as Record<string, unknown>)?.unit_code
+        ?? (u?.data as Record<string, unknown>)?.unit_number;
+      if (typeof code === 'string' && code) return code;
+    }
+    return l.label;
+  }, [unitById]);
+  /** The parent project's name for a unit (null for a project link — it IS the project). */
+  const linkProject = useCallback((l: FileLinkedRecord): string | null => {
+    if (l.model_name !== 'units') return null;
+    const u = unitById.get(l.record_id);
+    const pid = (u?.data as Record<string, unknown>)?.project_id;
+    return typeof pid === 'string' ? (projectNameById.get(pid) ?? null) : null;
+  }, [unitById, projectNameById]);
 
   const [rows, setRows] = useState<AiReviewRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -64,7 +105,6 @@ export default function FilesAiReviewPage() {
   const [attaching, setAttaching] = useState<Set<string>>(() => new Set());
   /** File whose manual "link to a record" dialog is open. */
   const [linkFileId, setLinkFileId] = useState<string | null>(null);
-  const models = useAppStore((s) => s.models);
 
   const refreshRowLinks = useCallback(async (fileId: string) => {
     try {
@@ -356,15 +396,26 @@ export default function FilesAiReviewPage() {
                       <>
                         <Link2 size={12} className="text-emerald-600" aria-hidden />
                         <span className="text-[11px] font-bold text-emerald-700">{t('files.ai_review.linked')}</span>
-                        {rowLinks.map((l) => (
-                          <span key={l.record_id}
-                                className="inline-flex items-baseline gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-700 text-[11px]" dir="auto">
-                            <span className="font-bold">{l.label}</span>
-                            <span className="text-emerald-700/55">
-                              · {(isAr ? l.model_label_ar : l.model_label_en) || l.model_name}
-                            </span>
-                          </span>
-                        ))}
+                        {rowLinks.map((l) => {
+                          const project = linkProject(l);
+                          return (
+                            // Clickable → opens the record's page in a NEW TAB, so
+                            // the reviewer keeps the queue open. Shows the unit's
+                            // own code and the project it belongs to.
+                            <a key={l.record_id}
+                               href={`/model/${l.model_name}/${l.record_id}`}
+                               target="_blank" rel="noopener noreferrer"
+                               title={t('files.ai_review.open_record_new_tab')}
+                               className="inline-flex items-baseline gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-700 text-[11px] hover:bg-emerald-500/20 hover:underline transition-colors" dir="auto">
+                              <span className="font-bold">{linkLabel(l)}</span>
+                              {project && <span className="text-emerald-700/80">— {project}</span>}
+                              <span className="text-emerald-700/45">
+                                · {(isAr ? l.model_label_ar : l.model_label_en) || l.model_name}
+                              </span>
+                              <ExternalLink size={9} className="self-center opacity-60" aria-hidden />
+                            </a>
+                          );
+                        })}
                       </>
                     ) : linksLoading ? (
                       <span className="text-[11px] text-charcoal/35">{t('files.ai_review.checking_links')}</span>
