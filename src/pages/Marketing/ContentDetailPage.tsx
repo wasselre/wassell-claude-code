@@ -40,6 +40,7 @@ import TaskCard, { TasksApprovalsTab } from './components/TaskCard';
 import WritingFields from './components/WritingFields';
 import PlacementsTab from './components/PlacementsTab';
 import SceneTable from './components/SceneTable';
+import VideoScriptModal from './components/VideoScriptModal';
 import { useMosText } from './lib/useMosText';
 import PerformanceTab from './components/PerformanceTab';
 import MaterialsTab from './components/MaterialsTab';
@@ -125,6 +126,7 @@ export default function ContentDetailPage() {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [approveOpen, setApproveOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [scriptOpen, setScriptOpen] = useState(false);
   const [versions, setVersions] = useState<MosContentVersion[] | null>(null);
 
   const load = useCallback(async () => {
@@ -445,6 +447,11 @@ export default function ContentDetailPage() {
             </div>
           </div>
           <div className="acts">
+            {item.content_type_key === 'video' && can('write_content') && (
+              <button type="button" className="btn btn-d" onClick={() => setScriptOpen(true)}>
+                {isAr ? 'اكتب سكربت' : 'Write script'}
+              </button>
+            )}
             {/* «مقارنة بالنسخة ١» — the compare panel renders the writing
                 fields, so it is gated by `compare_versions` (an oversight role
                 that can't see the body can't diff it either). */}
@@ -860,6 +867,14 @@ export default function ContentDetailPage() {
         />
       )}
 
+      {scriptOpen && item && (
+        <VideoScriptModal
+          contentId={item.id}
+          isAr={isAr}
+          onClose={() => setScriptOpen(false)}
+          onApplied={() => void load()}
+        />
+      )}
       {compareOpen && (
         <CompareModal
           itemRef={item.ref}

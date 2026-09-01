@@ -176,6 +176,19 @@ This workspace answers the three questions the old process could not:
 - **Type is a column, not a module.** Post, Video, Carousel and Story are rows in
   `mos_content_types`; each names its workflow, its ref prefix and its writing
   fields. Adding a Brochure type later is a row, not a screen.
+- **Write video script (AI) — 2026-09-01.** A **video** content record's header
+  shows an «اكتب سكربت» button (gated `write_content`). Pick a recipe (walkthrough /
+  offer / rent-vs-own / product-explainer / launch) → the AI writes a Saudi-Arabic
+  scene-by-scene script grounded in the record's **linked project's real facts** +
+  the most relevant **competitor video transcripts** (`mkt_transcripts`), obeying
+  the Wassel rules (only وصل العقارية is named, off-plan flagged both ways, the
+  *available* price as "starts from", never an invented number). Review, then
+  **Apply** inserts the scenes into `mos_scenes` (`footage_status='missing'`, so
+  they seed the shoot backlog) + shows 3 alternative hooks — **never auto-saved**.
+  Actions `write_video_script` / `video_script_apply` in `api/marketing-os.ts`
+  (brain: `api/_lib/marketing/videoScript.ts`, Claude forced-tool for a strict
+  scene array; sample RPC `mkt_script_transcripts_sample`). Mirrors the living
+  skill `.claude/skills/writing-video-script/` — keep recipes + rules in sync.
 - **Headlines ARE the post, not a shortlist.** In the Content tab's writing
   surface the headlines are the copy that lands on the design. You write as many
   as the piece needs — there is no forced count and no "approve one" picker; none

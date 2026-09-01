@@ -646,6 +646,26 @@ export const saveScene = (contentId: string, scene: Record<string, unknown>) =>
 export const deleteScene = (contentId: string, id: string) =>
   call<{ scenes: MosScene[] }>('scene_delete', { content_id: contentId, id });
 
+// ── Video-script generator (AI: learn from competitors → scenes) ───────────
+export type ScriptRecipeKey = 'walkthrough' | 'offer' | 'rent_vs_own' | 'product_explainer' | 'launch';
+export interface ScriptSceneDraft {
+  visual: string;
+  voiceover: string;
+  on_screen_text: string;
+  start_sec: number | null;
+  end_sec: number | null;
+}
+export interface VideoScriptDraft {
+  scenes: ScriptSceneDraft[];
+  hooks: string[];
+  recipe: ScriptRecipeKey;
+  project_name: string;
+}
+export const writeVideoScript = (contentId: string, recipe: ScriptRecipeKey) =>
+  call<{ draft: VideoScriptDraft }>('write_video_script', { content_id: contentId, recipe });
+export const applyVideoScript = (contentId: string, scenes: ScriptSceneDraft[]) =>
+  call<{ scenes: MosScene[] }>('video_script_apply', { content_id: contentId, scenes });
+
 export const fetchPublications = (contentId?: string) =>
   call<{ publications: MosPublication[]; accounts: MosAccount[] }>('publication_list',
     contentId ? { content_id: contentId } : {});
