@@ -27,6 +27,7 @@ import {
 } from '@/lib/marketingOS/adPlatforms';
 import { PlatformFieldsGrid, PlatformSettingsForm } from './components/PlatformSettingsForm';
 import CampaignTreeModal from './components/CampaignTreeModal';
+import CreativePicker from './components/CreativePicker';
 import { Empty, Field, LoadError, Modal, Pill, ReadField, Skeleton } from './components/kit';
 import { IconBack, IconForward, IconPlus } from './components/icons';
 import { num, whole } from './lib/format';
@@ -1054,15 +1055,15 @@ function AdModal({
     >
       <Field
         label={isMeta
-          ? (isAr ? 'الكرييتف — سجل المحتوى المرتبط بهذا الإعلان' : 'Creative — the content record this ad uses')
+          ? (isAr ? 'الكرييتف — اختر المحتوى المرتبط بهذا الإعلان' : 'Creative — pick the content this ad uses')
           : (isAr ? 'سجل المحتوى' : 'The content record')}
       >
-        <select className="inp" value={contentId} onChange={(e) => setContentId(e.target.value)}>
-          <option value="">{isAr ? 'غير محدد' : 'Not specified'}</option>
-          {options.map((c) => (
-            <option key={c.id} value={c.id}>{c.ref} · {c.title}</option>
-          ))}
-        </select>
+        <CreativePicker
+          contentOptions={options}
+          value={contentId}
+          isAr={isAr}
+          onChange={setContentId}
+        />
       </Field>
       {adSets.length > 0 && (
         <Field

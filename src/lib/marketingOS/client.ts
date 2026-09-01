@@ -265,6 +265,12 @@ export interface MosContentRow {
   /** The ONE material submitted for approval; promoted to a 'final' link when the
    *  item is approved. Present on the view for every row. */
   approval_asset_id?: string | null;
+  /** Preview fields returned by `content_list` (not on the raw view): the chosen
+   *  preview asset's public thumb, or a canonical file id to sign, plus its kind.
+   *  Powers thumbnailed content/creative pickers. */
+  thumb_url?: string | null;
+  preview_file_id?: string | null;
+  preview_kind?: string | null;
 }
 
 export interface MosTask {
