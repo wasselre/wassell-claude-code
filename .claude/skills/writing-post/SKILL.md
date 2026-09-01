@@ -87,9 +87,11 @@ order by length(p.caption) desc limit 12;
 
 ## Output format
 For each post, produce TWO layers (state the recipe of each):
-1. **On-design copy** — what goes ON the image: a short headline + optional subhead
-   + the 2–4 key on-image lines (e.g. «بدأ البيع» / area / «تبدأ من …»). This is the
-   PRIMARY deliverable — it's read first and it's what the designer sets in type.
+1. **On-design copy** — what goes ON the image. It ALWAYS opens with the
+   **PROJECT NAME** as the wordmark/lead (with the وصل logo lockup), THEN a short
+   headline/tagline, THEN the 2–4 key on-image lines (e.g. «بدأ البيع» / area /
+   «تبدأ من …»). The name is non-negotiable — competitors always lead with it. This
+   is the PRIMARY deliverable — read first, and what the designer sets in type.
 2. **Caption** — the supporting text below + 📞 Wassel CTA + hashtag block.
 Ready to paste. No file unless asked.
 
@@ -111,6 +113,13 @@ variety- or price-led, not the slow «بسم الله» greeting.
 **2026-09-01 — Hashtags are ours, never theirs.** Use #وصل_العقارية + the project
 + generic/district tags. Never carry a competitor's brand hashtag into our post,
 even though competitor captions end with their own (#أوشن_العقارية, etc.).
+
+**2026-09-01 — The PROJECT NAME must be ON the design (operator).** Every
+competitor design leads with the project name/wordmark («تل الربوة — عنوانٌ
+للراحة»، «أكنان ٢٥ — بدأ البيع»، «ربوة الرمز — لراحة العائلة»). A design without
+the project name is a failure. Always put it prominently as the lead/wordmark
+(with the وصل logo), the tagline under it, then the facts. This was a real miss:
+a 10-post batch once had the name only as a list label, never in the copy.
 
 **2026-09-01 — Learn from the ON-IMAGE text, not the caption (operator).** A
 post's persuasive copy is what's written ON the design (headline/tagline). We DO

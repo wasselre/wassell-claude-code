@@ -4,6 +4,24 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchAttributionQueue, reviewAttribution, type QueueItem } from '@/lib/competitorWatch/client';
 
+const UNIT_LABELS: Record<string, { ar: string; en: string }> = {
+  floor: { ar: 'أدوار', en: 'Floors' }, apartment: { ar: 'شقق', en: 'Apartments' },
+  villa: { ar: 'فلل', en: 'Villas' }, land: { ar: 'أراضٍ', en: 'Land' },
+  townhouse: { ar: 'تاون هاوس', en: 'Townhouses' }, duplex: { ar: 'دوبلكس', en: 'Duplexes' },
+  penthouse: { ar: 'بنتهاوس', en: 'Penthouses' }, studio: { ar: 'استوديو', en: 'Studios' },
+  commercial: { ar: 'تجاري', en: 'Commercial' }, office: { ar: 'مكاتب', en: 'Offices' },
+  building: { ar: 'مبانٍ', en: 'Buildings' }, chalet: { ar: 'شاليهات', en: 'Chalets' },
+};
+const STATUS_LABELS: Record<string, { ar: string; en: string }> = {
+  available_on_map: { ar: 'على الخارطة', en: 'Off-plan' }, off_plan: { ar: 'على الخارطة', en: 'Off-plan' },
+  ready: { ar: 'جاهز', en: 'Ready' }, under_construction: { ar: 'تحت الإنشاء', en: 'Under construction' },
+  available: { ar: 'متاح', en: 'Available' }, sold_out: { ar: 'نفد البيع', en: 'Sold out' },
+  completed: { ar: 'مكتمل', en: 'Completed' }, unknown: { ar: 'غير محدّد', en: 'Unspecified' },
+};
+const humanize = (s: string) => s.replace(/_/g, ' ').trim();
+const unitLabel = (code: string, isAr: boolean) => { const m = UNIT_LABELS[code]; return m ? (isAr ? m.ar : m.en) : humanize(code); };
+const statusLabel = (code: string, isAr: boolean) => { const m = STATUS_LABELS[code]; return m ? (isAr ? m.ar : m.en) : humanize(code); };
+
 function fmtPrice(p: { min?: number | null; max?: number | null } | null | undefined, isAr: boolean): string | null {
   if (!p || (p.min == null && p.max == null)) return null;
   const compact = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M` : n >= 1000 ? `${Math.round(n / 1000)}K` : String(Math.round(n)));
@@ -105,8 +123,8 @@ export default function ConfirmSurface({ isAr }: { isAr: boolean }) {
             {it.project?.developer && <div><span>{isAr ? 'المطوّر' : 'Developer'}</span><b dir="rtl">{it.project.developer}</b></div>}
             {it.project?.city && <div><span>{isAr ? 'المدينة' : 'City'}</span><b dir="rtl">{it.project.city}</b></div>}
             {price && <div><span>{isAr ? 'السعر' : 'Price'}</span><b>{price}</b></div>}
-            {it.project?.unit_types && it.project.unit_types.length > 0 && <div><span>{isAr ? 'الوحدات' : 'Units'}</span><b dir="rtl">{it.project.unit_types.join('، ')}</b></div>}
-            {it.project?.status && <div><span>{isAr ? 'الحالة' : 'Status'}</span><b dir="rtl">{it.project.status}</b></div>}
+            {it.project?.unit_types && it.project.unit_types.length > 0 && <div><span>{isAr ? 'الوحدات' : 'Units'}</span><b dir="rtl">{it.project.unit_types.map((u) => unitLabel(u, isAr)).join('، ')}</b></div>}
+            {it.project?.status && it.project.status !== 'unknown' && <div><span>{isAr ? 'الحالة' : 'Status'}</span><b dir="rtl">{statusLabel(it.project.status, isAr)}</b></div>}
           </div>
           {it.project?.page_url && (
             <a className="cw-projlink" href={it.project.page_url} target="_blank" rel="noreferrer" style={{ marginTop: 4 }}>
