@@ -82,6 +82,9 @@ interface Body {
   has_offer?: boolean;
   q?: string;
   offset?: number;
+  // attribution confirm
+  post_id?: string;
+  accept?: boolean;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined);
@@ -445,6 +448,33 @@ export default async function handler(req: Request): Promise<Response> {
         const { data, error } = await svc.rpc(fn);
         if (error) return jsonError(500, error.message);
         return jsonOk({ [field]: data });
+      }
+
+      case 'attribution_queue': {
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const { data, error } = await svc.rpc('mkt_attribution_queue', {
+          p_limit: typeof body.limit === 'number' ? Math.min(60, Math.max(1, body.limit)) : 30,
+        });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ queue: data });
+      }
+
+      case 'attribution_review': {
+        // Human confirm/reject of a candidate project link (admin-gated write,
+        // same posture as attribution_decide).
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+        if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
+        const pid = str(body.post_id);
+        const proj = str(body.project_id);
+        if (!pid || !proj || typeof body.accept !== 'boolean') return jsonError(400, 'post_id + project_id + accept required');
+        const { error } = await svc.rpc('mkt_attribution_review', {
+          p_post_id: pid, p_project_id: proj, p_accept: body.accept, p_user: user.userId,
+        });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ ok: true });
       }
 
       case 'insight_dismiss': {

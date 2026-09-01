@@ -14,9 +14,10 @@ import AgentsSurface from './components/AgentsSurface';
 import PipelineSurface from './components/PipelineSurface';
 import StorageSurface from './components/StorageSurface';
 import CompaniesSurface from './components/CompaniesSurface';
+import ConfirmSurface from './components/ConfirmSurface';
 import './watch.css';
 
-type Surface = 'library' | 'agents' | 'pipeline' | 'storage' | 'companies';
+type Surface = 'library' | 'confirm' | 'agents' | 'pipeline' | 'storage' | 'companies';
 
 export default function CompetitorWatchPage() {
   const { language } = useAppStore();
@@ -25,6 +26,7 @@ export default function CompetitorWatchPage() {
 
   const NAV: Array<{ id: Surface; ar: string; en: string }> = [
     { id: 'library', ar: 'مكتبة المحتوى', en: 'Content library' },
+    { id: 'confirm', ar: 'تأكيد الروابط', en: 'Confirm links' },
     { id: 'agents', ar: 'الوكلاء والتشغيل', en: 'Agents & runs' },
     { id: 'pipeline', ar: 'مسار المحتوى', en: 'Content pipeline' },
     { id: 'storage', ar: 'التخزين', en: 'Storage' },
@@ -56,6 +58,7 @@ export default function CompetitorWatchPage() {
       </nav>
 
       {surface === 'library' && <ContentLibrary isAr={isAr} />}
+      {surface === 'confirm' && <ConfirmSurface isAr={isAr} />}
       {surface === 'agents' && <AgentsSurface isAr={isAr} />}
       {surface === 'pipeline' && <PipelineSurface isAr={isAr} />}
       {surface === 'storage' && <StorageSurface isAr={isAr} />}

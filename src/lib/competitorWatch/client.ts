@@ -73,11 +73,11 @@ export async function fetchContentLibrary(f: LibraryFilters = {}): Promise<Libra
 }
 
 // ── Monitoring surfaces (Agents / Pipeline / Storage / Companies) ──────────
-async function callAction<T>(action: string, field: string): Promise<T> {
+async function callAction<T>(action: string, field: string, payload: Record<string, unknown> = {}): Promise<T> {
   const res = await fetch('/api/marketing', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action }),
+    body: JSON.stringify({ action, ...payload }),
   });
   if (!res.ok) {
     const b = (await res.json().catch(() => ({}))) as { error?: string };
@@ -122,3 +122,35 @@ export const fetchAgentActivity = () => callAction<AgentActivity>('agent_activit
 export const fetchPipelineHealth = () => callAction<PipelineHealth>('pipeline_health', 'pipeline');
 export const fetchStorageUsage = () => callAction<StorageUsage>('storage_usage', 'storage');
 export const fetchCompanyRoster = () => callAction<CompanyRoster>('company_roster', 'roster');
+
+// ── Confirm links (attribution review) ─────────────────────────────────────
+export interface QueueItem {
+  post_id: string;
+  project_id: string;
+  confidence: number | null;
+  org_name: string | null;
+  platform: string | null;
+  format: string | null;
+  post_url: string | null;
+  published_at: string | null;
+  summary: string | null;
+  project_name: string | null;
+  names_read: string | null;
+  thumb_url: string | null;
+}
+export interface AttributionQueue { remaining: number; items: QueueItem[]; }
+
+export const fetchAttributionQueue = (limit = 30) =>
+  callAction<AttributionQueue>('attribution_queue', 'queue', { limit });
+
+export async function reviewAttribution(post_id: string, project_id: string, accept: boolean): Promise<void> {
+  const res = await fetch('/api/marketing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ action: 'attribution_review', post_id, project_id, accept }),
+  });
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(b?.error ?? `attribution_review failed (${res.status})`);
+  }
+}
