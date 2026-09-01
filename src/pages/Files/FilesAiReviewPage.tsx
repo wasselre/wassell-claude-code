@@ -42,6 +42,8 @@ interface LinkSuggestion {
   record_id: string;
   label: string;
   matched_name: string;
+  /** 0..1 — how sure the deterministic matcher is (1 = exact name). */
+  confidence?: number;
 }
 
 const kindIcon: Record<string, typeof FileText> = {
@@ -339,10 +341,19 @@ export default function FilesAiReviewPage() {
         out.push({ k: t('files.ai_review.fact_units'), v: ut });
       }
     } else if (modelName === 'units') {
-      add(t('files.ai_review.fact_unit'), d.unit_code ?? d.unit_number);
+      const proj = typeof d.project_id === 'string' ? projectNameById.get(d.project_id) : null;
+      if (proj) out.push({ k: t('files.ai_review.fact_project'), v: proj });
+      add(t('files.ai_review.fact_unit_type'), d.unit_type);
+      if (d.unit_area != null && d.unit_area !== '') out.push({ k: t('files.ai_review.fact_area'), v: `${Number(d.unit_area)} ${isAr ? 'م²' : 'm²'}` });
+      if (d.bedrooms != null && d.bedrooms !== '') out.push({ k: t('files.ai_review.fact_bedrooms'), v: String(d.bedrooms) });
+      if (d.bathrooms != null && d.bathrooms !== '') out.push({ k: t('files.ai_review.fact_bathrooms'), v: String(d.bathrooms) });
+      add(t('files.ai_review.fact_floor'), d.floor);
+      const uprice = typeof d.total_price === 'number' && d.total_price > 0
+        ? `${compact(d.total_price)} ${isAr ? 'ر.س' : 'SAR'}` : fmtRange(d.price_range);
+      if (uprice) out.push({ k: t('files.ai_review.fact_price'), v: uprice });
     }
     return out;
-  }, [models, records, t, isAr, developerName]);
+  }, [models, records, t, isAr, developerName, projectNameById]);
   /** Accept = approve the AI read + attach the suggested project; Reject = dismiss.
    *  Both remove the row via decide(), so rows[0] advances to the next card. */
   const focusAct = useCallback(async (row: AiReviewRow, accept: boolean) => {
@@ -437,7 +448,7 @@ export default function FilesAiReviewPage() {
                   <div className="space-y-3">
                     <h3 className="text-xs font-bold uppercase tracking-wide text-charcoal/45">{t('files.ai_review.link_target')}</h3>
                     {curLinks.length > 0 ? (
-                      <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-1.5">
+                      <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
                         <div className="text-[11px] font-bold text-emerald-700">{t('files.ai_review.linked')}</div>
                         {curLinks.map((l) => (
                           <a key={l.record_id} href={`/model/${l.model_name}/${l.record_id}`} target="_blank" rel="noopener noreferrer"
@@ -447,6 +458,17 @@ export default function FilesAiReviewPage() {
                             <ExternalLink size={12} aria-hidden />
                           </a>
                         ))}
+                        {(() => {
+                          const lf = curLinks[0] ? recordFacts(curLinks[0].model_name, curLinks[0].record_id) : [];
+                          return lf.length > 0 ? (
+                            <dl className="grid grid-cols-2 gap-2 pt-2 border-t border-emerald-500/15">
+                              {lf.map((f) => (
+                                <div key={f.k}><dt className="text-[10px] text-emerald-700/50">{f.k}</dt>
+                                  <dd className="text-xs font-bold text-emerald-900/80" dir="auto">{f.v}</dd></div>
+                              ))}
+                            </dl>
+                          ) : null;
+                        })()}
                       </div>
                     ) : sugg ? (
                       <div className="space-y-2">
@@ -457,7 +479,17 @@ export default function FilesAiReviewPage() {
                             <Sparkles size={11} aria-hidden /> {t('files.ai_review.suggested_link')}
                           </div>
                           <div className="text-lg font-bold text-charcoal" dir="auto">{sugg.label}</div>
-                          <div className="text-[11px] text-charcoal/45">{(isAr ? suggModel?.label_ar : suggModel?.label_en) || sugg.model_name}</div>
+                          <div className="flex items-center gap-2 text-[11px] text-charcoal/45">
+                            <span>{(isAr ? suggModel?.label_ar : suggModel?.label_en) || sugg.model_name}</span>
+                            {typeof sugg.confidence === 'number' && (
+                              <span className={`px-1.5 py-0.5 rounded font-bold ${
+                                sugg.confidence >= 0.85 ? 'bg-emerald-500/15 text-emerald-700'
+                                : sugg.confidence >= 0.6 ? 'bg-amber-500/15 text-amber-700'
+                                : 'bg-red-500/10 text-red-600'}`}>
+                                {t('files.ai_review.confidence')} {Math.round(sugg.confidence * 100)}%
+                              </span>
+                            )}
+                          </div>
                           {facts.length > 0 && (
                             <dl className="grid grid-cols-2 gap-2 pt-1">
                               {facts.map((f) => (
