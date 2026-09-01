@@ -15,22 +15,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  AlertTriangle, Check, ExternalLink, FileText, Film, Image as ImageIcon, Link2, Loader2, Music, Sparkles, Unlink, X,
+  AlertTriangle, Check, ExternalLink, FileText, Film, Image as ImageIcon, Link2, Loader2, Music, Pencil, Sparkles, Unlink, X,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import type {
-  AiReviewRow, AppRecord, FileDocumentTypeRow, FileVocabRow, FileRow, FileLinkedRecord,
+  AiReviewRow, AppRecord, BusinessFileRow, FileDocumentTypeRow, FileVocabRow, FileRow, FileLinkedRecord,
 } from '@/types';
 import {
   approveAiSuggestions, dismissAiSuggestions, errorText, fetchAiReviewCount,
-  fetchAiReviewQueue, fetchFileLinkedRecords, listDocumentTypes, listFileVocabularies,
+  fetchAiReviewQueue, fetchFileLinkedRecords, getBusinessFile, listDocumentTypes, listFileVocabularies,
 } from '@/lib/files/library';
 import { getFile, signViewUrls } from '@/lib/files/client';
 import { attachFileToRecord } from '@/lib/files/recordFiles';
 import { resolveLocalizedName } from '@/lib/geo/localizedName';
 import FilesTabs from './components/FilesTabs';
 import FilePreviewModal from './components/FilePreviewModal';
+import LibraryDetailPanel from './library/LibraryDetailPanel';
 import BulkLinkModal from './library/BulkLinkModal';
 
 const PAGE_LIMIT = 200;
@@ -129,6 +130,9 @@ export default function FilesAiReviewPage() {
   const [links, setLinks] = useState<Map<string, FileLinkedRecord[]>>(new Map());
   const [linksLoading, setLinksLoading] = useState(false);
   const [previewRow, setPreviewRow] = useState<FileRow | null>(null);
+  /** File open in the full metadata editor (edit every field + see AI badges). */
+  const [editFile, setEditFile] = useState<BusinessFileRow | null>(null);
+  const [editLoadingId, setEditLoadingId] = useState<string | null>(null);
 
   // ── Load the queue ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -276,6 +280,16 @@ export default function FilesAiReviewPage() {
       const row = await getFile(fileId);
       if (row) setPreviewRow(row);
     } catch { /* getFile toasted */ }
+  }, []);
+
+  // Open the full metadata editor for a file — every field editable, with the
+  // AI's suggestions badged. Reuses the Library's detail panel.
+  const openEdit = useCallback(async (fileId: string) => {
+    setEditLoadingId(fileId);
+    try {
+      const row = await getBusinessFile(fileId);
+      if (row) setEditFile(row);
+    } catch { /* getBusinessFile toasted */ } finally { setEditLoadingId(null); }
   }, []);
 
   // Page through the rest of the queue (it can be thousands). Offset by the
@@ -453,6 +467,11 @@ export default function FilesAiReviewPage() {
                       {cur.asset_nature && <span className="px-2 py-0.5 rounded-md bg-gold/15 text-charcoal/70 text-[11px] font-bold" dir="auto">{natureLabel(cur.asset_nature)}</span>}
                       {curTags.slice(0, 8).map((tg) => <span key={tg} className="px-2 py-0.5 rounded-md bg-cream text-charcoal/55 text-[11px]" dir="auto">#{tg}</span>)}
                     </div>
+                    <button type="button" onClick={() => void openEdit(cur.id)} disabled={editLoadingId === cur.id}
+                            className="inline-flex items-center gap-1.5 text-xs font-bold text-copper hover:text-terracotta disabled:opacity-50">
+                      {editLoadingId === cur.id ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <Pencil size={13} aria-hidden />}
+                      {t('files.ai_review.edit_fields')}
+                    </button>
                   </div>
 
                   {/* where it links + the target's info */}
@@ -541,6 +560,23 @@ export default function FilesAiReviewPage() {
             </div>
           )}
           <p className="text-center text-[11px] text-charcoal/35 pb-2">{t('files.ai_review.focus_hint')}</p>
+        </div>
+      )}
+
+      {/* Full metadata editor — every field editable, AI suggestions badged. */}
+      {editFile && (
+        <div className="fixed inset-0 z-[60] flex justify-end bg-charcoal/40"
+             onClick={(e) => { if (e.target === e.currentTarget) setEditFile(null); }}>
+          <div className="h-full overflow-auto shadow-2xl">
+            <LibraryDetailPanel
+              file={editFile}
+              types={types}
+              onClose={() => setEditFile(null)}
+              onSaved={(row) => setEditFile(row)}
+              onOpenPreview={(id) => void openPreview(id)}
+              thumbUrl={thumbs[editFile.id]}
+            />
+          </div>
         </div>
       )}
 
@@ -746,6 +782,11 @@ export default function FilesAiReviewPage() {
                           className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg bg-white border border-sand/40 text-charcoal/70 text-xs font-bold hover:bg-cream disabled:opacity-50 min-w-[104px]">
                     <X size={13} aria-hidden />
                     {t('files.ai_review.dismiss')}
+                  </button>
+                  <button type="button" disabled={editLoadingId === row.id} onClick={() => void openEdit(row.id)}
+                          className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-charcoal/50 text-xs font-bold hover:text-copper hover:bg-cream disabled:opacity-50 min-w-[104px]">
+                    {editLoadingId === row.id ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <Pencil size={13} aria-hidden />}
+                    {t('files.ai_review.edit_fields')}
                   </button>
                 </div>
               </div>

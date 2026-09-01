@@ -349,6 +349,20 @@ export async function updateFileMetadata(
   return saved;
 }
 
+/** Load ONE file as a BusinessFileRow (the editable shape LibraryDetailPanel
+ *  wants), so the AI-review flow can open the full metadata editor for a row.
+ *  link_count isn't a column on `files` (the search RPC computes it) so it's
+ *  counted here. Returns null if the caller can't see the file (RLS). */
+export async function getBusinessFile(fileId: string): Promise<BusinessFileRow | null> {
+  const db = requireSupabase('load file');
+  const { data, error } = await db.from('files').select('*').eq('id', fileId).maybeSingle();
+  if (error) throw surfaceLibraryError('load file', error);
+  if (!data) return null;
+  const { count } = await db
+    .from('file_links').select('id', { count: 'exact', head: true }).eq('file_id', fileId);
+  return { ...(data as BusinessFileRow), link_count: count ?? 0 };
+}
+
 /** Create a classification (file_document_types) inline from the picker and
  *  return it (or the existing row if the slug already exists). SECURITY DEFINER
  *  RPC — writes to the vocab table are otherwise closed. The value is a stable
