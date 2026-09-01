@@ -97,6 +97,9 @@ export default function FilesAiReviewPage() {
   const [rows, setRows] = useState<AiReviewRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  /** Focus mode: full-screen, one decision at a time. The card is always rows[0]
+   *  — deciding REMOVES it, so the next row slides into view automatically. */
+  const [focus, setFocus] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -288,18 +291,198 @@ export default function FilesAiReviewPage() {
 
   const hasMore = total > rows.length;
 
+  // ── Focus mode helpers ─────────────────────────────────────────────────────
+  /** The top link suggestion for a row — the project match if any, else the first. */
+  const topSuggestion = useCallback((row: AiReviewRow): LinkSuggestion | null => {
+    const links = (row.ai_suggestions && typeof row.ai_suggestions === 'object'
+      ? (row.ai_suggestions as { links?: LinkSuggestion[] }).links : null) ?? [];
+    if (links.length === 0) return null;
+    return links.find((l) => l.model_name === 'all_projects') ?? links[0]!;
+  }, []);
+  /** A few key facts about the record we'd link to, so the reviewer can judge it. */
+  const recordFacts = useCallback((modelName: string, recordId: string): Array<{ k: string; v: string }> => {
+    const m = models.find((mm) => mm.name === modelName);
+    if (!m) return [];
+    const rec = (records[m.id] ?? []).find((r) => r.id === recordId);
+    const d = (rec?.data ?? {}) as Record<string, unknown>;
+    const loc = (d.location ?? {}) as Record<string, unknown>;
+    const out: Array<{ k: string; v: string }> = [];
+    const add = (k: string, v: unknown) => { if (typeof v === 'string' && v.trim()) out.push({ k, v }); };
+    if (modelName === 'all_projects') {
+      add(t('files.ai_review.fact_city'), d.city ?? loc.city);
+      add(t('files.ai_review.fact_district'), d.district ?? loc.district);
+      add(t('files.ai_review.fact_developer'), d.developer);
+    } else if (modelName === 'units') {
+      add(t('files.ai_review.fact_unit'), d.unit_code ?? d.unit_number);
+    }
+    return out;
+  }, [models, records, t]);
+  /** Accept = approve the AI read + attach the suggested project; Reject = dismiss.
+   *  Both remove the row via decide(), so rows[0] advances to the next card. */
+  const focusAct = useCallback(async (row: AiReviewRow, accept: boolean) => {
+    if (accept) {
+      const sugg = topSuggestion(row);
+      const alreadyLinked = (links.get(row.id)?.length ?? 0) > 0;
+      if (sugg && !alreadyLinked) {
+        try { await attachFileToRecord(row.id, sugg.model_id, sugg.record_id, null); }
+        catch { /* attach toasted; still approve the metadata below */ }
+      }
+    }
+    await decide(row, accept);
+    // Keep the queue flowing near the end.
+    if (rows.length <= 3 && hasMore && !loadingMore) void loadMore();
+  }, [topSuggestion, links, decide, rows.length, hasMore, loadingMore, loadMore]);
+
+  // Keyboard: Y / → / Enter = accept, N / ← / Backspace = reject, Esc = exit.
+  useEffect(() => {
+    if (!focus) return;
+    const onKey = (e: KeyboardEvent) => {
+      const cur = rows[0];
+      if (e.key === 'Escape') { setFocus(false); return; }
+      if (!cur || busyIds.has(cur.id)) return;
+      if (e.key === 'y' || e.key === 'Y' || e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); void focusAct(cur, true); }
+      else if (e.key === 'n' || e.key === 'N' || e.key === 'ArrowLeft' || e.key === 'Backspace') { e.preventDefault(); void focusAct(cur, false); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [focus, rows, busyIds, focusAct]);
+
   return (
     <div className="p-6 max-w-screen-2xl mx-auto">
+      {/* ── FOCUS MODE — full-screen, one decision at a time ──────────────── */}
+      {focus && (
+        <div className="fixed inset-0 z-50 bg-cream flex flex-col" role="dialog" aria-modal="true">
+          <div className="flex items-center justify-between px-6 py-3 border-b border-sand/30 shrink-0">
+            <div className="flex items-center gap-2 text-sm font-bold text-charcoal">
+              <Sparkles size={16} className="text-copper" aria-hidden />
+              {t('files.ai_review.focus_mode')}
+              <span className="text-charcoal/40 font-normal">· {t('files.ai_review.remaining', { count: total })}</span>
+            </div>
+            <button type="button" onClick={() => setFocus(false)}
+                    className="inline-flex items-center gap-1.5 text-sm text-charcoal/60 hover:text-charcoal">
+              <X size={16} aria-hidden /> {t('files.ai_review.exit_focus')}
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-auto flex items-center justify-center p-6">
+            {(() => {
+              const cur = rows[0];
+              if (!cur) {
+                return hasMore ? (
+                  <div className="text-center space-y-3 text-charcoal/60">
+                    <Loader2 size={28} className="animate-spin mx-auto text-copper" aria-hidden />
+                    <p className="text-sm">{t('files.ai_review.loading_more_focus')}</p>
+                  </div>
+                ) : (
+                  <div className="text-center space-y-3">
+                    <Check size={44} className="mx-auto text-emerald-500" aria-hidden />
+                    <p className="text-lg font-bold text-charcoal">{t('files.ai_review.focus_done')}</p>
+                    <Button variant="secondary" onClick={() => setFocus(false)}>{t('files.ai_review.exit_focus')}</Button>
+                  </div>
+                );
+              }
+              const curThumb = thumbs[cur.id];
+              const CurIcon = kindIcon[cur.kind] ?? FileText;
+              const curSubjects = cur.ai_subjects ?? [];
+              const curTags = cur.tags ?? [];
+              const curLinks = links.get(cur.id) ?? [];
+              const sugg = topSuggestion(cur);
+              const facts = sugg ? recordFacts(sugg.model_name, sugg.record_id) : [];
+              const suggModel = sugg ? models.find((m) => m.id === sugg.model_id) : undefined;
+              return (
+                <div className="w-full max-w-4xl grid md:grid-cols-2 gap-6 items-start">
+                  {/* the file + the AI read */}
+                  <div className="space-y-3">
+                    <button type="button" onClick={() => void openPreview(cur.id)}
+                            className="w-full aspect-[4/3] rounded-2xl overflow-hidden bg-white border border-sand/40 flex items-center justify-center hover:ring-2 hover:ring-copper/40">
+                      {curThumb ? <img src={curThumb} alt="" className="w-full h-full object-contain" />
+                                : <CurIcon size={48} className="text-copper/40" aria-hidden />}
+                    </button>
+                    <div className="text-base font-bold text-charcoal break-all" dir="auto">{cur.original_name}</div>
+                    {cur.ai_description && <p className="text-sm text-charcoal/70 leading-relaxed" dir="auto">{cur.ai_description}</p>}
+                    <div className="flex flex-wrap gap-1.5">
+                      {curSubjects.map((s) => <span key={s} className="px-2 py-0.5 rounded-md bg-copper/10 text-copper text-[11px] font-bold" dir="auto">{typeLabel(s)}</span>)}
+                      {cur.asset_nature && <span className="px-2 py-0.5 rounded-md bg-gold/15 text-charcoal/70 text-[11px] font-bold" dir="auto">{natureLabel(cur.asset_nature)}</span>}
+                      {curTags.slice(0, 8).map((tg) => <span key={tg} className="px-2 py-0.5 rounded-md bg-cream text-charcoal/55 text-[11px]" dir="auto">#{tg}</span>)}
+                    </div>
+                  </div>
+
+                  {/* where it links + the target's info */}
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-charcoal/45">{t('files.ai_review.link_target')}</h3>
+                    {curLinks.length > 0 ? (
+                      <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-1.5">
+                        <div className="text-[11px] font-bold text-emerald-700">{t('files.ai_review.linked')}</div>
+                        {curLinks.map((l) => (
+                          <a key={l.record_id} href={`/model/${l.model_name}/${l.record_id}`} target="_blank" rel="noopener noreferrer"
+                             className="flex items-center gap-1.5 text-sm text-emerald-800 hover:underline" dir="auto">
+                            <span className="font-bold">{linkLabel(l)}</span>
+                            {linkProject(l) && <span className="text-emerald-700/70">— {linkProject(l)}</span>}
+                            <ExternalLink size={12} aria-hidden />
+                          </a>
+                        ))}
+                      </div>
+                    ) : sugg ? (
+                      <a href={`/model/${sugg.model_name}/${sugg.record_id}`} target="_blank" rel="noopener noreferrer"
+                         className="block rounded-2xl border-2 border-copper/40 bg-copper/5 p-4 space-y-2 hover:bg-copper/10 transition-colors">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-copper">
+                          <Sparkles size={11} aria-hidden /> {t('files.ai_review.suggested_link')}
+                        </div>
+                        <div className="text-lg font-bold text-charcoal" dir="auto">{sugg.label}</div>
+                        <div className="text-[11px] text-charcoal/45">{(isAr ? suggModel?.label_ar : suggModel?.label_en) || sugg.model_name}</div>
+                        {facts.length > 0 && (
+                          <dl className="grid grid-cols-2 gap-2 pt-1">
+                            {facts.map((f) => (
+                              <div key={f.k}><dt className="text-[10px] text-charcoal/40">{f.k}</dt>
+                                <dd className="text-xs font-bold text-charcoal/80" dir="auto">{f.v}</dd></div>
+                            ))}
+                          </dl>
+                        )}
+                        <div className="inline-flex items-center gap-1 text-[11px] text-copper pt-1"><ExternalLink size={11} aria-hidden /> {t('files.ai_review.open_record_new_tab')}</div>
+                      </a>
+                    ) : (
+                      <div className="rounded-2xl border border-sand/40 bg-white p-4 text-sm text-charcoal/45">
+                        {t('files.ai_review.no_suggested_link')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {rows[0] && (
+            <div className="flex items-center justify-center gap-4 px-6 py-4 border-t border-sand/30 shrink-0">
+              <button type="button" disabled={busyIds.has(rows[0].id)} onClick={() => void focusAct(rows[0]!, false)}
+                      className="inline-flex items-center gap-2 px-8 py-3 rounded-2xl bg-white border-2 border-red-300 text-red-600 font-bold hover:bg-red-50 disabled:opacity-50">
+                <X size={20} aria-hidden /> {t('files.ai_review.no')}
+              </button>
+              <button type="button" disabled={busyIds.has(rows[0].id)} onClick={() => void focusAct(rows[0]!, true)}
+                      className="inline-flex items-center gap-2 px-8 py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50">
+                {busyIds.has(rows[0].id) ? <Loader2 size={20} className="animate-spin" aria-hidden /> : <Check size={20} aria-hidden />} {t('files.ai_review.yes')}
+              </button>
+            </div>
+          )}
+          <p className="text-center text-[11px] text-charcoal/35 pb-2">{t('files.ai_review.focus_hint')}</p>
+        </div>
+      )}
+
       <div className="flex items-start justify-between flex-wrap gap-4 mb-5">
         <div>
           <h1 className="text-2xl font-bold text-charcoal mb-3">{t('files.title')}</h1>
           <FilesTabs />
         </div>
         {rows.length > 0 && (
-          <Button className="!px-4 !py-2.5" disabled={bulkBusy} onClick={() => void approveAll()}>
-            {bulkBusy ? <Loader2 size={16} className="animate-spin" aria-hidden /> : <Check size={16} aria-hidden />}
-            {t('files.ai_review.approve_all', { count: rows.length })}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" className="!px-4 !py-2.5" onClick={() => setFocus(true)}>
+              <Sparkles size={16} aria-hidden />
+              {t('files.ai_review.focus_mode')}
+            </Button>
+            <Button className="!px-4 !py-2.5" disabled={bulkBusy} onClick={() => void approveAll()}>
+              {bulkBusy ? <Loader2 size={16} className="animate-spin" aria-hidden /> : <Check size={16} aria-hidden />}
+              {t('files.ai_review.approve_all', { count: rows.length })}
+            </Button>
+          </div>
         )}
       </div>
 
