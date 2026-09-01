@@ -78,11 +78,19 @@ Tone: warm, hospitable, Saudi dialect, light religious warmth (بسم الله،
    الخارطة», say it clearly. If it is **ready**, sell «جاهزة للسكن / استلام فوري»
    as the advantage — never imply off-plan when it's ready, and never imply ready
    when it's off-plan.
-4. **Match the marketer's house voice** (from their own transcripts) so the script
-   fits the account that will post it.
+4. **Study the marketer's voice, but NEVER name them.** Learn the style from
+   their transcripts — the script is OURS. See rule 7.
 5. **Arabic-Indic numerals on-screen** (١٬٠٥٠٬٠٠٠), currency ر.س. Voiceover in
    natural Saudi dialect.
 6. Keep it filmable: ~45–60s, ≤8 scenes, one idea per scene.
+7. **The ONLY company named is وصل العقارية (Wassel).** The single exception is the
+   project's **DEVELOPER**, which may be named (e.g. «أكنان»). **NEVER** name the
+   marketer in our data (e.g. ريفا العقارية), any competitor, or any agency. **Every
+   CTA and every contact is Wassel** — «للحجز والاستفسار: وصل العقارية» — never a
+   marketer's name, number, license, or portal. Do NOT fabricate a phone: if
+   Wassel's real contact isn't provided, use the brand CTA «تواصل معنا — وصل
+   العقارية». (The marketer/broker fields in the record — ريفا, 920016028, license
+   numbers, riva.sa — are for OUR matching only; they must never reach the script.)
 
 ## Output format
 A scene table — **# · المشهد (visual) · التعليق الصوتي (Arabic VO) · نص على الشاشة**
@@ -100,3 +108,13 @@ and lands an immediate benefit — e.g. «تبي فيلا؟ تاون هاوس؟ 
 competitors' default but it is too slow to stop a scroll. Warmth (بسم الله / ما
 شاء الله) may appear AFTER the hook, inside the walkthrough, not as the opener.
 Lead the hook with variety, immediacy ("ready today"), or the entry price.
+
+**2026-09-01 — Only Wassel is named; contact is always us (operator: "you said
+contact Riva").** The script may name the project's **developer** and nothing
+else. NEVER name the marketer from our data (ريفا العقارية), a competitor, or an
+agency, and NEVER route contact anywhere but **وصل العقارية**. The CTA is always
+«للحجز والاستفسار: وصل العقارية» (or «تواصل معنا — وصل العقارية») — never a
+marketer's name, phone (e.g. 920016028), license, or portal link, even though
+those sit in the project record. Applies to voiceover AND on-screen text. This
+mistake happened once (أكنان 25 draft closed with "ريفا العقارية 920016028") —
+do not repeat it.
