@@ -96,8 +96,8 @@
 .cw-root .cw-focuscard{display:grid; grid-template-columns:1fr 1fr; background:var(--cw-card); border:1px solid var(--cw-line); border-radius:16px; box-shadow:var(--cw-shadow); overflow:hidden}
 .cw-root .cw-fpost{padding:18px; border-inline-end:1px solid var(--cw-line2); min-width:0}
 .cw-root .cw-fproj{padding:18px; background:var(--cw-card2); min-width:0}
-.cw-root .cw-fmedia{position:relative; width:100%; height:360px; border-radius:12px; overflow:hidden; background:#14100e; display:grid; place-items:center; color:var(--cw-ink3)}
-.cw-root .cw-fmedia img{max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain}
+.cw-root .cw-fmedia{position:relative; width:100%; min-height:160px; border-radius:12px; overflow:hidden; background:#14100e; display:grid; place-items:center; color:var(--cw-ink3)}
+.cw-root .cw-fmedia img{width:100%; height:auto; display:block}
 .cw-root .cw-fmeta{display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; color:var(--cw-ink3); margin-top:12px}
 .cw-root .cw-ftext{margin:10px 0 0; font-size:15px; line-height:1.7; color:var(--cw-ink)}
 .cw-root .cw-fread{margin-top:12px; font-size:12.5px; color:var(--cw-ink3)}
