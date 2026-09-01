@@ -37,6 +37,7 @@ import {
 import { pullPublicationMetrics, runBundleMetricsSync } from './_lib/marketing/bundleMetrics.js';
 import { runBundleAccountMetricsSync } from './_lib/marketing/bundleAccountMetrics.js';
 import { runBundleStatusSweep } from './_lib/marketing/bundleStatusSync.js';
+import { generateScript, loadProjectData, loadTranscripts, buildFactsSheet, isScriptRecipe } from './_lib/marketing/videoScript.js';
 // Pure shared rulebook — same blessed src↔api cross-import as localizedName.ts.
 import { preflightPublishSet } from '../src/lib/marketingOS/platformRules.js';
 
@@ -2223,6 +2224,68 @@ export default async function handler(req: Request): Promise<Response> {
       /* -------------------------------------------------------- */
       /* Scenes — the shoot list is derived from these             */
       /* -------------------------------------------------------- */
+      case 'write_video_script': {
+        // Generate a video-ad script from the record's project + competitor
+        // transcripts. Returns a DRAFT only — nothing is saved until video_script_apply.
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        const recipe = isScriptRecipe(body.recipe) ? body.recipe : 'walkthrough';
+        const gate = await requireCap(sb, 'write_content');
+        if (gate) return gate;
+        const c = await sb.from('mos_content_v').select('id, project_id, content_type_key').eq('id', contentId).maybeSingle();
+        const cf = dbFail(c.error); if (cf) return cf;
+        if (!c.data) return jsonError(404, 'content item not found');
+        const projectId = (c.data as { project_id: string | null }).project_id;
+        if (!projectId) return jsonError(400, 'link a project to this content first');
+        const svc = makeServiceClient('api:marketing-os:video-script');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const pdata = await loadProjectData(svc, projectId);
+        if (!pdata) return jsonError(404, 'project not found in catalog');
+        const facts = buildFactsSheet(pdata);
+        if (!facts.hasFacts) return jsonError(422, 'not enough project facts to write a script');
+        const transcripts = await loadTranscripts(svc);
+        try {
+          const { scenes, hooks } = await generateScript(recipe, facts.sheet, transcripts);
+          return jsonOk({ draft: { scenes, hooks, recipe, project_name: facts.projectName } });
+        } catch (e) {
+          return jsonError(502, e instanceof Error ? e.message : 'script generation failed');
+        }
+      }
+
+      case 'video_script_apply': {
+        // Insert the approved draft scenes into mos_scenes (footage_status='missing'
+        // so they seed the shoot backlog). Appends after any existing scenes.
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        const gate = await requireCap(sb, 'write_content');
+        if (gate) return gate;
+        const incoming = Array.isArray(body.scenes) ? (body.scenes as Array<Record<string, unknown>>) : [];
+        if (incoming.length === 0) return jsonError(400, 'no scenes to apply');
+        const last = await sb.from('mos_scenes').select('position')
+          .eq('content_id', contentId).order('position', { ascending: false }).limit(1).maybeSingle();
+        const lf = dbFail(last.error); if (lf) return lf;
+        let pos = (last.data as { position: number } | null)?.position ?? 0;
+        const rows = incoming.map((s) => {
+          pos += 1;
+          return {
+            content_id: contentId,
+            position: pos,
+            visual: str(s.visual) ?? null,
+            voiceover: str(s.voiceover) ?? null,
+            on_screen_text: str(s.on_screen_text) ?? null,
+            start_sec: typeof s.start_sec === 'number' ? s.start_sec : null,
+            end_sec: typeof s.end_sec === 'number' ? s.end_sec : null,
+            footage_status: 'missing',
+          };
+        });
+        const ins = await sb.from('mos_scenes').insert(rows).select('id');
+        const insf = dbFail(ins.error); if (insf) return insf;
+        const listq = await sb.from('mos_scenes').select('*')
+          .eq('content_id', contentId).order('position', { ascending: true });
+        const lf2 = dbFail(listq.error); if (lf2) return lf2;
+        return jsonOk({ scenes: listq.data ?? [] });
+      }
+
       case 'scene_save': {
         const contentId = str(body.content_id);
         if (!contentId) return jsonError(400, 'content_id is required');

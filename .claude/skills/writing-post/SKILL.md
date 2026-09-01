@@ -28,18 +28,32 @@ district, developer, unit_types, area/available_price ranges, features,
 guarantees, landmarks, construction_status, show unit; mine `marketing_document`
 first).
 
-## Step 2 — study competitor captions (refresh the recipes)
+## Step 2 — study competitor DESIGN COPY (the text ON the image) FIRST
+A post has TWO text layers: the **on-design copy** written ON the picture (the
+headline/tagline the viewer reads first) and the **caption** below it. The
+persuasive copy we learn from is the ON-DESIGN text — and we DO capture it: every
+post image is OCR'd into `mkt_visual_text` (the image twin of video transcription).
+Learn that FIRST:
 ```sql
-select o.name_ar org, p.post_type, e.result->>'content_type' ctype, p.caption
-from mkt_content_posts p
-join mkt_organizations o on o.id=p.organization_id
-left join mkt_content_enrichment e on e.content_post_id=p.id and e.status='done'
-where p.caption is not null and length(p.caption) between 100 and 650
-  and p.post_type in ('image','carousel') and p.caption ~ '[ء-ي]'
-order by (o.name_ar = '<the project marketer, if useful>') desc, length(p.caption) desc
+select o.name_ar org, left(v.text, 280) on_image_text
+from mkt_visual_text v
+join mkt_content_posts p on p.id = v.content_post_id
+join mkt_organizations o on o.id = p.organization_id
+where v.status='done' and p.post_type in ('image','carousel')
+  and v.text ~ '[ء-ي]' and length(v.text) between 12 and 280
+order by (o.name_ar = '<the project marketer, if useful>') desc, v.created_at desc
 limit 16;
 ```
-Learn STRUCTURE + conventions (emojis, line breaks, bullet lists, hashtag block).
+THEN (secondary) read the CAPTION for the supporting text / specs / CTA / hashtag
+conventions:
+```sql
+select o.name_ar org, p.post_type, p.caption
+from mkt_content_posts p join mkt_organizations o on o.id=p.organization_id
+where p.caption ~ '[ء-ي]' and length(p.caption) between 100 and 650
+  and p.post_type in ('image','carousel')
+order by length(p.caption) desc limit 12;
+```
+**Design copy = the hook; caption = the support.** Learn the hook from OCR.
 
 ## Post recipe library (keep in sync as we learn)
 1. **Feature / spec post** *(the workhorse)* — ✨emoji headline (project + district)
@@ -72,7 +86,12 @@ Learn STRUCTURE + conventions (emojis, line breaks, bullet lists, hashtag block)
 8. Ready-to-PASTE: emojis, line breaks, and the hashtag block included.
 
 ## Output format
-1–3 ready-to-paste captions (state the recipe of each). No file needed unless asked.
+For each post, produce TWO layers (state the recipe of each):
+1. **On-design copy** — what goes ON the image: a short headline + optional subhead
+   + the 2–4 key on-image lines (e.g. «بدأ البيع» / area / «تبدأ من …»). This is the
+   PRIMARY deliverable — it's read first and it's what the designer sets in type.
+2. **Caption** — the supporting text below + 📞 Wassel CTA + hashtag block.
+Ready to paste. No file unless asked.
 
 ## Components — how this becomes an in-app BUTTON
 Same 7 components as writing-video-script (see that skill), with ONE difference:
@@ -92,3 +111,11 @@ variety- or price-led, not the slow «بسم الله» greeting.
 **2026-09-01 — Hashtags are ours, never theirs.** Use #وصل_العقارية + the project
 + generic/district tags. Never carry a competitor's brand hashtag into our post,
 even though competitor captions end with their own (#أوشن_العقارية, etc.).
+
+**2026-09-01 — Learn from the ON-IMAGE text, not the caption (operator).** A
+post's persuasive copy is what's written ON the design (headline/tagline). We DO
+capture it: every post image is OCR'd into `mkt_visual_text`. Learn the design
+copy from THERE; the caption is only the supporting text/specs/CTA/hashtags.
+Always output BOTH layers, design copy first. (Real examples that made the point:
+الرمز «عنوانٌ للراحة ومساحات للاستقرار»، مينا «لأن القيمة الحقيقية لا تنتهي عند
+البيع».)
