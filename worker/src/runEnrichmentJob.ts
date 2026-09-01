@@ -44,10 +44,6 @@ export interface EnrichmentJob {
 
 /** Cheap, fast, vision-capable — enrichment is high-volume. */
 const ENRICH_MODEL = 'claude-haiku-4-5-20251001';
-/** Anthropic rejects any single image whose base64 exceeds 10 MB, so an image
- *  over ~6 MB RAW (≈8.2 MB base64) is downscaled via ffmpeg before sending
- *  rather than sent whole (which 400s — measured live 2026-08-31). */
-const SAFE_IMAGE_BYTES = 6 * 1024 * 1024;
 /** PDFs go whole as a document block; keep the base64 comfortably under the
  *  ~32 MB request cap. Larger PDFs get a kind-based default instead. */
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
@@ -66,11 +62,6 @@ function noopDefault(kind: string): Record<string, unknown> {
   const v = KIND_DEFAULT_PRIMARY[kind];
   return v ? { model: 'kind-default', primary_category: v, primary_category_fallback: true } : {};
 }
-
-const IMAGE_MIMES: Record<string, 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'> = {
-  'image/jpeg': 'image/jpeg', 'image/jpg': 'image/jpeg', 'image/png': 'image/png',
-  'image/gif': 'image/gif', 'image/webp': 'image/webp',
-};
 
 export interface RunEnrichmentJobArgs {
   supabase: SupabaseClient;
@@ -156,20 +147,20 @@ export async function runEnrichmentJob(
 
   if (kind === 'image') {
     const bytes = await download(supabase, job);
-    const supported = IMAGE_MIMES[(job.mimeType || '').toLowerCase()];
-    // Downscale when the source is too big for the 10 MB per-image cap OR is a
-    // format the model won't accept (HEIC, etc.). A decode failure (ffmpeg can't
-    // read it) → kind-default rather than a hard job failure.
-    if (!supported || bytes.length > SAFE_IMAGE_BYTES) {
-      try {
-        const jpeg = await imageToBoundedJpeg(bytes, (job.mimeType || '').split('/')[1] || 'img');
-        blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: jpeg.toString('base64') } });
-      } catch (e) {
-        console.log(`[enrich] job=${job.id} image undecodable (${job.mimeType}, ${(bytes.length / 1048576).toFixed(1)}MB): ${e instanceof Error ? e.message : String(e)} — kind-default`);
-        return noopDefault(kind);
-      }
-    } else {
-      blocks.push({ type: 'image', source: { type: 'base64', media_type: supported, data: bytes.toString('base64') } });
+    // ALWAYS re-encode through ffmpeg to a bounded baseline JPEG. Sending the raw
+    // bytes trusted the stored mime_type, which frequently disagreed with the
+    // actual content — Anthropic 400'd "The image was specified using the
+    // image/webp media type, but ..." on 649 files in the backfill — and also
+    // left oversized dimensions and unsupported/undecodable formats to fail hard.
+    // One re-encode normalizes format + dimensions + byte size AND makes the
+    // declared media_type (image/jpeg) always match. ffmpeg can't decode it →
+    // kind-default (never a hard failure → never a null).
+    try {
+      const jpeg = await imageToBoundedJpeg(bytes, (job.mimeType || '').split('/')[1] || 'img');
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: jpeg.toString('base64') } });
+    } catch (e) {
+      console.log(`[enrich] job=${job.id} image undecodable (${job.mimeType}, ${(bytes.length / 1048576).toFixed(1)}MB): ${e instanceof Error ? e.message : String(e)} — kind-default`);
+      return noopDefault(kind);
     }
   } else if (kind === 'pdf') {
     if (job.sizeBytes > MAX_PDF_BYTES) { console.log(`[enrich] job=${job.id} pdf too large (${(job.sizeBytes / 1048576).toFixed(1)}MB) — kind-default`); return noopDefault(kind); }
