@@ -96,6 +96,7 @@ export default function FilesAiReviewPage() {
 
   const [rows, setRows] = useState<AiReviewRow[]>([]);
   const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -270,6 +271,20 @@ export default function FilesAiReviewPage() {
       if (row) setPreviewRow(row);
     } catch { /* getFile toasted */ }
   }, []);
+
+  // Page through the rest of the queue (it can be thousands). Offset by the
+  // number already loaded; dedup on append so a shift from concurrent approvals
+  // can't double-show a row.
+  const loadMore = useCallback(async () => {
+    setLoadingMore(true);
+    try {
+      const next = await fetchAiReviewQueue(PAGE_LIMIT, rows.length);
+      setRows((prev) => {
+        const seen = new Set(prev.map((r) => r.id));
+        return [...prev, ...next.filter((r) => !seen.has(r.id))];
+      });
+    } catch { /* fetchAiReviewQueue toasted */ } finally { setLoadingMore(false); }
+  }, [rows.length]);
 
   const hasMore = total > rows.length;
 
@@ -478,9 +493,16 @@ export default function FilesAiReviewPage() {
           })}
 
           {hasMore && (
-            <p className="text-center text-xs text-charcoal/45 pt-2">
-              {t('files.ai_review.showing_first', { shown: rows.length, total })}
-            </p>
+            <div className="flex flex-col items-center gap-2 pt-3">
+              <p className="text-center text-xs text-charcoal/45">
+                {t('files.ai_review.showing_first', { shown: rows.length, total })}
+              </p>
+              <Button variant="secondary" className="!px-4 !py-2 text-xs"
+                      disabled={loadingMore} onClick={() => void loadMore()}>
+                {loadingMore ? <Loader2 size={13} className="animate-spin" aria-hidden /> : null}
+                {t('files.ai_review.load_more')}
+              </Button>
+            </div>
           )}
         </div>
       )}
