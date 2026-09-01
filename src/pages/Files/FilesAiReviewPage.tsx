@@ -28,6 +28,7 @@ import {
 } from '@/lib/files/library';
 import { getFile, signViewUrls } from '@/lib/files/client';
 import { attachFileToRecord } from '@/lib/files/recordFiles';
+import { resolveLocalizedName } from '@/lib/geo/localizedName';
 import FilesTabs from './components/FilesTabs';
 import FilePreviewModal from './components/FilePreviewModal';
 import BulkLinkModal from './library/BulkLinkModal';
@@ -329,11 +330,21 @@ export default function FilesAiReviewPage() {
       return one != null ? `${compact(one)} ${unit}` : null;
     };
     const UNIT_AR: Record<string, string> = { floor: 'دور', villa: 'فيلا', townhouse: 'تاون هاوس', penthouse: 'بنتهاوس', apartment: 'شقة', duplex: 'دوبلكس' };
+    // city/district are geo REFERENCE ids (cities/districts records), never names.
+    const oneId = (v: unknown): string | null =>
+      Array.isArray(v) ? (typeof v[0] === 'string' ? v[0] : null) : (typeof v === 'string' && v ? v : null);
+    const geoName = (mn: 'cities' | 'districts', id: string | null): string | null => {
+      if (!id) return null;
+      const gm = models.find((mm) => mm.name === mn);
+      const grec = gm ? (records[gm.id] ?? []).find((r) => r.id === id) : undefined;
+      const lz = resolveLocalizedName(id, grec?.data as Record<string, unknown> | undefined);
+      return lz ? (isAr ? lz.ar : lz.enDisplay) : null;
+    };
     if (modelName === 'all_projects') {
       const dev = typeof d.developer === 'string' ? developerName(d.developer) : null;
       add(t('files.ai_review.fact_developer'), dev);
-      add(t('files.ai_review.fact_city'), d.city ?? loc.city);
-      add(t('files.ai_review.fact_district'), d.district ?? loc.district);
+      add(t('files.ai_review.fact_city'), geoName('cities', oneId(loc.city ?? d.city)));
+      add(t('files.ai_review.fact_district'), geoName('districts', oneId(loc.district ?? d.district)));
       const price = fmtRange(d.available_price_range ?? d.price_range);
       if (price) out.push({ k: t('files.ai_review.fact_price'), v: price });
       if (Array.isArray(d.unit_types) && d.unit_types.length) {
