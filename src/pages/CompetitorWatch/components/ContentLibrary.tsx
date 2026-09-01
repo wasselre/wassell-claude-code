@@ -230,6 +230,20 @@ function Entry({ row, isAr, open, onToggle, onOrg }: {
         <div className="cw-body">
           <div className="cw-metaline">
             <button className="cw-co" type="button" onClick={onOrg}>{row.org_name ?? '—'}</button>
+            {row.developer_record_id && (
+              <a
+                className="cw-devlink"
+                href={`/model/developers/${row.developer_record_id}`}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                title={isAr ? 'افتح سجل المطوّر' : 'Open developer record'}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M15 9h.01M9 13h.01M15 13h.01" /></svg>
+                {isAr ? 'المطوّر' : 'developer'}
+                <span aria-hidden="true">↗</span>
+              </a>
+            )}
             {row.platform && <span>· {row.platform}</span>}
             {row.project_name && <span>· {row.project_name}</span>}
             {shelfDef && <span className="cw-pill" style={{ background: shelfDef.color, color: '#fff' }}>{isAr ? shelfDef.ar : shelfDef.en}</span>}
