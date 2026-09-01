@@ -36,6 +36,7 @@ export interface LibraryRow {
   has_transcript: boolean;
   project_name: string | null;
   developer_record_id: string | null;              // publisher org's `developers` record (null for marketers)
+  project_record_id: string | null;                // all_projects record when confidently attributed
   thumb_url: string | null;                         // best poster / first image
   media: Array<{ kind: string; url: string }> | null; // every stored image/video
 }

@@ -76,6 +76,9 @@
 .cw-root .cw-devlink{display:inline-flex; align-items:center; gap:4px; font-size:11.5px; color:var(--cw-copper); text-decoration:none; border:1px solid color-mix(in srgb, var(--cw-copper) 30%, transparent); border-radius:20px; padding:2px 9px}
 .cw-root .cw-devlink:hover{background:color-mix(in srgb, var(--cw-copper) 10%, transparent)}
 .cw-root .cw-devlink svg{opacity:.85}
+.cw-root .cw-projlink{display:inline-flex; align-items:center; gap:4px; font-size:11.5px; color:var(--cw-info); text-decoration:none; border:1px solid color-mix(in srgb, var(--cw-info) 30%, transparent); border-radius:20px; padding:2px 9px}
+.cw-root .cw-projlink:hover{background:color-mix(in srgb, var(--cw-info) 10%, transparent)}
+.cw-root .cw-projlink svg{opacity:.85}
 .cw-root .cw-pill{font-size:11px; font-weight:600; border-radius:6px; padding:2px 8px}
 .cw-root .cw-desc{margin:7px 0 0; font-size:13.5px; line-height:1.6; color:var(--cw-ink)}
 .cw-root .cw-facts{display:flex; flex-wrap:wrap; gap:6px; margin-top:9px}

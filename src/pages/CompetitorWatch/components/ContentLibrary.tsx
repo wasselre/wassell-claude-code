@@ -245,7 +245,24 @@ function Entry({ row, isAr, open, onToggle, onOrg }: {
               </a>
             )}
             {row.platform && <span>· {row.platform}</span>}
-            {row.project_name && <span>· {row.project_name}</span>}
+            {row.project_name && (
+              row.project_record_id
+                ? (
+                  <a
+                    className="cw-projlink"
+                    href={`/model/all_projects/${row.project_record_id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    title={isAr ? 'افتح سجل المشروع' : 'Open project record'}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                    <span dir="rtl">{row.project_name}</span>
+                    <span aria-hidden="true">↗</span>
+                  </a>
+                )
+                : <span dir="rtl">· {row.project_name}</span>
+            )}
             {shelfDef && <span className="cw-pill" style={{ background: shelfDef.color, color: '#fff' }}>{isAr ? shelfDef.ar : shelfDef.en}</span>}
           </div>
           {row.summary && <p className="cw-desc" dir="auto">{row.summary}</p>}
