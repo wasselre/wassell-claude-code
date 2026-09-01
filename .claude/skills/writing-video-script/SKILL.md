@@ -98,6 +98,46 @@ A scene table — **# · المشهد (visual) · التعليق الصوتي (A
 checks" note (which record, that the off-plan flag was applied correctly, price
 source). Deliver the script directly in chat (no file needed unless asked).
 
+## Components — how this becomes an in-app BUTTON
+The skill decomposes into 7 components. An in-app **«اكتب سكربت» / "Write script"**
+button on a VIDEO content record re-implements them as one server endpoint — the
+skill file stays the SPEC, the endpoint mirrors it:
+
+1. **Project resolver.** The content record already carries its project link, so
+   there is NO project picker — the button inherits the project from the record,
+   then loads that project's facts from all_projects (Step 1 query).
+2. **Competitor learner.** Pull the most relevant competitor video transcripts
+   (Step 2 query): filter to walkthrough / offer / project_launch, prefer the same
+   district and a marketer whose voice fits, cap ~12, longest first. This is the
+   "systematically look through competitors' content" step.
+3. **Recipe.** The 7-beat structure + tone (above) — goes into the prompt.
+4. **Rules.** The Hard rules + this Decisions Log — become the system prompt. The
+   operator's learned preferences (Wassel-only, off-plan both ways, hook style…)
+   are the whole differentiator vs a generic AI.
+5. **Generator.** ONE LLM call: {project facts + transcript excerpts + recipe +
+   rules} → scene table + 3 alternative hooks. Route through the app's text-LLM
+   helper (DeepSeek default / Claude fallback per `TEXT_LLM_PROVIDER`), or force
+   Claude when script quality matters more than cost.
+6. **Output.** Render the scenes for review inside the content record; on approve,
+   write them into the record's **scenes** — and they map 1:1 onto `mos_scenes`
+   (verified live): scene # → `position`, timing → `start_sec`/`end_sec`,
+   visual → `visual`, voiceover → `voiceover`, on-screen text → `on_screen_text`,
+   each new scene `footage_status='missing'` (so it auto-populates the shoot
+   backlog). The 3 alt hooks go into the content's writing fields (headlines).
+   **Non-destructive — never auto-save** (matches the app's anti-silent-failure
+   posture). So the generator must emit STRICT scene objects (visual / voiceover /
+   on_screen_text / start_sec / end_sec), not prose, so the endpoint inserts rows
+   directly.
+7. **Feedback loop.** Operator reactions must keep improving it. In-app, the rules
+   (component 4) live in an EDITABLE preferences store (a settings row) so the team
+   tunes them without a deploy; every approved change is also appended to this
+   Decisions Log so the skill and the button stay in sync.
+
+**Where it lives:** the Marketing content detail page, on a video-type record,
+gated by `write_content`. Endpoint: a `write_video_script` action taking
+`content_id` → runs components 1–5, returns the script, and (on approve) writes
+component 6 back into the record.
+
 ## Decisions Log (self-improving core — append every operator note, dated)
 
 **2026-09-01 — Hook style (operator: "hook 2 is better").**
