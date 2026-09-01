@@ -299,7 +299,16 @@ export default function FilesAiReviewPage() {
     if (links.length === 0) return null;
     return links.find((l) => l.model_name === 'all_projects') ?? links[0]!;
   }, []);
-  /** A few key facts about the record we'd link to, so the reviewer can judge it. */
+  /** developer id → name, so a project's developer shows as a name not a uuid. */
+  const developerName = useCallback((id: string): string | null => {
+    const dm = models.find((mm) => mm.name === 'developers');
+    if (!dm) return null;
+    const dev = (records[dm.id] ?? []).find((r) => r.id === id);
+    const nm = (dev?.data as Record<string, unknown>)?.name;
+    return typeof nm === 'string' ? nm : null;
+  }, [models, records]);
+  /** Enough about the record we'd link to for the reviewer to judge the match —
+   *  modeled on the competitor-watch Confirm-links card (developer/city/price/units). */
   const recordFacts = useCallback((modelName: string, recordId: string): Array<{ k: string; v: string }> => {
     const m = models.find((mm) => mm.name === modelName);
     if (!m) return [];
@@ -308,15 +317,32 @@ export default function FilesAiReviewPage() {
     const loc = (d.location ?? {}) as Record<string, unknown>;
     const out: Array<{ k: string; v: string }> = [];
     const add = (k: string, v: unknown) => { if (typeof v === 'string' && v.trim()) out.push({ k, v }); };
+    const compact = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M` : n >= 1000 ? `${Math.round(n / 1000)}K` : String(Math.round(n)));
+    const fmtRange = (r: unknown): string | null => {
+      const o = r as { min?: number; max?: number } | null;
+      if (!o || (o.min == null && o.max == null)) return null;
+      const unit = isAr ? 'ر.س' : 'SAR';
+      if (o.min != null && o.max != null && o.max !== o.min) return `${compact(o.min)}–${compact(o.max)} ${unit}`;
+      const one = o.min ?? o.max;
+      return one != null ? `${compact(one)} ${unit}` : null;
+    };
+    const UNIT_AR: Record<string, string> = { floor: 'دور', villa: 'فيلا', townhouse: 'تاون هاوس', penthouse: 'بنتهاوس', apartment: 'شقة', duplex: 'دوبلكس' };
     if (modelName === 'all_projects') {
+      const dev = typeof d.developer === 'string' ? developerName(d.developer) : null;
+      add(t('files.ai_review.fact_developer'), dev);
       add(t('files.ai_review.fact_city'), d.city ?? loc.city);
       add(t('files.ai_review.fact_district'), d.district ?? loc.district);
-      add(t('files.ai_review.fact_developer'), d.developer);
+      const price = fmtRange(d.available_price_range ?? d.price_range);
+      if (price) out.push({ k: t('files.ai_review.fact_price'), v: price });
+      if (Array.isArray(d.unit_types) && d.unit_types.length) {
+        const ut = (d.unit_types as string[]).map((u) => (isAr ? (UNIT_AR[u] ?? u) : u)).join(isAr ? '، ' : ', ');
+        out.push({ k: t('files.ai_review.fact_units'), v: ut });
+      }
     } else if (modelName === 'units') {
       add(t('files.ai_review.fact_unit'), d.unit_code ?? d.unit_number);
     }
     return out;
-  }, [models, records, t]);
+  }, [models, records, t, isAr, developerName]);
   /** Accept = approve the AI read + attach the suggested project; Reject = dismiss.
    *  Both remove the row via decide(), so rows[0] advances to the next card. */
   const focusAct = useCallback(async (row: AiReviewRow, accept: boolean) => {
@@ -423,23 +449,31 @@ export default function FilesAiReviewPage() {
                         ))}
                       </div>
                     ) : sugg ? (
-                      <a href={`/model/${sugg.model_name}/${sugg.record_id}`} target="_blank" rel="noopener noreferrer"
-                         className="block rounded-2xl border-2 border-copper/40 bg-copper/5 p-4 space-y-2 hover:bg-copper/10 transition-colors">
-                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-copper">
-                          <Sparkles size={11} aria-hidden /> {t('files.ai_review.suggested_link')}
-                        </div>
-                        <div className="text-lg font-bold text-charcoal" dir="auto">{sugg.label}</div>
-                        <div className="text-[11px] text-charcoal/45">{(isAr ? suggModel?.label_ar : suggModel?.label_en) || sugg.model_name}</div>
-                        {facts.length > 0 && (
-                          <dl className="grid grid-cols-2 gap-2 pt-1">
-                            {facts.map((f) => (
-                              <div key={f.k}><dt className="text-[10px] text-charcoal/40">{f.k}</dt>
-                                <dd className="text-xs font-bold text-charcoal/80" dir="auto">{f.v}</dd></div>
-                            ))}
-                          </dl>
+                      <div className="space-y-2">
+                        <p className="text-sm font-bold text-charcoal">{t('files.ai_review.link_question')}</p>
+                        <a href={`/model/${sugg.model_name}/${sugg.record_id}`} target="_blank" rel="noopener noreferrer"
+                           className="block rounded-2xl border-2 border-copper/40 bg-copper/5 p-4 space-y-2 hover:bg-copper/10 transition-colors">
+                          <div className="flex items-center gap-1.5 text-[11px] font-bold text-copper">
+                            <Sparkles size={11} aria-hidden /> {t('files.ai_review.suggested_link')}
+                          </div>
+                          <div className="text-lg font-bold text-charcoal" dir="auto">{sugg.label}</div>
+                          <div className="text-[11px] text-charcoal/45">{(isAr ? suggModel?.label_ar : suggModel?.label_en) || sugg.model_name}</div>
+                          {facts.length > 0 && (
+                            <dl className="grid grid-cols-2 gap-2 pt-1">
+                              {facts.map((f) => (
+                                <div key={f.k}><dt className="text-[10px] text-charcoal/40">{f.k}</dt>
+                                  <dd className="text-xs font-bold text-charcoal/80" dir="auto">{f.v}</dd></div>
+                              ))}
+                            </dl>
+                          )}
+                          <div className="inline-flex items-center gap-1 text-[11px] text-copper pt-1"><ExternalLink size={11} aria-hidden /> {t('files.ai_review.open_record_new_tab')}</div>
+                        </a>
+                        {sugg.matched_name && (
+                          <p className="text-[11px] text-charcoal/55" dir="auto">
+                            {t('files.ai_review.ai_read_name')} <b className="text-charcoal/80">{sugg.matched_name}</b>
+                          </p>
                         )}
-                        <div className="inline-flex items-center gap-1 text-[11px] text-copper pt-1"><ExternalLink size={11} aria-hidden /> {t('files.ai_review.open_record_new_tab')}</div>
-                      </a>
+                      </div>
                     ) : (
                       <div className="rounded-2xl border border-sand/40 bg-white p-4 text-sm text-charcoal/45">
                         {t('files.ai_review.no_suggested_link')}
