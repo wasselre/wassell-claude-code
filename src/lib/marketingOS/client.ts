@@ -661,8 +661,28 @@ export interface VideoScriptDraft {
   recipe: ScriptRecipeKey;
   project_name: string;
 }
-export const writeVideoScript = (contentId: string, recipe: ScriptRecipeKey) =>
-  call<{ draft: VideoScriptDraft }>('write_video_script', { content_id: contentId, recipe });
+// Generation is a ~30–40s AI call — well past the shared 23s `call` abort — so
+// this uses its own fetch with a 90s timeout. (A proper background job +
+// notification is the real fix; this keeps the button working meanwhile.)
+export async function writeVideoScript(contentId: string, recipe: ScriptRecipeKey): Promise<{ draft: VideoScriptDraft }> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 90_000);
+  try {
+    const res = await fetch('/api/marketing-os', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+      body: JSON.stringify({ action: 'write_video_script', content_id: contentId, recipe }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const b = (await res.json().catch(() => ({}))) as { error?: string; error_ar?: string };
+      throw new Error(b?.error ?? `write_video_script failed (${res.status})`);
+    }
+    return (await res.json()) as { draft: VideoScriptDraft };
+  } finally {
+    clearTimeout(t);
+  }
+}
 export const applyVideoScript = (contentId: string, scenes: ScriptSceneDraft[]) =>
   call<{ scenes: MosScene[] }>('video_script_apply', { content_id: contentId, scenes });
 

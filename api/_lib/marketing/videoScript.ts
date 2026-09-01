@@ -198,7 +198,7 @@ export async function generateScript(
   const client = new Anthropic({ apiKey });
   const msg = await client.messages.create({
     model: SCRIPT_MODEL,
-    max_tokens: 2000,
+    max_tokens: 1500,
     system: systemPrompt(),
     tools: [tool],
     tool_choice: { type: 'tool', name: 'emit_script' },
