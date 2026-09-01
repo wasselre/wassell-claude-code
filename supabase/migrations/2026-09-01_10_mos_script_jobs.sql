@@ -66,7 +66,7 @@ BEGIN
 
   UPDATE public.mos_script_jobs
      SET status = 'running', started_at = now(), worker_id = p_worker_id,
-         attempts = attempts + 1
+         attempts = r.attempts + 1  -- qualify: bare `attempts` is ambiguous with the OUT param
    WHERE id = r.id;
 
   job_id := r.id; content_id := r.content_id; recipe := r.recipe;

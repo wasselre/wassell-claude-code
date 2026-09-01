@@ -191,7 +191,10 @@ export async function generateScript(
   const client = new Anthropic({ apiKey });
   const msg = await client.messages.create({
     model: SCRIPT_MODEL,
-    max_tokens: 1500,
+    // Generous ceiling: a full 5-8 scene Arabic script + 3 hooks needs ~1.5-2k
+    // output tokens, and 1500 truncated the tool JSON → 0 scenes. It's a
+    // background job now, so latency doesn't gate this.
+    max_tokens: 4000,
     system: systemPrompt(),
     tools: [tool],
     tool_choice: { type: 'tool', name: 'emit_script' },
