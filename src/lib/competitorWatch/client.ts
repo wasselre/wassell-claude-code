@@ -124,6 +124,14 @@ export const fetchStorageUsage = () => callAction<StorageUsage>('storage_usage',
 export const fetchCompanyRoster = () => callAction<CompanyRoster>('company_roster', 'roster');
 
 // ── Confirm links (attribution review) ─────────────────────────────────────
+export interface QueueProject {
+  developer: string | null;
+  city: string | null;
+  status: string | null;
+  unit_types: string[] | null;
+  price: { min?: number | null; max?: number | null } | null;
+  page_url: string | null;
+}
 export interface QueueItem {
   post_id: string;
   project_id: string;
@@ -134,9 +142,11 @@ export interface QueueItem {
   post_url: string | null;
   published_at: string | null;
   summary: string | null;
+  caption: string | null;
   project_name: string | null;
   names_read: string | null;
   thumb_url: string | null;
+  project: QueueProject | null;
 }
 export interface AttributionQueue { remaining: number; items: QueueItem[]; }
 
