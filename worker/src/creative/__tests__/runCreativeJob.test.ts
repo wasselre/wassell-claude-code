@@ -340,6 +340,13 @@ describe('classifyCreativeError', () => {
     expect(classifyCreativeError(new Error('fetch failed')).kind).toBe('transient');
     expect(classifyCreativeError(new Error('upstream request timeout')).kind).toBe('transient');
   });
+  it('maps a max_tokens truncation to output_truncated (NON-retryable), not provider', () => {
+    // Live regression (أكنان 25 package): the model call exceeded max_tokens.
+    // It arrives prefixed `provider:` but is DETERMINISTIC — must not requeue,
+    // or the job loops burning an opus-5 call each attempt.
+    const err = new Error('provider:anthropic max_tokens reached before the JSON was complete (model=claude-opus-5, max_tokens=8000)');
+    expect(classifyCreativeError(err).kind).toBe('output_truncated');
+  });
   it('everything else is unknown (terminal)', () => {
     expect(classifyCreativeError(new Error('post_package job is missing params.package_id')).kind).toBe('unknown');
     expect(classifyCreativeError('a string throw').kind).toBe('unknown');

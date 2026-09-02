@@ -292,8 +292,8 @@ UPDATE public.mos_settings
          SELECT COALESCE(jsonb_object_agg(k, v), '{}'::jsonb)
            FROM jsonb_each('{
              "creative_concepts":    {"provider": "anthropic", "model": "claude-sonnet-5", "params": {"max_tokens": 2500, "thinking": "adaptive", "effort": "medium"}},
-             "creative_package":     {"provider": "anthropic", "model": "claude-opus-5",   "params": {"max_tokens": 8000, "thinking": "adaptive", "effort": "high"}},
-             "creative_derivatives": {"provider": "anthropic", "model": "claude-sonnet-5", "params": {"max_tokens": 5000, "thinking": "adaptive", "effort": "medium"}},
+             "creative_package":     {"provider": "anthropic", "model": "claude-opus-5",   "params": {"max_tokens": 32000, "thinking": "adaptive", "effort": "high"}},
+             "creative_derivatives": {"provider": "anthropic", "model": "claude-sonnet-5", "params": {"max_tokens": 16000, "thinking": "adaptive", "effort": "medium"}},
              "design_read_slide":    {"provider": "anthropic", "model": "claude-sonnet-5", "params": {"max_tokens": 2000}},
              "design_read_post":     {"provider": "anthropic", "model": "claude-sonnet-5", "params": {"max_tokens": 3000, "thinking": "adaptive", "effort": "medium"}},
              "asset_enrich_v2":      {"provider": "anthropic", "model": "claude-haiku-4-5-20251001", "params": {"max_tokens": 1500}},

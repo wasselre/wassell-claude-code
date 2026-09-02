@@ -58,6 +58,7 @@ import type { CreativeJobContext, CreativeJobLike } from './io.js';
 export type CreativeErrorKind =
   | 'provider'
   | 'transient'
+  | 'output_truncated'
   | 'facts_insufficient'
   | 'validation_unrepaired'
   | 'rights_blocked'
@@ -76,9 +77,20 @@ const PREFIX_KINDS: ReadonlyArray<[prefix: string, kind: CreativeErrorKind]> = [
 
 const TRANSIENT_RE = /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|upstream request timeout|gateway timeout|503|502|504|rate.?limit|overloaded/i;
 
+/**
+ * A max_tokens truncation is DETERMINISTIC given the same role config — retrying
+ * it fails identically (same lesson as the Hatif-webhook loop), while burning a
+ * full model call each attempt. It arrives as `provider:anthropic max_tokens
+ * reached …`, which would otherwise be classified 'provider' (retryable), so we
+ * catch it FIRST and mark it non-retryable. Fix is to raise the role's
+ * max_tokens, not to retry.
+ */
+const OUTPUT_TRUNCATED_RE = /max_tokens reached before the JSON was complete/i;
+
 /** Map a thrown error to the mos_creative_jobs.error_kind vocabulary (the RPC requeues only provider/transient). */
 export function classifyCreativeError(err: unknown): { message: string; kind: CreativeErrorKind } {
   const message = err instanceof Error ? err.message : String(err);
+  if (OUTPUT_TRUNCATED_RE.test(message)) return { message, kind: 'output_truncated' };
   for (const [prefix, kind] of PREFIX_KINDS) {
     if (message.startsWith(prefix) || message.includes(` ${prefix}`)) return { message, kind };
   }
