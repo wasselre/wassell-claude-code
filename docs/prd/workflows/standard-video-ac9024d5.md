@@ -5,7 +5,7 @@
 # Workflow: Standard video / مسار الفيديو القياسي
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-03
+**Last updated (from DB):** 2026-09-02
 **Workflow id:** `ac9024d5-2093-4037-9d81-61ae17c90a54`   ·   **Active:** yes
 **Group:** (ungrouped)
 **Trigger:** null
