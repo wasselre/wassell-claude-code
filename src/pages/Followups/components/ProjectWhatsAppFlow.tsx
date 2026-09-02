@@ -62,6 +62,9 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
   const [bodyAr, setBodyAr] = useState('');
   const [bodyEn, setBodyEn] = useState('');
   const [chatBody, setChatBody] = useState(''); // body fed to the composer (current language)
+  /** The language the rep will SEND in — independent of the app UI language. */
+  const [sendLang, setSendLang] = useState<'ar' | 'en'>(isAr ? 'ar' : 'en');
+  const sendAr = sendLang === 'ar';
   const [previewMode, setPreviewMode] = useState<PreviewMode>('generate');
   const [saveOnAccept, setSaveOnAccept] = useState(true);
   const [warn, setWarn] = useState<string | null>(null);
@@ -149,7 +152,7 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
     setPreviewMode('factcheck');
     setBodyAr(savedAr);
     setBodyEn(savedEn);
-    setChatBody((isAr ? savedAr : savedEn) || savedAr || savedEn);
+    setChatBody((sendAr ? savedAr : savedEn) || savedAr || savedEn);
     setPhase('files');
   }
 
@@ -174,7 +177,7 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
     if (savedMessageMatchesCurrentFacts(currentFacts, savedAr, savedEn)) {
       setBodyAr(savedAr);
       setBodyEn(savedEn);
-      setChatBody((isAr ? savedAr : savedEn) || savedAr || savedEn);
+      setChatBody((sendAr ? savedAr : savedEn) || savedAr || savedEn);
       setGeneratedBy(null);
       setPhase('preview');
       return;
@@ -186,7 +189,7 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       const en = body_en || savedEn;
       setBodyAr(ar);
       setBodyEn(en);
-      setChatBody((isAr ? ar : en) || ar || en);
+      setChatBody((sendAr ? ar : en) || ar || en);
       setGeneratedBy(generated_by ?? null);
       setPhase('preview');
     } catch (e) {
@@ -195,7 +198,7 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       const msg = e instanceof Error ? e.message : String(e);
       setBodyAr(savedAr);
       setBodyEn(savedEn);
-      setChatBody((isAr ? savedAr : savedEn) || savedAr || savedEn);
+      setChatBody((sendAr ? savedAr : savedEn) || savedAr || savedEn);
       setGeneratedBy(null);
       setWarn(L(`تعذّر تحديث الأرقام تلقائيًا (${msg}). راجعها قبل الإرسال.`, `Couldn't auto-refresh the numbers (${msg}). Review them before sending.`));
       setPhase('preview');
@@ -211,7 +214,7 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       const { body_ar, body_en, generated_by } = await generateProjectMessageAi(projectId);
       setBodyAr(body_ar);
       setBodyEn(body_en);
-      setChatBody((isAr ? body_ar : body_en) || body_ar || body_en);
+      setChatBody((sendAr ? body_ar : body_en) || body_ar || body_en);
       setGeneratedBy(generated_by ?? null);
       setPhase('preview');
     } catch (e) {
@@ -221,16 +224,31 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
     }
   }
 
+  /**
+   * Flip the send language, carrying the rep's edited text over: the composer
+   * body becomes the newly-selected language's body, and the edit they just
+   * made is kept on the PREVIOUS language's body so nothing is lost.
+   */
+  function switchSendLang(next: 'ar' | 'en') {
+    if (next === sendLang) return;
+    const currentAr = sendAr ? chatBody : bodyAr;
+    const currentEn = sendAr ? bodyEn : chatBody;
+    setBodyAr(currentAr);
+    setBodyEn(currentEn);
+    setSendLang(next);
+    setChatBody(next === 'ar' ? currentAr : currentEn);
+  }
+
   // Accept the previewed text → persist (save new / update fact-checked) → files.
   async function acceptText() {
     if (!chatBody.trim()) {
       addToast(L('الرسالة فارغة', 'Message is empty'), 'error');
       return;
     }
-    // The edited body is in the current UI language; keep the other language's
+    // The edited body is in the current SEND language; keep the other language's
     // body so the stored template stays bilingual.
-    const ar = isAr ? chatBody : bodyAr;
-    const en = isAr ? bodyEn : chatBody;
+    const ar = sendAr ? chatBody : bodyAr;
+    const en = sendAr ? chatBody : bodyEn;
     setBodyAr(ar);
     setBodyEn(en);
 
@@ -393,6 +411,19 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
                   <span>{warn}</span>
                 </div>
               )}
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-charcoal/40">{L('لغة الرسالة', 'Message language')}</span>
+                <div className="inline-flex rounded-lg border border-sand/50 overflow-hidden">
+                  <button type="button" onClick={() => switchSendLang('ar')}
+                    className={`px-3 py-1 text-xs font-semibold transition-colors ${sendAr ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream'}`}>
+                    {L('العربية', 'Arabic')}
+                  </button>
+                  <button type="button" onClick={() => switchSendLang('en')}
+                    className={`px-3 py-1 text-xs font-semibold transition-colors ${!sendAr ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream'}`}>
+                    {L('الإنجليزية', 'English')}
+                  </button>
+                </div>
+              </div>
               <div>
                 <label className="block text-[11px] font-bold text-charcoal/40 mb-1">{L('الرسالة', 'Message')}</label>
                 <textarea

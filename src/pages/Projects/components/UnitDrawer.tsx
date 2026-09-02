@@ -412,15 +412,11 @@ export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, 
           chatWid={chatPdf.chatWid}
           clientName={chatPdf.clientName}
           clientPhone={chatPdf.clientPhone}
-          title={isAr ? `وحدة ${unit.code ?? ''}`.trim() : `Unit ${unit.code ?? ''}`.trim()}
-          subtitle={[projectName, unit.type ? (isAr ? unit.type.label_ar : unit.type.label_en) : null].filter(Boolean).join(isAr ? ' · ' : ' · ')}
-          filename={unitPdfFilename(project, unit)}
-          defaultCaption={
-            isAr
-              ? `تفاصيل الوحدة ${unit.code ?? ''} — ${projectName ?? ''}`.trim()
-              : `Unit ${unit.code ?? ''} — ${projectName ?? ''}`.trim()
-          }
-          build={() => buildUnitPdf({ project, unit, isAr })}
+          titleFor={(a) => (a ? `وحدة ${unit.code ?? ''}`.trim() : `Unit ${unit.code ?? ''}`.trim())}
+          subtitleFor={(a) => [projectName, unit.type ? (a ? unit.type.label_ar : unit.type.label_en) : null].filter(Boolean).join(' · ')}
+          filenameFor={() => unitPdfFilename(project, unit)}
+          captionFor={(a) => (a ? `تفاصيل الوحدة ${unit.code ?? ''} — ${projectName ?? ''}`.trim() : `Unit ${unit.code ?? ''} — ${projectName ?? ''}`.trim())}
+          buildFor={(a) => buildUnitPdf({ project, unit, isAr: a })}
         />
       )}
     </div>

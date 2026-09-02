@@ -422,15 +422,11 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
           chatWid={chatPdf.chatWid}
           clientName={chatPdf.clientName}
           clientPhone={chatPdf.clientPhone}
-          title={isAr ? `وحدات ${projectView.name ?? ''}`.trim() : `${projectView.name ?? 'Project'} units`}
-          subtitle={isAr ? `${filtered.length} وحدة` : `${filtered.length} units`}
-          filename={unitsPdfFilename(projectView)}
-          defaultCaption={
-            isAr
-              ? `قائمة وحدات ${projectView.name ?? ''}`.trim()
-              : `${projectView.name ?? 'Project'} — units list`
-          }
-          build={() => buildUnitsTablePdf({ project: projectView, units: filtered, isAr })}
+          titleFor={(a) => (a ? `وحدات ${projectView.name ?? ''}`.trim() : `${projectView.name ?? 'Project'} units`)}
+          subtitleFor={(a) => (a ? `${filtered.length} وحدة` : `${filtered.length} units`)}
+          filenameFor={() => unitsPdfFilename(projectView)}
+          captionFor={(a) => (a ? `قائمة وحدات ${projectView.name ?? ''}`.trim() : `${projectView.name ?? 'Project'} — units list`)}
+          buildFor={(a) => buildUnitsTablePdf({ project: projectView, units: filtered, isAr: a })}
         />
       )}
     </div>

@@ -14,13 +14,15 @@ interface Props {
   /** Resolved recipient (from the chat's linked client). */
   clientName?: string | null;
   clientPhone?: string | null;
-  /** What's being sent — shown in the dialog. */
-  title: string;
-  subtitle: string;
-  filename: string;
-  defaultCaption: string;
-  /** Lazily produce the PDF bytes; memoized once generated. */
-  build: () => Promise<Blob>;
+  /** Language-parameterized what's-being-sent text + document builders — the
+      rep picks the PDF language in this dialog, independent of the app UI
+      language. */
+  titleFor: (isAr: boolean) => string;
+  subtitleFor: (isAr: boolean) => string;
+  filenameFor: (isAr: boolean) => string;
+  captionFor: (isAr: boolean) => string;
+  /** Lazily produce the PDF bytes for a language; memoized per language. */
+  buildFor: (isAr: boolean) => Promise<Blob>;
 }
 
 /**
@@ -36,28 +38,42 @@ export default function SendUnitsPdfModal({
   chatWid,
   clientName,
   clientPhone,
-  title,
-  subtitle,
-  filename,
-  defaultCaption,
-  build,
+  titleFor,
+  subtitleFor,
+  filenameFor,
+  captionFor,
+  buildFor,
 }: Props) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
 
-  const [caption, setCaption] = useState(defaultCaption);
+  // `isAr` stays the APP UI language (dialog chrome + L()); `docLang` is the
+  // language the PDF itself is built in — the rep chooses it below.
+  const appIsAr = isAr;
+  const [docLang, setDocLang] = useState<'ar' | 'en'>(appIsAr ? 'ar' : 'en');
+  const docAr = docLang === 'ar';
+
+  const [caption, setCaption] = useState(() => captionFor(appIsAr));
+  const captionEdited = useRef(false);
   const [busy, setBusy] = useState<'send' | 'download' | null>(null);
   const [showSchedule, setShowSchedule] = useState(false);
-  const blobRef = useRef<Blob | null>(null);
+  const blobCache = useRef<Record<'ar' | 'en', Blob | null>>({ ar: null, en: null });
 
   const L = (ar: string, en: string) => (isAr ? ar : en);
 
   const ensureBlob = useCallback(async (): Promise<Blob> => {
-    if (blobRef.current) return blobRef.current;
-    const b = await build();
-    blobRef.current = b;
+    const cached = blobCache.current[docLang];
+    if (cached) return cached;
+    const b = await buildFor(docAr);
+    blobCache.current[docLang] = b;
     return b;
-  }, [build]);
+  }, [buildFor, docLang, docAr]);
+
+  const changeDocLang = (next: 'ar' | 'en') => {
+    if (next === docLang || busy) return;
+    setDocLang(next);
+    if (!captionEdited.current) setCaption(captionFor(next === 'ar'));
+  };
 
   const canSend = !!clientPhone && busy === null;
 
@@ -65,6 +81,7 @@ export default function SendUnitsPdfModal({
     if (busy) return;
     setBusy('download');
     try {
+      const filename = filenameFor(docAr);
       downloadPdf(await ensureBlob(), filename);
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
@@ -84,6 +101,7 @@ export default function SendUnitsPdfModal({
     // container on document.body), so it survives this modal unmounting.
     // Progress + failures surface globally via the job center + toasts.
     const cap = caption;
+    const filename = filenameFor(docAr);
     onClose();
     void (async () => {
       try {
@@ -111,7 +129,7 @@ export default function SendUnitsPdfModal({
       onClose={() => {
         if (!busy) onClose();
       }}
-      title={title}
+      title={titleFor(docAr)}
       maxWidth="max-w-md"
       footer={
         <>
@@ -148,10 +166,26 @@ export default function SendUnitsPdfModal({
       }
     >
       <div className="space-y-4">
+        {/* PDF language — the rep picks Arabic or English for the document,
+            independent of the app UI language. */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-charcoal/50">{L('لغة الملف', 'PDF language')}</span>
+          <div className="inline-flex rounded-lg border border-sand/40 overflow-hidden">
+            <button type="button" disabled={busy !== null} onClick={() => changeDocLang('ar')}
+              className={`px-3 py-1 text-xs font-semibold transition-colors ${docAr ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream'}`}>
+              {L('العربية', 'Arabic')}
+            </button>
+            <button type="button" disabled={busy !== null} onClick={() => changeDocLang('en')}
+              className={`px-3 py-1 text-xs font-semibold transition-colors ${!docAr ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream'}`}>
+              {L('الإنجليزية', 'English')}
+            </button>
+          </div>
+        </div>
+
         {/* What's being sent */}
         <div>
-          <div className="text-sm font-bold text-charcoal truncate" title={title}>{title}</div>
-          <div className="text-xs text-charcoal/55">{subtitle}</div>
+          <div className="text-sm font-bold text-charcoal truncate" title={titleFor(docAr)}>{titleFor(docAr)}</div>
+          <div className="text-xs text-charcoal/55">{subtitleFor(docAr)}</div>
         </div>
 
         {/* Recipient */}
@@ -175,7 +209,7 @@ export default function SendUnitsPdfModal({
           <label className="text-xs font-bold text-charcoal/50 mb-1 block">{L('نص المرافقة', 'Caption')}</label>
           <textarea
             value={caption}
-            onChange={(e) => setCaption(e.target.value)}
+            onChange={(e) => { captionEdited.current = true; setCaption(e.target.value); }}
             rows={3}
             className="form-input w-full resize-none"
           />
