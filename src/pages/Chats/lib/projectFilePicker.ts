@@ -100,3 +100,39 @@ export function orderSelectedRefs(items: PickerItem[], selected: ReadonlySet<str
   for (const g of order) for (const it of items) if (it.group === g && selected.has(it.ref)) out.push(it.ref);
   return out;
 }
+
+/**
+ * Bulk-send order: documents (PDFs) FIRST, then photos, then videos. The bulk
+ * project flow sends the text message on its own first, so this media list is
+ * appended after it — giving the customer the intended
+ * **text → PDF → pictures** sequence. Distinct from `orderSelectedRefs`
+ * (photo-first) which the single-project ride-along keeps for back-compat.
+ */
+export function orderSelectedRefsBulk(items: PickerItem[], selected: ReadonlySet<string>): string[] {
+  const order: PickerGroup[] = ['document', 'photo', 'video'];
+  const out: string[] = [];
+  for (const g of order) for (const it of items) if (it.group === g && selected.has(it.ref)) out.push(it.ref);
+  return out;
+}
+
+/**
+ * Default checkbox selection for the BULK picker: every document (PDFs — the
+ * brochure the rep wants sent) + the FIRST THREE photos. Videos start
+ * unchecked (heavy, rarely the intro). Photos arrive hero-first because
+ * `resolveProjectFacts` prepends `main_image`, so "first three" = hero + next
+ * two — the "top 3" pre-selection the rep asked for to make bulk faster. The
+ * rep can still tick/untick anything before sending.
+ */
+export const BULK_DEFAULT_PHOTO_COUNT = 3;
+export function defaultBulkSelection(items: PickerItem[]): Set<string> {
+  const out = new Set<string>();
+  let photos = 0;
+  for (const it of items) {
+    if (it.group === 'document') out.add(it.ref);
+    else if (it.group === 'photo' && photos < BULK_DEFAULT_PHOTO_COUNT) {
+      out.add(it.ref);
+      photos++;
+    }
+  }
+  return out;
+}

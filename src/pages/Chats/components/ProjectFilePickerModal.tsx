@@ -5,7 +5,8 @@ import { listSendableProjectFiles } from '@/lib/files/recordFiles';
 import { signThumbUrls, signViewUrl } from '@/lib/files/client';
 import Button from '@/components/ui/Button';
 import {
-  buildPickerItems, isUnitPlanFile, orderSelectedRefs, type PickerGroup, type PickerItem,
+  buildPickerItems, isUnitPlanFile, orderSelectedRefs, orderSelectedRefsBulk,
+  defaultBulkSelection, type PickerGroup, type PickerItem,
 } from '@/pages/Chats/lib/projectFilePicker';
 
 // pdf.js (~1 MB) loads only when a PDF is opened — keeps it out of the main bundle.
@@ -35,12 +36,22 @@ export default function ProjectFilePickerModal({
   isAr,
   onConfirm,
   onClose,
+  preselect = 'all',
+  confirmLabel,
 }: {
   allProjectId: string;
   projectName: string;
   isAr: boolean;
   onConfirm: (refs: string[]) => void;
   onClose: () => void;
+  /**
+   * Which files start checked. `'all'` (default, single-project flow) pre-checks
+   * everything. `'bulk'` pre-checks documents + the first 3 photos (the "top 3")
+   * and returns refs in text→PDF→pictures order (`orderSelectedRefsBulk`).
+   */
+  preselect?: 'all' | 'bulk';
+  /** Overrides the default "Continue" confirm-button label (e.g. "Next: message"). */
+  confirmLabel?: string;
 }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
@@ -91,7 +102,13 @@ export default function ProjectFilePickerModal({
 
         if (cancelled) return;
         setItems(withThumbs);
-        setSelected(new Set(withThumbs.map((it) => it.ref))); // everything pre-checked
+        // 'all' → everything pre-checked (single flow). 'bulk' → documents +
+        // the first 3 photos (the "top 3" pre-selection the rep asked for).
+        setSelected(
+          preselect === 'bulk'
+            ? defaultBulkSelection(withThumbs)
+            : new Set(withThumbs.map((it) => it.ref)),
+        );
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -127,8 +144,12 @@ export default function ProjectFilePickerModal({
       return next;
     });
 
-  // Send order matches today's behaviour: photos, then videos, then documents.
-  const orderedSelectedRefs = useMemo(() => orderSelectedRefs(items, selected), [items, selected]);
+  // Send order. 'all' (single flow) keeps today's photos→videos→documents order;
+  // 'bulk' returns documents→photos→videos so the send reads text→PDF→pictures.
+  const orderedSelectedRefs = useMemo(
+    () => (preselect === 'bulk' ? orderSelectedRefsBulk(items, selected) : orderSelectedRefs(items, selected)),
+    [items, selected, preselect],
+  );
 
   const selectedCount = orderedSelectedRefs.length;
 
@@ -271,7 +292,9 @@ export default function ProjectFilePickerModal({
             <Button variant="secondary" onClick={onClose}>{L('إلغاء', 'Cancel')}</Button>
             <Button variant="primary" onClick={() => onConfirm(orderedSelectedRefs)} disabled={loading}>
               <Check size={14} />
-              {selectedCount > 0 ? L(`متابعة (${selectedCount})`, `Continue (${selectedCount})`) : L('متابعة بدون ملفات', 'Continue with no files')}
+              {confirmLabel
+                ? (selectedCount > 0 ? `${confirmLabel} (${selectedCount})` : confirmLabel)
+                : selectedCount > 0 ? L(`متابعة (${selectedCount})`, `Continue (${selectedCount})`) : L('متابعة بدون ملفات', 'Continue with no files')}
             </Button>
           </div>
         </div>

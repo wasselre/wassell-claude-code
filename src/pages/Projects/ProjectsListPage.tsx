@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { LayoutGrid, List, Map as MapIcon, Search, Plus, MapPin, Building2, Target, Globe, AlertTriangle } from 'lucide-react';
+import { LayoutGrid, List, Map as MapIcon, Search, Plus, MapPin, Building2, Target, Globe, AlertTriangle, Send, Check, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import MapsView from '@/pages/Records/components/MapsView';
 import RecordListPage from '@/pages/Records/RecordListPage';
+import BulkProjectSendFlow from '@/pages/Chats/components/BulkProjectSendFlow';
+import ClientPicker, { type PickedClient } from '@/pages/Chats/components/ClientPicker';
 import {
   resolveProjectView,
   modelByName,
@@ -68,6 +70,14 @@ export default function ProjectsListPage() {
   const [priceMin, setPriceMin] = useState('');
   const [priceMax, setPriceMax] = useState('');
 
+  // Bulk send: select several projects → pick a client → send them in order.
+  const [selectMode, setSelectMode] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [pickClient, setPickClient] = useState(false);
+  const [recipient, setRecipient] = useState<PickedClient | null>(null);
+  const toggleSel = (id: string) =>
+    setSel((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
   // ── distinct filter option lists, derived from the data ─────────────────────
   const cities = useMemo(() => [...new Set(views.map((v) => v.city).filter((x): x is string => !!x))].sort(), [views]);
   const districts = useMemo(() => [...new Set(views.map((v) => v.district).filter((x): x is string => !!x))].sort(), [views]);
@@ -111,6 +121,7 @@ export default function ProjectsListPage() {
   }, [filtered]);
 
   const filteredRecords = useMemo(() => filtered.map((v) => v.raw), [filtered]);
+  const selectedIds = useMemo(() => filtered.filter((v) => sel.has(v.id)).map((v) => v.id), [filtered, sel]);
 
   // Publish the currently-visible, sorted project ids so the detail page's
   // prev/next steps through the same order shown here.
@@ -151,6 +162,13 @@ export default function ProjectsListPage() {
               </button>
             ))}
           </div>
+          <Button
+            variant={selectMode ? 'primary' : 'secondary'}
+            onClick={() => { setSelectMode((m) => !m); setSel(new Set()); }}
+          >
+            <Send size={16} className="inline -mt-0.5 me-1" />
+            {selectMode ? (isAr ? 'إلغاء' : 'Cancel') : (isAr ? 'إرسال متعدد' : 'Bulk send')}
+          </Button>
           <Button variant="ghost" onClick={() => navigate('/model/all_projects?generic=1')}>
             {isAr ? 'العرض الكلاسيكي' : 'Classic view'}
           </Button>
@@ -160,6 +178,19 @@ export default function ProjectsListPage() {
           </Button>
         </div>
       </div>
+
+      {/* Bulk-send selection strip */}
+      {selectMode && (
+        <div className="card p-3 flex items-center justify-between gap-3 border-copper/40 bg-copper/5">
+          <span className="text-sm text-charcoal/70">
+            {isAr ? `${selectedIds.length} مشروع محدد` : `${selectedIds.length} project${selectedIds.length === 1 ? '' : 's'} selected`}
+          </span>
+          <Button variant="primary" disabled={selectedIds.length === 0} onClick={() => setPickClient(true)}>
+            <Send size={15} className="inline -mt-0.5 me-1" />
+            {isAr ? 'اختيار العميل والإرسال' : 'Choose client & send'}
+          </Button>
+        </div>
+      )}
 
       {/* KPI summary */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -233,12 +264,32 @@ export default function ProjectsListPage() {
         <div className="card p-16 text-center text-charcoal/40">{isAr ? 'لا توجد مشاريع مطابقة' : 'No matching projects'}</div>
       ) : view === 'grid' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filtered.map((v) => <ProjectCard key={v.id} v={v} isAr={isAr} onOpen={() => navigate(`/model/all_projects/${v.id}`)} />)}
+          {filtered.map((v) => (
+            <ProjectCard
+              key={v.id}
+              v={v}
+              isAr={isAr}
+              onOpen={() => navigate(`/model/all_projects/${v.id}`)}
+              selectable={selectMode}
+              selected={sel.has(v.id)}
+              onToggleSelect={() => toggleSel(v.id)}
+            />
+          ))}
         </div>
       ) : (
         <div className="card divide-y divide-sand/40">
           {filtered.map((v) => (
-            <button key={v.id} onClick={() => navigate(`/model/all_projects/${v.id}`)} className="w-full text-start p-3 flex items-center gap-4 hover:bg-cream/50 transition-colors">
+            <button
+              key={v.id}
+              onClick={() => (selectMode ? toggleSel(v.id) : navigate(`/model/all_projects/${v.id}`))}
+              aria-pressed={selectMode ? sel.has(v.id) : undefined}
+              className={`w-full text-start p-3 flex items-center gap-4 transition-colors ${selectMode && sel.has(v.id) ? 'bg-copper/5' : 'hover:bg-cream/50'}`}
+            >
+              {selectMode && (
+                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${sel.has(v.id) ? 'border-copper bg-copper text-white' : 'border-sand bg-white text-transparent'}`}>
+                  <Check size={13} />
+                </span>
+              )}
               <div className="font-bold text-charcoal flex-1 min-w-0 truncate">{v.name ?? `#${v.id.slice(0, 8)}`}</div>
               <div className="text-sm text-charcoal/50 hidden md:block w-40 truncate">{[v.district, v.city].filter(Boolean).join(isAr ? '، ' : ', ') || '—'}</div>
               <div className="text-sm text-charcoal/50 hidden lg:block w-40 truncate">{v.developer ?? '—'}</div>
@@ -249,21 +300,70 @@ export default function ProjectsListPage() {
           ))}
         </div>
       )}
+
+      {/* Pick the recipient client for the bulk send. */}
+      {pickClient && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-charcoal/40 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setPickClient(false); }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]" dir={isAr ? 'rtl' : 'ltr'}>
+            <div className="flex items-center gap-3 px-5 py-3 border-b border-sand/20 shrink-0">
+              <h2 className="flex-1 text-base font-bold text-chocolate">{isAr ? 'إرسال إلى عميل' : 'Send to a client'}</h2>
+              <button onClick={() => setPickClient(false)} className="p-1.5 rounded-lg text-charcoal/50 hover:text-charcoal hover:bg-cream" aria-label={isAr ? 'إغلاق' : 'Close'}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto">
+              <ClientPicker onPick={(c) => { setRecipient(c); setPickClient(false); }} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk send — the selected projects to the chosen client, in order. */}
+      {recipient && selectedIds.length > 0 && (
+        <BulkProjectSendFlow
+          isAr={isAr}
+          projectIds={selectedIds}
+          recipient={{ kind: 'client', client: recipient }}
+          onClose={() => { setRecipient(null); setSelectMode(false); setSel(new Set()); }}
+        />
+      )}
     </div>
   );
 }
 
-function ProjectCard({ v, isAr, onOpen }: { v: ProjectView; isAr: boolean; onOpen: () => void }) {
+function ProjectCard({
+  v, isAr, onOpen, selectable = false, selected = false, onToggleSelect,
+}: {
+  v: ProjectView;
+  isAr: boolean;
+  onOpen: () => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+}) {
   const price = formatPriceRange(v.priceRange, isAr);
   const img = useSignedImage(v.imageRef);
   return (
-    <div className="card overflow-hidden flex flex-col group cursor-pointer" onClick={onOpen}>
+    <div
+      className={`card overflow-hidden flex flex-col group cursor-pointer ${selectable && selected ? 'ring-2 ring-copper' : ''}`}
+      onClick={selectable ? onToggleSelect : onOpen}
+    >
       {/* Image / placeholder */}
       <div className="h-36 bg-gradient-to-br from-copper/20 to-terracotta/20 relative flex items-center justify-center">
         {img ? (
           <img src={img} alt={v.name ?? ''} className="w-full h-full object-cover" loading="lazy" />
         ) : (
           <Building2 size={36} className="text-copper/40" />
+        )}
+        {selectable && (
+          <span className={`absolute top-2 ${isAr ? 'start-2' : 'end-2'} flex h-6 w-6 items-center justify-center rounded-md border shadow-sm ${selected ? 'border-copper bg-copper text-white' : 'border-sand bg-white/90 text-transparent'}`}>
+            <Check size={15} />
+          </span>
         )}
         <div className="absolute top-2 start-2 flex gap-1.5">
           {v.status && <Badge label={isAr ? v.status.label_ar : v.status.label_en} color={v.status.color ?? undefined} />}

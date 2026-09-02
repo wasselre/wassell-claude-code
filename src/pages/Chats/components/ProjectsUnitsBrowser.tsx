@@ -20,6 +20,8 @@ import Badge from '@/components/ui/Badge';
 import DualRangeSlider from '@/components/ui/DualRangeSlider';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
+import BulkProjectSendFlow, { type BulkRecipientInput } from '@/pages/Chats/components/BulkProjectSendFlow';
+import { recordToPickedClient, resolveClientSlugs } from '@/pages/Chats/components/ClientPicker';
 import type { AppModel, AppRecord } from '@/types';
 
 /**
@@ -155,6 +157,24 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
     return chatPdfFromClient(clientRec);
   }, [chatWid, clientRec, clientsModel, isAr]);
 
+  // Recipient for a bulk send: the open conversation when we have its wid, else
+  // the linked client (a new conversation is established on the first send).
+  // Null → no client context, so bulk send is not offered (browse-only).
+  const bulkRecipient = useMemo<BulkRecipientInput | null>(() => {
+    const label = clientRec && clientsModel ? recordTitle(clientsModel, clientRec, isAr) : undefined;
+    if (chatWid) return { kind: 'chat', chatWid, label };
+    if (clientRec && clientsModel) {
+      return { kind: 'client', client: recordToPickedClient(clientRec, resolveClientSlugs(clientsModel), isAr) };
+    }
+    return null;
+  }, [chatWid, clientRec, clientsModel, isAr]);
+  const toggleBulk = (id: string) =>
+    setBulkSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
   // ── filters ───────────────────────────────────────────────────────────────
   // Default to OUR projects — in a chat the rep is picking something of ours to
   // send the client, so the browser opens on مشاريعنا (they can still switch scope).
@@ -232,6 +252,11 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
   const [openId, setOpenId] = useState<string | null>(null);
   const openView = useMemo(() => (openId ? views.find((v) => v.id === openId) ?? null : null), [views, openId]);
   const [sendTarget, setSendTarget] = useState<{ id: string; name: string } | null>(null);
+  // Bulk send: multi-select several projects and send them to this client in
+  // order (text → PDF → pictures per project, one project at a time).
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkSel, setBulkSel] = useState<Set<string>>(new Set());
+  const [bulkFlow, setBulkFlow] = useState(false);
   const [addState, setAddState] = useState<'idle' | 'saving' | 'added'>('idle');
   // On opening a project, reflect whether it's ALREADY a (non-eliminated) option
   // for this client, so a saved project shows "In options" instead of "Add".
@@ -411,6 +436,19 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
                 <span className="ms-auto text-[11px] text-charcoal/50">
                   {L(`${filtered.length} مشروع`, `${filtered.length} projects`)}
                 </span>
+                {bulkRecipient && (
+                  <button
+                    type="button"
+                    onClick={() => { setBulkMode((m) => !m); setBulkSel(new Set()); }}
+                    className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                      bulkMode ? 'bg-copper text-white' : 'bg-cream text-charcoal/70 hover:bg-sand/40'
+                    }`}
+                    title={L('تحديد عدة مشاريع للإرسال', 'Select several projects to send')}
+                  >
+                    <ListPlus size={13} className="inline -mt-0.5 me-1" />
+                    {bulkMode ? L('إلغاء التحديد', 'Cancel') : L('إرسال متعدد', 'Bulk send')}
+                  </button>
+                )}
               </div>
 
               {showFilters && (
@@ -471,7 +509,16 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
                 <>
                   <div className="space-y-2">
                     {filtered.slice(0, limit).map((v) => (
-                      <ProjectRow key={v.id} v={v} isAr={isAr} model={projectsModel} onOpen={() => setOpenId(v.id)} />
+                      <ProjectRow
+                        key={v.id}
+                        v={v}
+                        isAr={isAr}
+                        model={projectsModel}
+                        onOpen={() => setOpenId(v.id)}
+                        selectable={bulkMode}
+                        selected={bulkSel.has(v.id)}
+                        onToggleSelect={() => toggleBulk(v.id)}
+                      />
                     ))}
                   </div>
                   {filtered.length > limit && (
@@ -486,6 +533,24 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
                 </>
               )}
             </div>
+
+            {/* Bulk action bar — send the selected projects to this client in order. */}
+            {bulkMode && (
+              <div className="flex shrink-0 items-center justify-between gap-2 border-t border-sand/40 bg-white px-3 py-2.5">
+                <span className="text-xs text-charcoal/60">
+                  {L(`${bulkSel.size} محدد`, `${bulkSel.size} selected`)}
+                </span>
+                <button
+                  type="button"
+                  disabled={bulkSel.size === 0}
+                  onClick={() => setBulkFlow(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-terracotta disabled:opacity-40"
+                >
+                  <Send size={14} />
+                  {L(`إرسال ${bulkSel.size} مشروع`, `Send ${bulkSel.size} project${bulkSel.size === 1 ? '' : 's'}`)}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -500,6 +565,16 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
           projectName={sendTarget.name}
           clientRec={clientRec}
           onClose={() => setSendTarget(null)}
+        />
+      )}
+
+      {/* Bulk send — several selected projects to this client, in order. */}
+      {bulkFlow && bulkRecipient && (
+        <BulkProjectSendFlow
+          isAr={isAr}
+          projectIds={filtered.filter((v) => bulkSel.has(v.id)).map((v) => v.id)}
+          recipient={bulkRecipient}
+          onClose={() => { setBulkFlow(false); setBulkMode(false); setBulkSel(new Set()); }}
         />
       )}
     </div>
@@ -559,8 +634,17 @@ function isAvailablePrice(v: ProjectView, model: AppModel | undefined): boolean 
 
 /** One compact project row — sized for a 600px sheet and a phone. */
 function ProjectRow({
-  v, isAr, model, onOpen,
-}: { v: ProjectView; isAr: boolean; model: AppModel | undefined; onOpen: () => void }) {
+  v, isAr, model, onOpen, selectable = false, selected = false, onToggleSelect,
+}: {
+  v: ProjectView;
+  isAr: boolean;
+  model: AppModel | undefined;
+  onOpen: () => void;
+  /** In bulk mode the row toggles selection instead of opening. */
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+}) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const img = useSignedImage(v.imageRef);
   const price = formatPriceRange(priceRangeFor(v, model), isAr);
@@ -569,9 +653,23 @@ function ProjectRow({
   return (
     <button
       type="button"
-      onClick={onOpen}
-      className="flex w-full items-stretch gap-3 overflow-hidden rounded-xl border border-sand/50 bg-white p-2 text-start transition-colors hover:border-copper/40 hover:bg-cream/50"
+      onClick={selectable ? onToggleSelect : onOpen}
+      aria-pressed={selectable ? selected : undefined}
+      className={`flex w-full items-stretch gap-3 overflow-hidden rounded-xl border bg-white p-2 text-start transition-colors ${
+        selectable && selected
+          ? 'border-copper ring-1 ring-copper/40 bg-copper/5'
+          : 'border-sand/50 hover:border-copper/40 hover:bg-cream/50'
+      }`}
     >
+      {selectable && (
+        <span
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors ${
+            selected ? 'border-copper bg-copper text-white' : 'border-sand bg-white text-transparent'
+          }`}
+        >
+          <Check size={13} />
+        </span>
+      )}
       <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-copper/20 to-terracotta/20">
         {img ? (
           <img src={img} alt="" className="h-full w-full object-cover" loading="lazy" />

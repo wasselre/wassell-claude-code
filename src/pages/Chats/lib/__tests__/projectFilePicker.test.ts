@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   groupOfKind, nameFromUrl, buildPickerItems, orderSelectedRefs,
+  orderSelectedRefsBulk, defaultBulkSelection,
 } from '../projectFilePicker';
 import type { RecordFileEntry } from '@/lib/files/recordFiles';
 import type { BusinessFileRow, FilePreviewKind } from '@/types';
@@ -68,5 +69,42 @@ describe('orderSelectedRefs', () => {
     );
     const selected = new Set(['doc', 'img', 'https://s/v/clip.mp4']); // vidfile excluded
     expect(orderSelectedRefs(items, selected)).toEqual(['img', 'https://s/v/clip.mp4', 'doc']);
+  });
+});
+
+describe('orderSelectedRefsBulk', () => {
+  it('orders documents → photos → videos (text is sent separately first)', () => {
+    const items = buildPickerItems(
+      [entry('img', 'image'), entry('doc', 'pdf'), entry('vidfile', 'video')],
+      ['https://s/v/clip.mp4'],
+    );
+    const selected = new Set(['img', 'doc', 'vidfile', 'https://s/v/clip.mp4']);
+    // PDF leads, then photos, then videos → the send reads text → PDF → pictures.
+    expect(orderSelectedRefsBulk(items, selected)).toEqual([
+      'doc', 'img', 'vidfile', 'https://s/v/clip.mp4',
+    ]);
+  });
+});
+
+describe('defaultBulkSelection', () => {
+  it('pre-checks every document + the first three photos, videos off', () => {
+    const items = buildPickerItems(
+      [
+        entry('p1', 'image'), entry('p2', 'image'), entry('p3', 'image'),
+        entry('p4', 'image'), // 4th photo must NOT be pre-checked
+        entry('d1', 'pdf'), entry('d2', 'pdf'),
+        entry('v1', 'video'),
+      ],
+      ['https://s/v/clip.mp4'],
+    );
+    const sel = defaultBulkSelection(items);
+    expect([...sel].sort()).toEqual(['d1', 'd2', 'p1', 'p2', 'p3'].sort());
+    expect(sel.has('p4')).toBe(false);
+    expect(sel.has('v1')).toBe(false);
+  });
+
+  it('is safe when a project has fewer than three photos', () => {
+    const items = buildPickerItems([entry('p1', 'image'), entry('d1', 'pdf')], []);
+    expect([...defaultBulkSelection(items)].sort()).toEqual(['d1', 'p1'].sort());
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, User, X, Bookmark, XCircle, TimerOff, RefreshCw, CheckSquare, Save } from 'lucide-react';
+import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, User, X, Bookmark, XCircle, TimerOff, RefreshCw, CheckSquare, Save, Send } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferences';
@@ -27,6 +27,8 @@ import { collectClientAreaItems } from '@/lib/geo/clientArea';
 import type { LocationItem } from '@/lib/geo/locationItems';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
+import BulkProjectSendFlow, { type BulkRecipientInput } from '@/pages/Chats/components/BulkProjectSendFlow';
+import { recordToPickedClient, resolveClientSlugs } from '@/pages/Chats/components/ClientPicker';
 import LeaveWithoutSavingModal from '@/components/matching/LeaveWithoutSavingModal';
 import ProjectDetailPage from '@/pages/Projects/ProjectDetailPage';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
@@ -179,6 +181,8 @@ export default function ProjectFinderPage() {
   const [eliminating, setEliminating] = useState(false);
   // "Send to client" from a card — only offered while a client is selected.
   const [sendTarget, setSendTarget] = useState<FinderMatch | null>(null);
+  // Bulk send: send the selected projects to this client in order.
+  const [bulkSendOpen, setBulkSendOpen] = useState(false);
   // A result's SOURCE opened as an IN-PAGE overlay (project → rich detail page;
   // market listing → record form) instead of a new browser tab. The old
   // `window.open('_blank')` spawned a fresh document that cold-booted the whole
@@ -538,6 +542,19 @@ export default function ProjectFinderPage() {
     [selectedClientId, refinedGroups, selected],
   );
 
+  // Selected all_projects ids for a bulk WhatsApp send (market listings use the
+  // separate ListingWhatsAppFlow and are excluded). Order follows the results.
+  const bulkSendableIds = useMemo(() => {
+    const all = FINDER_GROUP_KEYS.flatMap((k) => refinedGroups[k]);
+    return [...new Set(
+      all.filter((i) => selected.has(i.project_id) && i.source !== 'market_listings').map((i) => i.project_id),
+    )];
+  }, [refinedGroups, selected]);
+  const bulkRecipient = useMemo<BulkRecipientInput | null>(() => {
+    if (!clientRec || !clientsModel) return null;
+    return { kind: 'client', client: recordToPickedClient(clientRec, resolveClientSlugs(clientsModel), isAr) };
+  }, [clientRec, clientsModel, isAr]);
+
   // Select ALL currently-FILTERED results (score slider + refine filters, across
   // every tab) — or clear them if they already all are. Filtered-out items are
   // never touched; bulk-save persists only the filtered∩selected set anyway, so
@@ -661,6 +678,17 @@ export default function ProjectFinderPage() {
               {bulkSaving ? <Loader2 size={16} className="animate-spin" /> : <Bookmark size={16} />}
               <span className="hidden sm:inline">{L('حفظ الخيارات', 'Save options')}</span>
               <span className="rounded-full bg-white/25 px-1.5 text-[11px]">{selectedVisible}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkSendOpen(true)}
+              disabled={bulkSendableIds.length === 0}
+              title={L('إرسال المشاريع المحددة للعميل عبر واتساب', 'Send selected projects to the client on WhatsApp')}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-copper/50 bg-white px-4 py-2 text-sm font-bold text-copper transition hover:bg-copper/5 disabled:opacity-50"
+            >
+              <Send size={16} />
+              <span className="hidden sm:inline">{L('إرسال', 'Send')}</span>
+              <span className="rounded-full bg-copper/15 px-1.5 text-[11px]">{bulkSendableIds.length}</span>
             </button>
           </>
         )}
@@ -1051,6 +1079,16 @@ export default function ProjectFinderPage() {
             onClose={() => setSendTarget(null)}
           />
         )
+      )}
+
+      {/* Bulk send — the selected projects to this client, in order. */}
+      {bulkSendOpen && bulkRecipient && bulkSendableIds.length > 0 && (
+        <BulkProjectSendFlow
+          isAr={isAr}
+          projectIds={bulkSendableIds}
+          recipient={bulkRecipient}
+          onClose={() => setBulkSendOpen(false)}
+        />
       )}
 
       {/* Clearing the client without saving any option → confirm first. */}
