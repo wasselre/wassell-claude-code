@@ -69,13 +69,15 @@ export default function DualRangeSlider({ min, max, step = 1, low, high, onChang
             }}
           />
         )}
-        {/* Low handle (kept below the high handle in DOM so an overlap still lets
-            you grab the high one; low stays reachable everywhere else). */}
+        {/* When the two thumbs overlap, put the LOW thumb on top only in the
+            UPPER half of the range (so it can be dragged DOWN); otherwise leave
+            the HIGH thumb on top (so it can be dragged UP). This stops the
+            slider sticking at either extreme. */}
         <input
           type="range" min={min} max={max} step={step} value={lo} disabled={disabled}
           onChange={(e) => setLow(Number(e.target.value))}
           aria-label={label ? `${label} — min` : 'min'}
-          style={{ zIndex: lo >= hi ? 5 : 3 }}
+          style={{ zIndex: lo >= hi && lo > (min + max) / 2 ? 5 : 3 }}
         />
         <input
           type="range" min={min} max={max} step={step} value={hi} disabled={disabled}
