@@ -138,6 +138,19 @@ describe('validateBase — happy path', () => {
   });
 });
 
+describe('validateBase — robustness', () => {
+  it('NEVER throws when the model hands back non-array headlines / slides', () => {
+    const base = mkBase();
+    (base.design_text as unknown as { headlines: unknown }).headlines = 'ليست مصفوفة';
+    (base as unknown as { slides: unknown }).slides = null;
+    base.strategy.format = 'carousel';
+    let r!: ReturnType<typeof validateBase>;
+    expect(() => { r = validateBase(base, mkCtx()); }).not.toThrow();
+    expect(has(r.errors, 'headline_count')).toBe(true);
+    expect(has(r.errors, 'slides_missing')).toBe(true);
+  });
+});
+
 describe('validateBase — claims', () => {
   it('errors when a matching claim is not cited in fact_refs', () => {
     const r = validateBase(mkBase({ design: { fact_refs: [] } }), mkCtx());
@@ -401,6 +414,16 @@ describe('validateConcepts', () => {
     const r = validateConcepts(out, mkCtx());
     expect(has(r.errors, 'concept_count')).toBe(true);
     expect(has(r.errors, 'entity_phone')).toBe(true);
+  });
+  it('NEVER throws on a malformed (non-array) concepts payload — degrades to concept_count', () => {
+    // Live regression (أكنان 25 re-run): the model returned `concepts` as a
+    // non-array. `?? []` does not catch a truthy non-array, so `.map`/`for..of`
+    // threw and crashed the whole job instead of flagging needs_attention.
+    const bad = { concepts: { c1: {} }, recommended: 'c1', warnings: [], missing: [] } as unknown as ConceptsOutput;
+    let r!: ReturnType<typeof validateConcepts>;
+    expect(() => { r = validateConcepts(bad, mkCtx()); }).not.toThrow();
+    expect(has(r.errors, 'concept_count')).toBe(true);
+    expect(r.ok).toBe(false);
   });
   it('does NOT read fact-reference codes (F5, F8-F11) in the rationale as unverified claims', () => {
     // Live regression (أكنان 25): the model cites fact codes in `why`/`angle`

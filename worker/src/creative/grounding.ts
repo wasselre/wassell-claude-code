@@ -146,6 +146,7 @@ const FACT_CODE = /\bF\d+(?:\s*[-–]\s*F?\d+)?\b/g;
 
 /** Claim gate: every numeric mention must resolve to a claimable fact AND be cited. */
 function gateClaims(text: string, factRefs: string[], path: string, s: Scan, opts: { requireCitation: boolean }): void {
+  const cited = Array.isArray(factRefs) ? factRefs : []; // never throw on a malformed fact_refs
   const items = extractMentions(text.replace(FACT_CODE, ' ')).map((m) => ({ scene: 0, field: 'voiceover' as const, mention: classifyMention(m) }));
   if (items.length === 0) return;
   const verdicts = gateByClass(items, s.ctx.facts.facts, { forbidden_claim_classes: [] });
@@ -154,7 +155,7 @@ function gateClaims(text: string, factRefs: string[], path: string, s: Scan, opt
       s.errors.push({ path, rule: 'claim_unverified', detail: `«${v.mention}» (${v.class}): ${v.reason}` });
     } else if (v.verdict === 'review') {
       s.warnings.push({ path, rule: 'claim_review', detail: `«${v.mention}» (${v.class}): ${v.reason}` });
-    } else if (opts.requireCitation && v.fact_id && !factRefs.includes(v.fact_id)) {
+    } else if (opts.requireCitation && v.fact_id && !cited.includes(v.fact_id)) {
       s.errors.push({
         path,
         rule: 'fact_ref_missing',
@@ -167,7 +168,7 @@ function gateClaims(text: string, factRefs: string[], path: string, s: Scan, opt
 /** fact_refs entries must be real fact ids; citing a context-only fact is a warning. */
 function checkFactRefs(factRefs: string[], path: string, s: Scan): void {
   const known = new Map(s.ctx.refs.map((r) => [r.id, r]));
-  for (const id of factRefs) {
+  for (const id of Array.isArray(factRefs) ? factRefs : []) {
     const ref = known.get(id);
     if (!ref) s.errors.push({ path, rule: 'fact_ref_unknown', detail: `fact_refs cites unknown fact id '${id}'` });
     else if (!ref.claimable) {
@@ -229,14 +230,18 @@ function result(s: Scan): ValidationResult {
 // ── Stage 1: concepts ────────────────────────────────────────────────────────
 export function validateConcepts(out: ConceptsOutput, ctx: GroundingCtx): ValidationResult {
   const s = mkScan(ctx);
-  if (!Array.isArray(out.concepts) || out.concepts.length < 2 || out.concepts.length > 3) {
-    s.errors.push({ path: 'concepts', rule: 'concept_count', detail: `expected 2–3 concepts, got ${Array.isArray(out.concepts) ? out.concepts.length : 'none'}` });
+  // NEVER throw (contracts §8): a malformed model output (concepts not an array)
+  // must become a clean concept_count error → needs_attention, not a job crash.
+  // `?? []` does NOT catch a non-array truthy value, so normalise explicitly.
+  const concepts = Array.isArray(out.concepts) ? out.concepts : [];
+  if (concepts.length < 2 || concepts.length > 3) {
+    s.errors.push({ path: 'concepts', rule: 'concept_count', detail: `expected 2–3 concepts, got ${Array.isArray(out.concepts) ? out.concepts.length : 'none (concepts is not an array)'}` });
   }
-  const ids = new Set((out.concepts ?? []).map((c) => c.id));
+  const ids = new Set(concepts.map((c) => c.id));
   if (out.recommended && !ids.has(out.recommended)) {
     s.warnings.push({ path: 'recommended', rule: 'recommended_unknown', detail: `recommended concept '${out.recommended}' is not one of the concept ids` });
   }
-  for (const c of out.concepts ?? []) {
+  for (const c of concepts) {
     const path = `concepts.${c.id}`;
     // Gate only the CUSTOMER-FACING concept copy — the concept title and the
     // one-line design idea (what actually reaches the design). `angle` and `why`
@@ -253,6 +258,12 @@ export function validateConcepts(out: ConceptsOutput, ctx: GroundingCtx): Valida
 // ── Stage 2: base package ────────────────────────────────────────────────────
 export function validateBase(base: BasePackage, ctx: GroundingCtx): ValidationResult {
   const s = mkScan(ctx);
+  // NEVER throw (contracts §8): the model can hand back a non-array where the
+  // schema asks for one. Spreading / iterating that would crash the whole job
+  // instead of degrading to a validation error — normalise the model-supplied
+  // arrays we spread or iterate below.
+  const headlines = Array.isArray(base.design_text.headlines) ? base.design_text.headlines : [];
+  const slides = Array.isArray(base.slides) ? base.slides : [];
 
   // Language = the record's language (contracts §0 rule 5).
   if (base.strategy.language !== ctx.language) {
@@ -281,7 +292,7 @@ export function validateBase(base: BasePackage, ctx: GroundingCtx): ValidationRe
 
   // Headline counts: single 1–4; carousel cover 1–3 + a headline on every slide.
   const format = base.strategy.format;
-  const headlineCount = base.design_text.headlines.length;
+  const headlineCount = headlines.length;
   if (format === 'single') {
     if (headlineCount < 1 || headlineCount > 4) {
       s.errors.push({ path: 'design_text.headlines', rule: 'headline_count', detail: `a single post needs 1–4 headline lines, got ${headlineCount}` });
@@ -290,10 +301,10 @@ export function validateBase(base: BasePackage, ctx: GroundingCtx): ValidationRe
     if (headlineCount < 1 || headlineCount > 3) {
       s.errors.push({ path: 'design_text.headlines', rule: 'headline_count', detail: `a carousel cover needs 1–3 headline lines, got ${headlineCount}` });
     }
-    if (base.slides.length === 0) {
+    if (slides.length === 0) {
       s.errors.push({ path: 'slides', rule: 'slides_missing', detail: 'format is carousel but the slide plan is empty' });
     }
-    for (const slide of base.slides) {
+    for (const slide of slides) {
       if (!slide.headline || !slide.headline.trim()) {
         s.errors.push({ path: `slides.${slide.index}.headline`, rule: 'slide_headline', detail: `slide ${slide.index} has no headline — every carousel slide needs one` });
       }
@@ -302,9 +313,9 @@ export function validateBase(base: BasePackage, ctx: GroundingCtx): ValidationRe
 
   // Copy battery: design text + every slide.
   const dt = base.design_text;
-  checkCopy([...dt.headlines, dt.cta_on_design ?? ''].join('\n'), dt.fact_refs, 'design_text', s);
+  checkCopy([...headlines, dt.cta_on_design ?? ''].join('\n'), dt.fact_refs, 'design_text', s);
   checkFactRefs(dt.fact_refs, 'design_text.fact_refs', s);
-  for (const slide of base.slides) {
+  for (const slide of slides) {
     checkCopy([slide.headline, slide.support ?? ''].join('\n'), slide.fact_refs, `slides.${slide.index}`, s);
     checkFactRefs(slide.fact_refs, `slides.${slide.index}.fact_refs`, s);
   }
