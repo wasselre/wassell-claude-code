@@ -20,6 +20,7 @@ import Composer from './Composer';
 import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
 import LeadIntakeModal from './LeadIntakeModal';
 import ContactIntakeModal from './ContactIntakeModal';
+import OfficerIntakeModal from './OfficerIntakeModal';
 import LogInteractionModal from './LogInteractionModal';
 import NotifyOfficerModal from './NotifyOfficerModal';
 import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointmentModal';
@@ -171,9 +172,23 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     if (!contactsModel || !phone) return null;
     return matchRecordByPhone(phone, records[contactsModel.id] ?? [], phoneFieldSlugs(contactsModel));
   }, [contactsModel, records, phone]);
-  // Our own name for this number (client, else contact) wins over the WhatsApp
-  // push name — see resolveChatDisplayName.
-  const name = resolveChatDisplayName(data, matchedContact, linkedClient);
+
+  // Project officer whose phone matches this chat — a developer's/marketer's
+  // coordinator we notify about client visits (the receiving end of "Notify
+  // officer"). Matched live like the contact/advertiser above; nothing is stored
+  // on the chat, so an officer saved from this header links instantly.
+  const officersModel = useMemo(() => models.find((m) => m.name === 'project_officers') ?? null, [models]);
+  const matchedOfficer = useMemo(() => {
+    if (!officersModel || !phone) return null;
+    return matchRecordByPhone(phone, records[officersModel.id] ?? [], phoneFieldSlugs(officersModel));
+  }, [officersModel, records, phone]);
+  const matchedOfficerName = matchedOfficer
+    ? ((matchedOfficer.data as Record<string, unknown>).name as string | null) ?? null
+    : null;
+
+  // Our own name for this number (client, else contact, else project officer)
+  // wins over the WhatsApp push name — see resolveChatDisplayName.
+  const name = resolveChatDisplayName(data, matchedContact, linkedClient, matchedOfficer);
 
   // Client-options popup (options list + embedded Project Finder).
   const [showClientOptions, setShowClientOptions] = useState(false);
@@ -232,6 +247,8 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const [showLeadIntake, setShowLeadIntake] = useState(false);
   // Address-book capture (unlinked chat → save just a name + number).
   const [showContactIntake, setShowContactIntake] = useState(false);
+  // Project-officer capture (unlinked chat → save a developer/marketer officer).
+  const [showOfficerIntake, setShowOfficerIntake] = useState(false);
   // "Log an interaction" — record an off-task call/visit result.
   const [showLogInteraction, setShowLogInteraction] = useState(false);
   // Book an appointment / record a visit straight from the conversation — the
@@ -340,6 +357,12 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         ? () => setRecordPopup({ modelId: advertisersModel.id, recordId: matchedAdvertiser.id, href: `/model/advertisers/${matchedAdvertiser.id}` })
         : () => navigate(`/model/advertisers/${matchedAdvertiser.id}`)
       : null;
+  const openOfficerRecord =
+    matchedOfficer && officersModel
+      ? isMobile
+        ? () => setRecordPopup({ modelId: officersModel.id, recordId: matchedOfficer.id, href: `/model/project_officers/${matchedOfficer.id}` })
+        : () => navigate(`/model/project_officers/${matchedOfficer.id}`)
+      : null;
 
   // Props shared by the CRM-actions cluster, rendered inline on desktop and
   // inside the mobile bottom sheet — ONE source of truth, no duplicated markup.
@@ -348,12 +371,15 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     matchedContact,
     matchedAdvertiser,
     matchedAdvertiserName,
+    matchedOfficer,
+    matchedOfficerName,
     recordId,
     aiManaged,
     onOpenProjectsBrowser: () => setShowProjectsBrowser(true),
     onOpenClient: openClientProfile,
     onOpenContact: openContactRecord,
     onOpenAdvertiser: openAdvertiserRecord,
+    onOpenOfficer: openOfficerRecord,
     // Toggle so the header button also CLOSES the docked split panel (on the
     // modal path it can only be clicked while closed, so toggling is harmless).
     // Opening fresh starts on the options list.
@@ -367,6 +393,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     onNotifyOfficer: () => setShowNotifyOfficer(true),
     onLeadIntake: () => setShowLeadIntake(true),
     onContactIntake: () => setShowContactIntake(true),
+    onOfficerIntake: () => setShowOfficerIntake(true),
   };
 
   // Whether the client-options panel should dock beside the chat right now:
@@ -670,6 +697,16 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         />
       )}
 
+      {/* Project-officer capture — save this number as a developer/marketer
+          officer we coordinate visits with. Coverage is linked later. */}
+      {showOfficerIntake && !matchedOfficer && (
+        <OfficerIntakeModal
+          phone={phone ?? ''}
+          suggestedName={name !== '—' ? name : ''}
+          onClose={() => setShowOfficerIntake(false)}
+        />
+      )}
+
       {/* Log an interaction — record an off-task call/visit result; defaults
           to completing the client's current open task. */}
       {showLogInteraction && clientLinkId && (
@@ -796,12 +833,15 @@ function CrmActions({
   matchedContact,
   matchedAdvertiser,
   matchedAdvertiserName,
+  matchedOfficer,
+  matchedOfficerName,
   recordId,
   aiManaged,
   onOpenProjectsBrowser,
   onOpenClient,
   onOpenContact,
   onOpenAdvertiser,
+  onOpenOfficer,
   onClientOptions,
   onLogInteraction,
   onBookAppointment,
@@ -809,6 +849,7 @@ function CrmActions({
   onNotifyOfficer,
   onLeadIntake,
   onContactIntake,
+  onOfficerIntake,
   layout,
   className = '',
   close,
@@ -817,12 +858,15 @@ function CrmActions({
   matchedContact: AppRecord | null;
   matchedAdvertiser: AppRecord | null;
   matchedAdvertiserName: string | null;
+  matchedOfficer: AppRecord | null;
+  matchedOfficerName: string | null;
   recordId: string;
   aiManaged: boolean;
   onOpenProjectsBrowser: () => void;
   onOpenClient: (() => void) | null;
   onOpenContact: (() => void) | null;
   onOpenAdvertiser: (() => void) | null;
+  onOpenOfficer: (() => void) | null;
   onClientOptions: () => void;
   onLogInteraction: () => void;
   onBookAppointment: () => void;
@@ -830,6 +874,7 @@ function CrmActions({
   onNotifyOfficer: () => void;
   onLeadIntake: () => void;
   onContactIntake: () => void;
+  onOfficerIntake: () => void;
   layout: 'inline' | 'sheet';
   className?: string;
   close?: () => void;
@@ -876,6 +921,19 @@ function CrmActions({
           <span className="truncate max-w-[220px]">
             {isAr ? 'معلن: ' : 'Advertiser: '}
             {matchedAdvertiserName ?? (isAr ? 'عرض البطاقة' : 'open record')}
+          </span>
+        </button>
+      )}
+      {matchedOfficer && onOpenOfficer && (
+        <button
+          onClick={run(onOpenOfficer)}
+          className={`inline-flex items-center gap-1.5 rounded-full bg-copper/10 ${pad} font-medium text-copper transition-colors hover:bg-copper/20`}
+          title={isAr ? 'عرض بطاقة مسؤول المشروع' : 'View project officer record'}
+        >
+          <UserCheck size={12} />
+          <span className="truncate max-w-[220px]">
+            {isAr ? 'مسؤول مشروع: ' : 'Project officer: '}
+            {matchedOfficerName ?? (isAr ? 'عرض البطاقة' : 'open record')}
           </span>
         </button>
       )}
@@ -956,6 +1014,20 @@ function CrmActions({
             >
               <Contact size={12} />
               {isAr ? 'إضافة جهة اتصال جديدة' : 'Add a new contact'}
+            </button>
+          )}
+          {!matchedOfficer && (
+            <button
+              onClick={run(onOfficerIntake)}
+              className={`inline-flex items-center gap-1.5 rounded-full border border-copper/30 bg-copper/5 ${pad} font-medium text-copper transition-colors hover:bg-copper/10`}
+              title={
+                isAr
+                  ? 'حفظ الرقم كمسؤول مشروع (من مطوّر أو مسوّق) ننسّق معه الزيارات'
+                  : 'Save this number as a developer/marketer project officer we coordinate visits with'
+              }
+            >
+              <UserCheck size={12} />
+              {isAr ? 'إضافة كمسؤول مشروع' : 'Add as project officer'}
             </button>
           )}
         </>

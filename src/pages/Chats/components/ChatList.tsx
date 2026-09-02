@@ -52,10 +52,12 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
   const advertisersModel = useMemo(() => models.find((m) => m.name === 'advertisers') ?? null, [models]);
   const contactsModel = useMemo(() => models.find((m) => m.name === 'contacts') ?? null, [models]);
+  const officersModel = useMemo(() => models.find((m) => m.name === 'project_officers') ?? null, [models]);
   const chatRecords = chatsModel ? (records[chatsModel.id] ?? []) : [];
   const clientRecords = clientsModel ? (records[clientsModel.id] ?? []) : [];
   const advertiserRecords = advertisersModel ? (records[advertisersModel.id] ?? []) : [];
   const contactRecords = contactsModel ? (records[contactsModel.id] ?? []) : [];
+  const officerRecords = officersModel ? (records[officersModel.id] ?? []) : [];
 
   useEffect(() => {
     void (async () => {
@@ -158,6 +160,28 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     [contactByChatId],
   );
 
+  // chat id → matched project officer, same live phone match as the advertisers
+  // / contacts above. Like a contact, an officer does NOT move the chat out of
+  // "Other" — the chip just tells the rep this number is a developer's/marketer's
+  // coordinator (whom we notify about visits), and the row shows the saved name.
+  const officerByChatId = useMemo(() => {
+    const map = new Map<string, AppRecord>();
+    const slugs = phoneFieldSlugs(officersModel);
+    if (officerRecords.length === 0 || slugs.length === 0) return map;
+    for (const chat of chatRecords) {
+      const phone = (chat.data as Record<string, unknown>).phone as string | null | undefined;
+      const match = matchRecordByPhone(phone, officerRecords, slugs);
+      if (match) map.set(chat.id, match);
+    }
+    return map;
+  }, [chatRecords, officerRecords, officersModel]);
+
+  /** The project officer whose phone matches this chat's phone (or null). */
+  const officerOf = useCallback(
+    (chat: AppRecord): AppRecord | null => officerByChatId.get(chat.id) ?? null,
+    [officerByChatId],
+  );
+
   // id → display name for districts + cities (location-chip resolution).
   const geoNames = useMemo(() => buildGeoNameMap(models, records), [models, records]);
 
@@ -177,13 +201,16 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
           const advertiserName = advertiser ? String((advertiser.data as Record<string, unknown>).name ?? '') : '';
           const contact = contactOf(r);
           const contactName = contact ? String((contact.data as Record<string, unknown>).name ?? '') : '';
+          const officer = officerOf(r);
+          const officerName = officer ? String((officer.data as Record<string, unknown>).name ?? '') : '';
           return (
             name.toLowerCase().includes(q) ||
             phone.toLowerCase().includes(q) ||
             preview.toLowerCase().includes(q) ||
             clientName.toLowerCase().includes(q) ||
             advertiserName.toLowerCase().includes(q) ||
-            contactName.toLowerCase().includes(q)
+            contactName.toLowerCase().includes(q) ||
+            officerName.toLowerCase().includes(q)
           );
         })
       : chatRecords;
@@ -195,7 +222,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
       if (!bAt) return -1;
       return bAt.localeCompare(aAt);
     });
-  }, [chatRecords, search, clientOf, advertiserOf, contactOf]);
+  }, [chatRecords, search, clientOf, advertiserOf, contactOf, officerOf]);
 
   const clientChats = useMemo(() => searched.filter((r) => clientOf(r) !== null), [searched, clientOf]);
 
@@ -380,6 +407,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
         {visible.map((record) => {
           const client = clientOf(record);
           const advertiser = advertiserOf(record);
+          const officer = officerOf(record);
           return (
             <ChatRow
               key={record.id}
@@ -391,7 +419,12 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
                   ? ((advertiser.data as Record<string, unknown>).name as string | null) ?? null
                   : null
               }
-              displayName={resolveChatDisplayName(record.data as Record<string, unknown>, contactOf(record), client)}
+              officerName={
+                officer
+                  ? ((officer.data as Record<string, unknown>).name as string | null) ?? null
+                  : null
+              }
+              displayName={resolveChatDisplayName(record.data as Record<string, unknown>, contactOf(record), client, officer)}
               isContact={contactOf(record) !== null}
               prefChips={
                 client
@@ -427,6 +460,7 @@ function ChatRow({
   selected,
   deviceLabel,
   advertiserName,
+  officerName,
   displayName,
   isContact,
   prefChips,
@@ -437,6 +471,7 @@ function ChatRow({
   selected: boolean;
   deviceLabel: string | null;
   advertiserName: string | null;
+  officerName: string | null;
   displayName: string;
   isContact: boolean;
   prefChips: ClientPrefChip[];
@@ -512,13 +547,23 @@ function ChatRow({
             </span>
           )}
         </div>
-        {(status === 'resolved' || status === 'archived' || deviceLabel || advertiserName || isContact || prefChips.length > 0) && (
+        {(status === 'resolved' || status === 'archived' || deviceLabel || advertiserName || officerName || isContact || prefChips.length > 0) && (
           <div className="flex items-center gap-1 mt-1 flex-wrap">
             {isContact && (
               <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-charcoal/8 text-charcoal/70">
                 {/* The contact's name is the row title now — this only says
                     what kind of number it is. */}
                 {isAr ? 'جهة اتصال' : 'Contact'}
+              </span>
+            )}
+            {officerName && (
+              <span
+                className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-copper/10 text-copper truncate max-w-[180px]"
+                title={officerName}
+              >
+                {/* The officer's name is the row title now — this says what kind
+                    of number it is (a project coordinator we notify). */}
+                {isAr ? 'مسؤول مشروع' : 'Project officer'}
               </span>
             )}
             {advertiserName && (
