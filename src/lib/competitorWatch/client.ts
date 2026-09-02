@@ -522,3 +522,23 @@ export async function cvEnqueue(content_media_id: string, priority?: number): Pr
 
 export const cvBackfillStatus = async (): Promise<CvBackfillStatus> =>
   pickField<CvBackfillStatus>(await callRaw('cv_backfill_status'), 'backfill');
+
+/** cv_wassel_status — how much of OUR OWN asset library is visually indexed. */
+export interface CvWasselStatus {
+  eligible: number;
+  videos: number;
+  images: number;
+  indexed: number;
+  processing: number;
+  failed: number;
+  not_started: number;
+}
+
+export const cvWasselStatus = async (): Promise<CvWasselStatus> =>
+  pickField<CvWasselStatus>(await callRaw('cv_wassel_status'), 'wassel');
+
+/** Enqueue the next N un-indexed OWN assets into the visual pipeline (admin). */
+export async function cvWasselBackfill(limit: number): Promise<{ queued: number }> {
+  const j = await callRaw('cv_wassel_backfill', { limit });
+  return { queued: typeof j.queued === 'number' ? j.queued : 0 };
+}

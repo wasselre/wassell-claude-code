@@ -937,6 +937,8 @@ export default async function handler(req: Request): Promise<Response> {
       case 'cv_frame':
       case 'cv_search':
       case 'cv_enqueue':
+      case 'cv_wassel_status':
+      case 'cv_wassel_backfill':
       case 'cv_backfill_status': {
         const svc = makeServiceClient('api:marketing:cv');
         if (!svc) return jsonError(500, 'service unavailable');
@@ -1102,6 +1104,32 @@ export default async function handler(req: Request): Promise<Response> {
           const { data, error } = await svc.rpc('mkt_cv_enqueue_video', { p_content_media_id: mediaId, p_priority: 50 });
           if (error) return jsonError(500, error.message);
           return jsonOk({ video_id: data as string });
+        }
+
+        if (action === 'cv_wassel_status') {
+          // How much of OUR OWN asset library (mos_assets videos + photos) is
+          // visually indexed in the SAME pipeline as competitors. Read-gated.
+          const { data, error } = await svc.rpc('mkt_cv_wassel_status', { p_project_id: null });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ wassel: data });
+        }
+
+        if (action === 'cv_wassel_backfill') {
+          // Enqueue the next N un-indexed OWN assets into the visual pipeline.
+          // Admin or a marketing manager (manage_roles). The daily cost cap +
+          // budget guard still throttle actual processing — this only queues.
+          const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+          if (isAdmin.error) return jsonError(500, isAdmin.error.message);
+          if (isAdmin.data !== true) {
+            const manage = await mktCan(svc, user.userId, 'manage_roles');
+            if (manage) return manage;
+          }
+          const limit = Math.max(1, Math.min(50, typeof body.limit === 'number' ? body.limit : 5));
+          const { data, error } = await svc.rpc('mkt_cv_enqueue_wassel_backlog', {
+            p_limit: limit, p_project_id: null, p_kinds: ['video', 'photo'],
+          });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ queued: Array.isArray(data) ? data.length : 0 });
         }
 
         // cv_backfill_status — how much of the stored video corpus is indexed.

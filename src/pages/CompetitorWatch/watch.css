@@ -256,6 +256,8 @@
 .cw-root .cw-vl-mode{display:inline-flex; gap:4px; background:var(--cw-line2); border-radius:22px; padding:3px}
 .cw-root .cw-vl-mode .cw-chip{border-color:transparent; background:transparent}
 .cw-root .cw-vl-mode .cw-chip.on{background:var(--cw-copper); color:#fff}
+.cw-root .cw-vl-lens{display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:2px 0 12px}
+.cw-root .cw-vl-lens .cw-chip.on{background:var(--cw-copper); color:#fff; border-color:var(--cw-copper)}
 .cw-root .cw-vl-facets{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px}
 .cw-root .cw-vl-facet{position:relative}
 .cw-root .cw-vl-menu{position:absolute; top:calc(100% + 6px); inset-inline-start:0; z-index:30; min-width:180px; background:var(--cw-card); border:1px solid var(--cw-line); border-radius:12px; box-shadow:var(--cw-shadow); padding:6px; display:flex; flex-direction:column; gap:2px; max-height:320px; overflow-y:auto}

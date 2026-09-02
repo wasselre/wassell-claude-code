@@ -49,13 +49,17 @@ export default function ShotCard({ r, isAr, onOpen, onVideo, onOrg, compact }: P
           : <span className="cw-vl-noimg"><Film size={22} /></span>}
         <span className="cw-vl-play" aria-hidden="true"><Play size={16} fill="currentColor" /></span>
         <span className="cw-vl-dur cw-mono">{r.duration_ms > 0 ? fmtMs(r.duration_ms) : `@ ${fmtMs(r.start_ms)}`}</span>
-        <span className="cw-vl-ref">{isAr ? REFERENCE_BADGE.ar : REFERENCE_BADGE.en}</span>
+        {r.owner === 'wassel'
+          ? <span className="cw-vl-ref" style={{ background: 'var(--cw-ok-bg, #e6f4ea)', color: 'var(--cw-ok, #2f855a)' }}>{isAr ? 'محتوانا' : 'Our content'}</span>
+          : <span className="cw-vl-ref">{isAr ? REFERENCE_BADGE.ar : REFERENCE_BADGE.en}</span>}
       </button>
       <div className="cw-vl-body">
         <div className="cw-metaline">
-          {onOrg
-            ? <button className="cw-co" type="button" onClick={onOrg}>{r.org_name ?? '—'}</button>
-            : <span className="cw-co" style={{ cursor: 'default' }}>{r.org_name ?? '—'}</span>}
+          {r.owner === 'wassel'
+            ? <span className="cw-co" style={{ cursor: 'default' }}>{isAr ? 'من مكتبة وصل' : 'Wassel library'}</span>
+            : onOrg
+              ? <button className="cw-co" type="button" onClick={onOrg}>{r.org_name ?? '—'}</button>
+              : <span className="cw-co" style={{ cursor: 'default' }}>{r.org_name ?? '—'}</span>}
           {r.platform && <span>· {r.platform}</span>}
           {r.published_at && <span className="cw-mono">· {fmtDate(r.published_at, isAr)}</span>}
         </div>

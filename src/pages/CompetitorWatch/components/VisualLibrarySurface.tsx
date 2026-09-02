@@ -14,8 +14,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Film, Search } from 'lucide-react';
 import { useIsAdmin } from '@/hooks/usePermission';
 import {
-  cvBackfillStatus, cvEnqueue, cvHealth, cvSearch, fetchCompanyRoster,
-  type CvBackfillStatus, type CvHealth, type CvSearchFilters, type CvSearchMode, type CvSearchResult, type CompanyRow,
+  cvBackfillStatus, cvEnqueue, cvHealth, cvSearch, cvWasselBackfill, cvWasselStatus, fetchCompanyRoster,
+  type CvBackfillStatus, type CvHealth, type CvSearchFilters, type CvSearchMode, type CvSearchResult, type CvWasselStatus, type CompanyRow,
 } from '@/lib/competitorWatch/client';
 import ShotCard from './ShotCard';
 import ShotDetailDrawer from './ShotDetailDrawer';
@@ -30,25 +30,42 @@ const VIDEO_STATUSES = ['queued', 'processing', 'frames_done', 'analyzing', 'ana
 function HealthStrip({ isAr, isAdmin, tick, onEnqueued }: { isAr: boolean; isAdmin: boolean; tick: number; onEnqueued: () => void }) {
   const [health, setHealth] = useState<CvHealth | null>(null);
   const [backfill, setBackfill] = useState<CvBackfillStatus | null>(null);
+  const [wassel, setWassel] = useState<CvWasselStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [mediaId, setMediaId] = useState('');
   const [busy, setBusy] = useState(false);
   const [enqueueMsg, setEnqueueMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  const [wasBusy, setWasBusy] = useState(false);
+  const [wasMsg, setWasMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
     setLoading(true); setError(null);
     Promise.all([
       cvHealth(),
-      // Backfill status is informational — its failure must not hide the health strip.
+      // These two are informational — their failure must not hide the health strip.
       cvBackfillStatus().catch((e: unknown) => { console.error('[visual-library] cv_backfill_status failed', e); return null; }),
+      cvWasselStatus().catch((e: unknown) => { console.error('[visual-library] cv_wassel_status failed', e); return null; }),
     ])
-      .then(([h, b]) => { if (alive) { setHealth(h); setBackfill(b); } })
+      .then(([h, b, w]) => { if (alive) { setHealth(h); setBackfill(b); setWassel(w); } })
       .catch((e) => { if (alive) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [tick]);
+
+  const processOurContent = async () => {
+    setWasBusy(true); setWasMsg(null);
+    try {
+      const r = await cvWasselBackfill(10);
+      setWasMsg({ tone: 'ok', text: isAr ? `تمت جدولة ${r.queued} من محتوانا` : `Queued ${r.queued} of our assets` });
+      onEnqueued();
+    } catch (e) {
+      setWasMsg({ tone: 'bad', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setWasBusy(false);
+    }
+  };
 
   const enqueue = async () => {
     const id = mediaId.trim();
@@ -139,9 +156,33 @@ function HealthStrip({ isAr, isAdmin, tick, onEnqueued }: { isAr: boolean; isAdm
           <div className="cw-vl-hsub cw-mono">{num(backfill.not_indexed)} {isAr ? 'فيديو غير مفهرس' : 'videos not indexed'}</div>
         </div>
       )}
+      {wassel && (
+        <div className="cw-vl-hcell">
+          <div className="cw-vl-hk">{isAr ? 'محتوانا' : 'Our content'}</div>
+          <div className="cw-meter" style={{ margin: '4px 0 0' }}>
+            <span className="cw-track">
+              <span className="cw-fill ok" style={{ width: `${wassel.eligible > 0 ? Math.max(1, Math.round((wassel.indexed / wassel.eligible) * 100)) : 0}%` }} />
+            </span>
+            <span className="cw-meterval cw-mono">{num(wassel.indexed)} / {num(wassel.eligible)}</span>
+          </div>
+          <div className="cw-vl-hsub cw-mono">
+            {wassel.processing > 0 && <span>{num(wassel.processing)} {isAr ? 'قيد المعالجة' : 'processing'} · </span>}
+            {wassel.failed > 0 && <span className="cw-vl-bad">{num(wassel.failed)} {isAr ? 'فشل' : 'failed'} · </span>}
+            {num(wassel.videos)} {isAr ? 'فيديو' : 'video'} · {num(wassel.images)} {isAr ? 'صورة' : 'photo'}
+          </div>
+          {isAdmin && (
+            <div style={{ marginTop: 4 }}>
+              <button type="button" className="cw-rvbtn ok" disabled={wasBusy || wassel.indexed + wassel.processing >= wassel.eligible} onClick={() => void processOurContent()}>
+                {wasBusy ? '…' : (isAr ? 'عالِج ١٠ التالية' : 'Process next 10')}
+              </button>
+              {wasMsg && <div className={`cw-vl-hsub ${wasMsg.tone === 'bad' ? 'cw-vl-bad' : 'cw-vl-ok'}`}>{wasMsg.text}</div>}
+            </div>
+          )}
+        </div>
+      )}
       {isAdmin && (
         <div className="cw-vl-hcell admin">
-          <div className="cw-vl-hk">{isAr ? 'عالج فيديو (مسؤول)' : 'Process a video (admin)'}</div>
+          <div className="cw-vl-hk">{isAr ? 'عالج فيديو منافس (مسؤول)' : 'Process competitor video (admin)'}</div>
           <div className="cw-vl-enq">
             <input
               value={mediaId}
@@ -167,6 +208,8 @@ export default function VisualLibrarySurface({ isAr }: { isAr: boolean }) {
   const [debouncedQ, setDebouncedQ] = useState('');
   const [mode, setMode] = useState<CvSearchMode>('shot');
   const [facets, setFacets] = useState<Record<string, string>>({});   // facet key → value
+  // Primary lens: competitors' footage vs OUR OWN indexed footage vs both.
+  const [owner, setOwner] = useState<'competitor' | 'wassel' | null>('competitor');
   const [org, setOrg] = useState<{ id: string; name: string } | null>(null);
   const [platform, setPlatform] = useState<string | null>(null);
   const [duration, setDuration] = useState<string | null>(null);
@@ -211,6 +254,7 @@ export default function VisualLibrarySurface({ isAr }: { isAr: boolean }) {
     const id = ++reqRef.current;
     setLoading(true); setError(null);
     const filters: CvSearchFilters = {
+      owner,
       organization_id: org?.id ?? null,
       platform,
       min_duration_ms: bucket?.min ?? null,
@@ -228,7 +272,7 @@ export default function VisualLibrarySurface({ isAr }: { isAr: boolean }) {
       })
       .catch((e) => { if (id === reqRef.current) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (id === reqRef.current) setLoading(false); });
-  }, [debouncedQ, mode, tags, org, platform, bucket, perVideo]);
+  }, [debouncedQ, mode, tags, org, platform, bucket, perVideo, owner]);
 
   const setFacet = (key: string, value: string | null) => {
     setFacets((prev) => {
@@ -244,6 +288,32 @@ export default function VisualLibrarySurface({ isAr }: { isAr: boolean }) {
   return (
     <div className="cw-surface cw-vl">
       <HealthStrip isAr={isAr} isAdmin={isAdmin} tick={healthTick} onEnqueued={() => setHealthTick((t) => t + 1)} />
+
+      <div className="cw-vl-lens" role="tablist" aria-label={isAr ? 'مصدر اللقطات' : 'Shot source'}>
+        {([
+          ['competitor', isAr ? 'المنافسون' : 'Competitors'],
+          ['wassel', isAr ? 'محتوانا' : 'Our content'],
+          [null, isAr ? 'الكل' : 'All'],
+        ] as const).map(([val, label]) => (
+          <button
+            key={String(val)}
+            type="button"
+            role="tab"
+            aria-selected={owner === val}
+            className={`cw-chip${owner === val ? ' on' : ''}`}
+            onClick={() => setOwner(val)}
+          >
+            {label}
+          </button>
+        ))}
+        <span className="cw-muted" style={{ fontSize: 11 }}>
+          {owner === 'wassel'
+            ? (isAr ? 'مكتبتنا نفسها — نفس الفهم البصري' : 'Our own library — same visual understanding')
+            : owner === 'competitor'
+              ? (isAr ? 'لقطات المنافسين — للاستلهام فقط' : 'Competitor shots — inspiration only')
+              : (isAr ? 'محتوانا والمنافسون معًا' : 'Ours and competitors together')}
+        </span>
+      </div>
 
       <div className="cw-filters">
         <div className="cw-search">
@@ -339,8 +409,11 @@ export default function VisualLibrarySurface({ isAr }: { isAr: boolean }) {
             {isAr ? '— اكتب في صندوق البحث للبحث بالمعنى' : '— type in the search box to search by meaning'}
           </span>
         )}
-        {results && results.length > 0 && (
+        {results && results.length > 0 && owner !== 'wassel' && (
           <span className="cw-muted" style={{ marginInlineStart: 8 }}>{isAr ? 'مرجع للاطلاع فقط' : 'reference only'}</span>
+        )}
+        {results && results.length > 0 && owner === 'wassel' && (
+          <span className="cw-muted" style={{ marginInlineStart: 8 }}>{isAr ? 'من مكتبتنا — قابلة للاستخدام' : 'our library — usable'}</span>
         )}
       </div>
       {error && <div className="cw-error">{isAr ? 'تعذّر البحث: ' : 'Search failed: '}{error}</div>}
@@ -357,10 +430,16 @@ export default function VisualLibrarySurface({ isAr }: { isAr: boolean }) {
             {browse
               ? (hasFilter
                   ? (isAr ? 'لا لقطات تطابق هذه التصفية.' : 'No shots match these filters.')
-                  : (isAr ? 'المكتبة فارغة بعد — لا توجد فيديوهات معالَجة.' : 'The library is empty — no processed videos yet.'))
+                  : owner === 'wassel'
+                    ? (isAr ? 'محتوانا لم يُفهرَس بصريًا بعد — عالِج محتوانا من شريط النظام بالأعلى.' : 'Our content is not visually indexed yet — process it from the system strip above.')
+                    : (isAr ? 'المكتبة فارغة بعد — لا توجد فيديوهات معالَجة.' : 'The library is empty — no processed videos yet.'))
               : (isAr ? 'لا لقطات تطابق هذا البحث.' : 'No shots match this search.')}
           </div>
-          <div className="cw-muted">{isAr ? 'كل ما هنا مرجع للاطلاع فقط — لا يُستخدم كأصل من أصول وصل.' : 'Everything here is a reference only — never a Wassel asset.'}</div>
+          <div className="cw-muted">
+            {owner === 'wassel'
+              ? (isAr ? 'محتوانا — مادة قابلة للاستخدام في أعمالنا.' : 'Our content — usable material for our own work.')
+              : (isAr ? 'كل ما هنا مرجع للاطلاع فقط — لا يُستخدم كأصل من أصول وصل.' : 'Everything here is a reference only — never a Wassel asset.')}
+          </div>
         </div>
       )}
 

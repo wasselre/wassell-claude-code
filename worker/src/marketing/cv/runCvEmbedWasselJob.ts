@@ -21,13 +21,39 @@ import { meanEmbedding, parseVector } from './embeddings.js';
 export interface CvEmbedWasselDeps { sb: SupabaseClient; modal: ModalCvClient }
 export interface CvEmbedWasselResult { asset_id: string; video_id: string; kind: 'video' | 'image'; shots: number; frames: number; embedded_shots: number }
 
-interface AssetRow { id: string; kind: string; title: string; url: string | null; thumb_url: string | null; project_id: string | null; mime_type: string | null; archived_at: string | null }
+interface AssetRow { id: string; kind: string; title: string; url: string | null; thumb_url: string | null; project_id: string | null; mime_type: string | null; file_id: string | null; archived_at: string | null }
 
 async function loadAsset(sb: SupabaseClient, assetId: string): Promise<AssetRow> {
-  const { data, error } = await sb.from('mos_assets').select('id, kind, title, url, thumb_url, project_id, mime_type, archived_at').eq('id', assetId).maybeSingle();
+  const { data, error } = await sb.from('mos_assets').select('id, kind, title, url, thumb_url, project_id, mime_type, file_id, archived_at').eq('id', assetId).maybeSingle();
   if (error) throw new Error(`load mos_assets ${assetId} failed: ${error.message}`);
   if (!data) throw new Error(`permanent: mos_assets ${assetId} not found`);
   return data as AssetRow;
+}
+
+const DIRECT_MEDIA = /\.(mp4|mov|webm|m4v|jpg|jpeg|png|webp|gif)(\?|$)/i;
+
+/**
+ * A URL Modal can actually download. OUR videos live PRIVATE in wassel-files
+ * (no public url), so we mint a short-lived SIGNED url at process time — allowed
+ * for our own assets (the "public only / no signed urls" rule was for COMPETITOR
+ * videos). Photos usually already carry a public image url; use it directly.
+ * A YouTube/page url (no direct-media extension, no file) is not fetchable here.
+ */
+async function resolveWasselSource(sb: SupabaseClient, asset: AssetRow): Promise<string | null> {
+  if (asset.url && DIRECT_MEDIA.test(asset.url)) return asset.url;
+  if (asset.file_id) {
+    const { data: file, error } = await sb.from('files').select('storage_bucket, storage_path').eq('id', asset.file_id).maybeSingle();
+    if (error) throw new Error(`resolve file ${asset.file_id} failed: ${error.message}`);
+    const path = (file as { storage_bucket: string | null; storage_path: string | null } | null)?.storage_path;
+    if (path) {
+      const bucket = (file as { storage_bucket: string | null }).storage_bucket ?? 'wassel-files';
+      const signed = await sb.storage.from(bucket).createSignedUrl(path, 7200);
+      if (signed.error || !signed.data?.signedUrl) throw new Error(`sign asset ${asset.id} failed: ${signed.error?.message ?? 'no url'}`);
+      return signed.data.signedUrl;
+    }
+  }
+  // last resort for images with a non-standard-extension public url / thumbnail
+  return asset.url ?? asset.thumb_url;
 }
 
 /** Find-or-create the owner='wassel' video row for an asset (idempotent on wassel_asset_id). */
@@ -112,8 +138,8 @@ export async function runCvEmbedWasselJob(deps: CvEmbedWasselDeps, job: CvJob): 
   if (!assetId) throw new Error('permanent: cv_embed_wassel job has no params.asset_id');
   const asset = await loadAsset(deps.sb, assetId);
   if (asset.archived_at) throw new Error(`permanent: mos_assets ${assetId} is archived`);
-  const url = asset.url ?? asset.thumb_url;
-  if (!url) throw new Error(`permanent: mos_assets ${assetId} has no url`);
+  const url = await resolveWasselSource(deps.sb, asset);
+  if (!url) throw new Error(`permanent: mos_assets ${assetId} has no fetchable source`);
   if (asset.kind === 'video') return embedWasselVideo(deps, asset, url);
   if (asset.kind === 'photo' || asset.kind === 'design') return embedWasselImage(deps, asset, url);
   throw new Error(`permanent: mos_assets ${assetId} kind '${asset.kind}' is not embeddable`);
