@@ -33,17 +33,26 @@ function message(over: Partial<Anthropic.Message> = {}): Anthropic.Message {
 }
 
 /** Fake client: each queued entry is either a Message to return or an Error to throw. */
-function fakeClient(queue: Array<Anthropic.Message | Error>): AnthropicLike & { params: CreateParams[] } {
+function fakeClient(queue: Array<Anthropic.Message | Error>): AnthropicLike & { params: CreateParams[]; streamParams: CreateParams[] } {
   const params: CreateParams[] = [];
+  const streamParams: CreateParams[] = [];
+  const take = () => {
+    const next = queue.shift();
+    if (!next) throw new Error('fakeClient: queue exhausted');
+    if (next instanceof Error) throw next;
+    return next;
+  };
   return {
     params,
+    streamParams,
     messages: {
       async create(p: CreateParams) {
         params.push(p);
-        const next = queue.shift();
-        if (!next) throw new Error('fakeClient: queue exhausted');
-        if (next instanceof Error) throw next;
-        return next;
+        return take();
+      },
+      stream(p: CreateParams) {
+        streamParams.push(p);
+        return { finalMessage: async () => take() };
       },
     },
   };
@@ -78,6 +87,25 @@ describe('request shape', () => {
     expect(sent.tools).toBeUndefined();
     expect(res.output).toEqual({ a: 1 });
     expect(res.structured_via).toBe('format');
+  });
+  it('streams (not create) when max_tokens exceeds the non-streaming ceiling', async () => {
+    // The SDK refuses a non-streaming create() above ~8k max_tokens; the big
+    // creative_package role (32000) must go through the stream path instead.
+    const BIG: RoleConfig = { provider: 'anthropic', model: 'claude-opus-5', params: { max_tokens: 32000, thinking: 'adaptive', effort: 'high' } };
+    const client = fakeClient([message()]);
+    const p = createAnthropicProvider({ client, sleep: noSleep });
+    const res = await p.call<{ a: number }>(BIG, REQ);
+    expect(client.streamParams).toHaveLength(1);
+    expect(client.params).toHaveLength(0);
+    expect(client.streamParams[0].max_tokens).toBe(32000);
+    expect(res.output).toEqual({ a: 1 });
+  });
+  it('uses plain create() when max_tokens is at/under the ceiling', async () => {
+    const client = fakeClient([message()]);
+    const p = createAnthropicProvider({ client, sleep: noSleep });
+    await p.call(WRITER, REQ); // 6000 max_tokens
+    expect(client.params).toHaveLength(1);
+    expect(client.streamParams).toHaveLength(0);
   });
   it('cache:false drops cache_control; no thinking param when unset; temperature forwarded', async () => {
     const client = fakeClient([message()]);

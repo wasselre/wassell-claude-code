@@ -48,6 +48,8 @@ export interface AnthropicProviderOptions {
 export interface AnthropicLike {
   messages: {
     create(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message>;
+    /** Streaming path — required by the SDK for large max_tokens (see sendMessage). */
+    stream?(params: Anthropic.MessageStreamParams): { finalMessage(): Promise<Anthropic.Message> };
   };
 }
 
@@ -55,6 +57,32 @@ type StructuredMode = 'format' | 'tool';
 
 const FALLBACK_TOOL_NAME = 'emit_result';
 const DEFAULT_MAX_TOKENS = 4096;
+/**
+ * The SDK REFUSES a non-streaming request whose max_tokens is large enough that
+ * the generation could exceed 10 minutes ("Streaming is required for operations
+ * that may take longer than 10 minutes"). Above this ceiling we stream and
+ * assemble the final message — same result shape, no time cap. Below it we keep
+ * the plain non-streaming call (every small role + the unit-test fakes rely on
+ * it). Chosen conservatively above the largest non-streaming role in use.
+ */
+const STREAM_MAX_TOKENS_THRESHOLD = 8192;
+
+/**
+ * Send one message. Streams (and reassembles the final Message) when max_tokens
+ * exceeds the non-streaming ceiling and the client supports it; otherwise a
+ * plain create(). finalMessage() returns the SAME Anthropic.Message shape
+ * create() does, so all downstream handling is identical.
+ */
+async function sendMessage(
+  api: AnthropicLike,
+  params: Anthropic.MessageCreateParamsNonStreaming,
+): Promise<Anthropic.Message> {
+  const maxTokens = params.max_tokens ?? DEFAULT_MAX_TOKENS;
+  if (maxTokens > STREAM_MAX_TOKENS_THRESHOLD && typeof api.messages.stream === 'function') {
+    return api.messages.stream(params as unknown as Anthropic.MessageStreamParams).finalMessage();
+  }
+  return api.messages.create(params);
+}
 
 /** Per-model memory of which structured-output mode the API accepted. */
 const structuredModeByModel = new Map<string, StructuredMode>();
@@ -97,7 +125,7 @@ export function createAnthropicProvider(opts: AnthropicProviderOptions = {}): Ll
       const params = mode === 'format' ? withFormat(base, req) : withForcedTool(base, req);
       let res: Anthropic.Message;
       try {
-        res = await api.messages.create(params);
+        res = await sendMessage(api, params);
       } catch (err) {
         if (mode === 'format' && isStructuredOutputRejection(err)) {
           console.error(

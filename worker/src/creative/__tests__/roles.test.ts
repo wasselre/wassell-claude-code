@@ -79,7 +79,7 @@ describe('mergeCreativeRoles — settings over CREATIVE_DEFAULTS', () => {
       creative_package: { model: 'claude-sonnet-5', params: { effort: 'low' } },
     });
     expect(r.creative_package.model).toBe('claude-sonnet-5');
-    expect(r.creative_package.params).toEqual({ max_tokens: 8000, thinking: 'adaptive', effort: 'low' });
+    expect(r.creative_package.params).toEqual({ max_tokens: 32000, thinking: 'adaptive', effort: 'low' });
     expect(r.creative_concepts).toEqual(CREATIVE_DEFAULTS.creative_concepts);
   });
   it('a null param unsets the knob', () => {
@@ -185,7 +185,7 @@ describe('callCreativeRole — dispatch', () => {
     expect(res.model).toBe('claude-sonnet-5');
     // deep-merged params prove the creative defaults flowed through
     expect(anthropic.calls[0].params?.effort).toBe('high');
-    expect(anthropic.calls[0].params?.max_tokens).toBe(8000);
+    expect(anthropic.calls[0].params?.max_tokens).toBe(32000);
   });
   it('honours ctx.creativeRoles over the DB', async () => {
     const anthropic = fakeAnthropic();
