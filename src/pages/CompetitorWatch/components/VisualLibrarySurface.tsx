@@ -199,13 +199,15 @@ export default function VisualLibrarySurface({ isAr }: { isAr: boolean }) {
   const tags = useMemo(() => Object.entries(facets).map(([k, v]) => `${k}:${v}`), [facets]);
   const bucket = DURATION_BUCKETS.find((b) => b.key === duration) ?? null;
   const hasFilter = tags.length > 0 || Boolean(org) || Boolean(platform) || Boolean(bucket);
-  // cv_search embeds the query (SigLIP-2 + bge-m3) and requires `q`; the facets
-  // refine that search — they cannot browse on their own.
-  const canSearch = debouncedQ.length > 0;
+  // With a query, cv_search embeds it (SigLIP-2 + bge-m3) and fuses visual +
+  // text + lexical channels. With NO query it BROWSES the newest shots — still
+  // narrowed by any facet / org / platform / duration filter. So the library
+  // shows something the moment it opens; it is a library, not a blank search
+  // box. (The browse branch lives in the mkt_cv_search SQL, migration _17.)
+  const browse = debouncedQ.length === 0;
 
   const reqRef = useRef(0);
   useEffect(() => {
-    if (!canSearch) { setResults(null); setError(null); setLoading(false); return; }
     const id = ++reqRef.current;
     setLoading(true); setError(null);
     const filters: CvSearchFilters = {
@@ -226,7 +228,7 @@ export default function VisualLibrarySurface({ isAr }: { isAr: boolean }) {
       })
       .catch((e) => { if (id === reqRef.current) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (id === reqRef.current) setLoading(false); });
-  }, [canSearch, debouncedQ, mode, tags, org, platform, bucket, perVideo]);
+  }, [debouncedQ, mode, tags, org, platform, bucket, perVideo]);
 
   const setFacet = (key: string, value: string | null) => {
     setFacets((prev) => {
@@ -324,27 +326,23 @@ export default function VisualLibrarySurface({ isAr }: { isAr: boolean }) {
 
       {companiesError && <div className="cw-error">{isAr ? 'تعذّر تحميل قائمة الشركات: ' : 'Failed to load the company list: '}{companiesError}</div>}
 
-      {!canSearch && (
-        <div className="cw-empty cw-vl-start">
-          <Film size={28} />
-          <div>
-            {hasFilter
-              ? (isAr ? 'اكتب ما تبحث عنه — التصفيات تُضيّق نتائج البحث ولا تعرض المكتبة وحدها.' : 'Type what you are looking for — filters narrow a search; they cannot browse on their own.')
-              : (isAr ? 'اكتب ما تبحث عنه لبدء البحث في لقطات المنافسين.' : 'Type what you are looking for to search competitor shots.')}
-          </div>
-          <div className="cw-muted">{isAr ? 'كل ما هنا مرجع للاطلاع فقط — لا يُستخدم كأصل من أصول وصل.' : 'Everything here is a reference only — never a Wassel asset.'}</div>
-        </div>
-      )}
-
-      {canSearch && (
-        <div className="cw-count">
-          {loading
-            ? (isAr ? 'جارٍ البحث…' : 'Searching…')
-            : results
-              ? `${results.length.toLocaleString()} ${isAr ? (mode === 'shot' ? 'لقطة' : 'إطار') : (mode === 'shot' ? 'shots' : 'frames')}`
-              : ''}
-        </div>
-      )}
+      <div className="cw-count">
+        {loading
+          ? (isAr ? 'جارٍ البحث…' : 'Searching…')
+          : results
+            ? (browse
+                ? `${isAr ? 'أحدث اللقطات' : 'Newest shots'} · ${results.length.toLocaleString()}`
+                : `${results.length.toLocaleString()} ${isAr ? (mode === 'shot' ? 'لقطة' : 'إطار') : (mode === 'shot' ? 'shots' : 'frames')}`)
+            : ''}
+        {browse && !loading && results && results.length > 0 && (
+          <span className="cw-muted" style={{ marginInlineStart: 8 }}>
+            {isAr ? '— اكتب في صندوق البحث للبحث بالمعنى' : '— type in the search box to search by meaning'}
+          </span>
+        )}
+        {results && results.length > 0 && (
+          <span className="cw-muted" style={{ marginInlineStart: 8 }}>{isAr ? 'مرجع للاطلاع فقط' : 'reference only'}</span>
+        )}
+      </div>
       {error && <div className="cw-error">{isAr ? 'تعذّر البحث: ' : 'Search failed: '}{error}</div>}
       {unavailable && !error && (
         <div className="cw-error" style={{ background: 'var(--cw-warn-bg)', color: 'var(--cw-warn)' }}>
@@ -352,8 +350,18 @@ export default function VisualLibrarySurface({ isAr }: { isAr: boolean }) {
         </div>
       )}
 
-      {canSearch && !loading && !error && results && results.length === 0 && (
-        <div className="cw-empty">{isAr ? 'لا لقطات تطابق هذا البحث.' : 'No shots match this search.'}</div>
+      {!loading && !error && results && results.length === 0 && (
+        <div className="cw-empty cw-vl-start">
+          <Film size={28} />
+          <div>
+            {browse
+              ? (hasFilter
+                  ? (isAr ? 'لا لقطات تطابق هذه التصفية.' : 'No shots match these filters.')
+                  : (isAr ? 'المكتبة فارغة بعد — لا توجد فيديوهات معالَجة.' : 'The library is empty — no processed videos yet.'))
+              : (isAr ? 'لا لقطات تطابق هذا البحث.' : 'No shots match this search.')}
+          </div>
+          <div className="cw-muted">{isAr ? 'كل ما هنا مرجع للاطلاع فقط — لا يُستخدم كأصل من أصول وصل.' : 'Everything here is a reference only — never a Wassel asset.'}</div>
+        </div>
       )}
 
       {results && results.length > 0 && (
