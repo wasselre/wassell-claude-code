@@ -41,6 +41,24 @@ import { embedQuery, diversify, describeMatch, num as cvNum, type CvSearchRow } 
 // Pure shared rulebook — same blessed src↔api cross-import as localizedName.ts.
 import { preflightPublishSet } from '../src/lib/marketingOS/platformRules.js';
 
+/* ── creative director (handlers — dispatch block is near the switch end) ── */
+import { creativeTargets } from './_lib/marketing/creative/targets.js';
+import {
+  writePostCreative, creativeConceptSelect, creativeRegenerate, creativeJobStatus,
+  creativePackageList, creativePackageGet, creativePackageSave, creativeAssetReplace,
+} from './_lib/marketing/creative/packages.js';
+import {
+  creativePackageApply, creativePackageRevert, creativeAiApprove, creativeAiDismiss,
+} from './_lib/marketing/creative/apply.js';
+import { creativeHandoff } from './_lib/marketing/creative/handoff.js';
+import {
+  creativeFlags, creativeFlagsSave, brandKitGet, brandKitSave, brandKitReview,
+  writerRulesGet, writerRulesSave, roleMapGet, roleMapSave, aiRolesGet, aiRolesSave,
+} from './_lib/marketing/creative/settings.js';
+import { designExampleSet, designExampleList } from './_lib/marketing/creative/examples.js';
+import { creativePerformance } from './_lib/marketing/creative/performance.js';
+import { enqueueWasselReadsOnPublish } from './_lib/marketing/creative/onPublished.js';
+
 export const config = { runtime: 'edge' };
 
 /* ------------------------------------------------------------------ */
@@ -3706,6 +3724,16 @@ export default async function handler(req: Request): Promise<Response> {
           }
         }
 
+        // ── creative director: design reads on publish (best-effort) ──
+        // Verifies the published assets exist as collected internal-org media
+        // for the design-read sweep; failure here must never fail the publish.
+        try {
+          const readsSvc = makeServiceClient('api:marketing-os:creative');
+          if (readsSvc) await enqueueWasselReadsOnPublish(readsSvc, pubId);
+        } catch (e) {
+          console.error('[marketing-os] reads-on-publish hook failed (non-fatal)', pubId, e);
+        }
+
         const list = await sb.from('mos_publication_v').select('*').eq('content_id', pub.content_id as string)
           .order('scheduled_at', { ascending: true, nullsFirst: false });
         const lf = dbFail(list.error);
@@ -3770,6 +3798,16 @@ export default async function handler(req: Request): Promise<Response> {
         const upd = await sb.from('mos_publications').update(patch).eq('id', pubId).select('id').maybeSingle();
         const uf = dbFail(upd.error);
         if (uf) return uf;
+
+        // ── creative director: design reads on sync→published (best-effort) ──
+        if (patch.status === 'published') {
+          try {
+            const readsSvc = makeServiceClient('api:marketing-os:creative');
+            if (readsSvc) await enqueueWasselReadsOnPublish(readsSvc, pubId);
+          } catch (e) {
+            console.error('[marketing-os] reads-on-publish hook failed (non-fatal)', pubId, e);
+          }
+        }
 
         const list = await sb.from('mos_publication_v').select('*').eq('content_id', pub.content_id)
           .order('scheduled_at', { ascending: true, nullsFirst: false });
@@ -8720,6 +8758,126 @@ export default async function handler(req: Request): Promise<Response> {
           production_days_per_week: (settingsRes.data as { production_days_per_week?: number } | null)
             ?.production_days_per_week ?? 6,
         });
+      }
+
+      /* ── creative director ─────────────────────────────────────────────
+         Post Creative Director (docs/creative-director-contracts.md §4).
+         Dispatch only: the capability gate runs here (requireCap, same as
+         every other write surface); the handlers live in
+         api/_lib/marketing/creative/*.ts and take {sb, svc, body, userId}.
+         The mos_creative_* tables carry RLS with NO policies by design, so
+         the handlers use the service client after the gate. ─────────────── */
+      case 'creative_flags': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return creativeFlags({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_targets': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return creativeTargets({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'write_post_creative': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        return writePostCreative({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_concept_select': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        return creativeConceptSelect({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_regenerate': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        return creativeRegenerate({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_job_status': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return creativeJobStatus({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_package_list': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return creativePackageList({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_package_get': {
+        const gate = await requireCap(sb, 'view_content_body'); if (gate) return gate;
+        return creativePackageGet({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_package_save': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        return creativePackageSave({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_asset_replace': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        return creativeAssetReplace({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_package_apply': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        return creativePackageApply({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_package_revert': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        return creativePackageRevert({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_ai_approve': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        return creativeAiApprove({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_ai_dismiss': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        return creativeAiDismiss({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_handoff': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return creativeHandoff({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_performance': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return creativePerformance({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'brand_kit_get': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return brandKitGet({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'brand_kit_save': {
+        const gate = await requireCap(sb, 'manage_settings'); if (gate) return gate;
+        return brandKitSave({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'brand_kit_review': {
+        const gate = await requireCap(sb, 'approve_creative'); if (gate) return gate;
+        return brandKitReview({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'writer_rules_get': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return writerRulesGet({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'writer_rules_save': {
+        const gate = await requireCap(sb, 'manage_settings'); if (gate) return gate;
+        return writerRulesSave({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'role_map_get': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return roleMapGet({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'role_map_save': {
+        const gate = await requireCap(sb, 'manage_settings'); if (gate) return gate;
+        return roleMapSave({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'creative_flags_save': {
+        const gate = await requireCap(sb, 'manage_settings'); if (gate) return gate;
+        return creativeFlagsSave({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'ai_roles_get': {
+        const gate = await requireCap(sb, 'manage_settings'); if (gate) return gate;
+        return aiRolesGet({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'ai_roles_save': {
+        const gate = await requireCap(sb, 'manage_settings'); if (gate) return gate;
+        return aiRolesSave({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'design_example_set': {
+        const gate = await requireCap(sb, 'approve_creative'); if (gate) return gate;
+        return designExampleSet({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+      case 'design_example_list': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return designExampleList({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
       }
 
       default:

@@ -4,7 +4,11 @@
  * post, organised by purpose shelf, filterable and searchable.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { fetchContentLibrary, type LibraryResult, type LibraryRow } from '@/lib/competitorWatch/client';
+import { fetchContentLibrary, type LibraryResult, type LibraryRow, fetchDesignRead } from '@/lib/competitorWatch/client';
+import { setDesignExample } from '@/lib/marketingOS/creativeClient';
+import type { PostRead, SlideRead, VisualDesignReadRow } from '@/lib/creative/contracts';
+import { useAppStore } from '@/stores/appStore';
+import { resolveEffectiveProfile } from '@/lib/permissions';
 
 const SHELVES: Array<{ key: string; ar: string; en: string; color: string }> = [
   { key: 'brand', ar: 'هوية', en: 'Brand', color: 'var(--cw-plum)' },
@@ -37,6 +41,10 @@ function shelfLabel(key: string, isAr: boolean): string {
 }
 
 export default function ContentLibrary({ isAr }: { isAr: boolean }) {
+  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
+  const currentUser = users.find((u) => u.id === currentUserId);
+  // Admins see the «مثال للدراسة» action (it writes mos_design_examples).
+  const isAdmin = !!resolveEffectiveProfile(currentUser, profiles, previewProfileId)?.is_admin;
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [shelf, setShelf] = useState<string | null>(null);
@@ -180,6 +188,7 @@ export default function ContentLibrary({ isAr }: { isAr: boolean }) {
             key={row.id}
             row={row}
             isAr={isAr}
+            isAdmin={isAdmin}
             open={openId === row.id}
             onToggle={() => setOpenId(openId === row.id ? null : row.id)}
             onOrg={() => { if (row.organization_id) setOrg({ id: row.organization_id, name: row.org_name ?? '' }); }}
@@ -194,10 +203,77 @@ export default function ContentLibrary({ isAr }: { isAr: boolean }) {
   );
 }
 
-function Entry({ row, isAr, open, onToggle, onOrg }: {
-  row: LibraryRow; isAr: boolean; open: boolean; onToggle: () => void; onOrg: () => void;
+/** A one-line summary of a visual design read (slide- or post-level). */
+function designReadSummary(read: VisualDesignReadRow, isAr: boolean): string {
+  if (read.status === 'failed') {
+    return isAr ? 'فشلت القراءة' : 'Read failed';
+  }
+  if (read.level === 'slide') {
+    const r = read.read as SlideRead;
+    const bits = [
+      r.layout.replace(/_/g, ' '),
+      isAr ? `كثافة ${r.density}` : `${r.density} density`,
+      r.palette_family,
+      isAr ? `هوية ${r.branding_intensity}/٣` : `branding ${r.branding_intensity}/3`,
+    ];
+    return bits.join(' · ');
+  }
+  const r = read.read as PostRead;
+  const bits = [
+    r.format === 'carousel' ? (isAr ? `كاروسيل · ${r.slide_count} شرائح` : `carousel · ${r.slide_count} slides`) : (isAr ? 'صورة واحدة' : 'single'),
+    r.recurring_layout.layout_family.replace(/_/g, ' '),
+    isAr ? `هوية ${r.branding_intensity}/٣` : `branding ${r.branding_intensity}/3`,
+  ];
+  return bits.join(' · ');
+}
+
+function Entry({ row, isAr, isAdmin, open, onToggle, onOrg }: {
+  row: LibraryRow; isAr: boolean; isAdmin: boolean; open: boolean; onToggle: () => void; onOrg: () => void;
 }) {
   const shelfDef = SHELF_MAP.get(row.shelf ?? '');
+  // Visual design read — fetched lazily on first expand (Post Creative
+  // Director, 2026-09-02). 'none' = no read exists for this post yet.
+  const [reads, setReads] = useState<VisualDesignReadRow[] | null>(null);
+  const [readFailed, setReadFailed] = useState<string | null>(null);
+  // «مثال للدراسة» — admin-only registration into mos_design_examples.
+  const [exOpen, setExOpen] = useState(false);
+  const [exStrengths, setExStrengths] = useState('');
+  const [exCaveats, setExCaveats] = useState('');
+  const [exNote, setExNote] = useState('');
+  const [exBusy, setExBusy] = useState(false);
+  const [exDone, setExDone] = useState(false);
+  const [exError, setExError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || reads !== null || readFailed !== null) return;
+    let alive = true;
+    fetchDesignRead('competitor_post', row.id)
+      .then((r) => { if (alive) setReads(r); })
+      .catch((e: unknown) => { if (alive) setReadFailed(e instanceof Error ? e.message : String(e)); });
+    return () => { alive = false; };
+  }, [open, reads, readFailed, row.id]);
+
+  const saveExample = async (): Promise<void> => {
+    setExBusy(true);
+    setExError(null);
+    try {
+      await setDesignExample({
+        subject_kind: 'competitor_post',
+        subject_id: row.id,
+        example_kind: 'study_only',
+        strengths: exStrengths.split(/[،,]/).map((s) => s.trim()).filter(Boolean),
+        caveats: exCaveats.split(/[،,]/).map((s) => s.trim()).filter(Boolean),
+        note: exNote.trim() || null,
+      });
+      setExDone(true);
+      setExOpen(false);
+    } catch (e) {
+      setExError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExBusy(false);
+    }
+  };
+
   const facts: Array<{ k: string; v: string; hot?: boolean }> = [];
   if (row.unit_types && row.unit_types.length) facts.push({ k: isAr ? 'الوحدة' : 'Unit', v: row.unit_types.join('، ') });
   if (row.offer) facts.push({ k: isAr ? 'عرض' : 'Offer', v: row.offer, hot: true });
@@ -278,9 +354,24 @@ function Entry({ row, isAr, open, onToggle, onOrg }: {
             {typeof views === 'number' && <span className="cw-mono">▷ {views.toLocaleString()}</span>}
             {row.published_at && <span className="cw-mono">{fmtDate(row.published_at, isAr)}</span>}
             {row.has_transcript && <span className="cw-tx">{isAr ? 'مُفرّغ' : 'transcript'}</span>}
+            {reads && reads.length > 0 && (
+              <span className="cw-tx" title={reads.map((r) => designReadSummary(r, isAr)).join('\n')}>
+                {isAr ? 'قراءة تصميم' : 'design read'}
+              </span>
+            )}
+            {exDone && <span className="cw-tx">{isAr ? 'في سجل الأمثلة' : 'In examples'}</span>}
             {canExpand && (
               <button className="cw-expand" type="button" onClick={onToggle}>
                 {open ? (isAr ? 'إخفاء' : 'Hide') : (isAr ? 'اقرأ الكامل' : 'Read full')}
+              </button>
+            )}
+            {isAdmin && !exDone && (
+              <button
+                className="cw-expand"
+                type="button"
+                onClick={(e) => { e.stopPropagation(); if (!open) onToggle(); setExOpen((v) => !v); }}
+              >
+                {isAr ? 'مثال للدراسة' : 'Study example'}
               </button>
             )}
           </div>
@@ -324,6 +415,59 @@ function Entry({ row, isAr, open, onToggle, onOrg }: {
               {isAr
                 ? 'يوجد تفريغ صوتي لهذا المقطع (النص الكامل يُعرض في تحديث قادم).'
                 : 'A spoken transcript exists for this clip (full text shown in a coming update).'}
+            </div>
+          )}
+          {reads && reads.length > 0 && (
+            <div className="cw-dblock">
+              <div className="cw-k">{isAr ? 'قراءة التصميم' : 'Design read'}</div>
+              {reads.map((r) => (
+                <div key={r.id} className="cw-v" dir="auto" style={{ marginBottom: 4 }}>
+                  <b>{r.level === 'slide' ? (isAr ? 'شريحة' : 'Slide') : (isAr ? 'منشور' : 'Post')}: </b>
+                  {designReadSummary(r, isAr)}
+                  {r.level === 'post' && (r.read as PostRead).summary && (
+                    <div style={{ marginTop: 2 }}>{(r.read as PostRead).summary}</div>
+                  )}
+                  {r.level === 'slide' && (r.read as SlideRead).notes && (
+                    <div style={{ marginTop: 2 }}>{(r.read as SlideRead).notes}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {readFailed && (
+            <div className="cw-txnote">{isAr ? `تعذّر جلب قراءة التصميم: ${readFailed}` : `Design read unavailable: ${readFailed}`}</div>
+          )}
+          {exOpen && (
+            <div className="cw-dblock">
+              <div className="cw-k">{isAr ? 'تسجيل كمثال للدراسة' : 'Register as a study example'}</div>
+              <div style={{ display: 'grid', gap: 6, maxWidth: 560 }}>
+                {([
+                  [exStrengths, setExStrengths, isAr ? 'نقاط القوة (مفصولة بفاصلة) — ما الذي يُحتذى؟' : 'Strengths (comma-separated) — what is worth copying?'],
+                  [exCaveats, setExCaveats, isAr ? 'محاذير (مفصولة بفاصلة) — ما الذي لا يُنسخ؟' : 'Caveats (comma-separated) — what must not be copied?'],
+                  [exNote, setExNote, isAr ? 'ملاحظة (اختياري)' : 'Note (optional)'],
+                ] as Array<[string, (v: string) => void, string]>).map(([val, setter, ph], i) => (
+                  <input
+                    key={i}
+                    value={val}
+                    onChange={(e) => setter(e.target.value)}
+                    placeholder={ph}
+                    style={{
+                      border: '1px solid var(--cw-line)', background: 'var(--cw-card)',
+                      borderRadius: 8, padding: '7px 10px', fontSize: 13, fontFamily: 'inherit',
+                      color: 'inherit', width: '100%',
+                    }}
+                  />
+                ))}
+                {exError && <div className="cw-error">{exError}</div>}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="cw-rvbtn ok" type="button" disabled={exBusy} onClick={() => void saveExample()}>
+                    {exBusy ? (isAr ? 'يُحفظ…' : 'Saving…') : (isAr ? 'حفظ المثال' : 'Save example')}
+                  </button>
+                  <button className="cw-rvbtn" type="button" disabled={exBusy} onClick={() => setExOpen(false)}>
+                    {isAr ? 'إلغاء' : 'Cancel'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
           {row.post_url && (

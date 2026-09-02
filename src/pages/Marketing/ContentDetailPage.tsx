@@ -54,10 +54,12 @@ import ProjectMultiSelect from './components/ProjectMultiSelect';
 import ApprovalSheet, { useIsMobile } from './components/ApprovalSheet';
 import { IconBack, IconCheck, IconForward } from './components/icons';
 import MentionComposer, { renderMentions } from './components/MentionComposer';
+import CreativeTab from './components/creative/CreativeTab';
+import { fetchCreativeFlags, type CreativeFlagsResult } from '@/lib/marketingOS/creativeClient';
 import { dateTimeShort, daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
 import './styles/mobile-m2.css';
 
-type Tab = 'overview' | 'content' | 'placements' | 'materials' | 'project_assets' | 'project_info' | 'tasks' | 'performance';
+type Tab = 'overview' | 'content' | 'placements' | 'materials' | 'project_assets' | 'project_info' | 'tasks' | 'performance' | 'creative';
 
 /** The breadcrumb's plural type names — s06 «الفيديوهات», s08 «المنشورات». */
 const TYPE_PLURAL: Record<string, { ar: string; en: string }> = {
@@ -136,6 +138,10 @@ export default function ContentDetailPage() {
   const [scriptDraft, setScriptDraft] = useState<ScriptDraft | null>(null);
   const [scriptRecipes, setScriptRecipes] = useState<ScriptRecipe[] | undefined>(undefined);
   const [versions, setVersions] = useState<MosContentVersion[] | null>(null);
+  // Post Creative Director flags — fetched only for post/carousel items (the
+  // only types the creative tab exists for). Drives the «اكتب بوست» button,
+  // the creative tab's presence, and the design-owner handoff default.
+  const [creative, setCreative] = useState<CreativeFlagsResult | null>(null);
 
   const load = useCallback(async () => {
     if (!contentId) return;
@@ -274,6 +280,19 @@ export default function ContentDetailPage() {
   // Direct project(s) win; when the item has none, fall back to the campaign's —
   // the "related indirectly, through a campaign connected to a project" case.
   const linkedProjectIds = (item?.project_ids?.length ? item.project_ids : campaignProjectIds);
+
+  const isPostType = item?.content_type_key === 'post' || item?.content_type_key === 'carousel';
+  useEffect(() => {
+    if (!isPostType) { setCreative(null); return; }
+    let alive = true;
+    fetchCreativeFlags()
+      .then((r) => { if (alive) setCreative(r); })
+      .catch((e: unknown) => {
+        // Non-fatal: the button/tab just stay hidden. Logged, never swallowed.
+        console.error('[marketing] creative flags unavailable', e);
+      });
+    return () => { alive = false; };
+  }, [isPostType]);
 
   // The «المواد» tab badge — screen 06 shows the count from page open, before
   // the tab is ever visited. Non-fatal: a failure hides the badge and is
@@ -450,6 +469,11 @@ export default function ContentDetailPage() {
     // up front. The standalone Publishing tab was merged in here (2026-08-28).
     { key: 'placements', ar: 'أماكن النشر', en: 'Placements', needs: 'view_content_body', badge: openPubs || undefined },
     { key: 'materials', ar: 'المواد', en: 'Material', badge: materialCount || undefined },
+    // The Post Creative Director — post/carousel only, behind its feature
+    // flag; the body gate applies because the tab renders the package's copy.
+    ...(isPostType && creative?.flags.post_enabled
+      ? ([{ key: 'creative' as Tab, ar: 'الإبداع', en: 'Creative', needs: 'view_content_body' as Capability }])
+      : []),
     // The project the content runs under — its linked files + facts, so the
     // writer has every reference in one place. Shown only when a project is known.
     ...(linkedProjectIds.length > 0
@@ -546,6 +570,14 @@ export default function ContentDetailPage() {
             {item.content_type_key === 'video' && can('write_content') && (
               <button type="button" className="btn btn-d" onClick={() => setScriptOpen(true)}>
                 {isAr ? 'اكتب سكربت' : 'Write script'}
+              </button>
+            )}
+            {/* «اكتب بوست» — the Post Creative Director's entry point. Post and
+                carousel only, a linked project (the facts source), the feature
+                flag on, and write_content — same gate as the video twin above. */}
+            {isPostType && can('write_content') && linkedProjectIds.length > 0 && creative?.flags.post_enabled && (
+              <button type="button" className="btn btn-d" onClick={() => setTab('creative')}>
+                {isAr ? 'اكتب بوست' : 'Write post'}
               </button>
             )}
             {/* «مقارنة بالنسخة ١» — the compare panel renders the writing
@@ -904,6 +936,17 @@ export default function ContentDetailPage() {
               isAr={isAr}
               onCount={setMaterialCount}
               approvalAssetId={item.approval_asset_id ?? null}
+            />
+          )}
+
+          {activeTab === 'creative' && (
+            <CreativeTab
+              item={item}
+              canWrite={can('write_content')}
+              designOwnerActive={
+                !!openTask && !!creative && openTask.role === creative.role_map.design_owner
+              }
+              isAr={isAr}
             />
           )}
 

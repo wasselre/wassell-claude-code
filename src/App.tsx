@@ -99,6 +99,13 @@ const MarketingNumbersPage = lazy(() => import('@/pages/Marketing/NumbersPage'))
 const MarketingOrganicPulsePage = lazy(() => import('@/pages/Marketing/OrganicPulsePage'));
 const MarketingPublishingBoardPage = lazy(() => import('@/pages/Marketing/PublishingBoardPage'));
 import MarketingSettingsPage, { SettingsSectionPage } from '@/pages/Marketing/SettingsPage';
+// Post Creative Director settings screens (2026-09-02). Static segments, so
+// React Router ranks them above the generic /m/settings/:section route; each
+// wrapper reads the workspace capabilities and passes the manage gates down.
+const BrandKitSettingsRoute = lazy(() => import('@/pages/Marketing/components/SettingsCreativeRoutes').then((m) => ({ default: m.BrandKitSettingsRoute })));
+const WriterRulesSettingsRoute = lazy(() => import('@/pages/Marketing/components/SettingsCreativeRoutes').then((m) => ({ default: m.WriterRulesSettingsRoute })));
+const AiRolesSettingsRoute = lazy(() => import('@/pages/Marketing/components/SettingsCreativeRoutes').then((m) => ({ default: m.AiRolesSettingsRoute })));
+const CreativeFlagsSettingsRoute = lazy(() => import('@/pages/Marketing/components/SettingsCreativeRoutes').then((m) => ({ default: m.CreativeFlagsSettingsRoute })));
 const ProjectFinderPage = lazy(() => import('@/pages/ProjectFinder/ProjectFinderPage'));
 const FinancingPage = lazy(() => import('@/pages/Financing/FinancingPage'));
 const PostsContentPage = lazy(() => import('@/pages/PostsContent/PostsContentPage'));
@@ -539,6 +546,13 @@ export default function App() {
           <Route path="/m/publishing" element={<MarketingPublishingBoardPage />} />
           <Route path="/m/content-inventory" element={<MarketingContentInventoryPage />} />
           <Route path="/m/settings" element={<MarketingSettingsPage />} />
+          {/* Creative Director settings — static segments outrank :section.
+              Editing inside each screen is gated by manage_settings (and
+              approve_creative for the brand-kit review). */}
+          <Route path="/m/settings/brand-kit" element={<BrandKitSettingsRoute />} />
+          <Route path="/m/settings/writer-rules" element={<WriterRulesSettingsRoute />} />
+          <Route path="/m/settings/ai-roles" element={<AiRolesSettingsRoute />} />
+          <Route path="/m/settings/creative-flags" element={<CreativeFlagsSettingsRoute />} />
           <Route path="/m/settings/:section" element={<SettingsSectionPage />} />
           {/* A wrong /m/* path lands on the workspace's own front door rather
               than on a blank screen inside a shell that already rendered. */}

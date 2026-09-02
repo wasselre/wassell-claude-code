@@ -21,6 +21,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
+import { callRole } from './ai/roles.js';
+import type { ProviderKind, RoleConfig, RoleParams } from './ai/types.js';
 import {
   toTempFile, cleanup, probeDurationMs, hasAudioStream, extractAudio, sampleFrames,
   imageToBoundedJpeg,
@@ -61,6 +63,100 @@ const KIND_DEFAULT_PRIMARY: Record<string, string> = {
 function noopDefault(kind: string): Record<string, unknown> {
   const v = KIND_DEFAULT_PRIMARY[kind];
   return v ? { model: 'kind-default', primary_category: v, primary_category_fallback: true } : {};
+}
+
+// ── Asset enrich v2 (Post Creative Director, ADDITIVE — 2026-09-02) ─────────
+// Behind mos_settings.creative_writer.asset_enrich_v2. When on, IMAGE
+// enrichment routes through the shared AI-role adapter (callRole) with an
+// explicit RoleConfig resolved from mos_settings.ai_roles.asset_enrich_v2, and
+// the model additionally proposes has_text / headline_space / ocr_text /
+// scene_subjects, applied via the file_enrichment_apply_v2 RPC. When the flag
+// is off — or the role row is absent/invalid — the original Haiku tool path
+// below runs UNTOUCHED.
+
+/** Closed scene-subject list (mirrors the _29 file_document_types seed). */
+export const SCENE_SUBJECTS = [
+  'exterior', 'interior', 'plan', 'aerial', 'lifestyle', 'people', 'amenity', 'pool',
+  'kitchen', 'bedroom', 'majlis', 'facade', 'garden', 'street', 'render', 'logo', 'text_card',
+] as const;
+export type SceneSubject = (typeof SCENE_SUBJECTS)[number];
+
+export const HEADLINE_SPACES = ['none', 'top', 'bottom', 'left', 'right', 'center'] as const;
+export type HeadlineSpace = (typeof HEADLINE_SPACES)[number];
+
+const V2_LLM_PROVIDERS = new Set<string>(['anthropic', 'openai_compat']);
+
+/**
+ * Resolve the asset_enrich_v2 RoleConfig, or null when the v2 path should NOT
+ * run (flag off, role absent, role invalid — each logged, never silent).
+ */
+async function resolveAssetEnrichV2Role(supabase: SupabaseClient): Promise<RoleConfig | null> {
+  const { data: cw, error: cwErr } = await supabase
+    .from('mos_settings').select('value').eq('key', 'creative_writer').maybeSingle();
+  if (cwErr) {
+    console.error(`[enrich] mos_settings.creative_writer read failed: ${cwErr.message} — v2 disabled for this run`);
+    return null;
+  }
+  const cwVal = (cw as { value?: unknown } | null)?.value;
+  const flagOn = cwVal !== null && typeof cwVal === 'object' && !Array.isArray(cwVal)
+    && (cwVal as Record<string, unknown>).asset_enrich_v2 === true;
+  if (!flagOn) return null;
+
+  const { data: ar, error: arErr } = await supabase
+    .from('mos_settings').select('value').eq('key', 'ai_roles').maybeSingle();
+  if (arErr) {
+    console.error(`[enrich] mos_settings.ai_roles read failed: ${arErr.message} — v2 disabled for this run`);
+    return null;
+  }
+  const roles = (ar as { value?: unknown } | null)?.value;
+  const raw = roles !== null && typeof roles === 'object' && !Array.isArray(roles)
+    ? (roles as Record<string, unknown>).asset_enrich_v2 : undefined;
+  if (raw === undefined || raw === null) {
+    console.error('[enrich] creative_writer.asset_enrich_v2 is ON but mos_settings.ai_roles.asset_enrich_v2 is absent — falling back to the Haiku tool path');
+    return null;
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    console.error('[enrich] ai_roles.asset_enrich_v2 is not an object — falling back to the Haiku tool path');
+    return null;
+  }
+  const o = raw as Record<string, unknown>;
+  const provider = o.provider === undefined ? 'anthropic' : o.provider;
+  if (typeof provider !== 'string' || !V2_LLM_PROVIDERS.has(provider)) {
+    console.error(`[enrich] ai_roles.asset_enrich_v2.provider '${String(o.provider)}' is not an LLM provider — falling back to the Haiku tool path`);
+    return null;
+  }
+  if (typeof o.model !== 'string' || !o.model.trim()) {
+    console.error('[enrich] ai_roles.asset_enrich_v2.model is missing — falling back to the Haiku tool path');
+    return null;
+  }
+  const cfg: RoleConfig = { provider: provider as ProviderKind, model: o.model.trim() };
+  if (o.version !== undefined && o.version !== null) cfg.version = String(o.version);
+  if (o.params !== null && typeof o.params === 'object' && !Array.isArray(o.params)) {
+    cfg.params = o.params as RoleParams;
+  }
+  return cfg;
+}
+
+/** Extra fields the v2 vision pass proposes (parsed + validated before apply). */
+interface EnrichV2Fields {
+  has_text: boolean | null;
+  headline_space: HeadlineSpace | null;
+  ocr_text: string | null;
+  scene_subjects: SceneSubject[];
+}
+
+function parseV2Fields(out: Record<string, unknown>): EnrichV2Fields {
+  const has_text = typeof out.has_text === 'boolean' ? out.has_text : null;
+  const headline_space = typeof out.headline_space === 'string'
+    && (HEADLINE_SPACES as readonly string[]).includes(out.headline_space)
+    ? (out.headline_space as HeadlineSpace) : null;
+  const ocr_text = typeof out.ocr_text === 'string' && out.ocr_text.trim()
+    ? out.ocr_text.trim().slice(0, 500) : null;
+  const scene_subjects = Array.isArray(out.scene_subjects)
+    ? ([...new Set(out.scene_subjects.filter(
+        (s): s is SceneSubject => typeof s === 'string' && (SCENE_SUBJECTS as readonly string[]).includes(s),
+      ))]) : [];
+  return { has_text, headline_space, ocr_text, scene_subjects };
 }
 
 export interface RunEnrichmentJobArgs {
@@ -144,6 +240,9 @@ export async function runEnrichmentJob(
   // ── Gather what the model will see (blocks) + heard (transcript) ──────────
   const blocks: Anthropic.ContentBlockParam[] = [];
   let transcript = '';
+  // The normalized JPEG of an image file — stashed for the enrich-v2 path
+  // (callRole takes images as base64, not Anthropic blocks).
+  let imageJpegB64: string | null = null;
 
   if (kind === 'image') {
     const bytes = await download(supabase, job);
@@ -157,7 +256,8 @@ export async function runEnrichmentJob(
     // kind-default (never a hard failure → never a null).
     try {
       const jpeg = await imageToBoundedJpeg(bytes, (job.mimeType || '').split('/')[1] || 'img');
-      blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: jpeg.toString('base64') } });
+      imageJpegB64 = jpeg.toString('base64');
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageJpegB64 } });
     } catch (e) {
       console.log(`[enrich] job=${job.id} image undecodable (${job.mimeType}, ${(bytes.length / 1048576).toFixed(1)}MB): ${e instanceof Error ? e.message : String(e)} — kind-default`);
       return noopDefault(kind);
@@ -257,22 +357,70 @@ export async function runEnrichmentJob(
   if (transcript) prompt += `\n\nنص الكلام في الملف (منسوخ آلياً):\n${transcript}`;
   if (kind === 'audio') prompt += `\n\n(هذا ملف صوتي — اعتمد على النص أعلاه.)`;
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const msg = await client.messages.create({
-    model: ENRICH_MODEL,
-    max_tokens: 800,
-    tools: [tool],
-    tool_choice: { type: 'tool', name: 'propose_metadata' },
-    messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }],
-  });
+  // ── enrich v2 routing (ADDITIVE 2026-09-02) ──────────────────────────────
+  // Images only, only when creative_writer.asset_enrich_v2 is on AND
+  // ai_roles.asset_enrich_v2 resolves. Everything else takes the original path.
+  let v2Role: RoleConfig | null = null;
+  if (kind === 'image' && imageJpegB64 !== null) {
+    v2Role = await resolveAssetEnrichV2Role(supabase);
+  }
 
-  const toolUse = msg.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
-  if (!toolUse) { console.log(`[enrich] job=${job.id} no tool call — no-op`); return {}; }
-  const out = (toolUse.input ?? {}) as {
+  interface EnrichModelOutput {
     description?: unknown; title?: unknown; subjects?: unknown; asset_nature?: unknown; tags?: unknown;
     acquisition_source?: unknown; usage_rights?: unknown; production_state?: unknown; detected_names?: unknown;
     primary_category?: unknown; new_subjects?: unknown;
-  };
+    // enrich-v2 additions (images only)
+    has_text?: unknown; headline_space?: unknown; ocr_text?: unknown; scene_subjects?: unknown;
+  }
+  let out: EnrichModelOutput;
+  let v2: { model: string; cost_usd: number | null } | null = null;
+
+  if (v2Role !== null && imageJpegB64 !== null) {
+    const v2Schema: Record<string, unknown> = {
+      type: 'object',
+      properties: {
+        ...props,
+        has_text: { type: 'boolean', description: 'هل تحمل الصورة نصاً مقروءاً ذا معنى (عنوان، سعر، شعار نصي)؟' },
+        headline_space: {
+          type: 'string', enum: [...HEADLINE_SPACES],
+          description: 'أين تتوفر مساحة فارغة تصلح لعنوان رئيسي فوق الصورة دون حجب عنصر مهم.',
+        },
+        ocr_text: { type: 'string', maxLength: 500, description: 'كل النص الظاهر في الصورة منسوخاً حرفياً (٥٠٠ حرف كحد أقصى؛ سلسلة فارغة إن لم يوجد نص).' },
+        scene_subjects: {
+          type: 'array', items: { type: 'string', enum: [...SCENE_SUBJECTS] },
+          description: 'تصنيف محتوى المشهد — من القائمة المغلقة فقط.',
+        },
+      },
+      required,
+      additionalProperties: false,
+    };
+    const v2Prompt = prompt +
+      `\n- has_text: هل تحمل الصورة نصاً مقروءاً ذا معنى؟` +
+      `\n- headline_space: أين تتوفر مساحة فارغة تصلح لعنوان رئيسي دون حجب عنصر مهم — إحدى: ${HEADLINE_SPACES.join('، ')}.` +
+      `\n- ocr_text: انسخ كل النص الظاهر في الصورة كما هو حرفياً (٥٠٠ حرف كحد أقصى)، واتركها فارغة إن لم يوجد نص.` +
+      `\n- scene_subjects: صنّف محتوى المشهد من هذه القائمة المغلقة فقط: ${SCENE_SUBJECTS.join('، ')}.`;
+    const call = await callRole<EnrichModelOutput>(v2Role, {
+      system: 'أنت تصنّف ملفات تسويقية عقارية لشركة وصل العقارية. التزم بالمخطط المطلوب وبالقوائم المغلقة فقط.',
+      user: v2Prompt,
+      images: [{ base64: imageJpegB64, mime: 'image/jpeg' }],
+      schema: v2Schema,
+    }, { sb: supabase });
+    out = call.output ?? {};
+    v2 = { model: call.model, cost_usd: call.cost_usd };
+  } else {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const msg = await client.messages.create({
+      model: ENRICH_MODEL,
+      max_tokens: 800,
+      tools: [tool],
+      tool_choice: { type: 'tool', name: 'propose_metadata' },
+      messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }],
+    });
+
+    const toolUse = msg.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
+    if (!toolUse) { console.log(`[enrich] job=${job.id} no tool call — no-op`); return {}; }
+    out = (toolUse.input ?? {}) as EnrichModelOutput;
+  }
 
   const result: Record<string, unknown> = { model: ENRICH_MODEL };
   if (typeof out.description === 'string' && out.description.trim()) result.description = out.description.trim();
@@ -349,8 +497,35 @@ export async function runEnrichmentJob(
     }
   }
 
+  // ── enrich v2 apply (ADDITIVE 2026-09-02) ────────────────────────────────
+  // The visual fields go through file_enrichment_apply_v2 (migration
+  // 2026-09-02_29), which writes the columns + provenance + scene subjects and
+  // stamps visual_meta_version='enrich-v2'. A failure here THROWS → the job
+  // fails loudly and retries. Enable creative_writer.asset_enrich_v2 ONLY
+  // after _29 is applied — a missing RPC is the expected failure otherwise.
+  if (v2) {
+    const fields = parseV2Fields(out as Record<string, unknown>);
+    const { error: v2Err } = await supabase.rpc('file_enrichment_apply_v2', {
+      p_file_id: job.fileId,
+      p_has_text: fields.has_text,
+      p_headline_space: fields.headline_space,
+      p_ocr_text: fields.ocr_text,
+      p_subjects: fields.scene_subjects,
+      p_model: v2.model,
+    });
+    if (v2Err) throw new Error(`file_enrichment_apply_v2 failed: ${v2Err.message}`);
+    result.enrich_v2 = {
+      model: v2.model,
+      cost_usd: v2.cost_usd,
+      has_text: fields.has_text,
+      headline_space: fields.headline_space,
+      ocr_text: fields.ocr_text !== null,
+      scene_subjects: fields.scene_subjects,
+    };
+  }
+
   const pcatLog = result.primary_category ? `${String(result.primary_category)}${result.primary_category_fallback ? '(fb)' : ''}` : 'n';
-  console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} pcat=${pcatLog} subjects=${(result.subjects as string[] | undefined)?.length ?? 0} newSubs=${(result.new_subjects as unknown[] | undefined)?.length ?? 0} axes=${[result.asset_nature, result.acquisition_source, result.usage_rights, result.production_state].filter(Boolean).length}/4 title=${result.title ? 'y' : 'n'} names=${names.length} linkSugg=${nSugg}`);
+  console.log(`[enrich] job=${job.id} kind=${kind} frames=${blocks.filter((b) => b.type === 'image').length} tx=${transcript.length}c → desc=${result.description ? 'y' : 'n'} pcat=${pcatLog} subjects=${(result.subjects as string[] | undefined)?.length ?? 0} newSubs=${(result.new_subjects as unknown[] | undefined)?.length ?? 0} axes=${[result.asset_nature, result.acquisition_source, result.usage_rights, result.production_state].filter(Boolean).length}/4 title=${result.title ? 'y' : 'n'} names=${names.length} linkSugg=${nSugg}${v2 ? ` v2=${v2.model} scenes=${((result.enrich_v2 as { scene_subjects?: string[] }).scene_subjects ?? []).length}` : ''}`);
   return result;
 }
 

@@ -31,6 +31,8 @@ import type {
   LibraryLayout,
 } from '@/types';
 import { LIBRARY_GROUPINGS, LIBRARY_SORTS } from '@/lib/files/libraryUrl';
+import { ASPECT_FAMILIES, aspectFamilyLabel } from '@/lib/files/library';
+import type { AspectFamily } from '@/types/files';
 import {
   confidentialityLabel, documentTypeLabel, modelLabel, originLabel, ownerLabel, statusLabel,
 } from './labels';
@@ -320,6 +322,15 @@ export default function LibraryFilterBar({
             .map((v) => ({ value: v.value, label: isAr ? v.label_ar : v.label_en }))}
           selected={filters.primary_category ?? []}
           onToggle={(v) => toggleIn('primary_category', v)}
+        />
+        {/* Aspect family — fixed options (no facet count: each facet re-scans
+            the RLS-gated base CTE, the 2026-08-23 statement-timeout lesson).
+            The RPC derives portrait|landscape|square from aspect_ratio W:H. */}
+        <OptionMenu
+          label={isAr ? 'الاتجاه' : 'Orientation'}
+          options={ASPECT_FAMILIES.map((f) => ({ value: f, label: aspectFamilyLabel(f, isAr) }))}
+          selected={filters.aspect_family ?? []}
+          onToggle={(v) => toggleIn('aspect_family', v as AspectFamily)}
         />
         <FacetMenu
           label={t('files.library.filter.document_type')}

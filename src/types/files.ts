@@ -304,6 +304,12 @@ export interface BusinessFileRow {
   page_count?: number | null;
   /** Snapped display ratio (16:9 / 9:16 / 1:1 …), captured at upload. */
   aspect_ratio?: string | null;
+  /** Rights trust resolved from the LATEST usage_rights provenance row —
+   *  returned by business_files_search (2026-09-02_29) for picker badges.
+   *  'unknown' when no human or AI decision exists; verified only on a HUMAN
+   *  decision. Optional so an older RPC still types. */
+  rights_provenance?: string | null;
+  rights_verified?: boolean | null;
   /** Full subject set (file_subjects); document_type is the primary one. */
   subjects?: string[];
 }
@@ -367,9 +373,15 @@ export interface BusinessFilesSearchResult {
  * be stored and replayed without a translation step — a translation step is
  * where a saved view silently loses a filter.
  */
+/** Aspect family derived from the snapped aspect_ratio W:H (±5% = square).
+ *  RPC filter added 2026-09-02_29. */
+export type AspectFamily = 'portrait' | 'landscape' | 'square';
+
 export interface LibraryFilters {
   /** Primary "Document Type" (single-select axis; multiple values = OR). */
   primary_category?: string[];
+  /** Orientation family (derived from aspect_ratio W:H). */
+  aspect_family?: AspectFamily[];
   document_type?: string[];
   /** Multi-value subject (file_subjects). ANY listed subject matches. */
   subject?: string[];

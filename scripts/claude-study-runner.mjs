@@ -67,12 +67,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateEnrichmentResults, isSubscriptionLimit } from './lib/mkt-enrichment-validate.mjs';
 import { validateCampaignSummaries } from './lib/mkt-campaign-summary-validate.mjs';
+import { validateSlideReads, validatePostReads } from './lib/visual-design-validate.mjs';
 
 // Thrown when Claude reports a subscription/usage limit — the runner parks the
 // job (claude_job_block) and cools down instead of failing/retrying it.
 class RateLimitError extends Error {}
 const ENRICH_RULE_VERSION = 'enrich-runner-v1';
 const CAMPAIGN_SUMMARY_VERSION = 'campaign-summary-v1';
+const DESIGN_READ_RULE_VERSION = 'v1';
+const DESIGN_READ_MODEL = 'claude-runner:design-read';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const POLL_MS = 10_000;
@@ -696,6 +699,328 @@ async function handleAqarListingExtract(job) {
   }
 }
 
+// ── design-read lane (Post Creative Director) ───────────────────────────────
+// Structured DESIGN reads of static competitor/Wassel creatives on the
+// SUBSCRIPTION, persisted to visual_design_reads via the scoped upsert RPC.
+// Same shape as visual-ocr: stage images → manifest → Skill session → pure
+// validator → scoped upsert. Claude never writes to the DB.
+//
+// Two kinds (both claimed on the OCR lane — v_ocr_kinds, DB-side):
+//   mkt_visual_design_slide — one SlideRead per image   (≤24 per session)
+//   mkt_visual_design_post  — one PostRead per post, ALL slides each (≤6 posts)
+//
+// payload.manifest_items (slide kind): {media_id, post_id, stored_url,
+//   carousel_index, org, subject_kind?}. When EMPTY the handler self-selects
+// via creative_design_read_targets (tier walk, honouring payload.tier/tiers).
+// Items arriving with only {stored_url} (the worker's runner-provider path)
+// are resolved to their media row by stored_url; unresolvable items are
+// skipped (a read without a subject can never be persisted).
+const DESIGN_SLIDE_BATCH_MAX = 24;      // images per session (same bound as OCR)
+const DESIGN_POST_BATCH_MAX = 6;        // posts per session — each carries ALL its slides
+const DESIGN_POST_SLIDES_MAX = 10;      // carousel cap (IG max); keeps a session bounded
+
+/** org_type per organization id — 'internal' (Wassel) maps to wassel_* subjects. */
+async function designOrgTypeMap(orgIds) {
+  const ids = [...new Set(orgIds.filter(Boolean))];
+  const map = new Map();
+  if (ids.length === 0) return map;
+  const { data, error } = await supa.from('mkt_organizations').select('id, org_type').in('id', ids);
+  if (error) throw new Error(`design-read: org lookup failed: ${error.message}`);
+  for (const o of data ?? []) map.set(o.id, o.org_type);
+  return map;
+}
+
+function designSubjectKind(level, orgType, explicit) {
+  if (explicit === 'competitor_media' || explicit === 'competitor_post'
+    || explicit === 'wassel_file' || explicit === 'wassel_content') return explicit;
+  const internal = orgType === 'internal';
+  return level === 'slide' ? (internal ? 'wassel_file' : 'competitor_media')
+                           : (internal ? 'wassel_content' : 'competitor_post');
+}
+
+/** Self-select subjects lacking a read, walking tiers (payload.tier | payload.tiers | 1..5). */
+async function designReadSelfSelect(level, limit, payload) {
+  const tiers = Number.isInteger(payload?.tier) ? [payload.tier]
+    : (Array.isArray(payload?.tiers) && payload.tiers.length > 0 ? payload.tiers : [1, 2, 3, 4, 5]);
+  const out = [];
+  for (const tier of tiers) {
+    if (out.length >= limit) break;
+    const { data, error } = await supa.rpc('creative_design_read_targets', {
+      p_subject_kind: payload?.subject_kind ?? null,
+      p_level: level,
+      p_rule_version: DESIGN_READ_RULE_VERSION,
+      p_model_used: DESIGN_READ_MODEL,
+      p_tier: tier,
+      p_limit: limit - out.length,
+    });
+    if (error) throw new Error(`design-read targets rpc failed (tier ${tier}): ${error.message}`);
+    for (const t of data ?? []) out.push(t);
+  }
+  return out;
+}
+
+/** Resolve {stored_url}-only items to their mkt_content_media row. */
+async function designResolveMediaByUrl(items) {
+  const urls = [...new Set(items.filter((i) => !i.media_id && i.stored_url).map((i) => i.stored_url))];
+  const byUrl = new Map();
+  for (const batch of chunk(urls, 200)) {
+    const { data, error } = await supa.from('mkt_content_media')
+      .select('id, content_post_id, carousel_index, stored_url').in('stored_url', batch);
+    if (error) throw new Error(`design-read: media-by-url lookup failed: ${error.message}`);
+    for (const m of data ?? []) byUrl.set(m.stored_url, m);
+  }
+  return byUrl;
+}
+
+function chunk(xs, n) { const out = []; for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n)); return out; }
+
+async function handleMktVisualDesignSlide(job) {
+  let items = Array.isArray(job.payload?.manifest_items) ? job.payload.manifest_items : [];
+  if (items.length === 0) {
+    const targets = await designReadSelfSelect('slide', DESIGN_SLIDE_BATCH_MAX, job.payload);
+    items = targets.map((t) => ({
+      media_id: t.subject_id, post_id: t.post_id, stored_url: t.stored_url,
+      carousel_index: t.slide_index, org: t.organization_id, subject_kind: t.subject_kind,
+    }));
+  }
+  items = items.slice(0, DESIGN_SLIDE_BATCH_MAX).filter((it) => it && (it.media_id || it.stored_url || it.base64));
+  if (items.length === 0) return { processed: 0, failed: 0, ids: [], note: 'no slide targets' };
+
+  const byUrl = await designResolveMediaByUrl(items);
+  for (const it of items) {
+    if (!it.media_id && it.stored_url) {
+      const m = byUrl.get(it.stored_url);
+      if (m) { it.media_id = m.id; it.post_id = it.post_id ?? m.content_post_id; it.carousel_index = it.carousel_index ?? m.carousel_index; }
+    }
+  }
+  const orgTypes = await designOrgTypeMap(items.map((i) => i.org));
+
+  const workDir = mkdtempSync(path.join(tmpdir(), 'mkt-design-slide-'));
+  const manifestFile = path.join(workDir, 'manifest.json').replace(/\\/g, '/');
+  const resultFile = path.join(workDir, 'result.json').replace(/\\/g, '/');
+
+  try {
+    const manifest = [];
+    let failed = 0;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it.media_id) { console.warn(`[runner] design-slide: skip item ${i} — no media_id and no resolvable stored_url`); failed++; continue; }
+      const p = path.join(workDir, `${manifest.length}.jpg`).replace(/\\/g, '/');
+      if (it.base64) {
+        writeFileSync(p, Buffer.from(it.base64, 'base64'));
+      } else {
+        const res = await fetch(it.stored_url);
+        if (!res.ok) { console.warn(`[runner] design-slide: skip media ${it.media_id} — fetch ${res.status}`); failed++; continue; }
+        writeFileSync(p, Buffer.from(await res.arrayBuffer()));
+      }
+      manifest.push({
+        media_id: it.media_id, post_id: it.post_id ?? null,
+        subject_kind: designSubjectKind('slide', it.org ? orgTypes.get(it.org) : null, it.subject_kind),
+        carousel_index: Number.isInteger(it.carousel_index) ? it.carousel_index : null,
+        org: it.org ?? null, path: p,
+      });
+    }
+    if (manifest.length === 0) return { processed: 0, failed, ids: [], note: 'every item failed to stage' };
+    writeFileSync(manifestFile, JSON.stringify(manifest));
+
+    const prompt = [
+      `/visual-design-read-slide ${manifestFile} ${resultFile}`,
+      '',
+      'Run headless — read every image listed in the manifest and write ONLY the',
+      'result JSON file. Do not ask questions. Do not print the JSON to stdout.',
+    ].join('\n');
+
+    let validated = null, lastErr = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { code, out, err } = await runClaude(prompt, ROOT);
+      const combined = `${out}\n${err}`;
+      if (isSubscriptionLimit(combined)) throw new RateLimitError('Claude subscription/usage limit reached');
+      if (!existsSync(resultFile)) { lastErr = `session ended (code ${code}) without result file: ${combined.slice(-300)}`; continue; }
+      let parsed;
+      try { parsed = JSON.parse(readFileSync(resultFile, 'utf-8')); }
+      catch (e) { lastErr = `result JSON parse failed: ${e.message}`; continue; }
+      const { valid, errors } = validateSlideReads(parsed, manifest);
+      if (valid.length === 0) { lastErr = `validation produced 0 valid rows: ${errors.slice(0, 3).join('; ')}`; continue; }
+      validated = { valid, errors };
+      break;
+    }
+    if (!validated) throw new Error(`validation_unrepaired: visual-design-read-slide failed after retry: ${lastErr}`);
+
+    const ids = [];
+    for (const v of validated.valid) {
+      const { error } = await supa.rpc('visual_design_read_upsert', {
+        p_subject_kind: v.subjectKind ?? 'competitor_media',
+        p_subject_id: v.mediaId,
+        p_level: 'slide',
+        p_post_id: v.postId,
+        p_slide_index: v.slideIndex,
+        p_organization_id: v.org,
+        p_model_task: 'design_read_slide',
+        p_model_used: DESIGN_READ_MODEL,
+        p_rule_version: DESIGN_READ_RULE_VERSION,
+        p_read: v.read,
+        p_confidence: null,
+        p_cost_usd: 0,          // subscription — no incremental API charge
+        p_raw: null,
+        p_status: 'done',
+        p_failure: null,
+      });
+      if (error) { console.error(`[runner] design-slide upsert failed for ${v.mediaId}: ${error.message}`); failed++; continue; }
+      ids.push(v.mediaId);
+    }
+    return { processed: ids.length, failed, ids, validation_errors: validated.errors.slice(0, 10) };
+  } finally {
+    try { rmSync(workDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+
+async function handleMktVisualDesignPost(job) {
+  let postItems = Array.isArray(job.payload?.manifest_items) ? job.payload.manifest_items : [];
+  if (postItems.length === 0) {
+    const targets = await designReadSelfSelect('post', DESIGN_POST_BATCH_MAX, job.payload);
+    postItems = targets.map((t) => ({
+      post_id: t.subject_id, org: t.organization_id, subject_kind: t.subject_kind, post_type: t.post_type,
+    }));
+  }
+  postItems = postItems.slice(0, DESIGN_POST_BATCH_MAX)
+    .map((it) => (typeof it === 'string' ? { post_id: it } : it))
+    .filter((it) => it && (it.post_id || it.stored_url));
+  if (postItems.length === 0) return { processed: 0, failed: 0, ids: [], note: 'no post targets' };
+
+  // Items from the runner-provider path may carry only {stored_url} — resolve to their post.
+  const byUrl = await designResolveMediaByUrl(postItems);
+  for (const it of postItems) {
+    if (!it.post_id && it.stored_url) {
+      const m = byUrl.get(it.stored_url);
+      if (m) it.post_id = m.content_post_id;
+    }
+  }
+  postItems = postItems.filter((it) => it.post_id);
+  if (postItems.length === 0) return { processed: 0, failed: 0, ids: [], note: 'no resolvable posts' };
+  const postIds = postItems.map((it) => it.post_id);
+
+  const { data: postRows, error: pErr } = await supa.from('mkt_content_posts')
+    .select('id, organization_id, post_type').in('id', postIds);
+  if (pErr) throw new Error(`design-post: posts query failed: ${pErr.message}`);
+  const postById = new Map((postRows ?? []).map((p) => [p.id, p]));
+  const orgTypes = await designOrgTypeMap([
+    ...postItems.map((it) => it.org),
+    ...(postRows ?? []).map((p) => p.organization_id),
+  ]);
+
+  // ALL stored images of each post, in carousel order.
+  const { data: media, error: mErr } = await supa.from('mkt_content_media')
+    .select('id, content_post_id, carousel_index, stored_url')
+    .in('content_post_id', postIds)
+    .eq('media_kind', 'image').eq('download_status', 'stored')
+    .not('stored_url', 'is', null)
+    .order('carousel_index', { ascending: true });
+  if (mErr) throw new Error(`design-post: media query failed: ${mErr.message}`);
+  const mediaByPost = new Map();
+  for (const m of media ?? []) {
+    if (!mediaByPost.has(m.content_post_id)) mediaByPost.set(m.content_post_id, []);
+    mediaByPost.get(m.content_post_id).push(m);
+  }
+
+  // Existing slide reads (latest per media) ride along as evidence for the post read.
+  const { data: slideRows, error: srErr } = await supa.from('visual_design_reads')
+    .select('subject_id, slide_index, read, created_at')
+    .eq('level', 'slide').eq('status', 'done')
+    .in('post_id', postIds)
+    .order('created_at', { ascending: false });
+  if (srErr) throw new Error(`design-post: slide reads query failed: ${srErr.message}`);
+  const latestSlideRead = new Map(); // subject_id → read (first row wins: ordered DESC)
+  for (const r of slideRows ?? []) if (!latestSlideRead.has(r.subject_id)) latestSlideRead.set(r.subject_id, r);
+
+  const workDir = mkdtempSync(path.join(tmpdir(), 'mkt-design-post-'));
+  const manifestFile = path.join(workDir, 'manifest.json').replace(/\\/g, '/');
+  const resultFile = path.join(workDir, 'result.json').replace(/\\/g, '/');
+
+  try {
+    const manifest = [];
+    let failed = 0;
+    for (let pi = 0; pi < postItems.length; pi++) {
+      const it = postItems[pi];
+      const post = postById.get(it.post_id);
+      const org = it.org ?? post?.organization_id ?? null;
+      const slides = [];
+      const mediaList = (mediaByPost.get(it.post_id) ?? []).slice(0, DESIGN_POST_SLIDES_MAX);
+      let slideFailed = false;
+      for (const m of mediaList) {
+        const p = path.join(workDir, `${pi}-${m.carousel_index}.jpg`).replace(/\\/g, '/');
+        const res = await fetch(m.stored_url);
+        if (!res.ok) { console.warn(`[runner] design-post: skip post ${it.post_id} — slide ${m.id} fetch ${res.status}`); slideFailed = true; break; }
+        writeFileSync(p, Buffer.from(await res.arrayBuffer()));
+        slides.push({ media_id: m.id, carousel_index: m.carousel_index, path: p });
+      }
+      if (slideFailed) { failed++; continue; }
+      if (slides.length === 0) { console.warn(`[runner] design-post: skip post ${it.post_id} — no stored images`); failed++; continue; }
+      const slideReads = slides
+        .map((s) => latestSlideRead.get(s.media_id))
+        .filter(Boolean)
+        .map((r) => ({ carousel_index: r.slide_index, read: r.read }));
+      manifest.push({
+        post_id: it.post_id,
+        subject_kind: designSubjectKind('post', org ? orgTypes.get(org) : null, it.subject_kind),
+        org, post_type: it.post_type ?? post?.post_type ?? null,
+        slides, slide_reads: slideReads,
+      });
+    }
+    if (manifest.length === 0) return { processed: 0, failed, ids: [], note: 'no stageable posts' };
+    writeFileSync(manifestFile, JSON.stringify(manifest));
+
+    const prompt = [
+      `/visual-design-read-post ${manifestFile} ${resultFile}`,
+      '',
+      'Run headless — read every post in the manifest (ALL its slides, in order)',
+      'and write ONLY the result JSON file. Do not ask questions. Do not print',
+      'the JSON to stdout.',
+    ].join('\n');
+
+    let validated = null, lastErr = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { code, out, err } = await runClaude(prompt, ROOT);
+      const combined = `${out}\n${err}`;
+      if (isSubscriptionLimit(combined)) throw new RateLimitError('Claude subscription/usage limit reached');
+      if (!existsSync(resultFile)) { lastErr = `session ended (code ${code}) without result file: ${combined.slice(-300)}`; continue; }
+      let parsed;
+      try { parsed = JSON.parse(readFileSync(resultFile, 'utf-8')); }
+      catch (e) { lastErr = `result JSON parse failed: ${e.message}`; continue; }
+      const { valid, errors } = validatePostReads(parsed, manifest);
+      if (valid.length === 0) { lastErr = `validation produced 0 valid rows: ${errors.slice(0, 3).join('; ')}`; continue; }
+      validated = { valid, errors };
+      break;
+    }
+    if (!validated) throw new Error(`validation_unrepaired: visual-design-read-post failed after retry: ${lastErr}`);
+
+    const ids = [];
+    for (const v of validated.valid) {
+      const { error } = await supa.rpc('visual_design_read_upsert', {
+        p_subject_kind: v.subjectKind ?? 'competitor_post',
+        p_subject_id: v.postId,
+        p_level: 'post',
+        p_post_id: v.postId,
+        p_slide_index: null,
+        p_organization_id: v.org,
+        p_model_task: 'design_read_post',
+        p_model_used: DESIGN_READ_MODEL,
+        p_rule_version: DESIGN_READ_RULE_VERSION,
+        p_read: v.read,
+        p_confidence: null,
+        p_cost_usd: 0,
+        p_raw: null,
+        p_status: 'done',
+        p_failure: null,
+      });
+      if (error) { console.error(`[runner] design-post upsert failed for ${v.postId}: ${error.message}`); failed++; continue; }
+      ids.push(v.postId);
+    }
+    return { processed: ids.length, failed, ids, validation_errors: validated.errors.slice(0, 10) };
+  } finally {
+    try { rmSync(workDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+
 const HANDLERS = {
   ping: handlePing,
   client_study: handleClientStudy,
@@ -703,6 +1028,8 @@ const HANDLERS = {
   mkt_campaign_summary: handleMktCampaignSummary,
   mkt_visual_ocr: handleMktVisualOcr,
   aqar_listing_extract: handleAqarListingExtract,
+  mkt_visual_design_slide: handleMktVisualDesignSlide,
+  mkt_visual_design_post: handleMktVisualDesignPost,
 };
 
 // Upper bound on ONE job. Must sit ABOVE the slowest legitimate session

@@ -1,7 +1,7 @@
 # PRD: Competitor Watch (مرصد المنافسين)
 
 **Status:** Live (all five surfaces: Content Library + Agents & runs, Content pipeline, Storage, Companies)
-**Last updated:** 2026-08-31
+**Last updated:** 2026-09-02
 
 > A NEW, from-scratch workspace that succeeds the **Marketing Intelligence**
 > page (`marketing-intelligence.md`), built because the operator found that page
@@ -52,6 +52,16 @@ that study the corpus (how competitors write posts, script reels, price offers).
   filters to them. Active filters show as removable chips.
 - **Read full** expands an entry to its caption, selling points, amenities, a
   transcript-present note, and a link to the original post.
+- **Design-read chip (2026-09-02):** expanding an entry lazily fetches its
+  `visual_design_reads` (`design_read_get`); when a read exists a «قراءة
+  تصميم» chip shows on the entry and the expanded view renders a one-line
+  summary (layout, density, palette family, branding intensity, or the
+  post-level arc summary). No read → nothing renders, no error.
+- **«مثال للدراسة» (2026-09-02, admins only):** registers the post into
+  `mos_design_examples` as `study_only` via `design_example_set` — strengths /
+  caveats / note captured inline. Saved examples read «في سجل الأمثلة» and
+  feed the Creative Director's reference retrieval and the brand kit's
+  approved-examples registry.
 - **Honest gaps rendered, not hidden:** a shelf/facet with no items is shown as
   its real count; the full spoken-transcript TEXT is not yet inlined (only a
   "transcript exists" flag) — flagged in-UI as a coming update.
@@ -86,7 +96,7 @@ Reads only. No write path.
 | `api/marketing.ts` | `content_library` action (service client → RPC) |
 | `src/lib/competitorWatch/client.ts` | Typed client (`fetchContentLibrary`) + row/result types |
 | `src/pages/CompetitorWatch/CompetitorWatchPage.tsx` | Workspace shell: command bar + sub-nav (Library live, 4 surfaces "soon") |
-| `src/pages/CompetitorWatch/components/ContentLibrary.tsx` | The Library surface: shelves rail, filter bar, entry cards + expand |
+| `src/pages/CompetitorWatch/components/ContentLibrary.tsx` | The Library surface: shelves rail, filter bar, entry cards + expand. Also the design-read chip (lazy `design_read_get` on expand) and the admin «مثال للدراسة» action (`design_example_set`, 2026-09-02) |
 | `src/pages/CompetitorWatch/watch.css` | Scoped `.cw-root` design system (control-room; Fraunces + IBM Plex, copper/cream/charcoal) |
 | `src/lib/customPages.ts` / `src/App.tsx` | Page registration (`competitor_watch`, `/competitor-watch`, admin default) |
 

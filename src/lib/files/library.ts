@@ -21,6 +21,7 @@
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
 import { recordTitle } from '@/lib/documents/links';
+import type { AspectFamily } from '@/types/files';
 import type {
   AiReviewRow,
   AppRecord,
@@ -512,4 +513,61 @@ export async function bulkAddSubjects(fileIds: string[], subjects: string[]): Pr
     .from('file_subjects')
     .upsert(rows, { onConflict: 'file_id,subject', ignoreDuplicates: true });
   if (error) throw surfaceLibraryError('add file subjects', error);
+}
+
+// ── Creative Director additions (2026-09-02, A-ASSETS) ──────────────────────
+// Aspect-family filter + rights badges for the picker. The badge logic is the
+// CLIENT-SIDE mirror of worker/src/creative/assetMeta/rights.ts
+// (classifyRights) — keep the mapping in sync; the server copies are the
+// authority at final-approval time.
+
+export const ASPECT_FAMILIES: AspectFamily[] = ['landscape', 'portrait', 'square'];
+
+export function aspectFamilyLabel(f: AspectFamily, isAr: boolean): string {
+  switch (f) {
+    case 'landscape': return isAr ? 'أفقي' : 'Landscape';
+    case 'portrait': return isAr ? 'عمودي' : 'Portrait';
+    case 'square': return isAr ? 'مربع' : 'Square';
+  }
+}
+
+export type FileRightsBadge = 'verified' | 'unverified' | 'blocked' | 'reference_only' | 'ai_review';
+
+export interface FileRightsBadgeInfo {
+  badge: FileRightsBadge;
+  label_ar: string;
+  label_en: string;
+  /** True when a human must confirm rights before the asset ships. */
+  needs_confirmation: boolean;
+}
+
+/**
+ * The rights badge for one search row (needs the rights_provenance /
+ * rights_verified fields business_files_search returns after 2026-09-02_29;
+ * rows from an older RPC simply classify as unverified).
+ */
+export function rightsBadgeFor(row: {
+  usage_rights?: string | null;
+  rights_provenance?: string | null;
+  rights_verified?: boolean | null;
+  acquisition_source?: string | null;
+  asset_nature?: string | null;
+}): FileRightsBadgeInfo {
+  const verified = row.rights_verified === true;
+  if (row.acquisition_source === 'competitor') {
+    return { badge: 'reference_only', label_ar: 'مرجع فقط', label_en: 'Reference only', needs_confirmation: false };
+  }
+  if (row.usage_rights === 'restricted' || row.usage_rights === 'do_not_use') {
+    return { badge: 'blocked', label_ar: 'ممنوع', label_en: 'Blocked', needs_confirmation: false };
+  }
+  if ((row.asset_nature === 'ai_generated' || row.asset_nature === 'ai_edited') && !verified) {
+    return { badge: 'ai_review', label_ar: 'يتطلب مراجعة', label_en: 'AI review', needs_confirmation: true };
+  }
+  if (row.usage_rights === 'internal_only') {
+    return { badge: 'reference_only', label_ar: 'داخلي فقط', label_en: 'Internal only', needs_confirmation: false };
+  }
+  if (verified && (row.usage_rights === 'approved' || row.usage_rights === 'use_after_edit' || row.usage_rights === 'attribution_required')) {
+    return { badge: 'verified', label_ar: 'موثّق', label_en: 'Verified', needs_confirmation: false };
+  }
+  return { badge: 'unverified', label_ar: 'غير موثّق', label_en: 'Unverified', needs_confirmation: true };
 }

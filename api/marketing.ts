@@ -28,6 +28,12 @@ import {
   embedQuery, diversify, num as cvNum, type CvSearchRow, type CvFrameSearchRow,
 } from './_lib/marketing/modalCv.js';
 
+/* ── creative director (design reads + backfill ops — dispatch block below) ── */
+import {
+  designReadGet, designReadsStatus, creativeBackfillStatus,
+  creativeBackfillControl, wasselInternalStatus,
+} from './_lib/marketing/creative/reads.js';
+
 export const config = { runtime: 'edge' };
 
 interface Body {
@@ -1153,6 +1159,40 @@ export default async function handler(req: Request): Promise<Response> {
           videos_by_status: h.videos ?? {},
           jobs: h.jobs ?? {},
         });
+      }
+      /* ── creative director ─────────────────────────────────────────────
+         Design reads + creative backfill ops (docs/creative-director-contracts.md
+         §4). Reads go through the service client like content_library (the
+         route is the gate); creative_backfill_control is admin-gated like
+         run_*. Handlers live in api/_lib/marketing/creative/reads.ts.
+         NOTE: the control op travels as `op` (not `action`) — `action` is
+         this endpoint's dispatch envelope key. ─────────────────────────── */
+      case 'design_read_get': {
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        return designReadGet({ sb, svc, body: body as Record<string, unknown>, userId: user.userId });
+      }
+      case 'design_reads_status': {
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        return designReadsStatus({ sb, svc, body: body as Record<string, unknown>, userId: user.userId });
+      }
+      case 'creative_backfill_status': {
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        return creativeBackfillStatus({ sb, svc, body: body as Record<string, unknown>, userId: user.userId });
+      }
+      case 'creative_backfill_control': {
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+        if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
+        return creativeBackfillControl({ sb, svc, body: body as Record<string, unknown>, userId: user.userId });
+      }
+      case 'wassel_internal_status': {
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        return wasselInternalStatus({ sb, svc, body: body as Record<string, unknown>, userId: user.userId });
       }
 
       default:

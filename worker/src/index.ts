@@ -48,6 +48,15 @@ import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJ
 import { runCreativeCleanup } from './marketing/creativeCleanup.js';
 import { sweepContentBacklog } from './marketing/content/sweepBacklog.js';
 import { getSessionStatus, restartSession, stopSession, type WahaSendConfig } from './waha.js';
+// ── creative director lanes ── (contracts §3 — flag-gated; all four flags ship
+// OFF in mos_settings.creative_writer, so registering them is a no-op until an
+// operator flips a flag. Peer lane loops declare a structurally identical
+// LaneDeps, so the one deps object below fits all four.)
+import { creativeJobsLoop } from './creative/lanes/creativeJobsLane.js';
+import { creativeImageLoop } from './creative/lanes/creativeImageLane.js';
+import { designReadLoop } from './creative/lanes/designReadLane.js';
+import { assetMetaLaneLoop as assetMetaLoop } from './creative/lanes/assetMetaLane.js';
+import type { LaneDeps } from './creative/lanes/types.js';
 
 const env = loadEnv();
 
@@ -3399,6 +3408,31 @@ if (env.WORKFLOW_PROOF_ONLY) {
   } else {
     console.log(`[worker] cv lanes disabled (${env.CV_LANES_ENABLED ? 'MODAL_CV_URL unset' : 'CV_LANES_ENABLED=0'})`);
   }
+  // ── creative director lanes ──────────────────────────────────────────────
+  // Post Creative Director (contracts §3): four independent loops sharing one
+  // LaneDeps bag. ALWAYS registered — every lane re-reads its
+  // mos_settings.creative_writer flag each tick and sleeps 30 s while its flag
+  // is off (all flags ship OFF, so this is inert until an operator flips one;
+  // rollback = flip it back).
+  const creativeLaneDeps: LaneDeps = {
+    supabase,
+    env,
+    workerId: env.WORKER_ID,
+    sleep,
+    isShuttingDown: () => shuttingDown,
+    log: (msg, extra) => {
+      if (extra !== undefined) console.log(`[creative] ${msg}`, extra);
+      else console.log(`[creative] ${msg}`);
+    },
+  };
+  loops.push(
+    creativeJobsLoop(creativeLaneDeps),   // mos_creative_jobs (concepts/package/regenerate/derivatives)
+    creativeImageLoop(creativeLaneDeps),  // generation_jobs kind='creative-image'
+    designReadLoop(creativeLaneDeps),     // visual_design_reads sweep (A-VIS)
+    assetMetaLoop(creativeLaneDeps),      // asset deterministic meta + enrich v2 (A-ASSETS)
+  );
+  console.log('[worker] creative director lanes registered (flags gate actual runs)');
+  // ── end creative director lanes ──
 }
 Promise.all(loops).catch((err) => {
   console.error('[worker] poll loop crashed:', err);

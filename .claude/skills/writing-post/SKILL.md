@@ -87,12 +87,16 @@ order by length(p.caption) desc limit 12;
 
 ## Output format
 For each post, produce TWO layers (state the recipe of each):
-1. **On-design copy** — what goes ON the image. It ALWAYS opens with the
-   **PROJECT NAME** as the wordmark/lead (with the وصل logo lockup), THEN a short
-   headline/tagline, THEN the 2–4 key on-image lines (e.g. «بدأ البيع» / area /
-   «تبدأ من …»). The name is non-negotiable — competitors always lead with it. This
-   is the PRIMARY deliverable — read first, and what the designer sets in type.
-2. **Caption** — the supporting text below + 📞 Wassel CTA + hashtag block.
+1. **The headlines = the on-design copy.** These ARE the design's text — nothing
+   else goes on the image. It is the **PROJECT NAME** (wordmark/lead, with the وصل
+   logo lockup) + **3–4 SHORT headline lines**. That's the whole design. Do NOT
+   stack price/area/units/status/CTA/contact onto the image — competitors don't
+   (تل الربوة = name + one tagline; ربوة الرمز = name + two short lines; ستون
+   التندى = name + tagline + 3 feature words). The name is non-negotiable — always
+   the lead. This is the PRIMARY deliverable — the few punchy lines the designer
+   sets in type.
+2. **Caption** — where ALL the detail lives: the price, area, units, status,
+   amenities, location, + 📞 Wassel CTA + hashtag block.
 Ready to paste. No file unless asked.
 
 ## Components — how this becomes an in-app BUTTON
@@ -120,6 +124,22 @@ competitor design leads with the project name/wordmark («تل الربوة — 
 the project name is a failure. Always put it prominently as the lead/wordmark
 (with the وصل logo), the tagline under it, then the facts. This was a real miss:
 a 10-post batch once had the name only as a list label, never in the copy.
+
+**2026-09-01 — NEVER say «بدون سعي» (operator, hard rule).** Even when it sits in
+the project record's features / marketing_document (يمام بارك had it), NEVER carry
+«بدون سعي» into a headline OR a caption. Drop it silently — it is not a selling
+line we use. Applies to every post, no exceptions.
+
+**2026-09-01 — The design = project name + 3–4 headlines, NOTHING else
+(operator).** Headlines ARE "the shit written on the design." The image carries
+the wordmark + 3–4 short punchy lines and stops there. Do NOT put a price/area/
+units/status/CTA/contact stack on the image — that was a real miss (a full spec
+sheet got rendered onto the design). ALL detail (price, area, units, «على
+الخارطة»، amenities, location, CTA) lives in the CAPTION. Proof from competitor
+OCR: تل الربوة = name + «عنوانٌ للراحة ومساحات للاستقرار» (one line); ربوة الرمز =
+name + «لراحة العائلة» + «نبني مسكنًا ونصنع مستقبلاً»; ستون التندى = name + «راحة
+بكافة تفاصيلها» + ٣ كلمات مزايا. A price line may be ONE of the 3–4 only when the
+recipe is offer/launch and it's the hook — never a stack.
 
 **2026-09-01 — Learn from the ON-IMAGE text, not the caption (operator).** A
 post's persuasive copy is what's written ON the design (headline/tagline). We DO

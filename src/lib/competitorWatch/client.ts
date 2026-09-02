@@ -2,6 +2,7 @@
 // Thin, bearer-attached; talks to the shared /api/marketing dispatch endpoint
 // (the data layer is reused; the UI is a separate, new module).
 import { supabase } from '@/lib/supabase';
+import type { VisualDesignReadRow } from '@/lib/creative/contracts';
 
 async function authHeader(): Promise<Record<string, string>> {
   if (!supabase) return {};
@@ -542,3 +543,64 @@ export async function cvWasselBackfill(limit: number): Promise<{ queued: number 
   const j = await callRaw('cv_wassel_backfill', { limit });
   return { queued: typeof j.queued === 'number' ? j.queued : 0 };
 }
+// ── Post Creative Director: design reads + backfill + Wassel internal ──────
+// Wrappers for the creative-director actions on /api/marketing
+// (docs/creative-director-contracts.md §4). Row types come from the canonical
+// contracts; the payload shapes mirror the endpoint's jsonOk bodies.
+
+export const fetchDesignRead = (subject_kind: string, subject_id: string) =>
+  callAction<VisualDesignReadRow[]>('design_read_get', 'reads', { subject_kind, subject_id });
+
+export interface DesignReadsStatus {
+  slide_done: number;
+  post_done: number;
+  failed: number;
+  last_read_at: string | null;
+  design_reads_config: Record<string, unknown> | null;
+}
+export const fetchDesignReadsStatus = () =>
+  callAction<DesignReadsStatus>('design_reads_status', 'status');
+
+export interface CreativeBackfillRun {
+  id: string;
+  kind: string;
+  tier: number | null;
+  status: 'running' | 'completed' | 'failed' | 'paused';
+  started_at: string;
+  finished_at: string | null;
+  processed: number;
+  failed: number;
+  cost_usd: number | null;
+  worker_id: string | null;
+  note: string | null;
+}
+export interface CreativeBackfillStatus {
+  config: Record<string, unknown>;
+  runs: CreativeBackfillRun[];
+}
+export const fetchCreativeBackfillStatus = () =>
+  callAction<CreativeBackfillStatus>('creative_backfill_status', 'backfill');
+
+/** Admin-only. The op travels as `op` — `action` is the endpoint's dispatch key. */
+export const controlCreativeBackfill = (
+  kind: 'design_reads' | 'asset_meta' | 'asset_enrich',
+  op: 'start' | 'pause' | 'resume',
+  tier?: number,
+) =>
+  callAction<{ config: Record<string, unknown> }>('creative_backfill_control', 'backfill', {
+    kind, op, ...(tier !== undefined ? { tier } : {}),
+  });
+
+export interface WasselInternalStatus {
+  registered: boolean;
+  org: { id: string; name_ar: string | null; name_en: string | null; website: string | null } | null;
+  accounts: Array<{
+    id: string; platform: string | null; handle: string | null; profile_url: string | null;
+    is_active: boolean; collection_enabled: boolean; scrape_status: string | null;
+    followers: number | null; last_synced_at: string | null;
+  }>;
+  posts: number;
+  media_stored: number;
+}
+export const fetchWasselInternalStatus = () =>
+  callAction<WasselInternalStatus>('wassel_internal_status', 'wassel');

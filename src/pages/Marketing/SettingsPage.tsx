@@ -628,6 +628,49 @@ export default function SettingsPage() {
                 action={isAr ? 'فتح' : 'Open'}
                 onOpen={() => navigate('/m/settings/roles')}
               />
+
+              {/* Post Creative Director — the brand kit, the writer rules, the
+                  AI-role routing, and the feature flags. All ship dark. */}
+              <IndexCard
+                icon={IC.matrix}
+                title={isAr ? 'كتيّب العلامة' : 'Brand kit'}
+                desc={isAr
+                  ? 'الألوان وأدوارها، أميري، الطابع النجدي، والممنوعات — يقودان كاتب البوست. استشاري حتى تعتمده.'
+                  : 'The palette and its roles, Amiri, the Najdi character, and the prohibitions — steering the post writer. Advisory until you review it.'}
+                tags={<span className="tag">{isAr ? 'مسودة · استشاري' : 'Draft · advisory'}</span>}
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/brand-kit')}
+              />
+              <IndexCard
+                icon={IC.workflows}
+                title={isAr ? 'قواعد الكتابة' : 'Writer rules'}
+                desc={isAr
+                  ? 'القواعد الصارمة وسجل القرارات التي يتبعها كاتب البوست والفيديو.'
+                  : 'The hard rules and the decisions log the post and video writers follow.'}
+                tags={<span className="tag">{isAr ? 'مشترك · بوست + فيديو' : 'Shared · post + video'}</span>}
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/writer-rules')}
+              />
+              <IndexCard
+                icon={IC.matrix}
+                title={isAr ? 'أدوار الذكاء الاصطناعي' : 'AI roles'}
+                desc={isAr
+                  ? 'أي نموذج يشغّل كل مهمة إبداعية — بيانات قابلة للتبديل، بلا ربط بمزوّد.'
+                  : 'Which model runs each creative task — swappable data, no provider lock-in.'}
+                tags={<span className="tag">{isAr ? 'قابل للتبديل' : 'Swappable'}</span>}
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/ai-roles')}
+              />
+              <IndexCard
+                icon={IC.matrix}
+                title={isAr ? 'مفاتيح كاتب البوست' : 'Creative flags'}
+                desc={isAr
+                  ? 'تشغيل كاتب البوست، تنفيذ صور الذكاء الاصطناعي، قراءات التصميم، والمعالجة الخلفية — كلها مطفأة.'
+                  : 'Post writer, AI-image execution, design reads, and backfill — all off until you flip them.'}
+                tags={<span className="pill p-late">{isAr ? 'مطفأة' : 'Off'}</span>}
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/creative-flags')}
+              />
             </div>
 
             {/* The risk banner — shown while both declared risks actually hold. */}

@@ -128,3 +128,4 @@ docs/marketing-reference/tools/render-page.html
 # part of the app; each developer keeps their own. See CLAUDE.md dev notes.
 dev-api-shim.mjs
 vite.config.local.mjs
+.kimi-logs/

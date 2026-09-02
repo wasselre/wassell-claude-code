@@ -1,0 +1,387 @@
+{
+  "_comment": "Dev-only fixture for the Post Creative Director UI (A-UI). Shape = CreativePackageGetResult from src/lib/marketingOS/creativeClient.ts. Render the CreativeTab against this behind a window.fetch mock for /api/marketing-os when developing without the API. IDs are fake but well-formed. 2026-09-02.",
+  "package": {
+    "id": "9c9f2a10-1111-4a1a-8a1a-aaaaaaaaaaaa",
+    "content_id": "7b1c0de0-2222-4b2b-9b2b-bbbbbbbbbbbb",
+    "round": 1,
+    "version": 2,
+    "stage": "package",
+    "status": "draft",
+    "intended_use": "both",
+    "language": "ar",
+    "recipe": "ركّز على خطة السداد وقرب المشروع من الطريق الدائري",
+    "concept_id": "c2",
+    "concepts": null,
+    "facts": null,
+    "facts_used": ["F1", "F3", "F5", "F7"],
+    "brand_kit_version": 1,
+    "brand_kit_mode": "advisory",
+    "roles": { "creative_package": { "provider": "anthropic", "model": "claude-opus-5" } },
+    "cost_usd": 0.42,
+    "generated_by": "ai",
+    "job_id": "5e5f6a70-3333-4c3c-8c3c-cccccccccccc",
+    "created_by_user_id": null,
+    "applied_at": null,
+    "applied_snapshot": null,
+    "revision_note": "تقوية زاوية خطة السداد",
+    "created_at": "2026-09-02T09:14:00.000Z",
+    "updated_at": "2026-09-02T09:14:00.000Z",
+    "base": {
+      "strategy": {
+        "objective": "توليد محادثات واتساب مؤهلة من عائلات تبحث عن سكن أول في شمال الرياض",
+        "audience": "عائلات شابة (٣٠–٤٥) تبحث عن فيلا أو شقة كبيرة في حي الياسمين",
+        "audience_source": "campaign",
+        "campaign_context": { "campaign_id": "camp-aug-organic", "objective": "leads", "offer": "خطة سداد ١٠ سنوات" },
+        "angle": "السداد المريح بدل سعر المتر — «قسّطها على راحتك»",
+        "main_message": "امتلك بيت عائلتك في الياسمين بقسط شهري يبدأ من ٤٬٩٠٠ ريال",
+        "desired_response": "dm",
+        "format": "carousel",
+        "format_rationale": "الكاروسيل يتيح عرض خطة السداد ثم الوحدات ثم الموقع — رحلة قرار متدرجة",
+        "intended_use": "both",
+        "master_aspect": "4:5",
+        "master_aspect_rationale": "يخدم خلاصة انستقرام وإعلانات ميتا بأقل إعادة تخطيط",
+        "language": "ar"
+      },
+      "design_text": {
+        "project_name_lead": "واحة الياسمين",
+        "latin_name": null,
+        "headlines": ["قسّطها على راحتك", "من ٤٬٩٠٠ ريال شهريًا"],
+        "cta_on_design": "راسلنا «تفاصيل»",
+        "fact_refs": ["F3"]
+      },
+      "slides": [
+        {
+          "index": 1,
+          "role": "cover",
+          "purpose": "إيقاف التمرير بوعد السداد",
+          "headline": "قسّطها على راحتك",
+          "support": "من ٤٬٩٠٠ ريال شهريًا — ١٠ سنوات",
+          "asset_ref": "f0a1b2c3-4444-4d4d-8d4d-dddddddddd01",
+          "fact_refs": ["F3"],
+          "continuity": "الشريط النحاسي السفلي يتكرر في كل الشرائح"
+        },
+        {
+          "index": 2,
+          "role": "specs",
+          "purpose": "مواصفات الوحدات بأرقام موثقة",
+          "headline": "٤–٥ غرف · حتى ٣٨٠م²",
+          "support": "فلل وشقق كبيرة بتشطيب كامل",
+          "asset_ref": "f0a1b2c3-4444-4d4d-8d4d-dddddddddd02",
+          "fact_refs": ["F1", "F5"],
+          "continuity": "نفس شبكة النص أسفل الصورة"
+        },
+        {
+          "index": 3,
+          "role": "location",
+          "purpose": "قرب الموقع من الطريق الدائري والمدارس",
+          "headline": "٧ دقائق من الدائري الثاني",
+          "support": "شمال الرياض · حي الياسمين",
+          "asset_ref": null,
+          "fact_refs": ["F7"],
+          "continuity": "خريطة باهتة بنفس لوحة الألوان"
+        },
+        {
+          "index": 4,
+          "role": "cta",
+          "purpose": "الدعوة للمحادثة",
+          "headline": "راسلنا «تفاصيل»",
+          "support": "يرد فريق المبيعات خلال ساعات العمل",
+          "asset_ref": null,
+          "fact_refs": [],
+          "continuity": "الشعار بموضعه الثابت أعلى اليمين"
+        }
+      ],
+      "visual_direction": {
+        "concept": "دفء عائلي هادئ — بيت يُعاش لا مشروع يُباع",
+        "mood": ["هادئ", "دافئ", "واثق"],
+        "composition": "صورة كاملة النزيف، نص أسفل داخل شريط ثابت",
+        "layout": "full_bleed_photo_text_bottom",
+        "hierarchy": ["اسم المشروع", "العنوان", "السطر المساند", "الدعوة"],
+        "typography": { "display": "أميري", "size_levels": 3, "numerals": "arabic_indic", "notes": "الأرقام عربية دائمًا" },
+        "image_treatment": "تدرّج دافئ خفيف + تعتيم سفلي ٣٥٪ لقراءة النص",
+        "background": "رملي فاتح خلف الشريط",
+        "decoration": ["خط نحاسي رفيع فوق الشريط"],
+        "logo": { "variant": "أبيض أحادي", "position": "أعلى اليمين", "color": "أبيض" },
+        "cta_placement": "داخل الشريط، أسفل السطر المساند",
+        "negative_space": "سخية أعلى الصورة — لا نص فوق السماء",
+        "continuity": "شريط سفلي موحّد وشعار ثابت عبر الشرائح",
+        "safe_zones_note": "اترك ٢٥٠px أعلى وأسفل لمشتقات الستوري"
+      },
+      "palette": [
+        { "hex": "#B8734F", "name": "نحاسي وصل", "role": "accent", "source": "brand_kit" },
+        { "hex": "#F5EDE0", "name": "كريمي", "role": "background", "source": "brand_kit" },
+        { "hex": "#4A4E54", "name": "فحمي", "role": "text", "source": "brand_kit" },
+        { "hex": "#C09B5F", "name": "ذهبي هادئ", "role": "band", "source": "brand_kit" }
+      ],
+      "palette_rationale": "لوحة الهوية كما هي — لا انحرافات؛ الدفء يخدم الزاوية العائلية",
+      "brand_kit": { "version": 1, "mode": "advisory", "deviations": [] },
+      "assets": [
+        {
+          "file_id": "f0a1b2c3-4444-4d4d-8d4d-dddddddddd01",
+          "nature": "real",
+          "source": "developer",
+          "rights": "approved",
+          "rights_verified": true,
+          "production_state": "raw",
+          "placement": "شريحة ١ أساسية",
+          "usage": "crop",
+          "treatment": "قص إلى 4:5 مع تعتيم سفلي",
+          "why": "واجهة المشروع عند الغروب — الأقوى عاطفيًا",
+          "is_production": true,
+          "needs_rights_confirmation": false
+        },
+        {
+          "file_id": "f0a1b2c3-4444-4d4d-8d4d-dddddddddd02",
+          "nature": "cgi_render",
+          "source": "developer",
+          "rights": "use_after_edit",
+          "rights_verified": false,
+          "production_state": "edited",
+          "placement": "شريحة ٢ أساسية",
+          "usage": "color_correct",
+          "treatment": "توحيد درجة الألوان مع اللوحة",
+          "why": "يوضح تشطيب الوحدات الداخلي",
+          "is_production": true,
+          "needs_rights_confirmation": true
+        }
+      ],
+      "references": [
+        {
+          "ref_kind": "competitor_post",
+          "ref_id": "c0mpet1t0r-5555-4e4e-8e4e-eeeeeeeeee01",
+          "post_id": "c0mpet1t0r-5555-4e4e-8e4e-eeeeeeeeee01",
+          "slide_index": null,
+          "level": "post",
+          "preview_url": null,
+          "aspect": "carousel_structure",
+          "why": "كاروسيل سداد ناجح لمشروع منافس في الشمال",
+          "study": "تدرّج الرسالة: وعد ← أرقام ← موقع ← دعوة",
+          "adapt": "نفس التدرّج بلوحتنا وزاويتنا",
+          "do_not_copy": "نبرة الاستعجال والخصومات الوهمية",
+          "differ": "نقود بقسط حقيقي موثق لا بـ«أقل سعر»"
+        },
+        {
+          "ref_kind": "wassel_content",
+          "ref_id": "wa55e1c0nt-6666-4f4f-8f4f-ffffffffff01",
+          "post_id": null,
+          "slide_index": 1,
+          "level": "slide",
+          "preview_url": null,
+          "aspect": "branding",
+          "why": "غلاف معتمد سابق لوصل حقق حفظًا عاليًا",
+          "study": "ثبات الشريط السفلي والشعار أعلى اليمين",
+          "adapt": "نفس نظام الغلاف",
+          "do_not_copy": "صورة الغلاف نفسها",
+          "differ": "صورة جديدة خاصة بالمشروع"
+        }
+      ],
+      "ai_recommendations": [
+        {
+          "index": 0,
+          "mode": "remove_text",
+          "source_file_ids": ["f0a1b2c3-4444-4d4d-8d4d-dddddddddd01"],
+          "prompt": "أزل نص العلامة المائية أسفل الصورة مع الحفاظ على الواجهة والسماء كما هي تمامًا",
+          "must_keep": ["architecture", "sky_gradient"],
+          "must_change": ["watermark_text"],
+          "aspect": "4:5",
+          "constraints": ["لا تغيير في ملامح المبنى", "لا إضافة عناصر"],
+          "policy_check": "وضع remove_text — إزالة نص فقط، لا تلفيق لأي ملمح من ملامح المشروع",
+          "status": "recommended"
+        },
+        {
+          "index": 1,
+          "mode": "extend_background",
+          "source_file_ids": ["f0a1b2c3-4444-4d4d-8d4d-dddddddddd02"],
+          "prompt": "مدّد الخلفية عموديًا إلى 9:16 بامتداد الجدار المحايد والأرضية، دون إضافة أثاث أو نوافذ",
+          "must_keep": ["interior_features", "architecture"],
+          "must_change": ["canvas_height"],
+          "aspect": "9:16",
+          "constraints": ["التمديد بخلفية محايدة فقط"],
+          "policy_check": "extend_background — تمديد خلفية محايدة؛ أي عنصر معماري جديد ممنوع",
+          "status": "recommended"
+        }
+      ],
+      "warnings": [],
+      "missing": ["اسم الشارع الرئيس للحي"],
+      "facts_used": ["F1", "F3", "F5", "F7"],
+      "confidence": { "copy": 0.9, "assets": 0.75, "references": 0.8 },
+      "rationale": "الزاوية السدادية تخاطب العائلة الباحثة عن أول بيت؛ الكاروسيل يبني قرارها تدريجيًا"
+    }
+  },
+  "derivatives": [
+    {
+      "id": "der1v000-7777-4a4a-8a4a-000000000001",
+      "package_id": "9c9f2a10-1111-4a1a-8a1a-aaaaaaaaaaaa",
+      "target_kind": "organic",
+      "platform": "instagram",
+      "placement_type": "carousel",
+      "target_ref": { "publication_id": "pub-ig-carousel" },
+      "dimensions": { "aspect": "4:5", "px": [1080, 1350] },
+      "adaptation": {
+        "aspect": "4:5",
+        "px": [1080, 1350],
+        "safe_zones": {},
+        "requires_separate_design": false,
+        "image_change": "none",
+        "image_instructions": "لا تغيير — المقاس الرئيسي نفسه",
+        "text_reposition": "كما في الأساس",
+        "logo_reposition": "كما في الأساس",
+        "layout_changes": "لا شيء",
+        "element_scaling": "١:١",
+        "slide_mapping": [],
+        "asset_substitutions": []
+      },
+      "copy": {
+        "caption": "بيت عائلتك في الياسمين صار أقرب.\nقسّط على ١٠ سنوات من ٤٬٩٠٠ ريال شهريًا — فلل وشقق كبيرة بتشطيب كامل، ٧ دقائق من الدائري الثاني.\nراسلنا «تفاصيل» ويرد عليك فريق المبيعات.",
+        "hashtags": ["#واحة_الياسمين", "#عقارات_الرياض", "#تملك"],
+        "char_count": 168,
+        "fact_refs": ["F3", "F7"]
+      },
+      "limits": { "caption_max": 2000, "hashtags_max": 30, "max_slides": 10 },
+      "warnings": [],
+      "status": "draft",
+      "applied_at": null,
+      "created_at": "2026-09-02T09:14:00.000Z"
+    },
+    {
+      "id": "der1v000-7777-4a4a-8a4a-000000000002",
+      "package_id": "9c9f2a10-1111-4a1a-8a1a-aaaaaaaaaaaa",
+      "target_kind": "organic",
+      "platform": "instagram",
+      "placement_type": "story",
+      "target_ref": {},
+      "dimensions": { "aspect": "9:16", "px": [1080, 1920] },
+      "adaptation": {
+        "aspect": "9:16",
+        "px": [1080, 1920],
+        "safe_zones": { "top": 250, "bottom": 250 },
+        "requires_separate_design": true,
+        "image_change": "extend",
+        "image_instructions": "مدّد الخلفية عموديًا بسماء محايدة؛ لا عناصر جديدة",
+        "text_reposition": "الشريط السفلي يرتفع فوق منطقة الأمان السفلية بـ٢٥٠px",
+        "logo_reposition": "الشعار ينزل تحت منطقة الأمان العلوية",
+        "layout_changes": "إعادة تخطيط عمودية كاملة — العنوان بسطرين",
+        "element_scaling": "العنوان ١٫٢×، المساند ١×",
+        "slide_mapping": [
+          { "from_index": 1, "to_index": 1, "note": "الغلاف فقط — الستوري إطار واحد" },
+          { "from_index": 2, "to_index": null, "note": "تُسقط" },
+          { "from_index": 3, "to_index": null, "note": "تُسقط" },
+          { "from_index": 4, "to_index": null, "note": "الدعوة تندمج في الغلاف" }
+        ],
+        "asset_substitutions": []
+      },
+      "copy": {
+        "caption": "",
+        "hashtags": [],
+        "char_count": 0,
+        "fact_refs": []
+      },
+      "limits": {},
+      "warnings": ["الستوري لا تحمل كابشن — النص كله على التصميم"],
+      "status": "draft",
+      "applied_at": null,
+      "created_at": "2026-09-02T09:14:00.000Z"
+    },
+    {
+      "id": "der1v000-7777-4a4a-8a4a-000000000003",
+      "package_id": "9c9f2a10-1111-4a1a-8a1a-aaaaaaaaaaaa",
+      "target_kind": "paid",
+      "platform": "meta",
+      "placement_type": "ad_feed",
+      "target_ref": { "execution_id": "exec-meta-aug", "ad_set_id": "adset-yasmin-families" },
+      "dimensions": { "aspect": "1:1", "px": [1080, 1080] },
+      "adaptation": {
+        "aspect": "1:1",
+        "px": [1080, 1080],
+        "safe_zones": {},
+        "requires_separate_design": false,
+        "image_change": "crop",
+        "image_instructions": "قصّ جانبي متساوٍ — أبقِ الواجهة في المنتصف",
+        "text_reposition": "يبقى داخل الشريط",
+        "logo_reposition": "يبقى أعلى اليمين",
+        "layout_changes": "لا شيء",
+        "element_scaling": "١:١",
+        "slide_mapping": [],
+        "asset_substitutions": []
+      },
+      "copy": {
+        "primary_text": "قسّط بيت عائلتك في الياسمين على ١٠ سنوات — من ٤٬٩٠٠ ريال شهريًا. فلل وشقق كبيرة بتشطيب كامل.",
+        "headline": "قسّطها على راحتك",
+        "description": "٧ دقائق من الدائري الثاني",
+        "cta": "تواصل معنا",
+        "destination_url": "https://wassel.re/p/yasmin",
+        "fact_refs": ["F3", "F7"]
+      },
+      "limits": {},
+      "warnings": [],
+      "status": "draft",
+      "applied_at": null,
+      "created_at": "2026-09-02T09:14:00.000Z"
+    },
+    {
+      "id": "der1v000-7777-4a4a-8a4a-000000000004",
+      "package_id": "9c9f2a10-1111-4a1a-8a1a-aaaaaaaaaaaa",
+      "target_kind": "organic",
+      "platform": "x",
+      "placement_type": "post",
+      "target_ref": {},
+      "dimensions": { "aspect": "16:9", "px": [1600, 900] },
+      "adaptation": {
+        "aspect": "16:9",
+        "px": [1600, 900],
+        "safe_zones": {},
+        "requires_separate_design": true,
+        "image_change": "crop",
+        "image_instructions": "قصّ علوي وسفلي — لا تمديد؛ الواجهة تبقى كاملة عرضيًا",
+        "text_reposition": "النص ينتقل يمين الصورة بجانب الواجهة",
+        "logo_reposition": "أعلى اليسار",
+        "layout_changes": "تخطيط أفقي منقسم — صورة يسار ونص يمين",
+        "element_scaling": "العنوان ١٫١×",
+        "slide_mapping": [{ "from_index": 1, "to_index": 1, "note": "الغلاف فقط" }],
+        "asset_substitutions": []
+      },
+      "copy": {
+        "caption": "قسّطها على راحتك — من ٤٬٩٠٠ ريال شهريًا. واحة الياسمين، شمال الرياض. راسلنا «تفاصيل».",
+        "hashtags": [],
+        "char_count": 88,
+        "fact_refs": ["F3"]
+      },
+      "limits": { "max_slides": 4 },
+      "warnings": [],
+      "status": "draft",
+      "applied_at": null,
+      "created_at": "2026-09-02T09:14:00.000Z"
+    }
+  ],
+  "refs": [
+    {
+      "id": "ref00000-8888-4b4b-8b4b-000000000001",
+      "package_id": "9c9f2a10-1111-4a1a-8a1a-aaaaaaaaaaaa",
+      "role": "reference",
+      "ref_kind": "competitor_post",
+      "ref_id": "c0mpet1t0r-5555-4e4e-8e4e-eeeeeeeeee01",
+      "slide_index": null,
+      "level": "post",
+      "aspect": "carousel_structure",
+      "usage": null,
+      "rights_snapshot": null,
+      "rationale": { "why": "تدرّج رسالة ناجح" },
+      "preview_url": null
+    },
+    {
+      "id": "ref00000-8888-4b4b-8b4b-000000000002",
+      "package_id": "9c9f2a10-1111-4a1a-8a1a-aaaaaaaaaaaa",
+      "role": "selected_asset",
+      "ref_kind": "file",
+      "ref_id": "f0a1b2c3-4444-4d4d-8d4d-dddddddddd01",
+      "slide_index": 1,
+      "level": "slide",
+      "aspect": null,
+      "usage": "crop",
+      "rights_snapshot": { "usage_rights": "approved", "rights_verified": true },
+      "rationale": { "why": "واجهة الغروب" },
+      "preview_url": null
+    }
+  ],
+  "previews": {}
+}

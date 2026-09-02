@@ -11,13 +11,28 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Search, Upload, X } from 'lucide-react';
+import { BadgeCheck, Loader2, Search, ShieldAlert, ShieldCheck, Upload, X } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
-import type { BusinessFileRow, FileDocumentTypeRow, FileRow } from '@/types';
-import { errorText, listDocumentTypes, searchBusinessFiles } from '@/lib/files/library';
+import type { BusinessFileRow, FileDocumentTypeRow, FileRow, LibraryFilters } from '@/types';
+import type { AspectFamily } from '@/types/files';
+import { errorText, listDocumentTypes, rightsBadgeFor, searchBusinessFiles } from '@/lib/files/library';
 import { signViewUrls, uploadFile } from '@/lib/files/client';
+import { useAppStore } from '@/stores/appStore';
 import LibraryFileTile from './LibraryFileTile';
 import PostUploadModal from './PostUploadModal';
+
+/** Additive scoping for the picker (Post Creative Director, 2026-09-02): a
+ *  caller (e.g. the creative package's asset picker) narrows the grid to what
+ *  is eligible for the slot it is filling. Single values or arrays — both are
+ *  normalized into the RPC's array filters. `linked_record_id` scopes to the
+ *  files of ONE record (e.g. the content's project). */
+export interface FilePickerFilters {
+  linked_record_id?: string;
+  primary_category?: string | string[];
+  asset_nature?: string | string[];
+  usage_rights?: string | string[];
+  aspect_family?: AspectFamily | AspectFamily[];
+}
 
 interface Props {
   open: boolean;
@@ -29,14 +44,72 @@ interface Props {
   /** Stamp uploaded files to a record so they converge into its Files section. */
   uploadModelId?: string | null;
   uploadRecordId?: string | null;
+  /** Extra search filters merged into every query (see FilePickerFilters). */
+  filters?: FilePickerFilters;
+  /** Show asset nature / source / rights + verified badges under each tile. */
+  showMeta?: boolean;
 }
 
 const DEBOUNCE_MS = 300;
 
+/** Bilingual labels for the meta chips — the picker does not load the vocab
+ *  tables, so the known values are mapped locally (raw slug as fallback). */
+const NATURE_LABELS: Record<string, [string, string]> = {
+  real: ['أصلي', 'Real'],
+  ai_generated: ['مُولّد AI', 'AI-generated'],
+  ai_edited: ['مُعدّل AI', 'AI-edited'],
+  cgi_render: ['CGI', 'CGI'],
+  graphic_design: ['تصميم', 'Design'],
+  screenshot: ['لقطة', 'Screenshot'],
+};
+const SOURCE_LABELS: Record<string, [string, string]> = {
+  developer: ['المطوّر', 'Developer'],
+  internal: ['فريقنا', 'Internal'],
+  competitor: ['منافس', 'Competitor'],
+  client: ['عميل', 'Client'],
+  partner: ['شريك', 'Partner'],
+  public: ['عام', 'Public'],
+  unknown: ['غير معروف', 'Unknown'],
+};
+
+const RIGHTS_BADGE_CLASSES: Record<string, string> = {
+  verified: 'bg-emerald-500/10 text-emerald-700 border-emerald-500/30',
+  unverified: 'bg-amber-500/10 text-amber-700 border-amber-500/30',
+  blocked: 'bg-red-500/10 text-red-700 border-red-500/30',
+  reference_only: 'bg-charcoal/5 text-charcoal/60 border-charcoal/20',
+  ai_review: 'bg-purple-500/10 text-purple-700 border-purple-500/30',
+};
+
+/** Nature / source / rights chips for one tile (showMeta mode). */
+function FileMetaBadges({ file, isAr }: { file: BusinessFileRow; isAr: boolean }) {
+  const rights = rightsBadgeFor(file);
+  const chips: string[] = [];
+  if (file.asset_nature) chips.push(NATURE_LABELS[file.asset_nature]?.[isAr ? 0 : 1] ?? file.asset_nature);
+  if (file.acquisition_source) chips.push(SOURCE_LABELS[file.acquisition_source]?.[isAr ? 0 : 1] ?? file.acquisition_source);
+  return (
+    <div className="flex flex-wrap items-center gap-1 px-0.5">
+      <span
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-bold ${RIGHTS_BADGE_CLASSES[rights.badge] ?? RIGHTS_BADGE_CLASSES.unverified}`}
+        title={isAr ? 'حقوق الاستخدام' : 'Usage rights'}
+      >
+        {rights.badge === 'verified' ? <ShieldCheck size={10} aria-hidden /> : rights.badge === 'blocked' ? <ShieldAlert size={10} aria-hidden /> : <BadgeCheck size={10} aria-hidden />}
+        {isAr ? rights.label_ar : rights.label_en}
+      </span>
+      {chips.map((c) => (
+        <span key={c} className="px-1.5 py-0.5 rounded-md bg-cream border border-sand/30 text-[10px] font-bold text-charcoal/60" dir="auto">
+          {c}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function FilePickerModal({
   open, onClose, onPick, title, sub, uploadModelId = null, uploadRecordId = null,
+  filters = undefined, showMeta = false,
 }: Props) {
   const { t } = useTranslation();
+  const isAr = useAppStore((s) => s.language === 'ar');
 
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<BusinessFileRow[]>([]);
@@ -59,19 +132,40 @@ export default function FilePickerModal({
     return () => { alive = false; };
   }, [open]);
 
+  // The caller-supplied scoping, normalized into the RPC's filter shape.
+  const mergedFilters = useMemo<LibraryFilters>(() => {
+    const arr = (v?: string | string[]): string[] | undefined =>
+      v === undefined ? undefined : Array.isArray(v) ? v : [v];
+    const out: LibraryFilters = {};
+    if (filters?.linked_record_id) out.record_id = filters.linked_record_id;
+    const pcat = arr(filters?.primary_category);
+    if (pcat?.length) out.primary_category = pcat;
+    const nature = arr(filters?.asset_nature);
+    if (nature?.length) out.asset_nature = nature;
+    const rights = arr(filters?.usage_rights);
+    if (rights?.length) out.usage_rights = rights;
+    const aspect = arr(filters?.aspect_family);
+    if (aspect?.length) out.aspect_family = aspect as LibraryFilters['aspect_family'];
+    return out;
+  }, [filters]);
+  const filtersKey = JSON.stringify(mergedFilters);
+
   useEffect(() => {
     if (!open) return;
     const my = ++seq.current;
     setLoading(true);
     setError(null);
     const id = window.setTimeout(() => {
-      searchBusinessFiles({ q, sort: 'created_desc', pageSize: 48 })
+      searchBusinessFiles({ q, sort: 'created_desc', pageSize: 48, filters: mergedFilters })
         .then((r) => { if (my === seq.current) { setRows(r.rows ?? []); } })
         .catch((e) => { if (my === seq.current) setError(errorText(e)); })
         .finally(() => { if (my === seq.current) setLoading(false); });
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(id);
-  }, [q, open, reloadKey]);
+    // filtersKey is the stable serialization of mergedFilters (object identity
+    // would re-fire the search on every render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, open, reloadKey, filtersKey]);
 
   // Batch-sign image thumbnails for the visible slice — same as the library page.
   useEffect(() => {
@@ -172,17 +266,19 @@ export default function FilePickerModal({
           ) : (
             <div className={`grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 ${loading ? 'opacity-60' : ''}`}>
               {rows.map((f) => (
-                <LibraryFileTile
-                  key={f.id}
-                  file={f}
-                  types={types}
-                  thumbUrl={thumbs[f.id] ?? null}
-                  active={false}
-                  selected={false}
-                  selectionActive={false}
-                  onOpen={(picked) => { onPick({ id: picked.id, title: picked.title || picked.original_name }); onClose(); }}
-                  onToggle={() => {}}
-                />
+                <div key={f.id} className="space-y-1">
+                  <LibraryFileTile
+                    file={f}
+                    types={types}
+                    thumbUrl={thumbs[f.id] ?? null}
+                    active={false}
+                    selected={false}
+                    selectionActive={false}
+                    onOpen={(picked) => { onPick({ id: picked.id, title: picked.title || picked.original_name }); onClose(); }}
+                    onToggle={() => {}}
+                  />
+                  {showMeta && <FileMetaBadges file={f} isAr={isAr} />}
+                </div>
               ))}
             </div>
           )}

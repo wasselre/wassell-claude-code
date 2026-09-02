@@ -488,6 +488,9 @@ export class MosApiError extends Error {
   }
 }
 
+// The Post Creative Director client (creativeClient.ts) shares this transport.
+export { call as mosCall, authHeader as mosAuthHeader };
+
 /* ------------------------------------------------------------------ */
 /* actions                                                            */
 /* ------------------------------------------------------------------ */
