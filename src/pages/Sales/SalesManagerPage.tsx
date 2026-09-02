@@ -6,6 +6,7 @@ import { getStageConfig, getOutcome, getSalesProcessConfig } from '@/lib/salesPr
 import type { FollowUpTypeConfig } from '@/lib/salesProcess';
 import type { AppRecord, SalesProcessOverride } from '@/types';
 import { computeManagerMetrics, type Distribution } from './lib/salesMetrics';
+import { activeClientsOnly, retiredClientIdSet } from '@/lib/clients/retirement';
 
 /** Admin manager view — the sales-operation health metrics (Part 13, "views
  *  first"). Read-only, computed in-memory from the store. Headline: active
@@ -20,8 +21,14 @@ export default function SalesManagerPage() {
   const followupsModel = models.find((m) => m.name === 'followups');
 
   const m = useMemo(() => {
-    const clients: AppRecord[] = clientsModel ? records[clientsModel.id] ?? [] : [];
-    const followups: AppRecord[] = followupsModel ? records[followupsModel.id] ?? [] : [];
+    // Retired clients (and their follow-ups) are excluded from every manager
+    // metric — they don't count until the client messages us again.
+    const allClients: AppRecord[] = clientsModel ? records[clientsModel.id] ?? [] : [];
+    const clients = activeClientsOnly(allClients);
+    const retiredIds = retiredClientIdSet(allClients);
+    const followups: AppRecord[] = (followupsModel ? records[followupsModel.id] ?? [] : []).filter(
+      (f) => !retiredIds.has(String((f.data as Record<string, unknown>).client_id ?? '')),
+    );
     return computeManagerMetrics(clients, followups, now);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientsModel, followupsModel, records]);

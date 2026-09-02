@@ -2825,6 +2825,12 @@ export interface AppState {
    */
   saveRecord: (record: AppRecord, opts?: SaveRecordOpts) => Promise<SaveResult>;
   deleteRecord: (modelId: string, recordId: string) => void;
+  /** Retire a client — hides it from lists + every count without deleting it.
+   *  Reversible via `unretireClient` and auto-reversed when the client messages
+   *  us again (DB trigger). No-op if the id isn't a loaded clients record. */
+  retireClient: (recordId: string, reason?: string) => Promise<SaveResult | null>;
+  /** Un-retire a client — clears the retirement flag so it re-appears. */
+  unretireClient: (recordId: string) => Promise<SaveResult | null>;
   /** Read-only single-record refresh from `unified_records`, merged through the
    * same path as Realtime. The Realtime-independent fallback for surfacing a
    * worker's writes when the WebSocket isn't reaching this browser. Issues no

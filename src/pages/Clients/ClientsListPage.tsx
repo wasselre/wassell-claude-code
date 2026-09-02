@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { SlidersHorizontal, Users } from 'lucide-react';
+import { Archive, SlidersHorizontal, Users } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import RecordListPage from '@/pages/Records/RecordListPage';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
@@ -53,10 +53,20 @@ export default function ClientsListPage() {
     [models, records, users, language, translationVersion],
   );
 
-  const views: ClientView[] = useMemo(() => {
+  const allViews: ClientView[] = useMemo(() => {
     if (!clientsModel) return [];
     return (records[clientsModel.id] ?? []).map((r) => resolveClientView(r, ctx));
   }, [clientsModel, records, ctx]);
+
+  // Retired clients are hidden by default (a client is retired when dormant /
+  // pre-Aug-2026, and un-retires automatically the moment they message us).
+  // The toggle lets an admin see them for oversight.
+  const [showRetired, setShowRetired] = useState(false);
+  const retiredCount = useMemo(() => allViews.filter((v) => v.isRetired).length, [allViews]);
+  const views = useMemo(
+    () => (showRetired ? allViews : allViews.filter((v) => !v.isRetired)),
+    [allViews, showRetired],
+  );
 
   const [view, setView] = useState<ClientListView>('queue');
   const [filters, setFilters] = useState<ClientFilters>(EMPTY_FILTERS);
@@ -178,13 +188,30 @@ export default function ClientsListPage() {
           {isAr ? 'العملاء' : 'Clients'}
           <span className="text-sm font-semibold text-charcoal/40">({views.length})</span>
         </h1>
-        <button
-          type="button"
-          onClick={() => navigate('/model/clients?generic=1')}
-          className="inline-flex items-center gap-1.5 text-sm font-semibold text-copper hover:underline"
-        >
-          <SlidersHorizontal size={15} /> {isAr ? 'العرض العام' : 'Generic view'}
-        </button>
+        <div className="flex items-center gap-3">
+          {retiredCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowRetired((s) => !s)}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
+                showRetired ? 'bg-copper text-white' : 'text-charcoal/60 hover:bg-cream'
+              }`}
+              title={isAr ? 'إظهار / إخفاء العملاء المتقاعدين' : 'Show / hide retired clients'}
+            >
+              <Archive size={15} />
+              {showRetired
+                ? isAr ? 'إخفاء المتقاعدين' : 'Hide retired'
+                : isAr ? `إظهار المتقاعدين (${retiredCount})` : `Show retired (${retiredCount})`}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => navigate('/model/clients?generic=1')}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-copper hover:underline"
+          >
+            <SlidersHorizontal size={15} /> {isAr ? 'العرض العام' : 'Generic view'}
+          </button>
+        </div>
       </div>
 
       <ClientsKpiBar kpis={kpis} isAr={isAr} activeKey={activeKpi} onSelect={onKpi} />

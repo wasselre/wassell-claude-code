@@ -1,4 +1,4 @@
-import { ArrowLeft, Clock, Activity, CalendarPlus, ListPlus, Compass, FileCog } from 'lucide-react';
+import { ArrowLeft, Clock, Activity, CalendarPlus, ListPlus, Compass, FileCog, Archive, ArchiveRestore } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { ClientView } from '../lib/clientView';
 import { isOverdue } from '../lib/clientView';
@@ -14,6 +14,8 @@ interface DetailHeaderProps {
   onCreateFollowup: () => void;
   onCreateAppointment: () => void;
   onAdvancedView: () => void;
+  /** Retire (hide from lists + counts) or un-retire this client. */
+  onToggleRetire: () => void;
   /** When set (embedded / modal usage) the Back button calls this instead of
       navigating to `returnTo` — lets the 360 view close an overlay it's in. */
   onBack?: () => void;
@@ -21,7 +23,7 @@ interface DetailHeaderProps {
 }
 
 /** Client 360 header — identity, badges, next-action summary, quick actions. */
-export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreateFollowup, onCreateAppointment, onAdvancedView, onBack, now = Date.now() }: DetailHeaderProps) {
+export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreateFollowup, onCreateAppointment, onAdvancedView, onToggleRetire, onBack, now = Date.now() }: DetailHeaderProps) {
   const navigate = useNavigate();
   const overdue = isOverdue(view, now);
   const due = formatRelative(view.nextActionDueAt, isAr, now);
@@ -44,6 +46,7 @@ export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreat
               {view.name ?? (isAr ? 'عميل بدون اسم' : 'Unnamed client')}
             </h1>
             <HealthBadge value={view.lifecycleHealth} isAr={isAr} />
+            {view.isRetired && <Chip label={isAr ? 'متقاعد' : 'Retired'} color="#9A8E7E" />}
             <VisitRatingStars rating={view.latestVisitRating} />
           </div>
 
@@ -118,6 +121,19 @@ export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreat
             className="inline-flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3 py-2 text-sm font-bold text-charcoal/60 transition hover:bg-cream hover:text-charcoal"
           >
             <FileCog size={16} /> {isAr ? 'العرض المتقدم' : 'Advanced view'}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleRetire}
+            title={
+              view.isRetired
+                ? isAr ? 'إعادة تنشيط العميل' : 'Un-retire this client'
+                : isAr ? 'تقاعد العميل (إخفاؤه من القوائم والأعداد دون حذفه)' : 'Retire this client (hide from lists & counts without deleting)'
+            }
+            className="inline-flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3 py-2 text-sm font-bold text-charcoal/60 transition hover:bg-cream hover:text-charcoal"
+          >
+            {view.isRetired ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+            {view.isRetired ? (isAr ? 'إعادة تنشيط' : 'Un-retire') : (isAr ? 'تقاعد' : 'Retire')}
           </button>
         </div>
       </div>

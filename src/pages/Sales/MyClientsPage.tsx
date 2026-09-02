@@ -17,6 +17,7 @@ import {
 } from '@/pages/Clients/lib/clientFilters';
 import ClientsFilterBar, { type FilterOption, type FilterOptionSources } from '@/pages/Clients/components/ClientsFilterBar';
 import { useClientWhatsApp } from '@/pages/Clients/lib/useClientWhatsApp';
+import { isRetiredClient } from '@/lib/clients/retirement';
 import { indexClientFollowups } from './lib/myWork';
 import {
   buildRelatedCountsIndex,
@@ -78,9 +79,11 @@ export default function MyClientsPage() {
   const now = Date.now();
 
   // Scope the raw client records: managers see all, reps see only their own.
+  // Retired clients are excluded everywhere here (list, tab counts, header) —
+  // they reappear only if they message us again (auto-un-retire).
   const scopedRecords = useMemo(() => {
     if (!clientsModel) return [];
-    const all = records[clientsModel.id] ?? [];
+    const all = (records[clientsModel.id] ?? []).filter((r) => !isRetiredClient(r));
     if (isManager) return all;
     return all.filter((r) => ownerIdOf((r.data as Record<string, unknown>).client_owner) === currentUserId);
   }, [clientsModel, records, isManager, currentUserId]);

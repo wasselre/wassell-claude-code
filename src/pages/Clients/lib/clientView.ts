@@ -39,6 +39,12 @@ export const DERIVED_READONLY_SLUGS = [
   'lost_at',
   'latest_visit_rating',
   'latest_visit_rated_at',
+  // Retirement is action-driven (Retire / Un-retire button + the inbound-message
+  // auto-un-retire trigger) — never a free-form field. Listed here so the
+  // Preferences editor never renders it as editable.
+  'is_retired',
+  'retired_at',
+  'retired_reason',
 ] as const;
 
 export type DerivedReadOnlySlug = (typeof DERIVED_READONLY_SLUGS)[number];
@@ -138,6 +144,11 @@ export interface ClientView {
   lostAt: string | null;
   latestVisitRating: number | null;
   latestVisitRatedAt: string | null;
+  /** Retired clients are hidden from lists + every count until they message us
+   *  again (auto-un-retire). Never deleted. */
+  isRetired: boolean;
+  retiredAt: string | null;
+  retiredReason: string | null;
   // Preferences
   preferredUnitType: string[];
   budget: NumericRange | null;
@@ -554,6 +565,9 @@ export function resolveClientView(client: AppRecord, ctx: ClientViewCtx): Client
     lostAt: nonEmptyString(data.lost_at),
     latestVisitRating: toFiniteNumber(data.latest_visit_rating),
     latestVisitRatedAt: nonEmptyString(data.latest_visit_rated_at),
+    isRetired: data.is_retired === true,
+    retiredAt: nonEmptyString(data.retired_at),
+    retiredReason: nonEmptyString(data.retired_reason),
     preferredUnitType: asStringArray(data.preferred_unit_type),
     budget: readRange(data.budget),
     preferredCity: cityNames[0] ?? null,

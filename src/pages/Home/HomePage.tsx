@@ -6,6 +6,7 @@ import { getIconComponent } from '@/components/layout/Sidebar';
 import { Users, PhoneCall, Building2, Zap, Plus, Hammer, Calendar, TrendingUp } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
+import { activeClientsOnly } from '@/lib/clients/retirement';
 
 export default function HomePage() {
   const { t } = useTranslation();
@@ -14,7 +15,9 @@ export default function HomePage() {
   const isAr = language === 'ar';
 
   const clientsModel = models.find((m) => m.name === 'clients');
-  const clientCount = clientsModel ? (records[clientsModel.id]?.length ?? 0) : 0;
+  // Retired clients are excluded from the headline count (they reappear if they
+  // message us again — see lib/clients/retirement.ts).
+  const clientCount = clientsModel ? activeClientsOnly(records[clientsModel.id] ?? []).length : 0;
 
   const followupsModel = models.find((m) => m.name === 'followups');
   const allFollowups = followupsModel ? (records[followupsModel.id] ?? []) : [];

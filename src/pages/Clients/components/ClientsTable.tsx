@@ -80,6 +80,7 @@ export default function ClientsTable({ views, isAr, returnTo, now = Date.now() }
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="truncate text-sm font-bold text-chocolate">{v.name ?? (isAr ? 'عميل بدون اسم' : 'Unnamed client')}</span>
                   <HealthBadge value={v.lifecycleHealth} isAr={isAr} />
+                  {v.isRetired && <Chip label={isAr ? 'متقاعد' : 'Retired'} color="#9A8E7E" />}
                   <VisitRatingStars rating={v.latestVisitRating} size={13} />
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-charcoal/60">

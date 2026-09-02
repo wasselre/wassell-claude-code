@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { runAnalyticsQuery } from '@/lib/analytics/engine';
 import { resolveFieldDisplay, useFieldDisplayVersion } from '@/lib/recordTranslation/resolver';
+import { activeClientsOnly } from '@/lib/clients/retirement';
 import type { AnalyticsContext } from '@/lib/analytics/context';
 import type { AnalyticsQuery, AnalyticsResult } from '@/lib/analytics/types';
 
@@ -40,12 +41,22 @@ export function useAnalyticsQuery(
   // importable from server bundles that can't load the browser runtime.
   const translationVersion = useFieldDisplayVersion();
 
+  // Retired clients are excluded from every analytics count/group. This is the
+  // single client-side choke point every authenticated dashboard/widget flows
+  // through, so filtering the clients slice here (both the primary source feed
+  // and the cross-model `allRecords` slice) covers all of them at once.
+  const clientsModelId = useMemo(() => models.find((m) => m.name === 'clients')?.id ?? null, [models]);
+
   const data = useMemo<AnalyticsResult | null>(() => {
     if (!query) return null;
+    const scopedAll =
+      clientsModelId && records[clientsModelId]
+        ? { ...records, [clientsModelId]: activeClientsOnly(records[clientsModelId]!) }
+        : records;
     const ctx: AnalyticsContext = {
       models,
-      records: records[query.source_model_id] ?? EMPTY,
-      allRecords: records,
+      records: scopedAll[query.source_model_id] ?? EMPTY,
+      allRecords: scopedAll,
       users: users ?? EMPTY,
       savedViews: views ?? EMPTY,
       metrics: metrics ?? EMPTY,

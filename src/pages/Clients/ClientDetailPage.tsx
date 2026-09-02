@@ -73,6 +73,8 @@ export default function ClientDetailPage({ clientId, onClose }: { clientId?: str
   const language = useAppStore((s) => s.language);
   const currentUserId = useAppStore((s) => s.currentUserId);
   const addToast = useAppStore((s) => s.addToast);
+  const retireClient = useAppStore((s) => s.retireClient);
+  const unretireClient = useAppStore((s) => s.unretireClient);
   const isAr = language === 'ar';
 
   const generic = isGenericMode(searchParams);
@@ -153,6 +155,21 @@ export default function ClientDetailPage({ clientId, onClose }: { clientId?: str
         onWhatsApp={() => openWhatsApp(client.id, view.phone)}
         onCreateFollowup={() => setShowFollowupModal(true)}
         onCreateAppointment={() => setShowApptModal(true)}
+        onToggleRetire={async () => {
+          if (view.isRetired) {
+            await unretireClient(client.id);
+            addToast(isAr ? 'تمت إعادة تنشيط العميل' : 'Client un-retired', 'success');
+            return;
+          }
+          const ok = window.confirm(
+            isAr
+              ? 'تقاعد هذا العميل؟ سيُخفى من القوائم والأعداد دون حذفه، وسيظهر تلقائيًا إذا راسلنا.'
+              : 'Retire this client? They will be hidden from lists and counts (not deleted), and will reappear automatically if they message us.',
+          );
+          if (!ok) return;
+          await retireClient(client.id);
+          addToast(isAr ? 'تم تقاعد العميل' : 'Client retired', 'success');
+        }}
         onAdvancedView={() => {
           // Embedded (chat overlay): the advanced raw-record view is a
           // full-page concern — close the overlay and hand off to the route.

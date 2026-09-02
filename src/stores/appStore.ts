@@ -3578,6 +3578,44 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     return result;
   },
+  // Retire / un-retire a client. Retirement is a reversible JSONB flag on the
+  // (unfrozen) clients record — the client keeps all its data + relationships
+  // and is only hidden from lists and every count. Writes go through
+  // `saveRecord` so they surface + persist failures like any other save.
+  retireClient: async (recordId: string, reason = 'manual'): Promise<SaveResult | null> => {
+    const state = get();
+    const clientsModel = state.models.find((m) => m.name === 'clients');
+    if (!clientsModel) return null;
+    const rec = (state.records[clientsModel.id] ?? []).find((r) => r.id === recordId);
+    if (!rec) return null;
+    const updated: AppRecord = {
+      ...rec,
+      data: {
+        ...rec.data,
+        is_retired: true,
+        retired_at: new Date().toISOString(),
+        retired_reason: reason,
+      },
+    };
+    return get().saveRecord(updated);
+  },
+  unretireClient: async (recordId: string): Promise<SaveResult | null> => {
+    const state = get();
+    const clientsModel = state.models.find((m) => m.name === 'clients');
+    if (!clientsModel) return null;
+    const rec = (state.records[clientsModel.id] ?? []).find((r) => r.id === recordId);
+    if (!rec) return null;
+    const updated: AppRecord = {
+      ...rec,
+      data: {
+        ...rec.data,
+        is_retired: false,
+        retired_at: null,
+        retired_reason: null,
+      },
+    };
+    return get().saveRecord(updated);
+  },
   deleteRecord: (modelId: string, recordId: string) => {
     // Capture the model + last snapshot BEFORE the state mutation so the
     // activity log can record what was deleted.
