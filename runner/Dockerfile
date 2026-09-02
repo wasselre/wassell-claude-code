@@ -40,6 +40,9 @@ RUN npm install --omit=dev && npm cache clean --force
 # Runner + validator + version-controlled Skills. No secrets are copied.
 COPY scripts/claude-study-runner.mjs ./scripts/claude-study-runner.mjs
 COPY scripts/lib ./scripts/lib
+# scripts/_lib/serviceClient.mjs — imported by the runner (design-read handlers
+# use makeIdentifiedClient). Missing this dir crash-loops the runner at import.
+COPY scripts/_lib ./scripts/_lib
 COPY .claude/skills ./.claude/skills
 
 # Non-root execution.
