@@ -33,6 +33,10 @@ export interface PickerItem {
   kind: FilePreviewKind;
   name: string;
   isUrl: boolean;
+  /** True when this document is the project's brochure (`primary_category` =
+   *  'brochure', or the name says so). Drives the bulk picker's default: only
+   *  the brochure is pre-checked, not every document. */
+  isBrochure: boolean;
   /** Signed thumbnail URL for image items (filled in later, best-effort). Small
    *  transformed image when Storage transforms are on, else the full URL. */
   thumb?: string;
@@ -67,8 +71,19 @@ export function nameFromUrl(url: string): string {
  *     they never appear in file_links and are appended as their own tiles.
  */
 /** The minimal file shape the picker tiles need — satisfied by both the full
- *  RecordFileEntry and the lean SendableFile path (listSendableProjectFiles). */
-type PickerSource = { file: Pick<BusinessFileRow, 'id' | 'kind' | 'title' | 'original_name'> };
+ *  RecordFileEntry and the lean SendableFile path (listSendableProjectFiles).
+ *  `primary_category` is included so the tile can tell a brochure apart. */
+type PickerSource = { file: Pick<BusinessFileRow, 'id' | 'kind' | 'title' | 'original_name' | 'primary_category'> };
+
+/** A document is the brochure when its primary Document Type is `brochure`, or —
+ *  for a not-yet-typed file — its name says so (AR «بروشور»/«كتيّب» or EN). */
+const BROCHURE_NAME_RE = /بروشور|كتي(?:ّ)?ب|brochure/i;
+export function isBrochureFile(
+  file: Pick<BusinessFileRow, 'primary_category'>,
+  name: string,
+): boolean {
+  return file.primary_category === 'brochure' || BROCHURE_NAME_RE.test(name);
+}
 
 export function buildPickerItems(entries: PickerSource[], externalVideoUrls: string[]): PickerItem[] {
   const seen = new Set<string>();
@@ -76,18 +91,21 @@ export function buildPickerItems(entries: PickerSource[], externalVideoUrls: str
   for (const e of entries) {
     if (seen.has(e.file.id)) continue;
     seen.add(e.file.id);
+    const name = e.file.title || e.file.original_name || e.file.id;
+    const group = groupOfKind(e.file.kind);
     out.push({
       ref: e.file.id,
-      group: groupOfKind(e.file.kind),
+      group,
       kind: e.file.kind,
-      name: e.file.title || e.file.original_name || e.file.id,
+      name,
       isUrl: false,
+      isBrochure: group === 'document' && isBrochureFile(e.file, name),
     });
   }
   for (const url of externalVideoUrls) {
     if (!url || seen.has(url)) continue;
     seen.add(url);
-    out.push({ ref: url, group: 'video', kind: 'video', name: nameFromUrl(url), isUrl: true });
+    out.push({ ref: url, group: 'video', kind: 'video', name: nameFromUrl(url), isUrl: true, isBrochure: false });
   }
   return out;
 }
@@ -116,19 +134,20 @@ export function orderSelectedRefsBulk(items: PickerItem[], selected: ReadonlySet
 }
 
 /**
- * Default checkbox selection for the BULK picker: every document (PDFs — the
- * brochure the rep wants sent) + the FIRST THREE photos. Videos start
- * unchecked (heavy, rarely the intro). Photos arrive hero-first because
+ * Default checkbox selection for the BULK picker: the BROCHURE document(s) only
+ * (not every document — a project can carry a marketing plan, spec sheet, info
+ * sheet… that the rep rarely sends unprompted) + the FIRST THREE photos. Videos
+ * and non-brochure documents start unchecked. Photos arrive hero-first because
  * `resolveProjectFacts` prepends `main_image`, so "first three" = hero + next
- * two — the "top 3" pre-selection the rep asked for to make bulk faster. The
- * rep can still tick/untick anything before sending.
+ * two — the "top 3" pre-selection. The rep can still tick/untick anything
+ * (including adding another document) before sending.
  */
 export const BULK_DEFAULT_PHOTO_COUNT = 3;
 export function defaultBulkSelection(items: PickerItem[]): Set<string> {
   const out = new Set<string>();
   let photos = 0;
   for (const it of items) {
-    if (it.group === 'document') out.add(it.ref);
+    if (it.group === 'document' && it.isBrochure) out.add(it.ref);
     else if (it.group === 'photo' && photos < BULK_DEFAULT_PHOTO_COUNT) {
       out.add(it.ref);
       photos++;

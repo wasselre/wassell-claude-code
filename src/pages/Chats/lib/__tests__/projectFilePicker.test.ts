@@ -87,24 +87,34 @@ describe('orderSelectedRefsBulk', () => {
 });
 
 describe('defaultBulkSelection', () => {
-  it('pre-checks every document + the first three photos, videos off', () => {
+  it('pre-checks ONLY the brochure document + the first three photos, videos off', () => {
     const items = buildPickerItems(
       [
         entry('p1', 'image'), entry('p2', 'image'), entry('p3', 'image'),
         entry('p4', 'image'), // 4th photo must NOT be pre-checked
-        entry('d1', 'pdf'), entry('d2', 'pdf'),
+        entry('broch', 'pdf', { primary_category: 'brochure' }),
+        entry('specs', 'pdf'), // a non-brochure document must NOT be pre-checked
         entry('v1', 'video'),
       ],
       ['https://s/v/clip.mp4'],
     );
     const sel = defaultBulkSelection(items);
-    expect([...sel].sort()).toEqual(['d1', 'd2', 'p1', 'p2', 'p3'].sort());
+    expect([...sel].sort()).toEqual(['broch', 'p1', 'p2', 'p3'].sort());
+    expect(sel.has('specs')).toBe(false);
     expect(sel.has('p4')).toBe(false);
     expect(sel.has('v1')).toBe(false);
   });
 
-  it('is safe when a project has fewer than three photos', () => {
-    const items = buildPickerItems([entry('p1', 'image'), entry('d1', 'pdf')], []);
-    expect([...defaultBulkSelection(items)].sort()).toEqual(['d1', 'p1'].sort());
+  it('detects an untyped brochure by name (بروشور / brochure)', () => {
+    const items = buildPickerItems(
+      [entry('doc', 'pdf', { title: 'مينا 52- بروشور' }), entry('other', 'pdf', { title: 'ورقة معلومات المشروع' })],
+      [],
+    );
+    expect([...defaultBulkSelection(items)]).toEqual(['doc']);
+  });
+
+  it('pre-checks no document when none is a brochure', () => {
+    const items = buildPickerItems([entry('p1', 'image'), entry('info', 'pdf', { title: 'info sheet' })], []);
+    expect([...defaultBulkSelection(items)]).toEqual(['p1']);
   });
 });
