@@ -687,24 +687,37 @@ async function claimAndRunOneScript(): Promise<boolean> {
 
   try {
     const result = await runScriptJob({ supabase, env, job });
+    // 6-arg signature (migration 2026-09-02_12): the draft id, summed cost and
+    // per-role provenance travel back with the job. cost_usd may be null (an
+    // unknown-price role call) — the RPC COALESCEs to 0 for the numeric column
+    // while `roles` keeps the honest null.
     const { error: doneErr } = await supabase.rpc('mos_script_job_complete', {
       p_job_id: job.id,
       p_scene_count: result.scene_count,
       p_hooks: result.hooks,
+      p_draft_id: result.draft_id,
+      p_cost_usd: result.cost_usd,
+      p_roles: result.roles,
     });
     if (doneErr) {
       console.error(`[worker] mos_script_job_complete RPC failed: ${doneErr.message}`);
     } else {
-      console.log(`[worker] completed script job=${job.id} scenes=${result.scene_count}`);
+      console.log(`[worker] completed script job=${job.id} draft=${result.draft_id} scenes=${result.scene_count} status=${result.status} mode=${result.mode}`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[worker] script job=${job.id} FAILED:`, msg);
     if (err instanceof Error && err.stack) console.error(err.stack);
+    // error_kind = the stable prefix runScriptJob throws with (facts_insufficient:
+    // / provider: / validation_unrepaired:), else 'error' — lets a health query
+    // separate a user-actionable failure from a transient provider one.
+    const kindMatch = /^([a-z_]+):/.exec(msg);
+    const errorKind = kindMatch ? kindMatch[1]! : 'error';
     try {
       const { error: failErr } = await supabase.rpc('mos_script_job_fail', {
         p_job_id: job.id,
         p_error: msg,
+        p_error_kind: errorKind,
       });
       if (failErr) {
         console.error(`[worker] mos_script_job_fail RPC failed: ${failErr.message}`);
@@ -2448,6 +2461,142 @@ async function marketingOpsPollLoop(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// ── cv lanes (W-CV) ──  Competitor Visual Intelligence — mkt_cv_jobs queue.
+//
+// Two independent loops (contracts §9):
+//   cvProcessPollLoop  → kinds cv_process, cv_embed_wassel   (Modal /process +
+//                        chunked ingest; minutes per job; no LLM)
+//   cvAnalyzePollLoop  → kinds cv_analyze, cv_describe_frame (LLM per shot /
+//                        frame; budget-checked before every paid call)
+// Split so a 10-minute Modal run never head-of-line-blocks the LLM pass (and
+// vice-versa). Claims via mkt_cv_job_claim_next(worker, kinds, lease 900 s),
+// which itself refuses when mkt_settings.cv.enabled is false — the DB flag is
+// the switch; this process only adds two gates: CV_LANES_ENABLED and the
+// presence of MODAL_CV_URL (without the Modal endpoint nothing here can run,
+// so the lanes are skipped and that is logged ONCE at boot). The process loop
+// ticks mkt_cv_jobs_watchdog() every WATCHDOG_INTERVAL_MS.
+// ─────────────────────────────────────────────────────────────────────────
+import { makeModalClient } from './marketing/cv/modalClient.js';
+import { makeCvAi } from './marketing/cv/aiAdapter.js';
+import { runCvProcessJob } from './marketing/cv/runCvProcessJob.js';
+import { runCvAnalyzeJob } from './marketing/cv/runCvAnalyzeJob.js';
+import { describeFrameOnDemand } from './marketing/cv/describeFrameOnDemand.js';
+import { runCvEmbedWasselJob } from './marketing/cv/runCvEmbedWasselJob.js';
+import type { CvJob, CvJobKind } from './marketing/cv/types.js';
+
+let cvProcessBusy = false;
+let cvProcessWakeRequested = false;
+let cvAnalyzeBusy = false;
+let cvAnalyzeWakeRequested = false;
+const CV_LEASE_SECONDS = 900;
+const CV_PROCESS_KINDS: CvJobKind[] = ['cv_process', 'cv_embed_wassel'];
+const CV_ANALYZE_KINDS: CvJobKind[] = ['cv_analyze', 'cv_describe_frame'];
+const cvLanesActive = env.CV_LANES_ENABLED && env.MODAL_CV_URL !== null;
+const cvModal = cvLanesActive ? makeModalClient({ baseUrl: env.MODAL_CV_URL as string, token: env.MODAL_CV_TOKEN }) : null;
+const cvAi = cvLanesActive ? makeCvAi(supabase) : null;
+
+async function claimOneCvJob(kinds: CvJobKind[]): Promise<CvJob | null> {
+  const { data, error } = await supabase.rpc('mkt_cv_job_claim_next', {
+    p_worker_id: env.WORKER_ID, p_kinds: kinds, p_lease_seconds: CV_LEASE_SECONDS,
+  });
+  if (error) { console.error(`[worker] cv claim (${kinds.join(',')}) failed: ${error.message}`); return null; }
+  const rows = (data ?? []) as Array<{ job_id: string; kind: CvJobKind; video_id: string | null; frame_id: string | null; params: Record<string, unknown> | null; attempts: number; max_attempts: number }>;
+  const row = rows[0];
+  if (!row) return null;
+  return { id: row.job_id, kind: row.kind, videoId: row.video_id, frameId: row.frame_id, params: row.params ?? {}, attempts: row.attempts, maxAttempts: row.max_attempts };
+}
+
+/** Claim ONE cv job of the given kinds and run it to completion. complete/fail
+ *  only touch 'running' rows, so a late finish after the watchdog is a no-op. */
+async function claimAndRunOneCv(kinds: CvJobKind[]): Promise<boolean> {
+  if (!cvModal || !cvAi) return false;
+  const job = await claimOneCvJob(kinds);
+  if (!job) return false;
+  console.log(`[worker] claimed cv job=${job.id} kind=${job.kind} video=${job.videoId ?? '-'} frame=${job.frameId ?? '-'} attempts=${job.attempts}/${job.maxAttempts}`);
+  const startedAt = Date.now();
+  try {
+    let result: unknown;
+    switch (job.kind) {
+      case 'cv_process': result = await runCvProcessJob({ sb: supabase, modal: cvModal }, job); break;
+      case 'cv_embed_wassel': result = await runCvEmbedWasselJob({ sb: supabase, modal: cvModal }, job); break;
+      case 'cv_analyze': result = await runCvAnalyzeJob({ sb: supabase, ai: cvAi }, job); break;
+      case 'cv_describe_frame': result = await describeFrameOnDemand({ sb: supabase, ai: cvAi }, job); break;
+      default: throw new Error(`permanent: unknown cv job kind ${String(job.kind)}`);
+    }
+    const { error: doneErr } = await supabase.rpc('mkt_cv_job_complete', { p_job_id: job.id, p_result: result ?? {} });
+    if (doneErr) console.error(`[worker] mkt_cv_job_complete failed for job=${job.id}: ${doneErr.message}`);
+    else console.log(`[worker] completed cv job=${job.id} kind=${job.kind} in ${Math.round((Date.now() - startedAt) / 1000)}s`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] cv job=${job.id} kind=${job.kind} FAILED after ${Math.round((Date.now() - startedAt) / 1000)}s: ${msg}`);
+    if (err instanceof Error && err.stack && !msg.startsWith('budget_exceeded:')) console.error(err.stack);
+    // Error-kind prefixes (provider: / permanent: / budget_exceeded:) travel
+    // unchanged — mkt_cv_job_fail decides requeue vs terminal from them.
+    const { data: outcome, error: failErr } = await supabase.rpc('mkt_cv_job_fail', { p_job_id: job.id, p_error: msg });
+    if (failErr) console.error(`[worker] mkt_cv_job_fail failed for job=${job.id}: ${failErr.message}`);
+    else console.log(`[worker] cv job=${job.id} → ${String(outcome)}`);
+  }
+  return true;
+}
+
+async function runCvWatchdog(): Promise<void> {
+  const { data, error } = await supabase.rpc('mkt_cv_jobs_watchdog');
+  if (error) { console.error(`[worker] cv watchdog RPC error: ${error.message}`); return; }
+  const swept = typeof data === 'number' ? data : 0;
+  if (swept > 0) console.warn(`[worker] cv watchdog swept ${swept} stale job(s)`);
+}
+
+async function cvProcessPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    cvProcessBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneCv(CV_PROCESS_KINDS);
+    } catch (err) {
+      console.error('[worker] cv process poll iteration error:', err);
+    }
+    cvProcessBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      try { await runCvWatchdog(); } catch (err) { console.error('[worker] cv watchdog threw:', err); }
+    }
+    if (didClaim || cvProcessWakeRequested) {
+      cvProcessWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !cvProcessWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+async function cvAnalyzePollLoop(): Promise<void> {
+  while (!shuttingDown) {
+    cvAnalyzeBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneCv(CV_ANALYZE_KINDS);
+    } catch (err) {
+      console.error('[worker] cv analyze poll iteration error:', err);
+    }
+    cvAnalyzeBusy = false;
+
+    if (didClaim || cvAnalyzeWakeRequested) {
+      cvAnalyzeWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !cvAnalyzeWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+// ── end cv lanes (W-CV) ──
+
+// ─────────────────────────────────────────────────────────────────────────
 // HTTP server: /healthz for Fly health checks, /wake for API ping.
 // ─────────────────────────────────────────────────────────────────────────
 /**
@@ -2547,6 +2696,9 @@ const server = http.createServer((req, res) => {
         translation_busy: translationBusy,
         translation_enabled: Boolean(env.DEEPSEEK_API_KEY),
         script_busy: scriptBusy,
+        cv_process_busy: cvProcessBusy,
+        cv_analyze_busy: cvAnalyzeBusy,
+        cv_lanes_enabled: cvLanesActive,
         worker_id: env.WORKER_ID,
         uptime_s: Math.round(process.uptime()),
       }),
@@ -2575,6 +2727,8 @@ const server = http.createServer((req, res) => {
     marketingWakeRequested = true;
     translationWakeRequested = true;
     scriptWakeRequested = true;
+    cvProcessWakeRequested = true;
+    cvAnalyzeWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
     return;
@@ -3235,6 +3389,15 @@ if (env.WORKFLOW_PROOF_ONLY) {
     loops.push(marketingPollLoop());
   } else {
     console.log('[worker] marketing collection loop disabled (MARKETING_COLLECTION_ENABLED != 1)');
+  }
+  // ── cv lanes (W-CV) ── Competitor Visual Intelligence. Skipped (logged once)
+  // when MODAL_CV_URL is unset or CV_LANES_ENABLED=0; even when registered the
+  // DB flag mkt_settings.cv.enabled decides whether a job is ever claimed.
+  if (cvLanesActive) {
+    console.log(`[worker] cv lanes enabled (modal=${env.MODAL_CV_URL}; DB cv.enabled still gates claims)`);
+    loops.push(cvProcessPollLoop(), cvAnalyzePollLoop());
+  } else {
+    console.log(`[worker] cv lanes disabled (${env.CV_LANES_ENABLED ? 'MODAL_CV_URL unset' : 'CV_LANES_ENABLED=0'})`);
   }
 }
 Promise.all(loops).catch((err) => {

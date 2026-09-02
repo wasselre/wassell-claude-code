@@ -28,7 +28,8 @@ import {
   addComment, completeTask, fetchAssets, fetchCampaigns, fetchComments,
   fetchContentDetail, fetchContentVersions, fetchPublications,
   fieldSchemaEntries, fieldSchemaKeys, isOverdue, updateContent,
-  scriptJobStatus, type ScriptJobRow,
+  SCRIPT_STAGE_LABELS, SCRIPT_STAGE_ORDER, fetchScriptDraft, fetchScriptRecipes, scriptJobStatus,
+  type ScriptDraft, type ScriptJobRow, type ScriptRecipe,
 } from '@/lib/marketingOS/client';
 import { useAppStore } from '@/stores/appStore';
 import { useWorkspace, type Capability } from './MarketingWorkspace';
@@ -41,7 +42,8 @@ import TaskCard, { TasksApprovalsTab } from './components/TaskCard';
 import WritingFields from './components/WritingFields';
 import PlacementsTab from './components/PlacementsTab';
 import SceneTable from './components/SceneTable';
-import VideoScriptModal from './components/VideoScriptModal';
+import ScriptBriefModal from './components/ScriptBriefModal';
+import ScriptDraftReview from './components/ScriptDraftReview';
 import { useMosText } from './lib/useMosText';
 import PerformanceTab from './components/PerformanceTab';
 import MaterialsTab from './components/MaterialsTab';
@@ -129,6 +131,10 @@ export default function ContentDetailPage() {
   const [compareOpen, setCompareOpen] = useState(false);
   const [scriptOpen, setScriptOpen] = useState(false);
   const [scriptJob, setScriptJob] = useState<ScriptJobRow | null>(null);
+  // Script Writer v2: the pending DRAFT (draft | needs_attention), reviewed
+  // above the scenes table; 'applied' lingers only for the feedback strip.
+  const [scriptDraft, setScriptDraft] = useState<ScriptDraft | null>(null);
+  const [scriptRecipes, setScriptRecipes] = useState<ScriptRecipe[] | undefined>(undefined);
   const [versions, setVersions] = useState<MosContentVersion[] | null>(null);
 
   const load = useCallback(async () => {
@@ -159,11 +165,38 @@ export default function ContentDetailPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Background video-script job — poll while it runs so a progress bar shows on
-  // the scenes table (and survives a reload / navigating back). On completion
-  // the worker has already inserted the scenes, so we refetch the item; a bell
-  // notification also fires server-side. Keyed on the job's id+status so the
-  // interval stays stable while 'running' and tears down on a terminal status.
+  // Script Writer v2 — on mount, pick up a draft that is already waiting for
+  // review (written by an earlier job, maybe from another tab). Only an
+  // unapplied draft is shown; 'applied'/'discarded' rows stay out of the way.
+  useEffect(() => {
+    if (!contentId) return;
+    let alive = true;
+    fetchScriptDraft({ contentId })
+      .then((r) => {
+        if (!alive) return;
+        setScriptDraft(r.draft && (r.draft.status === 'draft' || r.draft.status === 'needs_attention') ? r.draft : null);
+      })
+      .catch((e: unknown) => { console.error('[marketing] script draft unavailable', e); });
+    return () => { alive = false; };
+  }, [contentId]);
+
+  // Recipe labels for the review header — non-fatal (the review falls back to
+  // the seeded keys), logged never swallowed.
+  useEffect(() => {
+    if (!contentId) return;
+    let alive = true;
+    fetchScriptRecipes()
+      .then((r) => { if (alive) setScriptRecipes(r.recipes); })
+      .catch((e: unknown) => { console.error('[marketing] script recipes unavailable', e); });
+    return () => { alive = false; };
+  }, [contentId]);
+
+  // Background video-script job — poll while it runs so a STAGED progress bar
+  // shows on the scenes table (and survives a reload / navigating back). On
+  // completion the worker has written a DRAFT (never the scenes): fetch it by
+  // draft_id and show the review; a bell notification also fires server-side.
+  // Keyed on the job's id+status so the interval stays stable while 'running'
+  // and tears down on a terminal status (stage changes update in place).
   useEffect(() => {
     if (!contentId) return;
     // No job in state yet → fetch the latest once (covers a fresh mount while a
@@ -172,7 +205,10 @@ export default function ContentDetailPage() {
       let cancelled = false;
       void scriptJobStatus(contentId)
         .then((r) => { if (!cancelled) setScriptJob(r.job); })
-        .catch(() => { /* transient — the button can still enqueue */ });
+        .catch((e: unknown) => {
+          // Transient — the button can still enqueue; logged, never swallowed.
+          console.error('[marketing] script job status unavailable', e);
+        });
       return () => { cancelled = true; };
     }
     if (scriptJob.status !== 'queued' && scriptJob.status !== 'running') return;
@@ -182,18 +218,36 @@ export default function ContentDetailPage() {
         if (cancelled || !r.job) return;
         setScriptJob(r.job);
         if (r.job.status === 'completed') {
-          addToast(
-            isAr ? `تمت كتابة السكربت (${r.job.scene_count ?? 0} مشهد)` : `Script ready (${r.job.scene_count ?? 0} scenes)`,
-            'success',
-          );
-          void load();
+          if (r.job.draft_id) {
+            void fetchScriptDraft({ draftId: r.job.draft_id })
+              .then((d) => {
+                if (cancelled) return;
+                setScriptDraft(d.draft);
+                addToast(
+                  isAr ? 'مسودة السكربت جاهزة للمراجعة' : 'The script draft is ready for review',
+                  'success',
+                );
+              })
+              .catch((e: unknown) => addToast(e instanceof Error ? e.message : String(e), 'error'));
+          } else {
+            // Legacy generator (v2 flag off) still writes a draft; a job with
+            // no draft_id is the pre-v2 append path — refetch the scenes.
+            addToast(
+              isAr ? `تمت كتابة السكربت (${r.job.scene_count ?? 0} مشهد)` : `Script ready (${r.job.scene_count ?? 0} scenes)`,
+              'success',
+            );
+            void load();
+          }
         } else if (r.job.status === 'failed') {
           addToast(
-            isAr ? `تعذّرت كتابة السكربت: ${r.job.error ?? ''}` : `Script failed: ${r.job.error ?? ''}`,
+            isAr ? `تعذّرت كتابة السكربت: ${r.job.error ?? r.job.error_kind ?? ''}` : `Script failed: ${r.job.error ?? r.job.error_kind ?? ''}`,
             'error',
           );
         }
-      }).catch(() => { /* transient — keep polling */ });
+      }).catch((e: unknown) => {
+        // Transient — keep polling; logged, never swallowed.
+        console.error('[marketing] script job poll failed', e);
+      });
     }, 4000);
     return () => { cancelled = true; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -746,18 +800,50 @@ export default function ContentDetailPage() {
                   the scenes table. Indeterminate (one AI call, no granular %);
                   the user can leave the page and gets a bell notification when
                   the scenes land. */}
-              {scriptJob && (scriptJob.status === 'queued' || scriptJob.status === 'running') && (
-                <div style={{ margin: '4px 0 12px', border: '1px solid var(--line)', borderRadius: 8, padding: '10px 12px' }}>
-                  <style>{'@keyframes wsScriptBar{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}'}</style>
-                  <div style={{ position: 'relative', height: 6, borderRadius: 99, background: 'var(--line)', overflow: 'hidden' }}>
-                    <span style={{ position: 'absolute', top: 0, bottom: 0, width: '30%', borderRadius: 99, background: 'var(--copper)', animation: 'wsScriptBar 1.2s ease-in-out infinite' }} />
+              {scriptJob && (scriptJob.status === 'queued' || scriptJob.status === 'running') && (() => {
+                const stage = scriptJob.stage ?? null;
+                const idx = stage ? SCRIPT_STAGE_ORDER.indexOf(stage) : -1;
+                // Stage-proportional fill (the sweep still animates over it so a
+                // long stage never reads as frozen); queued = 0.
+                const pct = idx >= 0 ? Math.round(((idx + 1) / SCRIPT_STAGE_ORDER.length) * 100) : 0;
+                const stageLabel = stage && SCRIPT_STAGE_LABELS[stage]
+                  ? (isAr ? SCRIPT_STAGE_LABELS[stage].ar : SCRIPT_STAGE_LABELS[stage].en)
+                  : (scriptJob.status === 'queued' ? (isAr ? 'في الانتظار' : 'Queued') : (isAr ? 'يبدأ…' : 'Starting…'));
+                return (
+                  <div style={{ margin: '4px 0 12px', border: '1px solid var(--line)', borderRadius: 8, padding: '10px 12px' }}>
+                    <style>{'@keyframes wsScriptBar{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}'}</style>
+                    <div style={{ position: 'relative', height: 6, borderRadius: 99, background: 'var(--line)', overflow: 'hidden' }}>
+                      <span style={{ position: 'absolute', top: 0, bottom: 0, insetInlineStart: 0, width: `${pct}%`, borderRadius: 99, background: 'color-mix(in srgb, var(--copper) 45%, transparent)', transition: 'width .4s ease' }} />
+                      <span style={{ position: 'absolute', top: 0, bottom: 0, width: '30%', borderRadius: 99, background: 'var(--copper)', animation: 'wsScriptBar 1.2s ease-in-out infinite' }} />
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 12, color: 'var(--mute)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 700, color: 'var(--ink-2)' }}>
+                        {stageLabel}
+                        {idx >= 0 && <span style={{ fontWeight: 400, color: 'var(--mute)' }}> · {num(idx + 1, isAr)}/{num(SCRIPT_STAGE_ORDER.length, isAr)}</span>}
+                      </span>
+                      <span>
+                        {isAr
+                          ? 'يكتب سكربت الفيديو… يمكنك مغادرة الصفحة، وسنُعلمك عندما تجهز المسودة للمراجعة'
+                          : "Writing the video script… you can leave this page — we'll notify you when the draft is ready for review"}
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--mute)' }}>
-                    {isAr
-                      ? 'يكتب سكربت الفيديو… يمكنك مغادرة الصفحة، وسنُعلمك عند الانتهاء'
-                      : "Writing the video script… you can leave this page — we'll notify you when it's done"}
-                  </div>
-                </div>
+                );
+              })()}
+              {/* Script Writer v2 — a draft waiting for review sits ABOVE the
+                  scenes: nothing enters the table until Apply. */}
+              {scriptDraft && (
+                <ScriptDraftReview
+                  draft={scriptDraft}
+                  contentId={item.id}
+                  recipes={scriptRecipes}
+                  isAr={isAr}
+                  canEdit={can('write_content')}
+                  readOnly={isMobile}
+                  onDraftChange={setScriptDraft}
+                  onApplied={(nextScenes, applied) => { setScenes(nextScenes); setScriptDraft(applied); }}
+                  onRegenerated={(job) => { setScriptDraft(null); setScriptJob(job); }}
+                />
               )}
               {/* Screen 29, phone 2: on the phone the scenes render as a
                   READABLE list with a duration bar, not a compressed table. */}
@@ -927,11 +1013,19 @@ export default function ContentDetailPage() {
       )}
 
       {scriptOpen && item && (
-        <VideoScriptModal
+        <ScriptBriefModal
           contentId={item.id}
+          projectName={projectName}
           isAr={isAr}
           onClose={() => setScriptOpen(false)}
-          onStarted={(job) => setScriptJob(job)}
+          onStarted={(job) => { setScriptDraft(null); setScriptJob(job); }}
+          onOpenDraft={(draftId) => {
+            // A draft is already pending — load it (by id when the 409 carried
+            // one, else the content's current draft) and show the review.
+            void fetchScriptDraft(draftId ? { draftId } : { contentId: item.id })
+              .then((r) => setScriptDraft(r.draft))
+              .catch((e: unknown) => addToast(e instanceof Error ? e.message : String(e), 'error'));
+          }}
         />
       )}
       {compareOpen && (

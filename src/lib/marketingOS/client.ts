@@ -344,6 +344,17 @@ export interface MosScene {
   on_screen_text: string | null;
   footage_status: 'have' | 'to_make' | 'missing' | 'template';
   note: string | null;
+  /** Script Writer v2 — who authored the row: a human or an applied AI draft. */
+  source?: 'manual' | 'ai';
+  /** The mos_script_drafts row this scene was applied from (source='ai'). */
+  source_draft_id?: string | null;
+  /** Stamped by scene_save on any human change; protects the scene from replace. */
+  manually_edited_at?: string | null;
+  last_edited_by?: string | null;
+  purpose?: DraftScenePurpose | null;
+  visual_intent?: DraftSceneVisualIntent | null;
+  /** F-ids from the draft's facts package that this scene's claims rest on. */
+  fact_refs?: string[] | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -646,28 +657,330 @@ export const saveScene = (contentId: string, scene: Record<string, unknown>) =>
 export const deleteScene = (contentId: string, id: string) =>
   call<{ scenes: MosScene[] }>('scene_delete', { content_id: contentId, id });
 
-// ── Video-script generator (background job: learn from competitors → scenes) ──
-export type ScriptRecipeKey = 'walkthrough' | 'offer' | 'rent_vs_own' | 'product_explainer' | 'launch';
+/* ------------------------------------------------------------------ */
+/* Script Writer v2 — brief → facts → exemplars → DRAFT → human Apply   */
+/* ------------------------------------------------------------------ */
+// Contract: docs/marketing-script-visual-contracts.md §5, §7, §8. Generated
+// scripts are DRAFTS (mos_script_drafts); nothing enters mos_scenes without a
+// human Apply, and protected scenes (edited / shoot-linked / in production)
+// are never removed. Recipes come from mos_script_recipes, so the key is an
+// open string — the five seeded keys are listed for label fallbacks only.
+
+export type ScriptRecipeKey = string;
 export type ScriptJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+/** The worker's stage ladder, written via mos_script_job_stage in this order. */
+export type ScriptJobStage =
+  | 'brief' | 'facts' | 'retrieve' | 'write' | 'validate' | 'review' | 'repair' | 'draft';
+
+export const SCRIPT_STAGE_ORDER: ScriptJobStage[] =
+  ['brief', 'facts', 'retrieve', 'write', 'validate', 'review', 'repair', 'draft'];
+
+export const SCRIPT_STAGE_LABELS: Record<ScriptJobStage, { ar: string; en: string }> = {
+  brief:    { ar: 'تجهيز الملخّص', en: 'Preparing the brief' },
+  facts:    { ar: 'جمع حقائق المشروع', en: 'Collecting project facts' },
+  retrieve: { ar: 'الاستلهام من فيديوهات المنافسين', en: "Learning from competitors' videos" },
+  write:    { ar: 'كتابة المشاهد', en: 'Writing the scenes' },
+  validate: { ar: 'التحقّق من الادعاءات', en: 'Checking every claim' },
+  review:   { ar: 'مراجعة الجودة', en: 'Quality review' },
+  repair:   { ar: 'إصلاح الملاحظات', en: 'Repairing notes' },
+  draft:    { ar: 'حفظ المسودة', en: 'Saving the draft' },
+};
+
 export interface ScriptJobRow {
   id: string;
   status: ScriptJobStatus;
+  stage?: ScriptJobStage | null;
   recipe?: ScriptRecipeKey;
+  /** Legacy (v1 appended scenes directly); v2 jobs report a draft_id instead. */
   scene_count?: number | null;
   error?: string | null;
+  /** Stable prefix from the worker: facts_insufficient | provider | budget_exceeded | validation_unrepaired. */
+  error_kind?: string | null;
+  draft_id?: string | null;
   created_at?: string;
   finished_at?: string | null;
 }
 
+export interface ScriptRecipe {
+  key: ScriptRecipeKey;
+  label_ar: string;
+  label_en: string;
+  default_duration_sec: number;
+  scene_count_hint: number;
+  version: number;
+}
+
+/** §5 Brief — built once in SQL (mos_script_brief) for both API and worker. */
+export interface ScriptBrief {
+  content_id: string;
+  project_id: string | null;
+  project_ids: string[];
+  multi_project_warning: boolean;
+  campaign?: {
+    id: string; name: string; objective: string | null; kind: string | null;
+    offer: string | null; audience_text: string | null; audience_id: string | null;
+  } | null;
+  purpose: 'organic' | 'paid' | 'both' | 'unknown';
+  platforms: string[];
+  objective: string | null;
+  audience: string | null;
+  language: 'ar' | 'en';
+  cta: string;
+  core_message?: string | null;
+  idea?: string | null;
+  hook?: string | null;
+  recipe: ScriptRecipeKey;
+  duration_sec: number;
+  scene_count_hint: number;
+  funnel: 'top' | 'mid' | 'bottom';
+  objection?: string | null;
+  existing_scenes: Array<{
+    position: number; visual: string | null; voiceover: string | null;
+    on_screen_text: string | null; footage_status: MosScene['footage_status'];
+  }>;
+  assets_summary: { count: number; kinds: Record<string, number> };
+}
+
+export type ScriptFactClass =
+  | 'price' | 'area' | 'unit_count' | 'date' | 'distance' | 'duration' | 'availability'
+  | 'guarantee' | 'payment' | 'unit_type' | 'feature' | 'landmark' | 'status' | 'name'
+  | 'location' | 'other';
+
+export interface ScriptFact {
+  /** F1, F2 … — what scenes' fact_refs point at. */
+  id: string;
+  key: string;
+  class: ScriptFactClass;
+  value: unknown;
+  rendered_ar: string;
+  source_field: string;
+  verified_at: string | null;
+  claimable: boolean;
+  note?: string;
+}
+
+export interface ScriptFactsPackage {
+  project_name: string;
+  readiness: 'off_plan' | 'ready' | 'unknown' | 'conflict';
+  sold_out: boolean;
+  facts: ScriptFact[];
+  warnings: string[];
+  viable: boolean;
+  missing: string[];
+}
+
+export type DraftScenePurpose =
+  | 'hook' | 'location' | 'product' | 'feature' | 'proof' | 'offer' | 'comparison' | 'cta' | 'brand';
+
+export const SCENE_PURPOSE_LABELS: Record<DraftScenePurpose, { ar: string; en: string }> = {
+  hook:       { ar: 'خطّاف', en: 'Hook' },
+  location:   { ar: 'الموقع', en: 'Location' },
+  product:    { ar: 'المنتج', en: 'Product' },
+  feature:    { ar: 'ميزة', en: 'Feature' },
+  proof:      { ar: 'إثبات', en: 'Proof' },
+  offer:      { ar: 'العرض', en: 'Offer' },
+  comparison: { ar: 'مقارنة', en: 'Comparison' },
+  cta:        { ar: 'دعوة للإجراء', en: 'CTA' },
+  brand:      { ar: 'العلامة', en: 'Brand' },
+};
+
+export interface DraftSceneVisualIntent {
+  shot_size: string;
+  subject: string;
+  setting: string;
+  interior_exterior: 'interior' | 'exterior' | 'graphic' | 'mixed';
+  motion: string;
+  graphic_kind: 'none' | 'text_overlay' | 'animated_map' | '3d_render' | 'motion_graphic' | 'split_screen';
+  mood: string;
+}
+
+export type DraftAssetRequirement = 'footage' | 'image' | 'graphic' | 'animation' | 'template' | 'none';
+
+export interface DraftScene {
+  order: number;
+  purpose: DraftScenePurpose;
+  duration_sec: number;
+  start_sec: number;
+  end_sec: number;
+  voiceover: string;
+  on_screen_text: string;
+  visual: string;
+  visual_intent: DraftSceneVisualIntent;
+  angle: string;
+  /** F-ids into ScriptDraft.facts.facts. */
+  fact_refs: string[];
+  /** E-ids of the exemplars this scene's shape was learned from. */
+  learned_from: string[];
+  asset_requirement: DraftAssetRequirement;
+  production_note: string;
+  warnings: string[];
+}
+
+export interface ScriptPlan {
+  patterns_learned: Array<{ pattern: string; from: string[] }>;
+  scene_plan: Array<{ order: number; purpose: string; goal: string; facts: string[] }>;
+}
+
+export interface ClaimVerdict {
+  scene: number;
+  field: 'voiceover' | 'on_screen_text';
+  mention: string;
+  class: string;
+  verdict: 'pass' | 'fail' | 'review';
+  fact_id?: string;
+  reason: string;
+}
+
+export interface ReviewReport {
+  validator: {
+    claims: ClaimVerdict[];
+    entities: Array<{ scene: number; mention: string; kind: string }>;
+    checks: Array<{ key: string; level: 'pass' | 'warn' | 'fail'; detail: string }>;
+  };
+  judge?: {
+    overall: 'pass' | 'revise' | 'reject';
+    dialect: number;
+    hook: number;
+    progression: number;
+    fit: number;
+    completeness: number;
+    notes: Array<{ scene: number; note: string }>;
+  };
+  repaired: boolean;
+  final: 'ok' | 'needs_attention';
+}
+
+export type ScriptDraftStatus = 'draft' | 'needs_attention' | 'applied' | 'discarded';
+
+/** One mos_script_drafts row — the full thing (scenes, hooks, review, facts). */
+export interface ScriptDraft {
+  id: string;
+  job_id: string | null;
+  content_id: string;
+  recipe: ScriptRecipeKey;
+  brief: ScriptBrief;
+  facts: ScriptFactsPackage;
+  plan: ScriptPlan | null;
+  scenes: DraftScene[];
+  hooks: string[];
+  chosen_hook: number | null;
+  review: ReviewReport | null;
+  status: ScriptDraftStatus;
+  applied_scene_ids: string[] | null;
+  approved_by: string | null;
+  applied_at: string | null;
+  /** AI roles actually used, keyed by role (provider/model/version) — small print. */
+  roles: Record<string, { provider?: string; model?: string; version?: string }> | null;
+  cost_usd: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ApplyMode = 'append' | 'replace';
+export type ProtectedReason = 'edited' | 'shoot_linked' | 'production_used' | 'manual';
+
+export interface ApplyPreview {
+  replaceable: Array<{ id: string; position: number; visual: string | null }>;
+  protected: Array<{ id: string; position: number; reason: ProtectedReason }>;
+  will_insert: number;
+}
+
+export type SceneReferenceKind = 'competitor_shot' | 'wassel_asset' | 'gap';
+export type SceneReferenceStatus = 'suggested' | 'accepted' | 'rejected';
+
+/** One mos_scene_references row. Competitor shots are ALWAYS reference_only. */
+export interface SceneReference {
+  id: string;
+  scene_id: string | null;
+  draft_scene_index: number | null;
+  content_id: string;
+  kind: SceneReferenceKind;
+  ref_id: string | null;
+  frame_url: string | null;
+  open_url: string | null;
+  start_ms: number | null;
+  end_ms: number | null;
+  reason: string | null;
+  learn_element: string | null;
+  adaptation_notes: string | null;
+  usage_class: 'reference_only' | 'usable';
+  gap: Record<string, unknown> | null;
+  rank: number | null;
+  similarity: number | null;
+  status: SceneReferenceStatus;
+  created_at?: string;
+  /** Display decoration the suggest action adds from the search row (competitor shots). */
+  org_name?: string | null;
+  platform?: string | null;
+  summary?: string | null;
+  post_url?: string | null;
+}
+
+/**
+ * scene_references_suggest: `{unavailable:true}` while the visual system is off
+ * (mkt_settings cv.enabled=false) — the UI shows a quiet note, never an error.
+ */
+export type SceneReferenceSuggestion =
+  | { unavailable: true; reason?: string }
+  | { unavailable?: false; competitor: SceneReference[]; wassel_assets: SceneReference[]; gap: SceneReference | null };
+
+/**
+ * write_video_script refuses (409) while an unapplied draft exists. Callers
+ * catch this to offer "open the pending draft" or "regenerate" (which discards).
+ */
+export class ScriptDraftPendingError extends MosApiError {
+  constructor(message: string, status: number, payload: Record<string, unknown>, public draftId: string | null) {
+    super(message, status, payload);
+    this.name = 'ScriptDraftPendingError';
+  }
+}
+
+export const fetchScriptRecipes = () =>
+  call<{ recipes: ScriptRecipe[] }>('script_recipes');
+
+export const fetchScriptBrief = (contentId: string) =>
+  call<{ brief: ScriptBrief; recommended_recipe: ScriptRecipeKey; warnings: string[] }>(
+    'script_brief', { content_id: contentId },
+  );
+
 /**
  * Enqueue a background video-script job. Returns fast (<1s) with the job row —
- * the Fly worker runs the ~30-40s AI write OFF the request, appends the scenes
- * to mos_scenes, and fires a completion notification. The old synchronous path
- * was killed by the 23s client / 25s edge timeout; this never holds a request
- * open for the AI call (the rule shared with decks/image/documents).
+ * the Fly worker runs the multi-stage pipeline OFF the request and writes a
+ * DRAFT (never mos_scenes). Never holds a request open for the AI call (the
+ * rule shared with decks/image/documents). A 409 `draft_pending` becomes a
+ * ScriptDraftPendingError carrying the pending draft's id.
  */
-export const writeVideoScript = (contentId: string, recipe: ScriptRecipeKey) =>
-  call<{ job: ScriptJobRow }>('write_video_script', { content_id: contentId, recipe });
+export async function writeVideoScript(
+  contentId: string,
+  opts: {
+    recipe: ScriptRecipeKey;
+    duration_sec?: number;
+    audience?: string | null;
+    objection?: string | null;
+    regenerate?: boolean;
+  },
+): Promise<{ job: ScriptJobRow }> {
+  try {
+    return await call<{ job: ScriptJobRow }>('write_video_script', {
+      content_id: contentId,
+      recipe: opts.recipe,
+      ...(opts.duration_sec ? { duration_sec: opts.duration_sec } : {}),
+      ...(opts.audience ? { audience: opts.audience } : {}),
+      ...(opts.objection ? { objection: opts.objection } : {}),
+      ...(opts.regenerate ? { regenerate: true } : {}),
+    });
+  } catch (e) {
+    if (e instanceof MosApiError && e.status === 409) {
+      const p = e.payload;
+      const draftId =
+        (typeof p.draft_id === 'string' && p.draft_id)
+        || (p.draft && typeof p.draft === 'object' && typeof (p.draft as { id?: unknown }).id === 'string'
+          ? (p.draft as { id: string }).id : null);
+      throw new ScriptDraftPendingError(e.message, e.status, p, draftId);
+    }
+    throw e;
+  }
+}
 
 /**
  * Latest script job for a content item — drives the progress bar and survives a
@@ -676,6 +989,66 @@ export const writeVideoScript = (contentId: string, recipe: ScriptRecipeKey) =>
  */
 export const scriptJobStatus = (contentId: string) =>
   call<{ job: ScriptJobRow | null }>('script_job_status', { content_id: contentId });
+
+/** By draft id, or the content's current draft (null when none exists). */
+export const fetchScriptDraft = (ref: { draftId: string } | { contentId: string }) =>
+  call<{ draft: ScriptDraft | null }>(
+    'script_draft_get',
+    'draftId' in ref ? { draft_id: ref.draftId } : { content_id: ref.contentId },
+  );
+
+export const previewApplyDraft = (draftId: string, mode: ApplyMode) =>
+  call<ApplyPreview>('script_draft_preview_apply', { draft_id: draftId, mode });
+
+/**
+ * Apply the draft into mos_scenes. For `replace`, `confirm_remove_ids` MUST equal
+ * the replaceable set the user was shown — the server recomputes protection and
+ * refuses a stale confirmation rather than removing something unseen.
+ */
+export const applyDraft = (
+  draftId: string,
+  opts: { mode: ApplyMode; chosen_hook?: number | null; confirm_remove_ids?: string[] },
+) =>
+  call<{ scenes: MosScene[]; removed: string[]; draft: ScriptDraft }>('script_draft_apply', {
+    draft_id: draftId,
+    mode: opts.mode,
+    ...(opts.chosen_hook !== undefined && opts.chosen_hook !== null ? { chosen_hook: opts.chosen_hook } : {}),
+    ...(opts.confirm_remove_ids ? { confirm_remove_ids: opts.confirm_remove_ids } : {}),
+  });
+
+export const discardDraft = (draftId: string) =>
+  call<{ ok?: true; draft?: ScriptDraft }>('script_draft_discard', { draft_id: draftId });
+
+export const sendDraftFeedback = (draftId: string, rating: number, note?: string) =>
+  call<{ ok?: true }>('script_draft_feedback', {
+    draft_id: draftId, rating, ...(note ? { note } : {}),
+  });
+
+/** Phase 4 — competitor shots / Wassel assets / gap for one scene (or draft scene). */
+export const suggestSceneReferences = (
+  target: { sceneId: string } | { draftId: string; sceneIndex: number },
+  k?: number,
+) =>
+  call<SceneReferenceSuggestion>('scene_references_suggest', {
+    ...('sceneId' in target
+      ? { scene_id: target.sceneId }
+      : { draft_id: target.draftId, scene_index: target.sceneIndex }),
+    ...(k ? { k } : {}),
+  });
+
+export const setSceneReference = (referenceId: string, status: SceneReferenceStatus) =>
+  call<{ reference?: SceneReference; ok?: true }>('scene_reference_set', {
+    reference_id: referenceId, status,
+  });
+
+/**
+ * Existing references for a saved scene (accepted + still-suggested). NOT in
+ * the §7 contract — proposed to the API owner as `scene_references_list
+ * {scene_id}` → `{references}`; until it lands the panel surfaces the 400
+ * inline (loud, never swallowed).
+ */
+export const fetchSceneReferences = (sceneId: string) =>
+  call<{ references: SceneReference[] }>('scene_references_list', { scene_id: sceneId });
 
 export const fetchPublications = (contentId?: string) =>
   call<{ publications: MosPublication[]; accounts: MosAccount[] }>('publication_list',

@@ -24,6 +24,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import { makeServiceClient } from './_lib/serviceClient.js';
 import { refreshAllProviderHealth } from './_lib/marketing/registry.js';
+import {
+  embedQuery, diversify, num as cvNum, type CvSearchRow, type CvFrameSearchRow,
+} from './_lib/marketing/modalCv.js';
 
 export const config = { runtime: 'edge' };
 
@@ -85,7 +88,40 @@ interface Body {
   // attribution confirm
   post_id?: string;
   accept?: boolean;
+  // competitor visual intelligence (cv_*)
+  content_media_id?: string;
+  video_id?: string;
+  shot_id?: string;
+  frame_id?: string;
+  filters?: Record<string, unknown>;
+  mode?: 'shot' | 'frame';
 }
+
+/**
+ * Marketing-intelligence capability gate (wassell_mkt_can — the module's own
+ * role matrix, separate from the Marketing OS role_capabilities table). The
+ * service client has no auth.uid(), so the caller's uid is passed explicitly.
+ */
+async function mktCan(svc: SupabaseClient, authUid: string, capability: string): Promise<Response | null> {
+  const res = await svc.rpc('wassell_mkt_can', { p_capability: capability, p_auth_uid: authUid });
+  if (res.error) return jsonError(500, res.error.message);
+  if (res.data !== true) return jsonError(403, `${capability} capability required`);
+  return null;
+}
+
+/** Shot columns safe to ship to the browser (no 768/1024-d vectors, no tsvector). */
+const CV_SHOT_COLUMNS = [
+  'id', 'video_id', 'shot_no', 'start_ms', 'end_ms', 'duration_ms', 'transition_in', 'transition_out',
+  'is_static', 'is_micro', 'internal_change', 'edit_pace_local', 'representative_frame_id', 'keyframe_ids',
+  'transcript_text', 'transcript_segments', 'ocr_text', 'analysis', 'tags', 'summary',
+  'analysis_status', 'analysis_error', 'analysis_cost_usd', 'analysis_role', 'created_at', 'updated_at',
+].join(', ');
+
+const CV_FRAME_COLUMNS = [
+  'id', 'video_id', 'shot_id', 'frame_no', 'ts_ms', 'is_boundary', 'is_keyframe', 'dup_group_id', 'phash',
+  'storage_path', 'public_url', 'width', 'height', 'bytes', 'quality', 'ocr', 'labels', 'analysis',
+  'described_at', 'describe_role', 'created_at',
+].join(', ');
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined);
 
@@ -890,6 +926,205 @@ export default async function handler(req: Request): Promise<Response> {
         const { data, error } = await svc.rpc('mkt_ops_evaluate');
         if (error) return jsonError(500, error.message);
         return jsonOk({ result: data });
+      }
+
+      // ── Competitor Visual Intelligence (mkt_cv_*). Reads via the service
+      // client after a wassell_mkt_can('read') gate (the tables have RLS with
+      // no policies by design); cv_enqueue is a manage-level write. ──────────
+      case 'cv_health':
+      case 'cv_video':
+      case 'cv_shot':
+      case 'cv_frame':
+      case 'cv_search':
+      case 'cv_enqueue':
+      case 'cv_backfill_status': {
+        const svc = makeServiceClient('api:marketing:cv');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const gate = await mktCan(svc, user.userId, 'read');
+        if (gate) return gate;
+
+        if (action === 'cv_health') {
+          const { data, error } = await svc.rpc('mkt_cv_health');
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ health: data });
+        }
+
+        if (action === 'cv_video') {
+          // One indexed video: its row, every shot (no vectors) and each shot's
+          // representative frame url — the Visual library's video page.
+          const mediaId = str(body.content_media_id);
+          const videoId = str(body.video_id);
+          if (!mediaId && !videoId) return jsonError(400, 'content_media_id or video_id required');
+          const vq = videoId
+            ? svc.from('mkt_cv_videos').select('*').eq('id', videoId).maybeSingle()
+            : svc.from('mkt_cv_videos').select('*').eq('content_media_id', mediaId).maybeSingle();
+          const v = await vq;
+          if (v.error) return jsonError(500, v.error.message);
+          if (!v.data) return jsonError(404, 'video not indexed');
+          const video = v.data as { id: string; content_post_id: string | null } & Record<string, unknown>;
+          const [shots, post] = await Promise.all([
+            svc.from('mkt_cv_shots').select(CV_SHOT_COLUMNS)
+              .eq('video_id', video.id).order('shot_no', { ascending: true }),
+            video.content_post_id
+              ? svc.from('mkt_content_posts').select('platform, post_url, published_at').eq('id', video.content_post_id).maybeSingle()
+              : Promise.resolve({ data: null, error: null }),
+          ]);
+          if (shots.error) return jsonError(500, shots.error.message);
+          if (post.error) return jsonError(500, post.error.message);
+          type ShotRow = { id: string; representative_frame_id: string | null } & Record<string, unknown>;
+          const shotRows = (shots.data ?? []) as unknown as ShotRow[];
+          const repIds = shotRows.map((s) => s.representative_frame_id).filter((x): x is string => typeof x === 'string');
+          const frameUrl = new Map<string, string | null>();
+          if (repIds.length > 0) {
+            const fr = await svc.from('mkt_cv_frames').select('id, public_url').in('id', repIds);
+            if (fr.error) return jsonError(500, fr.error.message);
+            for (const f of (fr.data ?? []) as Array<{ id: string; public_url: string | null }>) frameUrl.set(f.id, f.public_url);
+          }
+          return jsonOk({
+            video,
+            post: (post.data as { platform: string | null; post_url: string | null; published_at: string | null } | null) ?? null,
+            shots: shotRows.map((s) => ({
+              ...s,
+              representative_frame_url: s.representative_frame_id ? (frameUrl.get(s.representative_frame_id) ?? null) : null,
+            })),
+          });
+        }
+
+        if (action === 'cv_shot') {
+          const shotId = str(body.shot_id);
+          if (!shotId) return jsonError(400, 'shot_id required');
+          const { data, error } = await svc.rpc('mkt_cv_shot', { p_shot_id: shotId });
+          if (error) return jsonError(500, error.message);
+          if (!data) return jsonError(404, 'shot not found');
+          return jsonOk({ shot: data });
+        }
+
+        if (action === 'cv_frame') {
+          // A frame row; when it has no analysis yet, an on-demand describe job
+          // is enqueued (dedup on active) and the caller polls. The "materially
+          // different from its shot's representative" check needs the vector
+          // operator, which PostgREST cannot express — the worker's describe
+          // lane applies that threshold and no-ops on near-duplicates.
+          const frameId = str(body.frame_id);
+          if (!frameId) return jsonError(400, 'frame_id required');
+          const f = await svc.from('mkt_cv_frames').select(CV_FRAME_COLUMNS).eq('id', frameId).maybeSingle();
+          if (f.error) return jsonError(500, f.error.message);
+          if (!f.data) return jsonError(404, 'frame not found');
+          const frame = f.data as unknown as { id: string; video_id: string; analysis: unknown } & Record<string, unknown>;
+          if (frame.analysis !== null && frame.analysis !== undefined) {
+            return jsonOk({ frame, describing: false, job_id: null });
+          }
+          const enq = await svc.rpc('mkt_cv_job_enqueue', {
+            p_kind: 'cv_describe_frame', p_video_id: frame.video_id, p_frame_id: frame.id, p_params: {}, p_priority: 80,
+          });
+          if (enq.error) return jsonError(500, enq.error.message);
+          return jsonOk({ frame, describing: true, job_id: enq.data as string });
+        }
+
+        if (action === 'cv_search') {
+          // Hybrid search: the Modal service embeds the query (image-space +
+          // text vectors), SQL fuses three channels (RRF), and diversity is
+          // applied HERE: ≤1 shot per video (unless filters.per_video), ≤3 per
+          // organization, duplicate re-uploads collapsed by media checksum,
+          // MMR λ 0.7. The visual system is optional — an unreachable embedder
+          // answers {unavailable:true}, never a 500.
+          //
+          // BROWSE MODE (empty q): no Modal call at all — the v2 RPCs return the
+          // newest shots/frames for NULL vectors + '' text, and diversity still
+          // applies so the grid is not one org's latest video.
+          const q = str(body.q) ?? '';
+          const mode: 'shot' | 'frame' = body.mode === 'frame' ? 'frame' : 'shot';
+          const limit = typeof body.limit === 'number' ? Math.min(100, Math.max(1, Math.floor(body.limit))) : 30;
+          const rawFilters = body.filters && typeof body.filters === 'object' && !Array.isArray(body.filters) ? body.filters : {};
+          const perVideo = rawFilters.per_video === true;
+          // Only the keys the RPC understands travel; per_video is API-side.
+          const filters: Record<string, unknown> = {};
+          for (const k of ['organization_id', 'owner', 'platform', 'min_duration_ms', 'max_duration_ms', 'tags', 'exclude_micro'] as const) {
+            if (rawFilters[k] !== undefined && rawFilters[k] !== null) filters[k] = rawFilters[k];
+          }
+          const vec = q ? await embedQuery(q) : null;
+          if (q && !vec) return jsonOk({ unavailable: true, mode, results: [] });
+          const rpcLimit = Math.min(200, limit * 4);
+
+          if (mode === 'frame') {
+            const { data, error } = await svc.rpc('mkt_cv_search_frames', {
+              p_qvec_image: vec?.image_vec ?? null, p_query_text: q, p_filters: filters, p_limit: rpcLimit,
+            });
+            if (error) return jsonError(500, error.message);
+            const rows = (data ?? []) as CvFrameSearchRow[];
+            // v2 rows carry organization_id / org_name / platform / published_at /
+            // post_url / stored_url / shot_start_ms / shot_end_ms — passed
+            // through untouched so frame cards carry attribution.
+            const results = diversify(rows, {
+              videoKey: (r) => r.video_id, orgKey: () => null, score: (r) => cvNum(r.score),
+              perVideo: perVideo ? Infinity : 1, perOrg: Infinity, lambda: 1, limit,
+            });
+            return jsonOk({ unavailable: false, mode, results, candidates: rows.length });
+          }
+
+          const { data, error } = await svc.rpc('mkt_cv_search', {
+            p_qvec_image: vec?.image_vec ?? null, p_qvec_text: vec?.text_vec ?? null, p_query_text: q,
+            p_filters: filters, p_mode: 'shot', p_limit: rpcLimit,
+          });
+          if (error) return jsonError(500, error.message);
+          const rows = (data ?? []) as CvSearchRow[];
+          // Collapse videos that are byte-identical re-uploads (same checksum)
+          // into one "video" for the per-video cap.
+          const mediaIds = [...new Set(rows.map((r) => r.content_media_id).filter((x): x is string => typeof x === 'string'))];
+          const checksumOf = new Map<string, string>();
+          if (mediaIds.length > 0) {
+            const m = await svc.from('mkt_content_media').select('id, checksum_sha256').in('id', mediaIds);
+            if (m.error) return jsonError(500, m.error.message);
+            for (const row of (m.data ?? []) as Array<{ id: string; checksum_sha256: string | null }>) {
+              if (row.checksum_sha256) checksumOf.set(row.id, row.checksum_sha256);
+            }
+          }
+          const videoKey = (r: CvSearchRow): string =>
+            (r.content_media_id && checksumOf.get(r.content_media_id)) || r.video_id;
+          const results = diversify(rows, {
+            videoKey, orgKey: (r) => r.organization_id, score: (r) => cvNum(r.score),
+            perVideo: perVideo ? Infinity : 1, perOrg: 3, lambda: 0.7, limit,
+          });
+          return jsonOk({ unavailable: false, mode, results, candidates: rows.length });
+        }
+
+        if (action === 'cv_enqueue') {
+          // Index one stored competitor video (creates the mkt_cv_videos row +
+          // a cv_process job). Admin or a marketing manager (manage_roles).
+          const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+          if (isAdmin.error) return jsonError(500, isAdmin.error.message);
+          if (isAdmin.data !== true) {
+            const manage = await mktCan(svc, user.userId, 'manage_roles');
+            if (manage) return manage;
+          }
+          const mediaId = str(body.content_media_id);
+          if (!mediaId) return jsonError(400, 'content_media_id required');
+          const { data, error } = await svc.rpc('mkt_cv_enqueue_video', { p_content_media_id: mediaId, p_priority: 50 });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ video_id: data as string });
+        }
+
+        // cv_backfill_status — how much of the stored video corpus is indexed.
+        const [stored, indexed, health] = await Promise.all([
+          svc.from('mkt_content_media').select('id', { count: 'exact', head: true })
+            .eq('media_kind', 'video').eq('download_status', 'stored').not('stored_url', 'is', null),
+          svc.from('mkt_cv_videos').select('id', { count: 'exact', head: true }),
+          svc.rpc('mkt_cv_health'),
+        ]);
+        if (stored.error) return jsonError(500, stored.error.message);
+        if (indexed.error) return jsonError(500, indexed.error.message);
+        if (health.error) return jsonError(500, health.error.message);
+        const h = (health.data ?? {}) as { videos?: Record<string, number>; jobs?: Record<string, number>; enabled?: boolean };
+        const storedCount = stored.count ?? 0;
+        const indexedCount = indexed.count ?? 0;
+        return jsonOk({
+          enabled: h.enabled ?? false,
+          stored_videos: storedCount,
+          indexed_videos: indexedCount,
+          not_indexed: Math.max(0, storedCount - indexedCount),
+          videos_by_status: h.videos ?? {},
+          jobs: h.jobs ?? {},
+        });
       }
 
       default:

@@ -37,7 +37,7 @@ import {
 import { pullPublicationMetrics, runBundleMetricsSync } from './_lib/marketing/bundleMetrics.js';
 import { runBundleAccountMetricsSync } from './_lib/marketing/bundleAccountMetrics.js';
 import { runBundleStatusSweep } from './_lib/marketing/bundleStatusSync.js';
-import { isScriptRecipe } from './_lib/marketing/videoScript.js';
+import { embedQuery, diversify, describeMatch, num as cvNum, type CvSearchRow } from './_lib/marketing/modalCv.js';
 // Pure shared rulebook — same blessed src↔api cross-import as localizedName.ts.
 import { preflightPublishSet } from '../src/lib/marketingOS/platformRules.js';
 
@@ -1481,6 +1481,180 @@ function matchIn(
 /* ------------------------------------------------------------------ */
 /* handler                                                            */
 /* ------------------------------------------------------------------ */
+/* Script writer v2 — recipes, drafts, scene protection, references   */
+/*                                                                     */
+/* Generated scripts are DRAFTS (mos_script_drafts). Nothing reaches   */
+/* mos_scenes without a human Apply, and Apply never removes a scene   */
+/* the protection RPC (mos_scene_protection) marks as protected.       */
+/* ------------------------------------------------------------------ */
+
+/** Recipes are DATA (mos_script_recipes). This is only the fallback key. */
+const DEFAULT_RECIPE = 'walkthrough';
+
+/** Draft statuses a human has not yet decided on. */
+const PENDING_DRAFT: string[] = ['draft', 'needs_attention'];
+
+interface RecipeRow {
+  key: string;
+  label_ar: string;
+  label_en: string;
+  default_duration_sec: number;
+  scene_count_hint: number;
+  version: number;
+}
+
+async function loadActiveRecipes(sb: SupabaseClient): Promise<{ rows: RecipeRow[]; fail: Response | null }> {
+  const res = await sb.from('mos_script_recipes')
+    .select('key, label_ar, label_en, default_duration_sec, scene_count_hint, version')
+    .eq('is_active', true)
+    .order('key', { ascending: true });
+  return { rows: (res.data ?? []) as RecipeRow[], fail: dbFail(res.error) };
+}
+
+/**
+ * Deterministic recipe recommendation from the SQL-built brief. No model call:
+ * a sales/leads objective with a campaign offer → offer; awareness → launch
+ * (launch/teaser content) or product_explainer; anything else → walkthrough.
+ * Never recommends a recipe that is not active.
+ */
+function recommendRecipe(brief: Record<string, unknown>, active: Set<string>): string {
+  const objective = (typeof brief.objective === 'string' ? brief.objective : '').toLowerCase();
+  const campaign = (brief.campaign ?? null) as { offer?: unknown; kind?: unknown } | null;
+  const hasOffer = typeof campaign?.offer === 'string' && campaign.offer.trim() !== '';
+  const typeKey = typeof brief.content_type_key === 'string' ? brief.content_type_key : '';
+  const kind = typeof campaign?.kind === 'string' ? campaign.kind : '';
+  let pick = DEFAULT_RECIPE;
+  if (/sales|lead|conversion/.test(objective) && hasOffer) pick = 'offer';
+  else if (/awareness|reach/.test(objective)) {
+    pick = /launch|teaser/i.test(`${typeKey} ${kind}`) ? 'launch' : 'product_explainer';
+  }
+  if (!active.has(pick)) pick = active.has(DEFAULT_RECIPE) ? DEFAULT_RECIPE : ([...active][0] ?? DEFAULT_RECIPE);
+  return pick;
+}
+
+/** One scene of a draft (`mos_script_drafts.scenes[]`, the worker's DraftScene). */
+interface DraftSceneRow {
+  order?: number;
+  purpose?: string;
+  duration_sec?: number;
+  start_sec?: number;
+  end_sec?: number;
+  voiceover?: string;
+  on_screen_text?: string;
+  visual?: string;
+  visual_intent?: Record<string, unknown>;
+  angle?: string;
+  fact_refs?: string[];
+  learned_from?: string[];
+  asset_requirement?: string;
+  production_note?: string;
+  warnings?: string[];
+}
+
+interface DraftRow {
+  id: string;
+  job_id: string | null;
+  content_id: string;
+  recipe: string;
+  brief: Record<string, unknown>;
+  facts: Record<string, unknown>;
+  exemplars: unknown[];
+  plan: Record<string, unknown>;
+  scenes: DraftSceneRow[];
+  hooks: string[];
+  chosen_hook: number | null;
+  review: Record<string, unknown>;
+  status: 'draft' | 'needs_attention' | 'applied' | 'discarded';
+  applied_scene_ids: string[];
+  approved_by: string | null;
+  applied_at: string | null;
+  roles: Record<string, unknown>;
+  cost_usd: number;
+  created_at: string;
+  updated_at: string;
+}
+
+async function loadDraft(svc: SupabaseClient, draftId: string): Promise<{ draft: DraftRow | null; fail: Response | null }> {
+  const res = await svc.from('mos_script_drafts').select('*').eq('id', draftId).maybeSingle();
+  return { draft: (res.data as DraftRow | null) ?? null, fail: dbFail(res.error) };
+}
+
+/** The one pending (draft | needs_attention) draft of a content item, if any. */
+async function loadPendingDraft(svc: SupabaseClient, contentId: string): Promise<{ draft: DraftRow | null; fail: Response | null }> {
+  const res = await svc.from('mos_script_drafts').select('*')
+    .eq('content_id', contentId).in('status', PENDING_DRAFT)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  return { draft: (res.data as DraftRow | null) ?? null, fail: dbFail(res.error) };
+}
+
+const draftScenes = (draft: DraftRow): DraftSceneRow[] => (Array.isArray(draft.scenes) ? draft.scenes : []);
+const draftHooks = (draft: DraftRow): string[] =>
+  (Array.isArray(draft.hooks) ? draft.hooks : []).filter((h): h is string => typeof h === 'string');
+
+interface ProtectionRow {
+  scene_id: string;
+  position: number;
+  visual: string | null;
+  replaceable: boolean;
+  reason: 'edited' | 'shoot_linked' | 'production_used' | 'manual' | null;
+}
+
+/** mos_scene_protection — computed in SQL so preview and apply can never disagree. */
+async function sceneProtection(svc: SupabaseClient, contentId: string): Promise<{ rows: ProtectionRow[]; fail: Response | null }> {
+  const res = await svc.rpc('mos_scene_protection', { p_content_id: contentId });
+  return { rows: (res.data ?? []) as ProtectionRow[], fail: dbFail(res.error) };
+}
+
+/**
+ * DraftScene.asset_requirement → mos_scenes.footage_status. A machine never
+ * marks footage as 'have': footage/image/graphic/animation seed the shoot
+ * backlog ('missing'), templates are 'template', and a scene that needs no
+ * asset at all is 'to_make' (produced in the edit, not shot).
+ */
+function footageStatusFor(requirement: unknown): 'missing' | 'template' | 'to_make' {
+  if (requirement === 'template') return 'template';
+  if (requirement === 'none') return 'to_make';
+  return 'missing';
+}
+
+/** The visual-system query for a scene: structured intent first, then the writer's shot description. */
+function sceneQueryText(visual: string | null | undefined, intent: Record<string, unknown> | null | undefined): string {
+  const keys = ['shot_size', 'subject', 'setting', 'interior_exterior', 'motion', 'graphic_kind', 'mood'];
+  const parts = keys
+    .map((k) => intent?.[k])
+    .filter((v): v is string => typeof v === 'string' && v.trim() !== '' && v !== 'none');
+  return [parts.join(' '), (visual ?? '').trim()].filter(Boolean).join(' — ').slice(0, 600);
+}
+
+/** What production must create when no Wassel asset matches a scene. */
+function gapFor(
+  intent: Record<string, unknown> | null,
+  assetRequirement: string | null,
+  visual: string | null,
+): { kind: 'footage' | 'image' | 'design' | 'animation'; spec: string } {
+  const graphic = typeof intent?.graphic_kind === 'string' ? intent.graphic_kind : 'none';
+  let kind: 'footage' | 'image' | 'design' | 'animation' = 'footage';
+  if (assetRequirement === 'animation' || graphic === 'animated_map' || graphic === 'motion_graphic') kind = 'animation';
+  else if (assetRequirement === 'graphic' || assetRequirement === 'template' || graphic !== 'none' || intent?.interior_exterior === 'graphic') kind = 'design';
+  else if (assetRequirement === 'image') kind = 'image';
+  return { kind, spec: visual ?? '' };
+}
+
+/** Where a set of scene references hangs: a real scene, or a draft scene by index. */
+interface ReferenceTarget {
+  scene_id: string | null;
+  draft_id: string | null;
+  draft_scene_index: number | null;
+}
+
+/** Scope a mos_scene_references query to one target. */
+function scopeReferences<Q extends { eq(column: string, value: unknown): Q }>(q: Q, t: ReferenceTarget): Q {
+  return t.scene_id
+    ? q.eq('scene_id', t.scene_id)
+    : q.eq('draft_id', t.draft_id).eq('draft_scene_index', t.draft_scene_index);
+}
+
+/* ------------------------------------------------------------------ */
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, 'method not allowed');
@@ -2233,21 +2407,59 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
-      /* Scenes — the shoot list is derived from these             */
+      /* Script writer v2 — recipes, brief, jobs, drafts           */
       /* -------------------------------------------------------- */
-      case 'write_video_script': {
-        // ENQUEUE a background job. The Fly worker's script lane runs the
-        // ~30-40s Anthropic write OFF the HTTP request (the rule shared with
-        // decks/image/documents — never hold a request open for the AI call)
-        // and appends the scenes to mos_scenes when done. Returns fast with the
-        // job row; the SPA drives a progress bar from script_job_status.
+      case 'script_recipes': {
+        // The five recipes are rows in mos_script_recipes (read-only single
+        // source). RLS already allows authenticated SELECT; the cap gate keeps
+        // the surface consistent with the rest of the writer actions.
+        const gate = await requireCap(sb, 'read');
+        if (gate) return gate;
+        const { rows, fail } = await loadActiveRecipes(sb);
+        if (fail) return fail;
+        return jsonOk({ recipes: rows });
+      }
+
+      case 'script_brief': {
+        // The brief is built ONCE in SQL (mos_script_brief) so the API and the
+        // worker can never disagree about what the writer is told.
         const contentId = str(body.content_id);
         if (!contentId) return jsonError(400, 'content_id is required');
-        const recipe = isScriptRecipe(body.recipe) ? body.recipe : 'walkthrough';
+        const gate = await requireCap(sb, 'read');
+        if (gate) return gate;
+        const [briefRes, recipes] = await Promise.all([
+          sb.rpc('mos_script_brief', { p_content_id: contentId }),
+          loadActiveRecipes(sb),
+        ]);
+        const fail = dbFail(briefRes.error) ?? recipes.fail;
+        if (fail) return fail;
+        const brief = (briefRes.data ?? null) as Record<string, unknown> | null;
+        if (!brief) return jsonError(404, 'content item not found');
+        const warnings: string[] = [];
+        if (brief.multi_project_warning === true) warnings.push('multi_project');
+        if (!brief.project_id) warnings.push('no_project');
+        const active = new Set(recipes.rows.map((r) => r.key));
+        return jsonOk({ brief, recommended_recipe: recommendRecipe(brief, active), warnings });
+      }
+
+      case 'write_video_script': {
+        // ENQUEUE a background job. The Fly worker's script lane runs the
+        // staged pipeline (facts → retrieve → write → validate → review) OFF
+        // the HTTP request (the rule shared with decks/image/documents — never
+        // hold a request open for the AI call) and writes a DRAFT — never
+        // mos_scenes. Returns fast with the job row; the SPA drives a progress
+        // bar from script_job_status and reviews the draft when it lands.
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
         const gate = await requireCap(sb, 'write_content');
         if (gate) return gate;
+        const recipe = str(body.recipe) ?? DEFAULT_RECIPE;
+        const recipes = await loadActiveRecipes(sb);
+        if (recipes.fail) return recipes.fail;
+        const recipeRow = recipes.rows.find((r) => r.key === recipe);
+        if (!recipeRow) return jsonError(400, `unknown or inactive recipe: ${recipe}`);
         // Fail fast before burning a worker slot: the item must exist and have a
-        // project linked (the worker needs it to load facts).
+        // project linked (project facts are the ONLY source of claims).
         const c = await sb.from('mos_content_v').select('id, project_id').eq('id', contentId).maybeSingle();
         const cf = dbFail(c.error); if (cf) return cf;
         if (!c.data) return jsonError(404, 'content item not found');
@@ -2256,26 +2468,50 @@ export default async function handler(req: Request): Promise<Response> {
         }
         const svc = makeServiceClient('api:marketing-os:video-script');
         if (!svc) return jsonError(500, 'service unavailable');
+        // A pending draft blocks a new generation unless the caller explicitly
+        // regenerates, which discards it (the partial unique index allows one).
+        const pending = await loadPendingDraft(svc, contentId);
+        if (pending.fail) return pending.fail;
+        if (pending.draft) {
+          if (body.regenerate !== true) {
+            return jsonOk({ error: 'draft_pending', draft_id: pending.draft.id }, 409);
+          }
+          const disc = await svc.from('mos_script_drafts')
+            .update({ status: 'discarded', updated_at: new Date().toISOString() })
+            .eq('id', pending.draft.id).in('status', PENDING_DRAFT);
+          const df = dbFail(disc.error); if (df) return df;
+        }
         // One active (queued|running) job per content item (partial unique
         // index). If one already runs, return it rather than fanning out a dup.
+        const JOB_COLS = 'id, status, stage, recipe, draft_id, created_at';
         const existing = await svc.from('mos_script_jobs')
-          .select('id, status, recipe, created_at')
+          .select(JOB_COLS)
           .eq('content_id', contentId).in('status', ['queued', 'running'])
           .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        const ef = dbFail(existing.error); if (ef) return ef;
         if (existing.data) return jsonOk({ job: existing.data });
 
+        const durationSec = typeof body.duration_sec === 'number' && Number.isFinite(body.duration_sec)
+          ? Math.min(180, Math.max(10, Math.round(body.duration_sec)))
+          : recipeRow.default_duration_sec;
+        const brief = {
+          recipe,
+          duration_sec: durationSec,
+          audience: str(body.audience)?.slice(0, 500) ?? null,
+          objection: str(body.objection)?.slice(0, 500) ?? null,
+        };
         const requestedBy = await resolveAppUserId(sb, user.userId);
         const insert = await svc.from('mos_script_jobs')
-          .insert({ content_id: contentId, recipe, requested_by: requestedBy })
-          .select('id, status, recipe, created_at').maybeSingle();
+          .insert({ content_id: contentId, recipe, requested_by: requestedBy, brief })
+          .select(JOB_COLS).maybeSingle();
         if (insert.error) {
           // Lost the unique-index race with a concurrent enqueue — return the winner.
           const again = await svc.from('mos_script_jobs')
-            .select('id, status, recipe, created_at')
+            .select(JOB_COLS)
             .eq('content_id', contentId).in('status', ['queued', 'running'])
             .order('created_at', { ascending: false }).limit(1).maybeSingle();
           if (again.data) return jsonOk({ job: again.data });
-          return jsonError(500, insert.error.message);
+          const f = dbFail(insert.error); if (f) return f;
         }
         wakeWorker();
         return jsonOk({ job: insert.data });
@@ -2283,7 +2519,7 @@ export default async function handler(req: Request): Promise<Response> {
 
       case 'script_job_status': {
         // Latest script job for a content item — drives the SPA's progress bar
-        // and survives a reload / navigating away (the job lives in the DB).
+        // (stage) and survives a reload / navigating away (the job lives in the DB).
         const contentId = str(body.content_id);
         if (!contentId) return jsonError(400, 'content_id is required');
         const gate = await requireCap(sb, 'read');
@@ -2291,47 +2527,267 @@ export default async function handler(req: Request): Promise<Response> {
         const svc = makeServiceClient('api:marketing-os:video-script');
         if (!svc) return jsonError(500, 'service unavailable');
         const j = await svc.from('mos_script_jobs')
-          .select('id, status, recipe, scene_count, error, created_at, finished_at')
+          .select('id, status, stage, recipe, scene_count, error, error_kind, draft_id, cost_usd, created_at, started_at, finished_at')
           .eq('content_id', contentId)
           .order('created_at', { ascending: false }).limit(1).maybeSingle();
         const jf = dbFail(j.error); if (jf) return jf;
         return jsonOk({ job: j.data ?? null });
       }
 
-      case 'video_script_apply': {
-        // Insert the approved draft scenes into mos_scenes (footage_status='missing'
-        // so they seed the shoot backlog). Appends after any existing scenes.
+      case 'script_draft_get': {
+        // Full draft row (scenes, hooks, review, facts, exemplars) — by id, or
+        // the pending draft of a content item (null when there is none).
+        const gate = await requireCap(sb, 'read');
+        if (gate) return gate;
+        const draftId = str(body.draft_id);
         const contentId = str(body.content_id);
-        if (!contentId) return jsonError(400, 'content_id is required');
+        if (!draftId && !contentId) return jsonError(400, 'draft_id or content_id is required');
+        const svc = makeServiceClient('api:marketing-os:video-script');
+        if (!svc) return jsonError(500, 'service unavailable');
+        if (draftId) {
+          const { draft, fail } = await loadDraft(svc, draftId);
+          if (fail) return fail;
+          if (!draft) return jsonError(404, 'draft not found');
+          return jsonOk({ draft });
+        }
+        const { draft, fail } = await loadPendingDraft(svc, contentId as string);
+        if (fail) return fail;
+        return jsonOk({ draft });
+      }
+
+      case 'script_draft_preview_apply': {
+        // What Apply WOULD do: which current scenes go (replace mode only —
+        // AI-written, untouched, not shoot-linked, not in production) and which
+        // stay, with the reason. Same RPC Apply re-checks, so this is a promise.
+        const draftId = str(body.draft_id);
+        if (!draftId) return jsonError(400, 'draft_id is required');
+        const mode = body.mode === 'replace' ? 'replace' : body.mode === 'append' ? 'append' : null;
+        if (!mode) return jsonError(400, "mode must be 'append' or 'replace'");
+        const gate = await requireCap(sb, 'read');
+        if (gate) return gate;
+        const svc = makeServiceClient('api:marketing-os:video-script');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const { draft, fail } = await loadDraft(svc, draftId);
+        if (fail) return fail;
+        if (!draft) return jsonError(404, 'draft not found');
+        const prot = await sceneProtection(svc, draft.content_id);
+        if (prot.fail) return prot.fail;
+        const replaceable = mode === 'replace'
+          ? prot.rows.filter((r) => r.replaceable).map((r) => ({ id: r.scene_id, position: r.position, visual: r.visual }))
+          : [];
+        const protectedRows = prot.rows.filter((r) => !r.replaceable)
+          .map((r) => ({ id: r.scene_id, position: r.position, reason: r.reason ?? 'manual' }));
+        return jsonOk({
+          mode, replaceable, protected: protectedRows,
+          will_insert: draftScenes(draft).length, existing: prot.rows.length,
+        });
+      }
+
+      case 'script_draft_apply': {
+        // The ONLY path from a draft into mos_scenes. Protection is recomputed
+        // server-side; replace mode must name exactly the current replaceable
+        // set (409 protection_changed otherwise) so a stale preview can never
+        // delete a scene someone edited in the meantime.
+        const draftId = str(body.draft_id);
+        if (!draftId) return jsonError(400, 'draft_id is required');
+        const mode = body.mode === 'replace' ? 'replace' : body.mode === 'append' ? 'append' : null;
+        if (!mode) return jsonError(400, "mode must be 'append' or 'replace'");
         const gate = await requireCap(sb, 'write_content');
         if (gate) return gate;
-        const incoming = Array.isArray(body.scenes) ? (body.scenes as Array<Record<string, unknown>>) : [];
-        if (incoming.length === 0) return jsonError(400, 'no scenes to apply');
-        const last = await sb.from('mos_scenes').select('position')
-          .eq('content_id', contentId).order('position', { ascending: false }).limit(1).maybeSingle();
-        const lf = dbFail(last.error); if (lf) return lf;
+        const svc = makeServiceClient('api:marketing-os:video-script');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const { draft, fail } = await loadDraft(svc, draftId);
+        if (fail) return fail;
+        if (!draft) return jsonError(404, 'draft not found');
+        if (!PENDING_DRAFT.includes(draft.status)) {
+          return jsonOk({ error: 'draft_not_pending', status: draft.status }, 409);
+        }
+        const scenes = draftScenes(draft);
+        if (scenes.length === 0) return jsonError(400, 'draft has no scenes');
+
+        // Validate the hook BEFORE touching anything.
+        let chosenHook: number | null = draft.chosen_hook ?? null;
+        let hookText: string | null = null;
+        if (body.chosen_hook !== undefined && body.chosen_hook !== null) {
+          const idx = body.chosen_hook;
+          const hooks = draftHooks(draft);
+          const picked = typeof idx === 'number' && Number.isInteger(idx) && idx >= 0 ? hooks[idx] : undefined;
+          if (typeof idx !== 'number' || picked === undefined) {
+            return jsonError(400, 'chosen_hook is out of range');
+          }
+          chosenHook = idx;
+          hookText = picked;
+        }
+
+        const prot = await sceneProtection(svc, draft.content_id);
+        if (prot.fail) return prot.fail;
+        const replaceableIds = mode === 'replace' ? prot.rows.filter((r) => r.replaceable).map((r) => r.scene_id) : [];
+        if (mode === 'replace') {
+          const confirm = Array.isArray(body.confirm_remove_ids)
+            ? (body.confirm_remove_ids as unknown[]).filter((x): x is string => typeof x === 'string')
+            : null;
+          if (!confirm) return jsonError(400, 'confirm_remove_ids is required for replace');
+          const want = new Set(replaceableIds);
+          const got = new Set(confirm);
+          const same = want.size === got.size && [...want].every((id) => got.has(id));
+          if (!same) return jsonOk({ error: 'protection_changed', replaceable: replaceableIds }, 409);
+        }
+
+        // Claim the draft first (status flip guarded on pending) so two
+        // concurrent Applies cannot both insert; on any later failure we put
+        // the status back so the human can retry.
+        const nowIso = new Date().toISOString();
+        const approvedBy = await resolveAppUserId(sb, user.userId);
+        const claim = await svc.from('mos_script_drafts')
+          .update({ status: 'applied', approved_by: approvedBy, applied_at: nowIso, chosen_hook: chosenHook, updated_at: nowIso })
+          .eq('id', draft.id).in('status', PENDING_DRAFT)
+          .select('id').maybeSingle();
+        const claimFail = dbFail(claim.error); if (claimFail) return claimFail;
+        if (!claim.data) return jsonOk({ error: 'draft_not_pending', status: 'applied' }, 409);
+        const revert = async (): Promise<void> => {
+          const r = await svc.from('mos_script_drafts')
+            .update({ status: draft.status, approved_by: draft.approved_by, applied_at: draft.applied_at, chosen_hook: draft.chosen_hook, updated_at: new Date().toISOString() })
+            .eq('id', draft.id);
+          if (r.error) console.error('[marketing-os] draft apply revert failed', draft.id, r.error.code, r.error.message);
+        };
+
+        if (replaceableIds.length > 0) {
+          const del = await svc.from('mos_scenes').delete().in('id', replaceableIds).eq('content_id', draft.content_id);
+          const delFail = dbFail(del.error);
+          if (delFail) { await revert(); return delFail; }
+        }
+        const last = await svc.from('mos_scenes').select('position')
+          .eq('content_id', draft.content_id).order('position', { ascending: false }).limit(1).maybeSingle();
+        const lastFail = dbFail(last.error);
+        if (lastFail) { await revert(); return lastFail; }
         let pos = (last.data as { position: number } | null)?.position ?? 0;
-        const rows = incoming.map((s) => {
+        const rows = scenes.map((s) => {
           pos += 1;
           return {
-            content_id: contentId,
+            content_id: draft.content_id,
             position: pos,
             visual: str(s.visual) ?? null,
             voiceover: str(s.voiceover) ?? null,
             on_screen_text: str(s.on_screen_text) ?? null,
             start_sec: typeof s.start_sec === 'number' ? s.start_sec : null,
             end_sec: typeof s.end_sec === 'number' ? s.end_sec : null,
-            footage_status: 'missing',
+            footage_status: footageStatusFor(s.asset_requirement),
+            note: str(s.production_note) ?? null,
+            source: 'ai',
+            source_draft_id: draft.id,
+            purpose: str(s.purpose) ?? null,
+            visual_intent: s.visual_intent && typeof s.visual_intent === 'object' ? s.visual_intent : null,
+            fact_refs: Array.isArray(s.fact_refs) ? s.fact_refs : [],
           };
         });
-        const ins = await sb.from('mos_scenes').insert(rows).select('id');
-        const insf = dbFail(ins.error); if (insf) return insf;
-        const listq = await sb.from('mos_scenes').select('*')
-          .eq('content_id', contentId).order('position', { ascending: true });
-        const lf2 = dbFail(listq.error); if (lf2) return lf2;
-        return jsonOk({ scenes: listq.data ?? [] });
+        const ins = await svc.from('mos_scenes').insert(rows).select('id, position');
+        const insFail = dbFail(ins.error);
+        if (insFail) { await revert(); return insFail; }
+        const insertedIds = ((ins.data ?? []) as Array<{ id: string; position: number }>)
+          .sort((a, b) => a.position - b.position).map((r) => r.id);
+
+        // Draft-scene references (suggested before Apply) follow their scene.
+        const carry = await Promise.all(insertedIds.map((sceneId, i) =>
+          svc.from('mos_scene_references').update({ scene_id: sceneId, updated_at: nowIso })
+            .eq('draft_id', draft.id).eq('draft_scene_index', i)));
+        for (const r of carry) {
+          if (r.error) console.error('[marketing-os] scene reference carry-over failed', draft.id, r.error.code, r.error.message);
+        }
+
+        if (hookText !== null) {
+          const cur = await svc.from('mos_content').select('data').eq('id', draft.content_id).maybeSingle();
+          const curFail = dbFail(cur.error); if (curFail) return curFail;
+          const data = ((cur.data as { data?: Record<string, unknown> } | null)?.data ?? {});
+          const upd = await svc.from('mos_content').update({ data: { ...data, hook: hookText } }).eq('id', draft.content_id);
+          const updFail = dbFail(upd.error); if (updFail) return updFail;
+        }
+
+        const done = await svc.from('mos_script_drafts')
+          .update({ applied_scene_ids: insertedIds, updated_at: new Date().toISOString() })
+          .eq('id', draft.id).select('*').maybeSingle();
+        const doneFail = dbFail(done.error); if (doneFail) return doneFail;
+
+        const list = await svc.from('mos_scenes').select('*')
+          .eq('content_id', draft.content_id).order('position', { ascending: true });
+        const lf = dbFail(list.error); if (lf) return lf;
+        return jsonOk({ scenes: list.data ?? [], removed: replaceableIds, draft: done.data });
       }
 
+      case 'script_draft_discard': {
+        const draftId = str(body.draft_id);
+        if (!draftId) return jsonError(400, 'draft_id is required');
+        const gate = await requireCap(sb, 'write_content');
+        if (gate) return gate;
+        const svc = makeServiceClient('api:marketing-os:video-script');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const upd = await svc.from('mos_script_drafts')
+          .update({ status: 'discarded', updated_at: new Date().toISOString() })
+          .eq('id', draftId).in('status', PENDING_DRAFT)
+          .select('*').maybeSingle();
+        const uf = dbFail(upd.error); if (uf) return uf;
+        if (upd.data) return jsonOk({ draft: upd.data });
+        const { draft, fail } = await loadDraft(svc, draftId);
+        if (fail) return fail;
+        if (!draft) return jsonError(404, 'draft not found');
+        return jsonOk({ error: 'draft_not_pending', status: draft.status }, 409);
+      }
+
+      case 'script_draft_feedback': {
+        // Learning infrastructure: a rating/note plus the diff between what the
+        // writer produced and what the humans kept/edited. Proposals only —
+        // nothing here changes the writer automatically.
+        const draftId = str(body.draft_id);
+        if (!draftId) return jsonError(400, 'draft_id is required');
+        const rating = typeof body.rating === 'number' && Number.isInteger(body.rating) && body.rating >= 1 && body.rating <= 5
+          ? body.rating : null;
+        const note = str(body.note)?.slice(0, 4000) ?? null;
+        if (rating === null && note === null) return jsonError(400, 'rating (1–5) or note is required');
+        const gate = await requireCap(sb, 'write_content');
+        if (gate) return gate;
+        const svc = makeServiceClient('api:marketing-os:video-script');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const { draft, fail } = await loadDraft(svc, draftId);
+        if (fail) return fail;
+        if (!draft) return jsonError(404, 'draft not found');
+        const cur = await svc.from('mos_scenes')
+          .select('id, position, visual, voiceover, on_screen_text, footage_status, manually_edited_at')
+          .eq('source_draft_id', draft.id).order('position', { ascending: true });
+        const cf = dbFail(cur.error); if (cf) return cf;
+        type Cur = { id: string; visual: string | null; voiceover: string | null; on_screen_text: string | null; manually_edited_at: string | null };
+        const current = (cur.data ?? []) as Cur[];
+        const byId = new Map(current.map((s) => [s.id, s]));
+        const applied = Array.isArray(draft.applied_scene_ids) ? draft.applied_scene_ids : [];
+        const scenes = draftScenes(draft);
+        const FIELDS = ['visual', 'voiceover', 'on_screen_text'] as const;
+        const changed = applied.flatMap((id, i) => {
+          const c = byId.get(id);
+          const d = scenes[i];
+          if (!c || !d) return [];
+          const changes: Record<string, { draft: string; current: string }> = {};
+          for (const f of FIELDS) {
+            const a = (d[f] ?? '').trim();
+            const b = (c[f] ?? '').trim();
+            if (a !== b) changes[f] = { draft: a, current: b };
+          }
+          return Object.keys(changes).length ? [{ scene_id: id, index: i, edited_at: c.manually_edited_at, changes }] : [];
+        });
+        const diff = {
+          applied: applied.length,
+          present: current.length,
+          removed: applied.filter((id) => !byId.has(id)),
+          edited: changed,
+        };
+        const createdBy = await resolveAppUserId(sb, user.userId);
+        const ins = await svc.from('mos_script_feedback')
+          .insert({ draft_id: draft.id, content_id: draft.content_id, rating, note, diff, created_by: createdBy })
+          .select('*').maybeSingle();
+        const inf = dbFail(ins.error); if (inf) return inf;
+        return jsonOk({ feedback: ins.data });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Scenes — the shoot list is derived from these             */
+      /* -------------------------------------------------------- */
       case 'scene_save': {
         const contentId = str(body.content_id);
         if (!contentId) return jsonError(400, 'content_id is required');
@@ -2345,12 +2801,30 @@ export default async function handler(req: Request): Promise<Response> {
         }
 
         if (id) {
+          // A human change to the script text / production fields stamps the
+          // scene as manually edited — from then on a draft Apply can never
+          // replace it (mos_scene_protection reads manually_edited_at).
+          const HUMAN_FIELDS = ['visual', 'voiceover', 'on_screen_text', 'note', 'footage_status'] as const;
+          const cur = await sb.from('mos_scenes')
+            .select('id, visual, voiceover, on_screen_text, note, footage_status')
+            .eq('id', id).maybeSingle();
+          const cf = dbFail(cur.error);
+          if (cf) return cf;
+          if (!cur.data) return jsonError(404, 'scene not found');
+          const before = cur.data as Record<string, unknown>;
+          const touched = HUMAN_FIELDS.some((k) =>
+            Object.prototype.hasOwnProperty.call(patch, k) && (patch[k] ?? null) !== (before[k] ?? null));
+          if (touched) {
+            patch.manually_edited_at = new Date().toISOString();
+            patch.last_edited_by = await resolveAppUserId(sb, user.userId);
+          }
           const upd = await sb.from('mos_scenes').update(patch).eq('id', id).select('id').maybeSingle();
           const f = dbFail(upd.error);
           if (f) return f;
           if (!upd.data) return jsonError(404, 'scene not found');
         } else {
           patch.content_id = contentId;
+          patch.source = 'manual';
           if (patch.position === undefined) {
             const last = await sb.from('mos_scenes').select('position')
               .eq('content_id', contentId).order('position', { ascending: false }).limit(1).maybeSingle();
@@ -2368,6 +2842,239 @@ export default async function handler(req: Request): Promise<Response> {
         const f = dbFail(list.error);
         if (f) return f;
         return jsonOk({ scenes: list.data ?? [] });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Scene references — competitor shots (reference only),     */
+      /* Wassel assets (usable), or an explicit production gap     */
+      /* -------------------------------------------------------- */
+      case 'scene_references_suggest': {
+        // Phase 4. Query = the scene's structured visual intent + shot text,
+        // embedded by the Modal service, searched with mkt_cv_search (RRF in
+        // SQL, diversity here). The visual system is OPTIONAL: when it is off,
+        // unconfigured or unreachable this returns {unavailable:true} — never
+        // a 500 — so the writer keeps working without it.
+        const gate = await requireCap(sb, 'write_content');
+        if (gate) return gate;
+        const svc = makeServiceClient('api:marketing-os:scene-references');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const k = cap(body.k, 6, 12);
+        const sceneId = str(body.scene_id);
+        const draftId = str(body.draft_id);
+        const sceneIndex = typeof body.scene_index === 'number' && Number.isInteger(body.scene_index) && body.scene_index >= 0
+          ? body.scene_index : null;
+
+        let target: ReferenceTarget & {
+          content_id: string; visual: string | null; visual_intent: Record<string, unknown> | null; asset_requirement: string | null;
+        };
+        if (sceneId) {
+          const s = await svc.from('mos_scenes').select('id, content_id, visual, visual_intent').eq('id', sceneId).maybeSingle();
+          const sf = dbFail(s.error); if (sf) return sf;
+          if (!s.data) return jsonError(404, 'scene not found');
+          const row = s.data as { id: string; content_id: string; visual: string | null; visual_intent: Record<string, unknown> | null };
+          target = {
+            scene_id: row.id, draft_id: null, draft_scene_index: null, content_id: row.content_id,
+            visual: row.visual, visual_intent: row.visual_intent ?? null, asset_requirement: null,
+          };
+        } else if (draftId && sceneIndex !== null) {
+          const { draft, fail } = await loadDraft(svc, draftId);
+          if (fail) return fail;
+          if (!draft) return jsonError(404, 'draft not found');
+          const s = draftScenes(draft)[sceneIndex];
+          if (!s) return jsonError(404, 'draft scene not found');
+          target = {
+            scene_id: null, draft_id: draft.id, draft_scene_index: sceneIndex, content_id: draft.content_id,
+            visual: str(s.visual) ?? null, visual_intent: s.visual_intent ?? null, asset_requirement: str(s.asset_requirement) ?? null,
+          };
+        } else {
+          return jsonError(400, 'scene_id, or draft_id + scene_index, is required');
+        }
+
+        const unavailable = (): Response => jsonOk({ unavailable: true, competitor: [], wassel_assets: [], gap: null });
+        const enabled = await svc.rpc('mkt_cv_enabled');
+        const enFail = dbFail(enabled.error); if (enFail) return enFail;
+        if (enabled.data !== true) return unavailable();
+        const queryText = sceneQueryText(target.visual, target.visual_intent);
+        if (!queryText) return jsonError(400, 'the scene has no visual description to search with');
+        const vec = await embedQuery(queryText);
+        if (!vec) return unavailable();
+
+        const search = (owner: 'competitor' | 'wassel', limit: number) => svc.rpc('mkt_cv_search', {
+          p_qvec_image: vec.image_vec, p_qvec_text: vec.text_vec, p_query_text: queryText,
+          p_filters: { owner }, p_mode: 'shot', p_limit: limit,
+        });
+        const [compRes, wasRes] = await Promise.all([search('competitor', 60), search('wassel', 30)]);
+        const sFail = dbFail(compRes.error) ?? dbFail(wasRes.error); if (sFail) return sFail;
+        const pick = (rows: CvSearchRow[], limit: number): CvSearchRow[] => diversify(rows, {
+          videoKey: (r) => r.video_id, orgKey: (r) => r.organization_id,
+          score: (r) => cvNum(r.score), perVideo: 1, perOrg: 3, lambda: 0.7, limit,
+        });
+        const competitor = pick((compRes.data ?? []) as CvSearchRow[], k);
+        const wassel = pick((wasRes.data ?? []) as CvSearchRow[], k);
+
+        // A Wassel-owned video is indexed FROM a mos_assets row — that is what
+        // the reference points at (usable), not the shot.
+        const assetByVideo = new Map<string, string | null>();
+        if (wassel.length > 0) {
+          const v = await svc.from('mkt_cv_videos').select('id, wassel_asset_id').in('id', wassel.map((r) => r.video_id));
+          const vf = dbFail(v.error); if (vf) return vf;
+          for (const row of (v.data ?? []) as Array<{ id: string; wassel_asset_id: string | null }>) assetByVideo.set(row.id, row.wassel_asset_id);
+        }
+
+        const createdBy = await resolveAppUserId(sb, user.userId);
+        const targetCols = { scene_id: target.scene_id, draft_id: target.draft_id, draft_scene_index: target.draft_scene_index, content_id: target.content_id };
+        const openUrl = (r: CvSearchRow): string | null =>
+          r.stored_url ? `${r.stored_url}#t=${(r.start_ms ?? 0) / 1000}` : null;
+        const toRow = (r: CvSearchRow, rank: number, kind: 'competitor_shot' | 'wassel_asset'): Record<string, unknown> => {
+          const d = describeMatch(r);
+          return {
+            ...targetCols, kind,
+            ref_id: kind === 'competitor_shot' ? r.shot_id : (assetByVideo.get(r.video_id) ?? null),
+            frame_url: r.representative_frame_url, open_url: openUrl(r),
+            start_ms: r.start_ms, end_ms: r.end_ms,
+            reason: d.reason, learn_element: d.learn_element, adaptation_notes: null,
+            usage_class: kind === 'competitor_shot' ? 'reference_only' : 'usable',
+            gap: null, rank, similarity: cvNum(r.score), status: 'suggested', created_by: createdBy,
+          };
+        };
+        const rows: Record<string, unknown>[] = [
+          ...competitor.map((r, i) => toRow(r, i + 1, 'competitor_shot')),
+          ...wassel.map((r, i) => toRow(r, i + 1, 'wassel_asset')),
+        ];
+        if (wassel.length === 0) {
+          const g = gapFor(target.visual_intent, target.asset_requirement, target.visual);
+          rows.push({
+            ...targetCols, kind: 'gap', ref_id: null, frame_url: null, open_url: null, start_ms: null, end_ms: null,
+            reason: `no Wassel asset matches this scene — needs ${g.kind}`, learn_element: null, adaptation_notes: null,
+            usage_class: 'reference_only', gap: g, rank: 1, similarity: null, status: 'suggested', created_by: createdBy,
+          });
+        }
+
+        // Re-suggest replaces the previous SUGGESTED rows for this target;
+        // accepted / rejected decisions are kept and never re-suggested.
+        const del = await scopeReferences(svc.from('mos_scene_references').delete().eq('status', 'suggested'), target);
+        const delFail = dbFail(del.error); if (delFail) return delFail;
+        const decided = await scopeReferences(svc.from('mos_scene_references').select('*').neq('status', 'suggested'), target);
+        const decFail = dbFail(decided.error); if (decFail) return decFail;
+        const decidedRows = (decided.data ?? []) as Array<Record<string, unknown> & { ref_id: string | null; kind: string }>;
+        const decidedIds = new Set(decidedRows.map((r) => r.ref_id).filter((x): x is string => typeof x === 'string'));
+        const fresh = rows.filter((r) => r.ref_id === null || !decidedIds.has(r.ref_id as string));
+        let inserted: Array<Record<string, unknown> & { kind: string; rank: number | null }> = [];
+        if (fresh.length > 0) {
+          const ins = await svc.from('mos_scene_references').insert(fresh).select('*');
+          const insFail = dbFail(ins.error); if (insFail) return insFail;
+          inserted = (ins.data ?? []) as typeof inserted;
+        }
+        // Decorate with the search row's display fields (org, platform, summary,
+        // tags, channel scores) so the UI needs no second call.
+        const meta = new Map<string, CvSearchRow>();
+        competitor.forEach((r, i) => meta.set(`competitor_shot:${i + 1}`, r));
+        wassel.forEach((r, i) => meta.set(`wassel_asset:${i + 1}`, r));
+        const decorate = (row: Record<string, unknown> & { kind: string; rank: number | null }): Record<string, unknown> => {
+          const m = meta.get(`${row.kind}:${row.rank ?? 0}`);
+          return m ? {
+            ...row, shot_id: m.shot_id, video_id: m.video_id, organization_id: m.organization_id, org_name: m.org_name,
+            platform: m.platform, post_url: m.post_url, published_at: m.published_at, duration_ms: m.duration_ms,
+            summary: m.summary, tags: m.tags, why: m.why,
+          } : row;
+        };
+        const all = [
+          ...inserted.map(decorate),
+          ...decidedRows as Array<Record<string, unknown>>,
+        ];
+        const byRank = (a: Record<string, unknown>, b: Record<string, unknown>) => cvNum(a.rank) - cvNum(b.rank);
+        return jsonOk({
+          unavailable: false,
+          query: queryText,
+          competitor: all.filter((r) => r.kind === 'competitor_shot').sort(byRank),
+          wassel_assets: all.filter((r) => r.kind === 'wassel_asset').sort(byRank),
+          gap: all.find((r) => r.kind === 'gap') ?? null,
+        });
+      }
+
+      case 'scene_references_list': {
+        // Every reference attached to a scene (suggested / accepted / rejected),
+        // decorated the way suggest decorates competitor shots so the panel can
+        // re-render from the DB alone after a reload.
+        const sceneId = str(body.scene_id);
+        if (!sceneId) return jsonError(400, 'scene_id is required');
+        const gate = await requireCap(sb, 'read');
+        if (gate) return gate;
+        const svc = makeServiceClient('api:marketing-os:scene-references');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const refs = await svc.from('mos_scene_references').select('*')
+          .eq('scene_id', sceneId).order('rank', { ascending: true, nullsFirst: false });
+        const rf = dbFail(refs.error); if (rf) return rf;
+        type RefRow = Record<string, unknown> & { kind: string; ref_id: string | null };
+        const rows = (refs.data ?? []) as RefRow[];
+        const shotIds = [...new Set(rows
+          .filter((r) => r.kind === 'competitor_shot' && typeof r.ref_id === 'string')
+          .map((r) => r.ref_id as string))];
+        type ShotMeta = {
+          shot_id: string; video_id: string; organization_id: string | null; org_name: string | null;
+          platform: string | null; post_url: string | null; published_at: string | null;
+          duration_ms: number | null; summary: string | null; tags: string[] | null;
+        };
+        const meta = new Map<string, ShotMeta>();
+        if (shotIds.length > 0) {
+          const shots = await svc.from('mkt_cv_shots').select('id, video_id, duration_ms, summary, tags').in('id', shotIds);
+          const sf = dbFail(shots.error); if (sf) return sf;
+          type ShotRow = { id: string; video_id: string; duration_ms: number | null; summary: string | null; tags: string[] | null };
+          const shotRows = (shots.data ?? []) as ShotRow[];
+          const videoIds = [...new Set(shotRows.map((s) => s.video_id))];
+          const videos = videoIds.length > 0
+            ? await svc.from('mkt_cv_videos').select('id, organization_id, content_post_id').in('id', videoIds)
+            : { data: [], error: null };
+          const vf = dbFail(videos.error); if (vf) return vf;
+          type VideoRow = { id: string; organization_id: string | null; content_post_id: string | null };
+          const videoRows = (videos.data ?? []) as VideoRow[];
+          const orgIds = [...new Set(videoRows.map((v) => v.organization_id).filter((x): x is string => typeof x === 'string'))];
+          const postIds = [...new Set(videoRows.map((v) => v.content_post_id).filter((x): x is string => typeof x === 'string'))];
+          const [orgs, posts] = await Promise.all([
+            orgIds.length > 0 ? svc.from('mkt_organizations').select('id, name_ar').in('id', orgIds) : Promise.resolve({ data: [], error: null }),
+            postIds.length > 0 ? svc.from('mkt_content_posts').select('id, platform, post_url, published_at').in('id', postIds) : Promise.resolve({ data: [], error: null }),
+          ]);
+          const of = dbFail(orgs.error) ?? dbFail(posts.error); if (of) return of;
+          const orgName = new Map(((orgs.data ?? []) as Array<{ id: string; name_ar: string | null }>).map((o) => [o.id, o.name_ar]));
+          type PostRow = { id: string; platform: string | null; post_url: string | null; published_at: string | null };
+          const postById = new Map(((posts.data ?? []) as PostRow[]).map((p) => [p.id, p]));
+          const videoById = new Map(videoRows.map((v) => [v.id, v]));
+          for (const s of shotRows) {
+            const v = videoById.get(s.video_id);
+            const p = v?.content_post_id ? postById.get(v.content_post_id) : undefined;
+            meta.set(s.id, {
+              shot_id: s.id, video_id: s.video_id,
+              organization_id: v?.organization_id ?? null,
+              org_name: v?.organization_id ? (orgName.get(v.organization_id) ?? null) : null,
+              platform: p?.platform ?? null, post_url: p?.post_url ?? null, published_at: p?.published_at ?? null,
+              duration_ms: s.duration_ms, summary: s.summary, tags: s.tags,
+            });
+          }
+        }
+        const references = rows.map((r) => {
+          const m = r.kind === 'competitor_shot' && typeof r.ref_id === 'string' ? meta.get(r.ref_id) : undefined;
+          return m ? { ...r, ...m } : r;
+        });
+        return jsonOk({ references });
+      }
+
+      case 'scene_reference_set': {
+        const refId = str(body.reference_id);
+        const status = body.status;
+        if (!refId) return jsonError(400, 'reference_id is required');
+        if (status !== 'suggested' && status !== 'accepted' && status !== 'rejected') {
+          return jsonError(400, "status must be 'suggested', 'accepted' or 'rejected'");
+        }
+        const gate = await requireCap(sb, 'write_content');
+        if (gate) return gate;
+        const svc = makeServiceClient('api:marketing-os:scene-references');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const upd = await svc.from('mos_scene_references')
+          .update({ status, updated_at: new Date().toISOString() })
+          .eq('id', refId).select('*').maybeSingle();
+        const uf = dbFail(upd.error); if (uf) return uf;
+        if (!upd.data) return jsonError(404, 'reference not found');
+        return jsonOk({ reference: upd.data });
       }
 
       case 'scene_delete': {

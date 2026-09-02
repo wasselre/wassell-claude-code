@@ -5,7 +5,7 @@
 # Model: Units / الوحدات  `units`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-09-02
 **Model id:** `7ca3014d-f658-418e-9c53-2d279c97f009`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -128,7 +128,7 @@
   - API value `21` → "21" / "21"
   - API value `22` → "22" / "22"
   - API value `23` → "23" / "23"
-  - API value `الروف` → "الروف" / "الروف"
+  - API value `الروف` → "Roof" / "الروف"
 - **Unit Components / مكونات الوحدة** (`unit_components`, type `multiselect`) — multi-value. Options:
   - API value `صالة جلوس` → "Living Room" / "صالة جلوس"
   - API value `مجلس` → "Majlis" / "مجلس"
@@ -142,20 +142,20 @@
   - API value `مطبخ` → "Kitchen" / "مطبخ"
   - API value `ملابس` → "Walk-in Closet" / "ملابس"
   - API value `سطح` → "Rooftop" / "سطح"
-  - API value `مستودع` → "مستودع" / "مستودع" · color `#F59E0B`
-  - API value `تراس` → "تراس" / "تراس" · color `#EF4444`
-  - API value `مصعد` → "مصعد" / "مصعد" · color `#8B5CF6`
-  - API value `حديقة` → "حديقة" / "حديقة" · color `#EC4899`
-  - API value `غرفة-نوم-رييسية` → "غرفة نوم رئيسية" / "غرفة نوم رئيسية" · color `#06B6D4`
-  - API value `فتحة-سماوية` → "فتحة سماوية" / "فتحة سماوية" · color `#84CC16`
-  - API value `مطبخ-مجهز-مسبقا` → "مطبخ مُجهَّز مسبقاً" / "مطبخ مُجهَّز مسبقاً" · color `#F97316`
-  - API value `بيت-ذكي` → "بيت ذكي" / "بيت ذكي" · color `#6366F1`
-  - API value `تكييف-مخفي-مجهز-مسبقا` → "تكييف مخفي مُجهَّز مسبقاً" / "تكييف مخفي مُجهَّز مسبقاً" · color `#3B82F6`
-  - API value `حمام-ضيوف` → "حمام ضيوف" / "حمام ضيوف" · color `#10B981`
-  - API value `حمام-رييسي` → "حمام رئيسي" / "حمام رئيسي" · color `#F59E0B`
-  - API value `حمام-غرفة-النوم-الرييسية` → "حمام غرفة النوم الرئيسية" / "حمام غرفة النوم الرئيسية" · color `#EF4444`
-  - API value `مدخل-خاص` → "مدخل خاص" / "مدخل خاص" · color `#8B5CF6`
-  - API value `مدخل-جانبي` → "مدخل جانبي" / "مدخل جانبي" · color `#EC4899`
+  - API value `مستودع` → "Storage Room" / "مستودع" · color `#F59E0B`
+  - API value `تراس` → "Terrace" / "تراس" · color `#EF4444`
+  - API value `مصعد` → "Elevator" / "مصعد" · color `#8B5CF6`
+  - API value `حديقة` → "Garden" / "حديقة" · color `#EC4899`
+  - API value `غرفة-نوم-رييسية` → "Master Bedroom" / "غرفة نوم رئيسية" · color `#06B6D4`
+  - API value `فتحة-سماوية` → "Skylight" / "فتحة سماوية" · color `#84CC16`
+  - API value `مطبخ-مجهز-مسبقا` → "Pre-fitted Kitchen" / "مطبخ مُجهَّز مسبقاً" · color `#F97316`
+  - API value `بيت-ذكي` → "Smart Home" / "بيت ذكي" · color `#6366F1`
+  - API value `تكييف-مخفي-مجهز-مسبقا` → "Pre-installed Concealed A/C" / "تكييف مخفي مُجهَّز مسبقاً" · color `#3B82F6`
+  - API value `حمام-ضيوف` → "Guest Bathroom" / "حمام ضيوف" · color `#10B981`
+  - API value `حمام-رييسي` → "Master Bathroom" / "حمام رئيسي" · color `#F59E0B`
+  - API value `حمام-غرفة-النوم-الرييسية` → "En-suite Bathroom" / "حمام غرفة النوم الرئيسية" · color `#EF4444`
+  - API value `مدخل-خاص` → "Private Entrance" / "مدخل خاص" · color `#8B5CF6`
+  - API value `مدخل-جانبي` → "Side Entrance" / "مدخل جانبي" · color `#EC4899`
   - API value `سيب-خاص` → "Private utility yard" / "سيب خاص" · color `#9CA3AF`
   - API value `مؤثثة` → "Furnished" / "مؤثثة" · color `#C09B5F`
   - API value `مكنسة-مركزية` → "Central Vacuum" / "مكنسة مركزية" · color `#C09B5F`
@@ -168,7 +168,7 @@
   - API value `جنوبية` → "Southern" / "جنوبية"
   - API value `شرقية` → "Eastern" / "شرقية"
   - API value `غربية` → "Western" / "غربية"
-  - API value `جانبية` → "جانبية" / "جانبية" · color `#F97316`
+  - API value `جانبية` → "Side" / "جانبية" · color `#F97316`
 - **Elevator Status / حالة المصعد** (`elevator_status`, type `dropdown`) — options:
   - API value `مؤسس` → "Prepared" / "مؤسس"
   - API value `لا يوجد` → "None" / "لا يوجد"

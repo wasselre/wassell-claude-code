@@ -58,5 +58,5 @@
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 2 | 7 | no | 2026-07-31 |
 | [Unit Updates](unit-updates.md) | `unit_updates` | JSONB | Projects | 1 | 9 | no | 2026-08-24 |
-| [Units](units.md) | `units` | JSONB | Projects | 8 | 48 | no | 2026-08-20 |
+| [Units](units.md) | `units` | JSONB | Projects | 8 | 48 | no | 2026-09-02 |
 | [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 13 | no | 2026-08-20 |

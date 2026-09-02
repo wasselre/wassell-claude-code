@@ -122,6 +122,19 @@ export interface WorkerEnv {
    *  is the cheaper/faster sibling and is NOT validated for this task. */
   DEEPSEEK_MODEL: string;
   DEEPSEEK_BASE_URL: string;
+  /** Competitor Visual Intelligence (mkt_cv_jobs lanes, W-CV 2026-09-02). The
+   *  Modal service `wassel-video-cv` does shot detection, frame extraction,
+   *  OCR, SigLIP-2 embeddings and zero-shot labels; the worker orchestrates and
+   *  ingests. When MODAL_CV_URL is UNSET both cv lanes self-disable (logged once
+   *  at boot) so the worker boots fine before the Modal app is deployed. The
+   *  DB gate `mkt_settings.cv.enabled` (inside mkt_cv_job_claim_next) still
+   *  decides whether any job is ever claimed. */
+  MODAL_CV_URL: string | null;
+  /** Shared token sent as `x-wassel-token` to the Modal service. */
+  MODAL_CV_TOKEN: string | null;
+  /** Process-level kill switch for the cv lanes. Default ON; set '0' to keep
+   *  this worker out of the cv queues without touching the DB flag. */
+  CV_LANES_ENABLED: boolean;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -165,5 +178,8 @@ export function loadEnv(): WorkerEnv {
     DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? null,
     DEEPSEEK_MODEL: process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro',
     DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
+    MODAL_CV_URL: process.env.MODAL_CV_URL?.replace(/\/+$/, '') || null,
+    MODAL_CV_TOKEN: process.env.MODAL_CV_TOKEN ?? null,
+    CV_LANES_ENABLED: process.env.CV_LANES_ENABLED !== '0',
   };
 }

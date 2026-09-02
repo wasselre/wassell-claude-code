@@ -39,7 +39,13 @@
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+
+/** Stage 5 ceilings. A cv_process job is a multi-minute GPU run on Modal, so
+ *  the re-enqueue is deliberately small per tick; anything it does not reach
+ *  is reached next tick. RETRY_AFTER_MS (6 h) bounds a permanently-broken video
+ *  to ~4 attempts a day, the same cadence as stage 1. */
+const MAX_CV_REENQUEUE = 50;
 
 /** How long one machine owns the sweep. Must exceed the maintenance interval so
  *  exactly one machine sweeps per tick, and stay short enough that a machine
@@ -185,7 +191,7 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
-  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, skipped_queue_full: false, skipped_not_leader: false };
+  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, skipped_queue_full: false, skipped_not_leader: false };
 
   if (!(await acquireSweepLease(sb, workerId))) { stats.skipped_not_leader = true; return stats; }
 
@@ -406,6 +412,45 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
       const made = Number(data ?? 0);
       stats.intelligence += made;
       budget -= made;
+    }
+  }
+
+  // ── stage 5: visual intelligence self-heal (W-CV, 2026-09-02) ─────────────
+  // A cv video sits at 'queued' when its job was never enqueued (or was dropped
+  // by a deploy mid-claim) and at 'failed' when it exhausted attempts. Both are
+  // recoverable later — a Modal outage clears, a source URL comes back — so,
+  // like stage 1, they are re-offered on a 6-hour cadence, oldest first, capped
+  // per tick. mkt_cv_enqueue_video is idempotent: a video that already owns an
+  // active job is a no-op (job_enqueue dedups on the active partial index).
+  // Only when cv.enabled — the DB flag is the single switch for the system, and
+  // claim_next refuses when it is off anyway; enqueueing into a paused queue
+  // would only pile up work nobody asked for.
+  {
+    const { data: cvOn, error: cvErr } = await sb.rpc('mkt_cv_enabled');
+    if (cvErr) throw new Error(`sweep: mkt_cv_enabled failed: ${cvErr.message}`);
+    if (cvOn === true) {
+      const cutoffIso = new Date(Date.now() - RETRY_AFTER_MS).toISOString();
+      const { data: stale, error: staleErr } = await sb.from('mkt_cv_videos')
+        .select('id, content_media_id, status')
+        .in('status', ['queued', 'failed'])
+        .eq('owner', 'competitor')
+        .not('content_media_id', 'is', null)
+        .lt('updated_at', cutoffIso)
+        .order('updated_at', { ascending: true })
+        .limit(MAX_CV_REENQUEUE);
+      if (staleErr) throw new Error(`sweep: cv stale-video scan failed: ${staleErr.message}`);
+      for (const v of (stale ?? []) as Array<{ id: string; content_media_id: string; status: string }>) {
+        const { error } = await sb.rpc('mkt_cv_enqueue_video', { p_content_media_id: v.content_media_id, p_priority: 120 });
+        if (error) {
+          // The RPC raises `permanent:` when the media row is no longer a stored
+          // video (deleted / re-collected). That is one video's problem, not the
+          // sweep's — log it and keep offering the rest. Every other error kind
+          // is also logged here; none is hidden.
+          console.error(`[sweep] cv re-enqueue video=${v.id} (${v.status}) failed: ${error.message}`);
+          continue;
+        }
+        stats.cv_reenqueue++;
+      }
     }
   }
 

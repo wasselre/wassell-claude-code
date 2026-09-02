@@ -1,0 +1,26 @@
+{
+  "_about": "20 realistic marketing-team visual queries for the competitor Visual Library search (Gate C). `judgments` maps shot_id → relevance 0..3 and is EMPTY until a human judges the candidates written by scripts/eval/cv-eval.mjs --search-eval. See docs/eval/cv-queries-20-judging.md.",
+  "relevance_scale": { "0": "not relevant", "1": "marginal — same broad setting, wrong subject/graphic", "2": "relevant — a marketer would consider it as reference", "3": "exact — this is the shot the query describes" },
+  "queries": [
+    { "id": "Q01", "lang": "ar", "text": "خريطة متحركة فاخرة تُظهر قرب المشروع من المعالم", "intent": "animated proximity map", "hints": { "graphic": "animated_map", "setting": "map", "subject": "map" }, "judgments": {}, "notes": "" },
+    { "id": "Q02", "lang": "en", "text": "drone shot of a villa compound facade at golden hour", "intent": "aerial exterior, warm light", "hints": { "shot_size": "aerial", "setting": "exterior_facade", "motion": "drone", "light": "golden" }, "judgments": {}, "notes": "" },
+    { "id": "Q03", "lang": "en", "text": "presenter in an empty living room explaining the plan", "intent": "on-camera presenter, unfurnished interior", "hints": { "subject": "presenter", "setting": "interior_living", "shot_size": "medium" }, "judgments": {}, "notes": "" },
+    { "id": "Q04", "lang": "en", "text": "split-screen rent vs own graphic", "intent": "comparison motion graphic", "hints": { "graphic": "split_screen", "subject": "text_card" }, "judgments": {}, "notes": "" },
+    { "id": "Q05", "lang": "en", "text": "price card animation with Arabic-Indic numerals", "intent": "offer / price text card", "hints": { "graphic": "text_overlay", "subject": "text_card", "purpose": "offer" }, "judgments": {}, "notes": "" },
+    { "id": "Q06", "lang": "ar", "text": "لقطة جوية لبرج سكني وقت الغروب", "intent": "aerial tower at sunset", "hints": { "shot_size": "aerial", "subject": "building", "light": "golden", "motion": "drone" }, "judgments": {}, "notes": "" },
+    { "id": "Q07", "lang": "ar", "text": "مقدّم يتحدث أمام واجهة المشروع مع نص على الشاشة", "intent": "presenter at facade with on-screen text", "hints": { "subject": "presenter", "setting": "exterior_facade", "graphic": "text_overlay" }, "judgments": {}, "notes": "" },
+    { "id": "Q08", "lang": "ar", "text": "جولة داخل مطبخ حديث بإضاءة طبيعية", "intent": "kitchen walkthrough, daylight", "hints": { "setting": "kitchen", "motion": "handheld", "light": "day" }, "judgments": {}, "notes": "" },
+    { "id": "Q09", "lang": "en", "text": "3D render flythrough of a residential tower lobby", "intent": "CGI lobby interior", "hints": { "setting": "lobby", "graphic": "3d_render", "motion": "dolly" }, "judgments": {}, "notes": "" },
+    { "id": "Q10", "lang": "ar", "text": "مسبح على السطح مع إطلالة على المدينة ليلاً", "intent": "rooftop pool amenity at night", "hints": { "setting": "amenity_pool", "light": "night" }, "judgments": {}, "notes": "" },
+    { "id": "Q11", "lang": "en", "text": "family walking into a new apartment, handheld", "intent": "lifestyle family move-in", "hints": { "subject": "family", "setting": "interior_living", "motion": "handheld" }, "judgments": {}, "notes": "" },
+    { "id": "Q12", "lang": "ar", "text": "كرت نصي يعلن الطرح الأول مع شعار المطور", "intent": "launch announcement card with logo", "hints": { "subject": "text_card", "graphic": "motion_graphic", "purpose": "hook" }, "judgments": {}, "notes": "" },
+    { "id": "Q13", "lang": "en", "text": "close-up of bathroom finishes and fixtures", "intent": "bathroom detail shot", "hints": { "setting": "bathroom", "shot_size": "close" }, "judgments": {}, "notes": "" },
+    { "id": "Q14", "lang": "ar", "text": "لقطة ثابتة لخطة الدفع مع نسب مئوية", "intent": "payment plan infographic", "hints": { "subject": "text_card", "graphic": "text_overlay", "motion": "static", "purpose": "offer" }, "judgments": {}, "notes": "" },
+    { "id": "Q15", "lang": "en", "text": "excavation or construction site progress footage", "intent": "construction progress proof", "hints": { "setting": "street", "subject": "building", "purpose": "proof" }, "judgments": {}, "notes": "" },
+    { "id": "Q16", "lang": "ar", "text": "مشهد افتتاح أو فعالية مع حضور وقص شريط", "intent": "event / opening ceremony", "hints": { "subject": "person", "purpose": "brand" }, "judgments": {}, "notes": "" },
+    { "id": "Q17", "lang": "en", "text": "gym amenity interior, wide shot", "intent": "gym amenity", "hints": { "setting": "gym", "shot_size": "wide" }, "judgments": {}, "notes": "" },
+    { "id": "Q18", "lang": "ar", "text": "شعار الشركة على خلفية سوداء في نهاية الفيديو", "intent": "logo end card", "hints": { "subject": "logo", "graphic": "motion_graphic", "purpose": "brand" }, "judgments": {}, "notes": "" },
+    { "id": "Q19", "lang": "en", "text": "map showing distance to King Khalid airport and main roads", "intent": "location map with landmarks", "hints": { "setting": "map", "subject": "map", "graphic": "animated_map", "purpose": "location" }, "judgments": {}, "notes": "" },
+    { "id": "Q20", "lang": "ar", "text": "غرفة نوم رئيسية بتصميم فاخر مع بلكونة", "intent": "master bedroom with balcony", "hints": { "setting": "bedroom", "subject": "unit" }, "judgments": {}, "notes": "" }
+  ]
+}

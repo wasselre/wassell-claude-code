@@ -9,11 +9,52 @@
 import { useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import {
-  FOOTAGE_LABELS, MosScene, deleteScene, saveScene, saveShoot,
+  FOOTAGE_LABELS, MosScene, SCENE_PURPOSE_LABELS, deleteScene, saveScene, saveShoot,
 } from '@/lib/marketingOS/client';
 import { IconPlus, IconShoot, IconTrash } from './icons';
 import { Modal } from './kit';
-import { num } from '../lib/format';
+import SceneReferences from './SceneReferences';
+import { dateTimeShort, num } from '../lib/format';
+
+/**
+ * The strip under a scene's shot cell — Script Writer v2 provenance (purpose
+ * pill, an «AI» marker for scenes applied from a draft) plus the references
+ * slot. Display only; the row's behaviour is unchanged.
+ */
+function SceneMeta({ s, isAr, canEdit }: { s: MosScene; isAr: boolean; canEdit: boolean }) {
+  const purpose = s.purpose ? SCENE_PURPOSE_LABELS[s.purpose] : null;
+  const aiTitle = s.manually_edited_at
+    ? (isAr ? `من مسودة سكربت — عُدّل يدوياً في ${dateTimeShort(s.manually_edited_at, true)}` : `From a script draft — edited by hand on ${dateTimeShort(s.manually_edited_at, false)}`)
+    : (isAr ? 'من مسودة سكربت' : 'From a script draft');
+  return (
+    <div style={{ marginTop: 4 }}>
+      {(purpose || s.source === 'ai') && (
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+          {purpose && (
+            <span className="pill p-idle" style={{ fontSize: 9.5, padding: '1px 6px' }}>
+              {isAr ? purpose.ar : purpose.en}
+            </span>
+          )}
+          {s.source === 'ai' && (
+            <span
+              className="pill"
+              title={aiTitle}
+              style={{
+                fontSize: 9.5, padding: '1px 6px', cursor: 'help',
+                background: 'color-mix(in srgb, var(--copper) 14%, transparent)', color: 'var(--copper)',
+                borderColor: 'color-mix(in srgb, var(--copper) 40%, transparent)',
+                textDecoration: s.manually_edited_at ? 'underline dotted' : 'none',
+              }}
+            >
+              AI
+            </span>
+          )}
+        </div>
+      )}
+      <SceneReferences scene={s} isAr={isAr} canEdit={canEdit} />
+    </div>
+  );
+}
 
 /**
  * The three descriptive scene columns. They hold real sentences — a voice-over
@@ -262,6 +303,7 @@ export default function SceneTable({
                             // Screen 07's filled state — plain text, «—» when empty.
                             (s[f] as string | null) || '—'
                           )}
+                          {f === 'visual' && <SceneMeta s={s} isAr={isAr} canEdit={canEdit} />}
                         </td>
                       ))}
                       <td style={{ padding: 6 }}>

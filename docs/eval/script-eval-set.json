@@ -1,0 +1,1381 @@
+{
+  "_generated_by": "scripts/eval/build-eval-sets.mjs",
+  "generated_at": "2026-09-02T08:32:26.801Z",
+  "readiness_rule": "see deriveReadiness() in scripts/eval/build-eval-sets.mjs and docs/eval/README.md",
+  "synthesised_brief_note": "Entries with content_id=null have no mos_content row; the harness passes {content_id:null, project_id, recipe, duration_sec} and runScriptEval must build the brief from the project record alone (language ar, purpose unknown, cta = Wassel default, no existing scenes).",
+  "counts": {
+    "by_recipe": {
+      "walkthrough": 4,
+      "offer": 4,
+      "rent_vs_own": 4,
+      "product_explainer": 4,
+      "launch": 4
+    },
+    "by_readiness": {
+      "ready": 10,
+      "off_plan": 9,
+      "conflict": 1
+    },
+    "sold_out": 2,
+    "with_content_id": 2
+  },
+  "entries": [
+    {
+      "id": "S01",
+      "project_id": "aab86347-e139-4ebd-b481-5282293c8eea",
+      "project_name": "أكنان 25",
+      "developer_name": "أكنان",
+      "content_id": "30eb4c0e-b3bf-4ecb-9236-9216271dab24",
+      "content_ref": "V-041",
+      "recipe": "walkthrough",
+      "duration_sec": 45,
+      "why": "أكنان 25 — ready; the real V-041 content item",
+      "expected": {
+        "readiness": "ready",
+        "sold_out": false,
+        "project_status": "available",
+        "construction_status": "ready",
+        "must_not_contain": [],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1050000,
+            "max": 3150000
+          },
+          "price_all_units": {
+            "min": 1050000,
+            "max": 3150000
+          },
+          "area": {
+            "min": 191,
+            "max": 427
+          },
+          "area_all_units": {
+            "min": 191,
+            "max": 427
+          },
+          "unit_count": 62,
+          "available_units": 55,
+          "sold_units": 2,
+          "unit_types": [
+            "floor",
+            "penthouse",
+            "townhouse",
+            "villa"
+          ],
+          "handover_date": null,
+          "features": [
+            "موقف خاص",
+            "تكييف مخفي",
+            "واجهات حديثة",
+            "سمارت هوم",
+            "مدخل خاص",
+            "حديقة",
+            "خزانات مستقلة",
+            "دخول ذكي",
+            "مغاسل رخامية",
+            "دش مطري",
+            "تأسيس مصعد",
+            "بلكونة",
+            "غرفة خادمة"
+          ],
+          "landmarks": [
+            "مستشفى د سليمان الحبيب",
+            "الافنيوز",
+            "جامعة الأميرة نورة",
+            "مطار الملك خالد الدولي",
+            "واجهة روشن",
+            "حديقة الملتقى"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-31T12:18:59.63063+00:00"
+      }
+    },
+    {
+      "id": "S02",
+      "project_id": "95c0edd3-1d85-4149-b050-72edf35ee302",
+      "project_name": "شقق سماوة",
+      "developer_name": "آبه",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "walkthrough",
+      "duration_sec": 45,
+      "why": "شقق سماوة — ready, 5 of 9 available, 12 features, 9 guarantees",
+      "expected": {
+        "readiness": "ready",
+        "sold_out": false,
+        "project_status": "available",
+        "construction_status": "ready",
+        "must_not_contain": [
+          "920016028"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1290000,
+            "max": 1680000
+          },
+          "price_all_units": {
+            "min": 980000,
+            "max": 1680000
+          },
+          "area": {
+            "min": 110,
+            "max": 186
+          },
+          "area_all_units": {
+            "min": 108,
+            "max": 286
+          },
+          "unit_count": 9,
+          "available_units": 5,
+          "sold_units": 4,
+          "unit_types": [
+            "apartment"
+          ],
+          "handover_date": null,
+          "features": [
+            "منزل ذكي",
+            "نظام الانذار الحرائق",
+            "كاميرات مراقبة",
+            "دخول ذكي",
+            "موقف خاص",
+            "واجهات حديثة",
+            "مدخل خاص",
+            "مصعد",
+            "بلكونة",
+            "تكييف مخفي",
+            "بدون سعي",
+            "ارضيات بورسلان"
+          ],
+          "landmarks": [
+            "مركز الملك عبدالله المالي",
+            "طريق الملك فهد",
+            "طريق التخصصي",
+            "طريق الدائري الشمالي"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S03",
+      "project_id": "5ca5502f-dbd9-466d-85a8-a215c2ddcc18",
+      "project_name": "الماجدية 178",
+      "developer_name": "الماجدية",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "walkthrough",
+      "duration_sec": 60,
+      "why": "الماجدية 178 — off-plan (renders walkthrough), 120 units",
+      "expected": {
+        "readiness": "off_plan",
+        "sold_out": false,
+        "project_status": "available_on_map",
+        "construction_status": "تحت-التطوير",
+        "must_not_contain": [
+          "920011719"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1459000,
+            "max": 2129000
+          },
+          "price_all_units": {
+            "min": 1119000,
+            "max": 2199000
+          },
+          "area": {
+            "min": 96.03,
+            "max": 142.45
+          },
+          "area_all_units": {
+            "min": 81.96,
+            "max": 142.45
+          },
+          "unit_count": 120,
+          "available_units": 69,
+          "sold_units": 46,
+          "unit_types": [
+            "apartment"
+          ],
+          "handover_date": null,
+          "features": [
+            "موقع استراتيجي في حي حطين",
+            "تصاميم تلائم الأسرة العصرية",
+            "بيئات تتجاوز مجرد مساحات المعيشة",
+            "نادي رياضي يعزز الالتزام بالأهداف الصحية دون الابتعاد عن المحيط",
+            "لاونج راقٍ مثالي لجلسات العائلة والأصدقاء",
+            "سمارت سيستم",
+            "لحظات ملهمة داخل الوحدة",
+            "أسلوب حياة يليق بك",
+            "خبرة المطور: أكثر من 50 عاماً، 70,000+ ساكن، 18,000+ وحدة، 1,300+ مبنى، +2.5 مليون م² مطوّرة"
+          ],
+          "landmarks": [
+            "BLVD City",
+            "طريق أنس بن مالك",
+            "طريق الأمير يزيد بن عبدالله"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S04",
+      "project_id": "eb781575-3844-4817-aad6-c71d369dbf2f",
+      "project_name": "دروازة (Derwaza)",
+      "developer_name": "الماجدية",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "walkthrough",
+      "duration_sec": 45,
+      "why": "دروازة — ready, mixed AR/EN name",
+      "expected": {
+        "readiness": "ready",
+        "sold_out": false,
+        "project_status": "available",
+        "construction_status": "ready",
+        "must_not_contain": [
+          "920011719"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 2459000,
+            "max": 3179000
+          },
+          "price_all_units": {
+            "min": 2399000,
+            "max": 3179000
+          },
+          "area": {
+            "min": 350.65,
+            "max": 355.64
+          },
+          "area_all_units": {
+            "min": 350.65,
+            "max": 355.64
+          },
+          "unit_count": 22,
+          "available_units": 8,
+          "sold_units": 13,
+          "unit_types": [
+            "townhouse"
+          ],
+          "handover_date": null,
+          "features": [
+            "عداد مستقل كهرباء وماء",
+            "مصعد اختياري",
+            "فراغات مرنة",
+            "خمس جلسات خارجية",
+            "مسبح",
+            "نادي رياضي",
+            "سينما",
+            "جلسة علوية/غرفة نوم رابعة",
+            "مسطحات خضراء"
+          ],
+          "landmarks": [
+            "مطار الملك خالد",
+            "جامعة الأميرة نورة",
+            "بندة هايبر ماركت",
+            "مستشفى سليمان الحبيب النرجس",
+            "مدارس التربية النموذجية العارض"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S05",
+      "project_id": "eeeea025-41bf-4736-9283-dd2c83fd37fb",
+      "project_name": "المشرقية 2",
+      "developer_name": "الماجدية",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "offer",
+      "duration_sec": 30,
+      "why": "المشرقية 2 — 468 units, ONE left (real scarcity)",
+      "expected": {
+        "readiness": "off_plan",
+        "sold_out": false,
+        "project_status": "available_on_map",
+        "construction_status": "تحت-التطوير",
+        "must_not_contain": [
+          "920011719"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 725330,
+            "max": 725330
+          },
+          "price_all_units": {
+            "min": 225549,
+            "max": 916147
+          },
+          "area": {
+            "min": 168.7,
+            "max": 168.7
+          },
+          "area_all_units": {
+            "min": 74.3,
+            "max": 238.8
+          },
+          "unit_count": 468,
+          "available_units": 1,
+          "sold_units": 453,
+          "unit_types": [
+            "apartment"
+          ],
+          "handover_date": null,
+          "features": [
+            "35 مبنى، 468 شقة، تصاميم عصرية، مسطحات خضراء، حدائق، تنوع الوحدات السكنية، بيئة نابضة بالحياة"
+          ],
+          "landmarks": [
+            "طريق خريص، طريق الدمام، طريق المطار"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-31T12:18:59.63063+00:00"
+      }
+    },
+    {
+      "id": "S06",
+      "project_id": "ac48b23f-bc99-4bd1-b9fd-b245e47f4372",
+      "project_name": "اوتوجراف 21",
+      "developer_name": "ديار أصيلة",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "offer",
+      "duration_sec": 30,
+      "why": "اوتوجراف 21 — 1 of 21 left, single price point",
+      "expected": {
+        "readiness": "off_plan",
+        "sold_out": false,
+        "project_status": "available_on_map",
+        "construction_status": "تحت-التطوير",
+        "must_not_contain": [],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 570000,
+            "max": 570000
+          },
+          "price_all_units": {
+            "min": 560000,
+            "max": 865000
+          },
+          "area": {
+            "min": 82,
+            "max": 82
+          },
+          "area_all_units": {
+            "min": 80,
+            "max": 160
+          },
+          "unit_count": 21,
+          "available_units": 1,
+          "sold_units": 20,
+          "unit_types": [
+            "apartment"
+          ],
+          "handover_date": null,
+          "features": [
+            "تكييف مخفي",
+            "بيع على خارطة",
+            "موقف خاص",
+            "بدون سعي",
+            "دخول ذكي",
+            "ارضيات بورسلان"
+          ],
+          "landmarks": [
+            "طريق صاري",
+            "شارع الكيال",
+            "طريق الأمير سعود الفيصل",
+            "طريق الأمير سلطان"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S07",
+      "project_id": "e27d0887-f193-4ff4-b6c3-0932b8229340",
+      "project_name": "يمام فلورز 8",
+      "developer_name": "يمام للأستثمار",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "offer",
+      "duration_sec": 30,
+      "why": "يمام 8 — SOLD OUT (12/0, no available price): offer requires price → expected facts_insufficient refusal",
+      "expected": {
+        "readiness": "ready",
+        "sold_out": true,
+        "project_status": "sold_out",
+        "construction_status": "ready",
+        "must_not_contain": [
+          "595212033"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": null,
+          "price_all_units": null,
+          "area": null,
+          "area_all_units": {
+            "min": 325,
+            "max": 377
+          },
+          "unit_count": 12,
+          "available_units": 0,
+          "sold_units": 12,
+          "unit_types": [
+            "townhouse"
+          ],
+          "handover_date": null,
+          "features": [
+            "خزانات مستقلة",
+            "غرفة خادمة",
+            "موقف خاص",
+            "واجهات حديثة",
+            "بدون سعي",
+            "حوش خاص",
+            "مدخل خاص",
+            "مصعد",
+            "بلكونة",
+            "دخول ذكي",
+            "تكييف مخفي",
+            "حديقة",
+            "جلسات خارجية"
+          ],
+          "landmarks": [
+            "طريق ابو بكر الصديق",
+            "طريق الملك سلمان",
+            "مشروع المربع",
+            "حديقة الملك عبدالعزيز"
+          ]
+        },
+        "expect_pipeline_refusal": true
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S08",
+      "project_id": "93181558-b673-4cb1-83b6-c738c41b1f21",
+      "project_name": "سديم فلل",
+      "developer_name": "الرمز",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "offer",
+      "duration_sec": 30,
+      "why": "سديم فلل — STATUS CONFLICT: project_status=sold_out but 16 units available with a price",
+      "expected": {
+        "readiness": "conflict",
+        "sold_out": true,
+        "project_status": "sold_out",
+        "construction_status": null,
+        "must_not_contain": [
+          "920 031 440"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 2140000,
+            "max": 2140000
+          },
+          "price_all_units": {
+            "min": 2140000,
+            "max": 2140000
+          },
+          "area": {
+            "min": 324,
+            "max": 325
+          },
+          "area_all_units": {
+            "min": 324,
+            "max": 440
+          },
+          "unit_count": 69,
+          "available_units": 16,
+          "sold_units": 0,
+          "unit_types": [
+            "villa"
+          ],
+          "handover_date": null,
+          "features": [
+            "فيلا ذكية بالكامل (نظام تحكم ذكي)",
+            "تكييف مخفي للدور الأرضي والماستر في الدور الأول",
+            "كاميرات مراقبة خارجية",
+            "مكنسة مركزية",
+            "تأسيس مصعد",
+            "غرفة سائق وغرفة خادمة مستقلة",
+            "مستودع وديوانية",
+            "واجهات عصرية مستلهمة من الطراز السلماني",
+            "ستة نماذج تصميمية (A–F) لكل بلوك",
+            "خبرة المطور: تأسست 2016، +650 ألف م² مطوّرة، +3,200 وحدة، +40 مشروعاً"
+          ],
+          "landmarks": [
+            "جامع الراجحي",
+            "ايكيا",
+            "وزارة الحرس الوطني",
+            "ذا فيو مول"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S09",
+      "project_id": "384a2b68-1b68-47d3-ade8-c60923ea3c21",
+      "project_name": "صفا 80",
+      "developer_name": "صفا للاستثمار",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "rent_vs_own",
+      "duration_sec": 40,
+      "why": "صفا 80 — ready, 31 units",
+      "expected": {
+        "readiness": "ready",
+        "sold_out": false,
+        "project_status": "available",
+        "construction_status": "ready",
+        "must_not_contain": [],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1235999,
+            "max": 1870000
+          },
+          "price_all_units": {
+            "min": 1235999,
+            "max": 1870000
+          },
+          "area": {
+            "min": 120.8,
+            "max": 171.31
+          },
+          "area_all_units": {
+            "min": 120.8,
+            "max": 171.31
+          },
+          "unit_count": 31,
+          "available_units": 31,
+          "sold_units": 0,
+          "unit_types": [
+            "apartment"
+          ],
+          "handover_date": null,
+          "features": [
+            "منازل ذكية بالكامل",
+            "مطبخ مفتوح",
+            "ممرات مكيّفة ورخامية",
+            "عزل صوتي وحراري ومائي",
+            "أبواب WPC داخلية وUPVC وخشبية خارجية",
+            "إضاءات LED",
+            "دش مطري ومداخل خاصة",
+            "غسيل سحابي وطرود بريدية"
+          ],
+          "landmarks": []
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:33:02.174329+00:00"
+      }
+    },
+    {
+      "id": "S10",
+      "project_id": "ff658a62-fa27-424d-9c34-e56d7a9ef350",
+      "project_name": "ستون الندى",
+      "developer_name": "الرمز",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "rent_vs_own",
+      "duration_sec": 40,
+      "why": "ستون الندى — off-plan, 138 units",
+      "expected": {
+        "readiness": "off_plan",
+        "sold_out": false,
+        "project_status": "available_on_map",
+        "construction_status": "تحت-التطوير",
+        "must_not_contain": [
+          "920 031 440"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1066964,
+            "max": 1637595
+          },
+          "price_all_units": {
+            "min": 1066964,
+            "max": 1637595
+          },
+          "area": {
+            "min": 81.58,
+            "max": 117.07
+          },
+          "area_all_units": {
+            "min": 81.58,
+            "max": 117.07
+          },
+          "unit_count": 138,
+          "available_units": 107,
+          "sold_units": 28,
+          "unit_types": [
+            "apartment"
+          ],
+          "handover_date": "2028-07-01",
+          "features": [
+            "واجهات حجر طبيعي",
+            "تكييف مخفي مجهز مسبقاً",
+            "تشطيبات عالية الجودة",
+            "نادي رجالي ونسائي",
+            "بزنس سنتر",
+            "لاونج",
+            "أفنية داخلية مشجرة ومساحات خضراء",
+            "وحدات ذكية",
+            "نظام كاميرات مراقبة",
+            "مكنسة مركزية",
+            "تراسات وبلكونات"
+          ],
+          "landmarks": [
+            "أندية رياضية",
+            "جوامع ومساجد",
+            "مرافق تعليمية",
+            "مرافق صحية",
+            "حدائق",
+            "مجمعات تجارية",
+            "مغاسل ملابس",
+            "محطات وقود",
+            "جامعة الإمام محمد بن سعود الإسلامية",
+            "مطار الملك خالد الدولي",
+            "واجهة الرياض",
+            "جامعة الأميرة نورة"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:42:30.007361+00:00"
+      }
+    },
+    {
+      "id": "S11",
+      "project_id": "b83566e6-683d-49f0-a4a7-9e3bbab48282",
+      "project_name": "يمام 15",
+      "developer_name": "يمام للأستثمار",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "rent_vs_own",
+      "duration_sec": 40,
+      "why": "يمام 15 — ready floors",
+      "expected": {
+        "readiness": "ready",
+        "sold_out": false,
+        "project_status": "available",
+        "construction_status": "ready",
+        "must_not_contain": [
+          "595212033"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1790000,
+            "max": 2200000
+          },
+          "price_all_units": {
+            "min": 1790000,
+            "max": 2200000
+          },
+          "area": {
+            "min": 190.18,
+            "max": 243.57
+          },
+          "area_all_units": {
+            "min": 190.18,
+            "max": 243.57
+          },
+          "unit_count": 9,
+          "available_units": 8,
+          "sold_units": 1,
+          "unit_types": [
+            "floor"
+          ],
+          "handover_date": null,
+          "features": [
+            "خزانات مستقلة",
+            "موقف خاص",
+            "واجهات حديثة",
+            "حوش خاص",
+            "مدخل خاص",
+            "مصعد",
+            "جلسات خارجية",
+            "بلكونة",
+            "غرفة خادمة",
+            "دخول ذكي"
+          ],
+          "landmarks": [
+            "المسار الرياضي",
+            "بوليفارد",
+            "مركز الملك عبدالله المالي",
+            "الدرعية"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S12",
+      "project_id": "93d521e4-f4cf-4400-9d95-739351f32507",
+      "project_name": "ريا النخيل",
+      "developer_name": "الرمز",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "rent_vs_own",
+      "duration_sec": 40,
+      "why": "ريا النخيل — ready apartments, 32 of 52 available",
+      "expected": {
+        "readiness": "ready",
+        "sold_out": false,
+        "project_status": "available",
+        "construction_status": "ready",
+        "must_not_contain": [
+          "920 031 440"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1279112,
+            "max": 1599000
+          },
+          "price_all_units": {
+            "min": 1150391,
+            "max": 2096024
+          },
+          "area": {
+            "min": 98.02,
+            "max": 135.68
+          },
+          "area_all_units": {
+            "min": 71.2,
+            "max": 137.67
+          },
+          "unit_count": 52,
+          "available_units": 32,
+          "sold_units": 20,
+          "unit_types": [
+            "apartment"
+          ],
+          "handover_date": null,
+          "features": [
+            "مستودع",
+            "شقة ذكية بالكامل",
+            "مكنسة مركزية",
+            "غرفة خادمة",
+            "بلكونة",
+            "كاميرات مراقبة"
+          ],
+          "landmarks": [
+            "جامعة الملك سعود",
+            "بوابة الدرعية",
+            "المدينة الرقمية",
+            "منطقة البوليفارد",
+            "المركز المالي (KAFD)",
+            "البوليفارد"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-27T15:47:50.557822+00:00"
+      }
+    },
+    {
+      "id": "S13",
+      "project_id": "aab86347-e139-4ebd-b481-5282293c8eea",
+      "project_name": "أكنان 25",
+      "developer_name": "أكنان",
+      "content_id": "ef573714-325d-4079-87a6-72397148b36f",
+      "content_ref": "V-042",
+      "recipe": "product_explainer",
+      "duration_sec": 45,
+      "why": "أكنان 25 — the real V-042 content item",
+      "expected": {
+        "readiness": "ready",
+        "sold_out": false,
+        "project_status": "available",
+        "construction_status": "ready",
+        "must_not_contain": [],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1050000,
+            "max": 3150000
+          },
+          "price_all_units": {
+            "min": 1050000,
+            "max": 3150000
+          },
+          "area": {
+            "min": 191,
+            "max": 427
+          },
+          "area_all_units": {
+            "min": 191,
+            "max": 427
+          },
+          "unit_count": 62,
+          "available_units": 55,
+          "sold_units": 2,
+          "unit_types": [
+            "floor",
+            "penthouse",
+            "townhouse",
+            "villa"
+          ],
+          "handover_date": null,
+          "features": [
+            "موقف خاص",
+            "تكييف مخفي",
+            "واجهات حديثة",
+            "سمارت هوم",
+            "مدخل خاص",
+            "حديقة",
+            "خزانات مستقلة",
+            "دخول ذكي",
+            "مغاسل رخامية",
+            "دش مطري",
+            "تأسيس مصعد",
+            "بلكونة",
+            "غرفة خادمة"
+          ],
+          "landmarks": [
+            "مستشفى د سليمان الحبيب",
+            "الافنيوز",
+            "جامعة الأميرة نورة",
+            "مطار الملك خالد الدولي",
+            "واجهة روشن",
+            "حديقة الملتقى"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-31T12:18:59.63063+00:00"
+      }
+    },
+    {
+      "id": "S14",
+      "project_id": "d14c1370-0852-4c4d-8245-e61b3d8ac003",
+      "project_name": "ربوة الرمز",
+      "developer_name": "الرمز",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "product_explainer",
+      "duration_sec": 45,
+      "why": "ربوة الرمز — off-plan, wide price band",
+      "expected": {
+        "readiness": "off_plan",
+        "sold_out": false,
+        "project_status": "available_on_map",
+        "construction_status": "تحت-التطوير",
+        "must_not_contain": [
+          "920 031 440"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1799000,
+            "max": 3499000
+          },
+          "price_all_units": {
+            "min": 1799000,
+            "max": 3499000
+          },
+          "area": {
+            "min": 304.72,
+            "max": 458.81
+          },
+          "area_all_units": {
+            "min": 304.72,
+            "max": 458.81
+          },
+          "unit_count": 35,
+          "available_units": 35,
+          "sold_units": 0,
+          "unit_types": [
+            "villa"
+          ],
+          "handover_date": "2028-07-01",
+          "features": [
+            "وحدات ذكية بتقنيات حديثة (بيت ذكي)",
+            "مكنسة مركزية",
+            "مسبح",
+            "كاميرات مراقبة وأنظمة أمان",
+            "غرفة خادمة وغرفة سائق",
+            "ديوانية مستقلة (مجلس)",
+            "مصعد داخلي في الفيلا",
+            "سطح علوي بصالة جلوس وغرفة غسيل وتراسين",
+            "تصميم معماري راقٍ — فلل بواجهات حجرية عصرية",
+            "ممرات رياضية ومساحات خضراء لحياة صحية",
+            "مشروع متكامل على 5 مراحل: 219,130 م² و1,300 وحدة (فلل وأدوار)",
+            "خبرة المطور الرمز: +62 مشروعاً، +8,500 وحدة، +650 ألف م² مسطحات بناء"
+          ],
+          "landmarks": [
+            "طريق الدائري الشرقي",
+            "طريق عمر بن الخطاب",
+            "طريق النهضة",
+            "طريق المدينة المنورة"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S15",
+      "project_id": "36611f3e-891b-40f8-b3b7-68eeddcbe611",
+      "project_name": "ساندستون ريزيدنسيز",
+      "developer_name": "مسان العقارية",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "product_explainer",
+      "duration_sec": 45,
+      "why": "ساندستون ريزيدنسيز — ready, premium (3.8–4.2M)",
+      "expected": {
+        "readiness": "ready",
+        "sold_out": false,
+        "project_status": "available",
+        "construction_status": "ready",
+        "must_not_contain": [],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 3830000,
+            "max": 4170000
+          },
+          "price_all_units": {
+            "min": 2590000,
+            "max": 4170000
+          },
+          "area": {
+            "min": 280,
+            "max": 280
+          },
+          "area_all_units": {
+            "min": 200,
+            "max": 280
+          },
+          "unit_count": 7,
+          "available_units": 2,
+          "sold_units": 4,
+          "unit_types": [
+            "villa"
+          ],
+          "handover_date": null,
+          "features": [
+            "تكييف مخفي",
+            "واجهات حديثة",
+            "سمارت هوم",
+            "جميع غرف نوم ماستر",
+            "كراسي معلقة",
+            "دش  مطري",
+            "بدون سعي",
+            "أرضيات رخام"
+          ],
+          "landmarks": [
+            "طريق الملك سلمان",
+            "طريق عثمان بن عفان",
+            "أسواق التميمي",
+            "مستشفى سليمان  الحبيب"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S16",
+      "project_id": "8ab23ab5-85d2-4695-9482-41d45a14bfd7",
+      "project_name": "بن غاطي سكاي رايز (Binghatti Skyrise)",
+      "developer_name": "بن غاطي (Binghatti)",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "product_explainer",
+      "duration_sec": 45,
+      "why": "بن غاطي سكاي رايز — UAE, AED developer currency, off-plan",
+      "expected": {
+        "readiness": "off_plan",
+        "sold_out": false,
+        "project_status": "under_construction",
+        "construction_status": "تحت-التطوير",
+        "must_not_contain": [],
+        "hard_facts": {
+          "currency": "AED",
+          "price": {
+            "min": 2598706.11,
+            "max": 3262422.86
+          },
+          "price_all_units": {
+            "min": 2598706.11,
+            "max": 3262422.86
+          },
+          "area": {
+            "min": 57.61,
+            "max": 62.06
+          },
+          "area_all_units": {
+            "min": 57.61,
+            "max": 62.06
+          },
+          "unit_count": 16,
+          "available_units": 16,
+          "sold_units": 0,
+          "unit_types": [
+            "apartment"
+          ],
+          "handover_date": "2027-11-27",
+          "features": [
+            "تصميم بن غاطي المعماري المميز",
+            "قلب دبي النابض عند برج خليفة وداون تاون، أرقى مواقع المدينة"
+          ],
+          "landmarks": [
+            "برج خليفة",
+            "دبي مول",
+            "نافورة دبي",
+            "بوليفارد الشيخ محمد بن راشد",
+            "مركز دبي المالي العالمي"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:33:02.174329+00:00"
+      }
+    },
+    {
+      "id": "S17",
+      "project_id": "3117ab2a-f50a-4c48-ae4b-fca6b6ed68bb",
+      "project_name": "ستون الملقا",
+      "developer_name": "الرمز",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "launch",
+      "duration_sec": 40,
+      "why": "ستون الملقا — off-plan, 17 landmarks, 12 guarantees",
+      "expected": {
+        "readiness": "off_plan",
+        "sold_out": false,
+        "project_status": "available_on_map",
+        "construction_status": "تحت-التطوير",
+        "must_not_contain": [
+          "920 031 440"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1166394,
+            "max": 1399636
+          },
+          "price_all_units": {
+            "min": 1166394,
+            "max": 1399636
+          },
+          "area": {
+            "min": 79.74,
+            "max": 102.35
+          },
+          "area_all_units": {
+            "min": 79.74,
+            "max": 102.35
+          },
+          "unit_count": 20,
+          "available_units": 20,
+          "sold_units": 0,
+          "unit_types": [
+            "apartment"
+          ],
+          "handover_date": null,
+          "features": [
+            "وحدات ذكية بالكامل",
+            "مداخل ومخارج مكيّفة",
+            "تراس وبلكونة وسطح خاص",
+            "مكنسة مركزية",
+            "كاميرات مراقبة والأمن والسلامة",
+            "دخول ذكي",
+            "نادي رياضي للرجال وآخر للنساء",
+            "مركز أعمال بغرفة اجتماعات",
+            "مسطحات خضراء وحدائق داخلية للمبنى",
+            "الونج",
+            "مواقف مخصصة لأصحاب الهمم",
+            "10 سنوات اتحاد ملاك مجانًا"
+          ],
+          "landmarks": [
+            "محطة مترو",
+            "جامعة الإمام محمد بن سعود الإسلامية",
+            "مطار الملك خالد الدولي",
+            "مركز الملك عبدالله المالي",
+            "مرافق صحية",
+            "محطات وقود",
+            "جوامع ومساجد",
+            "مجمعات تجارية",
+            "مرافق تعليمية",
+            "مغاسل ملابس",
+            "أندية رياضية",
+            "حدائق",
+            "طريق أنس بن مالك",
+            "طريق الملك سلمان",
+            "طريق تركي بن عبدالعزيز الأول",
+            "طريق الأمير محمد بن سعد",
+            "طريق الإمام سعود بن فيصل"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S18",
+      "project_id": "bd4c49b0-49c9-4157-8592-570d73efa941",
+      "project_name": "تل الربوة",
+      "developer_name": "الرمز",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "launch",
+      "duration_sec": 40,
+      "why": "تل الربوة — off-plan, entry price < 1M",
+      "expected": {
+        "readiness": "off_plan",
+        "sold_out": false,
+        "project_status": "available_on_map",
+        "construction_status": "تحت-التطوير",
+        "must_not_contain": [
+          "920 031 440"
+        ],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 674497,
+            "max": 995676
+          },
+          "price_all_units": {
+            "min": 674497,
+            "max": 995676
+          },
+          "area": {
+            "min": 106.22,
+            "max": 136.35
+          },
+          "area_all_units": {
+            "min": 106.22,
+            "max": 136.35
+          },
+          "unit_count": 48,
+          "available_units": 48,
+          "sold_units": 0,
+          "unit_types": [
+            "apartment"
+          ],
+          "handover_date": "2028-08-01",
+          "features": [
+            "شقق ذكية بالكامل",
+            "مكنسة مركزية",
+            "تراسات وبلكونات وأسطح خاصة",
+            "غرفة خادمة",
+            "غرفة غسيل ملابس",
+            "مستودع",
+            "كاميرات مراقبة",
+            "نادي رياضي للرجال وآخر للنساء",
+            "مركز أعمال بغرفة اجتماعات",
+            "حديقة داخلية ومنطقة ألعاب أطفال",
+            "الونج",
+            "ضمن نطاق تملّك غير السعوديين",
+            "مسجد داخل المشروع",
+            "مواقف سيارات بالقبو",
+            "غرف ترفيه (Entertainment)",
+            "مستودعات خاصة بالقبو"
+          ],
+          "landmarks": [
+            "جامع الراجحي",
+            "ايكيا",
+            "وزارة الحرس الوطني",
+            "ذا فيو مول",
+            "مرافق صحية",
+            "محطات وقود",
+            "جوامع ومساجد",
+            "مجمعات تجارية",
+            "مرافق تعليمية",
+            "مغاسل ملابس",
+            "أندية رياضية",
+            "حدائق",
+            "طريق صلاح الدين",
+            "شارع حسين بن سعيد",
+            "طريق علي بن أبي طالب",
+            "طريق النهضة",
+            "الطريق الدائري الشرقي",
+            "طريق عمر بن الخطاب"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    },
+    {
+      "id": "S19",
+      "project_id": "7c0211b8-97e2-4694-9718-63d48564b7cc",
+      "project_name": "صفا 82",
+      "developer_name": "صفا للاستثمار",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "launch",
+      "duration_sec": 40,
+      "why": "صفا 82 — off-plan, 119 units",
+      "expected": {
+        "readiness": "off_plan",
+        "sold_out": false,
+        "project_status": "available_on_map",
+        "construction_status": "تحت-التطوير",
+        "must_not_contain": [],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1101400,
+            "max": 2301589
+          },
+          "price_all_units": {
+            "min": 1101400,
+            "max": 2301589
+          },
+          "area": {
+            "min": 112.96,
+            "max": 249.29
+          },
+          "area_all_units": {
+            "min": 112.96,
+            "max": 249.29
+          },
+          "unit_count": 119,
+          "available_units": 119,
+          "sold_units": 0,
+          "unit_types": [
+            "apartment",
+            "townhouse"
+          ],
+          "handover_date": null,
+          "features": [
+            "منازل ذكية بالكامل",
+            "مطبخ مفتوح",
+            "ممرات مكيّفة ورخامية",
+            "عزل صوتي وحراري ومائي",
+            "أبواب WPC داخلية وUPVC وخشبية خارجية",
+            "إضاءات LED",
+            "دش مطري ومداخل خاصة",
+            "غسيل سحابي وطرود بريدية"
+          ],
+          "landmarks": []
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:33:02.174329+00:00"
+      }
+    },
+    {
+      "id": "S20",
+      "project_id": "bf518a3c-62f7-41c5-9621-f40813d4725c",
+      "project_name": "ديارا مشارف",
+      "developer_name": "ديارا العقارية",
+      "content_id": null,
+      "content_ref": null,
+      "recipe": "launch",
+      "duration_sec": 40,
+      "why": "ديارا مشارف — project_status=unknown but construction_status=ready → the readiness rule must resolve to ready from construction alone",
+      "expected": {
+        "readiness": "ready",
+        "sold_out": false,
+        "project_status": "unknown",
+        "construction_status": "ready",
+        "must_not_contain": [],
+        "hard_facts": {
+          "currency": "SAR",
+          "price": {
+            "min": 1840000,
+            "max": 2090000
+          },
+          "price_all_units": {
+            "min": 1840000,
+            "max": 2090000
+          },
+          "area": {
+            "min": 257,
+            "max": 291
+          },
+          "area_all_units": {
+            "min": 257,
+            "max": 291
+          },
+          "unit_count": 8,
+          "available_units": 7,
+          "sold_units": 1,
+          "unit_types": [
+            "townhouse"
+          ],
+          "handover_date": null,
+          "features": [
+            "باب كراج",
+            "بدون سعي",
+            "تكيف",
+            "جلسات خارجية",
+            "غرفة خادمة",
+            "مصعد",
+            "سمارت هوم"
+          ],
+          "landmarks": [
+            "طريق الملك سلمان",
+            "طريق عثمان بن عفان",
+            "مستشفى د. سليمان الحبيب",
+            "الاف نيوز"
+          ]
+        },
+        "expect_pipeline_refusal": false
+      },
+      "snapshot": {
+        "project_updated_at": "2026-08-24T14:23:23.830506+00:00"
+      }
+    }
+  ]
+}

@@ -17,6 +17,7 @@ import { readFile } from 'node:fs/promises';
 import { extractVisualText, classifyVisionError, MAX_IMAGES } from './vision.js';
 import { narrowProjects, RULE_VERSION, type NarrowedCandidate } from './enrich.js';
 import { sha256Hex } from '../adIntel.js';
+import { cvEnabled } from '../cv/settings.js';
 
 const ALL_PROJECTS_MODEL = '220c49b9-de57-492d-9eca-c0d9f54fd40f';
 
@@ -162,6 +163,31 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     return stats;
   }
 
+  // ── visual intelligence hand-off (W-CV, 2026-09-02) ───────────────────────
+  // Every STORED video is offered to the cv queue. mkt_cv_enqueue_video is
+  // idempotent (no-op when the video is already processed with the current
+  // versions) so calling it on every full pass is what lets old videos join the
+  // library on their next reprocess. Gated by mkt_settings cv.enabled (read once,
+  // only when there is a video to offer). A failure here is degradation, not a
+  // reason to fail the post: the content pipeline does not depend on cv.
+  {
+    const videoRefs = storedRefs.filter((r) => r.kind === 'video' && r.storedUrl);
+    if (videoRefs.length > 0) {
+      try {
+        if (await cvEnabled(sb)) {
+          for (const ref of videoRefs) {
+            const { error: cvErr } = await sb.rpc('mkt_cv_enqueue_video', { p_content_media_id: ref.mediaId, p_priority: 100 });
+            if (cvErr) { stats.errors.push(`cv_enqueue[${ref.mediaId}]: ${cvErr.message}`); console.error(`[content] mkt_cv_enqueue_video ${ref.mediaId} failed: ${cvErr.message}`); }
+          }
+        }
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        stats.errors.push(`cv_enqueue: ${reason}`);
+        console.error(`[content] cv enqueue for post ${contentPostId} failed: ${reason}`);
+      }
+    }
+  }
+
   // ── videos: audio → transcribe; sample frames for vision ──
   const visionInputs: Array<{ mediaId: string; source: 'image' | 'frame' | 'thumbnail'; frameTsMs: number | null; buffer: Buffer; mime: string | null }> = [];
   let transcriptText = '';
@@ -223,16 +249,22 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     visualTextBlob = existingVt.map((v) => (v.text as string) ?? '').filter(Boolean).join(' ');
     stats.images_analyzed = existingVt.length;
   } else if (visionInputs.length > 0) {
-    const batch = visionInputs.slice(0, MAX_IMAGES);
+    // Batches of ≤ MAX_IMAGES, NOT a slice. A carousel of 10 images or a video
+    // with 6 sampled frames plus a thumbnail used to lose everything past the
+    // 8th input silently — no error, no count, just unread pixels. Each batch is
+    // one vision call; a failure in any batch is still fatal for the post.
     try {
-      const { results, costUsd } = await extractVisualText(batch.map((v) => ({ buffer: v.buffer, mime: v.mime })));
-      stats.cost_usd += costUsd;
-      const perRowCost = results.length > 0 ? Math.round((costUsd / results.length) * 1e6) / 1e6 : 0; // split the single vision-call cost across its rows
-      for (const r of results) {
-        const inp = batch[r.index]; if (!inp) continue;
-        visualTextBlob += ' ' + (r.fields.visible_text ?? '');
-        if (inp.source === 'frame') stats.frames_analyzed++; else stats.images_analyzed++;
-        await sb.rpc('mkt_visual_text_upsert', { p_media: inp.mediaId, p_post: contentPostId, p_source: inp.source, p_frame_ts_ms: inp.frameTsMs, p_model: process.env.MKT_VISION_MODEL ?? 'claude-sonnet-4-6', p_text: r.fields.visible_text ?? '', p_structured: r.fields, p_confidence: null, p_cost: perRowCost, p_status: 'done', p_failure: null, p_raw: null });
+      for (let start = 0; start < visionInputs.length; start += MAX_IMAGES) {
+        const batch = visionInputs.slice(start, start + MAX_IMAGES);
+        const { results, costUsd } = await extractVisualText(batch.map((v) => ({ buffer: v.buffer, mime: v.mime })));
+        stats.cost_usd += costUsd;
+        const perRowCost = results.length > 0 ? Math.round((costUsd / results.length) * 1e6) / 1e6 : 0; // split the single vision-call cost across its rows
+        for (const r of results) {
+          const inp = batch[r.index]; if (!inp) continue;
+          visualTextBlob += ' ' + (r.fields.visible_text ?? '');
+          if (inp.source === 'frame') stats.frames_analyzed++; else stats.images_analyzed++;
+          await sb.rpc('mkt_visual_text_upsert', { p_media: inp.mediaId, p_post: contentPostId, p_source: inp.source, p_frame_ts_ms: inp.frameTsMs, p_model: process.env.MKT_VISION_MODEL ?? 'claude-sonnet-4-6', p_text: r.fields.visible_text ?? '', p_structured: r.fields, p_confidence: null, p_cost: perRowCost, p_status: 'done', p_failure: null, p_raw: null });
+        }
       }
     } catch (e) {
       // FATAL, not degradation. This post had images to read and the read died,
