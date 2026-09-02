@@ -16,7 +16,7 @@ import { storeCreative } from './creativeStore.js';
 import { normalizeLandingUrl, campaignSignature, urlKey, insightKey } from './adIntel.js';
 import { scoreCandidates, decideAutoConfirm, type OrgIdentity } from './advertiserScoring.js';
 import {
-  attributeCaption, shouldSnapshot, browserbaseFallbackEligible, computeCommonTokens,
+  attributeCaption, shouldSnapshot, browserbaseFallbackEligible, computeCommonTokens, normalizeAr,
   type ProjectAlias, type Metrics,
 } from './pipeline.js';
 import { runOrganizationDiscovery } from './discovery/discoveryEngine.js';
@@ -59,6 +59,37 @@ async function loadAllProjectNames(sb: SupabaseClient): Promise<ProjectAlias[]> 
     const d = (r.data ?? {}) as Record<string, unknown>;
     return { projectId: r.id as string, nameAr: (d.project_name as string) ?? null, nameEn: (d.project_name_en as string) ?? null, tokens: [] };
   }).filter((p) => p.nameAr || p.nameEn);
+}
+
+/**
+ * Developer / marketer NAMES are never distinctive for a SPECIFIC project — a
+ * project is usually "<developer> <number/suffix>" (الماجدية 174, ريفييرا 61) and
+ * the developer's logo/name sits on every post, including pure brand posts. So
+ * treat every tracked org's name tokens as non-distinctive: a match on the
+ * developer name ALONE must never score as a project match. This fixes the case
+ * computeCommonTokens misses — a developer with a SINGLE catalogued project, where
+ * the ≥2-project frequency rule never flags the developer word, so a logo-only
+ * brand post scored 0.95 for that one project (the ديارا مشارف / آبه incidents).
+ */
+async function loadDeveloperTokens(sb: SupabaseClient): Promise<string[]> {
+  const out = new Set<string>();
+  const { data } = await sb.from('mkt_organizations').select('name_ar, name_en');
+  for (const r of data ?? []) {
+    for (const raw of [r.name_ar as string | null, r.name_en as string | null]) {
+      for (const w of normalizeAr(raw).split(/\s+/)) {
+        if (w.length >= 3 && !/^\d+$/.test(w)) out.add(w);
+      }
+    }
+  }
+  return [...out];
+}
+
+/** Global non-distinctive token set: series/developer names shared across ≥2
+ *  projects PLUS every tracked org's own name tokens (loadDeveloperTokens). */
+async function loadCommonTokens(sb: SupabaseClient): Promise<Set<string>> {
+  const common = computeCommonTokens(await loadAllProjectNames(sb));
+  for (const t of await loadDeveloperTokens(sb)) common.add(t);
+  return common;
 }
 
 async function publisherProjectIds(sb: SupabaseClient, orgId: string | null): Promise<string[]> {
@@ -159,7 +190,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
     } else if (job.kind === 'incremental' || job.kind === 'backfill') {
       const pubProjects = await publisherProjectIds(sb, orgId);
       const index = await loadProjectIndex(sb, pubProjects);
-      const commonTokens = computeCommonTokens(await loadAllProjectNames(sb));
+      const commonTokens = await loadCommonTokens(sb);
       // Explicit params.limit wins (capped 50) — used for bounded validation runs;
       // else backfill uses the settings default, incremental a fixed recent window.
       const paramLimit = typeof job.params.limit === 'number' ? Math.min(50, Math.max(1, job.params.limit)) : null;
@@ -359,7 +390,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       apifyCost = result.cost;
       const pubProjects = await publisherProjectIds(sb, adOrgId);
       const index = await loadProjectIndex(sb, pubProjects);
-      const commonTokens = computeCommonTokens(await loadAllProjectNames(sb));
+      const commonTokens = await loadCommonTokens(sb);
       const seen: string[] = [];
       const touchedCampaigns = new Set<string>();
       const newCampaignIds = new Set<string>();
@@ -453,7 +484,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
     } else if (job.kind === 'attribution' || job.kind === 'reprocess') {
       const { data: posts } = await sb.from('mkt_content_posts').select('id, caption, organization_id').limit(500);
       stats.received = posts?.length ?? 0;
-      const commonTokens = computeCommonTokens(await loadAllProjectNames(sb));
+      const commonTokens = await loadCommonTokens(sb);
       const indexCache = new Map<string, ProjectAlias[]>();
       for (const p of posts ?? []) {
         const org = (p.organization_id as string) ?? '';
