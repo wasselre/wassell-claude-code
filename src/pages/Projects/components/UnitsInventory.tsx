@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Check, Download, FileText, GitCompare, ListPlus, Loader2, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -174,6 +174,37 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
     return rec ? resolveProjectView({ models, records }, rec, { isAr, translate: getEntityFieldText }) : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, models, records, projectId, isAr, translationVersion]);
+
+  // Re-resolve the project + the filtered units in a REQUESTED language, so the
+  // WhatsApp PDF can be sent in English even while the app UI is Arabic (and
+  // vice-versa). Names come from the translation variant (else the source),
+  // geo names localize with an Arabic fallback, and option labels are picked in
+  // the requested language — the same resolvers the on-screen views use. When
+  // the requested language equals the UI language we reuse the already-resolved
+  // views. The Send/Download PDF path is the only caller; nothing else re-runs.
+  const projectViewByLang = useCallback(
+    (wantAr: boolean): ProjectView | null => {
+      if (wantAr === isAr) return projectView;
+      const pm = modelByName(models, 'all_projects');
+      const rec = pm ? (records[pm.id] ?? []).find((r) => r.id === (project?.id ?? projectId)) : undefined;
+      return rec ? resolveProjectView({ models, records }, rec, { isAr: wantAr, translate: getEntityFieldText }) : projectView;
+    },
+    [isAr, projectView, models, records, project, projectId],
+  );
+
+  const unitsByLang = useCallback(
+    (wantAr: boolean): UnitView[] => {
+      if (wantAr === isAr) return filtered;
+      const byId = new Map(
+        unitsForProject({ models, records }, projectId).map((r) => [
+          r.id,
+          resolveUnitView({ models, records }, r, { isAr: wantAr, translate: getEntityFieldText }),
+        ]),
+      );
+      return filtered.map((u) => byId.get(u.id)).filter((u): u is UnitView => !!u);
+    },
+    [isAr, filtered, models, records, projectId],
+  );
 
   const [pdfOpen, setPdfOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -422,11 +453,11 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
           chatWid={chatPdf.chatWid}
           clientName={chatPdf.clientName}
           clientPhone={chatPdf.clientPhone}
-          titleFor={(a) => (a ? `وحدات ${projectView.name ?? ''}`.trim() : `${projectView.name ?? 'Project'} units`)}
+          titleFor={(a) => (a ? `وحدات ${projectViewByLang(true)?.name ?? ''}`.trim() : `${projectViewByLang(false)?.name ?? 'Project'} units`)}
           subtitleFor={(a) => (a ? `${filtered.length} وحدة` : `${filtered.length} units`)}
           filenameFor={() => unitsPdfFilename(projectView)}
-          captionFor={(a) => (a ? `قائمة وحدات ${projectView.name ?? ''}`.trim() : `${projectView.name ?? 'Project'} — units list`)}
-          buildFor={(a) => buildUnitsTablePdf({ project: projectView, units: filtered, isAr: a })}
+          captionFor={(a) => (a ? `قائمة وحدات ${projectViewByLang(true)?.name ?? ''}`.trim() : `${projectViewByLang(false)?.name ?? 'Project'} — units list`)}
+          buildFor={(a) => buildUnitsTablePdf({ project: projectViewByLang(a) ?? projectView, units: unitsByLang(a), isAr: a })}
         />
       )}
     </div>

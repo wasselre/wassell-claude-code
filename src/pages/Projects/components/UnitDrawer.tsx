@@ -6,8 +6,9 @@ import { useAppStore } from '@/stores/appStore';
 import { canEditRecord, getFieldPermission } from '@/lib/permissions';
 import { signViewUrls } from '@/lib/files/client';
 import { isFileIdValue } from '@/pages/Records/components/useFileRowMap';
-import { modelByName, fieldByCandidates, type ProjectView } from '@/lib/projects/projectView';
-import type { UnitView } from '@/lib/projects/unitView';
+import { modelByName, fieldByCandidates, resolveProjectView, type ProjectView } from '@/lib/projects/projectView';
+import { resolveUnitView, type UnitView } from '@/lib/projects/unitView';
+import { getEntityFieldText } from '@/lib/recordTranslation/store';
 import { buildUnitPdf, unitPdfFilename } from '@/lib/projects/unitsPdf';
 import { downloadPdf, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 import SendUnitsPdfModal from '@/pages/Chats/components/SendUnitsPdfModal';
@@ -184,6 +185,30 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, onSaveToClient, saveOptionState, onClose }: UnitDrawerProps) {
   const addToast = useAppStore((s) => s.addToast);
+  const models = useAppStore((s) => s.models);
+  const records = useAppStore((s) => s.records);
+
+  // Re-resolve the project + unit in a REQUESTED language so the WhatsApp PDF
+  // can be sent in English even while the app UI is Arabic (and vice-versa).
+  // Same resolvers as the on-screen views: the project name comes from the
+  // translation variant (else the source), geo names localize with an Arabic
+  // fallback, and option labels are picked in the requested language. When the
+  // requested language equals the current one we reuse the props unchanged.
+  const projectByLang = (wantAr: boolean): ProjectView | null => {
+    if (!project || wantAr === isAr) return project ?? null;
+    const pm = modelByName(models, 'all_projects');
+    const rec = pm ? (records[pm.id] ?? []).find((r) => r.id === project.id) : undefined;
+    return rec ? resolveProjectView({ models, records }, rec, { isAr: wantAr, translate: getEntityFieldText }) : project;
+  };
+  const unitByLang = (wantAr: boolean): UnitView | null => {
+    if (!unit || wantAr === isAr) return unit ?? null;
+    const um = modelByName(models, 'units');
+    const rec = um ? (records[um.id] ?? []).find((r) => r.id === unit.id) : undefined;
+    return rec ? resolveUnitView({ models, records }, rec, { isAr: wantAr, translate: getEntityFieldText }) : unit;
+  };
+  const projectNameForLang = (wantAr: boolean): string =>
+    projectByLang(wantAr)?.name ?? projectName ?? '';
+
   // Resolve the plan image: it's a files.id UUID (private wassel-files bucket) →
   // batch-sign a view URL; legacy http values are used directly.
   const [planUrl, setPlanUrl] = useState<string | null>(null);
@@ -413,10 +438,13 @@ export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, 
           clientName={chatPdf.clientName}
           clientPhone={chatPdf.clientPhone}
           titleFor={(a) => (a ? `وحدة ${unit.code ?? ''}`.trim() : `Unit ${unit.code ?? ''}`.trim())}
-          subtitleFor={(a) => [projectName, unit.type ? (a ? unit.type.label_ar : unit.type.label_en) : null].filter(Boolean).join(' · ')}
+          subtitleFor={(a) => {
+            const u = unitByLang(a) ?? unit;
+            return [projectNameForLang(a), u.type ? (a ? u.type.label_ar : u.type.label_en) : null].filter(Boolean).join(' · ');
+          }}
           filenameFor={() => unitPdfFilename(project, unit)}
-          captionFor={(a) => (a ? `تفاصيل الوحدة ${unit.code ?? ''} — ${projectName ?? ''}`.trim() : `Unit ${unit.code ?? ''} — ${projectName ?? ''}`.trim())}
-          buildFor={(a) => buildUnitPdf({ project, unit, isAr: a })}
+          captionFor={(a) => (a ? `تفاصيل الوحدة ${unit.code ?? ''} — ${projectNameForLang(true)}`.trim() : `Unit ${unit.code ?? ''} — ${projectNameForLang(false)}`.trim())}
+          buildFor={(a) => buildUnitPdf({ project: projectByLang(a) ?? project, unit: unitByLang(a) ?? unit, isAr: a })}
         />
       )}
     </div>
