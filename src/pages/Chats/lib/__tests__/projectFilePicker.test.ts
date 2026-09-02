@@ -113,6 +113,31 @@ describe('defaultBulkSelection', () => {
     expect([...defaultBulkSelection(items)]).toEqual(['doc']);
   });
 
+  it('picks exactly ONE brochure — the name-titled one wins over type-only ones', () => {
+    // The file-enrichment AI tags several marketing PDFs primary_category=brochure;
+    // only «بروشور المشروع» is the real brochure, and only it must be pre-checked.
+    const items = buildPickerItems(
+      [
+        entry('plan', 'pdf', { primary_category: 'brochure', title: 'الخطة التسويقية' }),
+        entry('broch', 'pdf', { primary_category: 'brochure', title: 'بروشور المشروع' }),
+        entry('specs', 'pdf', { primary_category: 'brochure', title: 'المواصفات الرئيسية' }),
+      ],
+      [],
+    );
+    expect([...defaultBulkSelection(items)]).toEqual(['broch']);
+  });
+
+  it('falls back to the first type-brochure when none is named a brochure', () => {
+    const items = buildPickerItems(
+      [
+        entry('d1', 'pdf', { primary_category: 'brochure', title: 'ملف أول' }),
+        entry('d2', 'pdf', { primary_category: 'brochure', title: 'ملف ثانٍ' }),
+      ],
+      [],
+    );
+    expect([...defaultBulkSelection(items)]).toEqual(['d1']);
+  });
+
   it('pre-checks no document when none is a brochure', () => {
     const items = buildPickerItems([entry('p1', 'image'), entry('info', 'pdf', { title: 'info sheet' })], []);
     expect([...defaultBulkSelection(items)]).toEqual(['p1']);

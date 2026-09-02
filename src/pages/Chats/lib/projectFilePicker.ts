@@ -75,14 +75,21 @@ export function nameFromUrl(url: string): string {
  *  `primary_category` is included so the tile can tell a brochure apart. */
 type PickerSource = { file: Pick<BusinessFileRow, 'id' | 'kind' | 'title' | 'original_name' | 'primary_category'> };
 
-/** A document is the brochure when its primary Document Type is `brochure`, or —
- *  for a not-yet-typed file — its name says so (AR «بروشور»/«كتيّب» or EN). */
+/** A document reads as a brochure when its name says so (AR «بروشور»/«كتيّب» or
+ *  EN «brochure»). Name is the STRONGEST signal — it's what the rep titled it. */
 const BROCHURE_NAME_RE = /بروشور|كتي(?:ّ)?ب|brochure/i;
+export function isBrochureName(name: string): boolean {
+  return BROCHURE_NAME_RE.test(name);
+}
+/** A document is a brochure when its primary Document Type is `brochure`, or its
+ *  name says so. Note: in practice several of a project's marketing PDFs get
+ *  typed `brochure` by the file-enrichment AI (marketing plan, spec sheet…), so
+ *  this is a WIDE net — `defaultBulkSelection` narrows it to ONE. */
 export function isBrochureFile(
   file: Pick<BusinessFileRow, 'primary_category'>,
   name: string,
 ): boolean {
-  return file.primary_category === 'brochure' || BROCHURE_NAME_RE.test(name);
+  return file.primary_category === 'brochure' || isBrochureName(name);
 }
 
 export function buildPickerItems(entries: PickerSource[], externalVideoUrls: string[]): PickerItem[] {
@@ -134,24 +141,30 @@ export function orderSelectedRefsBulk(items: PickerItem[], selected: ReadonlySet
 }
 
 /**
- * Default checkbox selection for the BULK picker: the BROCHURE document(s) only
- * (not every document — a project can carry a marketing plan, spec sheet, info
- * sheet… that the rep rarely sends unprompted) + the FIRST THREE photos. Videos
- * and non-brochure documents start unchecked. Photos arrive hero-first because
- * `resolveProjectFacts` prepends `main_image`, so "first three" = hero + next
- * two — the "top 3" pre-selection. The rep can still tick/untick anything
- * (including adding another document) before sending.
+ * Default checkbox selection for the BULK picker: exactly ONE brochure document
+ * + the FIRST THREE photos. A project can carry a marketing plan, spec sheet,
+ * info sheet… (several of which the file-enrichment AI also tags `brochure`), so
+ * pre-checking every brochure-typed document would still tick a pile of them —
+ * we narrow to one: prefer the document whose NAME says «بروشور»/brochure (the
+ * real project brochure), else the first document typed `primary_category`
+ * ='brochure', else no document. Videos and every other document start
+ * unchecked. Photos arrive hero-first because `resolveProjectFacts` prepends
+ * `main_image`, so "first three" = hero + next two — the "top 3" pre-selection.
+ * The rep can still tick/untick anything (including adding another document).
  */
 export const BULK_DEFAULT_PHOTO_COUNT = 3;
 export function defaultBulkSelection(items: PickerItem[]): Set<string> {
   const out = new Set<string>();
   let photos = 0;
   for (const it of items) {
-    if (it.group === 'document' && it.isBrochure) out.add(it.ref);
-    else if (it.group === 'photo' && photos < BULK_DEFAULT_PHOTO_COUNT) {
+    if (it.group === 'photo' && photos < BULK_DEFAULT_PHOTO_COUNT) {
       out.add(it.ref);
       photos++;
     }
   }
+  // ONE brochure: a name-titled brochure wins over a merely type-classified one.
+  const brochures = items.filter((it) => it.group === 'document' && it.isBrochure);
+  const chosen = brochures.find((it) => isBrochureName(it.name)) ?? brochures[0];
+  if (chosen) out.add(chosen.ref);
   return out;
 }
