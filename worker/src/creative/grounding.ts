@@ -258,26 +258,31 @@ export function validateConcepts(out: ConceptsOutput, ctx: GroundingCtx): Valida
 // ── Stage 2: base package ────────────────────────────────────────────────────
 export function validateBase(base: BasePackage, ctx: GroundingCtx): ValidationResult {
   const s = mkScan(ctx);
-  // NEVER throw (contracts §8): the model can hand back a non-array where the
-  // schema asks for one. Spreading / iterating that would crash the whole job
-  // instead of degrading to a validation error — normalise the model-supplied
-  // arrays we spread or iterate below.
-  const headlines = Array.isArray(base.design_text.headlines) ? base.design_text.headlines : [];
+  // NEVER throw (contracts §8): the model can hand back a package missing a core
+  // object (`strategy` / `design_text`), e.g. from a forced-tool fallback on a
+  // rejected schema. Flag it structurally and read through safe fallbacks so the
+  // rest of the battery still runs (→ retry / needs_attention, never a crash).
+  const strategy = base.strategy ?? ({} as BasePackage['strategy']);
+  const design = base.design_text ?? ({} as BasePackage['design_text']);
+  if (!base.strategy) s.errors.push({ path: 'strategy', rule: 'strategy_missing', detail: 'the package has no strategy object' });
+  if (!base.design_text) s.errors.push({ path: 'design_text', rule: 'design_text_missing', detail: 'the package has no design_text object' });
+  // The model can also hand back a non-array where the schema asks for one.
+  const headlines = Array.isArray(design.headlines) ? design.headlines : [];
   const slides = Array.isArray(base.slides) ? base.slides : [];
 
   // Language = the record's language (contracts §0 rule 5).
-  if (base.strategy.language !== ctx.language) {
+  if (strategy.language !== ctx.language) {
     s.errors.push({
       path: 'strategy.language',
       rule: 'language_mismatch',
-      detail: `strategy.language is '${base.strategy.language}' but the content record is '${ctx.language}' — no automatic second language`,
+      detail: `strategy.language is '${strategy.language}' but the content record is '${ctx.language}' — no automatic second language`,
     });
   }
 
   // design_text.project_name_lead = the project name (or its known Latin form).
-  const lead = base.design_text.project_name_lead?.trim() ?? '';
+  const lead = design.project_name_lead?.trim() ?? '';
   const projectName = ctx.facts.project_name;
-  const latin = base.design_text.latin_name?.trim() ?? '';
+  const latin = design.latin_name?.trim() ?? '';
   const leadOk = lead.length > 0
     && (normAr(lead) === normAr(projectName) || (latin.length > 0 && normAr(lead) === normAr(latin)));
   if (!leadOk) {
@@ -291,7 +296,7 @@ export function validateBase(base: BasePackage, ctx: GroundingCtx): ValidationRe
   }
 
   // Headline counts: single 1–4; carousel cover 1–3 + a headline on every slide.
-  const format = base.strategy.format;
+  const format = strategy.format;
   const headlineCount = headlines.length;
   if (format === 'single') {
     if (headlineCount < 1 || headlineCount > 4) {
@@ -312,7 +317,7 @@ export function validateBase(base: BasePackage, ctx: GroundingCtx): ValidationRe
   }
 
   // Copy battery: design text + every slide.
-  const dt = base.design_text;
+  const dt = design;
   checkCopy([...headlines, dt.cta_on_design ?? ''].join('\n'), dt.fact_refs, 'design_text', s);
   checkFactRefs(dt.fact_refs, 'design_text.fact_refs', s);
   for (const slide of slides) {

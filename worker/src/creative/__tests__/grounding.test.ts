@@ -139,6 +139,17 @@ describe('validateBase — happy path', () => {
 });
 
 describe('validateBase — robustness', () => {
+  it('NEVER throws when the model omits the strategy / design_text objects', () => {
+    // Live أكنان 25: a rejected schema forced a forced-tool fallback whose
+    // result lacked `strategy`, crashing sanitize/validate with "reading 'format'".
+    const base = mkBase();
+    delete (base as unknown as { strategy?: unknown }).strategy;
+    delete (base as unknown as { design_text?: unknown }).design_text;
+    let r!: ReturnType<typeof validateBase>;
+    expect(() => { r = validateBase(base, mkCtx()); }).not.toThrow();
+    expect(has(r.errors, 'strategy_missing')).toBe(true);
+    expect(has(r.errors, 'design_text_missing')).toBe(true);
+  });
   it('NEVER throws when the model hands back non-array headlines / slides', () => {
     const base = mkBase();
     (base.design_text as unknown as { headlines: unknown }).headlines = 'ليست مصفوفة';

@@ -278,7 +278,10 @@ export function sanitizeBasePackage(input: DirectorInput, raw: BasePackage): Bas
     do_not_copy: r.do_not_copy,
     differ: r.differ,
   }));
-  const refResult = selectReferences(input.referenceRows, { format: raw.strategy.format }, { picks: modelRefs });
+  // raw.strategy can be absent if the model returned an incomplete object
+  // (e.g. a forced-tool fallback). Never throw here — a missing strategy is
+  // caught downstream by validateBase (structural error → retry / needs_attention).
+  const refResult = selectReferences(input.referenceRows, { format: raw.strategy?.format }, { picks: modelRefs });
   for (const d of refResult.dropped) warnings.push(`reference ${d.ref_id} dropped (${d.reason})`);
   warnings.push(...refResult.warnings);
   const references: ReferencePick[] = refResult.references;

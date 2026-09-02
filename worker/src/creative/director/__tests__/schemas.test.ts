@@ -64,6 +64,21 @@ describe('schemas mirror contracts.ts', () => {
     walk(DERIVATIVES_OUTPUT_SCHEMA);
   });
 
+  it('nullable enums use anyOf, never a union type+enum (Anthropic structured-output rejects the latter)', () => {
+    // Live أكنان 25: `{type:['string','null'], enum:[...]}` was rejected by the
+    // structured-output validator ("Enum value 'real' does not match declared
+    // type '['string','null']'"), forcing a lossy forced-tool fallback.
+    const asset = (BASE_PACKAGE_SCHEMA.properties!.assets as { items: unknown }).items as SchemaObj;
+    for (const key of ['nature', 'source', 'rights', 'production_state']) {
+      const field = asset.properties![key] as { anyOf?: unknown[]; type?: unknown; enum?: unknown };
+      expect(Array.isArray(field.anyOf), `${key} should be a nullable-enum anyOf`).toBe(true);
+      // must NOT be the rejected shape: a union `type` array carrying an `enum`
+      expect(Array.isArray(field.type) && field.enum !== undefined).toBe(false);
+      const branch = (field.anyOf as SchemaObj[]).find((b) => Array.isArray((b as { enum?: unknown }).enum)) as { type?: unknown };
+      expect(branch?.type).toBe('string'); // the enum branch is a plain string, not a union
+    }
+  });
+
   it('AiRecommendation.execution is NOT in the schema (the model never emits it)', () => {
     const rec = (BASE_PACKAGE_SCHEMA.properties!.ai_recommendations as { items: unknown }).items as SchemaObj;
     expect(props(rec)).not.toContain('execution');

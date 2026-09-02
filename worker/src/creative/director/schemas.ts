@@ -40,7 +40,12 @@ const strOrNull = { type: ['string', 'null'] } as const;
 const intOrNull = { type: ['integer', 'null'] } as const;
 const strArr = { type: 'array', items: str } as const;
 const enumOf = (values: readonly string[]) => ({ type: 'string', enum: [...values] }) as const;
-const enumOrNull = (values: readonly string[]) => ({ type: ['string', 'null'], enum: [...values, null] }) as const;
+// Nullable enum. Anthropic's structured-output (output_config.format) validator
+// REJECTS an `enum` combined with a UNION type (`type:['string','null']`):
+//   "Enum value 'real' does not match declared type '['string', 'null']'"
+// which silently forced the whole PACKAGE call onto the forced-tool fallback
+// (live أكنان 25). The anyOf form is the nullable-enum shape it accepts.
+const enumOrNull = (values: readonly string[]) => ({ anyOf: [{ type: 'string', enum: [...values] }, { type: 'null' }] }) as const;
 const pxPair = { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 } as const;
 
 // ── Stage 1: ConceptsOutput ──────────────────────────────────────────────────
