@@ -149,7 +149,7 @@ export default function SceneReferences({ scene, isAr, canEdit }: {
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
                   <span className={`pill ${r.status === 'accepted' ? 'p-go' : 'p-idle'}`} style={{ fontSize: 9.5, padding: '1px 5px' }}>
-                    {isAr ? KIND_LABEL[r.kind].ar : KIND_LABEL[r.kind].en}
+                    {(() => { const k = KIND_LABEL[r.kind]; return k ? (isAr ? k.ar : k.en) : r.kind; })()}
                   </span>
                   {r.kind === 'competitor_shot' && (
                     <span style={{ color: 'var(--mute)' }}>

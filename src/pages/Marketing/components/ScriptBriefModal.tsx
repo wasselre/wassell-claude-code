@@ -193,8 +193,8 @@ export default function ScriptBriefModal({
                 {brief.campaign?.offer && <span style={{ color: 'var(--mute)' }}> · {brief.campaign.offer}</span>}
               </BriefRow>
               <BriefRow label={isAr ? 'الغرض' : 'Purpose'}>
-                {isAr ? PURPOSE_LABELS[brief.purpose].ar : PURPOSE_LABELS[brief.purpose].en}
-                <span style={{ color: 'var(--mute)' }}> · {isAr ? FUNNEL_LABELS[brief.funnel].ar : FUNNEL_LABELS[brief.funnel].en}</span>
+                {(() => { const p = PURPOSE_LABELS[brief.purpose] ?? PURPOSE_LABELS.unknown; return isAr ? p.ar : p.en; })()}
+                {(() => { const f = FUNNEL_LABELS[brief.funnel]; return f ? <span style={{ color: 'var(--mute)' }}> · {isAr ? f.ar : f.en}</span> : null; })()}
               </BriefRow>
               <BriefRow label={isAr ? 'المنصّات' : 'Platforms'}>{platforms}</BriefRow>
               <BriefRow label={isAr ? 'الهدف' : 'Objective'}>{brief.objective || '—'}</BriefRow>

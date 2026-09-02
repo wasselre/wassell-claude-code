@@ -150,7 +150,7 @@ function SceneCard({
         </span>
         {s.asset_requirement && (
           <Pill tone={s.asset_requirement === 'footage' ? 'wait' : 'idle'}>
-            {isAr ? ASSET_REQ[s.asset_requirement].ar : ASSET_REQ[s.asset_requirement].en}
+            {(() => { const a = ASSET_REQ[s.asset_requirement]; return a ? (isAr ? a.ar : a.en) : s.asset_requirement; })()}
           </Pill>
         )}
         {s.angle && <span style={{ fontSize: 11, color: 'var(--mute)', marginInlineStart: 'auto' }}>{s.angle}</span>}
@@ -180,7 +180,7 @@ function SceneCard({
 
       {(s.warnings.length > 0 || claims.length > 0 || judgeNotes.length > 0 || s.production_note) && (
         <div style={{ marginTop: 8, display: 'grid', gap: 3 }}>
-          {s.warnings.map((w, i) => <div key={`w${i}`} style={{ fontSize: 11.5, color: 'var(--wait)' }}>⚠ {w}</div>)}
+          {(s.warnings ?? []).map((w, i) => <div key={`w${i}`} style={{ fontSize: 11.5, color: 'var(--wait)' }}>⚠ {w}</div>)}
           {claims.map((c, i) => <VerdictLine key={`c${i}`} v={c} isAr={isAr} />)}
           {judgeNotes.map((n, i) => <div key={`j${i}`} style={{ fontSize: 11.5, color: 'var(--ink-2)' }}>{isAr ? 'المراجع: ' : 'Reviewer: '}{n}</div>)}
           {s.production_note && <div style={{ fontSize: 11.5, color: 'var(--mute)' }}>{isAr ? 'ملاحظة إنتاج: ' : 'Production note: '}{s.production_note}</div>}

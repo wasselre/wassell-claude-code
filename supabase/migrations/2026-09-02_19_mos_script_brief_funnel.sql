@@ -1,0 +1,7 @@
+-- The brief RPC now returns `funnel` (top/mid/bottom, inferred from objective):
+-- awareness→top, sales→bottom, else mid. ScriptBriefModal reads brief.funnel
+-- unconditionally, so a missing key white-screened the content page. The modal
+-- and draft-review components were also hardened against off-vocabulary label
+-- keys. See mos_script_brief in 2026-09-02_12 (superseded by this definition).
+-- (function body applied live; kept here for the record.)
+-- CREATE OR REPLACE FUNCTION public.mos_script_brief(...) ... 'funnel', v_funnel ...
