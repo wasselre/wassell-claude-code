@@ -58,28 +58,33 @@ export async function saveUnitToClient(
   const code = asString(data.unit_code) ?? asString(data.unit_number) ?? '';
   const unitName = [projectName, code].filter(Boolean).join(' — ');
 
-  const unit = await saveClientOption({
-    clientId,
-    sourceType: 'unit',
-    sourceId: unitRec.id,
-    sourceName: unitName || null,
-    facts: buildOptionFacts(store, 'unit', unitRec),
-    addedFrom,
-    status: 'suitable',
-  });
-
-  let project: SaveOptionResult | null = null;
-  if (projRec) {
-    project = await saveClientOption({
+  // The unit option and its parent-project option are two independent records
+  // (different source_type, different rows), so their writes never race. Run
+  // them CONCURRENTLY: previously they awaited sequentially, so a single "add
+  // unit" cost two full record_save round-trips end-to-end — and either one
+  // hitting the DB's occasional multi-second tail stalled the whole action.
+  const [unit, project] = await Promise.all([
+    saveClientOption({
       clientId,
-      sourceType: 'project',
-      sourceId: projRec.id,
-      sourceName: projectName,
-      facts: buildOptionFacts(store, 'project', projRec),
+      sourceType: 'unit',
+      sourceId: unitRec.id,
+      sourceName: unitName || null,
+      facts: buildOptionFacts(store, 'unit', unitRec),
       addedFrom,
       status: 'suitable',
-    });
-  }
+    }),
+    projRec
+      ? saveClientOption({
+          clientId,
+          sourceType: 'project',
+          sourceId: projRec.id,
+          sourceName: projectName,
+          facts: buildOptionFacts(store, 'project', projRec),
+          addedFrom,
+          status: 'suitable',
+        })
+      : Promise.resolve<SaveOptionResult | null>(null),
+  ]);
 
   return { unit, project };
 }

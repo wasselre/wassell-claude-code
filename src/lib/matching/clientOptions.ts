@@ -252,10 +252,26 @@ export interface BulkSaveSummary {
   failed: number;
 }
 
+/** Cap on concurrent option writes in one bulk save — fast without flooding the DB. */
+const BULK_SAVE_CONCURRENCY = 6;
+
 /**
  * Save many options for a client (e.g. the SELECTED Project Finder cards). Each
- * option is its own record, so writes are independent; we run them sequentially
- * for deterministic tallying. Returns counts the UI can summarize in a toast.
+ * option is its own record with a distinct (source_type + source_id) uniqueness
+ * key, so the writes are fully independent.
+ *
+ * PERF (2026-09-02): these used to run STRICTLY SEQUENTIALLY — N selected cards
+ * meant N record_save round-trips end-to-end, so one save hitting the DB's
+ * occasional multi-second tail stalled the whole batch. We now run them with a
+ * bounded concurrency (BULK_SAVE_CONCURRENCY) so the wall-clock time is roughly
+ * (N / 6) round-trips instead of N, while never firing an unbounded burst of
+ * writes at the DB. Tallying stays deterministic (aggregated from the settled
+ * results, order-independent).
+ *
+ * Items are de-duplicated on (source_type + source_id) first: running two writes
+ * for the SAME source in parallel would both read "no existing row" off the same
+ * store snapshot and each create a duplicate. Finder result sets are already
+ * unique per source, so this only guards against an accidental repeat.
  */
 export async function bulkSaveOptions(
   clientId: string,
@@ -263,13 +279,37 @@ export async function bulkSaveOptions(
   addedFrom: ClientOptionAddedFrom = 'project_finder',
 ): Promise<BulkSaveSummary> {
   const summary: BulkSaveSummary = { created: 0, updated: 0, skippedEliminated: 0, failed: 0 };
-  for (const item of items) {
-    const res = await saveClientOption({ ...item, clientId, addedFrom: item.addedFrom ?? addedFrom });
+
+  // De-dup on the uniqueness key so parallel writes can't race into a duplicate.
+  const seen = new Set<string>();
+  const unique = items.filter((it) => {
+    const key = `${it.sourceType}:${it.sourceId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const tally = (res: SaveOptionResult) => {
     if (res.outcome === 'created') summary.created += 1;
     else if (res.outcome === 'updated') summary.updated += 1;
     else if (res.outcome === 'eliminated_exists') summary.skippedEliminated += 1;
     else summary.failed += 1;
-  }
+  };
+
+  // Simple bounded-concurrency worker pool over a shared cursor.
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= unique.length) return;
+      const item = unique[i]!;
+      const res = await saveClientOption({ ...item, clientId, addedFrom: item.addedFrom ?? addedFrom });
+      tally(res);
+    }
+  };
+  const lanes = Math.min(BULK_SAVE_CONCURRENCY, unique.length);
+  await Promise.all(Array.from({ length: lanes }, () => worker()));
+
   return summary;
 }
 
