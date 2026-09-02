@@ -218,6 +218,29 @@ describe('validateBase — entities + prohibited phrases', () => {
     const rules: WriterRules = { shared: ['استخدم صيغة «تبدأ من» عند ذكر السعر'], post: [], decisions_log: [] };
     expect(prohibitedPhrases(rules)).toEqual([]);
   });
+  it('does NOT ban a PRESCRIBED phrase paired with «never» in the same line (real writer_rules)', () => {
+    // Live regression (أكنان 25): this exact seeded rule has «تبدأ من» in its
+    // first clause and "never" in a LATER clause. The naive whole-line scan
+    // banned «تبدأ من» — the very phrase the rule prescribes.
+    const rules: WriterRules = {
+      shared: ['Use the AVAILABLE price range as the «تبدأ من» — never the all-unit range (a sold-out tier must never set the headline price).'],
+      post: [], decisions_log: [],
+    };
+    expect(prohibitedPhrases(rules)).toEqual([]);
+  });
+  it('still bans «بدون سعي» from the real NEVER-say rule, and readiness phrases stay unbanned', () => {
+    const rules: WriterRules = {
+      shared: [
+        'NEVER say «بدون سعي» anywhere — headline, caption, or script — even when it sits in the project record; drop it silently.',
+        'Off-plan flag works BOTH ways: «بيع على الخارطة» + delivery date when off-plan; «جاهزة للسكن / استلام فوري» when ready — never imply the wrong one.',
+      ],
+      post: [], decisions_log: [],
+    };
+    const banned = prohibitedPhrases(rules);
+    expect(banned).toContain('بدون سعي');
+    expect(banned).not.toContain('بيع على الخارطة');
+    expect(banned).not.toContain('جاهزة للسكن / استلام فوري');
+  });
 });
 
 describe('validateBase — assets + rights', () => {
@@ -378,6 +401,21 @@ describe('validateConcepts', () => {
     const r = validateConcepts(out, mkCtx());
     expect(has(r.errors, 'concept_count')).toBe(true);
     expect(has(r.errors, 'entity_phone')).toBe(true);
+  });
+  it('does NOT read fact-reference codes (F5, F8-F11) in the rationale as unverified claims', () => {
+    // Live regression (أكنان 25): the model cites fact codes in `why`/`angle`
+    // ("نوع الوحدات (F8-F11) وسعر البدء (F5)"). Those are internal citations,
+    // never customer numbers — the extractor pulled 8/11/5 and flagged them.
+    const c: Concept = {
+      id: 'c1', title: 'تنوّع الوحدات', angle: 'يبرز التنوع الفعلي (F8-F11)', format: 'single',
+      one_line_design_idea: 'اسم المشروع + تشكيلة وحدات جاهزة للسكن',
+      leans_on_reference: null, suggested_targets: ['instagram:feed'],
+      why: 'يبرز نوع الوحدات (F8-F11) وسعر البدء الحقيقي (F5) كخطّاف',
+    };
+    const out: ConceptsOutput = { concepts: [c, mkConcept('c2', 'موقع الحي')], recommended: 'c1', warnings: [], missing: [] };
+    const r = validateConcepts(out, mkCtx());
+    expect(has(r.errors, 'claim_unverified')).toBe(false);
+    expect(r.errors).toEqual([]);
   });
 });
 

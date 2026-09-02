@@ -95,18 +95,34 @@ const OFFPLAN_WORDS = /على\s*الخارطة|على\s*المخطط|تحت\s*ا
 /** Lines that read as prohibitions — quoted phrases inside them are banned verbatim. */
 const PROHIBITIVE_LINE = /ممنوع|يُمنع|لا\s*تستخدم|لا\s*تستعمل|لا\s*تكتب|تجنّب|تجنب|يُتجنّب|محظور|تُحظر|never|avoid|prohibit|do\s*not|don't/i;
 
+/**
+ * Clause boundaries WITHIN a rule line. Rules routinely pair a PRESCRIBED phrase
+ * with a PROHIBITED one across one of these ("use «A» — never «B»", "«ready» when
+ * ready; never «off-plan»"). Splitting on them lets us ban only the span the
+ * prohibition actually introduces. Plain hyphen-minus is deliberately EXCLUDED
+ * (it appears inside words like "all-unit"/"off-plan" and inside quoted phrases).
+ */
+const CLAUSE_SEP = /[—–:;،؛]/;
+
 // ── Prohibited phrases (from writer_rules) ───────────────────────────────────
 /**
  * Extract the banned verbatim phrases from the rules: quoted spans («…» or
- * "…") inside lines that read as prohibitions. This is how «بدون سعي» in a
- * rule like «ممنوع استخدام «بدون سعي» في أي نص» becomes a hard validator.
+ * "…") that a prohibition marker INTRODUCES (marker to the left of the span,
+ * within the same clause). This is how «بدون سعي» in «NEVER say «بدون سعي»…»
+ * becomes a hard validator — WITHOUT also banning the prescribed «تبدأ من» in
+ * «Use the AVAILABLE price range as the «تبدأ من» — never the all-unit range»,
+ * where the quoted phrase sits in a different clause from the "never".
  */
 export function prohibitedPhrases(rules: WriterRules): string[] {
   const out = new Set<string>();
+  const addBanned = (clause: string): void => {
+    const markerIdx = clause.search(PROHIBITIVE_LINE);
+    if (markerIdx < 0) return;
+    for (const m of clause.matchAll(/«([^»\n]{2,60})»/g)) if (m.index! > markerIdx) out.add(m[1]!.trim());
+    for (const m of clause.matchAll(/"([^"\n]{2,60})"/g)) if (m.index! > markerIdx) out.add(m[1]!.trim());
+  };
   for (const line of [...rules.shared, ...rules.post]) {
-    if (!PROHIBITIVE_LINE.test(line)) continue;
-    for (const m of line.matchAll(/«([^»\n]{2,60})»/g)) out.add(m[1]!.trim());
-    for (const m of line.matchAll(/"([^"\n]{2,60})"/g)) out.add(m[1]!.trim());
+    for (const clause of line.split(CLAUSE_SEP)) addBanned(clause);
   }
   return [...out].filter((p) => normAr(p).length >= 2);
 }
@@ -119,9 +135,18 @@ interface Scan {
   ctx: GroundingCtx;
 }
 
+/**
+ * Fact-reference codes (F1, F12, ranges like F8-F11 or F30-F39) are the internal
+ * citation handles the facts pack presents to the model — never customer claims.
+ * They must be stripped before claim extraction, or their digits (8, 11, 30…) get
+ * read as unverified price/area numbers (a validator false-positive seen live on
+ * أكنان 25: «5/7/8/11» flagged, all from F-codes the model wrote in its rationale).
+ */
+const FACT_CODE = /\bF\d+(?:\s*[-–]\s*F?\d+)?\b/g;
+
 /** Claim gate: every numeric mention must resolve to a claimable fact AND be cited. */
 function gateClaims(text: string, factRefs: string[], path: string, s: Scan, opts: { requireCitation: boolean }): void {
-  const items = extractMentions(text).map((m) => ({ scene: 0, field: 'voiceover' as const, mention: classifyMention(m) }));
+  const items = extractMentions(text.replace(FACT_CODE, ' ')).map((m) => ({ scene: 0, field: 'voiceover' as const, mention: classifyMention(m) }));
   if (items.length === 0) return;
   const verdicts = gateByClass(items, s.ctx.facts.facts, { forbidden_claim_classes: [] });
   for (const v of verdicts) {
@@ -213,9 +238,14 @@ export function validateConcepts(out: ConceptsOutput, ctx: GroundingCtx): Valida
   }
   for (const c of out.concepts ?? []) {
     const path = `concepts.${c.id}`;
+    // Gate only the CUSTOMER-FACING concept copy — the concept title and the
+    // one-line design idea (what actually reaches the design). `angle` and `why`
+    // are internal rationale shown to the reviewer but never published, and they
+    // legitimately cite fact codes (F5, F8-F11) and quote rule phrases — gating
+    // them produced false claim/prohibited flags with no bearing on the output.
     // Concepts carry no fact_refs — numbers are gated but the citation rule
     // applies only from the base package onward. Hard claim failures still error.
-    checkCopy(`${c.title}\n${c.angle}\n${c.one_line_design_idea}\n${c.why}`, null, path, s);
+    checkCopy(`${c.title}\n${c.one_line_design_idea}`, null, path, s);
   }
   return result(s);
 }
