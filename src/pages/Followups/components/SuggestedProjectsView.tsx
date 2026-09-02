@@ -30,6 +30,7 @@ import { chatPdfFromClient } from '@/lib/projects/sendPdfToChat';
 import FinderCard from './FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from './FinderRefinementBar';
 import FinderMapView from './FinderMapView';
+import { collectClientAreaItems } from '@/lib/geo/clientArea';
 import ProjectWhatsAppFlow from './ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import LeaveWithoutSavingModal from '@/components/matching/LeaveWithoutSavingModal';
@@ -258,6 +259,18 @@ export default function SuggestedProjectsView({
   // AT-LEAST minimum) and the per-field strictness bands (`preference_constraints`)
   // are both mapped inside draftToMatchRequirements now, so the finder and the live
   // inventory meter share one builder — nothing extra to wire here.
+  // The client's selected area AS SEARCHED — highlighted under the map pins so the
+  // rep sees which results fall inside it (draft rules win over the saved record,
+  // exactly as the search itself compiled them). Declared AFTER resolveLookupName.
+  const searchedAreaItems = useMemo(
+    () => collectClientAreaItems({
+      draft: searchedDraft,
+      savedClientData: (clientRec?.data as Record<string, unknown> | undefined) ?? null,
+      resolveDistrictName: (id) => resolveLookupName(id, 'districts'),
+    }),
+    [searchedDraft, clientRec?.data, resolveLookupName],
+  );
+
   function buildReqs(d: Record<string, unknown>): MatchRequirementsInput {
     return draftToMatchRequirements({ clientsModel, prefDraft: d, savedClientData: clientRec?.data ?? null, resolveLookupName });
   }
@@ -1224,6 +1237,7 @@ export default function SuggestedProjectsView({
               matches={[...ourProjects, ...tierItems]}
               isAr={isAr}
               focus={mapFocus}
+              areaItems={searchedAreaItems}
               onOpenDetails={onOpenDetails}
               renderSelectedCard={(item) => (
                 <FinderCard

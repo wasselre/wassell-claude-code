@@ -4,6 +4,7 @@ import { Ban, Check, Loader2, Map as MapIcon, MapPin, Minus, PenLine, Plus, Rota
 import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, GEO_LABEL_SUPPRESSION, buildPillIcon } from '@/lib/locationUtils';
+import { geojsonToPaths, geojsonToLinePaths } from '@/lib/geo/geojsonPaths';
 import { pickVisibleLabels } from '@/lib/geo/labelDeclutter';
 import {
   DIRECTION_DEFAULT_M, describeLocationItem, isDirectionRule, newDistrictItem, newDrawnAreaItem,
@@ -147,29 +148,8 @@ const PICKER_MAP_STYLE: google.maps.MapTypeStyle[] = [
   ...GEO_LABEL_SUPPRESSION,
 ];
 
-/** GeoJSON Polygon/MultiPolygon → google.maps paths (outer + hole rings). */
-function geojsonToPaths(g: { type: string; coordinates: unknown }): google.maps.LatLngLiteral[][] {
-  const ringToPath = (ring: unknown): google.maps.LatLngLiteral[] =>
-    (Array.isArray(ring) ? ring : [])
-      .filter((c): c is [number, number] => Array.isArray(c) && c.length >= 2)
-      .map((c) => ({ lat: c[1], lng: c[0] }));
-  if (g.type === 'Polygon') return ((g.coordinates as unknown[]) ?? []).map(ringToPath);
-  if (g.type === 'MultiPolygon') {
-    return ((g.coordinates as unknown[]) ?? []).flatMap((poly) => ((poly as unknown[]) ?? []).map(ringToPath));
-  }
-  return [];
-}
-
-/** GeoJSON LineString/MultiLineString → google.maps polyline paths. */
-function geojsonToLinePaths(g: { type: string; coordinates: unknown }): google.maps.LatLngLiteral[][] {
-  const lineToPath = (line: unknown): google.maps.LatLngLiteral[] =>
-    (Array.isArray(line) ? line : [])
-      .filter((c): c is [number, number] => Array.isArray(c) && c.length >= 2)
-      .map((c) => ({ lat: c[1], lng: c[0] }));
-  if (g.type === 'LineString') return [lineToPath(g.coordinates)];
-  if (g.type === 'MultiLineString') return ((g.coordinates as unknown[]) ?? []).map(lineToPath);
-  return [];
-}
+// geojsonToPaths / geojsonToLinePaths live in '@/lib/geo/geojsonPaths' (shared with
+// the finder's client-area layer) — imported at the top of this file.
 
 /** Andrew's monotone-chain convex hull over [lng,lat] points → a CLOSED ring
  *  (first point repeated at the end). Used to turn the vertices of several

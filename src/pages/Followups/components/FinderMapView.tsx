@@ -7,8 +7,10 @@ import { markActivity } from '@/lib/perf/freezeDetector';
 import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildColoredPinIcon, buildClusterIcon } from '@/lib/locationUtils';
 import type { FinderMatch, FinderSource } from '@/lib/matching/projectFinder';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
+import { useClientAreaLayer } from '@/components/map/useClientAreaLayer';
 import MapLayersOverlay from '@/components/map/MapLayersOverlay';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import type { LocationItem } from '@/lib/geo/locationItems';
 
 /**
  * MAP view for the Project Finder results — the alternative to the card list.
@@ -36,6 +38,11 @@ interface Props {
   focus?: { id: string; nonce: number } | null;
   /** Tailwind height for the map container. Default h-[70vh]. */
   heightClass?: string;
+  /** The client's selected area — the location items the search was gated by
+   *  (districts, geo-element rules, drawn shapes, legacy district picks). Drawn
+   *  as a shaded overlay under the pins so the rep sees which results fall
+   *  inside it. See useClientAreaLayer. */
+  areaItems?: LocationItem[] | null;
 }
 
 // Pin color by source — mirrors the card SourcePill so map & list read the same.
@@ -57,7 +64,7 @@ const asCoord = (v: unknown): number | null => {
 
 interface Plotted { match: FinderMatch; lat: number; lng: number }
 
-export default function FinderMapView({ matches, isAr, onOpenDetails, renderSelectedCard, focus, heightClass = 'h-[70vh]' }: Props) {
+export default function FinderMapView({ matches, isAr, onOpenDetails, renderSelectedCard, focus, heightClass = 'h-[70vh]', areaItems }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const isMobile = useIsMobile();
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
@@ -68,6 +75,9 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
   // zoom. Roads + landmarks are OFF here: they're now user-toggled context layers
   // owned by MapLayersOverlay (below), so the map opens clean. See useGeoBoundaryLayer.
   useGeoBoundaryLayer(map, { roads: false, landmarks: false });
+  // The client's selected area (compiled by the matcher's own preview RPC) shaded
+  // under the pins — include rules in copper, exclude rules in red.
+  const area = useClientAreaLayer(map, areaItems, isAr);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Full-view: the map wrapper enters the browser Fullscreen API (our own button
   // on the LEFT, since Google's default control sits top-right behind the layers
@@ -257,6 +267,20 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, map, isLoaded, plottedSig]);
 
+  // When the client's area arrives (it compiles server-side, so it lands after
+  // the pins' own fitBounds), widen the view to show the WHOLE area plus every
+  // pin — the point is to see which pins sit inside it. Keyed on the area's
+  // drawn-shape key, so panning/zooming afterwards isn't yanked back; a later
+  // pin-set change refits via the marker effect as before.
+  useEffect(() => {
+    if (!map || !isLoaded || !window.google || !area.bounds) return;
+    const bounds = new google.maps.LatLngBounds();
+    bounds.union(area.bounds);
+    for (const p of plotted) bounds.extend({ lat: p.lat, lng: p.lng });
+    map.fitBounds(bounds, 48);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, isLoaded, area.boundsKey]);
+
   if (keyMissing) {
     return (
       <div className={`card flex ${heightClass} items-center justify-center p-6 text-center text-sm text-charcoal/60`}>
@@ -350,6 +374,33 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
             </span>
           )}
         </span>
+        {(area.hasInclude || area.hasExclude || area.loading || area.undrawable > 0) && (
+          <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+            {area.hasInclude && (
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block h-2.5 w-2.5 rounded-sm border" style={{ background: '#B8734F22', borderColor: '#B8734F' }} />
+                {L('منطقة العميل', "Client's area")}
+              </span>
+            )}
+            {area.hasExclude && (
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block h-2.5 w-2.5 rounded-sm border" style={{ background: '#B91C1C1A', borderColor: '#B91C1C' }} />
+                {L('منطقة مستثناة', 'Excluded area')}
+              </span>
+            )}
+            {area.loading && !area.hasInclude && !area.hasExclude && (
+              <span className="inline-flex items-center gap-1 text-charcoal/45">
+                <Loader2 size={11} className="animate-spin" />
+                {L('جارٍ رسم منطقة العميل…', "Drawing the client's area…")}
+              </span>
+            )}
+            {area.undrawable > 0 && (
+              <span className="text-amber-700">
+                {L(`${area.undrawable} من قواعد الموقع لم تُرسم (تحتاج مراجعة)`, `${area.undrawable} location rule(s) not drawn (need review)`)}
+              </span>
+            )}
+          </span>
+        )}
         <span className="ms-auto flex flex-wrap items-center gap-x-3 gap-y-1">
           {(Object.keys(SOURCE_LABEL) as FinderSource[]).map((s) => (
             <span key={s} className="inline-flex items-center gap-1">

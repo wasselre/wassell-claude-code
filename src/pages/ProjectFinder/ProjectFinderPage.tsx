@@ -23,6 +23,8 @@ import { summarizeConstraintDrops, type RequirementConstraints } from '@/lib/mat
 import FinderCard from '@/pages/Followups/components/FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from '@/pages/Followups/components/FinderRefinementBar';
 import FinderMapView from '@/pages/Followups/components/FinderMapView';
+import { collectClientAreaItems } from '@/lib/geo/clientArea';
+import type { LocationItem } from '@/lib/geo/locationItems';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import LeaveWithoutSavingModal from '@/components/matching/LeaveWithoutSavingModal';
@@ -195,6 +197,9 @@ export default function ProjectFinderPage() {
   const [confirmLeave, setConfirmLeave] = useState(false);
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
+  // The client's selected area AS SEARCHED (captured with the results, so the map
+  // highlights the area that produced the pins, not a draft edited afterwards).
+  const [searchedAreaItems, setSearchedAreaItems] = useState<LocationItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<{ message: string; timeout: boolean } | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
@@ -366,6 +371,11 @@ export default function ProjectFinderPage() {
       );
       markActivity('finder: rendering results');
       setResp(r);
+      setSearchedAreaItems(collectClientAreaItems({
+        draft,
+        savedClientData: (clientRec?.data as Record<string, unknown> | undefined) ?? null,
+        resolveDistrictName: (id) => resolveLookupName(id, 'districts'),
+      }));
       // Land on the same-district tab; the auto-switch effect hops to the first
       // non-empty display tab if it has nothing (pinned our-projects aside).
       setActiveTab('exact_district_matches');
@@ -901,6 +911,7 @@ export default function ProjectFinderPage() {
                 matches={[...ourProjects, ...tierItems]}
                 isAr={isAr}
                 focus={mapFocus}
+                areaItems={searchedAreaItems}
                 onOpenDetails={onOpenDetails}
                 renderSelectedCard={(m) => renderCard(m, `map-${m.project_id}`, false)}
               />
