@@ -253,8 +253,11 @@ async function lexicalCandidates(sb: SupabaseClient, queryText: string, recipe: 
   const rows = (t.data ?? []) as unknown as LexicalTranscriptRow[];
   const ids = rows.map((r) => r.content_post_id);
   const enrichment = new Map<string, Record<string, unknown>>();
-  if (ids.length) {
-    const e = await sb.from('mkt_content_enrichment').select('content_post_id, result').eq('status', 'done').in('content_post_id', ids);
+  // Chunk the id filter: a single `.in()` over LEXICAL_SCAN (400) uuids builds a
+  // ~15KB GET URL that undici rejects as "fetch failed". 100/req stays well under.
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const e = await sb.from('mkt_content_enrichment').select('content_post_id, result').eq('status', 'done').in('content_post_id', chunk);
     if (e.error) throw new Error(`lexical enrichment read failed: ${e.error.message}`);
     for (const r of (e.data ?? []) as Array<{ content_post_id: string; result: Record<string, unknown> | null }>) enrichment.set(r.content_post_id, r.result ?? {});
   }
