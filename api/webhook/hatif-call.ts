@@ -149,23 +149,45 @@ export default async function handler(req: Request): Promise<Response> {
   // the legacy flat shape and the current one map to the same HatifCallEvent.
   // The full untouched payload is still stored in `call_logs.raw_event`, so any
   // field this mapping misses can be recovered without re-plumbing the webhook.
-  // Hatif's post-call webhook URL also receives conversation-lifecycle events
-  // (e.g. eventType 'LastEventUpdated') that carry NO call fields. ACK those so
-  // Hatif stops retrying — they are not calls and must never become call_logs
-  // rows. Anything else that fails coercion is logged IN FULL and 400'd (loud,
-  // retried) so its schema can be pinned — never silently dropped.
+  // Hatif's post-call webhook URL also receives conversation/contact lifecycle
+  // events (e.g. 'LastEventUpdated', 'AssignmentChanged') that carry NO call
+  // fields. ACK those so Hatif stops retrying — they are not calls and must
+  // never become call_logs rows.
   const eventType = readEventType(parsed);
   if (eventType && NON_CALL_HATIF_EVENTS.has(eventType)) {
     return json({ ok: true, ignored: eventType });
   }
 
+  // Anything else that isn't a coercible call is ALSO ACKed 200 — never 400.
+  //
+  // Why (incident 2026-09-02): Hatif AUTO-DISABLES the entire integration after
+  // 3 consecutive non-2xx responses. Three `AssignmentChanged` lifecycle events
+  // 400'd here (an event type this denylist didn't know yet) and killed call
+  // logging for EVERY call until an operator re-enabled it. A 400 buys nothing:
+  // a shape mismatch fails identically on every retry, so retrying only marches
+  // toward the auto-disable — the retry budget can't recover a payload we simply
+  // don't understand. So we ACK to keep the channel alive, and stay LOUD in a
+  // different way: the full payload is logged (LOUD ≠ non-2xx, per the repo's
+  // silent-failure doctrine — this is logged, not swallowed), so an unrecognized
+  // shape is still visible in the function log and can be pinned WITHOUT taking
+  // the webhook down. A payload carrying an eventType is expected lifecycle noise
+  // (warn); one WITHOUT any eventType or call id might be a new CALL shape we're
+  // now missing (error — inspect it), but either way the channel stays up.
   const event = coerceHatifEvent(parsed);
   if (!event) {
-    console.error(
-      `[hatif-webhook] 400 unrecognized payload (eventType=${eventType ?? 'none'}); preview:`,
-      bodyPreview(rawBody),
-    );
-    return json({ error: 'missing required fields callId/channelId', eventType }, 400);
+    if (eventType) {
+      console.warn(
+        `[hatif-webhook] ACK non-call lifecycle event (eventType=${eventType}); preview:`,
+        bodyPreview(rawBody),
+      );
+    } else {
+      console.error(
+        '[hatif-webhook] ACK 200 but payload had no callId/channelId and no eventType — ' +
+        'possible NEW call shape, please inspect; preview:',
+        bodyPreview(rawBody),
+      );
+    }
+    return json({ ok: true, ignored: eventType ?? 'unrecognized' });
   }
 
   let handlerError: string | undefined;
@@ -513,7 +535,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * Hatif event types that arrive on the post-call webhook URL but are NOT calls
  * (conversation/contact lifecycle). ACKed with 200 so Hatif stops retrying.
  */
-const NON_CALL_HATIF_EVENTS = new Set<string>(['LastEventUpdated']);
+const NON_CALL_HATIF_EVENTS = new Set<string>(['LastEventUpdated', 'AssignmentChanged']);
 
 /** Read the event-type discriminator off a Hatif envelope, if present. */
 function readEventType(parsed: unknown): string | null {
