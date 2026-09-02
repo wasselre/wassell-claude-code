@@ -16,7 +16,7 @@
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 15 | yes | 2026-08-20 |
 | [Cities](cities.md) | `cities` | frozen `cities` | Geography | 1 | 12 | no | 2026-07-30 |
 | [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-08-20 |
-| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 27 | no | 2026-08-31 |
+| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 30 | no | 2026-09-02 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-08-20 |
 | [Contacts](contacts.md) | `contacts` | JSONB | — | 1 | 6 | no | 2026-08-10 |
 | [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | Designs | 1 | 6 | no | 2026-08-20 |

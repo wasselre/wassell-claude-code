@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-31
+**Last updated (from DB):** 2026-09-02
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **4** (2 base, 2 non-base)
-- Fields: **27**
+- Fields: **30**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -39,6 +39,9 @@
 | `client_sources` | Client Sources / مصادر العميل | Multi-select | no | half | yes | 9 options · multi |
 | `notes` | Notes / الملاحظات | Notes | no | full | no |  |
 | `purchase_objective` | Purchase Objective / هدف الشراء | Multi-select | no | half | yes | 2 options · multi |
+| `is_retired` | Retired / متقاعد | Checkbox | no | half | no |  |
+| `retired_at` | Retired At / تاريخ التقاعد | Date & time | no | half | no |  |
+| `retired_reason` | Retirement Reason / سبب التقاعد | Text | no | full | no |  |
 | `client_owner` | Sales Consultant / مستشار المبيعات | Assignee | no | half | no | any user |
 
 **Field details:**
