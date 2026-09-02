@@ -340,6 +340,15 @@ describe('classifyCreativeError', () => {
     expect(classifyCreativeError(new Error('fetch failed')).kind).toBe('transient');
     expect(classifyCreativeError(new Error('upstream request timeout')).kind).toBe('transient');
   });
+  it('maps deterministic provider 4xx (credit / bad request) to provider_fatal, not provider', () => {
+    // Live أكنان 25: the API credit ran out; a "credit balance too low" 400 was
+    // classified 'provider' and requeued, looping on a failure that never clears
+    // without a billing action.
+    expect(classifyCreativeError(new Error('provider:anthropic BadRequestError 400 invalid_request_error: 400 {"error":{"message":"Your credit balance is too low to access the Anthropic API."}}')).kind).toBe('provider_fatal');
+    expect(classifyCreativeError(new Error('provider:anthropic AuthenticationError 401: bad key')).kind).toBe('provider_fatal');
+    // A genuinely transient provider error still requeues.
+    expect(classifyCreativeError(new Error('provider:anthropic InternalServerError 529 overloaded')).kind).toBe('provider');
+  });
   it('maps a max_tokens truncation to output_truncated (NON-retryable), not provider', () => {
     // Live regression (أكنان 25 package): the model call exceeded max_tokens.
     // It arrives prefixed `provider:` but is DETERMINISTIC — must not requeue,

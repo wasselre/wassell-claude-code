@@ -57,6 +57,7 @@ import type { CreativeJobContext, CreativeJobLike } from './io.js';
 
 export type CreativeErrorKind =
   | 'provider'
+  | 'provider_fatal'
   | 'transient'
   | 'output_truncated'
   | 'facts_insufficient'
@@ -87,10 +88,24 @@ const TRANSIENT_RE = /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up
  */
 const OUTPUT_TRUNCATED_RE = /max_tokens reached before the JSON was complete/i;
 
+/**
+ * DETERMINISTIC provider failures — a 4xx client error (bad request, invalid
+ * schema, auth/permission) or an exhausted credit balance fails identically on
+ * every retry (same lesson as the Hatif-webhook loop). They arrive `provider:`-
+ * prefixed, which would otherwise requeue; catch them and mark 'provider_fatal'
+ * so the job fails fast with a clear signal (fix billing / the request, not a
+ * retry). The transient 429/5xx/overloaded/network cases are NOT matched here —
+ * they stay 'provider' and requeue.
+ */
+const PROVIDER_FATAL_RE = /credit balance is too low|(BadRequest|Authentication|PermissionDenied|NotFound|UnprocessableEntity)Error\b|\binvalid_request_error\b/i;
+
 /** Map a thrown error to the mos_creative_jobs.error_kind vocabulary (the RPC requeues only provider/transient). */
 export function classifyCreativeError(err: unknown): { message: string; kind: CreativeErrorKind } {
   const message = err instanceof Error ? err.message : String(err);
   if (OUTPUT_TRUNCATED_RE.test(message)) return { message, kind: 'output_truncated' };
+  // A deterministic provider 4xx must not requeue — check before the generic
+  // `provider:` prefix (which would classify it retryable).
+  if (message.startsWith('provider:') && PROVIDER_FATAL_RE.test(message)) return { message, kind: 'provider_fatal' };
   for (const [prefix, kind] of PREFIX_KINDS) {
     if (message.startsWith(prefix) || message.includes(` ${prefix}`)) return { message, kind };
   }
