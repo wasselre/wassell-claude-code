@@ -2362,6 +2362,7 @@ export default function CampaignDetailPage() {
           presetCampaign={item.id}
           presetProject={item.project_id}
           onCreated={(id) => navigate(`/m/content/${id}`)}
+          onCreatedMany={() => void load()}
         />
       )}
     </>

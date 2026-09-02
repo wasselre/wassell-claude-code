@@ -661,7 +661,7 @@ export default function ContentListPage() {
         )}
       </div>
 
-      {creating && <NewContentModal onClose={() => setCreating(false)} />}
+      {creating && <NewContentModal onClose={() => setCreating(false)} onCreatedMany={() => void load()} />}
 
       {confirmOpen && (
         <Modal
