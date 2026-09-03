@@ -35,6 +35,10 @@ export type SurfaceKey =
   | 'organic' | 'publishing'
   // Performance & load system: own profile + the manager desk.
   | 'myperf' | 'performance'
+  // Paid-media analytics (التحليلات) — deep-dive dashboard. Like content_inventory,
+  // intentionally absent from the server SURFACES list, so it defaults to VISIBLE
+  // for every marketing role; data access is gated on `read` server-side.
+  | 'analytics'
   // Content inventory (per-project media/content rollup) + Content readiness
   // (required-assets gaps). NOTE: intentionally absent from the server-side
   // SURFACES list, so they are not seeded into surface_access and default to
@@ -1672,6 +1676,12 @@ export interface MosOverview {
   unscheduled: Array<{ id: string; ref: string | null; title: string; target_publish_at: string | null }>;
   campaigns: Array<Pick<MosCampaign,
     'id' | 'ref' | 'name' | 'status' | 'budget_total' | 'total_spend' | 'total_leads' | 'total_qualified'>>;
+  /**
+   * Period-scoped paid figures. `scoped` is true when the period had dated
+   * daily data (mos_execution_daily); false means these are lifetime execution
+   * totals shown because the period has no dated data yet.
+   */
+  paid: { spend: number; leads: number; qualified: number; scoped: boolean };
   mix: Array<{ content_type_key: string; status_key: string }>;
   /** Oldest item sitting with my role — «أقدمها منتظر منذ …». */
   waiting_oldest_at: string | null;
@@ -1690,8 +1700,51 @@ export interface MosTitleRef {
 
 export type OverviewPeriod = 'week' | 'month' | 'quarter';
 
-export const fetchOverview = (period: OverviewPeriod = 'week') =>
-  call<MosOverview>('overview', { period });
+/** `anchorIso` (any ISO date inside the target period) lets the caller view a
+ *  PAST period — omit for the current one. */
+export const fetchOverview = (period: OverviewPeriod = 'week', anchorIso?: string) =>
+  call<MosOverview>('overview', anchorIso ? { period, week_of: anchorIso } : { period });
+
+/* --- Paid-media analytics (التحليلات page) --- */
+
+export type AnalyticsPeriod = 'week' | 'month' | 'quarter' | 'year' | 'custom';
+
+/** One aggregation window as returned by the mos_paid_analytics RPC. */
+export interface PaidAnalyticsWindow {
+  from: string;
+  to: string;
+  daily: Array<{ day: string; spend: number; leads: number; qualified: number }>;
+  totals: {
+    spend: number; leads: number; qualified: number; daily_days: number;
+    impressions: number; clicks: number; exec_spend: number; exec_leads: number;
+  };
+  by_platform: Array<{ platform: string; spend: number; impressions: number; clicks: number; leads: number }>;
+  by_campaign: Array<{
+    id: string; name: string; spend: number; impressions: number; clicks: number; leads: number; qualified: number;
+  }>;
+}
+
+export interface PaidAnalytics {
+  from: string;
+  to: string;
+  period: AnalyticsPeriod;
+  current: PaidAnalyticsWindow;
+  previous: PaidAnalyticsWindow;
+}
+
+export interface PaidAnalyticsQuery {
+  period: AnalyticsPeriod;
+  /** For every non-custom period: any ISO date inside the target window. */
+  anchorIso?: string;
+  /** For a custom range only (inclusive ISO dates yyyy-mm-dd). */
+  from?: string;
+  to?: string;
+}
+
+export const fetchPaidAnalytics = (q: PaidAnalyticsQuery) =>
+  call<PaidAnalytics>('paid_analytics', q.period === 'custom'
+    ? { period: 'custom', from: q.from, to: q.to }
+    : { period: q.period, week_of: q.anchorIso });
 
 export const fetchWork = (scope: 'mine' | 'team') =>
   call<{
@@ -1956,8 +2009,8 @@ export interface MosCeoOverview {
   signature_threshold: number;
 }
 
-export const fetchCeoOverview = (period: CeoPeriod = 'month') =>
-  call<MosCeoOverview>('ceo_overview', { period });
+export const fetchCeoOverview = (period: CeoPeriod = 'month', anchorIso?: string) =>
+  call<MosCeoOverview>('ceo_overview', anchorIso ? { period, week_of: anchorIso } : { period });
 
 export const fetchCalendar = (from: string, to: string) =>
   call<{

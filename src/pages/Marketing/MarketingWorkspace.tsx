@@ -160,6 +160,7 @@ const NAV: NavGroup[] = [
     ar: null, en: null,
     items: [
       { to: '/m', ar: 'نظرة عامة', en: 'Overview', Icon: IconOverview, end: true, surface: 'overview' },
+      { to: '/m/analytics', ar: 'التحليلات', en: 'Analytics', Icon: IconMetrics, surface: 'analytics' },
       { to: '/m/my-work', ar: 'مهامي', en: 'My work', Icon: IconMyWork, badge: 'mywork', surface: 'mywork' },
       { to: '/m/team', ar: 'متابعة الفريق', en: 'Team work', Icon: IconTeam, surface: 'team' },
       { to: '/m/me', ar: 'ملفي', en: 'My profile', Icon: IconGoals, surface: 'myperf' },

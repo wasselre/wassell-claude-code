@@ -97,6 +97,7 @@ const MarketingExecutionDetailPage = lazy(() => import('@/pages/Marketing/Execut
 const MarketingUploadPage = lazy(() => import('@/pages/Marketing/UploadPage'));
 const MarketingShootsPage = lazy(() => import('@/pages/Marketing/ShootsPage'));
 const MarketingNumbersPage = lazy(() => import('@/pages/Marketing/NumbersPage'));
+const MarketingAnalyticsPage = lazy(() => import('@/pages/Marketing/AnalyticsPage'));
 const MarketingOrganicPulsePage = lazy(() => import('@/pages/Marketing/OrganicPulsePage'));
 const MarketingPublishingBoardPage = lazy(() => import('@/pages/Marketing/PublishingBoardPage'));
 import MarketingSettingsPage, { SettingsSectionPage } from '@/pages/Marketing/SettingsPage';
@@ -543,6 +544,7 @@ export default function App() {
               from ever being read as a campaign id. */}
           <Route path="/m/campaigns/:campaignId/exec/:executionId" element={<MarketingExecutionDetailPage />} />
           <Route path="/m/numbers" element={<MarketingNumbersPage />} />
+          <Route path="/m/analytics" element={<MarketingAnalyticsPage />} />
           <Route path="/m/organic" element={<MarketingOrganicPulsePage />} />
           <Route path="/m/publishing" element={<MarketingPublishingBoardPage />} />
           <Route path="/m/content-inventory" element={<MarketingContentInventoryPage />} />

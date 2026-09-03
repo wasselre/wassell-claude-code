@@ -4692,6 +4692,24 @@ export default async function handler(req: Request): Promise<Response> {
         }
         const lateMix = Array.from(mixMap.values()).sort((a, b) => b.n - a.n).slice(0, 3);
 
+        // Period-scoped paid figures. mos_execution_daily is the dated source;
+        // when a period has no daily rows we fall back to lifetime execution
+        // totals so the card never regresses to zero (paid data is currently
+        // undated). `scoped` tells the UI which case it is.
+        let paid: { spend: number; leads: number; qualified: number; scoped: boolean } =
+          { spend: 0, leads: 0, qualified: 0, scoped: false };
+        const paidSvc = makeServiceClient('api:marketing-os');
+        if (paidSvc) {
+          const pr = await paidSvc.rpc('mos_paid_analytics', {
+            p_from: weekStart.slice(0, 10), p_to: weekEnd.slice(0, 10),
+          });
+          const t = ((pr.data as { totals?: Record<string, number> } | null)?.totals) ?? {};
+          const dailyDays = Number(t.daily_days ?? 0);
+          paid = dailyDays > 0
+            ? { spend: Number(t.spend ?? 0), leads: Number(t.leads ?? 0), qualified: Number(t.qualified ?? 0), scoped: true }
+            : { spend: Number(t.exec_spend ?? 0), leads: Number(t.exec_leads ?? 0), qualified: Number(t.qualified ?? 0), scoped: false };
+        }
+
         return jsonOk({
           role: myRole,
           period,
@@ -4705,11 +4723,73 @@ export default async function handler(req: Request): Promise<Response> {
           week: weekRows,
           unscheduled,
           campaigns: spend.data ?? [],
+          paid,
           mix: byType.data ?? [],
           waiting_oldest_at: (mineOldest.data?.[0] as { updated_at?: string } | undefined)?.updated_at ?? null,
           late_mix: lateMix,
           week_start: weekStart,
           week_end: weekEnd,
+        });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Paid-media analytics — the التحليلات page. Real CPM/CPC/  */
+      /* CTR/CPL + funnel + platform/campaign breakdowns for a     */
+      /* [from,to) range, aggregated in SQL (mos_paid_analytics).  */
+      /* Daily spend/leads/qualified are dated; impressions/clicks */
+      /* are lifetime-per-execution, so those metrics are period   */
+      /* aggregates, not daily trends (see the RPC comment).       */
+      /* -------------------------------------------------------- */
+      case 'paid_analytics': {
+        const capFail = await requireCap(sb, 'read');
+        if (capFail) return capFail;
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+
+        // Resolve [from,to). A custom range carries explicit from/to; every
+        // other period resolves from an anchor (week_of), so past periods work.
+        const periodRaw = str(body.period);
+        const isCustom = periodRaw === 'custom';
+        let fromIso: string;
+        let toIso: string;
+        let prevFromIso: string;
+        let prevToIso: string;
+        if (isCustom) {
+          const f = str(body.from);
+          const t = str(body.to);
+          if (!f || !t) return jsonError(400, 'custom range requires from and to');
+          fromIso = f.slice(0, 10);
+          // `to` is inclusive from the UI; make it exclusive for [from,to).
+          const toExcl = new Date(t.slice(0, 10));
+          toExcl.setUTCDate(toExcl.getUTCDate() + 1);
+          toIso = toExcl.toISOString().slice(0, 10);
+          const lenDays = Math.max(1, Math.round((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 86_400_000));
+          const pf = new Date(fromIso); pf.setUTCDate(pf.getUTCDate() - lenDays);
+          prevFromIso = pf.toISOString().slice(0, 10);
+          prevToIso = fromIso;
+        } else {
+          const period = periodRaw === 'month' || periodRaw === 'quarter' || periodRaw === 'year' ? periodRaw : 'month';
+          const { weekStart, weekEnd } = periodBounds(period, str(body.week_of));
+          const prev = previousPeriodBounds(period, str(body.week_of));
+          fromIso = weekStart.slice(0, 10);
+          toIso = weekEnd.slice(0, 10);
+          prevFromIso = prev.weekStart.slice(0, 10);
+          prevToIso = prev.weekEnd.slice(0, 10);
+        }
+
+        const [cur, prev] = await Promise.all([
+          svc.rpc('mos_paid_analytics', { p_from: fromIso, p_to: toIso }),
+          svc.rpc('mos_paid_analytics', { p_from: prevFromIso, p_to: prevToIso }),
+        ]);
+        const curFail = dbFail(cur.error) ?? dbFail(prev.error);
+        if (curFail) return curFail;
+
+        return jsonOk({
+          from: fromIso,
+          to: toIso,
+          period: isCustom ? 'custom' : periodRaw,
+          current: cur.data ?? null,
+          previous: prev.data ?? null,
         });
       }
 
@@ -6469,7 +6549,9 @@ export default async function handler(req: Request): Promise<Response> {
         const periodRaw = str(body.period);
         const period: 'month' | 'quarter' | 'year' =
           periodRaw === 'quarter' || periodRaw === 'year' ? periodRaw : 'month';
-        const { weekStart: start, weekEnd: end } = periodBounds(period, null);
+        // week_of (any ISO date inside the target period) lets the CEO view a
+        // PAST month/quarter/year; null = the current one.
+        const { weekStart: start, weekEnd: end } = periodBounds(period, str(body.week_of));
         const { weekStart: prevStart, weekEnd: prevEnd } = previousPeriodBounds(period, null);
 
         // The six calendar months ending this month — the production chart.

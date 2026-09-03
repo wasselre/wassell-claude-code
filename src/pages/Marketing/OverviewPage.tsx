@@ -31,8 +31,10 @@ import { useWorkspace } from './MarketingWorkspace';
 import { Empty, LoadError, PageHead, Pill, Skeleton, Stat } from './components/kit';
 import NewContentModal from './components/NewContentModal';
 import EmptyDayOne from './components/EmptyDayOne';
+import DateControl from './components/DateControl';
 import { IconPlus } from './components/icons';
 import { dayLabel, daysAgo, money, monthName, monthOf, num, shortDate, toArabicDigits } from './lib/format';
+import { DateSel, todayIso } from './lib/period';
 
 const QUARTER_NAMES_AR = ['الأول', 'الثاني', 'الثالث', 'الرابع'];
 
@@ -73,17 +75,17 @@ function ManagerOverview() {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const addToast = useAppStore((s) => s.addToast);
-  const [period, setPeriod] = useState<OverviewPeriod>('week');
+  const [sel, setSel] = useState<DateSel>({ period: 'week', anchorIso: todayIso() });
   const [data, setData] = useState<MosOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
 
-  const load = useCallback(async (p: OverviewPeriod) => {
+  const load = useCallback(async (s: DateSel) => {
     setLoading(true);
     setError(null);
     try {
-      setData(await fetchOverview(p));
+      setData(await fetchOverview(s.period as OverviewPeriod, s.anchorIso));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -91,7 +93,7 @@ function ManagerOverview() {
     }
   }, []);
 
-  useEffect(() => { void load(period); }, [load, period]);
+  useEffect(() => { void load(sel); }, [load, sel]);
 
   const remind = async (e: MouseEvent, contentId: string) => {
     e.stopPropagation();
@@ -161,17 +163,7 @@ function ManagerOverview() {
         title={isAr ? 'نظرة عامة' : 'Overview'}
         sub={data ? periodSub(data) : undefined}
       >
-        <div className="seg">
-          <button type="button" className={period === 'week' ? 'on' : ''} onClick={() => setPeriod('week')}>
-            {isAr ? 'هذا الأسبوع' : 'This week'}
-          </button>
-          <button type="button" className={period === 'month' ? 'on' : ''} onClick={() => setPeriod('month')}>
-            {isAr ? 'الشهر' : 'Month'}
-          </button>
-          <button type="button" className={period === 'quarter' ? 'on' : ''} onClick={() => setPeriod('quarter')}>
-            {isAr ? 'الربع' : 'Quarter'}
-          </button>
-        </div>
+        <DateControl sel={sel} periods={['week', 'month', 'quarter']} isAr={isAr} onChange={setSel} showCustom={false} />
         {can('write_content') && !isMobile && (
           <button type="button" className="btn btn-p" onClick={() => setCreating(true)}>
             <IconPlus />
@@ -181,7 +173,7 @@ function ManagerOverview() {
       </PageHead>
 
       <div className="body">
-        {error && <LoadError message={error} onRetry={() => void load(period)} isAr={isAr} />}
+        {error && <LoadError message={error} onRetry={() => void load(sel)} isAr={isAr} />}
         {loading && !data && <Skeleton rows={6} />}
 
         {/* s52 phone2 — «اللوحة تُكدَّس ولا تُختصر»: the same four numbers in
@@ -438,7 +430,7 @@ function ManagerOverview() {
         )}
       </div>
 
-      {creating && <NewContentModal onClose={() => setCreating(false)} onCreatedMany={() => void load(period)} />}
+      {creating && <NewContentModal onClose={() => setCreating(false)} onCreatedMany={() => void load(sel)} />}
     </>
   );
 }
@@ -497,24 +489,25 @@ function WeekList({ data, isAr }: { data: MosOverview; isAr: boolean }) {
 /** The «الإعلانات المدفوعة» paid-ads card — same DOM on both layouts. Numbers
  *  may be Meta-synced or hand-entered, so it no longer claims a single source. */
 function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
-  // Numbers are cumulative active-campaign totals (not month-scoped), so the
-  // month word is just a header. Stamp it from today, not from week_start —
-  // otherwise a week that straddles a month boundary (e.g. Aug 30 – Sep 6)
-  // reads "August" even though today is in September.
-  const monthLabel = monthOf(new Date().toISOString(), isAr);
+  // Spend/leads/qualified are now PERIOD-SCOPED (data.paid) — summed from the
+  // dated daily data for the selected period. `scoped` is false when the period
+  // has no dated data yet, in which case these are lifetime totals shown "to
+  // date" rather than a misleading zero. Budget stays the active-campaign total.
+  const paid = data.paid ?? { spend: 0, leads: 0, qualified: 0, scoped: false };
   const budget = (data.campaigns ?? []).reduce((a, c) => a + (c.budget_total ?? 0), 0);
-  const spent = (data.campaigns ?? []).reduce((a, c) => a + (c.total_spend ?? 0), 0);
-  const leads = (data.campaigns ?? []).reduce((a, c) => a + (c.total_leads ?? 0), 0);
-  const qualified = (data.campaigns ?? []).reduce((a, c) => a + (c.total_qualified ?? 0), 0);
+  const spent = paid.spend;
+  const leads = paid.leads;
+  const qualified = paid.qualified;
   const cpl = leads > 0 ? spent / leads : null;
   return (
     <div className="card">
       <div className="card-h">
-        <h4>
-          {isAr
-            ? `الإعلانات المدفوعة — ${monthLabel}`
-            : `Paid ads — ${monthLabel}`}
-        </h4>
+        <h4>{isAr ? 'الإعلانات المدفوعة' : 'Paid ads'}</h4>
+        <span className="r" style={{ marginInlineStart: 'auto', color: 'var(--mute)', fontSize: 11 }}>
+          {paid.scoped
+            ? (isAr ? 'ضمن الفترة' : 'in period')
+            : (isAr ? 'إجمالي حتى الآن' : 'to date')}
+        </span>
       </div>
       <div className="card-b" style={{ display: 'grid', gap: 11 }}>
         <div>
@@ -563,17 +556,17 @@ function CeoOverview() {
   const { isAr } = useWorkspace();
   const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
-  const [period, setPeriod] = useState<CeoPeriod>('quarter');
+  const [sel, setSel] = useState<DateSel>({ period: 'quarter', anchorIso: todayIso() });
   const [data, setData] = useState<MosCeoOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [signing, setSigning] = useState<string | null>(null);
 
-  const load = useCallback(async (p: CeoPeriod) => {
+  const load = useCallback(async (s: DateSel) => {
     setLoading(true);
     setError(null);
     try {
-      setData(await fetchCeoOverview(p));
+      setData(await fetchCeoOverview(s.period as CeoPeriod, s.anchorIso));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -581,14 +574,14 @@ function CeoOverview() {
     }
   }, []);
 
-  useEffect(() => { void load(period); }, [load, period]);
+  useEffect(() => { void load(sel); }, [load, sel]);
 
   const sign = async (campaignId: string) => {
     setSigning(campaignId);
     try {
       await signCampaign(campaignId);
       addToast(isAr ? 'وُقّعت الميزانية' : 'Budget signed', 'success');
-      await load(period);
+      await load(sel);
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
     } finally {
@@ -596,7 +589,7 @@ function CeoOverview() {
     }
   };
 
-  const now = new Date();
+  const now = new Date(sel.anchorIso);
   const producedDelta = data && data.produced_prev > 0
     ? Math.round(((data.produced - data.produced_prev) / data.produced_prev) * 100)
     : null;
@@ -633,24 +626,14 @@ function CeoOverview() {
           ? `الرئيس التنفيذي · ${monthName(now.getMonth(), true)} ${num(now.getFullYear(), true)} · عرض للقراءة`
           : `CEO · ${monthName(now.getMonth(), false)} ${now.getFullYear()} · read view`}
       >
-        <div className="seg">
-          <button type="button" className={period === 'month' ? 'on' : ''} onClick={() => setPeriod('month')}>
-            {isAr ? 'الشهر' : 'Month'}
-          </button>
-          <button type="button" className={period === 'quarter' ? 'on' : ''} onClick={() => setPeriod('quarter')}>
-            {isAr ? 'الربع' : 'Quarter'}
-          </button>
-          <button type="button" className={period === 'year' ? 'on' : ''} onClick={() => setPeriod('year')}>
-            {isAr ? 'السنة' : 'Year'}
-          </button>
-        </div>
+        <DateControl sel={sel} periods={['month', 'quarter', 'year']} isAr={isAr} onChange={setSel} showCustom={false} />
         <button type="button" className="btn btn-d" onClick={() => navigate('/m/numbers')}>
           {isAr ? 'تقرير شهري' : 'Monthly report'}
         </button>
       </PageHead>
 
       <div className="body">
-        {error && <LoadError message={error} onRetry={() => void load(period)} isAr={isAr} />}
+        {error && <LoadError message={error} onRetry={() => void load(sel)} isAr={isAr} />}
         {loading && !data && <Skeleton rows={6} />}
 
         {data && (
