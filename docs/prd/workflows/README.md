@@ -16,7 +16,7 @@
 | [Create Unresponded Requests](create-unresponded-requests-28dae81e.md) | update | Follow-ups | yes | 1 | 1 | 2026-06-22 |
 | [Financing Status Updated](financing-status-updated-fcff0ba0.md) | update | Financing | yes | 3 | 4 | 2026-06-17 |
 | [First Follow-up (Clients - Follow-ups)](first-follow-up-clients-follow-ups-a336e134.md) | create | Clients | yes | 1 | 1 | 2026-08-31 |
-| [Follow-ups - Booking Call](follow-ups-booking-call-d997425a.md) | update | Follow-ups | yes | 6 | 10 | 2026-07-30 |
+| [Follow-ups - Booking Call](follow-ups-booking-call-d997425a.md) | update | Follow-ups | yes | 7 | 11 | 2026-09-03 |
 | [No-Show Recovery](no-show-recovery-f7864a0d.md) | update | Appointments | yes | 1 | 2 | 2026-06-17 |
 | [Offer Created → Offer Follow-up](offer-created-offer-follow-up-278823ff.md) | create | Offer Prices | yes | 1 | 2 | 2026-06-17 |
 | [Offer Follow-up Completed](offer-follow-up-completed-9966776a.md) | update | Follow-ups | yes | 6 | 10 | 2026-07-30 |
@@ -29,4 +29,4 @@
 | [Visit → After-Visit](visit-after-visit-3f2b8499.md) | create | Visits | yes | 1 | 3 | 2026-06-21 |
 | [Welcome new contact via WhatsApp](welcome-new-contact-via-whatsapp-a10fd4c9.md) | create | Contacts | no | 1 | 1 | 2026-06-09 |
 | [WhatsApp No-Response Escalation](whatsapp-no-response-escalation-918b2540.md) | on_due | Follow-ups | yes | 2 | 4 | 2026-06-17 |
-| [WhatsApp Response Completed](whatsapp-response-completed-95bdbe0f.md) | update | Follow-ups | yes | 5 | 8 | 2026-07-30 |
+| [WhatsApp Response Completed](whatsapp-response-completed-95bdbe0f.md) | update | Follow-ups | yes | 6 | 9 | 2026-09-03 |

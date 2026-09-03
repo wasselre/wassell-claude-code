@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-02
+**Last updated (from DB):** 2026-09-03
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -34,8 +34,8 @@
 | `client_code` | Client Code / رمز العميل | Auto ID | no | half | yes | CLT-#### |
 | `client_name` | Client Name / اسم العميل | Text | yes | half | yes |  |
 | `phone_number` | Mobile Number / رقم الجوال | Phone | yes | half | yes |  |
-| `client_status` | Client Status / حالة العميل | Dropdown | no | half | yes | 23 options |
-| `client_stage` | Client Stage / مرحلة العميل | Dropdown | no | half | yes | 10 options |
+| `client_status` | Client Status / حالة العميل | Dropdown | no | half | yes | 24 options |
+| `client_stage` | Client Stage / مرحلة العميل | Dropdown | no | half | yes | 11 options |
 | `client_sources` | Client Sources / مصادر العميل | Multi-select | no | half | yes | 9 options · multi |
 | `notes` | Notes / الملاحظات | Notes | no | full | no |  |
 | `purchase_objective` | Purchase Objective / هدف الشراء | Multi-select | no | half | yes | 2 options · multi |
@@ -74,6 +74,7 @@
   - API value `التقييم` → "Appraisal" / "التقييم"
   - API value `تم إصدار نموذج الإفراغ` → "Title Form Issued" / "تم إصدار نموذج الإفراغ"
   - API value `تم الإفراغ` → "Title Transferred" / "تم الإفراغ"
+  - API value `يريد إيجار` → "Wants Rent" / "يريد إيجار"
 - **Client Stage / مرحلة العميل** (`client_stage`, type `dropdown`) — options:
   - API value `جديد` → "New" / "جديد"
   - API value `غير مؤهل` → "Not Qualified" / "غير مؤهل"
@@ -85,6 +86,7 @@
   - API value `حجز` → "Booking" / "حجز"
   - API value `تمويل` → "Financing" / "تمويل"
   - API value `الإفراغ` → "Title Transfer" / "الإفراغ"
+  - API value `يريد إيجار` → "Wants Rent" / "يريد إيجار"
 - **Client Sources / مصادر العميل** (`client_sources`, type `multiselect`) — multi-value. Options:
   - API value `ترويج` → "Promotion" / "ترويج"
   - API value `زيارة مشروع` → "Project Visit" / "زيارة مشروع"

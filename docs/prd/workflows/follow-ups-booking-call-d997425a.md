@@ -5,7 +5,7 @@
 # Workflow: Follow-ups - Booking Call / المتابعات - إتصال حجز موعد
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-30
+**Last updated (from DB):** 2026-09-03
 **Workflow id:** `d997425a-0c8d-48c4-afef-b5792792cfae`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is updated
@@ -144,3 +144,17 @@ Create a **Follow-ups / المتابعات** record with:
 Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value إعادة تواصل لاحقًا
+
+### Branch 7: ELSE IF — Wants Rent
+
+**Conditions:**
+_Match: ALL must pass (AND)_
+- Outcome (`call_result`) equals "Wants Rent" (`wants_rent`) · _only when it newly becomes true_
+- Actual Follow-up (`actual_datetime`) is not empty
+
+**Actions (run in order):**
+
+**Action 1 — Update Record**
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
+- Client Stage (`client_stage`) ← static value يريد إيجار
+- Client Status (`client_status`) ← static value يريد إيجار

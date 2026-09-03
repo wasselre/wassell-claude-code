@@ -16,7 +16,7 @@
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 15 | yes | 2026-08-20 |
 | [Cities](cities.md) | `cities` | frozen `cities` | Geography | 1 | 12 | no | 2026-07-30 |
 | [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-08-20 |
-| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 30 | no | 2026-09-02 |
+| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 30 | no | 2026-09-03 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-08-20 |
 | [Contacts](contacts.md) | `contacts` | JSONB | — | 1 | 6 | no | 2026-08-10 |
 | [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | Designs | 1 | 6 | no | 2026-08-20 |
@@ -28,7 +28,7 @@
 | [Developers](developers.md) | `developers` | JSONB | Projects | 1 | 6 | no | 2026-08-20 |
 | [Districts](districts.md) | `districts` | frozen `districts` | Geography | 1 | 28 | no | 2026-07-30 |
 | [Financing](financing.md) | `financing` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
-| [Follow-ups](followups.md) | `followups` | JSONB | New Group | 3 | 44 | no | 2026-08-20 |
+| [Follow-ups](followups.md) | `followups` | JSONB | New Group | 3 | 44 | no | 2026-09-03 |
 | [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-08-20 |
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
 | [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 86 | no | 2026-08-30 |

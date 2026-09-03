@@ -5,7 +5,7 @@
 # Model: Follow-ups / المتابعات  `followups`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-09-03
 **Model id:** `764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -114,7 +114,7 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `call_result` | Outcome / النتيجة | Dropdown | no | full | yes | 29 options |
+| `call_result` | Outcome / النتيجة | Dropdown | no | full | yes | 30 options |
 | `next_followup_after_days` | Next Follow-up After (days) / المتابعة التالية بعد (أيام) | Number | no | half | no |  |
 | `reschedule_contact_date` | Reschedule Contact Date / تاريخ التواصل لإعادة الجدولة | Date & time | no | half | yes |  |
 | `actual_datetime` | Actual Follow-up / موعد المتابعة الفعلي | Date & time | no | half | yes |  |
@@ -173,6 +173,7 @@
   - API value `requested_another_visit` → "Requested Another Visit" / "طلب زيارة أخرى" · color `#10B981`
   - API value `visited_other_project` → "Visited Another Project" / "زار مشروعًا آخر" · color `#8E4E3A`
   - API value `unanswered_request` → "Unanswered Request" / "طلب غير مجاب" · color `#8B5CF6`
+  - API value `wants_rent` → "Wants Rent" / "يريد إيجار"
 - **Next Follow-up After (days) / المتابعة التالية بعد (أيام)** (`next_followup_after_days`, type `number`):
   - shown only when Follow-up Type (`followup_type`) is one of: `whatsapp_follow_up`
 - **Reschedule Contact Date / تاريخ التواصل لإعادة الجدولة** (`reschedule_contact_date`, type `datetime`):
