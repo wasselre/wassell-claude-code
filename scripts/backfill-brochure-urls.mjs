@@ -18,8 +18,12 @@
  *
  * Env (auto-loaded from .env.local / .env): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 
 // ── env (no dotenv dep) ──────────────────────────────────────────────
@@ -50,7 +54,35 @@ const LIMIT = limIdx >= 0 ? Number(process.argv[limIdx + 1]) : Infinity;
 const OWNER_USER_ID = 'a3374d65-9cee-4daa-8880-5e8ff23e7db0'; // public.users id
 const STORAGE_PREFIX = '31621e58-c723-45ad-9e4f-6f8ba1689fe7'; // that user's auth.uid
 const BUCKET = 'wassel-files';
-const MAX_BYTES = 100 * 1024 * 1024; // 100 MB cap (WhatsApp document ceiling)
+const MAX_BYTES = 200 * 1024 * 1024; // 200 MB fetch cap (oversized ones get compressed below)
+
+// Supabase Storage's single-request upload rejects objects above ~50 MiB (a 49.5
+// MB brochure uploads; a 74 MiB one fails). WhatsApp caps documents at 100 MB.
+// So any brochure over this threshold is re-rendered to a smaller PDF (Ghostscript
+// isn't installable here without admin; PyMuPDF flattens image-heavy brochures
+// reliably) targeting 45 MiB before upload.
+const COMPRESS_ABOVE = 48 * 1024 * 1024;
+const PY = process.env.PYTHON || 'python';
+const COMPRESS_SCRIPT = fileURLToPath(new URL('./compress-pdf.py', import.meta.url));
+
+/** Re-render an oversized PDF to fit the upload ceiling. Returns the (possibly
+ *  unchanged) buffer + a note. Throws if compression fails. */
+function maybeCompress(buf) {
+  if (buf.length <= COMPRESS_ABOVE) return { buf, note: '' };
+  const inP = join(tmpdir(), `broch-${randomUUID()}.pdf`);
+  const outP = join(tmpdir(), `broch-${randomUUID()}-c.pdf`);
+  writeFileSync(inP, buf);
+  try {
+    const r = spawnSync(PY, [COMPRESS_SCRIPT, inP, outP, '45'], { stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 1 << 20 });
+    const err = (r.stderr || '').toString().trim();
+    if (r.status !== 0) throw new Error(`compress: ${err || `python exited ${r.status}`}`);
+    const out = readFileSync(outP);
+    return { buf: out, note: `compressed ${(buf.length / 1024 / 1024).toFixed(0)}→${(out.length / 1024 / 1024).toFixed(1)} MiB (${err})` };
+  } finally {
+    try { unlinkSync(inP); } catch { /* temp file cleanup — safe to ignore if absent */ }
+    try { unlinkSync(outP); } catch { /* temp file cleanup — safe to ignore if absent */ }
+  }
+}
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
@@ -77,7 +109,7 @@ function isPdf(buf, contentType) {
   return buf.length >= 4 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46;
 }
 
-const FETCH_TIMEOUT_MS = 45_000;
+const FETCH_TIMEOUT_MS = 150_000; // generous — some hosts serve 100 MB+ brochures slowly
 function timedFetch(u) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
@@ -164,11 +196,13 @@ async function main() {
     const name = (p.data?.project_name || p.id).toString();
     const url = p.data.broucher_developer.trim();
     try {
-      const buf = await fetchPdf(url);
+      const raw = await fetchPdf(url);
       if (DRY) {
-        console.error(`  ✓ would import  ${name}  (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
+        const tag = raw.length > COMPRESS_ABOVE ? ' → would compress' : '';
+        console.error(`  ✓ would import  ${name}  (${(raw.length / 1024 / 1024).toFixed(1)} MB${tag})`);
         ok++; continue;
       }
+      const { buf, note } = maybeCompress(raw);
       const fileId = randomUUID();
       const storagePath = `${STORAGE_PREFIX}/${fileId}.pdf`;
       const up = await sb.storage.from(BUCKET).upload(storagePath, buf, { contentType: 'application/pdf', upsert: false });
@@ -206,7 +240,7 @@ async function main() {
       });
       if (li.error) throw new Error(`link insert: ${li.error.message}`);
 
-      console.error(`  ✓ imported  ${name}  (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
+      console.error(`  ✓ imported  ${name}  (${(buf.length / 1024 / 1024).toFixed(1)} MB${note ? `; ${note}` : ''})`);
       ok++;
     } catch (e) {
       console.error(`  ✗ FAILED    ${name}  — ${e.message}`);
