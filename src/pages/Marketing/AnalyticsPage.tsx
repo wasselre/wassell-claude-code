@@ -21,7 +21,7 @@ import { useWorkspace } from './MarketingWorkspace';
 import { Empty, LoadError, PageHead, Skeleton } from './components/kit';
 import DateControl from './components/DateControl';
 import { BarChart, Point, Sparkline, TrendChart } from './components/analyticsCharts';
-import { DateSel, todayIso } from './lib/period';
+import { DateSel, bucketDaily, granLabel, todayIso } from './lib/period';
 import { num, pct } from './lib/format';
 import './styles/analytics.css';
 
@@ -55,40 +55,6 @@ function Delta({ cur, prev, invert, isAr }: { cur: number; prev: number; invert?
   );
 }
 
-type Bucket = { label: string; spend: number; leads: number; qualified: number };
-
-/** Fill the window day-by-day (so gaps read as zero), then bucket for the axis. */
-function bucketDaily(win: PaidAnalyticsWindow, isAr: boolean): { mode: 'day' | 'week' | 'month'; items: Bucket[] } {
-  const from = new Date(`${win.from}T00:00`);
-  const to = new Date(`${win.to}T00:00`);
-  const days = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000));
-  const mode: 'day' | 'week' | 'month' = days <= 31 ? 'day' : days <= 126 ? 'week' : 'month';
-  const byDay = new Map(win.daily.map((d) => [d.day, d]));
-  const AR_MON = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
-  const EN_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const mon = (i: number): string => (isAr ? AR_MON : EN_MON)[i] ?? '';
-  const items: Bucket[] = [];
-  let curKey = '';
-  for (let d = new Date(from); d < to; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) {
-    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const wkStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay());
-    const key = mode === 'day' ? iso
-      : mode === 'week' ? `w${wkStart.getFullYear()}-${wkStart.getMonth()}-${wkStart.getDate()}`
-        : `m${d.getFullYear()}-${d.getMonth()}`;
-    const label = mode === 'day' ? num(d.getDate(), isAr)
-      : mode === 'week' ? `${num(wkStart.getDate(), isAr)} ${mon(wkStart.getMonth())}`
-        : mon(d.getMonth());
-    if (curKey !== key) {
-      items.push({ label, spend: 0, leads: 0, qualified: 0 });
-      curKey = key;
-    }
-    const b = items[items.length - 1];
-    const row = byDay.get(iso);
-    if (b && row) { b.spend += row.spend; b.leads += row.leads; b.qualified += row.qualified; }
-  }
-  return { mode, items };
-}
-
 export default function AnalyticsPage() {
   const { isAr } = useWorkspace();
   const navigate = useNavigate();
@@ -119,7 +85,7 @@ export default function AnalyticsPage() {
   const prev = data?.previous;
   const m = useMemo(() => (cur ? media(cur.totals) : null), [cur]);
   const mPrev = useMemo(() => (prev ? media(prev.totals) : null), [prev]);
-  const bk = useMemo(() => (cur ? bucketDaily(cur, isAr) : null), [cur, isAr]);
+  const bk = useMemo(() => (cur ? bucketDaily(cur.daily, cur.from, cur.to, isAr) : null), [cur, isAr]);
 
   const t = cur?.totals;
   const hasDaily = (t?.daily_days ?? 0) > 0;
@@ -318,11 +284,6 @@ export default function AnalyticsPage() {
   );
 }
 
-function granLabel(mode: 'day' | 'week' | 'month', isAr: boolean): string {
-  if (mode === 'day') return isAr ? 'يومي' : 'daily';
-  if (mode === 'week') return isAr ? 'أسبوعي' : 'weekly';
-  return isAr ? 'شهري' : 'monthly';
-}
 
 function DailyEmpty({ isAr, onGo }: { isAr: boolean; onGo: () => void }) {
   return (

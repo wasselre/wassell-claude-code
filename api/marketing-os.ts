@@ -4696,18 +4696,28 @@ export default async function handler(req: Request): Promise<Response> {
         // when a period has no daily rows we fall back to lifetime execution
         // totals so the card never regresses to zero (paid data is currently
         // undated). `scoped` tells the UI which case it is.
-        let paid: { spend: number; leads: number; qualified: number; scoped: boolean } =
-          { spend: 0, leads: 0, qualified: 0, scoped: false };
+        type PaidDaily = { day: string; spend: number; leads: number; qualified: number };
+        type PaidCampaign = {
+          id: string; name: string; spend: number; impressions: number; clicks: number; leads: number; qualified: number;
+        };
+        let paid: {
+          spend: number; leads: number; qualified: number; scoped: boolean;
+          daily: PaidDaily[]; by_campaign: PaidCampaign[];
+        } = { spend: 0, leads: 0, qualified: 0, scoped: false, daily: [], by_campaign: [] };
         const paidSvc = makeServiceClient('api:marketing-os');
         if (paidSvc) {
           const pr = await paidSvc.rpc('mos_paid_analytics', {
             p_from: weekStart.slice(0, 10), p_to: weekEnd.slice(0, 10),
           });
-          const t = ((pr.data as { totals?: Record<string, number> } | null)?.totals) ?? {};
+          const d = pr.data as {
+            totals?: Record<string, number>; daily?: PaidDaily[]; by_campaign?: PaidCampaign[];
+          } | null;
+          const t = d?.totals ?? {};
           const dailyDays = Number(t.daily_days ?? 0);
-          paid = dailyDays > 0
+          const base = dailyDays > 0
             ? { spend: Number(t.spend ?? 0), leads: Number(t.leads ?? 0), qualified: Number(t.qualified ?? 0), scoped: true }
             : { spend: Number(t.exec_spend ?? 0), leads: Number(t.exec_leads ?? 0), qualified: Number(t.qualified ?? 0), scoped: false };
+          paid = { ...base, daily: d?.daily ?? [], by_campaign: d?.by_campaign ?? [] };
         }
 
         return jsonOk({

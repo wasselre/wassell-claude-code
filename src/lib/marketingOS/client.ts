@@ -1679,9 +1679,16 @@ export interface MosOverview {
   /**
    * Period-scoped paid figures. `scoped` is true when the period had dated
    * daily data (mos_execution_daily); false means these are lifetime execution
-   * totals shown because the period has no dated data yet.
+   * totals shown because the period has no dated data yet. `daily` /
+   * `by_campaign` power the Overview's spend chart + campaigns table.
    */
-  paid: { spend: number; leads: number; qualified: number; scoped: boolean };
+  paid: {
+    spend: number; leads: number; qualified: number; scoped: boolean;
+    daily: Array<{ day: string; spend: number; leads: number; qualified: number }>;
+    by_campaign: Array<{
+      id: string; name: string; spend: number; impressions: number; clicks: number; leads: number; qualified: number;
+    }>;
+  };
   mix: Array<{ content_type_key: string; status_key: string }>;
   /** Oldest item sitting with my role — «أقدمها منتظر منذ …». */
   waiting_oldest_at: string | null;

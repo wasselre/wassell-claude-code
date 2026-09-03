@@ -32,9 +32,11 @@ import { Empty, LoadError, PageHead, Pill, Skeleton, Stat } from './components/k
 import NewContentModal from './components/NewContentModal';
 import EmptyDayOne from './components/EmptyDayOne';
 import DateControl from './components/DateControl';
+import { TrendChart } from './components/analyticsCharts';
 import { IconPlus } from './components/icons';
-import { dayLabel, daysAgo, money, monthName, monthOf, num, shortDate, toArabicDigits } from './lib/format';
-import { DateSel, todayIso } from './lib/period';
+import { dayLabel, daysAgo, money, monthName, monthOf, num, pct, shortDate, toArabicDigits } from './lib/format';
+import { DateSel, bucketDaily, granLabel, todayIso } from './lib/period';
+import './styles/analytics.css';
 
 const QUARTER_NAMES_AR = ['الأول', 'الثاني', 'الثالث', 'الرابع'];
 
@@ -271,6 +273,9 @@ function ManagerOverview() {
             <div style={{ marginTop: 16 }}>
               <PaidAdsCard data={data} isAr={isAr} />
             </div>
+            <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
+              <OverviewPaidExtras data={data} isAr={isAr} />
+            </div>
             {data.campaigns.length === 0 && (
               <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.8, marginTop: 10 }}>
                 {isAr
@@ -417,6 +422,8 @@ function ManagerOverview() {
 
                 <PaidAdsCard data={data} isAr={isAr} />
 
+                <OverviewPaidExtras data={data} isAr={isAr} />
+
                 {data.campaigns.length === 0 && (
                   <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.8 }}>
                     {isAr
@@ -545,6 +552,78 @@ function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The Overview's paid deep-cut: a spend-over-period trend chart + a campaigns
+ * table (spend / CTR / CPL), both from the period-scoped `data.paid`. Same
+ * shape as the التحليلات page's building blocks, so the two never drift.
+ */
+function OverviewPaidExtras({ data, isAr }: { data: MosOverview; isAr: boolean }) {
+  const navigate = useNavigate();
+  const daily = data.paid?.daily ?? [];
+  const camps = (data.paid?.by_campaign ?? []).filter((c) => c.spend > 0 || c.impressions > 0);
+  const bk = daily.length > 0 ? bucketDaily(daily, data.week_start, data.week_end, isAr) : null;
+  return (
+    <>
+      <div className="card">
+        <div className="card-h">
+          <h4>{isAr ? 'الإنفاق عبر الفترة' : 'Spend over the period'}</h4>
+          {bk && <span className="an-gran">{granLabel(bk.mode, isAr)}</span>}
+        </div>
+        <div className="card-b">
+          {bk ? (
+            <TrendChart
+              points={bk.items.map((b) => ({ label: b.label, value: b.spend }))}
+              color="var(--copper)"
+              fmt={(v) => num(Math.round(v), isAr)}
+            />
+          ) : (
+            <div style={{ fontSize: 12.5, color: 'var(--mute)', lineHeight: 1.8, padding: '4px 2px' }}>
+              {isAr
+                ? 'لا أرقام يومية بعد — تظهر السلسلة الزمنية فور إدخال الأرقام اليومية للحملات.'
+                : 'No daily figures yet — the time series appears once daily campaign figures are entered.'}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {camps.length > 0 && (
+        <div className="card">
+          <div className="card-h">
+            <h4>{isAr ? 'الحملات' : 'Campaigns'}</h4>
+            <span className="r">{isAr ? 'الأعلى إنفاقًا' : 'top spend'}</span>
+          </div>
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>{isAr ? 'الحملة' : 'Campaign'}</th>
+                  <th className="num">{isAr ? 'أُنفق' : 'Spent'}</th>
+                  <th className="num">CTR</th>
+                  <th className="num">CPL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {camps.map((c) => {
+                  const ctr = c.impressions > 0 ? (c.clicks / c.impressions) * 100 : 0;
+                  const cpl = c.leads > 0 ? c.spend / c.leads : null;
+                  return (
+                    <tr key={c.id} className="click" onClick={() => navigate(`/m/campaigns/${c.id}`)}>
+                      <td className="ttl">{c.name}</td>
+                      <td className="num">{num(Math.round(c.spend), isAr)}</td>
+                      <td className="num">{ctr > 0 ? pct(Number(ctr.toFixed(2)), isAr, 2) : '—'}</td>
+                      <td className="num">{cpl !== null ? num(Math.round(cpl), isAr) : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
