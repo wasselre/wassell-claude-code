@@ -73,7 +73,7 @@ interface RunArgs {
 // ── outcome matrix (COPY of src/lib/salesProcess/config.ts — keep in sync) ────
 
 const OUTCOMES_BY_TYPE: Record<string, string[]> = {
-  appointment_booking_call: ['appointment_booked', 'interested', 'no_answer', 'recontact_later', 'not_interested', 'invalid_number', 'duplicate'],
+  appointment_booking_call: ['appointment_booked', 'interested', 'no_answer', 'recontact_later', 'not_interested', 'wants_rent', 'invalid_number', 'duplicate'],
   appointment_confirmation_call: ['attendance_confirmed', 'no_answer', 'rescheduled', 'appointment_cancelled_rebook', 'appointment_cancelled_lost', 'recontact_later', 'not_interested'],
   same_day_appointment_confirmation: ['attendance_confirmed', 'no_answer', 'rescheduled', 'appointment_cancelled_lost'],
   no_show_recovery_call: ['rescheduled', 'still_interested', 'not_interested', 'no_answer', 'recontact_later'],

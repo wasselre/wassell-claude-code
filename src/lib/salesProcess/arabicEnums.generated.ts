@@ -25,6 +25,7 @@ export const CLIENT_STAGE_VALUES = [
   'الإفراغ',               // Title Transfer
   'خاسر',                  // Lost            (added — sales OS)
   'مغلق ناجح',             // Closed Won      (added — sales OS)
+  'يريد إيجار',            // Wants Rent      (added — wants-rent classification)
 ] as const;
 
 export type ClientStageValue = (typeof CLIENT_STAGE_VALUES)[number];
@@ -65,6 +66,7 @@ export const CLIENT_STATUS_VALUES = [
   'بانتظار دفعة الحجز',    // Waiting Reservation Payment (added — sales OS)
   'زار مشروعًا آخر — للمراجعة', // Visited another project — review (added — visits phase)
   'تعذّر التواصل بعد الزيارة',  // Unreachable after visit (added — visits phase)
+  'يريد إيجار',            // Wants Rent      (added — wants-rent classification)
 ] as const;
 
 export type ClientStatusValue = (typeof CLIENT_STATUS_VALUES)[number];

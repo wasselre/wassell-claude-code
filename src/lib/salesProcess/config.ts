@@ -69,6 +69,21 @@ function notInterested(stage: ClientStageValue, status: ClientStatusValue = 'غ�
   };
 }
 
+/**
+ * Terminal 'wants rent' — the client wants a RENTAL, which Wassel does not
+ * currently offer. Classifies the client into its own «يريد إيجار» stage/status
+ * and creates NO further follow-up (like not_interested), but stays a distinct,
+ * countable group. No lost_reason required — it's a product mismatch, not a loss.
+ */
+function wantsRent(): FollowUpOutcomeConfig {
+  return {
+    value: 'wants_rent',
+    requires: { ...REQ_ACTUAL },
+    client_update_preview: { stage: 'يريد إيجار', status: 'يريد إيجار' },
+    is_terminal: true,
+  };
+}
+
 const APPOINTMENT_BOOKED: FollowUpOutcomeConfig = {
   // Owned by the Appointment Created workflow (W3). The Workspace requires an
   // Appointment record to be created+linked; it does NOT move the client here.
@@ -92,6 +107,8 @@ const STAGES: SalesStageConfig[] = [
   { value: 'مغلق ناجح', label_ar: 'مغلق ناجح', label_en: 'Closed Won', order: 9, color: '#10B981', followup_types: [] },
   { value: 'غير مؤهل', label_ar: 'غير مؤهل', label_en: 'Unqualified', order: 10, color: '#6B7280', followup_types: [] },
   { value: 'خاسر', label_ar: 'خاسر', label_en: 'Lost', order: 11, color: '#8E4E3A', followup_types: [] },
+  // Terminal — client wants a rental we don't offer. No follow-up type maps here.
+  { value: 'يريد إيجار', label_ar: 'يريد إيجار', label_en: 'Wants Rent', order: 12, color: '#8E4E3A', followup_types: [] },
 ];
 
 // ── follow-up types with their per-type outcome matrix ───────────────────────
@@ -127,6 +144,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       noAnswer('appointment_booking_call', 1),
       recontactLater('appointment_booking_call'),
       notInterested('غير مؤهل'),
+      wantsRent(),
       { value: 'invalid_number', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'رقم خاطئ' }, is_terminal: true },
       { value: 'duplicate', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'مكرر' }, is_terminal: true },
     ],
@@ -192,6 +210,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
         next_action_preview: { kind: 'schedule_recontact', create_followup_type: 'whatsapp_follow_up', use_field: 'reschedule_contact_date' },
       },
       notInterested('غير مؤهل'),
+      wantsRent(),
       {
         // The rep deliberately did NOT send a message. A pre-reply action (shown
         // before any customer response). Requires a reason (notes) + the next

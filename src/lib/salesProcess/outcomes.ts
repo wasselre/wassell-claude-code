@@ -62,6 +62,11 @@ export const OUTCOME_CATALOG: readonly OutcomeCatalogEntry[] = [
   { value: 'visited_other_project', label_ar: 'زار مشروعًا آخر', label_en: 'Visited Another Project', tone: 'negative' },
   // --- WhatsApp: the rep deliberately did NOT send a message (reason + next date required) ---
   { value: 'no_message_sent', label_ar: 'لم تُرسل رسالة', label_en: 'No Message Sent', tone: 'neutral' },
+  // --- 'wants rent' terminal classification (2026-09-03): the client wants a
+  // RENTAL, which Wassel does not currently offer. Classifies + stops all
+  // follow-up (like not_interested), but as its own status so rent-seekers stay
+  // countable and re-engageable if rentals ever launch. ---
+  { value: 'wants_rent', label_ar: 'يريد إيجار', label_en: 'Wants Rent', tone: 'negative' },
 ] as const;
 
 export type OutcomeValue = (typeof OUTCOME_CATALOG)[number]['value'];
