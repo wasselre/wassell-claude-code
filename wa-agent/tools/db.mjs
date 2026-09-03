@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Read-only DB access for headless whatsapp-reply sessions.
+ * Read-only DB access for headless WhatsApp reply sessions.
  *   node tools/db.mjs "SELECT ..."
  * Runs ONE statement through the `claude_runner_sql` RPC (read-only enforced
  * server-side) and prints rows as JSON. The Supabase MCP needs an interactive

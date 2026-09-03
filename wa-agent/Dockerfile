@@ -24,13 +24,11 @@ COPY runner.mjs ./
 # Put them exactly there — a session should never have to hunt for its own tools.
 COPY tools /app/wa-agent/tools
 
-# The skills live where a session started in /app/repo will find them. Which one
-# each session runs is chosen at runtime by WA_SKILL (see runner.mjs). Both are
-# BUILD-CONTEXT COPIES of the repo skills (.claude/skills/<name>/SKILL.md) —
-# keep them in sync when the repo skill changes (the wa-agent/ folder is the Fly
-# build context, so the repo's .claude/ is out of reach at build time).
-RUN mkdir -p /app/repo/.claude/skills/whatsapp-reply /app/repo/.claude/skills/whatsapp-basic-reply
-COPY skill/SKILL.md /app/repo/.claude/skills/whatsapp-reply/SKILL.md
+# The skill lives where a session started in /app/repo will find it. It is a
+# BUILD-CONTEXT COPY of the repo skill (.claude/skills/whatsapp-basic-reply/
+# SKILL.md) — keep them in sync when the repo skill changes (the wa-agent/ folder
+# is the Fly build context, so the repo's .claude/ is out of reach at build time).
+RUN mkdir -p /app/repo/.claude/skills/whatsapp-basic-reply
 COPY skill-basic/SKILL.md /app/repo/.claude/skills/whatsapp-basic-reply/SKILL.md
 
 # NON-ROOT. The Claude CLI hard-refuses --dangerously-skip-permissions when
