@@ -27,6 +27,7 @@ const RolesPage = lazy(() => import('@/pages/Settings/RolesPage'));
 const UsersPage = lazy(() => import('@/pages/Settings/UsersPage'));
 const AuditLogPage = lazy(() => import('@/pages/Settings/AuditLogPage'));
 const GeoElementsPage = lazy(() => import('@/pages/Settings/GeoElementsPage'));
+const GeoLabelingPage = lazy(() => import('@/pages/GeoLabeling/GeoLabelingPage'));
 const MarketingOpsPage = lazy(() => import('@/pages/Settings/MarketingOpsPage'));
 const ContentIntelligencePage = lazy(() => import('@/pages/Settings/ContentIntelligencePage'));
 const MarketingAdvertisersPage = lazy(() => import('@/pages/Settings/MarketingAdvertisersPage'));
@@ -109,6 +110,7 @@ const WriterRulesSettingsRoute = lazy(() => import('@/pages/Marketing/components
 const AiRolesSettingsRoute = lazy(() => import('@/pages/Marketing/components/SettingsCreativeRoutes').then((m) => ({ default: m.AiRolesSettingsRoute })));
 const CreativeFlagsSettingsRoute = lazy(() => import('@/pages/Marketing/components/SettingsCreativeRoutes').then((m) => ({ default: m.CreativeFlagsSettingsRoute })));
 const ProjectFinderPage = lazy(() => import('@/pages/ProjectFinder/ProjectFinderPage'));
+const GeoReviewPage = lazy(() => import('@/pages/GeoReview/GeoReviewPage'));
 const FinancingPage = lazy(() => import('@/pages/Financing/FinancingPage'));
 const PostsContentPage = lazy(() => import('@/pages/PostsContent/PostsContentPage'));
 const SalesStudioHomePage = lazy(() => import('@/pages/SalesStudio/SalesStudioHomePage'));
@@ -432,6 +434,13 @@ export default function App() {
           <Route path="/marketing-management/*" element={<Navigate to="/m" replace />} />
           {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
           <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />
+          {/* Geography Understanding — rep-facing review surface: confirm / edit /
+              reject / must-confirm the location preferences the ability proposed
+              for a client, before any of it is applied. */}
+          <Route path="/geo-review" element={<GeoReviewPage />} />
+          {/* Geography Understanding — gold-set labeling instrument (blind label →
+              adjudication → canonical answer key). Internal ability-building tool. */}
+          <Route path="/geo-labeling" element={<RequireAdmin><GeoLabelingPage /></RequireAdmin>} />
           {/* Financing calculator. Query params let a client / project / unit
               page deep-link straight into a pre-filled scenario. */}
           <Route path="/financing" element={<RequirePageAccess pageId="financing_calculator"><FinancingPage /></RequirePageAccess>} />
