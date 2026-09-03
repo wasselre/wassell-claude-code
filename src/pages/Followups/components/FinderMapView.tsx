@@ -1,25 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
-import { Loader2, MapPin, X, Maximize2, Minimize2 } from 'lucide-react';
-import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
+import { useMemo, type ReactNode } from 'react';
 import { markActivity } from '@/lib/perf/freezeDetector';
-import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildColoredPinIcon, buildClusterIcon } from '@/lib/locationUtils';
+import { buildColoredPinIcon } from '@/lib/locationUtils';
 import type { FinderMatch, FinderSource } from '@/lib/matching/projectFinder';
-import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
-import { useClientAreaLayer } from '@/components/map/useClientAreaLayer';
-import MapLayersOverlay from '@/components/map/MapLayersOverlay';
-import { useIsMobile } from '@/hooks/useIsMobile';
+import BaseMapView, { type MapPin } from '@/components/map/BaseMapView';
 import type { LocationItem } from '@/lib/geo/locationItems';
 
 /**
  * MAP view for the Project Finder results — the alternative to the card list.
- * Plots every match that carries coordinates (facts.latitude/longitude, added by
- * scoreProject) as a brand-colored pin on the branded WASSEL_MAP_STYLE basemap,
- * clustered by density. Pins are colored by SOURCE (our projects / market / all
- * projects). Clicking a pin opens the SAME `FinderCard` as the list view — full
- * actions and all — in a floating panel over the map (the parent supplies it via
- * `renderSelectedCard`, so the action wiring is identical to a list card).
+ * A thin ADAPTER over the shared BaseMapView: it maps each match with coordinates
+ * to a pin colored by SOURCE (our projects / market / all projects), supplies the
+ * source legend, and renders the clicked pin's FinderCard. Every piece of map
+ * plumbing — clustering, the client-area highlight, the full-view button, the
+ * layers overlay, fit-bounds, focus — lives in BaseMapView, so this map and the
+ * Client Options map stay in lock-step (they used to be separate copies and kept
+ * drifting apart).
  *
  * Shared by the standalone Project Finder page and the Follow-up finder.
  */
@@ -33,15 +27,11 @@ interface Props {
   /** Render the clicked match as a full card (the parent's own wired FinderCard).
    *  When provided, a pin click shows this card in a panel instead of navigating. */
   renderSelectedCard?: (match: FinderMatch) => ReactNode;
-  /** External "show on map" request from a list card — open + center this pin.
-   *  The nonce re-triggers even when the same project is asked for twice. */
+  /** External "show on map" request from a list card — open + center this pin. */
   focus?: { id: string; nonce: number } | null;
   /** Tailwind height for the map container. Default h-[70vh]. */
   heightClass?: string;
-  /** The client's selected area — the location items the search was gated by
-   *  (districts, geo-element rules, drawn shapes, legacy district picks). Drawn
-   *  as a shaded overlay under the pins so the rep sees which results fall
-   *  inside it. See useClientAreaLayer. */
+  /** The client's selected area — shaded under the pins. See useClientAreaLayer. */
   areaItems?: LocationItem[] | null;
 }
 
@@ -62,354 +52,73 @@ const asCoord = (v: unknown): number | null => {
   return Number.isFinite(n) && n !== 0 ? n : null;
 };
 
-interface Plotted { match: FinderMatch; lat: number; lng: number }
-
 export default function FinderMapView({ matches, isAr, onOpenDetails, renderSelectedCard, focus, heightClass = 'h-[70vh]', areaItems }: Props) {
-  const L = (ar: string, en: string) => (isAr ? ar : en);
-  const isMobile = useIsMobile();
-  const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
-  const keyMissing = !isMapsKeyConfigured();
+  // One pin icon per source color, reused across every marker (a dense tab has
+  // thousands of pins — re-encoding an identical SVG data-URI per marker was the
+  // main-thread stall when opening the map on a large result set).
+  const iconBySource = useMemo(() => ({
+    our_projects: buildColoredPinIcon(SOURCE_COLOR.our_projects) as google.maps.Icon | undefined,
+    market_listings: buildColoredPinIcon(SOURCE_COLOR.market_listings) as google.maps.Icon | undefined,
+    all_projects: buildColoredPinIcon(SOURCE_COLOR.all_projects) as google.maps.Icon | undefined,
+  }), []);
 
-  const [map, setMap] = useState<google.maps.Map | null>(null);
-  // Administrative context under the result pins — country/region/city/district by
-  // zoom. Roads + landmarks are OFF here: they're now user-toggled context layers
-  // owned by MapLayersOverlay (below), so the map opens clean. See useGeoBoundaryLayer.
-  useGeoBoundaryLayer(map, { roads: false, landmarks: false });
-  // The client's selected area (compiled by the matcher's own preview RPC) shaded
-  // under the pins — include rules in copper, exclude rules in red.
-  const area = useClientAreaLayer(map, areaItems, isAr);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Full-view: the map wrapper enters the browser Fullscreen API (our own button
-  // on the LEFT, since Google's default control sits top-right behind the layers
-  // panel). isFs tracks it so the button flips between enter/exit.
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [isFs, setIsFs] = useState(false);
-  useEffect(() => {
-    const onFs = () => setIsFs(document.fullscreenElement === wrapRef.current);
-    document.addEventListener('fullscreenchange', onFs);
-    return () => document.removeEventListener('fullscreenchange', onFs);
-  }, []);
-  const toggleFs = () => {
-    const el = wrapRef.current;
-    if (!el) return;
-    if (document.fullscreenElement === el) void document.exitFullscreen();
-    else void el.requestFullscreen?.();
-  };
-  const clustererRef = useRef<MarkerClusterer | null>(null);
-  // OUR-project markers are placed on the map directly (NEVER in the clusterer) so
-  // they always show as individual pins; kept here for teardown.
-  const oursMarkersRef = useRef<google.maps.Marker[]>([]);
-  const onOpenRef = useRef(onOpenDetails);
-  useEffect(() => { onOpenRef.current = onOpenDetails; }, [onOpenDetails]);
-  const hasCard = !!renderSelectedCard;
-  const hasCardRef = useRef(hasCard);
-  useEffect(() => { hasCardRef.current = hasCard; }, [hasCard]);
+  // Only matches with real coordinates can be plotted. Keyed by project_id, colored
+  // by source; our projects are "solo" pins (never clustered) and sit on top.
+  const matchById = useMemo(() => {
+    const m = new Map<string, FinderMatch>();
+    for (const x of matches) m.set(x.project_id, x);
+    return m;
+  }, [matches]);
 
-  // Only matches with real coordinates can be plotted.
-  const plotted = useMemo<Plotted[]>(() => {
-    const out: Plotted[] = [];
+  const pins = useMemo<MapPin[]>(() => {
+    const out: MapPin[] = [];
     for (const m of matches) {
       const lat = asCoord(m.facts.latitude);
       const lng = asCoord(m.facts.longitude);
-      if (lat != null && lng != null) out.push({ match: m, lat, lng });
-    }
-    return out;
-  }, [matches]);
-
-  const missingCoords = matches.length - plotted.length;
-
-  // Stable CONTENT signature of the plotted set. The parent passes `matches` as a
-  // fresh array literal every render (`[...ourProjects, ...tierItems]`), so `plotted`
-  // changes identity on every parent re-render even when the pins are identical.
-  // Keying the marker/cluster/fitBounds effect on this string instead of the array
-  // means an unchanged pin set does NOT tear down and rebuild every marker (pins
-  // flickering in/out) nor refit the viewport (the user's zoom snapping back) —
-  // it only reacts when the pins actually change (a tab switch / new search).
-  const plottedSig = useMemo(
-    () => plotted.map((p) => `${p.match.source}:${p.match.project_id}:${p.lat.toFixed(5)}:${p.lng.toFixed(5)}`).join('|'),
-    [plotted],
-  );
-
-  // The currently-open card's match (kept in sync with the plotted set — a match
-  // that scrolled out of the active tab/search closes its card).
-  const selectedMatch = useMemo(
-    () => plotted.find((p) => p.match.project_id === selectedId)?.match ?? null,
-    [plotted, selectedId],
-  );
-
-  // Dismiss the open card when the plotted set changes (tab switch / new search).
-  // Keyed on the content signature, not the array identity, so an identical
-  // re-render doesn't close the card the user just opened.
-  useEffect(() => { setSelectedId(null); }, [plottedSig]);
-
-  // Clicking empty map space closes the open card.
-  useEffect(() => {
-    if (!map || !window.google) return;
-    const l = map.addListener('click', () => setSelectedId(null));
-    return () => google.maps.event.removeListener(l);
-  }, [map]);
-
-  // (Re)build markers + clusterer + fit bounds whenever the plotted set changes.
-  useEffect(() => {
-    if (!map || !isLoaded || !window.google) return;
-    markActivity(`finder: rendering ${plotted.length} map pins`);
-    clustererRef.current?.clearMarkers();
-    oursMarkersRef.current.forEach((m) => m.setMap(null));
-    oursMarkersRef.current = [];
-
-    // Build the pin icon ONCE per source color and reuse it across all markers —
-    // there are only 3 colors, so a dense tab (thousands of pins) no longer
-    // re-encodes an identical SVG data-URI per marker (that per-marker cost was the
-    // main-thread stall when opening the map on a large result set).
-    const iconBySource = {
-      our_projects: buildColoredPinIcon(SOURCE_COLOR.our_projects) as google.maps.Icon | undefined,
-      market_listings: buildColoredPinIcon(SOURCE_COLOR.market_listings) as google.maps.Icon | undefined,
-      all_projects: buildColoredPinIcon(SOURCE_COLOR.all_projects) as google.maps.Icon | undefined,
-    };
-
-    const makeMarker = (p: Plotted) => {
+      if (lat == null || lng == null) continue;
       // Market pins carry the Aqar ad id in the hover title ("… @123456").
       const extId =
-        p.match.source === 'market_listings' && typeof p.match.facts.external_id === 'string' && p.match.facts.external_id
-          ? ` @${p.match.facts.external_id}`
+        m.source === 'market_listings' && typeof m.facts.external_id === 'string' && m.facts.external_id
+          ? ` @${m.facts.external_id}`
           : '';
-      const marker = new google.maps.Marker({
-        position: { lat: p.lat, lng: p.lng },
-        icon: iconBySource[p.match.source],
-        title: `${p.match.project_name}${extId}`,
+      out.push({
+        id: m.project_id,
+        lat,
+        lng,
+        icon: iconBySource[m.source],
+        title: `${m.project_name}${extId}`,
         // Our projects sit on top so they're never hidden under a market pin.
-        zIndex: p.match.source === 'our_projects' ? 1000 : undefined,
-      });
-      marker.addListener('click', () => {
-        if (hasCardRef.current) {
-          setSelectedId(p.match.project_id);
-          map.panTo({ lat: p.lat, lng: p.lng });
-        } else {
-          onOpenRef.current(p.match);
-        }
-      });
-      return marker;
-    };
-
-    // OUR projects are placed on the map directly so they are ALWAYS individual
-    // pins (never absorbed into a cluster); every other source is clustered.
-    const clustered: google.maps.Marker[] = [];
-    for (const p of plotted) {
-      const marker = makeMarker(p);
-      if (p.match.source === 'our_projects') {
-        marker.setMap(map);
-        oursMarkersRef.current.push(marker);
-      } else {
-        clustered.push(marker);
-      }
-    }
-
-    if (clustered.length > 0) {
-      clustererRef.current = new MarkerClusterer({
-        map,
-        markers: clustered,
-        algorithm: new SuperClusterAlgorithm({ radius: 70, maxZoom: 15 }),
-        renderer: {
-          render: ({ count, position }) =>
-            new google.maps.Marker({
-              position,
-              icon: buildClusterIcon(count) as google.maps.Icon | undefined,
-              zIndex: Number(google.maps.Marker.MAX_ZINDEX) + count,
-            }),
-        },
+        zIndex: m.source === 'our_projects' ? 1000 : undefined,
+        solo: m.source === 'our_projects',
+        sig: m.source,
       });
     }
+    return out;
+  }, [matches, iconBySource]);
 
-    if (plotted.length > 0) {
-      // Fit to all pins (single pin → a comfortable zoom).
-      const bounds = new google.maps.LatLngBounds();
-      for (const p of plotted) bounds.extend({ lat: p.lat, lng: p.lng });
-      map.fitBounds(bounds, 48);
-      if (plotted.length === 1) {
-        google.maps.event.addListenerOnce(map, 'idle', () => {
-          if ((map.getZoom() ?? 0) > 15) map.setZoom(15);
-        });
-      }
-    }
+  const missingCount = matches.length - pins.length;
 
-    return () => {
-      clustererRef.current?.clearMarkers();
-      clustererRef.current = null;
-      oursMarkersRef.current.forEach((m) => m.setMap(null));
-      oursMarkersRef.current = [];
-    };
-    // Keyed on plottedSig (content), NOT plotted (identity): the parent rebuilds the
-    // matches array every render, so depending on `plotted` re-ran this whole effect —
-    // rebuilding markers and calling fitBounds — on every parent render, which is what
-    // made the map lag, flicker its pins, and yank the zoom back. plotted is read from
-    // the same render as plottedSig, so the closure is always in sync with the signature.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isLoaded, plottedSig]);
-
-  // External "show on map" request (from a list card). Applied ONCE per nonce,
-  // as soon as the map is ready AND the pin is in the current plotted set (which
-  // may lag a tab switch / a fresh mount) — declared after the marker effect so
-  // its panTo lands after that effect's fitBounds, and after the clear-on-change
-  // effect so it re-opens rather than being cleared. Guarded by the nonce so a
-  // later pin rebuild can't silently reopen a card the rep has since closed.
-  const appliedFocusNonce = useRef<number | null>(null);
-  useEffect(() => {
-    if (!focus || !map || !isLoaded) return;
-    if (focus.nonce === appliedFocusNonce.current) return;
-    const p = plotted.find((x) => x.match.project_id === focus.id);
-    if (!p) return; // pin not in the current set yet — re-runs when plottedSig updates
-    appliedFocusNonce.current = focus.nonce;
-    setSelectedId(focus.id);
-    map.panTo({ lat: p.lat, lng: p.lng });
-    google.maps.event.addListenerOnce(map, 'idle', () => {
-      if ((map.getZoom() ?? 0) < 13) map.setZoom(15);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus, map, isLoaded, plottedSig]);
-
-  // When the client's area arrives (it compiles server-side, so it lands after
-  // the pins' own fitBounds), widen the view to show the WHOLE area plus every
-  // pin — the point is to see which pins sit inside it. Keyed on the area's
-  // drawn-shape key, so panning/zooming afterwards isn't yanked back; a later
-  // pin-set change refits via the marker effect as before.
-  useEffect(() => {
-    if (!map || !isLoaded || !window.google || !area.bounds) return;
-    const bounds = new google.maps.LatLngBounds();
-    bounds.union(area.bounds);
-    for (const p of plotted) bounds.extend({ lat: p.lat, lng: p.lng });
-    map.fitBounds(bounds, 48);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isLoaded, area.boundsKey]);
-
-  if (keyMissing) {
-    return (
-      <div className={`card flex ${heightClass} items-center justify-center p-6 text-center text-sm text-charcoal/60`}>
-        {L('خريطة العرض غير مُفعّلة (مفتاح خرائط Google غير مُهيّأ).', 'Map view is unavailable (Google Maps key not configured).')}
-      </div>
-    );
-  }
-  if (loadError) {
-    return (
-      <div className={`card flex ${heightClass} items-center justify-center p-6 text-center text-sm text-red-600`}>
-        {L('تعذّر تحميل الخريطة.', 'Failed to load the map.')}
-      </div>
-    );
-  }
-  if (!isLoaded) {
-    return (
-      <div className={`card flex ${heightClass} items-center justify-center`}>
-        <Loader2 className="animate-spin text-copper" />
-      </div>
-    );
-  }
+  const legend = (Object.keys(SOURCE_LABEL) as FinderSource[]).map((s) => (
+    <span key={s} className="inline-flex items-center gap-1">
+      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: SOURCE_COLOR[s] }} />
+      {isAr ? SOURCE_LABEL[s].ar : SOURCE_LABEL[s].en}
+    </span>
+  ));
 
   return (
-    <div className="card overflow-hidden">
-      <div ref={wrapRef} className={`relative w-full bg-cream ${isFs ? 'h-full' : heightClass}`}>
-        <GoogleMap
-          mapContainerStyle={{ width: '100%', height: '100%' }}
-          center={DEFAULT_MAP_CENTER}
-          zoom={11}
-          onLoad={setMap}
-          onUnmount={() => setMap(null)}
-          options={{
-            styles: GEO_MAP_STYLE,
-            disableDefaultUI: false,
-            mapTypeControl: false,
-            streetViewControl: false,
-            // Our own full-view button (top-left) replaces Google's default — its
-            // top-right control was hidden behind the layers panel.
-            fullscreenControl: false,
-            clickableIcons: false,
-            // MOBILE-ONLY one-finger pan: the default demands two fingers, so a
-            // one-finger drag scrolls the surrounding modal instead of the map
-            // ("the map doesn't work" on a phone). On the laptop keep the
-            // original default ('auto' → cooperative), so desktop is unchanged.
-            gestureHandling: isMobile ? 'greedy' : 'auto',
-          }}
-        />
-
-        <MapLayersOverlay map={map} isAr={isAr} />
-
-        {/* Full view / exit — on the LEFT (end in RTL) so the layers panel (top
-            start) never hides it. Toggles the browser Fullscreen API. */}
-        <button
-          type="button"
-          onClick={toggleFs}
-          className="absolute top-3 end-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-sand/50 bg-white/95 text-charcoal shadow-sm backdrop-blur transition hover:bg-cream"
-          aria-label={isFs ? L('إنهاء العرض الكامل', 'Exit full view') : L('عرض كامل', 'Full view')}
-          title={isFs ? L('إنهاء العرض الكامل', 'Exit full view') : L('عرض كامل', 'Full view')}
-        >
-          {isFs ? <Minimize2 size={16} className="text-copper" /> : <Maximize2 size={16} className="text-copper" />}
-        </button>
-
-        {/* Clicked-pin card — the SAME FinderCard as the list, full actions. */}
-        {selectedMatch && renderSelectedCard && (
-          <div
-            className="absolute top-3 z-20 w-[92%] max-w-[360px] overflow-y-auto rounded-xl shadow-2xl ring-1 ring-black/5"
-            style={{ insetInlineStart: '0.75rem', maxHeight: 'calc(100% - 1.5rem)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={() => setSelectedId(null)}
-              className="absolute end-2 top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-charcoal/70 shadow ring-1 ring-black/5 transition hover:bg-white hover:text-charcoal"
-              aria-label={L('إغلاق', 'Close')}
-            >
-              <X size={14} />
-            </button>
-            {renderSelectedCard(selectedMatch)}
-          </div>
-        )}
-      </div>
-
-      {/* Legend + coverage note */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-sand/40 bg-cream/30 px-3 py-2 text-[11px] text-charcoal/70">
-        <span className="inline-flex items-center gap-1">
-          <MapPin size={12} className="text-copper" />
-          {L(`${plotted.length} على الخريطة`, `${plotted.length} on the map`)}
-          {missingCoords > 0 && (
-            <span className="text-charcoal/45">
-              {' '}· {L(`${missingCoords} بدون إحداثيات`, `${missingCoords} without coordinates`)}
-            </span>
-          )}
-        </span>
-        {(area.hasInclude || area.hasExclude || area.loading || area.undrawable > 0) && (
-          <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
-            {area.hasInclude && (
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block h-2.5 w-2.5 rounded-sm border" style={{ background: '#B8734F22', borderColor: '#B8734F' }} />
-                {L('منطقة العميل', "Client's area")}
-              </span>
-            )}
-            {area.hasExclude && (
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block h-2.5 w-2.5 rounded-sm border" style={{ background: '#B91C1C1A', borderColor: '#B91C1C' }} />
-                {L('منطقة مستثناة', 'Excluded area')}
-              </span>
-            )}
-            {area.loading && !area.hasInclude && !area.hasExclude && (
-              <span className="inline-flex items-center gap-1 text-charcoal/45">
-                <Loader2 size={11} className="animate-spin" />
-                {L('جارٍ رسم منطقة العميل…', "Drawing the client's area…")}
-              </span>
-            )}
-            {area.undrawable > 0 && (
-              <span className="text-amber-700">
-                {L(`${area.undrawable} من قواعد الموقع لم تُرسم (تحتاج مراجعة)`, `${area.undrawable} location rule(s) not drawn (need review)`)}
-              </span>
-            )}
-          </span>
-        )}
-        <span className="ms-auto flex flex-wrap items-center gap-x-3 gap-y-1">
-          {(Object.keys(SOURCE_LABEL) as FinderSource[]).map((s) => (
-            <span key={s} className="inline-flex items-center gap-1">
-              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: SOURCE_COLOR[s] }} />
-              {isAr ? SOURCE_LABEL[s].ar : SOURCE_LABEL[s].en}
-            </span>
-          ))}
-        </span>
-      </div>
-    </div>
+    <BaseMapView
+      pins={pins}
+      isAr={isAr}
+      focus={focus}
+      areaItems={areaItems}
+      heightClass={heightClass}
+      mobileGreedy
+      cardMaxWidthClass="max-w-[360px]"
+      missingCount={missingCount}
+      onRebuild={(count) => markActivity(`finder: rendering ${count} map pins`)}
+      onPinClick={(id) => { const m = matchById.get(id); if (m) onOpenDetails(m); }}
+      renderSelectedCard={renderSelectedCard ? (id) => { const m = matchById.get(id); return m ? renderSelectedCard(m) : null; } : undefined}
+      legend={legend}
+    />
   );
 }

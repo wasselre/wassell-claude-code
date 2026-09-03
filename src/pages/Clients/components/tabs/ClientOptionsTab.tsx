@@ -1,4 +1,5 @@
 import { buildGeoNameMap } from '@/lib/geo/geoNameMap';
+import { pickLocalized } from '@/lib/geo/localizedName';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -15,6 +16,7 @@ import {
   type ClientOptionStatus, type ClientOptionSourceType, type ClientOptionData,
 } from '@/lib/matching/clientOptions';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
+import { collectClientAreaItems } from '@/lib/geo/clientArea';
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
 import QualityBadge from '@/components/market/QualityBadge';
 import DeliveryPill from '@/components/matching/DeliveryPill';
@@ -258,6 +260,22 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
     if (bedVal) chips.push({ slug: 'preferred_bedrooms', label_ar: 'الغرف', label_en: 'Bedrooms', value: bedVal });
     return chips;
   }, [clientsModel, client, geoNames, isAr]);
+
+  // The client's selected area (from the saved record — no search draft here),
+  // as location items the finder's compiler turns into geometry, so the map can
+  // shade the area the client wants under the option pins. Districts resolve their
+  // display name from the same localized geo map the chips use.
+  const areaItems = useMemo(
+    () => collectClientAreaItems({
+      draft: null,
+      savedClientData: (client.data as Record<string, unknown>) ?? null,
+      resolveDistrictName: (id) => {
+        const n = geoNames[id];
+        return n ? pickLocalized(n, isAr) : null;
+      },
+    }),
+    [client, geoNames, isAr],
+  );
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editNotesId, setEditNotesId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
@@ -1075,7 +1093,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
       {/* Map view — status-colored pins; a pin click opens the same option
           card (full actions) in a floating panel over the map. */}
       {view === 'map' && visible.length > 0 && (
-        <ClientOptionsMapView options={visible} isAr={isAr} renderCard={renderOptionCard} />
+        <ClientOptionsMapView options={visible} isAr={isAr} renderCard={renderOptionCard} areaItems={areaItems} />
       )}
 
       {/* Option cards (list view) */}
