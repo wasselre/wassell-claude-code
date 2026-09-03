@@ -7,7 +7,7 @@
 /* ── DateControl ─────────────────────────────────────────────── */
 .datectl {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  background: var(--card, #fff); border: 1px solid var(--line);
+  background: var(--paper); border: 1px solid var(--line);
   border-radius: 12px; padding: 9px 11px; margin-bottom: 16px;
 }
 .datectl .stepper { display: flex; align-items: center; gap: 4px; margin-inline-end: auto; }
@@ -37,7 +37,7 @@
 .datectl .rangebtn.on { border-color: var(--copper); color: var(--ink); }
 .datectl .pop {
   position: absolute; top: calc(100% + 8px); inset-inline-start: 0; z-index: 30;
-  background: var(--card, #fff); border: 1px solid var(--line); border-radius: 12px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
   padding: 13px; width: 268px; box-shadow: 0 16px 40px rgba(0, 0, 0, .28);
 }
 .datectl .pop .presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 11px; }
@@ -73,7 +73,7 @@
 }
 
 /* media-efficiency metric card */
-.mcard { background: var(--card, #fff); border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px; }
+.mcard { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px; }
 .mcard .top { display: flex; align-items: center; gap: 7px; }
 .mcard .abbr {
   font-family: var(--serif); font-size: 11px; color: #fff; background: var(--copper);
