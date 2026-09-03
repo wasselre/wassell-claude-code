@@ -45,9 +45,11 @@ export default function ProjectFilePickerModal({
   onConfirm: (refs: string[]) => void;
   onClose: () => void;
   /**
-   * Which files start checked. `'all'` (default, single-project flow) pre-checks
-   * everything. `'bulk'` pre-checks documents + the first 3 photos (the "top 3")
-   * and returns refs in text→PDF→pictures order (`orderSelectedRefsBulk`).
+   * Which files start checked. `'bulk'` (both the single AND the bulk project
+   * send) pre-checks the brochure + the first 3 photos (the "top 3") and returns
+   * refs in text→PDF→pictures order (`orderSelectedRefsBulk`). `'all'` (the
+   * default, currently unused) pre-checks everything in photo-first order — kept
+   * as an explicit opt-in for any future "send the whole folder" caller.
    */
   preselect?: 'all' | 'bulk';
   /** Overrides the default "Continue" confirm-button label (e.g. "Next: message"). */

@@ -63,6 +63,10 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
         allProjectId={projectId}
         projectName={projectName}
         isAr={isAr}
+        // Same smart default as the bulk flow: pre-check the brochure + top-3
+        // photos (not every file), and send them documents→photos→videos so the
+        // send reads text → PDF → pictures. The rep can still tick/untick.
+        preselect="bulk"
         onConfirm={(refs) => { setSelectedRefs(refs); setPhase('chat'); }}
         onClose={onClose}
       />
