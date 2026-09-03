@@ -31,7 +31,9 @@ function storage(bytes: number, isAr: boolean): string {
   const KB = 1024, MB = KB * 1024, GB = MB * 1024;
   const fmt = (n: number, unitAr: string, unitEn: string, dp: number): string => {
     const s = n.toFixed(dp);
-    return `${isAr ? toArabicDigits(s) : s} ${isAr ? unitAr : unitEn}`;
+    // Arabic decimal mark is «٫», never a Latin dot (which reads as «٠»).
+    const arS = toArabicDigits(s).replace(/\./g, '٫');
+    return `${isAr ? arS : s} ${isAr ? unitAr : unitEn}`;
   };
   if (bytes >= GB) return fmt(bytes / GB, 'جيجابايت', 'GB', 2);
   if (bytes >= MB) return fmt(bytes / MB, 'ميجابايت', 'MB', 1);

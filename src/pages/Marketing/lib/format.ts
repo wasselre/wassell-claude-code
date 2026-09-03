@@ -9,16 +9,38 @@
 
 const AR_DIGITS = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
 
-/** Latin digits → Arabic-Indic. Anything that isn't 0-9 passes through. */
+/**
+ * Latin digits → Arabic-Indic. Anything that isn't 0-9 passes through.
+ * Deliberately does NOT touch the decimal dot — this runs over free text too
+ * (script bodies, hooks), where a "." is sentence punctuation, not a decimal.
+ * Number-shaped output goes through `num()` / `pct()`, which fix the decimal.
+ */
 export function toArabicDigits(s: string): string {
   return s.replace(/[0-9]/g, (d) => AR_DIGITS[Number(d)] ?? d);
 }
 
-/** A number for display. `null`/`undefined` becomes an em-dash, never "0". */
+/**
+ * A number for display. `null`/`undefined` becomes an em-dash, never "0".
+ * In Arabic the decimal separator is the Arabic decimal comma «٫», never a
+ * Latin dot: the dot sits exactly where the Arabic zero «٠» sits, so «٣١.٢»
+ * reads as «٣١٠٢». The thousands separator stays a Latin comma «,» — a
+ * different comma shape — so no number is ever ambiguous.
+ */
 export function num(v: number | null | undefined, isAr: boolean): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return '—';
   const s = new Intl.NumberFormat('en-US').format(v);
-  return isAr ? toArabicDigits(s) : s;
+  return isAr ? toArabicDigits(s).replace(/\./g, '٫') : s;
+}
+
+/**
+ * A percentage for display — always carries the sign («٪» in Arabic, "%" in
+ * English) so a bare number is never mistaken for a count. `digits` fixes the
+ * decimal places (default 0). Uses `num()` so the decimal mark is «٫», not ".".
+ */
+export function pct(v: number | null | undefined, isAr: boolean, digits = 0): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
+  const rounded = digits > 0 ? Number(v.toFixed(digits)) : Math.round(v);
+  return isAr ? `${num(rounded, true)}٪` : `${num(rounded, false)}%`;
 }
 
 /**

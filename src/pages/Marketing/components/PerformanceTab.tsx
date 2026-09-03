@@ -32,14 +32,16 @@ const DAY_MS = 86_400_000;
 function compact(v: number | null | undefined, isAr: boolean): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return '—';
   const trim = (s: string): string => s.replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
+  // Arabic decimal mark is «٫», never a Latin dot (which reads as «٠»).
+  const arNum = (s: string): string => toArabicDigits(s).replace(/\./g, '٫');
   const abs = Math.abs(v);
   if (abs >= 1_000_000) {
     const s = trim((v / 1_000_000).toFixed(2));
-    return isAr ? `${toArabicDigits(s)} م` : `${s}M`;
+    return isAr ? `${arNum(s)} م` : `${s}M`;
   }
   if (abs >= 10_000) {
     const s = trim((v / 1_000).toFixed(1));
-    return isAr ? `${toArabicDigits(s)} ألف` : `${s}K`;
+    return isAr ? `${arNum(s)} ألف` : `${s}K`;
   }
   return num(v, isAr);
 }
