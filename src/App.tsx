@@ -91,6 +91,7 @@ const MarketingPerformanceDeskPage = lazy(() => import('@/pages/Marketing/Perfor
 const MarketingCampaignsPage = lazy(() => import('@/pages/Marketing/CampaignsPage'));
 const MarketingGoalsPage = lazy(() => import('@/pages/Marketing/GoalsPage'));
 const MarketingContentInventoryPage = lazy(() => import('@/pages/Marketing/ContentInventoryPage'));
+const MarketingContentReadinessPage = lazy(() => import('@/pages/Marketing/ContentReadinessPage'));
 const MarketingCampaignDetailPage = lazy(() => import('@/pages/Marketing/CampaignDetailPage'));
 const MarketingExecutionDetailPage = lazy(() => import('@/pages/Marketing/ExecutionDetailPage'));
 const MarketingUploadPage = lazy(() => import('@/pages/Marketing/UploadPage'));
@@ -545,6 +546,7 @@ export default function App() {
           <Route path="/m/organic" element={<MarketingOrganicPulsePage />} />
           <Route path="/m/publishing" element={<MarketingPublishingBoardPage />} />
           <Route path="/m/content-inventory" element={<MarketingContentInventoryPage />} />
+          <Route path="/m/content-readiness" element={<MarketingContentReadinessPage />} />
           <Route path="/m/settings" element={<MarketingSettingsPage />} />
           {/* Creative Director settings — static segments outrank :section.
               Editing inside each screen is gated by manage_settings (and

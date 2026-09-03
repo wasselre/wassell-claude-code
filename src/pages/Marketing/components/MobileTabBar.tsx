@@ -142,6 +142,7 @@ const SHEET_GROUPS: SheetGroup[] = [
       { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', surface: 'calendar', icon: iconCalendar },
       { to: marketingLibraryHref(), ar: 'مكتبة المواد', en: 'Asset library', surface: 'library', icon: iconLibrary },
       { to: '/m/content-inventory', ar: 'جرد المحتوى', en: 'Content inventory', surface: 'content_inventory', icon: iconInventory },
+      { to: '/m/content-readiness', ar: 'جاهزية المحتوى', en: 'Content readiness', surface: 'content_readiness', icon: iconInventory },
     ],
   },
   {

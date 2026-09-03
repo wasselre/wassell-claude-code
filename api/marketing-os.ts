@@ -4307,6 +4307,117 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
+      /* Content readiness — per project, does it have its        */
+      /* required assets? 1 brochure + 3 hero images (counted on   */
+      /* the file's MAIN type primary_category), and how many of   */
+      /* its units have a plan (units.unit_plan). Aggregated in    */
+      /* SQL by mkt_content_readiness() so we never fetch the ~7k  */
+      /* unit rows. Read-only planning view.                       */
+      /* -------------------------------------------------------- */
+      case 'content_readiness': {
+        const capFail = await requireCap(sb, 'read');
+        if (capFail) return capFail;
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+
+        const rpc = await svc.rpc('mkt_content_readiness');
+        const rpcFail = dbFail(rpc.error);
+        if (rpcFail) return rpcFail;
+
+        // all_projects model id — lets the client deep-link into the Files library.
+        const modelRes = await svc.from('models').select('id').eq('name', 'all_projects').single();
+        const modelFail = dbFail(modelRes.error);
+        if (modelFail) return modelFail;
+        const apId = (modelRes.data as { id: string }).id;
+
+        type Row = {
+          project_id: string; project_name: string;
+          brochure_count: number; hero_count: number;
+          total_units: number; units_with_plan: number;
+        };
+        const projects = ((rpc.data ?? []) as Row[]).map((r) => ({
+          id: r.project_id,
+          name: r.project_name || '',
+          brochure_count: r.brochure_count,
+          hero_count: r.hero_count,
+          total_units: r.total_units,
+          units_with_plan: r.units_with_plan,
+          units_missing_plan: Math.max(0, r.total_units - r.units_with_plan),
+        }));
+
+        const totals = projects.reduce(
+          (t, p) => {
+            if (p.brochure_count === 1) t.brochure_ok += 1;
+            else if (p.brochure_count === 0) t.brochure_missing += 1;
+            else t.brochure_over += 1;
+            if (p.hero_count === 3) t.hero_ok += 1;
+            else if (p.hero_count < 3) t.hero_under += 1;
+            else t.hero_over += 1;
+            t.total_units += p.total_units;
+            t.units_missing_plan += p.units_missing_plan;
+            return t;
+          },
+          {
+            projects: projects.length,
+            brochure_ok: 0, brochure_missing: 0, brochure_over: 0,
+            hero_ok: 0, hero_under: 0, hero_over: 0,
+            total_units: 0, units_missing_plan: 0,
+          },
+        );
+
+        return jsonOk({ projects, totals, model_id: apId });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Content readiness — units drill-down: the units of ONE    */
+      /* project with whether each has a plan (units.unit_plan).   */
+      /* -------------------------------------------------------- */
+      case 'content_readiness_units': {
+        const capFail = await requireCap(sb, 'read');
+        if (capFail) return capFail;
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+        const projectId = str(body.project_id);
+        if (!projectId) return jsonError(400, 'project_id is required');
+
+        const uModel = await svc.from('models').select('id').eq('name', 'units').single();
+        const uFail = dbFail(uModel.error);
+        if (uFail) return uFail;
+        const uId = (uModel.data as { id: string }).id;
+
+        // A project can hold a few hundred units — paginate past the 1000 cap.
+        const rows: Array<{ id: string; data: Record<string, unknown> }> = [];
+        for (let from = 0; ; from += 1000) {
+          const res = await svc
+            .from('records')
+            .select('id, data')
+            .eq('model_id', uId)
+            .eq('data->>project_id', projectId)
+            .range(from, from + 999);
+          const f = dbFail(res.error);
+          if (f) return f;
+          const batch = (res.data ?? []) as Array<{ id: string; data: Record<string, unknown> }>;
+          rows.push(...batch);
+          if (batch.length < 1000) break;
+        }
+        const units = rows
+          .map((r) => {
+            const d = (r.data ?? {}) as Record<string, unknown>;
+            const label =
+              (typeof d.unit_number === 'string' && d.unit_number) ||
+              (typeof d.unit_name === 'string' && d.unit_name) ||
+              (typeof d.name === 'string' && d.name) ||
+              r.id.slice(0, 8);
+            const hasPlan = typeof d.unit_plan === 'string' && d.unit_plan.trim() !== '';
+            return { id: r.id, label: String(label), has_plan: hasPlan };
+          })
+          // missing-plan units first, then by label
+          .sort((a, b) => Number(a.has_plan) - Number(b.has_plan) || a.label.localeCompare(b.label, 'ar'));
+
+        return jsonOk({ units, model_id: uId });
+      }
+
+      /* -------------------------------------------------------- */
       /* Roles — canonical roles 'mos_*' × users.role_assignments  */
       /* -------------------------------------------------------- */
       case 'roles_list': {

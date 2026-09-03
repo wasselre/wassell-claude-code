@@ -35,13 +35,14 @@ export type SurfaceKey =
   | 'organic' | 'publishing'
   // Performance & load system: own profile + the manager desk.
   | 'myperf' | 'performance'
-  // Content inventory (per-project media/content rollup). NOTE: intentionally
-  // absent from the server-side SURFACES list, so it is not seeded into
-  // surface_access and defaults to VISIBLE for every marketing role (the rail's
-  // navVisible treats an absent surface as shown). Data access is gated on the
-  // `read` capability server-side. Add it to the API SURFACES const + a seed
-  // migration later if per-role hiding is ever wanted.
-  | 'content_inventory';
+  // Content inventory (per-project media/content rollup) + Content readiness
+  // (required-assets gaps). NOTE: intentionally absent from the server-side
+  // SURFACES list, so they are not seeded into surface_access and default to
+  // VISIBLE for every marketing role (the rail's navVisible treats an absent
+  // surface as shown). Data access is gated on the `read` capability
+  // server-side. Add to the API SURFACES const + a seed migration later if
+  // per-role hiding is ever wanted.
+  | 'content_inventory' | 'content_readiness';
 
 export type SurfaceLevel = 'full' | 'read' | 'hidden';
 
@@ -1756,6 +1757,46 @@ export const fetchContentInventory = () =>
   call<{ projects: ContentInventoryProject[]; totals: ContentInventoryTotals; model_id: string }>(
     'content_inventory',
   );
+
+/* ------------------------------------------------------------------ */
+/* Content readiness — required assets per project / unit              */
+/* ------------------------------------------------------------------ */
+
+/** One project's readiness row: does it have its required marketing assets?
+ *  Counts are on the file's MAIN type (`primary_category`): 1 brochure + 3 hero
+ *  images per project; each unit needs 1 plan (`units.unit_plan`). */
+export interface ContentReadinessProject {
+  id: string;
+  name: string;
+  brochure_count: number;   // required: exactly 1
+  hero_count: number;       // required: exactly 3
+  total_units: number;
+  units_with_plan: number;
+  units_missing_plan: number;
+}
+
+export interface ContentReadinessTotals {
+  projects: number;
+  brochure_ok: number; brochure_missing: number; brochure_over: number;
+  hero_ok: number; hero_under: number; hero_over: number;
+  total_units: number; units_missing_plan: number;
+}
+
+/** Per-project content-readiness across OUR marketed projects. Read-only. */
+export const fetchContentReadiness = () =>
+  call<{ projects: ContentReadinessProject[]; totals: ContentReadinessTotals; model_id: string }>(
+    'content_readiness',
+  );
+
+export interface ReadinessUnit {
+  id: string;
+  label: string;
+  has_plan: boolean;
+}
+
+/** The units of ONE project with whether each has a plan (missing-plan first). */
+export const fetchContentReadinessUnits = (projectId: string) =>
+  call<{ units: ReadinessUnit[]; model_id: string }>('content_readiness_units', { project_id: projectId });
 
 /* ------------------------------------------------------------------ */
 /* Manual tasks — hand-assigned work no workflow generates             */

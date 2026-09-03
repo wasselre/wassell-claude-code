@@ -38,7 +38,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { initial, num } from './lib/format';
 import {
-  IconCalendar, IconCampaigns, IconContent, IconGoals, IconInventory, IconLibrary,
+  IconCalendar, IconCampaigns, IconCheck, IconContent, IconGoals, IconInventory, IconLibrary,
   IconMenu, IconMetrics, IconMyWork, IconOverview, IconPulse, IconSearch, IconSend,
   IconSettings, IconShoot, IconTeam,
 } from './components/icons';
@@ -189,6 +189,7 @@ const NAV: NavGroup[] = [
       { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', Icon: IconCalendar, surface: 'calendar' },
       { to: marketingLibraryHref(), ar: 'مكتبة المواد', en: 'Asset library', Icon: IconLibrary, surface: 'library' },
       { to: '/m/content-inventory', ar: 'جرد المحتوى', en: 'Content inventory', Icon: IconInventory, surface: 'content_inventory' },
+      { to: '/m/content-readiness', ar: 'جاهزية المحتوى', en: 'Content readiness', Icon: IconCheck, surface: 'content_readiness' },
       { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', Icon: IconShoot, surface: 'shoots' },
     ],
   },
