@@ -497,6 +497,11 @@ function WeekList({ data, isAr }: { data: MosOverview; isAr: boolean }) {
 /** The «الإعلانات المدفوعة» paid-ads card — same DOM on both layouts. Numbers
  *  may be Meta-synced or hand-entered, so it no longer claims a single source. */
 function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
+  // Numbers are cumulative active-campaign totals (not month-scoped), so the
+  // month word is just a header. Stamp it from today, not from week_start —
+  // otherwise a week that straddles a month boundary (e.g. Aug 30 – Sep 6)
+  // reads "August" even though today is in September.
+  const monthLabel = monthOf(new Date().toISOString(), isAr);
   const budget = (data.campaigns ?? []).reduce((a, c) => a + (c.budget_total ?? 0), 0);
   const spent = (data.campaigns ?? []).reduce((a, c) => a + (c.total_spend ?? 0), 0);
   const leads = (data.campaigns ?? []).reduce((a, c) => a + (c.total_leads ?? 0), 0);
@@ -507,8 +512,8 @@ function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
       <div className="card-h">
         <h4>
           {isAr
-            ? `الإعلانات المدفوعة — ${monthOf(data.week_start, true)}`
-            : `Paid ads — ${monthOf(data.week_start, false)}`}
+            ? `الإعلانات المدفوعة — ${monthLabel}`
+            : `Paid ads — ${monthLabel}`}
         </h4>
       </div>
       <div className="card-b" style={{ display: 'grid', gap: 11 }}>
