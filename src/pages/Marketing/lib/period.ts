@@ -9,7 +9,7 @@
  * The API (periodBounds in api/marketing-os.ts) resolves the SAME window from
  * period + week_of; this is its client twin for display + navigation.
  */
-import { monthName, num, shortDate } from './format';
+import { monthName, num, shortDate, toArabicDigits } from './format';
 
 const AR_MON = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
 const EN_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -118,7 +118,8 @@ export function windowLabel(sel: DateSel, isAr: boolean): { main: string; sub: s
     };
   }
   const a = new Date(sel.anchorIso);
-  const year = num(a.getFullYear(), isAr);
+  // A year is a label, not a quantity — «٢٠٢٦», never grouped as «٢,٠٢٦».
+  const year = isAr ? toArabicDigits(String(a.getFullYear())) : String(a.getFullYear());
   if (sel.period === 'week') {
     return {
       main: `${shortDate(w.from.toISOString(), isAr)} – ${shortDate(lastDay.toISOString(), isAr)}`,
