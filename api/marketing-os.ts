@@ -2041,8 +2041,12 @@ export default async function handler(req: Request): Promise<Response> {
       case 'content_delete': {
         // Hard-delete one or many content items. Children cascade or SET NULL
         // (scenes/versions/comments/publications/asset_links cascade; executions/
-        // ads/tasks unlink). Gated on delete_records for a clean 403; the DELETE
-        // RLS policy on mos_content re-enforces it per row (scope-limited).
+        // ads unlink). The task→content link is POLYMORPHIC (no FK), so the
+        // AFTER DELETE trigger `mos_content_delete_close_tasks_tg` closes a row's
+        // open workflow tasks ('skipped') and manual tasks ('cancelled') — else
+        // they orphan and keep inflating the Performance load panel (2026-09-03).
+        // Gated on delete_records for a clean 403; the DELETE RLS policy on
+        // mos_content re-enforces it per row (scope-limited).
         const gate = await requireCap(sb, 'delete_records'); if (gate) return gate;
         const single = str(body.id);
         const ids = Array.isArray(body.ids)
