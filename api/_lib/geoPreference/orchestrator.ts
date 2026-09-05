@@ -22,11 +22,11 @@
  * structural guarantee, not just a convention (see orchestrator.test.ts).
  */
 
-import { resolveAnchor, type ResolutionContext } from './resolver';
-import { compile } from './compiler';
-import { classify, type SatUniverse } from './satisfiability';
-import { decide, type GateConfig } from './gate';
-import { geoObserver, type GeoObserver } from './observability';
+import { resolveAnchor, type ResolutionContext } from './resolver.js';
+import { compile } from './compiler.js';
+import { classify, type SatUniverse } from './satisfiability.js';
+import { decide, type GateConfig } from './gate.js';
+import { geoObserver, type GeoObserver } from './observability.js';
 import type {
   Evidence,
   EvidenceRelation,

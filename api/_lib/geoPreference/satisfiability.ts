@@ -23,7 +23,7 @@
  * Pure. Writes to no client record.
  */
 
-import type { GeoPreference, GeoGroup, SatisfiabilityFlag } from './ontology';
+import type { GeoPreference, GeoGroup, SatisfiabilityFlag } from './ontology.js';
 
 export interface SatUniverse {
   /** The bounded universe — every cell that exists. Eligibility is clipped to this. */
