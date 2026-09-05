@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, Clock } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppModel, AppRecord } from '@/types';
 import { buildFieldLabels, getFollowUpTypeConfig, validateFollowUpCompletion } from '@/lib/salesProcess';
@@ -194,14 +194,19 @@ export default function CompleteWhatsAppFollowupModal({
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-sand/60 p-4">
+          {/* "Still waiting" — the client hasn't replied yet, so there is no
+              outcome to record. This closes/resolves the chat (it leaves the
+              inbox) and deliberately leaves the follow-up untouched in its
+              waiting state, so the auto-reminder keeps tracking it. */}
           <button
             type="button"
             disabled={saving}
             onClick={async () => { setSaving(true); try { await onResolveChat(); } finally { setSaving(false); onClose(); } }}
-            className="text-xs font-semibold text-charcoal/60 hover:text-terracotta hover:underline disabled:opacity-40"
-            title={isAr ? 'إغلاق المحادثة دون تسجيل نتيجة على المتابعة' : 'Resolve the chat without recording an outcome on the follow-up'}
+            className="inline-flex items-center gap-2 rounded-xl border-[1.5px] border-[#C09B5F] bg-[#C09B5F]/10 px-4 py-2.5 text-sm font-bold text-[#8E4E3A] transition hover:bg-[#C09B5F]/20 disabled:opacity-40"
+            title={isAr ? 'إغلاق المحادثة وترك المتابعة في حالة انتظار الرد' : 'Close the chat and leave the follow-up waiting for a reply'}
           >
-            {saving ? <Loader2 size={13} className="inline animate-spin" /> : null} {isAr ? 'إغلاق دون تسجيل نتيجة' : 'Resolve without recording'}
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Clock size={15} />}
+            {isAr ? 'ما زلت بانتظار رد العميل' : 'Still waiting'}
           </button>
           <button type="button" onClick={onClose} className="rounded-lg border border-sand px-3 py-1.5 text-sm font-semibold text-charcoal/70 hover:bg-sand/30">
             {isAr ? 'إلغاء' : 'Cancel'}
