@@ -177,6 +177,17 @@ const CARDS: SettingsCard[] = [
     adminOnly: true,
   },
   {
+    titleAr: 'طلبات التوظيف',
+    titleEn: 'Job Applications',
+    descAr: 'مراجعة طلبات التوظيف الواردة لوظيفة مستشار مبيعات عقارية',
+    descEn: 'Review incoming applications for the sales-consultant role',
+    icon: Briefcase,
+    color: '#8E4E3A',
+    bg: '#8E4E3A14',
+    route: '/careers/applications',
+    adminOnly: true,
+  },
+  {
     titleAr: 'إعدادات الموقع',
     titleEn: 'Website Settings',
     descAr: 'محتوى الموقع العام، معلومات التواصل، وتخصيص بطاقة الخريطة',

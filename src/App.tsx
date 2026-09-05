@@ -124,6 +124,8 @@ const FilesLibraryPage = lazy(() => import('@/pages/Files/FilesLibraryPage'));
 const DocumentEditorPage = lazy(() => import('@/pages/Documents/DocumentEditorPage'));
 const PublicShareFilePage = lazy(() => import('@/pages/PublicShare/PublicShareFilePage'));
 const RateVisitPage = lazy(() => import('@/pages/PublicRate/RateVisitPage'));
+const SalesConsultantApplicationPage = lazy(() => import('@/pages/Careers/SalesConsultantApplicationPage'));
+const JobApplicationsPage = lazy(() => import('@/pages/Careers/JobApplicationsPage'));
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import RequirePageAccess from '@/components/guards/RequirePageAccess';
 import RequireWorkflowView from '@/components/guards/RequireWorkflowView';
@@ -376,6 +378,9 @@ export default function App() {
         <Route path="/public/dashboard/:token" element={<PublicDashboardPage />} />
         <Route path="/share/:token" element={<PublicShareFilePage />} />
         <Route path="/rate/:token" element={<RateVisitPage />} />
+        {/* Public job-application landing (ad traffic). No auth, no layout,
+            fully Arabic/RTL. Private applicant files are handled server-side. */}
+        <Route path="/careers/sales-consultant" element={<SalesConsultantApplicationPage />} />
 
         {/* ── Protected app routes (auth required, inside layout) ────── */}
         <Route
@@ -511,6 +516,9 @@ export default function App() {
           <Route path="/settings/project-details" element={<RequireAdmin><ProjectDetailsListPage /></RequireAdmin>} />
           <Route path="/settings/project-details/:projectId" element={<RequireAdmin><ProjectDetailsBridgePage /></RequireAdmin>} />
           <Route path="/logs" element={<RequireAdmin><LogsPage /></RequireAdmin>} />
+          {/* Internal review of public job applications (admin-only; RLS gates
+              the data too). */}
+          <Route path="/careers/applications" element={<RequireAdmin><JobApplicationsPage /></RequireAdmin>} />
         </Route>
 
         {/* ── The Marketing workspace ────────────────────────────────────
