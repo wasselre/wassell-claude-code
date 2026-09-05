@@ -95,6 +95,14 @@ export interface BackfillDeps {
   ): Promise<ReviewFirstResult>;
   /** Dedup-aware proposal store handed to runReviewFirst. */
   proposals: ProposalStore;
+  /** Persist evidence + relations + a checkpoint (origin='model') so the labeling
+   *  workflow has real subjects and the proposal can link to a checkpoint. Optional
+   *  — a fake without it simply skips persistence. Returns the checkpoint id. */
+  persistExtraction?(
+    clientId: string,
+    evidence: Evidence[],
+    relations: EvidenceRelation[],
+  ): Promise<{ checkpointId: string; evidenceIds: string[] }>;
   /** Optional structured logger. */
   log?(msg: string): void;
 }
@@ -128,7 +136,15 @@ export async function processBackfillJob(
     }
 
     const { evidence, relations } = await deps.extract(conversation);
+    // Persist evidence + checkpoint (origin='model') so labeling has subjects and
+    // the proposal links to a checkpoint. Skipped when the dep isn't provided.
+    let checkpointId: string | null = null;
+    if (deps.persistExtraction) {
+      const persisted = await deps.persistExtraction(job.clientId, evidence, relations);
+      checkpointId = persisted.checkpointId;
+    }
     const ctx = await deps.buildRunContext(job.clientId, evidence.length);
+    if (checkpointId) ctx.checkpoint_id = checkpointId;
     const result = await deps.runReviewFirst(evidence, relations, ctx, {
       proposals: deps.proposals,
     });

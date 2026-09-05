@@ -23,8 +23,77 @@ import type {
 } from './orchestrator.js';
 import type { GateConfig, WriteAction } from './gate.js';
 import type { SatUniverse } from './satisfiability.js';
-import type { Speaker } from './ontology.js';
+import type { Speaker, Evidence, EvidenceRelation, RelationMemberRef } from './ontology.js';
 import type { BackfillDeps, BackfillJob } from './backfillRunner.js';
+
+const randomUuid = (): string => globalThis.crypto.randomUUID();
+
+/**
+ * Persist a run's extraction (evidence + relations + one checkpoint) as
+ * `origin='model'` rows, so the labeling workflow has real subjects to label and
+ * the proposal can link to a checkpoint. Idempotent per client: a re-run replaces
+ * the prior model rows for this conversation. Evidence ids are re-minted to fresh
+ * uuids and relation member refs of kind 'evidence' are remapped to them, so the
+ * persisted graph is self-consistent regardless of what the extractor emitted.
+ * NEVER touches a client record.
+ */
+export async function persistExtraction(
+  supabase: SupabaseClient,
+  clientId: string,
+  evidence: Evidence[],
+  relations: EvidenceRelation[],
+): Promise<{ checkpointId: string; evidenceIds: string[] }> {
+  const conversationId = clientId; // one aggregate conversation per client for a backfill run
+
+  // Idempotency: clear this conversation's prior MODEL rows (never touches gold).
+  await supabase.from('geo_pref_evidence').delete().eq('conversation_id', conversationId).eq('origin', 'model');
+  await supabase.from('geo_pref_relations').delete().eq('conversation_id', conversationId).eq('origin', 'model');
+  await supabase.from('geo_pref_checkpoints').delete().eq('conversation_id', conversationId).eq('origin_tag', 'model');
+
+  const idMap = new Map<string, string>();
+  const evRows = evidence.map((e) => {
+    const id = randomUuid();
+    idMap.set(e.id, id);
+    return {
+      id, origin: 'model' as const, conversation_id: conversationId, client_id: clientId,
+      mention_span: e.mention_span, anchors: e.anchors,
+      speaker: e.speaker, preference_holder: e.preference_holder, holder_role: e.holder_role,
+      quoted_speaker: e.quoted_speaker, dialogue_act: e.dialogue_act, conditionality: e.conditionality,
+      temporal_reference: e.temporal_reference, preference_applicability: e.preference_applicability,
+      preference_role: e.preference_role, commitment: e.commitment, hardness_evidence: e.hardness_evidence,
+      modality: e.modality, interpretation_confidence: e.interpretation_confidence ?? null,
+      source_channel: e.source.channel, source_ref: e.source.ref, source_timestamp: e.source.timestamp,
+      extraction_version: e.extraction_version ?? null,
+    };
+  });
+  if (evRows.length) {
+    const { error } = await supabase.from('geo_pref_evidence').insert(evRows);
+    if (error) throw new Error(`persist evidence failed: ${error.message}`);
+  }
+
+  const remap = (r: RelationMemberRef): RelationMemberRef =>
+    r.type === 'evidence' ? { type: 'evidence', id: idMap.get(r.id) ?? r.id } : r;
+  const relRows = relations.map((r) => ({
+    origin: 'model' as const, conversation_id: conversationId, relation: r.relation,
+    members: r.members.map(remap), ordering: r.ordering ? r.ordering.map(remap) : null,
+    target: r.target ? remap(r.target) : null, source_span: r.source_span,
+    explicit_or_inferred: r.explicit_or_inferred, interpretation_confidence: r.interpretation_confidence ?? null,
+  }));
+  if (relRows.length) {
+    const { error } = await supabase.from('geo_pref_relations').insert(relRows);
+    if (error) throw new Error(`persist relations failed: ${error.message}`);
+  }
+
+  const evidenceIds = evRows.map((r) => r.id);
+  const { data: cp, error: cpErr } = await supabase.from('geo_pref_checkpoints').insert({
+    conversation_id: conversationId, client_id: clientId, turn_id: 'aggregate',
+    as_of_timestamp: new Date().toISOString(), member_message_ids: [],
+    expected_processing: 'evaluate_now', evidence_visible_so_far: evidenceIds,
+    lifecycle_by_mention: {}, origin_tag: 'model',
+  }).select('id').single();
+  if (cpErr) throw new Error(`persist checkpoint failed: ${cpErr.message}`);
+  return { checkpointId: cp!.id as string, evidenceIds };
+}
 
 // Bounds so a very chatty client can't blow the extractor's token budget.
 const MAX_MESSAGES_PER_CHAT = 120;
@@ -264,6 +333,7 @@ export function makeSupabaseBackfillDeps(
     },
     runReviewFirst,
     proposals,
+    persistExtraction: (clientId, evidence, relations) => persistExtraction(supabase, clientId, evidence, relations),
     log: opts.log,
   };
 }
