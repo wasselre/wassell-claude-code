@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
-  X, Loader2, Check, AlertTriangle, Clock, ArrowUp, ArrowDown, Trash2, Pencil,
-  Send, Layers, CheckCircle2, FileText, Image as ImageIcon,
+  X, Loader2, AlertTriangle, ArrowUp, ArrowDown, Trash2, Pencil,
+  Send, Layers, CheckCircle2, FileText, Image as ImageIcon, CalendarClock,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -9,22 +9,21 @@ import ProjectMessageComposeStep from '@/pages/Chats/components/ProjectMessageCo
 import ProjectFilePickerModal from '@/pages/Chats/components/ProjectFilePickerModal';
 import type { PickedClient } from '@/pages/Chats/components/ClientPicker';
 import {
-  runBulkProjectSend,
-  type BulkProgress,
+  enqueueBulkProjectSend,
+  type BulkEnqueueResult,
   type BulkRecipient,
-  type BulkSendResult,
-  type BulkStepStatus,
 } from '@/lib/projects/bulkProjectSend';
 
 /**
  * BulkProjectSendFlow — send SEVERAL projects to ONE client, in order.
  *
  * Flow: walk each project { compose message → pick files (top-3 photos + PDFs
- * pre-checked) } → REVIEW all projects in order → SEND ALL. Nothing is sent
- * until "Send all": the engine (`runBulkProjectSend`) then sends each project
- * text → PDF → pictures, one whole project finishing before the next starts,
- * each step gated on WhatsApp accepting the previous (sent-gating). Live
- * per-project progress is shown while it runs.
+ * pre-checked) } → REVIEW all projects in order → SEND ALL. Nothing is queued
+ * until "Send all": the engine (`enqueueBulkProjectSend`) then ENQUEUES the
+ * whole plan to the backend scheduled-send queue — each project's text → PDF →
+ * pictures on a staggered delivery schedule — and returns immediately. The Fly
+ * worker delivers in the background, so the rep is never made to wait: the
+ * modal shows a brief "queued" confirmation and closes.
  */
 
 /** Where the bulk goes. An existing conversation, or a client we resolve a
@@ -48,7 +47,7 @@ interface ProjectConfig {
   refs: string[];
 }
 
-type Phase = 'compose' | 'files' | 'review' | 'sending' | 'done';
+type Phase = 'compose' | 'files' | 'review' | 'queuing' | 'done';
 
 export default function BulkProjectSendFlow({ isAr, projectIds, recipient, onClose }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
@@ -70,10 +69,9 @@ export default function BulkProjectSendFlow({ isAr, projectIds, recipient, onClo
   const [cursor, setCursor] = useState(0); // index in `order` while walking/editing
   const [mode, setMode] = useState<'walk' | 'edit'>('walk');
 
-  // Frozen send plan + live progress (set on "Send all").
-  const [sendOrder, setSendOrder] = useState<string[]>([]);
-  const [progress, setProgress] = useState<BulkProgress[]>([]);
-  const [result, setResult] = useState<BulkSendResult | null>(null);
+  // Backend enqueue result (set on "Send all"). No live per-delivery progress:
+  // the plan is queued to the worker and delivered in the background.
+  const [result, setResult] = useState<BulkEnqueueResult | null>(null);
 
   const recipientLabel =
     recipient.kind === 'chat'
@@ -182,13 +180,10 @@ export default function BulkProjectSendFlow({ isAr, projectIds, recipient, onClo
         ? { kind: 'chat', chatWid: recipient.chatWid }
         : { kind: 'new', phone: recipient.client.phone as string, clientRecordId: recipient.client.recordId };
 
-    setSendOrder(configuredOrder);
-    setProgress(configuredOrder.map((id, index) => ({ index, projectId: id, status: 'pending' as BulkStepStatus })));
-    setPhase('sending');
-
-    const res = await runBulkProjectSend(engineRecipient, plan, {
-      onProgress: (p) => setProgress((prev) => prev.map((row) => (row.index === p.index ? p : row))),
-    });
+    // Enqueue only — resolves in ~a second (fast queue inserts, no delivery
+    // waits). The worker then delivers in the background.
+    setPhase('queuing');
+    const res = await enqueueBulkProjectSend(engineRecipient, plan);
     setResult(res);
     setPhase('done');
   }
@@ -255,48 +250,48 @@ export default function BulkProjectSendFlow({ isAr, projectIds, recipient, onClo
     );
   }
 
-  // ── Sending / Done — one status list, driven by the engine's progress ──
+  // ── Queuing / Done — the plan is enqueued to the backend, delivered later ──
+  if (phase === 'queuing') {
+    return (
+      <Shell isAr={isAr} title={L('جارٍ الجدولة…', 'Queuing…')} subtitle={L(`إلى ${recipientLabel}`, `to ${recipientLabel}`)}>
+        <div className="flex items-center gap-3 py-6 text-charcoal/70">
+          <Loader2 size={18} className="animate-spin text-copper shrink-0" />
+          <span className="text-sm">
+            {L('جارٍ جدولة الرسائل للإرسال في الخلفية…', 'Queuing the messages to send in the background…')}
+          </span>
+        </div>
+      </Shell>
+    );
+  }
+
+  // phase === 'done'
+  const ok = result ? result.failedProjects === 0 : false;
   const summary = result
-    ? L(`أُرسل ${result.sentProjects} من ${sendOrder.length}${result.failedProjects ? ` — فشل ${result.failedProjects}` : ''}`,
-        `Sent ${result.sentProjects} of ${sendOrder.length}${result.failedProjects ? ` — ${result.failedProjects} failed` : ''}`)
+    ? L(`تمت جدولة ${result.queuedProjects} مشروع${result.queuedMedia ? ` و${result.queuedMedia} ملف` : ''} للإرسال${result.failedProjects ? ` — تعذّر ${result.failedProjects}` : ''}`,
+        `Queued ${result.queuedProjects} project${result.queuedProjects === 1 ? '' : 's'}${result.queuedMedia ? ` and ${result.queuedMedia} file${result.queuedMedia === 1 ? '' : 's'}` : ''}${result.failedProjects ? ` — ${result.failedProjects} couldn't queue` : ''}`)
     : '';
 
   return (
-    <Shell
-      isAr={isAr}
-      title={phase === 'done' ? L('اكتمل الإرسال', 'Send complete') : L('جارٍ الإرسال…', 'Sending…')}
-      subtitle={L(`إلى ${recipientLabel}`, `to ${recipientLabel}`)}
-      onClose={phase === 'done' ? onClose : undefined}
-    >
-      <ul className="space-y-2">
-        {progress.map((p) => (
-          <li key={p.index} className="flex items-center gap-3 rounded-xl border border-sand/40 px-3 py-2.5">
-            <StatusIcon status={p.status} />
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold text-sm text-charcoal truncate">{nameOf(p.projectId)}</div>
-              <div className="text-[11px] text-charcoal/55">{statusLabel(p, isAr)}</div>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      {phase === 'done' && (
-        <div className="pt-4">
-          <div className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 ${result && result.failedProjects === 0 ? 'text-green-700 bg-green-50 border border-green-200' : 'text-amber-700 bg-amber-50 border border-amber-200'}`}>
-            {result && result.failedProjects === 0 ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-            <span>{summary}</span>
-          </div>
-          {result?.stoppedAt != null && (
-            <p className="text-[11px] text-charcoal/55 mt-2">
-              {L('توقّف الإرسال عند مشروع تعذّر إرسال رسالته — لم تُرسَل المشاريع التالية له.',
-                 'Sending stopped at a project whose message failed — the projects after it were not sent.')}
-            </p>
-          )}
-          <div className="flex justify-end pt-3">
-            <Button variant="primary" onClick={onClose}>{L('تم', 'Done')}</Button>
-          </div>
+    <Shell isAr={isAr} title={L('في قائمة الإرسال', 'Queued to send')} subtitle={L(`إلى ${recipientLabel}`, `to ${recipientLabel}`)} onClose={onClose}>
+      <div className="flex flex-col items-center text-center py-4 gap-3">
+        <div className={`w-12 h-12 rounded-full flex items-center justify-center ${ok ? 'bg-green-50 text-green-600' : 'bg-amber-50 text-amber-600'}`}>
+          {ok ? <CheckCircle2 size={26} /> : <AlertTriangle size={26} />}
         </div>
-      )}
+        <p className="text-sm font-semibold text-charcoal">{summary}</p>
+        <div className="flex items-start gap-2 text-[12px] text-charcoal/60 bg-cream/60 border border-sand/40 rounded-lg px-3 py-2 text-start">
+          <CalendarClock size={15} className="shrink-0 mt-0.5 text-copper" />
+          <span>
+            {L('تُرسَل الرسائل تِباعًا في الخلفية — لست بحاجة للانتظار. يمكنك متابعتها أو إلغاؤها من داخل المحادثة.',
+               "The messages send one after another in the background — you don't have to wait. You can watch or cancel them from inside the conversation.")}
+          </span>
+        </div>
+        {result?.firstError && (
+          <p className="text-[11px] text-amber-700">{L(`ملاحظة: ${result.firstError}`, `Note: ${result.firstError}`)}</p>
+        )}
+      </div>
+      <div className="flex justify-end pt-2">
+        <Button variant="primary" onClick={onClose}>{L('تم', 'Done')}</Button>
+      </div>
     </Shell>
   );
 }
@@ -339,25 +334,4 @@ function Shell({
       </div>
     </div>
   );
-}
-
-function StatusIcon({ status }: { status: BulkStepStatus }) {
-  if (status === 'sending-text' || status === 'sending-media') return <Loader2 size={16} className="animate-spin text-copper shrink-0" />;
-  if (status === 'done') return <Check size={16} className="text-green-600 shrink-0" />;
-  if (status === 'done-with-errors') return <AlertTriangle size={16} className="text-amber-600 shrink-0" />;
-  if (status === 'failed') return <X size={16} className="text-red-600 shrink-0" />;
-  return <Clock size={16} className="text-charcoal/30 shrink-0" />; // pending
-}
-
-function statusLabel(p: BulkProgress, isAr: boolean): string {
-  const L = (ar: string, en: string) => (isAr ? ar : en);
-  switch (p.status) {
-    case 'pending': return L('في الانتظار', 'Queued');
-    case 'sending-text': return L('جارٍ إرسال النص…', 'Sending text…');
-    case 'sending-media': return L('جارٍ إرسال الملفات…', 'Sending files…');
-    case 'done': return L('تم الإرسال', 'Sent');
-    case 'done-with-errors':
-      return L(`أُرسل — فشل ${p.mediaFailed ?? 0} ملف`, `Sent — ${p.mediaFailed ?? 0} file(s) failed`);
-    case 'failed': return p.error ? L(`فشل: ${p.error}`, `Failed: ${p.error}`) : L('فشل الإرسال', 'Failed to send');
-  }
 }

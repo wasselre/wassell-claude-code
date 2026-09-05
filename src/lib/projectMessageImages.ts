@@ -73,6 +73,13 @@ export async function sendProjectImageMessages(
      * guaranteed, so the stagger keeps text → image1 → image2 delivery order).
      */
     deliverAt?: string;
+    /**
+     * Override the per-item delivery spacing (seconds) for a scheduled send.
+     * Bulk project send uses a tighter cadence than the default 10s so a batch
+     * of several projects drips out faster. Ignored for a send-now (no
+     * deliverAt) call. Clamped server-side to [3, 60].
+     */
+    staggerSeconds?: number;
   } = {},
 ): Promise<{ sent: number; failed: number }> {
   const ids = (fileIds ?? []).filter((id): id is string => typeof id === 'string' && id.length > 0);
@@ -104,6 +111,7 @@ export async function sendProjectImageMessages(
         deviceId: deviceId ?? undefined,
         items: ids.map((ref) => ({ ref })),
         ...(opts.deliverAt ? { deliverAt: opts.deliverAt } : {}),
+        ...(opts.staggerSeconds != null ? { staggerSeconds: opts.staggerSeconds } : {}),
       }),
       keepalive: true,
     });

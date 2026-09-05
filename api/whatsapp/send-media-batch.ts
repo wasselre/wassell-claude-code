@@ -52,9 +52,14 @@ const INLINE_MAX_ITEMS = 30;
 /** Hard sanity ceiling — a gallery beyond this is almost certainly a caller
  *  bug, and per the no-silent-caps rule it fails LOUDLY rather than trimming. */
 const MAX_ITEMS = 120;
-/** Scheduled items are staggered after the caller's text message so the queue
- *  delivers text → media1 → media2 in order (same spacing the client used). */
+/** Default spacing for scheduled items — staggered after the caller's text so
+ *  the queue delivers text → media1 → media2 in order. A caller may override it
+ *  with `staggerSeconds` (bulk project send uses a tighter cadence). */
 const STAGGER_MS = 10_000;
+/** Bounds for a caller-supplied `staggerSeconds`. Floor keeps spacing above the
+ *  worker's ~3s poll so a chat's rows stay single-file; ceiling is a sanity cap. */
+const MIN_STAGGER_MS = 3_000;
+const MAX_STAGGER_MS = 60_000;
 
 // ── Node↔Web bridge (the nodejs runtime ignores a returned Web Response) ────
 async function nodeToWebRequest(nodeReq: IncomingMessage): Promise<Request> {
@@ -91,7 +96,7 @@ async function runBatch(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
 
   return withAuth(req, async (user) => {
-    let body: { deviceId?: unknown; phone?: unknown; items?: unknown; deliverAt?: unknown };
+    let body: { deviceId?: unknown; phone?: unknown; items?: unknown; deliverAt?: unknown; staggerSeconds?: unknown };
     try {
       body = (await req.json()) as typeof body;
     } catch {
@@ -110,6 +115,13 @@ async function runBatch(req: Request): Promise<Response> {
       .filter((r) => r.length > 0);
     if (refs.length === 0) return jsonError(400, 'items must carry non-empty ref strings');
     if (refs.length > MAX_ITEMS) return jsonError(400, `too many items (max ${MAX_ITEMS})`);
+
+    // Optional per-item spacing override (bulk project send uses ~4s). Clamped
+    // so a bad value can never stack rows on top of each other or stretch a send
+    // to hours.
+    const staggerMs = typeof body.staggerSeconds === 'number' && Number.isFinite(body.staggerSeconds)
+      ? Math.min(MAX_STAGGER_MS, Math.max(MIN_STAGGER_MS, Math.round(body.staggerSeconds * 1000)))
+      : STAGGER_MS;
 
     const deliverAt = typeof body.deliverAt === 'string' ? body.deliverAt : undefined;
     let baseDeliverMs: number | null = null;
@@ -165,7 +177,7 @@ async function runBatch(req: Request): Promise<Response> {
       try {
         if (!url) throw new Error('ref is neither a URL nor a viewable CRM file');
         const itemDeliverAt = baseDeliverMs != null
-          ? new Date(baseDeliverMs + (index + 1) * STAGGER_MS).toISOString()
+          ? new Date(baseDeliverMs + (index + 1) * staggerMs).toISOString()
           : undefined;
         if (itemDeliverAt) {
           // WAHA numbers enqueue into our scheduled_whatsapp_jobs queue; a

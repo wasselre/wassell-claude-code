@@ -1,26 +1,37 @@
 /**
- * Bulk project send engine — one client, many projects, strictly ordered.
+ * Bulk project send engine — one client, many projects, ENQUEUED to the backend.
  *
- * Sends a prepared plan of projects into ONE WhatsApp conversation:
- *   • Per project: TEXT first, then the ordered media (documents → photos →
- *     videos, as the caller ordered `orderedRefs`) — i.e. text → PDF → pictures.
- *   • Across projects: project N is FULLY sent before project N+1 begins.
+ * Sends a prepared plan of projects into ONE WhatsApp conversation without the
+ * rep ever waiting for delivery. On "Send all" we compute a staggered delivery
+ * schedule and hand every message (each project's TEXT, then its ordered media)
+ * to the durable `scheduled_whatsapp_jobs` queue via the existing scheduled-send
+ * primitives:
+ *   • TEXT  → `startNewChat({…, deliverAt})` for a brand-new conversation (also
+ *             creates the chat record + client link), or `sendChatMessage(wid,
+ *             {body, deliverAt})` for an existing one.
+ *   • MEDIA → `sendProjectImageMessages(wid, refs, {deliverAt})` — the server
+ *             fans the gallery into the same queue, one staggered row per item.
+ * Each of those calls returns as soon as the message is ENQUEUED (a fast DB
+ * insert), never waiting for WhatsApp to accept it. The Fly worker then drains
+ * the queue and actually delivers — so the rep's modal closes the instant the
+ * plan is queued, not minutes later when the last photo has gone out.
  *
- * SENT-GATING (not delivery): every step is `await`ed, and each await resolves
- * only when WhatsApp has ACCEPTED the message —
- *   - `sendChatMessage` throws on failure and otherwise resolves after the
- *     gateway accepts (it flips the bubble to `ack:'sent'`);
- *   - `startNewChat().sent` resolves `{ ok }` after the first message is
- *     accepted/rejected (used only to establish a brand-new conversation);
- *   - `sendProjectImageMessages` returns `{ sent, failed }` after its server-side
- *     sequential loop, which itself awaits each item's WAHA acceptance.
- * We never wait on delivery acks (double-tick) — those arrive async and would
- * stall on a phone that's off. Nothing here is fire-and-forget: the ordering the
- * customer sees is guaranteed by the awaits, not by luck.
+ * ORDERING (was sent-gating, now deliver_at staggering): the old engine awaited
+ * each WhatsApp acceptance in the tab so project N fully sent before N+1 began —
+ * which is exactly what forced the rep to wait. Ordering now comes from the
+ * `deliver_at` timestamps instead: the whole bulk is one steady ~4s stream —
+ * TEXT at `base`, media at `base + k·SPACING`, the next project's text one tick
+ * after the previous project's last media. The worker's
+ * `scheduled_whatsapp_claim_due` pulls rows in `deliver_at` order, so the
+ * customer sees text → photos → next project. Media items are staggered by the
+ * SAME `SPACING` on the server (send-media-batch's `staggerSeconds`), so the
+ * cadence is uniform end to end.
  *
- * There is intentionally NO durable cross-project queue: a mid-bulk tab close
- * stops the remaining projects (each project is itself atomic + refresh-safe).
- * The wizard surfaces exactly where it stopped so the rep can resume.
+ * DURABILITY: nothing is held in the tab. A mid-enqueue tab close can drop the
+ * projects not yet queued (the enqueue loop is quick, so this window is ~1s),
+ * but once queued a message survives refresh, tab close, and worker restarts —
+ * and every queued message is visible + cancelable in the conversation's
+ * scheduled-message strip.
  */
 
 import { useAppStore } from '@/stores/appStore';
@@ -42,105 +53,113 @@ export interface BulkProjectPlanItem {
   orderedRefs: string[];
 }
 
-export type BulkStepStatus =
-  | 'pending'
-  | 'sending-text'
-  | 'sending-media'
-  | 'done'
-  | 'done-with-errors'
-  | 'failed';
-
-export interface BulkProgress {
-  /** 0-based index of the project in the plan. */
-  index: number;
-  projectId: string;
-  status: BulkStepStatus;
-  mediaSent?: number;
-  mediaFailed?: number;
-  error?: string;
-}
-
-export interface BulkSendResult {
-  /** The conversation everything went to (resolved after the first send). */
+export interface BulkEnqueueResult {
+  /** The conversation everything was queued into (resolved after the first
+   *  send establishes a brand-new chat). */
   chatWid: string | null;
-  sentProjects: number;
+  /** Projects successfully queued (text — and media, if any — enqueued). */
+  queuedProjects: number;
+  /** Projects whose TEXT could not be enqueued (skipped, media not queued). */
   failedProjects: number;
-  /** Index the run STOPPED at on a hard failure, or null if it completed. */
-  stoppedAt: number | null;
+  /** Total media messages queued across all projects. */
+  queuedMedia: number;
+  /** First enqueue error, for a compact summary line. */
+  firstError?: string;
 }
 
-export async function runBulkProjectSend(
+/** Uniform delivery spacing for the whole bulk stream — every message (each
+ *  project's text and each media item) is scheduled one tick after the last, so
+ *  a batch drips out at a steady ~4s cadence rather than the 10s the default
+ *  scheduled gallery uses. Kept just above the worker's ~3s poll so a chat's
+ *  rows stay single-file (and so it survives send-media-batch's [3,60] clamp,
+ *  since media items are staggered by the SAME value on the server). */
+const SPACING_MS = 4_000;
+/** Lead time before the FIRST message's delivery — the worker polls every ~3s,
+ *  so this keeps project 1's text near-immediate while still going through the
+ *  queue (uniform ordering with everything after it). */
+const START_DELAY_MS = 4_000;
+
+/**
+ * Queue a whole bulk plan to the backend and return as soon as it is enqueued.
+ *
+ * Resolves quickly (only fast enqueue round-trips, no delivery waits). A failed
+ * TEXT enqueue skips that project's media and is tallied in `failedProjects`;
+ * the loop CONTINUES (later projects have later `deliver_at`, so skipping one
+ * never reorders the rest) — unlike the old sent-gated engine, which stopped.
+ */
+export async function enqueueBulkProjectSend(
   recipient: BulkRecipient,
   plan: BulkProjectPlanItem[],
-  opts: { onProgress?: (p: BulkProgress) => void } = {},
-): Promise<BulkSendResult> {
-  const report = (p: BulkProgress) => opts.onProgress?.(p);
+): Promise<BulkEnqueueResult> {
   const { sendChatMessage, startNewChat } = useAppStore.getState();
 
   let chatWid: string | null = recipient.kind === 'chat' ? recipient.chatWid : null;
   // For a 'chat' recipient the conversation already exists; for 'new' it is
-  // established by the first text send (startNewChat).
+  // established by the first text send (startNewChat creates the record + link).
   let established = recipient.kind === 'chat';
-  let sentProjects = 0;
+  let queuedProjects = 0;
   let failedProjects = 0;
+  let queuedMedia = 0;
+  let firstError: string | undefined;
 
-  for (let i = 0; i < plan.length; i++) {
-    const item = plan[i]!;
+  // Delivery cursor. Every project's text is scheduled at `cursor`; the cursor
+  // then advances past that project's media before the next project starts.
+  let cursor = Date.now() + START_DELAY_MS;
 
-    // ── 1) TEXT (sent-gated). ────────────────────────────────────────────
-    report({ index: i, projectId: item.projectId, status: 'sending-text' });
+  for (const item of plan) {
+    const base = cursor;
+    const baseIso = new Date(base).toISOString();
+
+    // ── 1) TEXT — enqueue (never awaited for delivery). ──────────────────
     let textOk = false;
-    let textErr: string | undefined;
     try {
       if (!established && recipient.kind === 'new') {
         const r = await startNewChat({
           phone: recipient.phone,
           body: item.text,
           clientRecordId: recipient.clientRecordId,
+          deliverAt: baseIso,
         });
         chatWid = r.chatWid;
         established = true;
-        const { ok } = await r.sent; // resolves on acceptance/rejection, never throws
-        textOk = ok;
-        if (!ok) textErr = 'gateway rejected the first message';
-      } else if (chatWid) {
-        await sendChatMessage(chatWid, { body: item.text });
         textOk = true;
+      } else if (chatWid) {
+        await sendChatMessage(chatWid, { body: item.text, deliverAt: baseIso });
+        textOk = true;
+      } else {
+        throw new Error('no conversation to send to');
       }
     } catch (err) {
-      textOk = false;
-      textErr = err instanceof Error ? err.message : String(err);
-    }
-
-    if (!textOk) {
-      // Hard failure: do NOT send this project's media, and do NOT jump ahead —
-      // stop so the rep decides. Ordering is never violated by continuing past
-      // a message we couldn't send.
+      const msg = err instanceof Error ? err.message : String(err);
+      firstError ??= msg;
       failedProjects++;
-      report({ index: i, projectId: item.projectId, status: 'failed', error: textErr });
-      return { chatWid, sentProjects, failedProjects, stoppedAt: i };
+      // Don't queue this project's media without its text. Advance one tick so
+      // the remaining projects keep their spacing, then move on.
+      cursor = base + SPACING_MS;
+      continue;
     }
 
-    // ── 2) MEDIA — one refresh-safe request; the server sends PDF → photos →
-    //        videos sequentially, awaiting each item's acceptance. ──────────
-    let mediaSent = 0;
-    let mediaFailed = 0;
+    if (!textOk) continue; // defensive; the try above sets it or throws
+
+    // ── 2) MEDIA — one enqueue request; the server schedules PDF → photos →
+    //        videos as queue rows at base + k·SPACING (staggerSeconds). ─────
+    let mediaEnd = base;
     if (item.orderedRefs.length > 0 && chatWid) {
-      report({ index: i, projectId: item.projectId, status: 'sending-media' });
-      const res = await sendProjectImageMessages(chatWid, item.orderedRefs);
-      mediaSent = res.sent;
-      mediaFailed = res.failed;
+      const res = await sendProjectImageMessages(chatWid, item.orderedRefs, {
+        deliverAt: baseIso,
+        staggerSeconds: SPACING_MS / 1000,
+      });
+      queuedMedia += res.sent;
+      if (res.failed > 0) firstError ??= 'some media could not be queued';
+      // The server placed item k at base + (k+1)·SPACING, so the last one is at
+      // base + n·SPACING regardless of how many resolved — reserve that window.
+      mediaEnd = base + item.orderedRefs.length * SPACING_MS;
     }
 
-    sentProjects++;
-    report({
-      index: i,
-      projectId: item.projectId,
-      status: mediaFailed > 0 ? 'done-with-errors' : 'done',
-      mediaSent,
-      mediaFailed,
-    });
+    queuedProjects++;
+    // Next project's text one tick after this project's last media.
+    cursor = mediaEnd + SPACING_MS;
   }
 
-  return { chatWid, sentProjects, failedProjects, stoppedAt: null };
+  return { chatWid, queuedProjects, failedProjects, queuedMedia, firstError };
 }
