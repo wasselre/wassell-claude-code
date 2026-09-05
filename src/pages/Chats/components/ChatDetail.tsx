@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, UserCheck, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X, CalendarPlus, MapPin, ChevronUp, ChevronDown } from 'lucide-react';
@@ -15,6 +15,7 @@ const ClientOptionsModal = lazy(() => import('@/components/clients/ClientOptions
 const ProjectsUnitsBrowser = lazy(() => import('./ProjectsUnitsBrowser'));
 const ClientDetailPage = lazy(() => import('@/pages/Clients/ClientDetailPage'));
 const RecordFormModal = lazy(() => import('@/pages/Records/components/RecordFormModal'));
+import type { FinderSession } from '@/pages/Followups/components/SuggestedProjectsView';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
 import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
@@ -215,6 +216,18 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   // SURVIVES a Split↔Full-screen switch — the docked panel and the modal are
   // two instances, and without a shared mode the switch would reset to the list.
   const [optionsMode, setOptionsMode] = useState<'options' | 'finder' | 'browse'>('options');
+  // The embedded Project Finder's working session (edited preferences + results
+  // + view state), lifted here for the SAME reason as `optionsMode` above: the
+  // docked panel and the full-screen modal are two separate instances, so
+  // without a shared holder a Split↔Full-screen switch would bin the rep's
+  // unsaved preferences and search results mid-session (user report 2026-09-05).
+  // Cleared when the surface closes or the rep returns to the options list, so a
+  // fresh "Find more options" always starts clean; the finder itself guards the
+  // restore by client id so switching chats never rehydrates the wrong session.
+  const finderSessionRef = useRef<FinderSession | null>(null);
+  useEffect(() => {
+    if (!showClientOptions || optionsMode !== 'finder') finderSessionRef.current = null;
+  }, [showClientOptions, optionsMode]);
   // Collapse the conversation's top section (CRM actions, meta, preference
   // chips, study card) so the thread owns the height — especially useful in
   // split view where the chat column is narrow. Persisted; desktop-only effect.
@@ -673,6 +686,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
             onToggleLayout={isWide ? () => chooseOptionsView('dock') : undefined}
             mode={optionsMode}
             onModeChange={setOptionsMode}
+            finderSessionRef={finderSessionRef}
           />
         </Suspense>
       )}
@@ -793,6 +807,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
             onToggleLayout={() => chooseOptionsView('modal')}
             mode={optionsMode}
             onModeChange={setOptionsMode}
+            finderSessionRef={finderSessionRef}
           />
         </Suspense>
       </div>

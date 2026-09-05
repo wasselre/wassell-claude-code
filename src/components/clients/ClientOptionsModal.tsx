@@ -4,7 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import { useCanEditRecord } from '@/hooks/usePermission';
 import type { AppRecord } from '@/types';
 import ClientOptionsTab from '@/pages/Clients/components/tabs/ClientOptionsTab';
-import SuggestedProjectsView from '@/pages/Followups/components/SuggestedProjectsView';
+import SuggestedProjectsView, { type FinderSession } from '@/pages/Followups/components/SuggestedProjectsView';
 import ProjectsUnitsBrowser from '@/pages/Chats/components/ProjectsUnitsBrowser';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import ProjectDetailPage from '@/pages/Projects/ProjectDetailPage';
@@ -42,6 +42,7 @@ export default function ClientOptionsModal({
   onToggleLayout,
   mode: controlledMode,
   onModeChange,
+  finderSessionRef,
 }: {
   clientId: string;
   onClose: () => void;
@@ -60,6 +61,15 @@ export default function ClientOptionsModal({
    */
   mode?: 'options' | 'finder' | 'browse';
   onModeChange?: (mode: 'options' | 'finder' | 'browse') => void;
+  /**
+   * Shared holder for the embedded finder's working session (edited
+   * preferences + results + view state). A host that renders this modal in two
+   * interchangeable shells — the docked side panel AND the full-screen modal —
+   * passes ONE ref to both so the rep's unsaved preferences survive the
+   * Split↔Full-screen switch (each shell is a separate mount). Same lifting
+   * rationale as the controlled `mode` above.
+   */
+  finderSessionRef?: { current: FinderSession | null };
 }) {
   const docked = variant === 'docked';
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -242,6 +252,7 @@ export default function ClientOptionsModal({
                 // once the rep leaves the options list.
                 onToggleLayout={onToggleLayout}
                 layoutDocked={docked}
+                sessionRef={finderSessionRef}
               />
             )}
           </div>

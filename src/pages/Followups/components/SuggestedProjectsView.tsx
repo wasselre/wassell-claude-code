@@ -96,6 +96,38 @@ function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) 
  * A prominent "Done" button (onDone) returns the rep to the follow-up record.
  */
 
+/**
+ * A snapshot of the finder's in-memory working session — the edited preferences,
+ * the results they produced, and the view state around them. A host that mounts
+ * this component in two interchangeable shells (the WhatsApp Client-Options
+ * modal: a docked side panel AND a full-screen modal are two DIFFERENT instances)
+ * passes a shared `sessionRef`; the finder restores from it on mount and mirrors
+ * into it on every change, so Split↔Full-screen no longer bins the rep's typed
+ * preferences and search results (user report 2026-09-05). `clientId` guards the
+ * restore so switching the viewed client never rehydrates the wrong session.
+ */
+export interface FinderSession {
+  clientId: string | null;
+  editDraft: Record<string, unknown>;
+  searchedDraft: Record<string, unknown>;
+  lastDraft: Record<string, unknown>;
+  resp: FinderResponse | null;
+  loading: boolean;
+  hasSearched: boolean;
+  showEdit: boolean;
+  showPrefs: boolean;
+  showControls: boolean;
+  viewMode: FinderViewMode;
+  activeTab: DisplayTabKey;
+  scoreThreshold: number;
+  sortKey: SortKey;
+  refine: Refine;
+  showRefine: boolean;
+  visibleCount: number;
+  selected: string[];
+  savedAny: boolean;
+}
+
 interface Props {
   isAr: boolean;
   clientsModel: AppModel | null;
@@ -131,6 +163,13 @@ interface Props {
   /** Whether the host is CURRENTLY docked — picks the button's icon/label
    *  (docked → "Full screen", modal → "Split"). */
   layoutDocked?: boolean;
+  /** Shared holder for the finder's working session. When present, the finder
+   *  restores its edited preferences + results + view state from it on mount and
+   *  keeps it current on every change — so a host that swaps this component
+   *  between two shells (docked panel ↔ full-screen modal) doesn't lose the
+   *  rep's unsaved preferences across the switch. Omit for hosts with a single
+   *  stable mount (the standalone page, the follow-up workspace). */
+  sessionRef?: { current: FinderSession | null };
 }
 
 const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
@@ -148,7 +187,7 @@ const PAGE = 24;
 
 export default function SuggestedProjectsView({
   isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName, clientName,
-  defaultPrefsCollapsed, editPrefsFirst, onDone, onOpenSource, onToggleLayout, layoutDocked,
+  defaultPrefsCollapsed, editPrefsFirst, onDone, onOpenSource, onToggleLayout, layoutDocked, sessionRef,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
@@ -156,26 +195,36 @@ export default function SuggestedProjectsView({
   const addToast = useAppStore((s) => s.addToast);
   const saveRecord = useAppStore((s) => s.saveRecord);
 
+  // A persisted session left by a previous mount in the SAME shell-switch (e.g.
+  // Split↔Full-screen) — restored only when it belongs to the client on screen,
+  // so switching clients never rehydrates the wrong session. Captured once at
+  // mount; every state below seeds from it when present.
+  const restored =
+    sessionRef?.current && sessionRef.current.clientId === (clientRec?.id ?? null)
+      ? sessionRef.current
+      : null;
+
   // A client is attached → each card's units popup can SEND the units-table +
   // single-unit PDFs to the client (derived conversation), not just download.
   const chatPdf = useMemo(() => chatPdfFromClient(clientRec), [clientRec]);
 
-  const [resp, setResp] = useState<FinderResponse | null>(null);
+  const [resp, setResp] = useState<FinderResponse | null>(restored?.resp ?? null);
   // Starts true because the search normally fires on mount — but NOT when the
   // host defers it (editPrefsFirst), or the spinner would hang forever in place
-  // of the start screen (caught in the live smoke-test 2026-07-19).
-  const [loading, setLoading] = useState(!editPrefsFirst);
+  // of the start screen (caught in the live smoke-test 2026-07-19). A restored
+  // session keeps its own loading flag (a search in flight at the swap resumes).
+  const [loading, setLoading] = useState(restored ? restored.loading : !editPrefsFirst);
   const [error, setError] = useState<{ message: string; timeout: boolean } | null>(null);
-  const [activeTab, setActiveTab] = useState<DisplayTabKey>('exact_district_matches');
-  const [viewMode, setViewMode] = useState<FinderViewMode>('list');
+  const [activeTab, setActiveTab] = useState<DisplayTabKey>(restored?.activeTab ?? 'exact_district_matches');
+  const [viewMode, setViewMode] = useState<FinderViewMode>(restored?.viewMode ?? 'list');
   // "Show on map" from a card: switch to the map and open/center that pin. The
   // nonce lets the same project be re-focused (e.g. clicked twice).
   const [mapFocus, setMapFocus] = useState<{ id: string; nonce: number } | null>(null);
   const mapFocusNonce = useRef(0);
-  const [visibleCount, setVisibleCount] = useState(PAGE);
+  const [visibleCount, setVisibleCount] = useState(restored?.visibleCount ?? PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(restored?.selected ?? []));
   const [saveStates, setSaveStates] = useState<Record<string, 'idle' | 'saving' | 'saved'>>({});
   const [bulkSaving, setBulkSaving] = useState(false);
   const [eliminateTarget, setEliminateTarget] = useState<FinderMatch | null>(null);
@@ -185,22 +234,22 @@ export default function SuggestedProjectsView({
   const [sendTarget, setSendTarget] = useState<FinderMatch | null>(null);
   // Whether at least ONE option was saved for the client during THIS visit —
   // leaving (Done / Esc / unload) without it triggers a confirmation.
-  const [savedAny, setSavedAny] = useState(false);
+  const [savedAny, setSavedAny] = useState(restored?.savedAny ?? false);
   const [confirmLeave, setConfirmLeave] = useState(false);
 
   // Results-refinement (shared with the standalone Project Finder page).
-  const [scoreThreshold, setScoreThreshold] = useState<number>(FETCH_FLOOR);
-  const [sortKey, setSortKey] = useState<SortKey>('score');
-  const [showRefine, setShowRefine] = useState(false);
-  const [refine, setRefine] = useState<Refine>(REFINE_DEFAULT);
+  const [scoreThreshold, setScoreThreshold] = useState<number>(restored?.scoreThreshold ?? FETCH_FLOOR);
+  const [sortKey, setSortKey] = useState<SortKey>(restored?.sortKey ?? 'score');
+  const [showRefine, setShowRefine] = useState(restored?.showRefine ?? false);
+  const [refine, setRefine] = useState<Refine>(restored?.refine ?? REFINE_DEFAULT);
 
   // Editable preference draft + the draft the CURRENT results were searched with.
-  const [editDraft, setEditDraft] = useState<Record<string, unknown>>(() => ({ ...prefDraft }));
-  const [searchedDraft, setSearchedDraft] = useState<Record<string, unknown>>(() => ({ ...prefDraft }));
-  const [showEdit, setShowEdit] = useState(!!editPrefsFirst);
+  const [editDraft, setEditDraft] = useState<Record<string, unknown>>(() => ({ ...(restored?.editDraft ?? prefDraft) }));
+  const [searchedDraft, setSearchedDraft] = useState<Record<string, unknown>>(() => ({ ...(restored?.searchedDraft ?? prefDraft) }));
+  const [showEdit, setShowEdit] = useState(restored ? restored.showEdit : !!editPrefsFirst);
   // False until a search has actually been run — drives the "review your
   // preferences, then search" start screen when editPrefsFirst defers it.
-  const [hasSearched, setHasSearched] = useState(!editPrefsFirst);
+  const [hasSearched, setHasSearched] = useState(restored ? restored.hasSearched : !editPrefsFirst);
   const [savingPrefs, setSavingPrefs] = useState(false);
   // Version this surface loaded the client with (optimistic concurrency). Pinned
   // in a ref and bumped after each successful save so a second save in the same
@@ -210,10 +259,10 @@ export default function SuggestedProjectsView({
     prefVersionRef.current = { id: clientRec.id, version: clientRec.version ?? null };
   }
   // The preferences-chips area (QA: collapsible so popup results get the height).
-  const [showPrefs, setShowPrefs] = useState(!defaultPrefsCollapsed);
+  const [showPrefs, setShowPrefs] = useState(restored ? restored.showPrefs : !defaultPrefsCollapsed);
   // The refinement toolbar + group tabs — collapsible so the results/map get the
   // full height when the rep just wants to browse.
-  const [showControls, setShowControls] = useState(true);
+  const [showControls, setShowControls] = useState(restored ? restored.showControls : true);
 
   // Cross-reference the client's already-saved options so each card shows its status.
   const clientOptionsModelId = useMemo(
@@ -283,7 +332,7 @@ export default function SuggestedProjectsView({
   const controllerRef = useRef<AbortController | null>(null);
   // The draft of the LAST ATTEMPTED search — retry after a timeout re-sends it
   // verbatim (searchedDraft only updates on success, so it can't serve here).
-  const lastDraftRef = useRef<Record<string, unknown>>(prefDraft);
+  const lastDraftRef = useRef<Record<string, unknown>>(restored?.lastDraft ?? prefDraft);
   // Re-run the deterministic match for a preference draft and reset the view.
   function runSearch(d: Record<string, unknown>) {
     markActivity('finder: search request');
@@ -341,13 +390,35 @@ export default function SuggestedProjectsView({
   // shows the start screen until Search is pressed.
   useEffect(() => {
     startFreezeDetector();
-    if (!editPrefsFirst) {
+    if (restored) {
+      // Re-mounted from a persisted session (a Split↔Full-screen swap). The
+      // edited preferences, results and view state were already restored above;
+      // only resume a search that was actually in flight when the shell swapped.
+      if (restored.loading) {
+        markActivity('finder: resume search after layout switch');
+        runSearch(restored.lastDraft);
+      }
+    } else if (!editPrefsFirst) {
       markActivity('finder: initial load');
       runSearch(prefDraft);
     }
     return () => controllerRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Mirror the working session into the shared holder on every change, so a host
+  // that swaps this component between shells (docked panel ↔ full-screen modal)
+  // can restore it on the next mount. No-op when no `sessionRef` is passed.
+  useEffect(() => {
+    if (!sessionRef) return;
+    sessionRef.current = {
+      clientId: clientRec?.id ?? null,
+      editDraft, searchedDraft, lastDraft: lastDraftRef.current,
+      resp, loading, hasSearched, showEdit, showPrefs, showControls,
+      viewMode, activeTab, scoreThreshold, sortKey, refine, showRefine,
+      visibleCount, selected: Array.from(selected), savedAny,
+    };
+  });
 
   // ── Refresh safety net for the UNSAVED selection ─────────────────────────
   // A finder session is in-memory only, so a forced stale-build reload (or an
