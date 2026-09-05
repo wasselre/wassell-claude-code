@@ -22,7 +22,7 @@ import {
   type RelationMemberRef,
   type GeoPreference,
   type GeoGroup,
-} from './ontology';
+} from './ontology.js';
 
 export const REFERENCE_SCHEMA_VERSION = 'geo-pref/v7';
 

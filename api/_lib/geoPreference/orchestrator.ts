@@ -37,7 +37,7 @@ import type {
   GeoPreference,
   ResolutionResult,
   SatisfiabilityFlag,
-} from './ontology';
+} from './ontology.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Ports — the ONLY surfaces the orchestrator can write through. There is no

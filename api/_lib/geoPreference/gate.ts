@@ -46,7 +46,7 @@ import type {
   GateDecision,
   MaximumSafeAction,
   AmbiguityCondition,
-} from './ontology';
+} from './ontology.js';
 
 /** The tunable thresholds — mirrors the `geo_pref_gate_config` row (1:1). */
 export interface GateConfig {

@@ -37,7 +37,7 @@ import {
   type GeoOperation,
   type AnchorToken,
   type Polarity,
-} from './ontology';
+} from './ontology.js';
 
 export const COMPILER_SCHEMA_VERSION = 'geo-pref/v7';
 const RESOLVER_VERSION = 'compiler@v7';
