@@ -138,7 +138,7 @@ export default function SalesConsultantApplicationPage() {
 
       <div className="mx-auto w-full max-w-xl px-4 py-6 sm:py-10">
         <header className="flex justify-center mb-6">
-          <img src="/assets/logo-full.png" alt="وصل العقارية" className="h-14 sm:h-16" />
+          <img src="/assets/wassel-logo.png" alt="وصل العقارية" className="h-20 sm:h-24" />
         </header>
 
         {phase === 'intro' && <IntroScreen onStart={startApplication} hasDraft={!!(answers.full_name || answers.phone)} />}
