@@ -50,7 +50,9 @@ export default async function handler(req: Request): Promise<Response> {
   const submissionId = typeof body.submissionId === 'string' ? body.submissionId : '';
   const kind = body.kind === 'cv' || body.kind === 'audio' ? body.kind : '';
   const filename = typeof body.filename === 'string' ? body.filename : '';
-  const mime = (typeof body.mime === 'string' ? body.mime : '').toLowerCase();
+  // Strip any codec/parameter suffix — MediaRecorder emits e.g.
+  // "audio/webm;codecs=opus", and the allowlist keys on the base type.
+  const mime = ((typeof body.mime === 'string' ? body.mime : '').toLowerCase().split(';')[0] ?? '').trim();
   const size = typeof body.size === 'number' && Number.isFinite(body.size) ? body.size : 0;
 
   if (!UUID_RE.test(submissionId)) return jsonError(400, 'invalid submissionId');
