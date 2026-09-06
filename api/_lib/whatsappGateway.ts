@@ -336,7 +336,7 @@ const STORAGE_SIGNED_URL_RE = /\/storage\/v1\/object\/sign\/([^/]+)\/([^?]+)/;
  * signed URL on any other bucket cannot be re-signed by the worker and is
  * rejected loudly at schedule time instead of silently failing at delivery.
  */
-function scheduledMediaItem(
+export function scheduledMediaItem(
   mediaFileId: string,
   caption: string | null,
 ): { fileId?: string; url?: string; caption: string | null } {
