@@ -28,6 +28,7 @@ const UsersPage = lazy(() => import('@/pages/Settings/UsersPage'));
 const AuditLogPage = lazy(() => import('@/pages/Settings/AuditLogPage'));
 const GeoElementsPage = lazy(() => import('@/pages/Settings/GeoElementsPage'));
 const GeoLabelingPage = lazy(() => import('@/pages/GeoLabeling/GeoLabelingPage'));
+const GeoGradePage = lazy(() => import('@/pages/GeoGrade/GeoGradePage'));
 const MarketingOpsPage = lazy(() => import('@/pages/Settings/MarketingOpsPage'));
 const ContentIntelligencePage = lazy(() => import('@/pages/Settings/ContentIntelligencePage'));
 const MarketingAdvertisersPage = lazy(() => import('@/pages/Settings/MarketingAdvertisersPage'));
@@ -446,6 +447,7 @@ export default function App() {
           {/* Geography Understanding — gold-set labeling instrument (blind label →
               adjudication → canonical answer key). Internal ability-building tool. */}
           <Route path="/geo-labeling" element={<RequireAdmin><GeoLabelingPage /></RequireAdmin>} />
+          <Route path="/geo-grade" element={<RequireAdmin><GeoGradePage /></RequireAdmin>} />
           {/* Financing calculator. Query params let a client / project / unit
               page deep-link straight into a pre-filled scenario. */}
           <Route path="/financing" element={<RequirePageAccess pageId="financing_calculator"><FinancingPage /></RequirePageAccess>} />
