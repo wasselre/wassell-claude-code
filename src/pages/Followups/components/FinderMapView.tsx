@@ -1,6 +1,8 @@
 import { useMemo, type ReactNode } from 'react';
+import { useJsApiLoader } from '@react-google-maps/api';
 import { markActivity } from '@/lib/perf/freezeDetector';
-import { buildColoredPinIcon } from '@/lib/locationUtils';
+import { buildColoredPinIcon, buildPillIcon } from '@/lib/locationUtils';
+import { getMapsLoaderOptions } from '@/lib/mapsLoader';
 import type { FinderMatch, FinderSource } from '@/lib/matching/projectFinder';
 import BaseMapView, { type MapPin } from '@/components/map/BaseMapView';
 import type { LocationItem } from '@/lib/geo/locationItems';
@@ -36,8 +38,10 @@ interface Props {
 }
 
 // Pin color by source — mirrors the card SourcePill so map & list read the same.
+// Our projects use the brand copper and render as NAMED pills (not plain teardrop
+// pins) so they never read the same as a market ad — see the pins builder below.
 const SOURCE_COLOR: Record<FinderSource, string> = {
-  our_projects: '#16A34A',   // green — our portfolio
+  our_projects: '#B8734F',   // copper — our brand / our portfolio
   market_listings: '#4A2C2A', // chocolate — external market ads
   all_projects: '#4A4E54',   // charcoal — the listings DB
 };
@@ -53,14 +57,23 @@ const asCoord = (v: unknown): number | null => {
 };
 
 export default function FinderMapView({ matches, isAr, onOpenDetails, renderSelectedCard, focus, heightClass = 'h-[70vh]', areaItems }: Props) {
-  // One pin icon per source color, reused across every marker (a dense tab has
-  // thousands of pins — re-encoding an identical SVG data-URI per marker was the
-  // main-thread stall when opening the map on a large result set).
+  // Track when the Maps script is ready. Icon builders return `undefined` until
+  // `window.google.maps` exists; keying the memos below on `isLoaded` makes them
+  // rebuild once it does — otherwise a map opened before the script finished
+  // loading would cache `undefined` icons forever and every pin would fall back
+  // to Google's default RED marker (our projects & market ads reading identical).
+  const { isLoaded } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
+
+  // One teardrop icon per source color, reused across every marker (a dense tab
+  // has thousands of pins — re-encoding an identical SVG data-URI per marker was
+  // the main-thread stall when opening the map on a large result set). Our
+  // projects don't use these — they render as per-name pills in the builder below.
   const iconBySource = useMemo(() => ({
     our_projects: buildColoredPinIcon(SOURCE_COLOR.our_projects) as google.maps.Icon | undefined,
     market_listings: buildColoredPinIcon(SOURCE_COLOR.market_listings) as google.maps.Icon | undefined,
     all_projects: buildColoredPinIcon(SOURCE_COLOR.all_projects) as google.maps.Icon | undefined,
-  }), []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [isLoaded]);
 
   // Only matches with real coordinates can be plotted. Keyed by project_id, colored
   // by source; our projects are "solo" pins (never clustered) and sit on top.
@@ -81,15 +94,29 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
         m.source === 'market_listings' && typeof m.facts.external_id === 'string' && m.facts.external_id
           ? ` @${m.facts.external_id}`
           : '';
+      if (m.source === 'our_projects') {
+        // Our projects render as a NAMED copper pill (the project name inside the
+        // marker) — visually distinct from a market ad's plain teardrop, and in
+        // our brand colour. Solo + top zIndex so the name always shows and is
+        // never absorbed into a cluster or hidden under a market pin.
+        out.push({
+          id: m.project_id,
+          lat,
+          lng,
+          icon: buildPillIcon(m.project_name, SOURCE_COLOR.our_projects) as google.maps.Icon | undefined,
+          title: m.project_name,
+          zIndex: 1000,
+          solo: true,
+          sig: `our:${m.project_name}`,
+        });
+        continue;
+      }
       out.push({
         id: m.project_id,
         lat,
         lng,
         icon: iconBySource[m.source],
         title: `${m.project_name}${extId}`,
-        // Our projects sit on top so they're never hidden under a market pin.
-        zIndex: m.source === 'our_projects' ? 1000 : undefined,
-        solo: m.source === 'our_projects',
         sig: m.source,
       });
     }
