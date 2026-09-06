@@ -69,8 +69,45 @@ export default async function handler(req: Request): Promise<Response> {
         .select('subject_ref, value').eq('batch_id', batchId).eq('annotator_id', user.userId).eq('field', 'overall.verdict');
       const verdictOf = new Map<string, string | null>((mine ?? []).map((m) => [m.subject_ref as string, m.value as string | null]));
 
+      // The SOURCE the AI read — so a grader can verify. Call transcripts + inbound
+      // chat, per client, phone-numbers scrubbed. (Calls dominate the calibration.)
+      const PHONE = /(\+?\d[\d\s().-]{6,}\d)/g;
+      const transcripts: Record<string, string> = {};
+      const mdl = await sb.from('models').select('id, name').in('name', ['phone_calls', 'chats']);
+      const pcId = (mdl.data ?? []).find((m) => m.name === 'phone_calls')?.id as string | undefined;
+      const chatId = (mdl.data ?? []).find((m) => m.name === 'chats')?.id as string | undefined;
+      if (pcId) {
+        const { data: calls } = await sb.from('records').select('data').eq('model_id', pcId).in('data->>client_link', clientIds);
+        for (const c of calls ?? []) {
+          const cid = String((c.data as Record<string, unknown>).client_link ?? '');
+          const t = String((c.data as Record<string, unknown>).transcription_text ?? '').trim();
+          if (cid && t) transcripts[cid] = (transcripts[cid] ? transcripts[cid] + '\n\n──────\n\n' : '') + t;
+        }
+      }
+      if (chatId) {
+        const { data: chatRecs } = await sb.from('records').select('data').eq('model_id', chatId).in('data->>client_link', clientIds);
+        const widToClient = new Map<string, string>();
+        for (const ct of chatRecs ?? []) {
+          const cid = String((ct.data as Record<string, unknown>).client_link ?? '');
+          const wid = String((ct.data as Record<string, unknown>).wid ?? '');
+          if (cid && wid) widToClient.set(wid, cid);
+        }
+        const wids = [...widToClient.keys()];
+        if (wids.length) {
+          // Both sides — the agent's question is what makes a one-word reply gradeable.
+          const { data: msgs } = await sb.from('chat_messages').select('chat_wid, body, flow, date').in('chat_wid', wids).order('date', { ascending: true }).limit(600);
+          for (const m of msgs ?? []) {
+            const cid = widToClient.get(m.chat_wid as string);
+            const bd = String(m.body ?? '').trim();
+            if (cid && bd) transcripts[cid] = (transcripts[cid] ? transcripts[cid] + '\n' : '') + (m.flow === 'in' ? '🧑 ' : '🏢 ') + bd;
+          }
+        }
+      }
+      for (const k of Object.keys(transcripts)) transcripts[k] = (transcripts[k] ?? '').replace(PHONE, '[رقم]').slice(0, 8000);
+
       const items = (evs ?? []).map((e) => ({
         id: e.id,
+        client_id: e.client_id,
         client: nameOf.get(e.client_id as string) ?? '',
         mention: e.mention_span,
         role: e.preference_role,
@@ -80,7 +117,7 @@ export default async function handler(req: Request): Promise<Response> {
         anchor_type: (Array.isArray(e.anchors) && e.anchors[0] ? (e.anchors[0] as { anchor_type?: string }).anchor_type : null) ?? null,
         my_verdict: verdictOf.get(e.id as string) ?? null,
       }));
-      return jsonOk({ batch: { id: b.id, label: b.label }, items, total: items.length, graded: items.filter((i) => i.my_verdict).length });
+      return jsonOk({ batch: { id: b.id, label: b.label }, items, transcripts, total: items.length, graded: items.filter((i) => i.my_verdict).length });
     }
 
     // ── POST: save one verdict (upsert; re-grading edits) ──
