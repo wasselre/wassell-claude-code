@@ -67,22 +67,36 @@ cleanly, **hand off — do not improvise.**
 Send **one message per action.** If a sheet must follow a line, send the line
 first, then the sheet as a second `send.mjs` call. Max two sends total.
 
-### 3A — Project sheet (named-project lead / price ask on a tagged project)
+### 3A — Send the project (named-project lead / price ask on a tagged project)
 
-Get the project id (from the chat record's tagged project, or look it up by the
-name the customer/ad used), then generate the **canonical, guarded** sheet — do
-NOT hand-format it and do NOT read prices straight from SQL:
+A named-project lead gets **the full package a rep would send** — the marketing
+message **plus the project brochure and its top photos** — in ONE call. Get the
+project id (from the chat record's tagged project, or look it up by the name the
+customer/ad used) and run:
+
+```bash
+node /app/wa-agent/tools/project-flow.mjs "<project name or id>"
+```
+
+- This is the rep's own flow, server-side: it resolves the message the same way
+  the reps do (the project's **saved** message, fact-checked to current numbers →
+  a fresh AI rewrite → the deterministic sheet as a floor), attaches **one
+  brochure + the top 3 photos**, and enqueues them **text → PDF → pictures**. It
+  quotes only the **available_price_range** ("starts from" = cheapest *available*
+  unit, never a sold unit's price) and never invents geography.
+- It re-checks the gate before sending, so `sent`/`queued` from THIS tool already
+  counts as the send — do **not** also call `send.mjs` for the same project.
+- If it returns `blocked` → a human took over; **send nothing more**, set
+  `handoff: true`. If it returns `not_found`/`error` → send a warm greeting (3C)
+  and `handoff: true`. Never invent a sheet.
+
+If you only need the **plain text sheet** (e.g. a quick FAQ answer in bucket D,
+or media would be noise), use the text-only sibling and send its `body_ar` via
+`send.mjs`:
 
 ```bash
 node /app/wa-agent/tools/project.mjs "<project name or id>"
 ```
-
-- This calls the same server generator the reps use, which enforces the
-  **available_price_range** ("starts from" = cheapest *available* unit, never a
-  sold unit's price) and the geography guard.
-- Send exactly what it returns. Quote nothing it did not return.
-- If it returns `not_found` or `error` → send a warm greeting (3C) and
-  `handoff: true`. Never invent a sheet.
 
 House sheet format (for reference — the tool produces this):
 
