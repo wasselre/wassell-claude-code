@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, ArrowRight, Building2, Check, ExternalLink, ListPlus, Loader2,
-  MapPin, Search, SlidersHorizontal, Send, X,
+  Map as MapIcon, MapPin, Rows3, Search, SlidersHorizontal, Send, X,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
@@ -18,6 +18,8 @@ import { normalizePhone } from '@/lib/phone';
 import { chatPdfFromClient, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 import Badge from '@/components/ui/Badge';
 import DualRangeSlider from '@/components/ui/DualRangeSlider';
+import BaseMapView, { type MapPin as MapPinData } from '@/components/map/BaseMapView';
+import { buildColoredPinIcon } from '@/lib/locationUtils';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import BulkProjectSendFlow, { type BulkRecipientInput } from '@/pages/Chats/components/BulkProjectSendFlow';
@@ -71,8 +73,6 @@ interface Props {
   /** Close the sheet (the caller owns the open/closed flag). */
   onClose: () => void;
 }
-
-type Scope = 'all' | 'ours' | 'targeted';
 
 /** How many rows render before "show more" — keeps a 1,000-project list cheap on a phone. */
 const PAGE = 60;
@@ -176,9 +176,9 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
     });
 
   // ── filters ───────────────────────────────────────────────────────────────
-  // Default to OUR projects — in a chat the rep is picking something of ours to
-  // send the client, so the browser opens on مشاريعنا (they can still switch scope).
-  const [scope, setScope] = useState<Scope>('ours');
+  // This browser is OUR-projects only — in a chat the rep is always picking
+  // something of ours to send the client (no all/targeted scopes).
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [search, setSearch] = useState('');
   const [city, setCity] = useState('');
   const [district, setDistrict] = useState('');
@@ -217,8 +217,8 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
     const pMin = priceMin ? Number(priceMin) : null;
     const pMax = priceMax ? Number(priceMax) : null;
     const out = views.filter((v) => {
-      if (scope === 'ours' && !ourProjectIds.has(v.id)) return false;
-      if (scope === 'targeted' && !v.isTargeted) return false;
+      // OUR projects only — this is the send-to-client catalogue.
+      if (!ourProjectIds.has(v.id)) return false;
       if (city && v.city !== city) return false;
       if (district && v.district !== district) return false;
       if (unitType && !v.unitTypes.some((u) => u.value === unitType)) return false;
@@ -241,10 +241,10 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
       if (d !== 0) return d;
       return (a.name ?? '').localeCompare(b.name ?? '', isAr ? 'ar' : 'en');
     });
-  }, [views, scope, ourProjectIds, city, district, unitType, availableOnly, priceMin, priceMax, search, projectsModel, isAr]);
+  }, [views, ourProjectIds, city, district, unitType, availableOnly, priceMin, priceMax, search, projectsModel, isAr]);
 
   // Reset paging whenever the result set changes shape.
-  useEffect(() => { setLimit(PAGE); }, [scope, search, city, district, unitType, availableOnly, priceMin, priceMax]);
+  useEffect(() => { setLimit(PAGE); }, [search, city, district, unitType, availableOnly, priceMin, priceMax]);
 
   // ── drill-down ────────────────────────────────────────────────────────────
   // Hold the project ID (not the resolved view) so a live record update — a
@@ -395,7 +395,7 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
           </div>
         ) : (
           <>
-            {/* Search + scope + filters */}
+            {/* Search + view toggle + filters */}
             <div className="shrink-0 space-y-2 border-b border-sand/40 bg-white px-3 py-2.5">
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
@@ -421,22 +421,27 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
               </div>
 
               <div className="flex items-center gap-1">
-                {(['all', 'ours', 'targeted'] as const).map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setScope(s)}
-                    className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-                      scope === s ? 'bg-copper text-white' : 'bg-cream text-charcoal/60 hover:bg-sand/40'
-                    }`}
-                  >
-                    {s === 'all' ? L('كل المشاريع', 'All') : s === 'ours' ? L('مشاريعنا', 'Ours') : L('المستهدفة', 'Targeted')}
-                  </button>
-                ))}
+                {/* List / Map view toggle — the catalogue is always our projects. */}
+                <div className="inline-flex overflow-hidden rounded-full border border-sand">
+                  {(['list', 'map'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => { setViewMode(m); if (m === 'map') { setBulkMode(false); setBulkSel(new Set()); } }}
+                      aria-pressed={viewMode === m}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors ${
+                        viewMode === m ? 'bg-copper text-white' : 'bg-white text-charcoal/60 hover:bg-cream'
+                      }`}
+                    >
+                      {m === 'list' ? <Rows3 size={13} /> : <MapIcon size={13} />}
+                      {m === 'list' ? L('قائمة', 'List') : L('خريطة', 'Map')}
+                    </button>
+                  ))}
+                </div>
                 <span className="ms-auto text-[11px] text-charcoal/50">
                   {L(`${filtered.length} مشروع`, `${filtered.length} projects`)}
                 </span>
-                {bulkRecipient && (
+                {bulkRecipient && viewMode === 'list' && (
                   <button
                     type="button"
                     onClick={() => { setBulkMode((m) => !m); setBulkSel(new Set()); }}
@@ -499,43 +504,54 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
               )}
             </div>
 
-            {/* Results */}
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              {filtered.length === 0 ? (
-                <div className="rounded-2xl border border-sand/40 bg-white p-8 text-center text-sm text-charcoal/50">
-                  {L('لا توجد مشاريع مطابقة.', 'No matching projects.')}
-                </div>
-              ) : (
-                <>
-                  <div className="space-y-2">
-                    {filtered.slice(0, limit).map((v) => (
-                      <ProjectRow
-                        key={v.id}
-                        v={v}
-                        isAr={isAr}
-                        model={projectsModel}
-                        onOpen={() => setOpenId(v.id)}
-                        selectable={bulkMode}
-                        selected={bulkSel.has(v.id)}
-                        onToggleSelect={() => toggleBulk(v.id)}
-                      />
-                    ))}
+            {/* Results — list or map (same filtered our-projects set). */}
+            {viewMode === 'map' ? (
+              <div className="min-h-0 flex-1 p-3">
+                <ProjectsMapPanel
+                  views={filtered}
+                  isAr={isAr}
+                  model={projectsModel}
+                  onOpen={(id) => setOpenId(id)}
+                />
+              </div>
+            ) : (
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                {filtered.length === 0 ? (
+                  <div className="rounded-2xl border border-sand/40 bg-white p-8 text-center text-sm text-charcoal/50">
+                    {L('لا توجد مشاريع مطابقة.', 'No matching projects.')}
                   </div>
-                  {filtered.length > limit && (
-                    <button
-                      type="button"
-                      onClick={() => setLimit((n) => n + PAGE)}
-                      className="mt-3 w-full rounded-xl border border-sand bg-white py-2 text-sm font-medium text-copper transition-colors hover:bg-cream"
-                    >
-                      {L(`عرض المزيد (${filtered.length - limit} متبقية)`, `Show more (${filtered.length - limit} left)`)}
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      {filtered.slice(0, limit).map((v) => (
+                        <ProjectRow
+                          key={v.id}
+                          v={v}
+                          isAr={isAr}
+                          model={projectsModel}
+                          onOpen={() => setOpenId(v.id)}
+                          selectable={bulkMode}
+                          selected={bulkSel.has(v.id)}
+                          onToggleSelect={() => toggleBulk(v.id)}
+                        />
+                      ))}
+                    </div>
+                    {filtered.length > limit && (
+                      <button
+                        type="button"
+                        onClick={() => setLimit((n) => n + PAGE)}
+                        className="mt-3 w-full rounded-xl border border-sand bg-white py-2 text-sm font-medium text-copper transition-colors hover:bg-cream"
+                      >
+                        {L(`عرض المزيد (${filtered.length - limit} متبقية)`, `Show more (${filtered.length - limit} left)`)}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
 
             {/* Bulk action bar — send the selected projects to this client in order. */}
-            {bulkMode && (
+            {bulkMode && viewMode === 'list' && (
               <div className="flex shrink-0 items-center justify-between gap-2 border-t border-sand/40 bg-white px-3 py-2.5">
                 <span className="text-xs text-charcoal/60">
                   {L(`${bulkSel.size} محدد`, `${bulkSel.size} selected`)}
@@ -630,6 +646,107 @@ function priceRangeFor(v: ProjectView, model: AppModel | undefined): NumericRang
 
 function isAvailablePrice(v: ProjectView, model: AppModel | undefined): boolean {
   return asRange(rollupByKind(model, (v.raw.data ?? {}) as Record<string, unknown>, 'available_price_range')) !== null;
+}
+
+/** A finite, non-zero coordinate — 0/0 and blanks mean "no location". */
+function asCoord(v: unknown): number | null {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) && n !== 0 ? n : null;
+}
+
+/**
+ * MAP view for the browser — our projects plotted on the SAME shared BaseMapView
+ * the Project Finder and Client Options maps use (clustering, the full-view
+ * button, the layers overlay all come for free). Every pin is copper (this
+ * catalogue is our-projects only), and clicking one shows a compact card with an
+ * "open project" action that drills into the same ProjectDetail as a list row.
+ */
+function ProjectsMapPanel({
+  views, isAr, model, onOpen,
+}: {
+  views: ProjectView[];
+  isAr: boolean;
+  model: AppModel | undefined;
+  onOpen: (id: string) => void;
+}) {
+  // One copper pin icon, reused across every marker.
+  const icon = useMemo(() => buildColoredPinIcon('#B8734F') as google.maps.Icon | undefined, []);
+
+  const pins = useMemo<MapPinData[]>(() => {
+    const out: MapPinData[] = [];
+    for (const v of views) {
+      const data = (v.raw.data ?? {}) as Record<string, unknown>;
+      const lat = asCoord(data.latitude);
+      const lng = asCoord(data.longitude);
+      if (lat == null || lng == null) continue;
+      out.push({ id: v.id, lat, lng, icon, title: v.name ?? '' });
+    }
+    return out;
+  }, [views, icon]);
+
+  const byId = useMemo(() => new Map(views.map((v) => [v.id, v] as const)), [views]);
+
+  return (
+    <BaseMapView
+      pins={pins}
+      isAr={isAr}
+      heightClass="min-h-0 flex-1"
+      outerClassName="flex h-full flex-col overflow-hidden rounded-xl border border-sand/40 bg-white"
+      stateBoxClassName="flex h-full flex-col items-center justify-center rounded-xl border border-sand/40 bg-white"
+      cardMaxWidthClass="max-w-[320px]"
+      mobileGreedy
+      missingCount={views.length - pins.length}
+      renderSelectedCard={(id) => {
+        const v = byId.get(id);
+        return v ? <MapPinCard v={v} isAr={isAr} model={model} onOpen={() => onOpen(id)} /> : null;
+      }}
+    />
+  );
+}
+
+/** Compact card shown when a map pin is clicked — the essentials plus "open". */
+function MapPinCard({
+  v, isAr, model, onOpen,
+}: {
+  v: ProjectView;
+  isAr: boolean;
+  model: AppModel | undefined;
+  onOpen: () => void;
+}) {
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+  const img = useSignedImage(v.imageRef);
+  const price = formatPriceRange(priceRangeFor(v, model), isAr);
+  const place = [v.district, v.city].filter(Boolean).join(isAr ? '، ' : ', ');
+
+  return (
+    <div className="bg-white">
+      {img && <img src={img} alt="" className="h-24 w-full object-cover" loading="lazy" />}
+      <div className="space-y-1 p-3">
+        <div className="flex items-center gap-1.5 pe-6">
+          <span className="truncate text-sm font-bold text-charcoal">{v.name ?? `#${v.id.slice(0, 8)}`}</span>
+          {v.status && <Badge label={isAr ? v.status.label_ar : v.status.label_en} color={v.status.color ?? undefined} />}
+        </div>
+        <div className="flex items-center gap-1 text-[11px] text-charcoal/55">
+          <MapPin size={11} className="shrink-0" />
+          <span className="truncate">{place || L('موقع غير محدد', 'No location')}</span>
+        </div>
+        {v.developer && <div className="truncate text-[11px] text-charcoal/40">{v.developer}</div>}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pt-0.5 text-[11px]">
+          <span className="font-semibold text-charcoal">{price ?? L('السعر غير متوفر', 'Price N/A')}</span>
+          <span className={(v.availableUnits ?? 0) > 0 ? 'text-emerald-700' : 'text-charcoal/40'}>
+            {L(`متاح: ${v.availableUnits ?? 0}`, `Available: ${v.availableUnits ?? 0}`)}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="mt-1.5 w-full rounded-lg bg-copper px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-terracotta"
+        >
+          {L('فتح المشروع', 'Open project')}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** One compact project row — sized for a 600px sheet and a phone. */
