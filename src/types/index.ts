@@ -3040,6 +3040,11 @@ export interface AppState {
        *  waits in Haberchat's delivery queue; no optimistic bubble (the
        *  webhook echoes it into the thread when it actually sends). */
       deliverAt?: string;
+      /** INTERNAL. A send-now normally waits for the conversation's send lane
+       *  (`src/lib/chat/sendLane.ts`) so it lands after any gallery still
+       *  going out. A caller that itself HOLDS the lane (the composer's
+       *  multi-file fan-out) passes true so its own sends don't deadlock. */
+      laneBypass?: boolean;
     },
   ) => Promise<void>;
   /**

@@ -202,6 +202,16 @@ async function runBatch(req: Request): Promise<Response> {
       }
     }
 
-    return jsonOk({ sent, failed, total: refs.length, ...(firstError ? { firstError } : {}) });
+    // lastDeliverAt: when the batch went through the delivery queue, the moment
+    // the LAST item is due — the browser keeps the conversation's send lane
+    // held until then so a later send-now (a units PDF) queues behind it.
+    const lastDeliverAt = baseDeliverMs != null
+      ? new Date(baseDeliverMs + refs.length * staggerMs).toISOString()
+      : undefined;
+    return jsonOk({
+      sent, failed, total: refs.length,
+      ...(firstError ? { firstError } : {}),
+      ...(lastDeliverAt ? { lastDeliverAt } : {}),
+    });
   });
 }

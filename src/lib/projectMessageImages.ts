@@ -27,7 +27,8 @@
 
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
-import { startJob, completeJob, failJob } from '@/lib/jobs/jobCenter';
+import { startJob, completeJob, failJob, updateJob } from '@/lib/jobs/jobCenter';
+import { holdSendLane } from '@/lib/chat/sendLane';
 
 /** Legacy webhook-created chats can carry the whole device OBJECT in
  *  data.device_id — same guard as appStore's deviceIdString. */
@@ -87,14 +88,29 @@ export async function sendProjectImageMessages(
 
   const { addToast, language } = useAppStore.getState();
   const isAr = language === 'ar';
+  const label = opts.deliverAt
+    ? (isAr ? `جدولة ${ids.length} من الوسائط` : `Scheduling ${ids.length} media message(s)`)
+    : (isAr ? `إرسال ${ids.length} من الوسائط` : `Sending ${ids.length} media message(s)`);
   const jobId = startJob({
     kind: 'media_fanout',
-    label: opts.deliverAt
-      ? (isAr ? `جدولة ${ids.length} من الوسائط` : `Scheduling ${ids.length} media message(s)`)
-      : (isAr ? `إرسال ${ids.length} من الوسائط` : `Sending ${ids.length} media message(s)`),
+    label,
     progress: { done: 0, total: ids.length },
     href: `/model/chats/`,
   });
+
+  // A send-now gallery HOLDS the conversation's send lane for as long as the
+  // server is still sending it, so anything else the rep sends to this
+  // conversation meanwhile (a units PDF from the units list, a typed reply)
+  // waits and lands AFTER the last photo/video instead of in the middle of
+  // them. Scheduled galleries sit in the server queue at explicit times and
+  // don't hold the lane. Released in `finally` — never left dangling.
+  let releaseLane: (() => void) | null = null;
+  if (!opts.deliverAt) {
+    let settle: () => void = () => {};
+    const inFlight = new Promise<void>((resolve) => { settle = resolve; });
+    const release = holdSendLane(chatWid, label, inFlight);
+    releaseLane = () => { settle(); release(); };
+  }
 
   try {
     const { phone, deviceId } = resolveChatTarget(chatWid);
@@ -119,7 +135,31 @@ export async function sendProjectImageMessages(
       const body = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(body?.error || `send-media-batch failed (${res.status})`);
     }
-    const result = (await res.json()) as { sent: number; failed: number; firstError?: string };
+    const result = (await res.json()) as {
+      sent: number;
+      failed: number;
+      firstError?: string;
+      /** Present when the server routed the batch through its delivery queue
+       *  (send-now galleries above the inline ceiling): the moment the LAST
+       *  item is due. The lane stays held until then. */
+      lastDeliverAt?: string;
+    };
+
+    // Server upgraded a send-now gallery to its queue → the sends are still
+    // going out on a timer after this request returned. Keep the lane held
+    // until the last item is due (plus one stagger for the worker's poll), so
+    // a PDF sent meanwhile still queues behind the whole gallery.
+    const lastDue = !opts.deliverAt && typeof result.lastDeliverAt === 'string'
+      ? new Date(result.lastDeliverAt).getTime()
+      : NaN;
+    if (Number.isFinite(lastDue) && lastDue > Date.now() && result.sent > 0) {
+      holdSendLane(chatWid, label, { until: lastDue + 10_000 });
+      updateJob(jobId, {
+        detail: isAr
+          ? `في طابور الإرسال حتى ${new Date(lastDue).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}`
+          : `Queued on the server until ${new Date(lastDue).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`,
+      });
+    }
 
     if (result.failed > 0) {
       addToast(
@@ -147,5 +187,7 @@ export async function sendProjectImageMessages(
       'error',
     );
     return { sent: 0, failed: ids.length };
+  } finally {
+    releaseLane?.();
   }
 }

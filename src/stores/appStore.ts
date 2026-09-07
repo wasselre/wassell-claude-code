@@ -27,6 +27,7 @@ import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, healDisplayedChildModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
+import { isSendLaneBusy, waitForSendLane } from '@/lib/chat/sendLane';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient, deviceIdString, resolveSendDeviceId } from '@/lib/haberchat/normalize';
 import { mergeMessageSources, identityKey } from '@/lib/chat/messageIdentity';
 import { normalizePhone } from '@/lib/phone';
@@ -5132,6 +5133,9 @@ export const useAppStore = create<AppState>((set, get) => ({
        *  waits in Haberchat's delivery queue (no thread bubble until it
        *  actually sends and the webhook echoes it). */
       deliverAt?: string;
+      /** INTERNAL — skip the per-conversation send-lane wait (the caller
+       *  holds the lane itself). See src/lib/chat/sendLane.ts. */
+      laneBypass?: boolean;
     },
   ) => {
     const body = input.body?.trim() || undefined;
@@ -5314,6 +5318,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     try {
+      // SEND LANE: if a gallery (text → photos → videos) is still going out to
+      // this conversation, park this send behind it. The bubble is already on
+      // screen (pending), so the rep sees it queued; when the lane frees, the
+      // bubble's timestamp is refreshed so it sorts after what it waited for.
+      // Callers that HOLD the lane themselves pass laneBypass (see the type).
+      if (!input.laneBypass && isSendLaneBusy(chatWid)) {
+        await waitForSendLane(chatWid);
+        const now = new Date().toISOString();
+        set((s) => {
+          const existing = s.chatMessages[chatWid] ?? [];
+          const next = existing.map((m) => (m.client_id === clientId ? { ...m, date: now } : m));
+          return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
+        });
+      }
       const result = await sendHaberchatMessage({
         deviceId: identity.deviceId,
         phone: identity.phone,

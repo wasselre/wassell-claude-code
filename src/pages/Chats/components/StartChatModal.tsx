@@ -183,9 +183,10 @@ export default function StartChatModal({
       // Send the project gallery (if any) into the just-created conversation —
       // each image as its own WhatsApp message, chained AFTER the first text
       // message dispatches (result.sent) so the intro text lands before the
-      // images. Fully backgrounded: the modal is already gone (a beforeunload
-      // guard in sendProjectImageMessages protects against closing the tab
-      // mid-send; failures toast from inside the fan-out).
+      // images. Fully backgrounded: the modal is already gone (the fan-out is
+      // one server-owned request, so closing the tab mid-send is safe; it also
+      // holds the conversation's send lane so a later send-now queues behind
+      // it; failures toast from inside the fan-out).
       // chatWid mirrors startNewChat's derivation from the canonical E.164.
       const galleryCount = initialImageFileIds?.length ?? 0;
       if (initialImageFileIds && galleryCount > 0) {

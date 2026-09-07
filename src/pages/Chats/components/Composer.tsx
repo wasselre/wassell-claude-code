@@ -9,6 +9,7 @@ import {
   loadDraftFiles, saveDraftFiles, clearDraft,
 } from '../lib/drafts';
 import { sendProjectImageMessages } from '@/lib/projectMessageImages';
+import { holdSendLane, waitForSendLane } from '@/lib/chat/sendLane';
 import TemplatePickerModal from './TemplatePickerModal';
 import SchedulePopover, { formatScheduleTime } from './SchedulePopover';
 import type { ResolvedConversationIdentity } from '../lib/conversationIdentity';
@@ -277,30 +278,49 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
         const rest = files.slice(1);
         if (rest.length > 0) {
           void (async () => {
-            for (let i = 0; i < rest.length; i++) {
-              const f = rest[i]!;
-              try {
-                const up = await uploadLocalFile(f);
-                // Immediate sends go out now (order preserved by sequential
-                // await); scheduled sends stagger +10s each so the queue keeps
-                // order (queue order within the same second isn't guaranteed).
-                const at = deliverAt
-                  ? new Date(new Date(deliverAt).getTime() + (i + 1) * 10_000).toISOString()
-                  : undefined;
-                await sendChatMessage(wid, {
-                  mediaFileId: up.fileId,
-                  kind: kindForLocalFile(f),
-                  mediaMime: up.mime ?? f.type,
-                  mediaSize: up.size ?? f.size,
-                  deliverAt: at,
-                });
-              } catch (e) {
-                addToast(
-                  isAr ? `تعذّر إرسال ${f.name}` : `Failed to send ${f.name}`,
-                  'error',
-                );
-                console.error('[composer] fan-out send failed:', e);
+            // Send-now fan-out HOLDS the conversation's send lane for the whole
+            // loop, so a PDF sent from the units list meanwhile queues behind
+            // the last attachment instead of landing between two of them. The
+            // loop's own sends bypass the lane (they ARE the holder).
+            const fanOut = async () => {
+              for (let i = 0; i < rest.length; i++) {
+                const f = rest[i]!;
+                try {
+                  const up = await uploadLocalFile(f);
+                  // Immediate sends go out now (order preserved by sequential
+                  // await); scheduled sends stagger +10s each so the queue keeps
+                  // order (queue order within the same second isn't guaranteed).
+                  const at = deliverAt
+                    ? new Date(new Date(deliverAt).getTime() + (i + 1) * 10_000).toISOString()
+                    : undefined;
+                  await sendChatMessage(wid, {
+                    mediaFileId: up.fileId,
+                    kind: kindForLocalFile(f),
+                    mediaMime: up.mime ?? f.type,
+                    mediaSize: up.size ?? f.size,
+                    deliverAt: at,
+                    laneBypass: !deliverAt,
+                  });
+                } catch (e) {
+                  addToast(
+                    isAr ? `تعذّر إرسال ${f.name}` : `Failed to send ${f.name}`,
+                    'error',
+                  );
+                  console.error('[composer] fan-out send failed:', e);
+                }
               }
+            };
+            if (deliverAt) {
+              await fanOut();
+            } else {
+              await waitForSendLane(wid);
+              const work = fanOut();
+              holdSendLane(
+                wid,
+                isAr ? `إرسال ${rest.length} ملفات` : `Sending ${rest.length} file(s)`,
+                work,
+              );
+              await work;
             }
             if (deliverAt) setScheduledRefreshKey((k) => k + 1);
           })();

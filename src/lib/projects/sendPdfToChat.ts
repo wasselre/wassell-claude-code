@@ -17,7 +17,8 @@
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
 import { uploadLocalFile } from '@/lib/haberchat/client';
-import { startJob, completeJob, failJob } from '@/lib/jobs/jobCenter';
+import { startJob, completeJob, failJob, updateJob } from '@/lib/jobs/jobCenter';
+import { isSendLaneBusy, getSendLaneHolds, describeSendLaneHolds } from '@/lib/chat/sendLane';
 import { normalizePhone } from '@/lib/phone';
 import type { AppRecord } from '@/types';
 
@@ -89,6 +90,13 @@ export async function sendPdfToChat(
     if (!supabase) throw new Error(isAr ? 'التخزين غير مهيّأ' : 'Storage is not configured');
     const file = new File([blob], filename, { type: 'application/pdf' });
     const uploaded = await uploadLocalFile(file);
+
+    // A gallery still going out to this conversation? sendChatMessage parks
+    // the PDF behind it (per-conversation send lane) — say so in the job entry
+    // so the rep knows the PDF is queued, not stuck.
+    if (!opts.deliverAt && isSendLaneBusy(chatWid)) {
+      updateJob(jobId, { detail: describeSendLaneHolds(getSendLaneHolds(chatWid), isAr) });
+    }
 
     // sendChatMessage owns the optimistic bubble + its own send-failure toast
     // (non-scheduled path); the scheduled path throws on identity failure.
