@@ -9,10 +9,16 @@
  * Fly worker) stays available and is selected by whatsapp_ai_settings.responder_mode='agent'.
  *
  * Called by the WAHA webhook on every new inbound. It reuses the existing send /
- * notify / project-sheet endpoints so there is no duplicate send or audit logic:
- *   - reply text  → POST /api/whatsapp/ai-send      (gate re-check + queue + audit)
- *   - project card→ POST /api/templates/project-message (deterministic sheet)
- *   - handoff     → POST /api/whatsapp/ai-notify     (Tasks → AI notifications)
+ * notify helpers so there is no duplicate send or audit logic:
+ *   - reply text  → enqueueAiReply                   (gate re-check + queue + audit)
+ *   - project card→ sendProjectViaAiFlow             (message + brochure + top photos)
+ *   - handoff     → ai_notifications insert          (Tasks → AI notifications)
+ *
+ * A named-project lead gets the FULL rep package — the marketing message PLUS the
+ * project brochure and its top 3 photos — via `sendProjectViaAiFlow`, run in its
+ * fast, no-AI mode (saved message when current, else the deterministic sheet; the
+ * media rides the scheduled queue). So the basic bot now sends what a rep sends,
+ * without the latency/cost of a per-message model call.
  *
  * Auth: x-wassel-ai-secret === WHATSAPP_AI_SECRET.
  * Body: { chat_wid, trigger_message?, chat_record_id?, device_id?, phone? }
@@ -21,8 +27,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import Anthropic from '@anthropic-ai/sdk';
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
-import { resolveProjectSheet } from '../_lib/projectSheet.js';
 import { enqueueAiReply } from '../_lib/aiSend.js';
+import { sendProjectViaAiFlow } from '../_lib/aiSendProject.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -198,6 +204,9 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   let handoff = false;
   let severity: 'info' | 'action' | 'warning' = 'info';
   let summary = '';
+  // Set true when a branch has ALREADY enqueued its own send (the project flow),
+  // so the generic text send below is skipped for it.
+  let sent = false;
 
   if (d.action === 'greet') {
     replyText = d.reply || GREETING;
@@ -210,10 +219,20 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     replyText = NO_SERVICE;
     summary = 'العميل يسأل عن خدمة غير متوفرة (إيجار/تجاري/أرض).';
   } else if (d.action === 'project_sheet') {
-    const sheet = await resolveProjectSheet(supa, supa, { projectName: d.projectName, onlyOurProjects: true });
-    if (sheet.ok && sheet.body_ar) {
-      replyText = sheet.body_ar;
-      summary = `أُرسلت بطاقة مشروع «${d.projectName}» للعميل.`;
+    // Send the FULL package — message + brochure + top 3 photos — the way a rep
+    // does. Fast mode: no per-message model call (allowAi:false), only our
+    // curated projects (onlyOurProjects:true). The flow re-checks the gate, sends
+    // the text now and staggers the media into the scheduled queue.
+    const flow = await sendProjectViaAiFlow(supa, {
+      chatWid, projectName: d.projectName, deviceId: body.device_id, jobId: 'basic',
+      onlyOurProjects: true, allowAi: false,
+    });
+    if (flow.blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: flow.reason });
+    if (flow.queued) {
+      // Text + brochure + photos already enqueued by the flow — leave replyText
+      // null so the generic send below doesn't double-send the text.
+      sent = true;
+      summary = `أُرسلت بطاقة مشروع «${d.projectName}» مع الكتيّب والصور للعميل.`;
     } else {
       // Couldn't resolve the project → hand off rather than guess.
       replyText = HOLDING; handoff = true; severity = 'action';
@@ -232,7 +251,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   }
 
   // Send the reply (in-process: gate re-check + device + queue + audit).
-  let sent = false;
+  // Skipped for a project_sheet that already sent via the flow (sent=true, replyText=null).
   if (replyText) {
     const res = await enqueueAiReply(supa, { chatWid, text: replyText, deviceId: body.device_id, jobId: 'basic' });
     if (res.blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: res.reason });

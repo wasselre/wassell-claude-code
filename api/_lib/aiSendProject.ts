@@ -72,6 +72,7 @@ async function resolveMessageText(
   projectId: string,
   sheetBodyAr: string,
   sheetFacts: ProjectMessageFacts,
+  allowAi: boolean,
 ): Promise<{ text: string; source: NonNullable<AiSendProjectResult['message_source']> }> {
   const pick = (ar: string, en: string) => (ar.trim() || en.trim());
 
@@ -97,18 +98,24 @@ async function resolveMessageText(
     if (savedMessageMatchesCurrentFacts(sheetFacts, savedAr, savedEn)) {
       return { text: pick(savedAr, savedEn), source: 'saved' };
     }
-    // Numbers drifted → fact-check (correct numbers, keep wording). On any
-    // failure fall through to the sheet — never send the stale saved copy.
-    const fc = await generateProjectMessage(svc, svc, { projectId, existingAr: savedAr, existingEn: savedEn });
-    if (fc.ok) return { text: pick(fc.body_ar, fc.body_en), source: 'saved-factchecked' };
-    console.error(`[aiSendProject] fact-check failed for ${projectId} (${fc.error}) — falling back to the deterministic sheet`);
+    // Numbers drifted. With AI allowed, fact-check (correct numbers, keep
+    // wording); on any failure fall through to the sheet — never send a stale
+    // saved copy. With AI disallowed (the fast basic responder), skip straight
+    // to the sheet: guaranteed-current numbers, zero AI latency.
+    if (allowAi) {
+      const fc = await generateProjectMessage(svc, svc, { projectId, existingAr: savedAr, existingEn: savedEn });
+      if (fc.ok) return { text: pick(fc.body_ar, fc.body_en), source: 'saved-factchecked' };
+      console.error(`[aiSendProject] fact-check failed for ${projectId} (${fc.error}) — falling back to the deterministic sheet`);
+    }
     return { text: sheetBodyAr, source: 'sheet' };
   }
 
-  // No saved message → fresh AI rewrite, else the deterministic sheet.
-  const gen = await generateProjectMessage(svc, svc, { projectId });
-  if (gen.ok) return { text: pick(gen.body_ar, gen.body_en), source: 'ai-generated' };
-  console.error(`[aiSendProject] AI generate failed for ${projectId} (${gen.error}) — falling back to the deterministic sheet`);
+  // No saved message → fresh AI rewrite (when allowed), else the deterministic sheet.
+  if (allowAi) {
+    const gen = await generateProjectMessage(svc, svc, { projectId });
+    if (gen.ok) return { text: pick(gen.body_ar, gen.body_en), source: 'ai-generated' };
+    console.error(`[aiSendProject] AI generate failed for ${projectId} (${gen.error}) — falling back to the deterministic sheet`);
+  }
   return { text: sheetBodyAr, source: 'sheet' };
 }
 
@@ -187,18 +194,32 @@ async function resolveDevice(svc: SupabaseClient, requested?: string | null): Pr
  */
 export async function sendProjectViaAiFlow(
   svc: SupabaseClient,
-  input: { chatWid: string; projectId?: string; projectName?: string; deviceId?: string | null; jobId?: string | null; force?: boolean },
+  input: {
+    chatWid: string; projectId?: string; projectName?: string;
+    deviceId?: string | null; jobId?: string | null; force?: boolean;
+    /** Restrict name/id resolution to the curated our_projects set — the bot must
+     *  only ever offer projects we actually market. Default false (the agent tool,
+     *  which resolves ids it was handed). The basic responder passes true. */
+    onlyOurProjects?: boolean;
+    /** Allow live AI message generation / fact-check. Default true. The fast basic
+     *  responder passes false so it never holds the webhook on a ~40s model call —
+     *  it uses the saved message (when current) or the deterministic sheet. */
+    allowAi?: boolean;
+  },
 ): Promise<AiSendProjectResult> {
   const chatWid = (input.chatWid ?? '').trim();
   if (!chatWid) return { queued: false, error: 'chat_wid is required' };
   const digits = chatWid.split('@')[0] ?? '';
   if (!/^\d{8,15}$/.test(digits)) return { queued: false, error: `unsupported chat_wid: ${chatWid}` };
   if (!input.projectId && !input.projectName) return { queued: false, error: 'project_id or project_name is required' };
+  const allowAi = input.allowAi !== false;
 
   // Resolve the project + its current facts + the deterministic sheet body in one
   // read. This is also the fallback message when the AI is unavailable, and it is
   // what guards against an empty-shell "project" (no sellable data → not_found).
-  const sheet = await resolveProjectSheet(svc, svc, { projectId: input.projectId, projectName: input.projectName });
+  const sheet = await resolveProjectSheet(svc, svc, {
+    projectId: input.projectId, projectName: input.projectName, onlyOurProjects: input.onlyOurProjects,
+  });
   if (!sheet.ok) {
     if (sheet.reason === 'not_found') return { queued: false, error: 'project not found (or has no sellable data)' };
     if (sheet.reason === 'ambiguous') return { queued: false, error: 'project name matched several projects — pass the id' };
@@ -211,7 +232,7 @@ export async function sendProjectViaAiFlow(
   const allProjectsModelId = apModel?.id as string | undefined;
 
   const { text, source } = await resolveMessageText(
-    svc, projectId, sheet.body_ar, sheet.facts as unknown as ProjectMessageFacts,
+    svc, projectId, sheet.body_ar, sheet.facts as unknown as ProjectMessageFacts, allowAi,
   );
   if (!text.trim()) return { queued: false, error: 'resolved an empty message', project_id: projectId };
 
