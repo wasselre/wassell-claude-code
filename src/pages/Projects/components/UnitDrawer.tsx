@@ -12,6 +12,8 @@ import { getEntityFieldText } from '@/lib/recordTranslation/store';
 import { buildUnitPdf, unitPdfFilename } from '@/lib/projects/unitsPdf';
 import { downloadPdf, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 import SendUnitsPdfModal from '@/pages/Chats/components/SendUnitsPdfModal';
+import { resolveProjectLocationLink, buildLocationMessage } from '@/lib/projects/projectLocationLink';
+import SendLocationButton from '@/components/chat/SendLocationButton';
 
 interface UnitDrawerProps {
   unit: UnitView | null;
@@ -259,6 +261,16 @@ export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, 
 
   const lab = (o: { label_ar: string; label_en: string } | null) => (o ? (isAr ? o.label_ar : o.label_en) : DASH);
 
+  // «إرسال الموقع» — the unit's own map link (location_url / coordinates on
+  // the unit record), falling back to its parent project's link when the unit
+  // carries none. Null → the button renders disabled with a tooltip.
+  const locationLink =
+    resolveProjectLocationLink((unit.raw.data ?? {}) as Record<string, unknown>)
+    ?? (project ? resolveProjectLocationLink((project.raw.data ?? {}) as Record<string, unknown>) : null);
+  const locationMessage = locationLink
+    ? buildLocationMessage(project?.name ?? projectName ?? null, locationLink, isAr, unit.code)
+    : '';
+
   return (
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true">
       <div className="flex-1 bg-charcoal/40" onClick={onClose} />
@@ -281,9 +293,9 @@ export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, 
         <div className="p-4 space-y-5 flex-1">
           {/* Unit PDF — send this unit's one-pager to the client (in a chat) or
               download it. Needs the resolved project for the branded header. */}
-          {project && (
-            <div className="flex items-center gap-2">
-              {chatPdf ? (
+          {(project || chatPdf) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {project && (chatPdf ? (
                 <Button variant="primary" className="text-sm !py-1.5" onClick={() => setPdfOpen(true)}>
                   <FileText size={14} className="inline -mt-0.5 me-1" />
                   {isAr ? 'إرسال PDF للعميل' : 'Send unit PDF'}
@@ -293,6 +305,19 @@ export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, 
                   {downloading ? <Loader2 size={14} className="inline -mt-0.5 me-1 animate-spin" /> : <Download size={14} className="inline -mt-0.5 me-1" />}
                   {isAr ? 'تنزيل PDF الوحدة' : 'Download unit PDF'}
                 </Button>
+              ))}
+              {/* Same two-tap send-location control as the project card in the
+                  Projects & Units browser — the unit's link, else the project's. */}
+              {chatPdf && (
+                <SendLocationButton
+                  chatWid={chatPdf.chatWid}
+                  clientName={chatPdf.clientName}
+                  link={locationLink}
+                  message={locationMessage}
+                  isAr={isAr}
+                  size="sm"
+                  subjectKey={unit.id}
+                />
               )}
             </div>
           )}

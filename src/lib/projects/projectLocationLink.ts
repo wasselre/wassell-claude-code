@@ -52,10 +52,24 @@ export function resolveProjectLocationLink(data: Record<string, unknown> | null 
  * (so the link is not a naked URL in the client's thread) + the link on its
  * own line, which WhatsApp turns into a tappable map preview.
  */
-export function buildLocationMessage(projectName: string | null, link: string, isAr: boolean): string {
+export function buildLocationMessage(
+  projectName: string | null,
+  link: string,
+  isAr: boolean,
+  /** Set → the label names the UNIT («موقع وحدة A-12 — مشروع X») instead of the project. */
+  unitCode?: string | null,
+): string {
   const name = projectName?.trim();
-  const label = isAr
-    ? name ? `📍 موقع مشروع ${name}` : '📍 موقع المشروع'
-    : name ? `📍 Location of ${name}` : '📍 Project location';
+  const unit = unitCode?.trim();
+  let label: string;
+  if (unit) {
+    label = isAr
+      ? name ? `📍 موقع وحدة ${unit} — مشروع ${name}` : `📍 موقع وحدة ${unit}`
+      : name ? `📍 Location of unit ${unit} — ${name}` : `📍 Location of unit ${unit}`;
+  } else {
+    label = isAr
+      ? name ? `📍 موقع مشروع ${name}` : '📍 موقع المشروع'
+      : name ? `📍 Location of ${name}` : '📍 Project location';
+  }
   return `${label}\n${link}`;
 }
