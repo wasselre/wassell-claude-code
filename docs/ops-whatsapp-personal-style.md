@@ -57,6 +57,17 @@ word SEND / أرسل, said after seeing the text, authorizes sending. (Added
 7. **Apologize politely when asking for a lot.** A short `معليش أتعبناك` /
    `آسف على الإزعاج` when the request is heavy. (From the Rams thread.)
 
+8. **Office address for visit invitations: `حي النزهة، الرياض`.** When inviting
+   anyone (job applicants, contacts) to the office, say the office is in حي
+   النزهة. Do not guess another district. (Operator correction, 2026-09-07.)
+
+9. **Job-applicant invitations** (from the طلبات التوظيف list): first name only
+   after `أستاذ`, propose a specific 30-minute slot, and ask university students
+   to send their university schedule so we can confirm they have time to work.
+   Always close with the website line:
+   `تقدر تتعرف على الشركة أكثر عن طريق زيارة موقعنا الإلكتروني` then
+   `https://wassel.re/` on its own line. (Added 2026-09-07.)
+
 ---
 
 ## Contact log (who we've already introduced ourselves to)
@@ -66,3 +77,23 @@ Used to decide whether rule 1 applies. Append as we open new relationships.
 | Contact | Role | Channel | First introduced |
 |---|---|---|---|
 | عبدالعزيز المطلب | مسؤول مشاريع — الرمز (Rams) | operations number | 2026-09-06 |
+| عبدالعزيز فهد محمد بجران | متقدم للتوظيف — مستشار مبيعات | operations number | 2026-09-07 |
+| عبدالله خالد العوض | متقدم للتوظيف — مستشار مبيعات | operations number | 2026-09-07 |
+| محمد فهد هذال ال هزاع | متقدم للتوظيف — مستشار مبيعات | operations number | 2026-09-07 |
+| علي موسى التميمي | متقدم للتوظيف — مستشار مبيعات | operations number | 2026-09-07 |
+
+---
+
+## How to send from the operations number (Claude runbook)
+
+The WAHA gateway (`WAHA_URL`, an sslip.io host on the Doha VM) is NOT reachable
+from the laptop — direct calls time out. Send through the Fly proxy instead:
+`POST <WAHA_PROXY_URL>/waha/api/sendText` with header
+`x-wassel-proxy-secret: <WHATSAPP_AI_SECRET>` and body
+`{ "session": "wassel_ops", "chatId": "<966…>@c.us", "text": "…" }`.
+Both values come from Vercel production env (`vercel env pull` after
+`vercel link --scope wassel1 --project wassell-claude-code`). Write the Arabic
+to a UTF-8 `.mjs` file and run it with node — never inline Arabic in a shell
+command. A 201 with `true_<phone>@c.us_<hash>` is accepted; the webhook mirrors
+it into `chat_messages` (`device_id='wassel_ops'`, `flow='out'`) within seconds
+and `ack` moves to `delivered`. (Proven 2026-09-07, four applicant invitations.)
