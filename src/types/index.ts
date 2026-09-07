@@ -828,6 +828,12 @@ export type SaveRecordActor =
 export interface SaveRecordOpts {
   expectedVersion?: number | null;
   actor?: SaveRecordActor;
+  /** Workflow-chain depth of the save that triggered THIS save (0 = a direct
+   *  user/system write). saveRecord passes it to executeWorkflows so the
+   *  engine's MAX_DEPTH holds ACROSS store re-entries — until 2026-09-07 every
+   *  chained save re-entered at depth 0, making a workflow ping-pong
+   *  (followup → client → followup …) unbounded. */
+  workflowDepth?: number;
 }
 
 /**

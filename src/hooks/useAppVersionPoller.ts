@@ -38,7 +38,8 @@ import {
   getStaleBuildState,
 } from '@/lib/staleBuild';
 
-const POLL_INTERVAL_MS = 60_000; // 1 minute
+const POLL_INTERVAL_MS = 60_000; // 1 minute (visible tab)
+const HIDDEN_POLL_INTERVAL_MS = 5 * 60_000; // 5 minutes (hidden tab — still detects, see checkOnce)
 // Short grace after detection before we force the reload — enough time for the
 // banner countdown to let the user save, short enough that a stale (possibly
 // storming) tab can't linger. A storming tab pulls this in further (see
@@ -94,12 +95,12 @@ export function useAppVersionPoller(): AppVersionState {
 
     async function checkOnce(): Promise<void> {
       if (cancelled) return;
-      // Only poll when the tab is visible — pollers in background tabs
-      // are wasteful and Chrome throttles them anyway.
-      if (document.hidden) {
-        schedule();
-        return;
-      }
+      // Hidden tabs still poll, just slower (HIDDEN_POLL_INTERVAL_MS). Until
+      // 2026-09-07 a hidden tab never checked at all, so a tab left in a
+      // background window for days never learned it was outdated, never armed
+      // the forced-reload deadline, and stayed on a 2-4 day old bundle (five
+      // such tabs were found live). Chrome throttles background timers to
+      // ~1/min, which is fine — one tiny fetch every few minutes.
       try {
         // Cache-bust query param + no-store fetch options so the browser
         // and any intermediate proxy can't return a stale answer.
@@ -141,7 +142,7 @@ export function useAppVersionPoller(): AppVersionState {
 
     function schedule(): void {
       if (cancelled) return;
-      timer = setTimeout(checkOnce, POLL_INTERVAL_MS);
+      timer = setTimeout(checkOnce, document.hidden ? HIDDEN_POLL_INTERVAL_MS : POLL_INTERVAL_MS);
     }
 
     // First check fires shortly after mount so a returning tab catches up

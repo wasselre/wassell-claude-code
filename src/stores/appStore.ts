@@ -986,8 +986,28 @@ async function supabaseRecordUpsert(
   const expectedVersion =
     opts.expectedVersion !== undefined ? opts.expectedVersion : (record.version ?? null);
   let outcome: SaveResult = { status: 'saved' };
+  // Serialize saves per record (2026-09-07): a re-render loop or a burst of
+  // callers used to open an unbounded number of concurrent record_save calls
+  // for the SAME id (the map only remembered the latest). Each save now waits
+  // for the previous in-flight save of that id, so concurrency per record is 1
+  // and a stale-version burst can never fan out into parallel conflicts.
+  const priorSameRecord = pendingWrites.get(key);
   const op = (async () => {
+    // `op` promises never reject (every branch below catches into `outcome`),
+    // so a bare await is safe — no swallowed error here.
+    if (priorSameRecord) await priorSameRecord;
     try {
+      // Circuit breaker check moved ABOVE the frozen/unfrozen split (2026-09-07):
+      // the frozen branch used to bypass it entirely, so a wedged frozen record
+      // could keep hitting the DB.
+      if (recordSaveBlocked(id)) {
+        outcome = {
+          status: 'conflict',
+          kind: 'wedged',
+          message: 'save paused after repeated version conflicts — reload the page to continue',
+        };
+        return;
+      }
       if (frozen) {
         // Pass `created_by_user_id` through to the RPC so the dedicated
         // table stamps it on first save (the RPC's freeze_apply_row
@@ -1030,18 +1050,7 @@ async function supabaseRecordUpsert(
         // Migration wizard auto-saved the same record after its local version
         // froze behind the server's, pinning DB CPU). No-op for the common case
         // — only trips after repeated rapid conflicts on the same record.
-        if (recordSaveBlocked(id)) {
-          // Breaker tripped (count-based, or wedged/storm-blocked). Terminal:
-          // kind:'wedged' so reload-on-conflict does NOT re-fetch/retry — the
-          // record only resumes on a successful save (impossible while tripped)
-          // or a page reload, which resets this module state.
-          outcome = {
-            status: 'conflict',
-            kind: 'wedged',
-            message: 'save paused after repeated version conflicts — reload the page to continue',
-          };
-          return;
-        }
+        // (Breaker check happens once, above the frozen/unfrozen split.)
         // Phase F.2: route unfrozen writes through `record_save` so the
         // optimistic-concurrency check applies. Pass the caller-supplied
         // `expectedVersion` (form-mount snapshot) when available; otherwise
@@ -3489,7 +3498,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
 
-    // Execute workflows after state is settled
+    // Execute workflows after state is settled — but NEVER after a REJECTED save
+    // (2026-09-07). A version_mismatch / wedged / hard-stop outcome means the
+    // row did not change, so firing "update" workflows would chain
+    // version-less writes off a write that never happened (and each of those
+    // bumps the row's version, turning the tab into its own second writer).
+    if (result.status === 'conflict') return result;
     queueMicrotask(() => {
       const s = get();
       // Server-authoritative skip: when this model is enrolled in
@@ -3537,10 +3551,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         // fields (next-action, rollups) on every write, so last-write-wins is correct
         // here. Do NOT re-introduce a version here without solving the _touch_client
         // self-bump race first.
-        (r) => get().saveRecord(r, { actor: { kind: 'workflow', workflow_id: 'unknown' }, expectedVersion: null }),
+        (r, depth) => get().saveRecord(r, { actor: { kind: 'workflow', workflow_id: 'unknown' }, expectedVersion: null, workflowDepth: depth }),
         (msg) => get().addToast(msg, 'info'),
         s.currentUserId,
-        0,
+        // Chain depth (2026-09-07): a chained save re-enters saveRecord with the
+        // depth the engine handed it, so MAX_DEPTH bounds the WHOLE chain instead
+        // of restarting at 0 on every store re-entry (which made a two-workflow
+        // ping-pong followup → client → followup unbounded).
+        opts.workflowDepth ?? 0,
         (run) => get().appendWorkflowRun(run),
         // Audit M4: closure over the live store so each branch re-reads
         // the trigger record. If a concurrent user edit lands while the
@@ -5808,7 +5826,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         state.records,
         state.users,
         state.roles,
-        (record) => void get().saveRecord(record),
+        (record, depth) => void get().saveRecord(record, { workflowDepth: depth }),
         (message) => get().addToast(message, 'info'),
         userId,
       );

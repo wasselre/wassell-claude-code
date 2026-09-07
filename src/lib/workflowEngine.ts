@@ -219,7 +219,10 @@ export async function executeWorkflows(
   allRecords: Record<string, AppRecord[]>,
   allUsers: User[],
   allRoles: Role[],
-  saveRecord: (record: AppRecord) => void,
+  // (record, depth): the engine hands every chained save the depth it will
+  // re-enter at, so the caller can thread it back into executeWorkflows and
+  // MAX_DEPTH bounds the whole chain (2026-09-07 — it used to restart at 0).
+  saveRecord: (record: AppRecord, depth: number) => void,
   showToast: (message: string) => void,
   currentUserId?: string | null,
   depth = 0,
@@ -408,7 +411,7 @@ export async function executeWorkflows(
           allRecords,
           allUsers,
           allRoles,
-          saveRecord,
+          (r) => saveRecord(r, depth + 1),
           showToast,
           currentUserId,
           prevActionOutputs,
@@ -468,7 +471,7 @@ export async function executeWebhookWorkflows(
   allRecords: Record<string, AppRecord[]>,
   allUsers: User[],
   _allRoles: Role[],
-  saveRecord: (record: AppRecord) => void,
+  saveRecord: (record: AppRecord, depth: number) => void,
   showToast: (message: string) => void,
   currentUserId?: string | null,
 ): Promise<void> {
@@ -500,7 +503,7 @@ export async function executeWebhookWorkflows(
           allRecords,
           allUsers,
           _allRoles,
-          saveRecord,
+          (r) => saveRecord(r, 1),
           showToast,
           currentUserId,
           webhookPrevOutputs,
