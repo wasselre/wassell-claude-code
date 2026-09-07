@@ -16,6 +16,7 @@ import { saveProjectToClient } from '@/lib/matching/saveUnitOption';
 import { recordTitle } from '@/lib/documents/links';
 import { normalizePhone } from '@/lib/phone';
 import { chatPdfFromClient, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
+import { resolveProjectLocationLink, buildLocationMessage } from '@/lib/projects/projectLocationLink';
 import Badge from '@/components/ui/Badge';
 import DualRangeSlider from '@/components/ui/DualRangeSlider';
 import BaseMapView, { type MapPin as MapPinData } from '@/components/map/BaseMapView';
@@ -835,6 +836,41 @@ function ProjectDetail({
   const availablePrice = isAvailablePrice(v, model);
   const area = formatRange(v.areaRange, L('م²', 'm²'));
 
+  // «إرسال الموقع» — the project's map link as ONE plain-text WhatsApp message
+  // into this conversation. Two taps on purpose (tap → confirm-to-<name> → send)
+  // so a stray click in a busy sheet never messages a client. Goes through the
+  // store's `sendChatMessage`, so it gets the optimistic bubble, the per-
+  // conversation send lane (waits behind an in-flight gallery), and the store's
+  // own failed-bubble + toast on error.
+  const sendChatMessage = useAppStore((s) => s.sendChatMessage);
+  const addToast = useAppStore((s) => s.addToast);
+  const locationLink = useMemo(
+    () => resolveProjectLocationLink((v.raw.data ?? {}) as Record<string, unknown>),
+    [v.raw.data],
+  );
+  const [locState, setLocState] = useState<'idle' | 'confirm' | 'sending' | 'sent'>('idle');
+  useEffect(() => { setLocState('idle'); }, [v.id]);
+  useEffect(() => {
+    if (locState !== 'sent') return;
+    const t = window.setTimeout(() => setLocState('idle'), 3000);
+    return () => window.clearTimeout(t);
+  }, [locState]);
+  const sendLocation = async () => {
+    if (!chatPdf || !locationLink) return;
+    setLocState('sending');
+    try {
+      await sendChatMessage(chatPdf.chatWid, { body: buildLocationMessage(v.name, locationLink, isAr) });
+      setLocState('sent');
+    } catch (err) {
+      // sendChatMessage normally reports its own failure (failed bubble +
+      // toast); this covers the pre-bubble throws (identity not resolved).
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[ProjectsUnitsBrowser] send location failed', err);
+      addToast(L(`تعذّر إرسال الموقع — ${msg}`, `Couldn't send the location — ${msg}`), 'error');
+      setLocState('idle');
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="overflow-hidden rounded-2xl border border-sand/50 bg-white">
@@ -891,6 +927,45 @@ function ProjectDetail({
                   {addState === 'added' ? L('ضمن الخيارات', 'In options') : L('إضافة لخيارات العميل', 'Add to options')}
                 </button>
               </>
+            )}
+            {chatPdf && (
+              locState === 'confirm' ? (
+                <span className="inline-flex items-center gap-1 rounded-lg border border-copper/40 bg-copper/5 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => void sendLocation()}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-copper px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-terracotta"
+                  >
+                    <Send size={12} />
+                    {chatPdf.clientName
+                      ? L(`تأكيد الإرسال إلى ${chatPdf.clientName}`, `Send to ${chatPdf.clientName}`)
+                      : L('تأكيد إرسال الموقع', 'Confirm send')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLocState('idle')}
+                    className="rounded-md p-1 text-charcoal/50 transition-colors hover:bg-cream hover:text-charcoal"
+                    aria-label={L('إلغاء', 'Cancel')}
+                  >
+                    <X size={13} />
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setLocState('confirm')}
+                  disabled={!locationLink || locState !== 'idle'}
+                  title={!locationLink ? L('لا يوجد موقع محفوظ لهذا المشروع', 'This project has no saved location') : locationLink}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-copper/30 bg-copper/5 px-3 py-1.5 text-xs font-medium text-copper transition-colors hover:bg-copper/10 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {locState === 'sending' ? <Loader2 size={13} className="animate-spin" /> : locState === 'sent' ? <Check size={13} /> : <MapPin size={13} />}
+                  {locState === 'sent'
+                    ? L('تم إرسال الموقع', 'Location sent')
+                    : locState === 'sending'
+                      ? L('جارٍ الإرسال…', 'Sending…')
+                      : L('إرسال الموقع', 'Send location')}
+                </button>
+              )
             )}
             {/* NEW TAB on purpose — the conversation must stay exactly where it is. */}
             <a
