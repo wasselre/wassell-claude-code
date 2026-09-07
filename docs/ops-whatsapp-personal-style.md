@@ -15,6 +15,18 @@ come; don't overwrite the reason a rule exists.
 
 ---
 
+## HARD RULE — never send without explicit confirmation
+
+**NEVER send any operations WhatsApp message until the user has seen the exact
+text and explicitly said `SEND` (or `أرسل`).** Draft it, show the full message +
+recipient + which number it goes from, and then STOP and wait. No exceptions,
+no "I'll just send it," no treating a general instruction ("ask him X") as
+permission to send — "ask him" means *draft it and show me*. Only the literal
+word SEND / أرسل, said after seeing the text, authorizes sending. (Added
+2026-09-07, standing instruction from the operator.)
+
+---
+
 ## Rules
 
 1. **Introduce yourself only ONCE per contact.** The first time we message a new
