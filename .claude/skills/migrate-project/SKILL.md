@@ -585,6 +585,59 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   per-floor room plans, so room counts weren't derivable; requested detailed model plans from the team. **Future
   join key for الرمز Drive أدوار sheets = (block, رقم العمارة 1..N, الدور).** New villa blocks in later sheets
   follow the standard add/reconcile posture.
+- **[2026-09-07] FULL RIVA RECONCILE — the broker portal is scraped from the OPERATOR'S LOGGED-IN CHROME TAB, no
+  Browserbase, no login step (user asked "why not Browserbase?" — answer: Chrome was already signed in as broker
+  BRK-00025, so the Claude-in-Chrome MCP drives it directly; Browserbase stays the fallback when no Chrome session
+  exists).** Portal = 21 projects; CRM had 25 `riva_projects`. Outcome: 17 matched + 2 الرمز (ستون الندى reconciled
+  from the portal = 0 changes; جديل الرمال skipped per the 2026-08-24 not-joinable rule) + **2 NEW migrated** (زنك 8
+  `م ش2879` id 689000c4-…, 6 units U-49809–U-49814, dev زنك `ee64a973-…`, حي الصحافة `933ffe22-…`; أكنان 23
+  `م ش2880` id 17607119-…, 72 units U-49815–U-49886, dev أكنان, حي الرمال `21f12126-…`) + **7 RETIRED** (أدوار - يمام 9,
+  فيورا أدوار, شقق سماوة, عزوم النرجس, يمام فلورز 8, ديارا مشارف, أجذى — absent from BOTH the portal and the public
+  riva.sa/projects listing → the العجلان retirement recipe: our_projects rows deleted → is_public auto-false,
+  classification `general_project`/type `general`, registry `static_none` + Arabic note, units kept as archive;
+  backup `public._backup_riva_reconcile_20260907`). **عبق العارض is the in-between case: gone from the portal (0
+  available) but still on the public listing as محجوز 2 | مباع 2 → keep it, reconcile from the PUBLIC page**
+  (A1 available→reserved), registry deactivated. Run totals: 59 unit patches (18 status + 52 price — أكنان 25
+  repriced −3.5%…+6.4% and 12 A-units flipped to reserved; أوشن A12, زنك 6 C2, مجبب A14/A9 → sold), 4 new units with
+  real plans (مجبب A19/B16, أكنان 25 32-B/33-B), 21 `unit_updates` stamps. Rule for "remove old projects" = RETIRE
+  (this recipe), never hard-delete.
+  **Portal facts learned (supersede the 2026-08-24 adapter where they differ):** (1) plain `?page=N` works on both
+  `/broker/projects` and `/broker/projects/<id>` — no Livewire replay; (2) every card's «التفاصيل» button
+  `@click="selectedUnit = JSON.parse('…')"` embeds the FULL unit JSON (`"`-escaped) — `case` 0/1/2 is the ONLY
+  status source (the `span.absolute` badge is the «مخطط» tag, NOT the status), `unit_price` is a "1,439,000" string
+  (strip commas), `gallery[].is_plan` = the public fls-*.laravel.cloud plan PNG; (3) **pagination is UNSTABLE** — the
+  same unit id shows on 2–3 pages while others drop; union by `id` over repeated rounds (أكنان 25 plateaus at 63/69,
+  مجبب 70/71, جديل 57/60 = server-hidden cards; resolve their statuses from the public listing's «متاح X | محجوز Y |
+  مباع Z» aggregate and note the gap in `source_notes`); (4) `/broker/projects/<id>/pdf` = an official price list PDF
+  (extraction timestamped) that matched the cards 100% — but fetching it mid-scrape STALLS the scrape (Laravel session
+  lock serializes same-session requests); (5) `/download-images` ZIP = the same `project-media` gallery the public page
+  serves; (6) the two new projects publish NO plans and NO brochure anywhere (portal cards, public cards = placeholder
+  700x400, public `loadUnit` popup `unitImages=[]`) — `unit_plan` left empty + reported, never fabricated; زنك 8 prices
+  are «عند الطلب» even in the PDF. **Chrome-tab mechanics:** never `setTimeout` inside the tab loop (Chrome throttles a
+  non-focused tab's timers to 1/min — a 200 ms sleep became 56 s); `fetch` to `http://localhost` from the https page is
+  silently blocked (Private Network Access) even with the PNA preflight header; `navigator.clipboard.writeText` needs
+  a real user gesture → inject a fixed-position button whose onclick copies `window.__payload`, click it with the
+  `computer` tool, then `Get-Clipboard -Raw` in PowerShell writes the file (432 KB + 645 KB payloads fine). Every
+  `javascript_tool` result containing raw URLs with query strings / base64 / JWT-looking strings is BLOCKED by the
+  output filter — return parsed JSON with `lead_url` dropped, not HTML. Bash heredocs in this harness collapse `\\`
+  → `\` — write regex-heavy scripts with the Write tool. Scripts: scratchpad `riva/{diff,apply_existing,new_projects,
+  lib}.mjs`. Pre-existing finding (not caused by this run): 46 duplicate `unit_code` values exist globally
+  (U-4285…U-43706, newest 2026-08-17) — none in riva projects touched today.
+- **[2026-09-07] SAFA FULL RECONCILE (12 projects, user-ordered "same process as Riva"):** adapter in the
+  «صفا للاستثمار — BROKER PORTAL» bullet below. Outcome: prices unchanged since the 2026-08-16 pull (0 repricings);
+  60 CRM units gained `payment_plans` from the public detail popup; **66 CRM-available units absent from BOTH the
+  broker portal and the public listing → sold** (صفا 78: 15, 80: 1, 82: 49, 86: 1 — noted per unit that neither
+  source shows sold/reserved explicitly); **684 NEW units** (U-49887–U-50570): صفا 83 +496 (broker-released, 22
+  buildings, all شقة, plans + prices, NO components beyond مطبخ+صالة and NO payment tables in the source), صفا 85
+  +100, صفا 86 +25, صفا 82 +2, صفا 20/78/80 +1 each, **صفا 96 مِراف +58 «قريباً» townhouses created as
+  `under_construction` with no price/plan**. 626/684 got plans (Odoo `property.photo`), 626 priced. صفا 84/101/102 have
+  ZERO units on both sources (101 الفرسان is 55.75% built and 102 المكيمن 1% — big projects not yet released to
+  brokers or the public). Self-fixed: صفا 83 brochure = the portal library's Drive «ملف المشروع». Registry: 12
+  `unit_updates` rows created with the new `source_type='safa_broker'` option (added via `add_field_option`).
+  Backup `public._backup_safa_reconcile_20260907` (12 projects + 312 units). Officer for the follow-up message =
+  `project_officers` تميم الشايع +966553732972. Remaining asks (in the ops WhatsApp draft): unit specs + payment
+  plans for صفا 83, prices/plans/brochure for مِراف, inventory/price lists for 84/101/102, payment plans for 78/82/85,
+  photos for صفا 52, and an explicit sold/reserved status list (the sources never show it).
 
 ## Update-source registry (added 2026-08-24 — how EVERY member project gets updated)
 
@@ -615,7 +668,7 @@ Every `our_projects` member's `all_projects` record now carries FOUR registry fi
      2026-08-24 standard (match (building, unit), absent-available→sold, new rows→create).
      ربوة الرمز's Drive link is now on record (`drive/folders/1eUk-SiEkQ_fDU4awIPoNXSqQ2sKU0tyH`,
      set 2026-09-05 — see the 2026-09-05 Decisions-Log entry; أدوار بلك 491 added there).
-   - **ريفا وعلاماتها (24: يمام 8، مجبب 2، زنك 2، آبه، أجذى، أكدال، أوشن، ديار أصيلة، ديارا، زود،
+   - **ريفا وعلاماتها (20 since the 2026-09-07 reconcile — +زنك 8 +أكنان 23, −7 retired; was 24: يمام 8، مجبب 2، زنك 2، آبه، أجذى، أكدال، أوشن، ديار أصيلة، ديارا، زود،
      عبق، عزوم، فيورا، مسان، مينا)** → `broker_portal` — the team logs into the riva.sa broker
      portal (user statement 2026-08-24); the public Livewire scrape (adapter below) still works as
      the headless fallback. Portal credentials: NOT yet on file — ask the user when a login is needed.
@@ -774,6 +827,36 @@ Every `our_projects` member's `all_projects` record now carries FOUR registry fi
   prefer FANNING OUT MULTIPLE Browserbase sessions on the SAME persistent context (login is shared) and scraping
   projects in parallel — user explicitly asked for this (2026-08-24); serial took ~10 min that parallel would do
   in ~1. Scripts: scratchpad `bb_start/bb_resume/bb_htmlinc.mjs` + `parse_all2.py` + `match.py`.
+  **⭐ PREFERRED SINCE 2026-09-07 — no Browserbase:** if the operator's Chrome is signed into riva.sa/broker
+  (BRK-00025), use the Claude-in-Chrome MCP on that tab: `fetch('/broker/projects/<id>?page=N',{credentials:'include'})`
+  returns the server-rendered page; parse each card's «التفاصيل» `@click` JSON (`case` = status, `unit_price`,
+  `gallery[].is_plan`), union by unit id over repeated rounds (unstable pagination), NO sleeps in the tab, and pull the
+  payload out via an injected clipboard button + `Get-Clipboard`. Full trap list in the 2026-09-07 Decisions-Log entry.
+  ~4 min for all 21 projects. The public listing's card aggregates still resolve the server-hidden cards.
+- **صفا للاستثمار — BROKER PORTAL «برنامج كسب» (broker.safainv.sa) + PUBLIC safainv.sa (added 2026-09-07).**
+  jQuery/Bootstrap, fully server-rendered, login-gated (the operator's Chrome is logged in as broker
+  BR-2026-0104 — drive that tab with the Claude-in-Chrome MCP; no Browserbase). Shape: `/projects` → 12 cards
+  (`/project/details/<id>`); details page = description, «مميزات المشروع» chips, gallery
+  (`safa-erp.odoo.com/web/image?model=product.image…`, public), «مكتبة المشروع» modal = Odoo attachments
+  (`/web/content/ir.attachment/<id>/datas?access_token=…`, public) + Google-Drive folders, «ملف المشروع» Drive
+  link; `/project/properties/<id>?page=N` = 12 `div.unit_details` cards/page (code `SF0xx-<Bldg>-<F|R>nn-<nnn>-<APT|TWH|VIL|DPX>`,
+  total area, price, commission, beds, baths, floor text, «عرض المزيد» → `/property/<id>`); `/property/<id>` =
+  «مساحة الوحدة / المساحة الإضافية / إجمالي المساحة» (LABEL PRECEDES VALUE; net + extra = total; CRM
+  `unit_area`=net, `private_area`=extra, `total_area`=total), rooms, parking داخلي/خارجي, baths, kitchen type, THREE
+  prices (list, +5% VAT, discounted), «مخطط الوحدة» = `model=property.photo` image, 360 tour, payment-plan table
+  (`الدفعة N | تقدم الإنجاز % | نسبة الدفع % | المبلغ` → `payment_plans` row: down = the 0%-progress payment,
+  on_handover = عند التسليم, before = rest, `schedule` = the milestone string). **PUBLIC side:**
+  `safainv.sa/project/units/<id>?page=N` cards carry the same code + `<a class="unitCard" data-id=<broker property id>>`;
+  details via `POST https://safainv.sa/unit/details` `{_token, unit_id}` with the page's `safa_session` cookie AND
+  `X-CSRF-TOKEN` header (419 without it) → JSON `data.html` (same fields + plan photo). **Both sources are PARTIAL
+  and disagree per project** (broker = broker-released units, public = customer-facing): صفا 85 broker 154 vs
+  public 54; صفا 78 broker 1 vs public 72; صفا 83 broker 496 vs public 24. Neither shows sold/reserved. Posture:
+  listed = UNION; CRM-available ∧ absent from both → sold (noted); listed-only → NEW; join = code == `unit_model`.
+  **Traps:** (1) roof units are `-R01-` not `-F0x-` — a `F\d+` regex silently drops every roof unit (would have
+  marked 27 CRM units sold); (2) the portal's «ما الجديد اليوم؟» SweetAlert modal swallows clicks on injected
+  buttons — close it first; (3) `performance` resource buffer fills with polling pings — `setResourceTimingBufferSize`
+  before using it for progress; (4) «قريباً» projects (صفا 96 مِراف) list units with no price → create as
+  `under_construction`, never `available`. Scripts: scratchpad `safa/{parse,pub_units,pub_details,apply_safa}.mjs`.
 - Other non-Almajdiah sites: document each site's units source + field shape here as you learn it.
 
 ## Verify & cleanup
