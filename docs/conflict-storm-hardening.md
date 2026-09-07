@@ -472,3 +472,77 @@ fix adds one counter that CANNOT be reset except by an actual successful save �
 during this kind of jam there are no successful saves — so after 6 straight failures
 on the same record the tab now slams the brake on itself and reloads, ending the jam
 almost instantly instead of grinding for ten minutes.
+
+---
+
+## 7. 2026-09-07 — ROOT CAUSE FOUND: PostgREST retries SQLSTATE 40001 forever (closes §4, §5, §6)
+
+**Signature.** CPU 100% on m6g.large for ~52 h (ignition 2026-09-05 08:10 UTC on
+followups `2fab456f`, spreading to 7 followups/clients records), ~1,200
+rollbacks/sec, `active_record_save_backends` 4–7. Enriched log: user `31621e58`,
+FIVE tabs (desktop session `f04fd95f` on builds `87d19170`/`dd1517f6`/`409a13fa`/
+`8e3df623` + iPhone session `25a17fd5`), every one a `client=supabase-js-web` save
+with a frozen `expected` version. `record_conflict_report` telemetry: **zero rows**
+for 3 days. The 08-29 absolute cap (`RECORD_ABSOLUTE_CONFLICT_LIMIT=6`) was live in
+every one of those builds and never latched. The sweep's `auto_killed` stayed empty
+(no single record dominated).
+
+**The mechanism — server-side, not the browser.** PostgREST executes each request
+inside `hasql-transaction`'s `transaction`, which *by library design* re-runs the
+whole transaction whenever it aborts with SQLSTATE `40001` (serialization_failure)
+or `40P01` (deadlock_detected) — **no backoff, no attempt cap, and it does not
+notice the client going away.** `record_save` raised `version_mismatch` and
+`conflict_storm_blocked` with `ERRCODE='serialization_failure'`. So one stale save
+was replayed by PostgREST itself thousands of times per second, on the same frozen
+payload, until something made it stop failing. That single fact explains every
+"mystery" in §4–§6:
+
+- the client never received an error (its one request was still open), so no
+  client-side breaker/cap/`record_conflict_report` could fire — "current-build
+  tab still storms";
+- closing the tab, revoking the session, and replacing worker machines did nothing
+  — "zombie senders";
+- `reject`-mode blocks "did not reduce CPU" (still 40001 → still retried);
+- only `noop` / `noop_stale` ever ended a storm (they turn the failure into success);
+- the "hammer never re-reads and ignores all responses" — it never got one;
+- `xmax` churns while `version` is pinned (each retry re-takes the `FOR UPDATE`
+  lock and aborts);
+- edge logs showed ~nothing (one request; the loop is inside PostgREST).
+
+**Proof (live).** One `curl` `record_save` with `p_expected_version=-1` on
+`2fab456f` produced several `version_mismatch` Postgres log lines within 17 ms; the
+sweep then found that row's xmax **57,578** transactions ahead of every other row
+and auto-`noop_stale`-blocked it; only then did the curl receive **HTTP 200**.
+After the fix, the same probe on an unblocked record returned **HTTP 400
+`{"code":"WS409",…}` in 0.2 s**, twice, producing exactly two log lines, no block,
+rollback rate flat at 0.
+
+**Fix (migration `2026-09-07_never_raise_sqlstate_40001.sql`, applied live).**
+Every function in `public` that raised a retryable code was rewritten from its
+live definition changing ONLY the ERRCODE token: `WS409` for
+optimistic-concurrency conflicts (`version_mismatch`, `source_changed`,
+`revision_mismatch` — `record_save`, `freeze_apply_row`, the five
+`record_translation_*` CAS RPCs) and `WS429` for `conflict_storm_blocked`.
+Messages/HINTs unchanged. PostgREST maps an unknown SQLSTATE to HTTP 400. The
+migration asserts nothing in the schema raises 40001/40P01 any more, and
+`supabase/tests/ci/assert_no_retryable_sqlstate.sql` re-checks it in the
+`db-migrations` CI job. Consumers (`appStore` `supabaseRecordUpsert`,
+`api/_lib/recordSaveRetry.ts` + worker copy, `workflowSweeper`,
+`smoke_translation.sql`) accept the new codes and still classify by message.
+
+**Containment used live (before the root cause was known):** `noop_stale` blocks
+on the 7 hammered records (24 h) — rollbacks 1,190→0 in six seconds.
+
+**What stays.** The per-record / per-session blocks, the rollback-rate sweep and
+its auto-kill, and the client breaker all remain as defense in depth — but a
+version conflict is now a single, immediate, cheap 400, so a "storm" can only
+come from a genuine client loop, which the client breaker (which now actually
+receives the errors) ends within a handful of conflicts.
+
+**Plain version.** For three months we blamed browser tabs, old builds, and
+"zombie" servers. The real culprit was the database's HTTP layer: when our save
+function said "no, your copy is out of date," it used an error code that the HTTP
+layer treats as "try again," and it tries again forever, thousands of times a
+second, without ever telling the browser. Changing that one error code to one that
+means "no, and stop" ends the whole family of incidents. Measured: the same stale
+save that used to spin now returns a clean rejection in a fifth of a second.

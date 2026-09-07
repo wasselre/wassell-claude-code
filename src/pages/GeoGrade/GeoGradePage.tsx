@@ -12,12 +12,25 @@ import { Loader2, Check, X, HelpCircle, ChevronRight, ChevronLeft, MapPin, Party
  */
 
 interface Item {
-  id: string; client: string; mention: string;
+  id: string; client_id: string; client: string; mention: string;
   role: 'positive' | 'negative' | 'exploratory' | 'none';
   commitment: string; holder: string; applicability: string; anchor_type: string | null;
   my_verdict: 'right' | 'wrong' | 'unsure' | null;
 }
 type Verdict = 'right' | 'wrong' | 'unsure';
+
+/** Render the transcript with every occurrence of `mention` highlighted. */
+function Transcript({ text, mention }: { text: string; mention: string }) {
+  const m = (mention ?? '').trim();
+  if (!m) return <>{text}</>;
+  const parts = text.split(m);
+  return <>{parts.map((p, i) => (
+    <span key={i}>
+      {p}
+      {i < parts.length - 1 && <mark className="rounded bg-copper/25 px-0.5 font-bold text-chocolate">{m}</mark>}
+    </span>
+  ))}</>;
+}
 
 const STRENGTH_AR: Record<string, string> = {
   required: 'شرط أساسي', preferred: 'يفضّلها', acceptable: 'مقبولة', considered: 'يفكّر فيها',
@@ -70,6 +83,7 @@ export default function GeoGradePage() {
   const batchId = params.get('batch') ?? '';
 
   const [items, setItems] = useState<Item[]>([]);
+  const [transcripts, setTranscripts] = useState<Record<string, string>>({});
   const [idx, setIdx] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -82,6 +96,7 @@ export default function GeoGradePage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? `(${res.status})`);
       setItems(body.items as Item[]);
+      setTranscripts((body.transcripts ?? {}) as Record<string, string>);
       const firstUngraded = (body.items as Item[]).findIndex((i) => !i.my_verdict);
       setIdx(firstUngraded === -1 ? 0 : firstUngraded);
     } catch (e) {
@@ -156,8 +171,22 @@ export default function GeoGradePage() {
         <div className="card p-5">
           {it.client && <p className="mb-2 text-xs font-semibold text-charcoal/40">{isAr ? `مكالمة العميل: ${it.client}` : `Customer call: ${it.client}`}</p>}
 
+          {/* The full conversation the AI read — highlighted where the mention is */}
+          {transcripts[it.client_id]?.trim() ? (
+            <>
+              <p className="mb-1 text-xs text-charcoal/50">{isAr ? 'المحادثة (اقرأها بنفسك):' : 'The conversation (read it yourself):'}</p>
+              <div className="mb-4 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl border border-sand/40 bg-cream/20 px-4 py-3 text-sm leading-relaxed text-charcoal/80" dir="rtl">
+                <Transcript text={transcripts[it.client_id]!} mention={it.mention} />
+              </div>
+            </>
+          ) : (
+            <p className="mb-4 rounded-xl border border-dashed border-sand/40 bg-cream/10 px-4 py-3 text-center text-xs text-charcoal/40">
+              {isAr ? 'لا يوجد نص محادثة محفوظ لهذا العميل.' : 'No saved conversation text for this customer.'}
+            </p>
+          )}
+
           {/* The exact words */}
-          <p className="mb-1 text-xs text-charcoal/50">{isAr ? 'العميل قال:' : 'The customer said:'}</p>
+          <p className="mb-1 text-xs text-charcoal/50">{isAr ? 'العبارة محل التقييم:' : 'The phrase being graded:'}</p>
           <div className="mb-4 rounded-xl bg-cream/50 px-4 py-3 text-center text-2xl font-bold text-chocolate" dir="rtl">«{it.mention}»</div>
 
           {/* The AI's read, plain */}

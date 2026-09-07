@@ -5,7 +5,8 @@
 // has NO DB / DOM / store imports, only Date.now + in-memory Maps.
 //
 // `record_save` rejects a write whose `p_expected_version` is behind the row's
-// current version (SQLSTATE 40001 / "version_mismatch"); the server can also
+// current version (SQLSTATE WS409 / "version_mismatch" — NEVER 40001, which PostgREST
+// retries forever server-side; see migrations/2026-09-07_never_raise_sqlstate_40001.sql); the server can also
 // terminally reject with `conflict_storm_blocked`. A stale tab that re-sends the
 // same stale version loops and pins Postgres CPU. This breaker bounds the blast
 // radius: count conflicts per record in a short window; once a record trips (or

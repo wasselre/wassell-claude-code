@@ -564,6 +564,27 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   `_backup_<project>_<date>` table in-DB first (better than local JSON). ريا النخيل 2026-08-24: 29 repriced
   (بعد الخصم 1,279,112–1,599,000), 20 available→sold, 3 units added (`U-49524`–`U-49526`), rollups verified
   (52/32/20, available_price_range matches the sheet exactly).
+- **[2026-09-05] ربوة الرمز (م ش2818, `d14c1370-0852-4c4d-8245-e61b3d8ac003`) — the team's Drive folder IS the
+  missing update link, and «أدوار» blocks join the SAME project (not a new one):** the operator supplied the
+  team's Google-Drive folder (`drive/folders/1eUk-SiEkQ_fDU4awIPoNXSqQ2sKU0tyH`) — the link the 2026-08-24
+  registry flagged as missing for ربوة الرمز. It is now stored in `all_projects.update_source_url` + a
+  `unit_updates` record (`source_type=developer_sheet`, `update_frequency=on_file`). The folder held
+  «ادوار ربوة الرمز - بلك 491» (price sheet) + نماذج/رندرات/فيديو 3D/موقع البلك. **Block 491 is an أدوار
+  (floor-apartment) block from the project's own master plan (blocks 489–496 = 150 فيلا + 63 دور), so it was
+  ADDED to the existing ربوة الرمز** (which already spans villa blocks 493+495) — NOT migrated as a new project.
+  The folder also names تل الربوة + ستون الندى, both already in the CRM → no genuinely new project. **أدوار sheet
+  shape:** each عمارة (رقم 1..5) is a villa whose 3 floors are sold separately — الأرضي / الأول / الملحق — priced
+  individually (أرضي 1,219,000 / أول 1,199,000 / ملحق 899,000 ر.س). Columns (RTL): الدور | إجمالي مسطح البناء
+  (=صافي + ملحقات) | المساحة الصافية | مسطح الملحقات | أسعار اليوم | رقم العمارة. Google-Drive `read_file_content`
+  returns it cleanly (correct digits, Arabic reversed) — the largest of the three area numbers = the other two
+  summed (247=180+67, 197.72=183.72+14, 162=102+60), which is the parse check. Map: الأرضي→`ارضي`, الأول→`اول`,
+  الملحق→`الروف`; `unit_type=دور`; `unit_area`=the الإجمالي (net+annex documented in `notes`); every row available
+  (launch «أسعار اليوم», no status column). Added 15 units `U-49626`–`U-49640` (5 عمائر × 3 أدوار) → project now
+  50 units (35 فيلا + 15 دور), price_range 899,000–3,499,000. **Beds/baths/components for the أدوار left minimal +
+  flagged** — «نماذج ادوار … بلك 491.pdf» is a SITE/master layout (villa TYPE A–H along an 18 m street), NOT
+  per-floor room plans, so room counts weren't derivable; requested detailed model plans from the team. **Future
+  join key for الرمز Drive أدوار sheets = (block, رقم العمارة 1..N, الدور).** New villa blocks in later sheets
+  follow the standard add/reconcile posture.
 
 ## Update-source registry (added 2026-08-24 — how EVERY member project gets updated)
 
@@ -592,7 +613,8 @@ Every `our_projects` member's `all_projects` record now carries FOUR registry fi
      **Retirement recipe for any future ended contract = exactly those four steps + backup first.**
    - **الرمز (8)** → `google_drive` — the team's «اخر تحديث»/price sheets; reconcile posture is the
      2026-08-24 standard (match (building, unit), absent-available→sold, new rows→create).
-     ربوة الرمز has NO url on record — ask the team for its Drive link.
+     ربوة الرمز's Drive link is now on record (`drive/folders/1eUk-SiEkQ_fDU4awIPoNXSqQ2sKU0tyH`,
+     set 2026-09-05 — see the 2026-09-05 Decisions-Log entry; أدوار بلك 491 added there).
    - **ريفا وعلاماتها (24: يمام 8، مجبب 2، زنك 2، آبه، أجذى، أكدال، أوشن، ديار أصيلة، ديارا، زود،
      عبق، عزوم، فيورا، مسان، مينا)** → `broker_portal` — the team logs into the riva.sa broker
      portal (user statement 2026-08-24); the public Livewire scrape (adapter below) still works as

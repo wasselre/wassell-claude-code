@@ -806,7 +806,7 @@ export interface FreezeResult {
  * `expectedVersion` — the value of `record.version` at the moment the
  * caller LOADED the record (e.g. when a form first mounts). The store
  * passes this to the `record_save` RPC as `p_expected_version`. The RPC
- * raises `version_mismatch` (SQLSTATE 40001) if the row has been bumped
+ * raises `version_mismatch` (SQLSTATE WS409 — never 40001, which PostgREST retries forever) if the row has been bumped
  * by another writer in the meantime, and `saveRecord` resolves with
  * `{ status: 'conflict' }` instead of silently overwriting. Pass
  * `undefined` (or omit) to fall back to the store's live version
@@ -828,6 +828,12 @@ export type SaveRecordActor =
 export interface SaveRecordOpts {
   expectedVersion?: number | null;
   actor?: SaveRecordActor;
+  /** Workflow-chain depth of the save that triggered THIS save (0 = a direct
+   *  user/system write). saveRecord passes it to executeWorkflows so the
+   *  engine's MAX_DEPTH holds ACROSS store re-entries — until 2026-09-07 every
+   *  chained save re-entered at depth 0, making a workflow ping-pong
+   *  (followup → client → followup …) unbounded. */
+  workflowDepth?: number;
 }
 
 /**

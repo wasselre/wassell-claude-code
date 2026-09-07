@@ -39,7 +39,7 @@ select public.record_save(
 -- delete (works for frozen + unfrozen)
 select public.record_delete('<model_id>'::uuid, '<record_id>'::uuid);
 ```
-- A stale `p_expected_version` raises **`40001 version_mismatch`** (loud, no overwrite); a trigger
+- A stale `p_expected_version` raises **`version_mismatch` as SQLSTATE `WS409`** (never 40001 — PostgREST retries that forever; 2026-09-07) (loud, no overwrite); a trigger
   auto-bumps `version` on every update.
 - Auto-ID fields: `select public.record_assign_auto_id('<model_id>'::uuid,'<field_id>'::uuid,'',1);`
 - The `records_block_frozen_writes` trigger rejects direct `records` writes for frozen models — the

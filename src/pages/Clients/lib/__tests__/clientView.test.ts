@@ -222,7 +222,6 @@ describe('derived read-only fields', () => {
   it('covers exactly the twelve documented derived fields', () => {
     expect([...DERIVED_READONLY_SLUGS].sort()).toEqual(
       [
-        'is_retired',
         'last_activity_at',
         'latest_visit_rated_at',
         'latest_visit_rating',
@@ -232,6 +231,9 @@ describe('derived read-only fields', () => {
         'next_action_due_at',
         'next_action_type',
         'next_followup_id',
+        'is_retired',
+        // Retire/un-retire (2026-09-02, 5611dd9b): stamped by retireClient / the
+        // auto-un-retire-on-WhatsApp path, never typed by hand.
         'retired_at',
         'retired_reason',
       ].sort(),

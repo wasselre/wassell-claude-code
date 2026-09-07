@@ -729,18 +729,52 @@ export async function mirrorWahaHostedMedia(
       return;
     }
 
-    const res = await fetch(`${wahaUrl()}/api/files/${session}/${fname}`, {
-      headers: wahaAuthHeaders(),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) {
-      // Already evicted (we lost the race), or a transient gateway error. A later
-      // first-view cache-through is the last remaining chance; nothing to do here.
-      console.error(`[waha.mirrorWahaHostedMedia] source fetch ${res.status} for ${session}/${fname}`);
+    // WAHA writes (and for voice notes TRANSCODES) its /api/files copy
+    // ASYNCHRONOUSLY, so on a FRESH inbound message the file is frequently not
+    // ready yet: an immediate single fetch 404s and the media is never durably
+    // mirrored. This is the real root cause of the inbound-mirror gap — a brand
+    // new message cannot have been "evicted", its bytes just aren't written yet.
+    // Voice notes take longest to be ready and so failed the most (~80%), plus a
+    // fraction of larger docs/videos. So retry with backoff to let the gateway
+    // finish writing it. 404/5xx = "not ready / transient" and retryable; 401/403
+    // = a config error and bails immediately. The total wait budget is bounded
+    // (~10s) so the awaited webhook stays within the same latency envelope as the
+    // previous single 15s-timeout fetch, and WAHA's own webhook re-delivery (if
+    // we are slow) only gives another idempotent chance to mirror.
+    const RETRY_DELAYS_MS = [0, 1200, 3000, 6000];
+    let bytes: Uint8Array | null = null;
+    let contentType = mime || 'application/octet-stream';
+    for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
+      if (RETRY_DELAYS_MS[attempt]) await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+      let res: Response;
+      try {
+        res = await fetch(`${wahaUrl()}/api/files/${session}/${fname}`, {
+          headers: wahaAuthHeaders(),
+          signal: AbortSignal.timeout(8_000),
+        });
+      } catch {
+        // network error / timeout — treat as transient and retry.
+        continue;
+      }
+      if (res.ok) {
+        bytes = new Uint8Array(await res.arrayBuffer());
+        contentType = mime || res.headers.get('content-type') || 'application/octet-stream';
+        break;
+      }
+      // 400/401/403 = misconfig or a permanently-bad ref; retrying won't help.
+      if (res.status !== 404 && res.status < 500) {
+        console.error(`[waha.mirrorWahaHostedMedia] source fetch ${res.status} (not retryable) for ${session}/${fname}`);
+        return;
+      }
+      // else: 404 (not written yet) or 5xx (transient) — loop and retry.
+    }
+    if (!bytes) {
+      // Still not available after the retry budget (a slow/failed gateway
+      // download, or genuine eviction). The lazy first-view cache-through in
+      // downloadFile remains the last-chance backstop.
+      console.error(`[waha.mirrorWahaHostedMedia] source not ready after ${RETRY_DELAYS_MS.length} attempts for ${session}/${fname}`);
       return;
     }
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    const contentType = mime || res.headers.get('content-type') || 'application/octet-stream';
     const { error } = await svc().storage
       .from(OUTBOUND_BUCKET)
       .upload(`${MIRROR_PREFIX}/${session}/${fname}`, bytes, { contentType, upsert: false });

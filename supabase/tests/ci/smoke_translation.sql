@@ -77,14 +77,14 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
 
-  -- 6) Generation CAS: stale expected_generation => source_changed (40001).
+  -- 6) Generation CAS: stale expected_generation => source_changed (SQLSTATE WS409).
   PERFORM set_config('request.jwt.claim.sub', gen_random_uuid()::text, true);
   PERFORM set_config('test.is_admin', 'true', true);
   BEGIN
     PERFORM record_translation_approve('record', v_rec, 'project_analysis', 'en',
       gen_random_uuid(), v_gen2 - 1);
     RAISE EXCEPTION 'SMOKE 6 failed: stale generation accepted';
-  EXCEPTION WHEN serialization_failure THEN NULL;
+  EXCEPTION WHEN SQLSTATE 'WS409' THEN NULL; -- was serialization_failure (40001) until 2026-09-07: PostgREST retries 40001 forever
   END;
 
   -- 7) Record deletion purges units + search doc.
