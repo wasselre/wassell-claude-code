@@ -920,7 +920,8 @@ function serializeRecord(record: AppRecord): SupabaseRecordsRow {
 // record_save conflict circuit breaker (incident 2026-06-02)
 //
 // `record_save` rejects a write whose `p_expected_version` is behind the
-// row's current version (SQLSTATE 40001 / "version_mismatch"). If a client's
+// row's current version (SQLSTATE WS409 / "version_mismatch"; it was 40001 until
+// 2026-09-07 — a code PostgREST retries FOREVER, the engine of every storm). If a client's
 // local `version` falls behind the server — which used to happen whenever
 // Realtime dropped the client's own version bump (see the version-advance fix
 // in `saveRecord`) — every retry re-sends the SAME stale version and is
@@ -1060,11 +1061,14 @@ async function supabaseRecordUpsert(
           // they must NOT be. conflict_storm_blocked = "the DB has rate-limited
           // you" → STOP everything, no reload-retry. version_mismatch = a possibly
           // one-off concurrent edit → allow exactly one reload-and-retry.
-          const isStormBlocked = errMsg.includes('conflict_storm_blocked');
-          // serialization_failure (SQLSTATE 40001) is the version_mismatch raise.
+          const isStormBlocked = error.code === 'WS429' || errMsg.includes('conflict_storm_blocked');
+          // version_mismatch is raised as SQLSTATE WS409 (2026-09-07; it was 40001
+          // until then — and PostgREST retries 40001 FOREVER server-side, which
+          // was the real engine of every conflict storm; see
+          // supabase/migrations/2026-09-07_never_raise_sqlstate_40001.sql).
           const isVersionConflict =
             !isStormBlocked &&
-            (error.code === '40001' || errMsg.includes('version_mismatch'));
+            (error.code === 'WS409' || error.code === '40001' || errMsg.includes('version_mismatch'));
 
           if (isStormBlocked) {
             // req 1/2/6: terminal. Wedge the breaker so no path retries this

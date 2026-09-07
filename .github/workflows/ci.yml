@@ -76,6 +76,14 @@ jobs:
             echo "== $f"
             psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
           done
+      # 2026-09-07: rewrite every retryable SQLSTATE (40001/40P01) raise to WS409/WS429
+      # BEFORE the smoke runs (the smoke expects WS409 on a stale generation), then
+      # assert the rule holds for the whole schema. PostgREST retries 40001 forever;
+      # that was the engine of every conflict storm since June.
+      - name: Never raise a PostgREST-retryable SQLSTATE
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-09-07_never_raise_sqlstate_40001.sql
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/assert_no_retryable_sqlstate.sql
       - name: Smoke assertions
         run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_translation.sql
 

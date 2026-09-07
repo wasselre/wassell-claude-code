@@ -544,7 +544,7 @@ async function executeUpdateRecord(
     // won the race. Record it as skipped (surfaced loudly in the run log), not
     // failed, and never retry-overwrite — this is what honors "a manual update
     // is never overridden".
-    const isVersionConflict = error.code === '40001' || /version_mismatch/i.test(error.message ?? '');
+    const isVersionConflict = error.code === 'WS409' || error.code === '40001' || /version_mismatch/i.test(error.message ?? '');
     return {
       action_id: action.id,
       type: 'update_record',

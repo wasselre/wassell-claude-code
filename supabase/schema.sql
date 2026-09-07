@@ -3079,7 +3079,7 @@ BEGIN
         RAISE EXCEPTION
           'version_mismatch: record was edited by another user (loaded v%, current v%)',
           p_expected_version, v_existing_version
-          USING ERRCODE = 'serialization_failure',
+          USING ERRCODE = 'WS409',  -- NEVER 40001: PostgREST retries it forever (2026-09-07)
                 HINT = 'reload the record to see latest changes';
       END IF;
     END IF;

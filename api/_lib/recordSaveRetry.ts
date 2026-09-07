@@ -37,10 +37,11 @@ export type SaveDisposition = 'success' | 'retry_version' | 'retry_transient' | 
 export function classifySaveError(error: SaveError | null | undefined): SaveDisposition {
   if (!error) return 'success';
   const msg = (error.message ?? '').toLowerCase();
-  // MUST come before the 40001 branch — conflict_storm_blocked shares SQLSTATE 40001.
-  if (msg.includes('conflict_storm_blocked')) return 'terminal';
   const code = (error.code ?? '').toString().toLowerCase();
-  if (code === '40001' || msg.includes('version_mismatch') || msg.includes('serialization_failure')) {
+  // Terminal first: conflict_storm_blocked is WS429 (was 40001 until 2026-09-07 and
+  // shared its code with version_mismatch, so it MUST still be classified by message).
+  if (code === 'ws429' || msg.includes('conflict_storm_blocked')) return 'terminal';
+  if (code === 'ws409' || code === '40001' || msg.includes('version_mismatch') || msg.includes('serialization_failure')) {
     return 'retry_version';
   }
   if (
