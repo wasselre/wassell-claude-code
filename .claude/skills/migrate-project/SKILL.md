@@ -312,13 +312,16 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   ~3.3 MB and stop at that marker; the og:description is truncated). Use net for `unit_area` (price/m² sanity: net
   gave ~14k/m² vs gross ~7k), and `private_area = gross − net` for roof/ground outdoor space. The detail narrative
   also gives the floor (الأرضي/الأول/الثاني/السطح→الروف) and the exact component list per unit.
-  (3) **Per-flat FLOOR PLANS are published as parent-listing gallery PNGs**, NOT a brochure: on the parent page the
-  jpg image ids are photos/renders (→ `project_images`), and the later PNG image ids are per-flat plans (مينا 51:
-  listing ids 6205=A46, 6207=A47, 6209=A48, 6218=A49, 6226=A50, 6228=A51 — the roof + 2 second-floor units). Each PNG
-  has AREA + model letter + KEY PLAN + KEY FEATURES (kitchen/smart-home/concealed-AC PRE-INSTALLED, 1 balcony,
-  1 parking). Attach by EXACT (net-area + bedrooms): A46-plan→A19/A34/A37/A46, A47-plan→A18/A35/A36/A47, roof plans to
-  their own unit only. Ground/1st-floor unique-area units stayed unplanned (12/51 planned — never attach a
-  wrong-area plan). Register plan files against the PROJECT record (shared asset) + set `unit_plan`=file-id on units.
+  (3) **EVERY unit has its OWN floor-plan PNG — it is that unit's `og:image` on its `/listings/sub/<id>` detail page.**
+  Each plan is a MENA "Internal Zoning" sheet (AREA + model letter + KEY PLAN + KEY FEATURES: kitchen/smart-home/
+  concealed-AC PRE-INSTALLED, 1 balcony, 1 parking; ground-floor plans show the private garden). All 51 og:images are
+  DISTINCT → download each and attach to ITS unit, `record_id`=the unit (same convention as مينا 52), `unit_plan`=file-id.
+  ⚠ DO NOT stop at the parent listing page: it only surfaces a handful of "featured" plans (مينا 51 showed 6 —
+  A46/A47/A48/A49/A50/A51 as PNG gallery ids 6205/6207/6209/6218/6226/6228), and each sub-listing detail page also
+  renders that same featured set in a lazy-loaded "other units" strip near the page BOTTOM — so the featured 6 are a
+  trap. The unit's OWN plan is the `<meta property="og:image">` in the head (I already collect it in the sub-page pass).
+  First pass on مينا 51 wrongly attached only the 6 featured plans (propagated by area+beds to 12 units, 3 of them the
+  WRONG area's plan); corrected same day to 51 real per-unit plans and the 6 shared project-level files were deleted.
   (4) **No brochure + no landmarks published** for this project on menaco → left `broucher_developer` empty (flag to
   the team for a Drive link) and `nearby_landmarks` empty; the spec/warranty/amenity package is the MENA
   developer-standard (same as مينا 52), with EV chargers dropped (unconfirmed for this project). Recorded in
