@@ -299,6 +299,33 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   2/3 avail→sold, A/4 reserved→sold, 1/5 avail→sold); new dist 10 avail/5 sold/1 reserved. Writes via `record_save`
   RPC through the Supabase MCP (`SELECT record_save(units_model, id, data || jsonb_build_object('unit_status',…),
   NULL, NULL)`), version-unaware, creator preserved; the unit-change trigger auto-recomputed the project rollups.
+- **[2026-09-06] menaco.sa FIRST MIGRATION of a NEW project (مينا 51 - سليل التعاون, listing 276031, project
+  `0cb7c65b-95de-4506-b9be-56c3f8f1f00e`, م ش2878, 51 units U-49738–U-49788, dev مينا `84907fad`, our_projects +
+  membership + published).** New learnings beyond the 2026-08-24 status-update entry:
+  (1) **unit_model here is a plain `A01..A51` code (not `<floor>/<unit#>`)** — it's the token BEFORE «الرياض» in the
+  card text (`<price> <model> الرياض - حي التعاون <beds> غرفة نوم <baths> حمام <grossArea> متر مربع <badge>`).
+  Reserved cards HIDE the price (and the leading price token) but the model token is still there → anchor the model
+  regex on «الرياض», NOT on a preceding price, or you lose every reserved unit's model.
+  (2) **NET vs GROSS area:** the card «متر مربع» is GROSS (incl. terrace/garden). The real net apartment area is on
+  each sub-listing detail page `/listings/sub/<sub_id>` in the narrative «بمساحة إجمالية تبلغ X م²» (the full
+  description sits near the BOTTOM of the ~6.8 MB page, right before «تفاصيل العقار رقم العقار» ~offset 3.1 MB — stream
+  ~3.3 MB and stop at that marker; the og:description is truncated). Use net for `unit_area` (price/m² sanity: net
+  gave ~14k/m² vs gross ~7k), and `private_area = gross − net` for roof/ground outdoor space. The detail narrative
+  also gives the floor (الأرضي/الأول/الثاني/السطح→الروف) and the exact component list per unit.
+  (3) **EVERY unit has its OWN floor-plan PNG — it is that unit's `og:image` on its `/listings/sub/<id>` detail page.**
+  Each plan is a MENA "Internal Zoning" sheet (AREA + model letter + KEY PLAN + KEY FEATURES: kitchen/smart-home/
+  concealed-AC PRE-INSTALLED, 1 balcony, 1 parking; ground-floor plans show the private garden). All 51 og:images are
+  DISTINCT → download each and attach to ITS unit, `record_id`=the unit (same convention as مينا 52), `unit_plan`=file-id.
+  ⚠ DO NOT stop at the parent listing page: it only surfaces a handful of "featured" plans (مينا 51 showed 6 —
+  A46/A47/A48/A49/A50/A51 as PNG gallery ids 6205/6207/6209/6218/6226/6228), and each sub-listing detail page also
+  renders that same featured set in a lazy-loaded "other units" strip near the page BOTTOM — so the featured 6 are a
+  trap. The unit's OWN plan is the `<meta property="og:image">` in the head (I already collect it in the sub-page pass).
+  First pass on مينا 51 wrongly attached only the 6 featured plans (propagated by area+beds to 12 units, 3 of them the
+  WRONG area's plan); corrected same day to 51 real per-unit plans and the 6 shared project-level files were deleted.
+  (4) **No brochure + no landmarks published** for this project on menaco → left `broucher_developer` empty (flag to
+  the team for a Drive link) and `nearby_landmarks` empty; the spec/warranty/amenity package is the MENA
+  developer-standard (same as مينا 52), with EV chargers dropped (unconfirmed for this project). Recorded in
+  `source_notes`. Registry: `update_source='developer_page'`. No user question was needed — logged for the next run.
 - **[2026-08-24] RIVA BROKER-PORTAL BULK RECONCILE (16 projects, user-approved source):** when the user says
   "update units from riva", the source is the **broker portal** (see the riva BROKER PORTAL adapter) — user chose
   it over public pages ("I drive, you log in" via Browserbase live-view). Reconcile posture: join broker unit code
