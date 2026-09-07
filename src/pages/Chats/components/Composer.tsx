@@ -319,6 +319,7 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
                 wid,
                 isAr ? `إرسال ${rest.length} ملفات` : `Sending ${rest.length} file(s)`,
                 work,
+                { estimatedMs: rest.length * 10_000 },
               );
               await work;
             }

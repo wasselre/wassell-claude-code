@@ -108,7 +108,9 @@ export async function sendProjectImageMessages(
   if (!opts.deliverAt) {
     let settle: () => void = () => {};
     const inFlight = new Promise<void>((resolve) => { settle = resolve; });
-    const release = holdSendLane(chatWid, label, inFlight);
+    // estimatedMs: what OTHER tabs honor if this tab closes mid-batch (the
+    // keepalive request keeps sending server-side) — ~10 s per item.
+    const release = holdSendLane(chatWid, label, inFlight, { estimatedMs: ids.length * 10_000 });
     releaseLane = () => { settle(); release(); };
   }
 
