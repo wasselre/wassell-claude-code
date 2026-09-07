@@ -5,7 +5,7 @@
 # Model: Unit Updates / تحديثات الوحدات  `unit_updates`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-24
+**Last updated (from DB):** 2026-09-07
 **Model id:** `aa10c001-2026-4824-9000-000000000001`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -27,7 +27,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `project` | Project / المشروع | Lookup | yes | half | yes | → All Projects |
 | `update_frequency` | Frequency / دورية التحديث | Dropdown | yes | half | yes | 5 options |
-| `source_type` | Source / مصدر التحديث | Dropdown | no | half | yes | 5 options |
+| `source_type` | Source / مصدر التحديث | Dropdown | no | half | yes | 6 options |
 | `source_url` | Source URL / رابط المصدر | URL | no | half | no |  |
 | `last_migrated_at` | Last migrated / آخر تحديث | Date | no | half | yes |  |
 | `next_due` | Next due / التحديث القادم | Date | no | half | yes |  |
@@ -53,3 +53,4 @@
   - API value `developer_sheet` → "Developer availability sheet" / "ملف توفر من المطور" · color `#8E4E3A`
   - API value `developer_api` → "Developer API" / "API المطور" · color `#C09B5F`
   - API value `menaco` → "Menaco platform" / "منصة منيكو" · color `#D4B896`
+  - API value `safa_broker` → "Safa broker portal (Kasb)" / "بوابة كسب — صفا" · color `#B8734F`
