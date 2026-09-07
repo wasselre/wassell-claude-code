@@ -41,9 +41,17 @@ const DASH = '—';
 // different prices (different offers). Group by structure so the drawer shows
 // one compact row per structure with its price (range if it has several).
 interface PlanRow {
+  plan?: string;
   down?: number; before_handover?: number; on_handover?: number; after_handover?: number;
   price?: number; price_sar?: number;
+  /** Free-text milestone breakdown ("20% عند التعاقد · 10% عند إنجاز 20% …"). */
+  schedule?: string;
 }
+/** A real plan NAME ("نموذج 2"), not a bare sequence number ("01"). */
+const planNameOf = (p: PlanRow): string => {
+  const s = typeof p.plan === 'string' ? p.plan.trim() : '';
+  return s && !/^\d+$/.test(s) ? s : '';
+};
 const pnum = (v: unknown): number => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
 function planStructLabel(p: PlanRow, isAr: boolean): string {
   if (pnum(p.down) === 100 && pnum(p.before_handover) === 0 && pnum(p.on_handover) === 0)
@@ -56,17 +64,21 @@ function planStructLabel(p: PlanRow, isAr: boolean): string {
   return parts.join(' / ');
 }
 function groupUnitPlans(rows: PlanRow[], isAr: boolean) {
-  const map = new Map<string, { sample: PlanRow; aeds: number[]; sars: number[] }>();
+  const map = new Map<string, { sample: PlanRow; name: string; schedule: string; aeds: number[]; sars: number[] }>();
   for (const p of rows) {
     const key = `${pnum(p.down)}/${pnum(p.before_handover)}/${pnum(p.on_handover)}/${pnum(p.after_handover)}`;
-    const g = map.get(key) ?? { sample: p, aeds: [], sars: [] };
+    const g = map.get(key) ?? { sample: p, name: '', schedule: '', aeds: [], sars: [] };
+    if (!g.schedule && typeof p.schedule === 'string') g.schedule = p.schedule.trim();
+    if (!g.name) g.name = planNameOf(p);
     if (pnum(p.price) > 0) g.aeds.push(pnum(p.price));
     if (pnum(p.price_sar) > 0) g.sars.push(pnum(p.price_sar));
     map.set(key, g);
   }
   return [...map.values()]
     .map((g) => ({
+      name: g.name,
       label: planStructLabel(g.sample, isAr),
+      schedule: g.schedule,
       down: pnum(g.sample.down),
       minAed: g.aeds.length ? Math.min(...g.aeds) : 0,
       maxAed: g.aeds.length ? Math.max(...g.aeds) : 0,
@@ -335,8 +347,16 @@ export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, 
                 <div className="space-y-1.5">
                   {plans.map((p, i) => (
                     <div key={i} className="rounded-lg border border-sand/40 bg-cream/20 px-2.5 py-1.5">
-                      <div className="text-[13px] font-medium text-charcoal">{p.label}</div>
-                      <div className="text-xs text-charcoal/70 mt-0.5">{priceLine(p.minAed, p.maxAed, AED)}</div>
+                      <div className="text-[13px] font-medium text-charcoal">{p.name || p.label}</div>
+                      {p.name && <div className="text-xs text-charcoal/70">{p.label}</div>}
+                      {p.schedule && (
+                        <div className="text-[11px] text-charcoal/55 mt-0.5 leading-relaxed">{p.schedule}</div>
+                      )}
+                      {/* Plan-specific prices only (Dubai cards). A Saudi card has
+                        * none — the unit's total price above is the price. */}
+                      {p.maxAed > 0 && (
+                        <div className="text-xs text-charcoal/70 mt-0.5">{priceLine(p.minAed, p.maxAed, AED)}</div>
+                      )}
                       {p.minSar > 0 && (
                         <div className="text-[11px] text-charcoal/45">{priceLine(p.minSar, p.maxSar, SAR)}</div>
                       )}

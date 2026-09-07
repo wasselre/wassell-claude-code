@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [Advertisers](advertisers.md) | `advertisers` | JSONB | — | 1 | 10 | no | 2026-07-01 |
 | [AI Agent](ai-chats.md) | `ai_chats` | JSONB | New Group | 1 | 5 | yes | 2026-08-20 |
-| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 71 | no | 2026-08-31 |
+| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 71 | no | 2026-09-07 |
 | [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 11 | no | 2026-08-31 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 13 | yes | 2026-08-20 |
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 15 | yes | 2026-08-20 |
@@ -58,5 +58,5 @@
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 2 | 7 | no | 2026-07-31 |
 | [Unit Updates](unit-updates.md) | `unit_updates` | JSONB | Projects | 1 | 9 | no | 2026-08-24 |
-| [Units](units.md) | `units` | JSONB | Projects | 8 | 48 | no | 2026-09-02 |
+| [Units](units.md) | `units` | JSONB | Projects | 8 | 48 | no | 2026-09-07 |
 | [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 13 | no | 2026-08-20 |

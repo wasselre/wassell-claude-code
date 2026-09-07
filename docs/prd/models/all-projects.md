@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-31
+**Last updated (from DB):** 2026-09-07
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -233,7 +233,7 @@
 | `during_construction_percent` | During Construction % / أثناء الإنشاء % | Number | no | half | yes |  |
 | `on_handover_percent` | On Handover % / عند التسليم % | Number | no | half | yes |  |
 | `post_handover_months` | Post-Handover Months / أشهر ما بعد التسليم | Number | no | half | yes |  |
-| `payment_plan_schedule` | Payment Schedule / جدول الدفعات | Table | no | full | yes | 5 columns |
+| `payment_plan_schedule` | Payment Schedule / جدول الدفعات | Table | no | full | yes | 6 columns |
 
 **Field details:**
 
@@ -246,6 +246,7 @@
   - `during_construction` "During Construction %" (number)
   - `on_handover` "On Handover %" (number)
   - `post_handover` "Post-Handover %" (number)
+  - `schedule` "Schedule" (text)
 
 ### 5. Sales & Targeting / المبيعات والاستهداف  _(color #8E4E3A)_
 

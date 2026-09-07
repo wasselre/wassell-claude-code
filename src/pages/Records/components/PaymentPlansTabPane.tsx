@@ -17,7 +17,17 @@ import type { AppRecord, AppModel, ModelField } from '@/types';
  *
  * Prices live per-unit (the source of truth is the `payment_plans` table field
  * on each unit); the project view never stores them, it aggregates live from
- * the units already in the store — same pattern as UnitsTabPane.
+ * the units already in the store — same pattern as UnitsTabPane. (The
+ * project's STORED menu — `payment_plan_schedule` + summary + headline %s —
+ * is a Postgres rollup of the same cards, see
+ * supabase/migrations/2026-09-07_project_payment_plans_rollup.sql; it gates
+ * whether this tab shows at all.)
+ *
+ * A card with no price of its own (Saudi projects: the plan is a %-split, the
+ * price is the unit's `total_price`) falls back to the unit's total price as
+ * SAR. A card may also carry a free-text `schedule` — the milestone-by-
+ * milestone breakdown ("20% عند التعاقد · 10% عند إنجاز 20% …") — shown under
+ * the structure label.
  */
 
 interface PlanRow {
@@ -28,6 +38,25 @@ interface PlanRow {
   after_handover?: number;
   price?: number;
   price_sar?: number;
+  schedule?: string;
+}
+
+const scheduleOf = (p: PlanRow): string => (typeof p.schedule === 'string' ? p.schedule.trim() : '');
+
+/**
+ * The developer's own plan NAME, when it is a real name ("نموذج 2", "Flexi
+ * Plan") rather than a bare sequence number ("01", "3") — Binghatti cards are
+ * numbered, Saudi developers name their models. A real name becomes the row
+ * title with the %-split as its subtitle.
+ */
+const planNameOf = (p: PlanRow): string => {
+  const s = typeof p.plan === 'string' ? p.plan.trim() : '';
+  return s && !/^\d+$/.test(s) ? s : '';
+};
+
+/** The unit's own total price (SAR) — the price of a plan card that has none. */
+function unitTotalPrice(rec: AppRecord | undefined): number {
+  return num((rec?.data as Record<string, unknown> | undefined)?.total_price);
 }
 
 const num = (v: unknown): number => {
@@ -106,21 +135,35 @@ export default function PaymentPlansTabPane({
   const projectPlans = useMemo(() => {
     const map = new Map<
       string,
-      { sample: PlanRow; units: Set<string>; minAed: number; maxAed: number; minSar: number; maxSar: number }
+      {
+        sample: PlanRow;
+        name: string;
+        schedule: string;
+        units: Set<string>;
+        minAed: number;
+        maxAed: number;
+        minSar: number;
+        maxSar: number;
+      }
     >();
     for (const u of unitsForProject) {
       for (const p of planRowsOf(u)) {
         const key = structKey(p);
         const price = num(p.price);
-        const priceSar = num(p.price_sar);
+        // No plan-specific price → the unit's own total price (SAR).
+        const priceSar = num(p.price_sar) || (price > 0 ? 0 : unitTotalPrice(u));
         const g = map.get(key) ?? {
           sample: p,
+          name: '',
+          schedule: '',
           units: new Set<string>(),
           minAed: Infinity,
           maxAed: 0,
           minSar: Infinity,
           maxSar: 0,
         };
+        if (!g.schedule) g.schedule = scheduleOf(p);
+        if (!g.name) g.name = planNameOf(p);
         g.units.add(u.id);
         if (price > 0) {
           g.minAed = Math.min(g.minAed, price);
@@ -135,7 +178,9 @@ export default function PaymentPlansTabPane({
     }
     return [...map.values()]
       .map((g) => ({
+        name: g.name,
         label: structLabel(g.sample, isAr),
+        schedule: g.schedule,
         down: num(g.sample.down),
         during: num(g.sample.before_handover),
         onHandover: num(g.sample.on_handover),
@@ -151,11 +196,18 @@ export default function PaymentPlansTabPane({
 
   // ---- UNIT DETAIL: group this unit's cards by structure ----
   const unitPlans = useMemo(() => {
-    const map = new Map<string, { sample: PlanRow; prices: { aed: number; sar: number }[] }>();
+    const map = new Map<
+      string,
+      { sample: PlanRow; name: string; schedule: string; prices: { aed: number; sar: number }[] }
+    >();
+    const fallbackSar = unitTotalPrice(record);
     for (const p of planRowsOf(record)) {
       const key = structKey(p);
-      const g = map.get(key) ?? { sample: p, prices: [] };
-      g.prices.push({ aed: num(p.price), sar: num(p.price_sar) });
+      const g = map.get(key) ?? { sample: p, name: '', schedule: '', prices: [] };
+      if (!g.schedule) g.schedule = scheduleOf(p);
+      if (!g.name) g.name = planNameOf(p);
+      const aed = num(p.price);
+      g.prices.push({ aed, sar: num(p.price_sar) || (aed > 0 ? 0 : fallbackSar) });
       map.set(key, g);
     }
     return [...map.values()]
@@ -163,7 +215,9 @@ export default function PaymentPlansTabPane({
         const aeds = g.prices.map((x) => x.aed).filter((x) => x > 0);
         const sars = g.prices.map((x) => x.sar).filter((x) => x > 0);
         return {
+          name: g.name,
           label: structLabel(g.sample, isAr),
+          schedule: g.schedule,
           down: num(g.sample.down),
           during: num(g.sample.before_handover),
           onHandover: num(g.sample.on_handover),
@@ -191,6 +245,9 @@ export default function PaymentPlansTabPane({
   }
 
   const entryDown = Math.min(...rows.map((r) => r.down));
+  // AED column only when at least one card is priced in AED (Dubai projects);
+  // Saudi projects are SAR-only and the extra "—" column is noise.
+  const hasAed = rows.some((r) => r.maxAed > 0);
 
   const priceCell = (min: number, max: number, ccy: string) => {
     if (min <= 0 && max <= 0) return '—';
@@ -216,7 +273,9 @@ export default function PaymentPlansTabPane({
           </p>
         </div>
         <span className="text-[11px] text-charcoal/40">
-          {isAr ? 'الأسعار بالدرهم الإماراتي والريال السعودي' : 'Prices in AED & SAR'}
+          {hasAed
+            ? isAr ? 'الأسعار بالدرهم الإماراتي والريال السعودي' : 'Prices in AED & SAR'
+            : isAr ? 'الأسعار بالريال السعودي' : 'Prices in SAR'}
         </span>
       </div>
 
@@ -237,7 +296,9 @@ export default function PaymentPlansTabPane({
               <th className="text-center px-2 py-2.5 text-xs font-bold">
                 {isProject ? (isAr ? 'وحدات' : 'Units') : (isAr ? 'عروض' : 'Offers')}
               </th>
-              <th className="text-end px-4 py-2.5 text-xs font-bold">{isAr ? 'السعر (د.إ)' : 'Price (AED)'}</th>
+              {hasAed && (
+                <th className="text-end px-4 py-2.5 text-xs font-bold">{isAr ? 'السعر (د.إ)' : 'Price (AED)'}</th>
+              )}
               <th className="text-end px-4 py-2.5 text-xs font-bold">{isAr ? 'السعر (ر.س)' : 'Price (SAR)'}</th>
             </tr>
           </thead>
@@ -247,7 +308,15 @@ export default function PaymentPlansTabPane({
               return (
                 <tr key={i} className="border-b border-sand/25 last:border-0 hover:bg-cream/20">
                   <td className="px-4 py-2.5 font-medium text-charcoal">
-                    {isCash ? (isAr ? 'دفعة كاملة (كاش)' : 'Full payment (cash)') : r.label}
+                    {isCash ? (isAr ? 'دفعة كاملة (كاش)' : 'Full payment (cash)') : r.name || r.label}
+                    {!isCash && r.name && (
+                      <div className="mt-0.5 text-xs font-normal text-charcoal/70">{r.label}</div>
+                    )}
+                    {r.schedule && (
+                      <div className="mt-0.5 text-[11px] font-normal leading-relaxed text-charcoal/55">
+                        {r.schedule}
+                      </div>
+                    )}
                   </td>
                   <td className="text-center px-2 py-2.5 tabular-nums">{r.down ? `${r.down}%` : '—'}</td>
                   <td className="text-center px-2 py-2.5 tabular-nums text-charcoal/70">
@@ -260,9 +329,11 @@ export default function PaymentPlansTabPane({
                   <td className="text-center px-2 py-2.5 tabular-nums text-charcoal/60">
                     {'unitCount' in r ? r.unitCount : r.offers}
                   </td>
-                  <td className="text-end px-4 py-2.5 tabular-nums text-charcoal whitespace-nowrap">
-                    {priceCell(r.minAed, r.maxAed, isAr ? 'د.إ' : 'AED')}
-                  </td>
+                  {hasAed && (
+                    <td className="text-end px-4 py-2.5 tabular-nums text-charcoal whitespace-nowrap">
+                      {priceCell(r.minAed, r.maxAed, isAr ? 'د.إ' : 'AED')}
+                    </td>
+                  )}
                   <td className="text-end px-4 py-2.5 tabular-nums text-charcoal/70 whitespace-nowrap">
                     {priceCell(r.minSar, r.maxSar, isAr ? 'ر.س' : 'SAR')}
                   </td>
