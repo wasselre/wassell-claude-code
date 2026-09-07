@@ -219,9 +219,10 @@ describe('derived read-only fields', () => {
     expect(isDerivedReadOnly('client_name')).toBe(false);
   });
 
-  it('covers exactly the nine documented derived fields', () => {
+  it('covers exactly the twelve documented derived fields', () => {
     expect([...DERIVED_READONLY_SLUGS].sort()).toEqual(
       [
+        'is_retired',
         'last_activity_at',
         'latest_visit_rated_at',
         'latest_visit_rating',
@@ -231,6 +232,8 @@ describe('derived read-only fields', () => {
         'next_action_due_at',
         'next_action_type',
         'next_followup_id',
+        'retired_at',
+        'retired_reason',
       ].sort(),
     );
   });

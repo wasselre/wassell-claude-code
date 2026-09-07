@@ -49,7 +49,7 @@ function die(msg) {
 // Reads the spec JSON path from argv[2]; streams one JSONL result per item to
 // stdout. Anything human-readable goes to stderr.
 const DRIVER_SOURCE = `
-import { createClient } from '@supabase/supabase-js';
+import { makeIdentifiedClient } from '../../scripts/_lib/serviceClient.mjs';
 import { readFileSync } from 'node:fs';
 import { buildFactsPackage, loadProjectRecord, resolveLookupName } from '../../worker/src/marketing/script/facts.js';
 import {
@@ -73,9 +73,7 @@ interface Spec {
 }
 
 const spec = JSON.parse(readFileSync(process.argv[2]!, 'utf8')) as Spec;
-const sb = createClient(process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? '', process.env.SUPABASE_SERVICE_ROLE_KEY ?? '', {
-  auth: { persistSession: false },
-});
+const sb = makeIdentifiedClient('script:eval/creative-run', process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? '', process.env.SUPABASE_SERVICE_ROLE_KEY ?? '');
 
 // Peer modules (A-GEN director, A-FACTS grounding + placementSpecs) may not
 // exist yet — dynamic import, and the run degrades to facts-only.

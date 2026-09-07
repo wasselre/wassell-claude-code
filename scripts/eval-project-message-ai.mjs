@@ -23,7 +23,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { createClient } from '@supabase/supabase-js';
+import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,7 +72,7 @@ if (!SUPABASE_URL || !SERVICE_KEY) die('SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
 if (!ANTHROPIC_API_KEY) die('ANTHROPIC_API_KEY required.');
 if (!KIMI_API_KEY) die('KIMI_API_KEY required (lives in ~/.kimi.env.local).');
 
-const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+const db = makeIdentifiedClient('script:eval-project-message-ai', SUPABASE_URL, SERVICE_KEY);
 
 // ─────────────────────────────────────────────────────────────────────────
 // SHARED PROMPT — the endpoint copies this verbatim. Keep in sync.

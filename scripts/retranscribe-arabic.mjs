@@ -32,7 +32,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createClient } from '@supabase/supabase-js';
+import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, '..');
@@ -64,7 +64,7 @@ const FAL_KEY = process.env.FAL_KEY;
 if (!SUPABASE_URL || !SERVICE_KEY) { console.error('SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are required (.env.local)'); process.exit(2); }
 if (!FAL_KEY) { console.error('FAL_KEY is required. It is not stored on disk in this repo — pull it from Vercel (`vercel env pull <scratch>`) or Fly and export it.'); process.exit(2); }
 
-const sb = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+const sb = makeIdentifiedClient('script:retranscribe-arabic', SUPABASE_URL, SERVICE_KEY);
 
 // ── args ────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);

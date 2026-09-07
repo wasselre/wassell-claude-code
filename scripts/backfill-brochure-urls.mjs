@@ -24,7 +24,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createClient } from '@supabase/supabase-js';
+import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
 
 // ── env (no dotenv dep) ──────────────────────────────────────────────
 for (const f of ['.env.local', '.env']) {
@@ -84,7 +84,7 @@ function maybeCompress(buf) {
   }
 }
 
-const sb = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+const sb = makeIdentifiedClient('script:backfill-brochure-urls', SUPABASE_URL, SERVICE_KEY);
 
 function isDriveUrl(url) {
   return /drive\.google\.com|docs\.google\.com/.test(url);

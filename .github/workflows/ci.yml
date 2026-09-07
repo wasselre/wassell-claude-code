@@ -73,6 +73,16 @@ jobs:
       - name: Apply translation migrations (W1 set + W4 server-language)
         run: |
           for f in supabase/migrations/2026-09-01_0*.sql supabase/migrations/2026-09-02_0*.sql; do
+            case "$f" in
+              # Marketing / Marketing-OS migrations share the 2026-09-0x date range
+              # but are NOT part of the translation set this job validates: they
+              # target mkt_*/mos_* tables the translation fixture deliberately omits
+              # and (unlike the translation migrations) carry no
+              # to_regclass/check_function_bodies CI guard. They have no fixture here,
+              # so skip them — they are validated by production apply, not this job.
+              *_attribution_*|*_mos_*)
+                echo "== skip (marketing, out of scope for the translation validator): $f"; continue ;;
+            esac
             echo "== $f"
             psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
           done
