@@ -109,10 +109,19 @@ BEGIN
   END IF;
 END $$;
 
-COMMENT ON FUNCTION public.record_save(uuid, uuid, jsonb, uuid, integer) IS
-  'Dispatching record write (records JSONB vs frozen table) with optimistic concurrency. '
-  'Raises version_mismatch as SQLSTATE WS409 and conflict_storm_blocked as WS429 — NEVER 40001/40P01: '
-  'PostgREST (hasql-transaction) retries those forever with no backoff, which was the root cause of every '
-  'conflict storm from 2026-06 to 2026-09-07. See supabase/migrations/2026-09-07_never_raise_sqlstate_40001.sql.';
+-- record_save belongs to the frozen-model infrastructure, which the translation
+-- CI fixture does not create — so guard this (cosmetic) COMMENT the same way the
+-- rewrite loop above is guarded (it only touches functions that actually exist).
+-- In prod record_save exists and the comment is set; in CI it is skipped.
+DO $$
+BEGIN
+  IF to_regprocedure('public.record_save(uuid, uuid, jsonb, uuid, integer)') IS NOT NULL THEN
+    EXECUTE $c$COMMENT ON FUNCTION public.record_save(uuid, uuid, jsonb, uuid, integer) IS
+      'Dispatching record write (records JSONB vs frozen table) with optimistic concurrency. '
+      'Raises version_mismatch as SQLSTATE WS409 and conflict_storm_blocked as WS429 — NEVER 40001/40P01: '
+      'PostgREST (hasql-transaction) retries those forever with no backoff, which was the root cause of every '
+      'conflict storm from 2026-06 to 2026-09-07. See supabase/migrations/2026-09-07_never_raise_sqlstate_40001.sql.'$c$;
+  END IF;
+END $$;
 
 COMMIT;
