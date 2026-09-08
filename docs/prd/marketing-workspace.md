@@ -76,12 +76,16 @@ This workspace answers the three questions the old process could not:
     Otherwise it reads «لا شيء لديك» (finished rows «منتهٍ», drafts «مسودة»). The
     active-role string is never consulted — held roles only, same as `canAct`.
   - **معاينة** — opens `ContentPreviewModal` over the list. It fetches
-    `content_detail`, derives the item's **phase** from its pinned steps and
-    renders the matching body: *writing* → `WritingFields` (editable on a
-    working step for anyone with `write_content`, locked text on a review) plus
-    a read-only scene list; *design* → the material marked for approval
-    (`approval_asset_id`) rendered big, then the other linked materials;
-    *publish* → the publication plan. The footer carries the CURRENT ROLE's
+    `content_detail` and ALWAYS renders the content itself — both halves: the
+    **material** (the approved `final` link → the file marked for approval →
+    the first renderable linked file, rendered big, then the other linked
+    materials) and the **writing** (`WritingFields`, editable on a working
+    step for anyone with `write_content`, locked text otherwise, plus a
+    read-only scene list). The item's phase (from its pinned steps) only
+    decides the ORDER — writing first while the copy is the work, material
+    first from design onward — and a publishing/finished item also gets its
+    publication plan underneath. (The first cut showed only the plan for a
+    finished item — fixed the same day.) The footer carries the CURRENT ROLE's
     action through the same `task_complete` flow as the content page header —
     «اعتماد <reviewed step>» + «طلب تعديلات» (opens `RequestChangesModal`) on an
     approval step, «إرسال للمراجعة» / «إرسال للخطوة التالية» on a working step —

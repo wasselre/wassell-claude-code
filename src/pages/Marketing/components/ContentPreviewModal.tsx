@@ -1,15 +1,20 @@
 /**
  * «معاينة» — the content list's in-place review popup.
  *
- * One click from the table opens the thing that is being worked on RIGHT NOW,
- * at the stage it is in, without leaving the list:
- *   writing phase → the writing fields (editable while the stage is a working
- *                   step and the caller can write; locked text on a review);
- *   design phase  → the material submitted for approval, rendered big, plus the
- *                   other linked materials;
- *   publish phase → the publication plan.
- * The phase is derived from the item's PINNED workflow steps (`stagePhase.ts`),
- * never from a hardcoded step key.
+ * One click from the table opens the ACTUAL CONTENT without leaving the list —
+ * always both halves of it:
+ *   the material  → the approved / submitted design (final link → the file
+ *                   marked for approval → any renderable linked file) rendered
+ *                   big, then the other linked materials;
+ *   the writing   → the writing fields (editable while the stage is a working
+ *                   step and the caller can write; locked text otherwise) and
+ *                   the scenes.
+ * The item's phase (from its PINNED workflow steps — `stagePhase.ts`, never a
+ * hardcoded step key) only decides the ORDER: writing first while the copy is
+ * being written or reviewed, material first once it is in design or beyond.
+ * A finished / publishing item also gets its publication plan underneath.
+ * (The first cut showed ONLY the plan for a finished item — the operator
+ * opened a published post and saw a table of platforms instead of the post.)
  *
  * The footer carries the CURRENT ROLE's action — the same `task_complete` flow
  * the content page's header uses: «اعتماد …» / «طلب تعديلات» on an approval
@@ -97,25 +102,26 @@ export default function ContentPreviewModal({
     return phaseOfStep(sortedSteps, item.status_key);
   }, [item, currentStep, sortedSteps]);
 
-  // Phase-specific data, fetched only when that phase is on screen. A failure
-  // here is shown in place (the header still renders), never swallowed.
+  // The linked materials — ALWAYS fetched: the material is the content, whatever
+  // the stage. The publication plan only matters once the item is publishing
+  // or done. A failure is shown in place (the header still renders), never
+  // swallowed.
   useEffect(() => {
     if (!item) return;
     let alive = true;
-    if (phase === 'design') {
-      fetchAssets()
-        .then((res) => {
-          if (!alive) return;
-          const mine = res.links.filter((l) => l.content_id === contentId);
-          const ids = new Set(mine.map((l) => l.asset_id));
-          setLinks(mine);
-          setAssets(res.assets.filter((a) => ids.has(a.id)));
-        })
-        .catch((e: unknown) => {
-          console.error('[marketing] preview materials unavailable', e);
-          if (alive) setError(e instanceof Error ? e.message : String(e));
-        });
-    } else if (phase === 'publish') {
+    fetchAssets()
+      .then((res) => {
+        if (!alive) return;
+        const mine = res.links.filter((l) => l.content_id === contentId);
+        const ids = new Set(mine.map((l) => l.asset_id));
+        setLinks(mine);
+        setAssets(res.assets.filter((a) => ids.has(a.id)));
+      })
+      .catch((e: unknown) => {
+        console.error('[marketing] preview materials unavailable', e);
+        if (alive) setError(e instanceof Error ? e.message : String(e));
+      });
+    if (phase === 'publish' || item.status_key === 'done') {
       fetchPublications(contentId)
         .then((res) => { if (alive) setPublications(res.publications); })
         .catch((e: unknown) => {
@@ -166,7 +172,7 @@ export default function ContentPreviewModal({
   const openFull = (): void => {
     onClose();
     if (changed) onChanged();
-    navigate(`/m/content/${contentId}?tab=${tabForPhase(phase)}`);
+    navigate(`/m/content/${contentId}?tab=${item?.status_key === 'done' ? 'materials' : tabForPhase(phase)}`);
   };
 
   const stepLabel = currentStep
@@ -180,10 +186,24 @@ export default function ContentPreviewModal({
 
   /* ── phase bodies ───────────────────────────────────────────────────── */
 
-  const approvalAsset = item?.approval_asset_id
-    ? assets.find((a) => a.id === item.approval_asset_id) ?? null
-    : null;
-  const otherAssets = assets.filter((a) => a.id !== approvalAsset?.id);
+  // The one file to show BIG: the approved final cut, else the file marked for
+  // approval, else the first linked file that can actually be rendered.
+  const renderable = (a: MosAsset): boolean => !!(a.thumb_url || a.url || a.file_id);
+  const finalLink = links.find((l) => l.role === 'final');
+  const heroAsset: MosAsset | null =
+    (finalLink ? assets.find((a) => a.id === finalLink.asset_id) : undefined)
+    ?? (item?.approval_asset_id ? assets.find((a) => a.id === item.approval_asset_id) : undefined)
+    ?? assets.find(renderable)
+    ?? assets[0]
+    ?? null;
+  const heroRole = heroAsset
+    ? finalLink && heroAsset.id === finalLink.asset_id
+      ? (isAr ? 'المادة المعتمدة' : 'Approved material')
+      : item?.approval_asset_id === heroAsset.id
+        ? (isAr ? 'المادة المقدَّمة للاعتماد' : 'Material submitted for approval')
+        : (isAr ? 'المادة' : 'Material')
+    : (isAr ? 'المادة' : 'Material');
+  const otherAssets = assets.filter((a) => a.id !== heroAsset?.id);
   const roleOf = (assetId: string): string | null => {
     const l = links.find((x) => x.asset_id === assetId);
     if (!l) return null;
@@ -209,133 +229,140 @@ export default function ContentPreviewModal({
     );
   };
 
-  const body = (): JSX.Element | null => {
-    if (!item) return null;
-    if (phase === 'writing') {
-      return (
-        <div style={{ display: 'grid', gap: 16 }}>
-          <WritingFields
-            contentId={item.id}
-            schema={fieldSchemaKeys(type?.field_schema ?? [])}
-            data={item.data ?? {}}
-            canEdit={canEdit}
-            isAr={isAr}
-            onSaved={(data) => setItem({ ...item, data })}
-          />
-          {scenes.length > 0 && (
-            <div className="card">
-              <div className="card-h">
-                <h4>{isAr ? 'المشاهد' : 'Scenes'}</h4>
-                <span className="r">{num(scenes.length, isAr)}</span>
-              </div>
-              <div className="card-b" style={{ display: 'grid', gap: 8 }}>
-                {[...scenes].sort((a, b) => a.position - b.position).map((s) => (
-                  <div key={s.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, lineHeight: 1.7 }}>
-                    <b style={{ color: 'var(--mute)', minWidth: 22 }}>{num(s.position, isAr)}</b>
-                    <span style={{ whiteSpace: 'pre-wrap' }}>{s.visual ?? s.voiceover ?? '—'}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-    if (phase === 'design') {
-      return (
-        <div style={{ display: 'grid', gap: 16 }}>
-          <div className="card">
-            <div className="card-h">
-              <h4>{isAr ? 'المادة المقدَّمة للاعتماد' : 'Material submitted for approval'}</h4>
-              {approvalAsset && (
-                <a className="btn btn-d btn-sm" href={urlFor(approvalAsset) ?? undefined} target="_blank" rel="noreferrer">
-                  {isAr ? 'فتح الملف' : 'Open file'}
-                </a>
-              )}
-            </div>
-            <div className="card-b">
-              {approvalAsset ? (
-                <div style={{ display: 'grid', gap: 10 }}>
-                  {assetPreview(approvalAsset, true)}
-                  <div style={{ fontSize: 12.5 }}>
-                    <b>{approvalAsset.title}</b>
-                    <span style={{ color: 'var(--mute)' }}> · <span className="ltr">{approvalAsset.ref}</span></span>
-                  </div>
-                </div>
-              ) : (
-                <div className="notice">
-                  {isAr
-                    ? 'لا مادة محدَّدة للاعتماد بعد — يحدّدها المصمم من تبويب المواد بزر «تحديد للاعتماد».'
-                    : 'Nothing is marked for approval yet — the designer marks a file on the Material tab.'}
-                </div>
-              )}
-            </div>
-          </div>
-          {otherAssets.length > 0 && (
-            <div className="card">
-              <div className="card-h">
-                <h4>{isAr ? 'مواد أخرى مرتبطة' : 'Other linked material'}</h4>
-                <span className="r">{num(otherAssets.length, isAr)}</span>
-              </div>
-              <div className="card-b" style={{ display: 'grid', gap: 10 }}>
-                {otherAssets.map((a) => (
-                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {assetPreview(a, false)}
-                    <div style={{ minWidth: 0, fontSize: 12.5 }}>
-                      <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</div>
-                      <div style={{ color: 'var(--mute)' }}>{roleOf(a.id) ?? '—'}</div>
-                    </div>
-                    {urlFor(a) && (
-                      <a className="btn btn-d btn-sm" style={{ marginInlineStart: 'auto' }} href={urlFor(a) ?? undefined} target="_blank" rel="noreferrer">
-                        {isAr ? 'فتح' : 'Open'}
-                      </a>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-    return (
+  const materialsCards = item ? (
+    <>
       <div className="card">
         <div className="card-h">
-          <h4>{isAr ? 'خطة النشر' : 'Publishing plan'}</h4>
-          <span className="r">{num(publications.length, isAr)} {isAr ? 'منصة' : 'platforms'}</span>
+          <h4>{heroRole}</h4>
+          {heroAsset && urlFor(heroAsset) && (
+            <a className="btn btn-d btn-sm" href={urlFor(heroAsset) ?? undefined} target="_blank" rel="noreferrer">
+              {isAr ? 'فتح الملف' : 'Open file'}
+            </a>
+          )}
         </div>
-        {publications.length === 0 ? (
-          <p style={{ padding: 20, textAlign: 'center', fontSize: 12.5, color: 'var(--mute)' }}>
-            {isAr ? 'لا منصات بعد.' : 'No platforms yet.'}
-          </p>
-        ) : (
-          <div className="tbl-wrap">
-            <table className="tbl">
-              <tbody>
-                {publications.map((p) => (
-                  <tr key={p.id}>
-                    <td style={{ width: 140 }}>
-                      <span className="tag">
-                        {(isAr ? PLATFORM_LABELS[p.platform]?.ar : PLATFORM_LABELS[p.platform]?.en) ?? p.platform}
-                      </span>
-                    </td>
-                    <td className="ltr" style={{ color: 'var(--mute)' }}>{p.account_handle ?? '—'}</td>
-                    <td style={{ width: 170, color: 'var(--mute)' }}>
-                      {p.published_at || p.scheduled_at
-                        ? dateTimeShort(p.published_at ?? p.scheduled_at, isAr)
-                        : (isAr ? 'بلا موعد' : 'no time set')}
-                    </td>
-                    <td style={{ width: 110 }}>
-                      <Pill tone={p.status === 'published' ? 'live' : p.status === 'scheduled' ? 'go' : 'idle'}>
-                        {(isAr ? PUB_STATUS_LABELS[p.status]?.ar : PUB_STATUS_LABELS[p.status]?.en) ?? p.status}
-                      </Pill>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="card-b">
+          {heroAsset ? (
+            <div style={{ display: 'grid', gap: 10 }}>
+              {assetPreview(heroAsset, true)}
+              <div style={{ fontSize: 12.5 }}>
+                <b>{heroAsset.title}</b>
+                <span style={{ color: 'var(--mute)' }}> · <span className="ltr">{heroAsset.ref}</span></span>
+              </div>
+            </div>
+          ) : (
+            <div className="notice">
+              {isAr
+                ? 'لا مواد مرتبطة بهذا العنصر بعد — تُضاف من تبويب المواد.'
+                : 'No material is linked to this item yet — it is added on the Material tab.'}
+            </div>
+          )}
+        </div>
+      </div>
+      {otherAssets.length > 0 && (
+        <div className="card">
+          <div className="card-h">
+            <h4>{isAr ? 'مواد أخرى مرتبطة' : 'Other linked material'}</h4>
+            <span className="r">{num(otherAssets.length, isAr)}</span>
           </div>
-        )}
+          <div className="card-b" style={{ display: 'grid', gap: 10 }}>
+            {otherAssets.map((a) => (
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {assetPreview(a, false)}
+                <div style={{ minWidth: 0, fontSize: 12.5 }}>
+                  <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</div>
+                  <div style={{ color: 'var(--mute)' }}>{roleOf(a.id) ?? '—'}</div>
+                </div>
+                {urlFor(a) && (
+                  <a className="btn btn-d btn-sm" style={{ marginInlineStart: 'auto' }} href={urlFor(a) ?? undefined} target="_blank" rel="noreferrer">
+                    {isAr ? 'فتح' : 'Open'}
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  ) : null;
+
+  const writingCards = item ? (
+    <>
+      <WritingFields
+        contentId={item.id}
+        schema={fieldSchemaKeys(type?.field_schema ?? [])}
+        data={item.data ?? {}}
+        canEdit={canEdit}
+        isAr={isAr}
+        onSaved={(data) => setItem({ ...item, data })}
+      />
+      {scenes.length > 0 && (
+        <div className="card">
+          <div className="card-h">
+            <h4>{isAr ? 'المشاهد' : 'Scenes'}</h4>
+            <span className="r">{num(scenes.length, isAr)}</span>
+          </div>
+          <div className="card-b" style={{ display: 'grid', gap: 8 }}>
+            {[...scenes].sort((a, b) => a.position - b.position).map((s) => (
+              <div key={s.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, lineHeight: 1.7 }}>
+                <b style={{ color: 'var(--mute)', minWidth: 22 }}>{num(s.position, isAr)}</b>
+                <span style={{ whiteSpace: 'pre-wrap' }}>{s.visual ?? s.voiceover ?? '—'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  ) : null;
+
+  const publishCard = item && (phase === 'publish' || item.status_key === 'done') ? (
+    <div className="card">
+      <div className="card-h">
+        <h4>{isAr ? 'خطة النشر' : 'Publishing plan'}</h4>
+        <span className="r">{num(publications.length, isAr)} {isAr ? 'منصة' : 'platforms'}</span>
+      </div>
+      {publications.length === 0 ? (
+        <p style={{ padding: 20, textAlign: 'center', fontSize: 12.5, color: 'var(--mute)' }}>
+          {isAr ? 'لا منصات بعد.' : 'No platforms yet.'}
+        </p>
+      ) : (
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <tbody>
+              {publications.map((p) => (
+                <tr key={p.id}>
+                  <td style={{ width: 140 }}>
+                    <span className="tag">
+                      {(isAr ? PLATFORM_LABELS[p.platform]?.ar : PLATFORM_LABELS[p.platform]?.en) ?? p.platform}
+                    </span>
+                  </td>
+                  <td className="ltr" style={{ color: 'var(--mute)' }}>{p.account_handle ?? '—'}</td>
+                  <td style={{ width: 170, color: 'var(--mute)' }}>
+                    {p.published_at || p.scheduled_at
+                      ? dateTimeShort(p.published_at ?? p.scheduled_at, isAr)
+                      : (isAr ? 'بلا موعد' : 'no time set')}
+                  </td>
+                  <td style={{ width: 110 }}>
+                    <Pill tone={p.status === 'published' ? 'live' : p.status === 'scheduled' ? 'go' : 'idle'}>
+                      {(isAr ? PUB_STATUS_LABELS[p.status]?.ar : PUB_STATUS_LABELS[p.status]?.en) ?? p.status}
+                    </Pill>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  ) : null;
+
+  // The content itself, always: writing first while the copy is the work,
+  // material first once the piece is in design or beyond.
+  const body = (): JSX.Element | null => {
+    if (!item) return null;
+    return (
+      <div style={{ display: 'grid', gap: 16 }}>
+        {phase === 'writing' ? (<>{writingCards}{materialsCards}</>) : (<>{materialsCards}{writingCards}</>)}
+        {publishCard}
       </div>
     );
   };
