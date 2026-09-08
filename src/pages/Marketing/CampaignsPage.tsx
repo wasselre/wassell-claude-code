@@ -19,7 +19,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
-import { IconCampaigns, IconMetrics, IconPlus } from './components/icons';
+import { IconCampaigns, IconContent, IconMetrics, IconPlus } from './components/icons';
 import ProjectMultiSelect from './components/ProjectMultiSelect';
 import GoalMultiSelect from './components/GoalMultiSelect';
 import CampaignExecutionsBuilder, {
@@ -29,7 +29,7 @@ import CampaignContentBuilder, { type ContentDraft } from './components/Campaign
 import SuccessMeasuresEditor, {
   MeasureDraft, measuresToDrafts, draftsToMeasures, hasMeasureTarget,
 } from './components/SuccessMeasuresEditor';
-import { money, num, shortDate, whole } from './lib/format';
+import { money, num, pct, shortDate, whole } from './lib/format';
 import { measureActual, pickMainMeasure } from './lib/measure';
 import { campaignAutoName, executionAutoName } from './lib/autoName';
 import './styles/mobile-m4.css';
@@ -605,7 +605,11 @@ export default function CampaignsPage() {
                         <th className="num" style={{ width: 96 }}>{isAr ? 'الميزانية' : 'Budget'}</th>
                         <th className="num" style={{ width: 88 }}>{isAr ? 'المصروف' : 'Spent'}</th>
                         <th className="num" style={{ width: 66 }}>{isAr ? 'العملاء' : 'Leads'}</th>
-                        <th className="num" style={{ width: 82 }}>{isAr ? 'التكلفة' : 'Cost'}</th>
+                        <th className="num" style={{ width: 82 }}>{isAr ? 'تكلفة العميل' : 'Cost / lead'}</th>
+                        <th className="num" style={{ width: 84 }}>{isAr ? 'الظهور' : 'Impressions'}</th>
+                        <th className="num" style={{ width: 66 }}>CTR</th>
+                        <th className="num" style={{ width: 70 }}>{isAr ? 'النقرات' : 'Clicks'}</th>
+                        <th className="num" style={{ width: 66 }}>CPC</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -620,9 +624,20 @@ export default function CampaignsPage() {
                           : (isAr ? 'لم تُطلق' : 'Not launched yet');
                         const leads = c.total_leads ?? 0;
                         const spend = c.total_spend ?? 0;
-                        const cpl = !organic && !planning && spend > 0 && leads > 0
+                        // Results show whenever the executions have REPORTED them
+                        // — never gated on the hand-set status. A campaign left
+                        // as «مخططة» while its Meta ads already ran used to blank
+                        // its leads (C-041: 5 leads, C-026: 169 leads rendered as
+                        // «—»), which read as "the sync is broken".
+                        const hasResults = c.total_spend !== null || c.total_leads !== null
+                          || c.total_impressions !== null || c.total_clicks !== null;
+                        const cpl = !organic && spend > 0 && leads > 0
                           ? Math.round(spend / leads)
                           : null;
+                        const impressions = c.total_impressions ?? 0;
+                        const clicks = c.total_clicks ?? 0;
+                        const ctr = !organic && impressions > 0 ? (clicks / impressions) * 100 : null;
+                        const cpc = !organic && spend > 0 && clicks > 0 ? spend / clicks : null;
                         const threshold = c.success_metric === 'cpl' ? c.success_threshold : null;
                         return (
                           <tr
@@ -673,7 +688,19 @@ export default function CampaignsPage() {
                             })()}</td>
                             <td>{duration(c, isAr)}</td>
                             <td><Pill tone={st.tone}>{isAr ? st.ar : st.en}</Pill></td>
-                            <td className="num">{num(c.content_count, isAr)}</td>
+                            {/* The count doubles as the door to the library,
+                                filtered to this campaign's content. */}
+                            <td className="num" onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }}>
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                title={isAr ? 'عرض محتوى هذه الحملة' : 'Show this campaign\u2019s content'}
+                                onClick={() => navigate(`/m/content?campaign=${c.id}`)}
+                              >
+                                <IconContent style={{ width: 12, height: 12 }} />
+                                {num(c.content_count, isAr)}
+                              </button>
+                            </td>
                             <td className="num" style={organic || c.budget_total === null ? { color: 'var(--mute)' } : undefined}>
                               {organic
                                 ? '—'
@@ -684,8 +711,8 @@ export default function CampaignsPage() {
                             <td className="num" style={organic || c.total_spend === null ? { color: 'var(--mute)' } : undefined}>
                               {organic ? '—' : num(whole(c.total_spend), isAr)}
                             </td>
-                            <td className="num" style={planning || c.total_leads === null ? { color: 'var(--mute)' } : undefined}>
-                              {planning ? '—' : num(c.total_leads, isAr)}
+                            <td className="num" style={c.total_leads === null ? { color: 'var(--mute)' } : undefined}>
+                              {hasResults ? num(c.total_leads ?? 0, isAr) : '—'}
                             </td>
                             <td
                               className="num"
@@ -696,6 +723,18 @@ export default function CampaignsPage() {
                                   : undefined}
                             >
                               {cpl === null ? '—' : num(cpl, isAr)}
+                            </td>
+                            <td className="num" style={!hasResults || organic ? { color: 'var(--mute)' } : undefined}>
+                              {organic || !hasResults ? '—' : num(impressions, isAr)}
+                            </td>
+                            <td className="num" style={ctr === null ? { color: 'var(--mute)' } : undefined}>
+                              {ctr === null ? '—' : pct(ctr, isAr, 1)}
+                            </td>
+                            <td className="num" style={!hasResults || organic ? { color: 'var(--mute)' } : undefined}>
+                              {organic || !hasResults ? '—' : num(clicks, isAr)}
+                            </td>
+                            <td className="num" style={cpc === null ? { color: 'var(--mute)' } : undefined}>
+                              {cpc === null ? '—' : num(Math.round(cpc * 100) / 100, isAr)}
                             </td>
                           </tr>
                         );

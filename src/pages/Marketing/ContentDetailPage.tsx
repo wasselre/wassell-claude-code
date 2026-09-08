@@ -21,7 +21,7 @@
  *   ceo         — read-only AND no script, scenes, or comments at all.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   FOOTAGE_LABELS, MosAccount, MosComment, MosContentRow, MosContentVersion, MosPublication,
   MosScene, MosStep, MosTask, PLATFORM_LABELS, PUB_STATUS_LABELS, ROLE_LABELS, RolePerson,
@@ -60,6 +60,15 @@ import { dateTimeShort, daysAgo, daysFromNow, initial, num, roleAvatarClass, sho
 import './styles/mobile-m2.css';
 
 type Tab = 'overview' | 'content' | 'placements' | 'materials' | 'project_assets' | 'project_info' | 'tasks' | 'performance' | 'creative';
+
+const TAB_KEYS: ReadonlySet<string> = new Set<Tab>([
+  'overview', 'content', 'placements', 'materials', 'project_assets', 'project_info', 'tasks', 'performance', 'creative',
+]);
+
+/** `?tab=content` deep-links straight to a tab (the list's «الخطوة الحالية» button). */
+function tabFromParam(raw: string | null): Tab {
+  return raw && TAB_KEYS.has(raw) ? (raw as Tab) : 'overview';
+}
 
 /** The breadcrumb's plural type names — s06 «الفيديوهات», s08 «المنشورات». */
 const TYPE_PLURAL: Record<string, { ar: string; en: string }> = {
@@ -102,6 +111,7 @@ function relDay(iso: string | null | undefined, isAr: boolean): string {
 export default function ContentDetailPage() {
   const { contentId } = useParams<{ contentId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const addToast = useAppStore((s) => s.addToast);
   const { isAr, roles, can, typeLabel, projectName, contentTypes, people, projects, appUserId } = useWorkspace();
   // W6-M: content field VALUES read in the workspace language (English pages
@@ -123,7 +133,7 @@ export default function ContentDetailPage() {
   // The campaign's own projects — used as the INDIRECT project link when the
   // item carries no project of its own («المحتوى مرتبط بحملة مرتبطة بمشروع»).
   const [campaignProjectIds, setCampaignProjectIds] = useState<string[]>([]);
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>(() => tabFromParam(searchParams.get('tab')));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingBrief, setEditingBrief] = useState(false);

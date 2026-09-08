@@ -25,10 +25,13 @@ import {
   fetchContentList,
   fetchSettings,
   isOverdue,
+  statusLabel,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, KindCell, LoadError, Modal, PageHead, Skeleton, StatusPill } from './components/kit';
 import NewContentModal from './components/NewContentModal';
+import ContentPreviewModal from './components/ContentPreviewModal';
+import { phaseOfStep, stageIsMine, tabForPhase } from './lib/stagePhase';
 import { IconPlus, IconSearch } from './components/icons';
 import { daysAgo, initial, num, roleAvatarClass, shortDate } from './lib/format';
 
@@ -61,7 +64,7 @@ function WhoCell({ row, isAr }: { row: ListRow; isAr: boolean }) {
 }
 
 export default function ContentListPage() {
-  const { isAr, contentTypes, projects, people, typeLabel, projectName, can, setBadge } = useWorkspace();
+  const { isAr, contentTypes, projects, people, typeLabel, projectName, can, roles, setBadge } = useWorkspace();
   const addToast = useAppStore((s) => s.addToast);
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -71,6 +74,8 @@ export default function ContentListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // «معاينة» — the row whose stage popup is open.
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [q, setQ] = useState('');
   // Multi-select for bulk delete (table view).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -298,6 +303,18 @@ export default function ContentListPage() {
   }, [bottleneckKey, boardCols, people, isAr]);
 
   const peopleById = useMemo(() => new Map(people.map((p) => [p.user_id, p])), [people]);
+
+  /**
+   * «الخطوة الحالية» — where the row's open stage lives on the content page.
+   * The phase (writing / design / publish) is read off the workflow the row's
+   * TYPE points at (the pinned version is the same list for every live row;
+   * a drifted key falls back to a keyword guess inside phaseOfStep).
+   */
+  const tabForRow = (r: ListRow): string => {
+    const wfId = contentTypes.find((t) => t.key === r.content_type_key)?.workflow_id ?? null;
+    const steps = workflows.find((w) => w.id === wfId)?.steps ?? [];
+    return tabForPhase(phaseOfStep(steps, r.status_key));
+  };
 
   const boardSub = boardWf
     ? isAr
@@ -537,6 +554,8 @@ export default function ContentListPage() {
                     <th style={{ width: 112 }}>{isAr ? 'المشروع' : 'Project'}</th>
                     <th style={{ width: 134 }}>{isAr ? 'الحملة' : 'Campaign'}</th>
                     <th style={{ width: 140 }}>{isAr ? 'المرحلة' : 'Stage'}</th>
+                    <th style={{ width: 132 }}>{isAr ? 'الخطوة الحالية' : 'Current step'}</th>
+                    <th style={{ width: 76 }}>{isAr ? 'معاينة' : 'Preview'}</th>
                     <th style={{ width: 104 }}>{isAr ? 'لدى' : 'With'}</th>
                     <th style={{ width: 88 }}>{isAr ? 'الاستحقاق' : 'Due'}</th>
                     <th style={{ width: 88 }}>{isAr ? 'النشر' : 'Publish'}</th>
@@ -574,6 +593,39 @@ export default function ContentListPage() {
                         {r.campaign_name ?? '—'}
                       </td>
                       <td><StatusPill row={r} isAr={isAr} /></td>
+                      {/* «الخطوة الحالية»: the open stage is MINE → a button
+                          straight to the tab that holds the work (writing →
+                          content, design → materials, publishing → placements);
+                          otherwise an honest «لا شيء لديك». Ownership = held
+                          roles (manager/admin act on any stage), never the
+                          active role string. */}
+                      <td onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }}>
+                        {r.status_key === 'done' ? (
+                          <span style={{ fontSize: 12, color: 'var(--mute)' }}>{isAr ? 'منتهٍ' : 'Finished'}</span>
+                        ) : r.status_key === 'draft' ? (
+                          <span style={{ fontSize: 12, color: 'var(--mute)' }}>{isAr ? 'مسودة' : 'Draft'}</span>
+                        ) : stageIsMine(roles, r.owner_role) ? (
+                          <button
+                            type="button"
+                            className="btn btn-p btn-sm"
+                            title={isAr ? 'انتقل إلى مكان العمل في هذه المرحلة' : 'Go to where this stage has its work'}
+                            onClick={() => navigate(`/m/content/${r.id}?tab=${tabForRow(r)}`)}
+                          >
+                            {statusLabel(r, isAr)}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: 12, color: 'var(--mute)' }}>{isAr ? 'لا شيء لديك' : 'Nothing for you'}</span>
+                        )}
+                      </td>
+                      <td onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }}>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => setPreviewId(r.id)}
+                        >
+                          {isAr ? 'معاينة' : 'Preview'}
+                        </button>
+                      </td>
                       <td><WhoCell row={r} isAr={isAr} /></td>
                       <td style={isOverdue(r) ? { color: 'var(--late)', fontWeight: 700 } : undefined}>
                         {shortDate(r.current_task_due_at ?? r.due_at, isAr)}
@@ -662,6 +714,15 @@ export default function ContentListPage() {
       </div>
 
       {creating && <NewContentModal onClose={() => setCreating(false)} onCreatedMany={() => void load()} />}
+
+      {previewId && (
+        <ContentPreviewModal
+          contentId={previewId}
+          isAr={isAr}
+          onClose={() => setPreviewId(null)}
+          onChanged={() => void load()}
+        />
+      )}
 
       {confirmOpen && (
         <Modal
