@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Loader2, Search, FileText, Download, Play, X, RefreshCw, Phone, Clock,
-  Megaphone, AlertTriangle, Briefcase, StickyNote, HandCoins, Save,
+  Megaphone, AlertTriangle, Briefcase, StickyNote, HandCoins, Save, Calculator, FileDown,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
 import { SITUATION_OPTIONS, EXPERIENCE_OPTIONS, YES_NO_OPTIONS } from '@/lib/careers/form';
+import { buildOfferLetterPdf, offerPdfFilename } from '@/lib/careers/offerPdf';
+import { downloadPdf } from '@/lib/projects/sendPdfToChat';
 
 /**
  * Internal, admin-only review of public job applications ("مستشار مبيعات عقارية").
@@ -43,11 +45,32 @@ interface JobApplication {
   offer_details: string | null;
   offer_sent_at: string | null;
   review_notes: string | null;
+  // Cost-projection scenario inputs (2026-09-08). Null → UI defaults below.
+  offer_sales_per_month: number | null;
+  offer_avg_sale_price: number | null;
+  offer_company_commission_pct: number | null;
 }
 
 /** Admin-editable columns (the rest of the row is applicant-authored + immutable). */
 type AppPatch = Partial<Pick<JobApplication,
-  'status' | 'offer_salary' | 'offer_commission' | 'offer_details' | 'offer_sent_at' | 'review_notes'>>;
+  | 'status' | 'offer_salary' | 'offer_commission' | 'offer_details' | 'offer_sent_at' | 'review_notes'
+  | 'offer_sales_per_month' | 'offer_avg_sale_price' | 'offer_company_commission_pct'>>;
+
+/** Projection defaults when the row has no saved scenario yet. */
+const DEFAULT_AVG_SALE_PRICE = 1_250_000;   // SAR
+const DEFAULT_COMPANY_COMMISSION_PCT = 2.5; // % of the sale price the company earns
+
+/**
+ * Parse a user-typed number: strips thousands separators / % / currency, maps
+ * Arabic-Indic digits to ASCII. '' → null (unset); garbage → NaN (invalid).
+ */
+function parseNum(s: string): number | null {
+  const ascii = s.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+  const cleaned = ascii.replace(/[^\d.]/g, '');
+  if (s.trim() === '') return null;
+  if (cleaned === '') return NaN;
+  return Number(cleaned);
+}
 
 const STATUSES = [
   { value: 'new', ar: 'جديد', en: 'New', color: '#3B82F6' },
@@ -261,36 +284,94 @@ function DetailDrawer({
   const [busy, setBusy] = useState<string | null>(null);
 
   // Offer + notes drafts. Re-seeded whenever a different application opens.
-  const [offerSalary, setOfferSalary] = useState(app.offer_salary != null ? String(app.offer_salary) : '');
+  const str = (n: number | null) => (n != null ? String(n) : '');
+  const [offerSalary, setOfferSalary] = useState(str(app.offer_salary));
   const [offerCommission, setOfferCommission] = useState(app.offer_commission ?? '');
   const [offerDetails, setOfferDetails] = useState(app.offer_details ?? '');
+  const [offerSales, setOfferSales] = useState(str(app.offer_sales_per_month));
+  const [offerAvgPrice, setOfferAvgPrice] = useState(str(app.offer_avg_sale_price ?? DEFAULT_AVG_SALE_PRICE));
+  const [offerCompanyPct, setOfferCompanyPct] = useState(str(app.offer_company_commission_pct ?? DEFAULT_COMPANY_COMMISSION_PCT));
+  const [includeDetailsInPdf, setIncludeDetailsInPdf] = useState(true);
   const [notes, setNotes] = useState(app.review_notes ?? '');
   useEffect(() => {
-    setOfferSalary(app.offer_salary != null ? String(app.offer_salary) : '');
+    setOfferSalary(str(app.offer_salary));
     setOfferCommission(app.offer_commission ?? '');
     setOfferDetails(app.offer_details ?? '');
+    setOfferSales(str(app.offer_sales_per_month));
+    setOfferAvgPrice(str(app.offer_avg_sale_price ?? DEFAULT_AVG_SALE_PRICE));
+    setOfferCompanyPct(str(app.offer_company_commission_pct ?? DEFAULT_COMPANY_COMMISSION_PCT));
+    setIncludeDetailsInPdf(true);
     setNotes(app.review_notes ?? '');
     setAudioUrl(null);
   }, [app.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const salaryNum = offerSalary.trim() === '' ? null : Number(offerSalary.replace(/[^\d.]/g, ''));
-  const salaryInvalid = salaryNum != null && !Number.isFinite(salaryNum);
+  // Parsed numbers (null = unset, NaN = invalid).
+  const salaryNum = parseNum(offerSalary);
+  const repPctNum = parseNum(offerCommission);
+  const salesNum = parseNum(offerSales);
+  const avgPriceNum = parseNum(offerAvgPrice);
+  const companyPctNum = parseNum(offerCompanyPct);
+  const invalid = [salaryNum, repPctNum, salesNum, avgPriceNum, companyPctNum].some((n) => n != null && Number.isNaN(n));
+  const bad = (n: number | null) => n != null && Number.isNaN(n);
+
+  // Cost projection: company commission per sale → rep's share → × sales → + salary.
+  const companyPerSale = avgPriceNum != null && companyPctNum != null && !bad(avgPriceNum) && !bad(companyPctNum)
+    ? avgPriceNum * (companyPctNum / 100) : null;
+  const repPerSale = companyPerSale != null && repPctNum != null && !bad(repPctNum) ? companyPerSale * (repPctNum / 100) : null;
+  const monthlyCommission = repPerSale != null && salesNum != null && !bad(salesNum) ? repPerSale * salesNum : null;
+  const monthlyCost = monthlyCommission != null || (salaryNum != null && !bad(salaryNum))
+    ? (bad(salaryNum) ? 0 : salaryNum ?? 0) + (monthlyCommission ?? 0) : null;
+  const annualCost = monthlyCost != null ? monthlyCost * 12 : null;
+  const money = (n: number | null) => (n == null ? '—' : `${Math.round(n).toLocaleString(isAr ? 'ar-SA' : 'en-US')} ${isAr ? 'ر.س' : 'SAR'}`);
+
+  const same = (a: number | null, b: number | null) => (a == null ? null : a) === (b == null ? null : b);
   const offerDirty =
-    (salaryNum ?? null) !== (app.offer_salary ?? null) ||
+    !same(bad(salaryNum) ? null : salaryNum, app.offer_salary) ||
     (offerCommission.trim() || null) !== (app.offer_commission || null) ||
-    (offerDetails.trim() || null) !== (app.offer_details || null);
+    (offerDetails.trim() || null) !== (app.offer_details || null) ||
+    !same(bad(salesNum) ? null : salesNum, app.offer_sales_per_month) ||
+    !same(bad(avgPriceNum) ? null : avgPriceNum, app.offer_avg_sale_price ?? DEFAULT_AVG_SALE_PRICE) ||
+    !same(bad(companyPctNum) ? null : companyPctNum, app.offer_company_commission_pct ?? DEFAULT_COMPANY_COMMISSION_PCT);
   const notesDirty = (notes.trim() || null) !== (app.review_notes || null);
 
-  const saveOffer = async () => {
-    if (salaryInvalid) { onToast(isAr ? 'الراتب يجب أن يكون رقمًا' : 'Salary must be a number', 'error'); return; }
+  const saveOffer = async (): Promise<boolean> => {
+    if (invalid) { onToast(isAr ? 'تحقق من الأرقام المدخلة في العرض' : 'Check the numbers entered in the offer', 'error'); return false; }
     setBusy('offer');
     const ok = await onPatch({
       offer_salary: salaryNum,
       offer_commission: offerCommission.trim() || null,
       offer_details: offerDetails.trim() || null,
+      offer_sales_per_month: salesNum,
+      offer_avg_sale_price: avgPriceNum,
+      offer_company_commission_pct: companyPctNum,
     });
     setBusy(null);
     if (ok) onToast(isAr ? 'تم حفظ العرض' : 'Offer saved', 'success');
+    return ok;
+  };
+
+  /** Candidate-facing offer letter. Saves first when the card has unsaved edits. */
+  const exportOfferPdf = async () => {
+    if (offerDirty) {
+      const ok = await saveOffer();
+      if (!ok) return;
+    }
+    setBusy('pdf');
+    try {
+      const blob = await buildOfferLetterPdf({
+        candidateName: app.full_name,
+        candidatePhone: app.phone,
+        salary: bad(salaryNum) ? null : salaryNum,
+        commissionPct: bad(repPctNum) ? null : repPctNum,
+        details: offerDetails.trim() || null,
+        includeDetails: includeDetailsInPdf,
+        isAr,
+      });
+      downloadPdf(blob, offerPdfFilename(app.full_name));
+    } catch (e) {
+      console.error('[job_applications] offer pdf failed', e);
+      onToast(isAr ? `تعذّر إنشاء الملف: ${e instanceof Error ? e.message : 'error'}` : `Could not build the PDF: ${e instanceof Error ? e.message : 'error'}`, 'error');
+    } finally { setBusy(null); }
   };
 
   const saveNotes = async () => {
@@ -408,20 +489,50 @@ function DetailDrawer({
                   dir="ltr"
                   placeholder={app.expected_salary != null ? String(app.expected_salary) : '6000'}
                   className={inputCls}
-                  style={salaryInvalid ? { borderColor: '#8E4E3A' } : undefined}
+                  style={bad(salaryNum) ? { borderColor: '#8E4E3A' } : undefined}
                 />
               </div>
               <div>
-                <label className="block text-[11px] text-charcoal/50 mb-1">{isAr ? 'العمولة' : 'Commission'}</label>
+                <label className="block text-[11px] text-charcoal/50 mb-1">{isAr ? 'عمولة الموظف (٪ من عمولة الشركة)' : "Rep commission (% of company's)"}</label>
                 <input
                   value={offerCommission}
                   onChange={(e) => setOfferCommission(e.target.value)}
-                  placeholder={app.expected_commission || (isAr ? 'مثال: 1.5%' : 'e.g. 1.5%')}
+                  inputMode="decimal"
+                  dir="ltr"
+                  placeholder={app.expected_commission || (isAr ? 'مثال: 12%' : 'e.g. 12%')}
                   className={inputCls}
+                  style={bad(repPctNum) ? { borderColor: '#8E4E3A' } : undefined}
                 />
               </div>
             </div>
-            <label className="block text-[11px] text-charcoal/50 mb-1">{isAr ? 'تفاصيل العرض' : 'Offer details'}</label>
+
+            {/* Cost projection inputs */}
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              <div>
+                <label className="block text-[11px] text-charcoal/50 mb-1">{isAr ? 'مبيعات / شهر' : 'Sales / month'}</label>
+                <input value={offerSales} onChange={(e) => setOfferSales(e.target.value)} inputMode="decimal" dir="ltr" placeholder="2" className={inputCls} style={bad(salesNum) ? { borderColor: '#8E4E3A' } : undefined} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-charcoal/50 mb-1">{isAr ? 'متوسط سعر البيع' : 'Avg sale price'}</label>
+                <input value={offerAvgPrice} onChange={(e) => setOfferAvgPrice(e.target.value)} inputMode="decimal" dir="ltr" placeholder={String(DEFAULT_AVG_SALE_PRICE)} className={inputCls} style={bad(avgPriceNum) ? { borderColor: '#8E4E3A' } : undefined} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-charcoal/50 mb-1">{isAr ? 'عمولة الشركة ٪' : 'Company comm. %'}</label>
+                <input value={offerCompanyPct} onChange={(e) => setOfferCompanyPct(e.target.value)} inputMode="decimal" dir="ltr" placeholder={String(DEFAULT_COMPANY_COMMISSION_PCT)} className={inputCls} style={bad(companyPctNum) ? { borderColor: '#8E4E3A' } : undefined} />
+              </div>
+            </div>
+
+            {/* Cost projection (internal — never printed on the offer letter) */}
+            <div className="rounded-lg bg-cream/70 border border-sand/30 px-3 py-2 mb-3 text-xs">
+              <p className="text-[11px] font-bold text-charcoal/60 mb-1.5 flex items-center gap-1.5"><Calculator size={12} /> {isAr ? 'تقدير التكلفة علينا' : 'Projected cost to us'}</p>
+              <div className="flex justify-between py-0.5 text-charcoal/70"><span>{isAr ? 'عمولة الشركة عن كل بيعة' : 'Company commission / sale'}</span><span dir="ltr">{money(companyPerSale)}</span></div>
+              <div className="flex justify-between py-0.5 text-charcoal/70"><span>{isAr ? 'عمولة الموظف عن كل بيعة' : 'Rep commission / sale'}</span><span dir="ltr">{money(repPerSale)}</span></div>
+              <div className="flex justify-between py-0.5 text-charcoal/70"><span>{isAr ? 'عمولة الموظف شهريًا' : 'Rep commission / month'}</span><span dir="ltr">{money(monthlyCommission)}</span></div>
+              <div className="flex justify-between py-1 mt-1 border-t border-sand/40 font-bold text-charcoal"><span>{isAr ? 'التكلفة الشهرية (راتب + عمولة)' : 'Monthly cost (salary + commission)'}</span><span dir="ltr">{money(monthlyCost)}</span></div>
+              <div className="flex justify-between py-0.5 text-charcoal/70"><span>{isAr ? 'التكلفة السنوية' : 'Annual cost'}</span><span dir="ltr">{money(annualCost)}</span></div>
+            </div>
+
+            <label className="block text-[11px] text-charcoal/50 mb-1">{isAr ? 'تفاصيل العرض والمكافآت' : 'Offer details & bonuses'}</label>
             <textarea
               value={offerDetails}
               onChange={(e) => setOfferDetails(e.target.value)}
@@ -439,6 +550,28 @@ function DetailDrawer({
                 className="flex items-center gap-1.5 rounded-lg bg-copper text-white text-xs font-bold px-3 py-1.5 disabled:opacity-40"
               >
                 {busy === 'offer' ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {isAr ? 'حفظ العرض' : 'Save offer'}
+              </button>
+            </div>
+
+            {/* Offer letter PDF */}
+            <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-sand/30">
+              <label className="flex items-center gap-1.5 text-[11px] text-charcoal/60 select-none">
+                <input
+                  type="checkbox"
+                  checked={includeDetailsInPdf && !!offerDetails.trim()}
+                  disabled={!offerDetails.trim()}
+                  onChange={(e) => setIncludeDetailsInPdf(e.target.checked)}
+                  className="accent-copper"
+                />
+                {isAr ? 'تضمين التفاصيل والمكافآت في الملف' : 'Include details & bonuses in the letter'}
+              </label>
+              <button
+                onClick={() => void exportOfferPdf()}
+                disabled={!!busy || invalid || (salaryNum == null && repPctNum == null)}
+                className="flex items-center gap-1.5 rounded-lg bg-chocolate text-white text-xs font-bold px-3 py-1.5 disabled:opacity-40"
+                title={isAr ? 'ملف عرض العمل الرسمي (PDF)' : 'Official offer letter (PDF)'}
+              >
+                {busy === 'pdf' ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />} {isAr ? 'ملف العرض PDF' : 'Offer letter PDF'}
               </button>
             </div>
           </div>

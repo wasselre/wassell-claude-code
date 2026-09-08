@@ -95,7 +95,7 @@ function imgReady(im: HTMLImageElement): Promise<void> {
  * Blob. Mirrors `pricingReportPdf.ts`: settle images first so html2canvas can't
  * rasterize a gap, then slice a tall canvas across pages.
  */
-async function rasterizeToPdf(html: string, orientation: 'portrait' | 'landscape'): Promise<Blob> {
+export async function rasterizeToPdf(html: string, orientation: 'portrait' | 'landscape'): Promise<Blob> {
   const container = document.createElement('div');
   container.style.cssText = 'position:absolute;left:-9999px;top:0';
   container.innerHTML = html;
