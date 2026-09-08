@@ -276,6 +276,20 @@ export interface MosContentRow {
   thumb_url?: string | null;
   preview_file_id?: string | null;
   preview_kind?: string | null;
+  /** The paid ads this item is the creative for — `content_list` only. Empty =
+   *  not linked to any ad. `platform_ad_id` set = the ad exists on the platform
+   *  (pushed or synced from Meta); null = planned in the app only. */
+  ads?: MosContentAdLink[];
+}
+
+export interface MosContentAdLink {
+  id: string;
+  label: string | null;
+  status: string | null;
+  platform_ad_id: string | null;
+  execution_id: string;
+  platform: string | null;
+  campaign_id: string | null;
 }
 
 export interface MosTask {

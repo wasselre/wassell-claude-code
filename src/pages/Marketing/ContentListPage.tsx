@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
+  AD_STATUS_LABELS,
   MosContentRow,
   MosRole,
   PLATFORM_LABELS,
@@ -28,7 +29,7 @@ import {
   statusLabel,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, KindCell, LoadError, Modal, PageHead, Skeleton, StatusPill } from './components/kit';
+import { Empty, KindCell, LoadError, Modal, PageHead, Pill, Skeleton, StatusPill } from './components/kit';
 import NewContentModal from './components/NewContentModal';
 import ContentPreviewModal from './components/ContentPreviewModal';
 import { phaseOfStep, stageIsMine, tabForPhase } from './lib/stagePhase';
@@ -42,6 +43,38 @@ const ROLES: MosRole[] = ['writer', 'montage', 'ops_supervisor', 'marketing_mana
 
 const platformLabel = (key: string, isAr: boolean): string =>
   PLATFORM_LABELS[key] ? (isAr ? PLATFORM_LABELS[key].ar : PLATFORM_LABELS[key].en) : key;
+
+/**
+ * «الإعلان» — is this creative the content of a paid ad, and is that ad real on
+ * the platform yet? Three honest states: not linked («—»), linked to an ad
+ * that exists only in the app (planned, no platform id), or linked to an ad
+ * that is on Meta (has a platform ad id) — with the ad's status.
+ */
+function AdCell({ row, isAr }: { row: ListRow; isAr: boolean }) {
+  const ads = row.ads ?? [];
+  if (ads.length === 0) return <span style={{ color: 'var(--mute)' }}>—</span>;
+  // A synced ad wins the headline; among several, a running one wins.
+  const synced = ads.filter((a) => a.platform_ad_id);
+  const lead = synced.find((a) => a.status === 'running') ?? synced[0] ?? ads[0];
+  if (!lead) return <span style={{ color: 'var(--mute)' }}>—</span>;
+  const platform = lead.platform
+    ? (isAr ? PLATFORM_LABELS[lead.platform]?.ar : PLATFORM_LABELS[lead.platform]?.en) ?? lead.platform
+    : (isAr ? 'إعلان' : 'Ad');
+  const status = lead.status && AD_STATUS_LABELS[lead.status]
+    ? (isAr ? AD_STATUS_LABELS[lead.status].ar : AD_STATUS_LABELS[lead.status].en)
+    : null;
+  const onPlatform = !!lead.platform_ad_id;
+  const text = onPlatform
+    ? `${platform}${status ? ` · ${status}` : ''}`
+    : `${platform} · ${isAr ? 'لم يُرفع بعد' : 'not pushed yet'}`;
+  const more = ads.length > 1 ? ` +${num(ads.length - 1, isAr)}` : '';
+  const title = ads.map((a) => a.label ?? a.id.slice(0, 8)).join(isAr ? '، ' : ', ');
+  return (
+    <span title={title}>
+      <Pill tone={onPlatform ? (lead.status === 'running' ? 'live' : 'go') : 'idle'}>{text}{more}</Pill>
+    </span>
+  );
+}
 
 /** «لدى» — the mockup's avatar carries the PERSON's initial, the text the role. */
 function WhoCell({ row, isAr }: { row: ListRow; isAr: boolean }) {
@@ -553,6 +586,7 @@ export default function ContentListPage() {
                     <th>{isAr ? 'العنوان' : 'Title'}</th>
                     <th style={{ width: 112 }}>{isAr ? 'المشروع' : 'Project'}</th>
                     <th style={{ width: 134 }}>{isAr ? 'الحملة' : 'Campaign'}</th>
+                    <th style={{ width: 128 }}>{isAr ? 'الإعلان' : 'Ad'}</th>
                     <th style={{ width: 140 }}>{isAr ? 'المرحلة' : 'Stage'}</th>
                     <th style={{ width: 132 }}>{isAr ? 'الخطوة الحالية' : 'Current step'}</th>
                     <th style={{ width: 76 }}>{isAr ? 'معاينة' : 'Preview'}</th>
@@ -592,6 +626,7 @@ export default function ContentListPage() {
                       <td style={{ color: r.campaign_name ? undefined : 'var(--mute)' }}>
                         {r.campaign_name ?? '—'}
                       </td>
+                      <td><AdCell row={r} isAr={isAr} /></td>
                       <td><StatusPill row={r} isAr={isAr} /></td>
                       {/* «الخطوة الحالية»: the open stage is MINE → a button
                           straight to the tab that holds the work (writing →

@@ -1839,8 +1839,37 @@ export default async function handler(req: Request): Promise<Response> {
         const links = ids.length > 0
           ? await sb.from('mos_asset_links').select('content_id, asset_id, role').in('content_id', ids)
           : { data: [] as Array<{ content_id: string; asset_id: string; role: string }>, error: null };
-        const fail2 = dbFail(camps.error) ?? dbFail(pubs.error) ?? dbFail(links.error);
+        // «الإعلان» — which paid ads (mos_execution_ads) each item is the creative
+        // for, with the execution's platform so the list can say "Meta ad" and
+        // whether the ad has been pushed/synced (platform_ad_id present). One
+        // batched read; archived ads are left out.
+        const adRows = ids.length > 0
+          ? await sb.from('mos_execution_ads')
+              .select('id, content_id, label, status, platform_ad_id, execution_id, mos_campaign_executions(platform, campaign_id)')
+              .in('content_id', ids)
+              .is('archived_at', null)
+          : { data: [] as unknown[], error: null };
+        const fail2 = dbFail(camps.error) ?? dbFail(pubs.error) ?? dbFail(links.error) ?? dbFail(adRows.error);
         if (fail2) return fail2;
+        type AdRow = {
+          id: string; content_id: string; label: string | null; status: string | null;
+          platform_ad_id: string | null; execution_id: string;
+          mos_campaign_executions: { platform: string | null; campaign_id: string | null } | null;
+        };
+        const adsByContent = new Map<string, Array<Record<string, unknown>>>();
+        for (const a of (adRows.data ?? []) as AdRow[]) {
+          const arr = adsByContent.get(a.content_id) ?? [];
+          arr.push({
+            id: a.id,
+            label: a.label,
+            status: a.status,
+            platform_ad_id: a.platform_ad_id,
+            execution_id: a.execution_id,
+            platform: a.mos_campaign_executions?.platform ?? null,
+            campaign_id: a.mos_campaign_executions?.campaign_id ?? null,
+          });
+          adsByContent.set(a.content_id, arr);
+        }
 
         const assetIds = Array.from(new Set((links.data ?? []).map((l) => l.asset_id)));
         const assetsRes = assetIds.length > 0
@@ -1890,6 +1919,7 @@ export default async function handler(req: Request): Promise<Response> {
               ...r,
               campaign_name: r.campaign_id ? campName.get(r.campaign_id as string) ?? null : null,
               platforms: plats.get(r.id as string) ?? [],
+              ads: adsByContent.get(r.id as string) ?? [],
               thumb_url: best?.thumb ?? null,
               preview_file_id: best?.fileId ?? null,
               preview_kind: best?.kind ?? null,
