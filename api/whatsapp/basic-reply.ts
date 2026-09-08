@@ -190,13 +190,30 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     return jsonRes(nodeRes, 200, { delegated: 'agent' });
   }
 
-  // Gate: kill switch, schedule, permanent-human-stop, reply cap.
+  // Decide FIRST (deterministic, no LLM) so the gate can special-case a named
+  // project. classify() only returns 'kimi' for the ambiguous tail — resolved
+  // AFTER the gate, so we never pay for a Kimi call on a blocked message.
+  let d = classify(body.trigger_message);
+
+  // Gate: kill switch, working-hours, human-active, reply cap.
   const { data: gate } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });
   const g = Array.isArray(gate) ? gate[0] : gate;
-  if (g?.should_reply !== true) return jsonRes(nodeRes, 200, { skipped: true, reason: g?.reason ?? 'blocked' });
+  const gateOk = g?.should_reply === true;
+  // A message that NAMES one of our projects («مهتم بمشروع أكنان 25») is a safe,
+  // deterministic auto-answer — the guarded project package — that we always want
+  // to send: as a first touch, as a follow-up after the qualification block,
+  // inside working hours, or past the per-chat reply cap. So a deterministic
+  // project_sheet match bypasses exactly those two SOFT gates. It still obeys the
+  // kill switch ('disabled') and an actively-replying human ('human_active') — the
+  // bot never talks over a rep. The bypass is threaded into sendProjectViaAiFlow
+  // via `force` below so its own gate re-check doesn't re-block on the same reason.
+  const namedProjectBypass = d.action === 'project_sheet'
+    && (g?.reason === 'working_hours' || g?.reason === 'reply_cap_reached');
+  if (!gateOk && !namedProjectBypass) {
+    return jsonRes(nodeRes, 200, { skipped: true, reason: g?.reason ?? 'blocked' });
+  }
 
-  // Decide.
-  let d = classify(body.trigger_message);
+  // Only now, having decided to proceed, pay for the Kimi call on the ambiguous tail.
   if (d.action === 'kimi') d = await kimiClassify(foldDigits((body.trigger_message ?? '').trim()));
 
   // Resolve the reply text (+ handoff) per action.
@@ -225,7 +242,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     // the text now and staggers the media into the scheduled queue.
     const flow = await sendProjectViaAiFlow(supa, {
       chatWid, projectName: d.projectName, deviceId: body.device_id, jobId: 'basic',
-      onlyOurProjects: true, allowAi: false,
+      onlyOurProjects: true, allowAi: false, force: namedProjectBypass,
     });
     if (flow.blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: flow.reason });
     if (flow.queued) {
