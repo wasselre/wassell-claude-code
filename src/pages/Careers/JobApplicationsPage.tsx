@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Loader2, Search, FileText, Download, Play, X, RefreshCw, Phone, Clock,
-  Megaphone, AlertTriangle, Briefcase,
+  Megaphone, AlertTriangle, Briefcase, StickyNote, HandCoins, Save,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
@@ -37,15 +37,32 @@ interface JobApplication {
   source_url: string | null;
   utm: Record<string, string> | null;
   click_ids: Record<string, string> | null;
+  // Offer stage + reviewer notes (2026-09-08) — admin-authored, never applicant-visible.
+  offer_salary: number | null;
+  offer_commission: string | null;
+  offer_details: string | null;
+  offer_sent_at: string | null;
+  review_notes: string | null;
 }
+
+/** Admin-editable columns (the rest of the row is applicant-authored + immutable). */
+type AppPatch = Partial<Pick<JobApplication,
+  'status' | 'offer_salary' | 'offer_commission' | 'offer_details' | 'offer_sent_at' | 'review_notes'>>;
 
 const STATUSES = [
   { value: 'new', ar: 'جديد', en: 'New', color: '#3B82F6' },
   { value: 'reviewing', ar: 'قيد المراجعة', en: 'Reviewing', color: '#C09B5F' },
   { value: 'interview', ar: 'للمقابلة', en: 'Interview', color: '#8B5CF6' },
+  { value: 'offer_pending', ar: 'إعداد العرض', en: 'Prepare offer', color: '#D97706' },
+  { value: 'offer_sent', ar: 'تم إرسال العرض', en: 'Offer sent', color: '#0EA5E9' },
+  { value: 'offer_accepted', ar: 'قبِل العرض', en: 'Offer accepted', color: '#059669' },
+  { value: 'offer_rejected', ar: 'رفض العرض', en: 'Offer declined', color: '#B45309' },
   { value: 'rejected', ar: 'مرفوض', en: 'Rejected', color: '#8E4E3A' },
   { value: 'hired', ar: 'تم التوظيف', en: 'Hired', color: '#10B981' },
 ] as const;
+
+/** Statuses at which the offer card is the main thing the reviewer is working on. */
+const OFFER_STATUSES = new Set<string>(['offer_pending', 'offer_sent', 'offer_accepted', 'offer_rejected', 'hired']);
 
 const situationLabel = (v: string | null) => SITUATION_OPTIONS.find((o) => o.value === v)?.label ?? '—';
 const experienceLabel = (v: string | null) => EXPERIENCE_OPTIONS.find((o) => o.value === v)?.label ?? '—';
@@ -115,16 +132,33 @@ export default function JobApplicationsPage() {
     return m;
   }, [apps]);
 
-  const updateStatus = async (id: string, status: string) => {
-    if (!supabase) return;
-    const prev = apps;
-    setApps((list) => list.map((a) => (a.id === id ? { ...a, status } : a)));
-    setSelected((s) => (s && s.id === id ? { ...s, status } : s));
-    const { error: err } = await supabase.from('job_applications').update({ status }).eq('id', id);
+  /**
+   * Optimistic patch of the admin-editable columns (status / offer / notes).
+   * Rolls back list + drawer and toasts on failure — never a silent loss.
+   * Returns true when the write landed so callers can clear a "dirty" flag.
+   */
+  const patchApp = async (id: string, patch: AppPatch): Promise<boolean> => {
+    if (!supabase) return false;
+    const prevApps = apps;
+    const prevSelected = selected;
+    setApps((list) => list.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+    setSelected((s) => (s && s.id === id ? { ...s, ...patch } : s));
+    const { error: err } = await supabase.from('job_applications').update(patch).eq('id', id);
     if (err) {
-      setApps(prev);
-      addToast(isAr ? 'تعذّر تحديث الحالة' : 'Could not update status', 'error');
+      console.error('[job_applications] patch failed', { id, patch, err });
+      setApps(prevApps);
+      setSelected((s) => (s && s.id === id ? prevSelected : s));
+      addToast(isAr ? `تعذّر الحفظ: ${err.message}` : `Could not save: ${err.message}`, 'error');
+      return false;
     }
+    return true;
+  };
+
+  const updateStatus = (app: JobApplication, status: string) => {
+    const patch: AppPatch = { status };
+    // First move to "offer sent" stamps the send time; later re-selections keep the original.
+    if (status === 'offer_sent' && !app.offer_sent_at) patch.offer_sent_at = new Date().toISOString();
+    return patchApp(app.id, patch);
   };
 
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'medium' });
@@ -204,7 +238,8 @@ export default function JobApplicationsPage() {
           app={selected}
           isAr={isAr}
           onClose={() => setSelected(null)}
-          onStatus={(status) => updateStatus(selected.id, status)}
+          onStatus={(status) => void updateStatus(selected, status)}
+          onPatch={(patch) => patchApp(selected.id, patch)}
           onToast={(m, t) => addToast(m, t)}
           fmtDate={fmtDate}
         />
@@ -214,15 +249,58 @@ export default function JobApplicationsPage() {
 }
 
 function DetailDrawer({
-  app, isAr, onClose, onStatus, onToast, fmtDate,
+  app, isAr, onClose, onStatus, onPatch, onToast, fmtDate,
 }: {
   app: JobApplication; isAr: boolean; onClose: () => void;
   onStatus: (status: string) => void;
+  onPatch: (patch: AppPatch) => Promise<boolean>;
   onToast: (m: string, t: 'error' | 'success') => void;
   fmtDate: (iso: string) => string;
 }) {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+
+  // Offer + notes drafts. Re-seeded whenever a different application opens.
+  const [offerSalary, setOfferSalary] = useState(app.offer_salary != null ? String(app.offer_salary) : '');
+  const [offerCommission, setOfferCommission] = useState(app.offer_commission ?? '');
+  const [offerDetails, setOfferDetails] = useState(app.offer_details ?? '');
+  const [notes, setNotes] = useState(app.review_notes ?? '');
+  useEffect(() => {
+    setOfferSalary(app.offer_salary != null ? String(app.offer_salary) : '');
+    setOfferCommission(app.offer_commission ?? '');
+    setOfferDetails(app.offer_details ?? '');
+    setNotes(app.review_notes ?? '');
+    setAudioUrl(null);
+  }, [app.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const salaryNum = offerSalary.trim() === '' ? null : Number(offerSalary.replace(/[^\d.]/g, ''));
+  const salaryInvalid = salaryNum != null && !Number.isFinite(salaryNum);
+  const offerDirty =
+    (salaryNum ?? null) !== (app.offer_salary ?? null) ||
+    (offerCommission.trim() || null) !== (app.offer_commission || null) ||
+    (offerDetails.trim() || null) !== (app.offer_details || null);
+  const notesDirty = (notes.trim() || null) !== (app.review_notes || null);
+
+  const saveOffer = async () => {
+    if (salaryInvalid) { onToast(isAr ? 'الراتب يجب أن يكون رقمًا' : 'Salary must be a number', 'error'); return; }
+    setBusy('offer');
+    const ok = await onPatch({
+      offer_salary: salaryNum,
+      offer_commission: offerCommission.trim() || null,
+      offer_details: offerDetails.trim() || null,
+    });
+    setBusy(null);
+    if (ok) onToast(isAr ? 'تم حفظ العرض' : 'Offer saved', 'success');
+  };
+
+  const saveNotes = async () => {
+    setBusy('notes');
+    const ok = await onPatch({ review_notes: notes.trim() || null });
+    setBusy(null);
+    if (ok) onToast(isAr ? 'تم حفظ الملاحظات' : 'Notes saved', 'success');
+  };
+
+  const inputCls = 'w-full rounded-lg border border-sand/40 bg-white px-3 py-2 text-sm text-charcoal outline-none focus:ring-2 focus:ring-copper/20';
 
   const openCv = async (download: boolean) => {
     setBusy(download ? 'cv-dl' : 'cv');
@@ -256,7 +334,7 @@ function DetailDrawer({
   return (
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true">
       <div className="flex-1 bg-black/40" onClick={onClose} />
-      <div className="w-full max-w-md bg-cream-light h-full overflow-y-auto shadow-2xl" style={{ [isAr ? 'borderLeft' : 'borderRight']: 'none' }}>
+      <div className="w-full max-w-md bg-cream-light h-full overflow-y-auto overflow-x-hidden shadow-2xl" style={{ [isAr ? 'borderLeft' : 'borderRight']: 'none' }}>
         <div className="sticky top-0 bg-cream-light/95 backdrop-blur border-b border-sand/30 px-5 py-4 flex items-center justify-between z-10">
           <div className="min-w-0">
             <h2 className="text-lg font-bold text-charcoal truncate">{app.full_name}</h2>
@@ -285,6 +363,83 @@ function DetailDrawer({
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Reviewer notes — impression of the candidate, internal only */}
+          <div className="rounded-xl bg-white border border-sand/30 p-4 mb-4">
+            <p className="text-xs text-charcoal/40 mb-2 flex items-center gap-1.5"><StickyNote size={13} /> {isAr ? 'ملاحظات المراجعة' : 'Review notes'}</p>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder={isAr ? 'انطباعك عن المتقدم…' : 'Your impression of the candidate…'}
+              className={inputCls}
+            />
+            <div className="flex justify-end mt-2">
+              <button
+                onClick={() => void saveNotes()}
+                disabled={!notesDirty || !!busy}
+                className="flex items-center gap-1.5 rounded-lg bg-copper text-white text-xs font-bold px-3 py-1.5 disabled:opacity-40"
+              >
+                {busy === 'notes' ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {isAr ? 'حفظ الملاحظات' : 'Save notes'}
+              </button>
+            </div>
+          </div>
+
+          {/* Offer — what we intend to submit / did submit to the candidate */}
+          <div
+            className="rounded-xl bg-white border p-4 mb-4"
+            style={{ borderColor: OFFER_STATUSES.has(app.status) ? '#D9770655' : undefined }}
+          >
+            <p className="text-xs text-charcoal/40 mb-2 flex items-center gap-1.5">
+              <HandCoins size={13} /> {isAr ? 'العرض الوظيفي' : 'Job offer'}
+              {app.offer_sent_at && (
+                <span className="ms-auto text-[11px] text-sky-600">{isAr ? 'أُرسل' : 'Sent'} {fmtDate(app.offer_sent_at)}</span>
+              )}
+            </p>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <div>
+                <label className="block text-[11px] text-charcoal/50 mb-1">{isAr ? 'الراتب الأساسي (ر.س)' : 'Base salary (SAR)'}</label>
+                <input
+                  value={offerSalary}
+                  onChange={(e) => setOfferSalary(e.target.value)}
+                  inputMode="decimal"
+                  dir="ltr"
+                  placeholder={app.expected_salary != null ? String(app.expected_salary) : '6000'}
+                  className={inputCls}
+                  style={salaryInvalid ? { borderColor: '#8E4E3A' } : undefined}
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-charcoal/50 mb-1">{isAr ? 'العمولة' : 'Commission'}</label>
+                <input
+                  value={offerCommission}
+                  onChange={(e) => setOfferCommission(e.target.value)}
+                  placeholder={app.expected_commission || (isAr ? 'مثال: 1.5%' : 'e.g. 1.5%')}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+            <label className="block text-[11px] text-charcoal/50 mb-1">{isAr ? 'تفاصيل العرض' : 'Offer details'}</label>
+            <textarea
+              value={offerDetails}
+              onChange={(e) => setOfferDetails(e.target.value)}
+              rows={3}
+              placeholder={isAr ? 'المكافآت، تاريخ المباشرة، فترة التجربة، شروط أخرى…' : 'Bonuses, start date, probation, other terms…'}
+              className={inputCls}
+            />
+            <div className="flex items-center justify-between mt-2 gap-2">
+              <p className="text-[11px] text-charcoal/40">
+                {isAr ? 'المطلوب:' : 'Asked:'} {app.expected_salary != null ? app.expected_salary.toLocaleString(isAr ? 'ar-SA' : 'en-US') : '—'} {app.expected_commission ? `· ${app.expected_commission}` : ''}
+              </p>
+              <button
+                onClick={() => void saveOffer()}
+                disabled={!offerDirty || !!busy}
+                className="flex items-center gap-1.5 rounded-lg bg-copper text-white text-xs font-bold px-3 py-1.5 disabled:opacity-40"
+              >
+                {busy === 'offer' ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {isAr ? 'حفظ العرض' : 'Save offer'}
+              </button>
             </div>
           </div>
 
@@ -338,7 +493,7 @@ function DetailDrawer({
               {Object.keys(attribution).length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {Object.entries(attribution).map(([k, v]) => (
-                    <span key={k} className="rounded-md bg-cream px-2 py-1 text-[11px] text-charcoal/60" dir="ltr">{k}: {v}</span>
+                    <span key={k} className="max-w-full break-all rounded-md bg-cream px-2 py-1 text-[11px] text-charcoal/60" dir="ltr">{k}: {v}</span>
                   ))}
                 </div>
               )}

@@ -1,7 +1,7 @@
 # PRD: Job Applications (طلبات التوظيف)
 
 **Status:** Live
-**Last updated:** 2026-09-05
+**Last updated:** 2026-09-08
 **Related PRDs:** [access-control.md](access-control.md) (admin gate), [data-storage.md](data-storage.md) (dedicated table + private bucket), [files.md](files.md) (signed-URL pattern reused)
 
 ## What it is (in plain English)
@@ -21,19 +21,24 @@ Wassel runs paid hiring ads and needed a fast, polished intake that (a) feels on
 - **Attribution captured** from the landing URL: UTM params + click ids (`fbclid`, `gclid`, `ttclid`, …), persisted so they survive a refresh.
 - **Files are private.** Uploads go straight to a **private** `job-applications` bucket via one-shot signed upload URLs; they are never exposed by public URL. The admin screen fetches them through short-lived signed URLs.
 - **Server-side validation (never trusts the client):** the submit endpoint re-checks every field, canonicalizes the KSA phone, and sniffs the **real bytes** of the uploaded CV (PDF/DOC/DOCX magic numbers) and audio (webm/ogg/mp3/mp4/wav/aac signatures) plus size — a `.pdf` that is really an executable is rejected. Both public endpoints are IP-rate-limited (salted hash; raw IPs never stored).
-- **Internal review is admin-only** (route `RequireAdmin` **and** table RLS `wassell_is_admin`). Search by name/phone, filter by status + experience, open a detail drawer, view/download CV, play audio, see attribution, and set status: `جديد` → `قيد المراجعة` → `للمقابلة` → `مرفوض` / `تم التوظيف`.
+- **Internal review is admin-only** (route `RequireAdmin` **and** table RLS `wassell_is_admin`). Search by name/phone, filter by status + experience, open a detail drawer, view/download CV, play audio, see attribution, and set status: `جديد` → `قيد المراجعة` → `للمقابلة` → `إعداد العرض` → `تم إرسال العرض` → `قبِل العرض` / `رفض العرض` → `تم التوظيف`; `مرفوض` is terminal at any point. The first move to `تم إرسال العرض` stamps `offer_sent_at` (later re-selections keep the original stamp).
+- **Offer per application** (added 2026-09-08): the drawer has a **العرض الوظيفي** card where the reviewer records the offer they intend to submit — base salary (SAR), commission (free text), and free-text details (bonuses, start date, probation…). The applicant's own asks (expected salary / commission) are shown under the card as placeholders + a hint so the offer is written against them. Saved explicitly with «حفظ العرض» (button only enables when something changed); the card gets an amber border once the application is in any offer/hired status. Stored on the row, never shown to the applicant.
+- **Review notes** (added 2026-09-08): a **ملاحظات المراجعة** textarea at the top of the drawer for the reviewer's impression of the candidate; saved with «حفظ الملاحظات». Internal only.
+- All admin edits (status, offer, notes) are optimistic with rollback + a red toast carrying the DB error on failure — never a silent loss.
 
 ## User flows
 1. **Apply (happy path):** ad → `/careers/sales-consultant` → intro screen (role, on-site Riyadh/النزهة, 6-day week, fixed salary + commissions + bonuses, 3–5 min estimate) → `ابدأ التقديم` → answer each card → `مراجعة الطلب` → tick consent → `إرسال الطلب` → success screen (`تم استلام طلبك بنجاح`). No promise of a reply to every applicant.
 2. **No-experience branch:** at Q4 pick `لا توجد لدي خبرة` → the results question is skipped automatically.
 3. **Recording unavailable:** mic denied / unsupported → clear Arabic error + "رفع ملف صوتي" fallback.
 4. **Refresh mid-application:** reload → intro shows `متابعة التقديم` → resumes with answers (and uploaded files) intact.
-5. **Review (internal):** Settings → طلبات التوظيف → search/filter → open applicant → view CV / play recording / read answers + attribution → change status.
+5. **Review (internal):** Settings → طلبات التوظيف → search/filter → open applicant → write review notes → view CV / play recording / read answers + attribution → change status.
+5b. **Offer (internal):** after the interview → set `إعداد العرض` → fill salary / commission / details in the offer card → «حفظ العرض» → send it to the candidate outside the app (WhatsApp/call) → set `تم إرسال العرض` (send time stamped) → on the candidate's answer set `قبِل العرض` (then `تم التوظيف`) or `رفض العرض`.
 6. **Error/empty states:** per-step validation messages; upload errors; a submit error keeps the review screen; empty admin list shows "لا توجد طلبات مطابقة".
 
 ## Data touched
 - **Writes:** `public.job_applications` (dedicated table — answers, status, file paths, attribution, debug metadata) via the service-role `api/careers/submit` endpoint. `public.job_application_rate` (rate-limit counters) via `job_application_rate_hit`.
 - **Storage:** private `job-applications` bucket — `cv/<submission_id>/…` and `audio/<submission_id>/…` (service-role signed upload/download only; no bucket policies).
+- **Admin writes (internal):** `job_applications.status`, `offer_salary`, `offer_commission`, `offer_details`, `offer_sent_at`, `review_notes` via the admin's JWT under the existing unrestricted admin UPDATE policy (no RLS change was needed for the offer stage).
 - **Reads (internal):** `job_applications` via the admin's JWT under RLS; CV/audio via admin-gated signed URLs.
 - Not a Builder model — it never appears in `models` / `records`.
 
@@ -43,7 +48,7 @@ Wassel runs paid hiring ads and needed a fast, polished intake that (a) feels on
 | `src/pages/Careers/SalesConsultantApplicationPage.tsx` | Public flow orchestrator (intro → cards → review → success) |
 | `src/pages/Careers/components/CvUploadField.tsx` | CV upload widget (progress, replace/remove) |
 | `src/pages/Careers/components/AudioRecorder.tsx` | Record/upload voice note (timer, pause/stop, playback, min/max) |
-| `src/pages/Careers/JobApplicationsPage.tsx` | Internal admin review (list, filters, detail drawer, status) |
+| `src/pages/Careers/JobApplicationsPage.tsx` | Internal admin review (list, filters, detail drawer, status pipeline, offer card, review notes) |
 | `src/lib/careers/form.ts` | Questions, options, conditional rule, validation, persistence |
 | `src/lib/careers/attribution.ts` | UTM + click-id capture |
 | `src/lib/careers/client.ts` | Signed-upload + submit API client (XHR progress) |
@@ -52,9 +57,11 @@ Wassel runs paid hiring ads and needed a fast, polished intake that (a) feels on
 | `api/careers/file-url.ts` | Admin: short-lived signed view/download URL |
 | `api/_lib/careers.ts` | Shared constants, phone canon, magic-byte sniffers, IP hash |
 | `supabase/migrations/2026-09-05_job_applications.sql` | Table + RLS + private bucket + rate-limit fn |
+| `supabase/migrations/2026-09-08_job_applications_offer_stage.sql` | Widens the status CHECK with the four `offer_*` states; adds `offer_salary` / `offer_commission` / `offer_details` / `offer_sent_at` / `review_notes` |
 
 ## Open questions / known limitations
 - Access is **admin-only**. If HR needs access without full admin, add a `page_access` id + widen the RLS policy (kept simple deliberately).
 - Abandoned uploads (form never submitted) leave orphan objects in the bucket keyed by `submission_id` — safe to prune later by "paths with no matching row"; not automated.
 - Uploaded-audio duration is best-effort from browser metadata (some containers report unknown); recorded-audio duration is exact from the timer.
-- No applicant-facing status tracking or email/WhatsApp auto-reply — intentionally out of scope ("not a large ATS").
+- No applicant-facing status tracking or email/WhatsApp auto-reply — intentionally out of scope ("not a large ATS"). The offer itself is delivered to the candidate outside the app; `تم إرسال العرض` only records that it happened.
+- The offer is one free-form snapshot per application (no offer history / versions). Editing it after sending overwrites the saved values; `offer_sent_at` stays.
