@@ -60,9 +60,8 @@ function AdCell({ row, isAr }: { row: ListRow; isAr: boolean }) {
   const platform = lead.platform
     ? (isAr ? PLATFORM_LABELS[lead.platform]?.ar : PLATFORM_LABELS[lead.platform]?.en) ?? lead.platform
     : (isAr ? 'إعلان' : 'Ad');
-  const status = lead.status && AD_STATUS_LABELS[lead.status]
-    ? (isAr ? AD_STATUS_LABELS[lead.status].ar : AD_STATUS_LABELS[lead.status].en)
-    : null;
+  const statusDef = lead.status ? AD_STATUS_LABELS[lead.status] : undefined;
+  const status = statusDef ? (isAr ? statusDef.ar : statusDef.en) : null;
   const onPlatform = !!lead.platform_ad_id;
   const text = onPlatform
     ? `${platform}${status ? ` · ${status}` : ''}`
