@@ -1279,6 +1279,40 @@ async function callerSurfaces(
   return { surfaces: computeSurfaces(held, accessRes.data ?? []) };
 }
 
+/**
+ * The roles an admin may "view as" (`x-mos-preview-role`). Shared by bootstrap
+ * and every queue read so the preview is one consistent interface, not just a
+ * different header.
+ */
+const PREVIEWABLE_ROLES = new Set(['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage', 'viewer']);
+
+/**
+ * The role the QUEUE screens should treat as "mine". Normally the caller's own
+ * `wassell_mos_role`; for a platform admin previewing another role it is the
+ * previewed role — so «مهامي» under "view as marketing manager" shows the
+ * marketing manager's queue, not the admin's whole-team board. Display only:
+ * RLS still runs under the admin's real identity. A non-admin's header is
+ * ignored exactly as bootstrap ignores it.
+ */
+async function effectiveQueueRole(
+  sb: SupabaseClient,
+  req: Request,
+  authUid: string,
+): Promise<{ role: string; previewRole: string | null } | { fail: Response }> {
+  const rawPreview = (req.headers.get('x-mos-preview-role') ?? '').trim();
+  if (PREVIEWABLE_ROLES.has(rawPreview)) {
+    const heldRes = await sb.rpc('wassell_mos_roles');
+    const heldFail = dbFail(heldRes.error);
+    if (heldFail) return { fail: heldFail };
+    const held = (heldRes.data as string[] | null) ?? [];
+    if (held.includes('administrator')) return { role: rawPreview, previewRole: rawPreview };
+  }
+  const roleRes = await sb.rpc('wassell_mos_role', { p_auth_uid: authUid });
+  const roleFail = dbFail(roleRes.error);
+  if (roleFail) return { fail: roleFail };
+  return { role: (roleRes.data as string | null) ?? 'viewer', previewRole: null };
+}
+
 /** The role × event × channel matrix rows, in the contract's shape. */
 async function fetchNotificationRuleRows(
   sb: SupabaseClient,
@@ -1735,9 +1769,8 @@ export default async function handler(req: Request): Promise<Response> {
         // SHOWS (roles/capabilities/surfaces); RLS still runs under the admin's
         // real identity, so it previews the VIEW, not data-level access.
         const isAdmin = held.includes('administrator');
-        const PREVIEWABLE = new Set(['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage', 'viewer']);
         const rawPreview = (req.headers.get('x-mos-preview-role') ?? '').trim();
-        const previewRole = isAdmin && PREVIEWABLE.has(rawPreview) ? rawPreview : null;
+        const previewRole = isAdmin && PREVIEWABLE_ROLES.has(rawPreview) ? rawPreview : null;
 
         let effRoles: string[] = held;
         let effCaps: string[] = capabilities;
@@ -4624,10 +4657,10 @@ export default async function handler(req: Request): Promise<Response> {
         const periodRaw = str(body.period);
         const period = periodRaw === 'month' || periodRaw === 'quarter' ? periodRaw : 'week';
         const { weekStart, weekEnd } = periodBounds(period, str(body.week_of));
-        const roleRes = await sb.rpc('wassell_mos_role', { p_auth_uid: user.userId });
-        const roleFail = dbFail(roleRes.error);
-        if (roleFail) return roleFail;
-        const myRole = (roleRes.data as string | null) ?? 'viewer';
+        // Honors an admin's "view as" so the «لي» count matches the previewed role.
+        const eff = await effectiveQueueRole(sb, req, user.userId);
+        if ('fail' in eff) return eff.fail;
+        const myRole = eff.role;
 
         const live = sb.from('mos_content_v').select('id', { count: 'exact', head: true })
           .is('archived_at', null).not('status_key', 'in', '("draft","done")');
@@ -4843,15 +4876,24 @@ export default async function handler(req: Request): Promise<Response> {
         // manager by default) may pull it. A hidden-surface caller is silently
         // downgraded to their OWN queue, so a stale client, a direct API call,
         // or a leftover "الجميع" button can never expose the whole team's tasks.
+        // An admin previewing another role gets THAT role's queue (and that
+        // role's team-surface gate) — otherwise «مهامي» under "view as
+        // marketing manager" silently stayed the admin's whole-team board.
+        const eff = await effectiveQueueRole(sb, req, user.userId);
+        if ('fail' in eff) return eff.fail;
+        const myRole = eff.role;
         if (scope === 'team') {
-          const surf = await callerSurfaces(sb);
-          if ('fail' in surf) return surf.fail;
-          if (surf.surfaces.team === 'hidden') scope = 'mine';
+          if (eff.previewRole) {
+            const accessRes = await sb.from('surface_access').select('surface_key, level, roles!inner(key)');
+            const af = dbFail(accessRes.error);
+            if (af) return af;
+            if (computeSurfaces([eff.previewRole], accessRes.data ?? []).team === 'hidden') scope = 'mine';
+          } else {
+            const surf = await callerSurfaces(sb);
+            if ('fail' in surf) return surf.fail;
+            if (surf.surfaces.team === 'hidden') scope = 'mine';
+          }
         }
-        const roleRes = await sb.rpc('wassell_mos_role', { p_auth_uid: user.userId });
-        const roleFail = dbFail(roleRes.error);
-        if (roleFail) return roleFail;
-        const myRole = (roleRes.data as string | null) ?? 'viewer';
 
         let q = sb.from('mos_content_v')
           .select(CONTENT_LIST_COLUMNS)
