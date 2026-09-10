@@ -453,8 +453,8 @@ export default function ExecutionDetailPage() {
                   <span className="r">
                     {isMetaExec
                       ? isAr
-                        ? `${num(visibleAds.length, true)} إعلان من ميتا · ${num(adSets.length, true)} مجموعة إعلانية`
-                        : `${visibleAds.length} Meta ad${visibleAds.length === 1 ? '' : 's'} · ${adSets.length} ad set${adSets.length === 1 ? '' : 's'}`
+                        ? `${num(visibleAds.length, true)} إعلان · ${num(visibleAds.length - unpushedAds.length, true)} في ميتا · ${num(adSets.length, true)} مجموعة إعلانية`
+                        : `${visibleAds.length} ad${visibleAds.length === 1 ? '' : 's'} · ${visibleAds.length - unpushedAds.length} in Meta · ${adSets.length} ad set${adSets.length === 1 ? '' : 's'}`
                       : adSets.length > 0
                         ? isAr
                           ? `${num(visibleAds.length, true)} إعلان · ${num(adSets.length, true)} مجموعة إعلانية`
