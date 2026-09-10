@@ -596,19 +596,19 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
   for (const s of slots) {
     if (s.kind === 'image') {
       const bytes = await fetchBytes(s.url);
-      const up = await meta.uploadAdImage(bytes, `${adName} · ${s.slot}`);
+      const up = await meta.uploadImageBytes(bytes, `${adName} · ${s.slot}`);
       imageHashes[s.slot] = up.hash;
       log(`uploaded ${s.slot} image → ${up.hash}`);
     } else {
-      const up = await meta.uploadAdVideo(s.url, `${adName} · ${s.slot}`);
+      const up = await meta.uploadVideoByUrl(s.url, `${adName} · ${s.slot}`);
       // Meta transcodes asynchronously; a creative on an unready video fails.
       let status = 'processing';
       let thumb: string | null = null;
       const deadline = Date.now() + 6 * 60_000;
       while (Date.now() < deadline) {
         const st = await meta.getVideoStatus(up.id);
-        status = st.status; thumb = st.picture;
-        if (status === 'ready') break;
+        status = st.status ?? 'processing'; thumb = st.thumbnailUrl;
+        if (st.ready) break;
         if (status === 'error') throw new Error(`Meta could not process the ${s.slot} video`);
         await new Promise((r) => setTimeout(r, 5_000));
       }

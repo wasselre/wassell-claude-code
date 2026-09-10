@@ -20,8 +20,9 @@
 //
 // WORKER COPY of api/_lib/marketing/metaMarketingApi.ts (the worker is a
 // standalone package and cannot import from api/_lib — same posture as
-// worker/src/imageGen.ts). Keep the shared part in sync with the API copy; the
-// upload / ad-set read methods at the bottom exist ONLY here.
+// worker/src/imageGen.ts). Keep the shared part IDENTICAL to the API copy
+// (re-copy it when the API copy changes); the ad-set / sibling-ad reads at the
+// bottom exist ONLY here (the meta-ad lane, 2026-09-10).
 // ============================================================================
 
 const DEFAULT_GRAPH_VERSION = 'v21.0';
@@ -271,6 +272,43 @@ export class MetaMarketingClient {
     return this.request('POST', `${this.act}/ads`, this.withValidate(input, validateOnly));
   }
 
+  // ----- Creative media (verified live 2026-09-10) ---------------------------
+  // `adimages` accepts the bytes as base64 in the `bytes` form field — the
+  // documented `url` parameter answers "(#3) Application does not have the
+  // capability to make this API call" for our app, so we always download the
+  // file ourselves and re-upload. `advideos` DOES accept a `file_url` (Meta
+  // fetches it — a 1h signed Storage URL is enough), then processes the video
+  // asynchronously; a creative can only reference it once `status.video_status`
+  // is `ready` (a tiny clip took ~10s, a real reel can take minutes).
+
+  /** Upload image bytes; returns the account-scoped image hash a creative uses. */
+  async uploadImageBytes(bytes: Uint8Array, name: string): Promise<{ hash: string; width: number | null; height: number | null }> {
+    const res = await this.request<{ images: Record<string, { hash: string; width?: number; height?: number }> }>(
+      'POST', `${this.act}/adimages`, { bytes: base64Of(bytes), name },
+    );
+    const first = Object.values(res.images ?? {})[0];
+    if (!first?.hash) throw new MetaApiError('adimages returned no hash', null, null, null, null, 200, res);
+    return { hash: first.hash, width: first.width ?? null, height: first.height ?? null };
+  }
+
+  /** Start a video upload from a URL Meta can fetch; returns the video id. */
+  async uploadVideoByUrl(fileUrl: string, name: string): Promise<{ id: string }> {
+    return this.request('POST', `${this.act}/advideos`, { file_url: fileUrl, name });
+  }
+
+  /** Processing status + Meta's own generated thumbnails (the preferred one
+   *  becomes the creative's `image_url`, so no thumbnail upload is needed). */
+  async getVideoStatus(videoId: string): Promise<{ ready: boolean; status: string | null; thumbnailUrl: string | null }> {
+    const res = await this.request<{
+      status?: { video_status?: string };
+      thumbnails?: { data?: Array<{ uri: string; is_preferred?: boolean }> };
+    }>('GET', videoId, { fields: 'status,thumbnails{uri,is_preferred}' });
+    const status = res.status?.video_status ?? null;
+    const thumbs = res.thumbnails?.data ?? [];
+    const preferred = thumbs.find((t) => t.is_preferred) ?? thumbs[0];
+    return { ready: status === 'ready', status, thumbnailUrl: preferred?.uri ?? null };
+  }
+
   /** Update a node's mutable fields (status, budget, name…). id = node id. */
   async updateNode(id: string, input: Record<string, unknown>): Promise<{ success: boolean }> {
     return this.request('POST', id, input);
@@ -305,38 +343,7 @@ export class MetaMarketingClient {
     return { success: true };
   }
 
-  private withValidate(input: Record<string, unknown>, validateOnly: boolean): Record<string, unknown> {
-    return validateOnly ? { ...input, execution_options: ['validate_only'] } : input;
-  }
-
-  // ----- WORKER-ONLY additions (auto Meta ad, 2026-09-10) -------------------
-  // Media uploads + the ad-set / sibling-ad reads the meta-ad lane needs. They
-  // live only in this worker copy: the API never uploads bytes to Meta.
-
-  /** Upload one image (bytes) to the ad account's image library → its hash. */
-  async uploadAdImage(bytes: Uint8Array, name: string): Promise<{ hash: string; url: string | null }> {
-    const b64 = Buffer.from(bytes).toString('base64');
-    const res = await this.request<{ images?: Record<string, { hash: string; url?: string }> }>(
-      'POST', `${this.act}/adimages`, { bytes: b64, name },
-    );
-    const first = Object.values(res.images ?? {})[0];
-    if (!first?.hash) throw new MetaApiError('adimages returned no hash', null, null, null, null, 200, res);
-    return { hash: first.hash, url: first.url ?? null };
-  }
-
-  /** Upload one video by URL (Meta fetches it) → the video id. Processing is
-   *  asynchronous — poll getVideoStatus() until 'ready' before using it. */
-  async uploadAdVideo(fileUrl: string, name: string): Promise<{ id: string }> {
-    return this.request<{ id: string }>('POST', `${this.act}/advideos`, { file_url: fileUrl, name });
-  }
-
-  /** Video processing state + auto-generated thumbnail once ready. */
-  async getVideoStatus(videoId: string): Promise<{ status: string; picture: string | null }> {
-    const res = await this.request<{ status?: { video_status?: string }; picture?: string }>(
-      'GET', videoId, { fields: 'status,picture' },
-    );
-    return { status: res.status?.video_status ?? 'unknown', picture: res.picture ?? null };
-  }
+  // ----- WORKER-ONLY additions (auto Meta ad lane, 2026-09-10) ---------------
 
   /** The ad set's targeting (publisher platforms + positions), destination and state. */
   async getAdSet(adSetId: string): Promise<MetaAdSetDetail> {
@@ -353,36 +360,21 @@ export class MetaMarketingClient {
     });
     return res.data ?? [];
   }
+
+  private withValidate(input: Record<string, unknown>, validateOnly: boolean): Record<string, unknown> {
+    return validateOnly ? { ...input, execution_options: ['validate_only'] } : input;
+  }
 }
 
-export interface MetaAdSetDetail {
-  id: string;
-  name: string;
-  status: string;
-  effective_status?: string;
-  destination_type?: string;
-  optimization_goal?: string;
-  campaign_id?: string;
-  promoted_object?: { page_id?: string } & Record<string, unknown>;
-  targeting?: {
-    publisher_platforms?: string[];
-    facebook_positions?: string[];
-    instagram_positions?: string[];
-    messenger_positions?: string[];
-    whatsapp_positions?: string[];
-    audience_network_positions?: string[];
-  } & Record<string, unknown>;
-}
-
-export interface MetaSiblingAd {
-  id: string;
-  name?: string;
-  status?: string;
-  creative?: {
-    id?: string;
-    object_story_spec?: { link_data?: { page_welcome_message?: string; message?: string } } & Record<string, unknown>;
-    asset_feed_spec?: { additional_data?: { page_welcome_message?: string } } & Record<string, unknown>;
-  };
+/** Runtime-agnostic base64 (no `Buffer` on the Vercel Edge runtime). Chunked so
+ *  a multi-MB image never builds one giant argument list for fromCharCode. */
+export function base64Of(bytes: Uint8Array): string {
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
+  }
+  return btoa(bin);
 }
 
 // ----- Raw Graph response shapes (only the fields we request) ---------------
@@ -484,4 +476,36 @@ export function leadsFromActions(actions?: Array<{ action_type: string; value: s
   let n = 0;
   for (const a of actions) if (leadTypes.has(a.action_type)) n += Number(a.value) || 0;
   return n;
+}
+
+// ----- WORKER-ONLY shapes (auto Meta ad lane) --------------------------------
+
+export interface MetaAdSetDetail {
+  id: string;
+  name: string;
+  status: string;
+  effective_status?: string;
+  destination_type?: string;
+  optimization_goal?: string;
+  campaign_id?: string;
+  promoted_object?: { page_id?: string } & Record<string, unknown>;
+  targeting?: {
+    publisher_platforms?: string[];
+    facebook_positions?: string[];
+    instagram_positions?: string[];
+    messenger_positions?: string[];
+    whatsapp_positions?: string[];
+    audience_network_positions?: string[];
+  } & Record<string, unknown>;
+}
+
+export interface MetaSiblingAd {
+  id: string;
+  name?: string;
+  status?: string;
+  creative?: {
+    id?: string;
+    object_story_spec?: { link_data?: { page_welcome_message?: string; message?: string } } & Record<string, unknown>;
+    asset_feed_spec?: { additional_data?: { page_welcome_message?: string } } & Record<string, unknown>;
+  };
 }
