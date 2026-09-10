@@ -146,15 +146,22 @@ export default function ApprovalSheet({
   const sentAgo = daysAgo(openTask.opened_at, isAr);
   const nextLabel = nextStep ? (isAr ? nextStep.label_ar : nextStep.label_en) : null;
   const nextRole = roleLabel(nextStep?.role);
+  // An auto-ad step whose campaign resolved to a Meta ad set does NOT open the
+  // next human step — the ad automation takes over; say so instead of «يفتح الجدولة».
+  const adTakesOver = autoAd && (autoAdState.preview?.kind === 'target' || autoAdState.preview?.kind === 'choose');
   const sub = isAr
     ? `${waitRole} ${sentAgo === 'اليوم' ? 'أرسلها اليوم' : `ينتظر منذ ${sentAgo}`}.${
-        nextLabel
-          ? ` الاعتماد يفتح «${nextLabel}»${nextRole ? ` لدى ${nextRole}` : ''}.`
-          : ' هذه آخر خطوة في المسار.'}`
+        adTakesOver
+          ? ' هذا الاعتماد الأخير على التصميم — بعده يُنشأ الإعلان في ميتا تلقائيًا.'
+          : nextLabel
+            ? ` الاعتماد يفتح «${nextLabel}»${nextRole ? ` لدى ${nextRole}` : ''}.`
+            : ' هذه آخر خطوة في المسار.'}`
     : `The ${waitRole} ${sentAgo === 'today' ? 'submitted today' : `has been waiting ${sentAgo}`}.${
-        nextLabel
-          ? ` Approving opens “${nextLabel}”${nextRole ? ` for the ${nextRole}` : ''}.`
-          : ' This is the last step on the path.'}`;
+        adTakesOver
+          ? ' This is the final design approval — after it the Meta ad is created automatically.'
+          : nextLabel
+            ? ` Approving opens “${nextLabel}”${nextRole ? ` for the ${nextRole}` : ''}.`
+            : ' This is the last step on the path.'}`;
 
   const approve = async (): Promise<void> => {
     setBusy(true);
