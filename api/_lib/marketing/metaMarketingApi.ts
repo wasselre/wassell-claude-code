@@ -270,6 +270,43 @@ export class MetaMarketingClient {
     return this.request('POST', `${this.act}/ads`, this.withValidate(input, validateOnly));
   }
 
+  // ----- Creative media (verified live 2026-09-10) ---------------------------
+  // `adimages` accepts the bytes as base64 in the `bytes` form field — the
+  // documented `url` parameter answers "(#3) Application does not have the
+  // capability to make this API call" for our app, so we always download the
+  // file ourselves and re-upload. `advideos` DOES accept a `file_url` (Meta
+  // fetches it — a 1h signed Storage URL is enough), then processes the video
+  // asynchronously; a creative can only reference it once `status.video_status`
+  // is `ready` (a tiny clip took ~10s, a real reel can take minutes).
+
+  /** Upload image bytes; returns the account-scoped image hash a creative uses. */
+  async uploadImageBytes(bytes: Uint8Array, name: string): Promise<{ hash: string; width: number | null; height: number | null }> {
+    const res = await this.request<{ images: Record<string, { hash: string; width?: number; height?: number }> }>(
+      'POST', `${this.act}/adimages`, { bytes: base64Of(bytes), name },
+    );
+    const first = Object.values(res.images ?? {})[0];
+    if (!first?.hash) throw new MetaApiError('adimages returned no hash', null, null, null, null, 200, res);
+    return { hash: first.hash, width: first.width ?? null, height: first.height ?? null };
+  }
+
+  /** Start a video upload from a URL Meta can fetch; returns the video id. */
+  async uploadVideoByUrl(fileUrl: string, name: string): Promise<{ id: string }> {
+    return this.request('POST', `${this.act}/advideos`, { file_url: fileUrl, name });
+  }
+
+  /** Processing status + Meta's own generated thumbnails (the preferred one
+   *  becomes the creative's `image_url`, so no thumbnail upload is needed). */
+  async getVideoStatus(videoId: string): Promise<{ ready: boolean; status: string | null; thumbnailUrl: string | null }> {
+    const res = await this.request<{
+      status?: { video_status?: string };
+      thumbnails?: { data?: Array<{ uri: string; is_preferred?: boolean }> };
+    }>('GET', videoId, { fields: 'status,thumbnails{uri,is_preferred}' });
+    const status = res.status?.video_status ?? null;
+    const thumbs = res.thumbnails?.data ?? [];
+    const preferred = thumbs.find((t) => t.is_preferred) ?? thumbs[0];
+    return { ready: status === 'ready', status, thumbnailUrl: preferred?.uri ?? null };
+  }
+
   /** Update a node's mutable fields (status, budget, name…). id = node id. */
   async updateNode(id: string, input: Record<string, unknown>): Promise<{ success: boolean }> {
     return this.request('POST', id, input);
@@ -307,6 +344,17 @@ export class MetaMarketingClient {
   private withValidate(input: Record<string, unknown>, validateOnly: boolean): Record<string, unknown> {
     return validateOnly ? { ...input, execution_options: ['validate_only'] } : input;
   }
+}
+
+/** Runtime-agnostic base64 (no `Buffer` on the Vercel Edge runtime). Chunked so
+ *  a multi-MB image never builds one giant argument list for fromCharCode. */
+export function base64Of(bytes: Uint8Array): string {
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
+  }
+  return btoa(bin);
 }
 
 // ----- Raw Graph response shapes (only the fields we request) ---------------

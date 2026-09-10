@@ -2953,16 +2953,29 @@ export const mosMetaUpdate = (
 export interface MetaPushResult {
   ok: boolean;
   validate_only: boolean;
-  campaign: { platform_campaign_id: string; name: string };
+  /** `created` = this call made the campaign; false = it was already linked
+   *  and the push only added what was missing under it. */
+  campaign: { platform_campaign_id: string; name: string | null; created: boolean };
   ad_sets: Array<{ wassell_ad_set_id: string | null; platform_adset_id: string; name: string }>;
   errors: Array<{ ad_set: string; error: string }>;
+  /** Planned ads that now exist in Meta (paused) — creative uploaded + ad created. */
+  ads: Array<{ wassell_ad_id: string; platform_ad_id: string; name: string }>;
+  /** Ads whose video is still processing in Meta — run the push again in a
+   *  minute; the upload is remembered so nothing is re-sent. */
+  ads_pending: Array<{ wassell_ad_id: string; name: string; reason: string }>;
+  /** Ads Meta (or our media lookup) rejected. The skeleton stays; fix + re-run. */
+  ad_errors: Array<{ wassell_ad_id: string; ad: string; error: string }>;
+  /** True while `ads_pending` is non-empty — call again to continue. */
+  more: boolean;
 }
 
 /**
- * Build this planned execution (its campaign + ad sets) in Meta as a PAUSED
- * skeleton and link the returned platform ids back. Ads/creatives are added by
- * the buyer in Meta and matched on sync. validateOnly = Meta dry-run (creates
- * nothing). Gated on manage_paid_ads.
+ * Build this planned execution in Meta — campaign + ad sets + one creative and
+ * ad per planned ad (content record = the media, `creative` jsonb = the copy)
+ * — all PAUSED, and link every returned platform id back. Re-running on a
+ * linked execution only adds what is still missing (new ad sets, un-pushed
+ * ads, videos that were still processing). validateOnly = Meta dry-run of the
+ * skeleton (creates nothing; ads are skipped). Gated on manage_paid_ads.
  */
 export const mosMetaPushStructure = (
   executionId: string, validateOnly = false,

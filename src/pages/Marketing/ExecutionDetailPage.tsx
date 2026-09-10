@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  AD_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosAdSet, MosCampaign, MosContentRow,
+  AD_STATUS_LABELS, EXEC_STATUS_LABELS, MetaPushResult, MosAd, MosAdSet, MosCampaign, MosContentRow,
   MosExecution, MosTargeting, PLATFORM_LABELS,
   deleteAd, fetchContentList, fetchExecutionDetail, mosMetaPushStructure, mosMetaSync,
   saveAd, saveExecution,
@@ -95,16 +95,20 @@ export default function ExecutionDetailPage() {
     adContent.find((c) => c.id === id);
 
   /**
-   * On a Meta/Instagram execution the ads ARE the real synced Meta ads (they
-   * carry a platform_ad_id). Rows without one are legacy hand-added
-   * content-as-ads — not real ads — so they are hidden here (an ad is a Meta
-   * object; the content record is the CREATIVE you attach to it). Other
-   * platforms have no sync, so every row is shown.
+   * On a Meta/Instagram execution an ad row is either a REAL Meta ad (it
+   * carries a platform_ad_id — pushed by «Create in Meta» or synced back) or
+   * a PLANNED ad: a content record (the creative's media) + copy, waiting for
+   * the push to create it. Both are shown; planned rows wear a «not in Meta
+   * yet» pill instead of a status. (Archived placements are filtered
+   * server-side.) Other platforms have no sync, so every row is hand-entered.
    */
-  const visibleAds = useMemo(() => {
-    const meta = execution?.platform === 'meta' || execution?.platform === 'instagram';
-    return meta ? ads.filter((a) => a.platform_ad_id) : ads;
-  }, [ads, execution]);
+  const isMetaPlatform = execution?.platform === 'meta' || execution?.platform === 'instagram';
+  const visibleAds = ads;
+  /** The planned ads the next «Create in Meta» will build. */
+  const unpushedAds = useMemo(
+    () => (isMetaPlatform ? ads.filter((a) => !a.platform_ad_id) : []),
+    [ads, isMetaPlatform],
+  );
 
   /** The ad the numbers say to feed — computed, never assigned. */
   const bestAdId = useMemo(() => {
@@ -134,19 +138,68 @@ export default function ExecutionDetailPage() {
     if (!execution) return;
     setBusy(true);
     try {
-      // All-or-nothing on the server: a rejected ad set rolls the whole push back
-      // and throws with Meta's reason, so reaching here means full success.
-      const r = await mosMetaPushStructure(execution.id);
-      const sets = r.ad_sets.length;
-      addToast(
-        isAr
-          ? `أُنشئت الحملة و${sets} مجموعة إعلانية في ميتا (موقوفة).`
-          : `Created the campaign + ${sets} ad set(s) in Meta (paused).`,
-        'success',
-      );
+      // The skeleton (campaign + ad sets) is all-or-nothing on the server: a
+      // rejected ad set rolls it back and throws with Meta's reason. The ads
+      // phase then runs under the Edge time budget and reports whatever it
+      // could not reach as pending (`more`) — so keep calling until it is
+      // done. A video still processing in Meta is waited out HERE, between
+      // calls, never inside a request.
+      let campaignMade = false;
+      let sets = 0;
+      let created = 0;
+      let pending: MetaPushResult['ads_pending'] = [];
+      const errorsByAd = new Map<string, MetaPushResult['ad_errors'][number]>();
+      let videoWaits = 0;
+      for (let round = 0; round < 40; round++) {
+        const r = await mosMetaPushStructure(execution.id);
+        if (r.campaign.created) campaignMade = true;
+        sets += r.ad_sets.length;
+        created += r.ads.length;
+        for (const e of r.ad_errors) errorsByAd.set(e.wassell_ad_id, e);
+        pending = r.ads_pending;
+        if (!r.more) break;
+        if (pending.every((p) => p.reason === 'video_processing')) {
+          // ~2 minutes of Meta-side video processing before giving up (the
+          // upload is remembered — pressing again later just resumes).
+          if (videoWaits++ >= 12) break;
+          await new Promise((res) => setTimeout(res, 10_000));
+        }
+      }
+      const parts: string[] = [];
+      if (campaignMade) parts.push(isAr ? 'الحملة' : 'the campaign');
+      if (sets > 0) parts.push(isAr ? `${num(sets, true)} مجموعة إعلانية` : `${sets} ad set${sets === 1 ? '' : 's'}`);
+      if (created > 0) parts.push(isAr ? `${num(created, true)} إعلان` : `${created} ad${created === 1 ? '' : 's'}`);
+      if (parts.length > 0) {
+        addToast(
+          isAr
+            ? `أُنشئ في ميتا (موقوف): ${parts.join(' + ')}.`
+            : `Created in Meta (paused): ${parts.join(' + ')}.`,
+          'success',
+        );
+      } else if (pending.length === 0 && errorsByAd.size === 0) {
+        addToast(isAr ? 'لا شيء جديد لإنشائه — كل شيء مربوط بميتا.' : 'Nothing new to create — everything is already in Meta.', 'success');
+      }
+      if (pending.length > 0) {
+        addToast(
+          isAr
+            ? `${num(pending.length, true)} إعلان ما زال فيديوه يُعالَج في ميتا — اضغط «إنشاء في ميتا» بعد دقيقة لإكماله.`
+            : `${pending.length} ad${pending.length === 1 ? '' : 's'} still have a video processing in Meta — press Create in Meta again in a minute to finish.`,
+          'error',
+        );
+      }
+      if (errorsByAd.size > 0) {
+        const first = Array.from(errorsByAd.values())[0];
+        addToast(
+          isAr
+            ? `رفضت ميتا ${num(errorsByAd.size, true)} إعلان — «${first?.ad ?? ''}»: ${first?.error ?? ''}`
+            : `Meta rejected ${errorsByAd.size} ad${errorsByAd.size === 1 ? '' : 's'} — "${first?.ad ?? ''}": ${first?.error ?? ''}`,
+          'error',
+        );
+      }
       await load();
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
+      await load();
     } finally {
       setBusy(false);
     }
@@ -305,19 +358,28 @@ export default function ExecutionDetailPage() {
                   : isAr ? 'تشغيل الحملة الإعلانية' : 'Resume ad campaign'}
               </button>
             )}
-            {/* Meta/Instagram: ads are REAL Meta objects, created by the buyer in
-                Meta and pulled down by the sync — never invented here. So the
-                "Add an ad" / "Ad sets & ads" entry paths are hidden, and the one
-                action is «Sync from Meta now» (the same job the hourly cron runs).
-                Every other platform has no sync, so manual entry stays. */}
+            {/* Meta/Instagram: an ad row is either a real Meta ad (pushed by
+                «Create in Meta» or synced back) or a PLANNED ad — a content
+                record + copy that the next push turns into a creative + ad. So
+                «Add an ad» stays (it plans an ad); the bulk "Ad sets & ads"
+                tree stays hidden for Meta because ad sets are pushed/synced by
+                platform id. Every other platform has no sync, so manual entry
+                is the whole story. */}
             {!isMetaExec && canEnter && (
               <button type="button" className="btn btn-p" onClick={() => setTreeOpen(true)}>
                 <IconPlus />
                 {isAr ? 'المجموعات والإعلانات' : 'Ad sets & ads'}
               </button>
             )}
-            {!isMetaExec && canEnter && (
-              <button type="button" className="btn" onClick={() => setAddingAd(true)}>
+            {canEnter && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setAddingAd(true)}
+                title={isMetaExec
+                  ? (isAr ? 'خطّط إعلانًا: اختر المحتوى (الكرييتف) واكتب النص — ثم «إنشاء في ميتا» يبنيه.' : 'Plan an ad: pick the content (creative) and write the copy — then «Create in Meta» builds it.')
+                  : undefined}
+              >
                 <IconPlus />
                 {isAr ? 'إضافة إعلان' : 'Add an ad'}
               </button>
@@ -335,12 +397,13 @@ export default function ExecutionDetailPage() {
                 {syncing ? (isAr ? 'جارٍ المزامنة…' : 'Syncing…') : (isAr ? 'مزامنة من ميتا' : 'Sync from Meta')}
               </button>
             )}
-            {/* Build the planned campaign + ad sets in Meta (paused). Ads are
-                added by the buyer in Meta; the sync matches them back. Meta-only:
+            {/* Build the planned campaign + ad sets + ads in Meta (paused) and
+                link the ids back. On a linked execution the same button only
+                adds what is still missing (the un-pushed planned ads). Meta-only:
                 the push targets the Meta Graph API, so it never shows for
                 Snapchat/TikTok (which also carry a platformSchema). */}
             {isMetaExec && can('manage_paid_ads') && (
-              execution.platform_campaign_id ? (
+              execution.platform_campaign_id && unpushedAds.length === 0 ? (
                 <button
                   type="button"
                   className="btn"
@@ -356,10 +419,16 @@ export default function ExecutionDetailPage() {
                   disabled={busy}
                   onClick={() => void pushToMeta()}
                   title={isAr
-                    ? 'تُنشئ الحملة والمجموعات الإعلانية في ميتا (موقوفة) وتربط المعرفات تلقائيًا. الإعلانات يضيفها المشتري في ميتا.'
-                    : 'Creates the campaign + ad sets in Meta (paused) and links the ids automatically. Ads are added by the buyer in Meta.'}
+                    ? 'تُنشئ الحملة والمجموعات الإعلانية والإعلانات (الكرييتف من المحتوى + النص) في ميتا موقوفة، وتربط المعرفات تلقائيًا. لا يُصرف شيء حتى يُشغّلها إنسان في ميتا.'
+                    : 'Creates the campaign + ad sets + ads (creative from the content record + the copy) in Meta, all paused, and links the ids automatically. Nothing spends until a human activates them in Meta.'}
                 >
-                  {isAr ? 'إنشاء في ميتا' : 'Create in Meta'}
+                  {busy
+                    ? (isAr ? 'جارٍ الإنشاء في ميتا…' : 'Creating in Meta…')
+                    : execution.platform_campaign_id
+                      ? (isAr
+                        ? `إنشاء ${num(unpushedAds.length, true)} إعلان في ميتا`
+                        : `Create ${unpushedAds.length} ad${unpushedAds.length === 1 ? '' : 's'} in Meta`)
+                      : (isAr ? 'إنشاء في ميتا' : 'Create in Meta')}
                 </button>
               )
             )}
@@ -403,24 +472,23 @@ export default function ExecutionDetailPage() {
                         : (isAr ? 'لا إعلانات بعد' : 'No ads yet')}
                       body={isMetaExec
                         ? isAr
-                          ? 'الإعلانات تُنشأ في ميتا وتصل هنا تلقائيًا. أنشئ الإعلان في ميتا ثم زامِن — ثم اربط كل إعلان بسجل المحتوى (الكرييتف) الصحيح. المسودات في ميتا لا تظهر حتى تُنشر.'
-                          : "Ads are created in Meta and arrive here automatically. Build the ad in Meta, then sync — then attach the right content record (creative) to each ad. Drafts in Meta don't appear until published."
+                          ? 'طريقتان: خطّط الإعلان هنا (اختر سجل المحتوى = الكرييتف، واكتب النص) ثم «إنشاء في ميتا» يبنيه موقوفًا — أو أنشئه في ميتا ثم زامِن واربطه بسجل المحتوى. المسودات في ميتا لا تظهر حتى تُنشر.'
+                          : "Two ways: plan the ad here (pick the content record = creative, write the copy) and «Create in Meta» builds it paused — or build it in Meta, sync, and attach its content record. Drafts in Meta don't appear until published."
                         : isAr
                           ? 'الإعلان = إشارة إلى سجل محتوى + استهداف + نتيجة. هذا ما يجعل «أي إعلان جلب العميل؟» سؤالًا له جواب.'
                           : 'An ad = a content reference + targeting + a result. That is what makes "which ad brought the client?" answerable.'}
                     >
-                      {isMetaExec
-                        ? can('manage_paid_ads') && (
-                          <button type="button" className="btn btn-p" disabled={syncing} onClick={() => void syncFromMeta()}>
-                            {syncing ? (isAr ? 'جارٍ المزامنة…' : 'Syncing…') : (isAr ? 'مزامنة من ميتا' : 'Sync from Meta')}
-                          </button>
-                        )
-                        : canEnter && (
-                          <button type="button" className="btn btn-p" onClick={() => setAddingAd(true)}>
-                            <IconPlus />
-                            {isAr ? 'إضافة إعلان' : 'Add an ad'}
-                          </button>
-                        )}
+                      {canEnter && (
+                        <button type="button" className="btn btn-p" onClick={() => setAddingAd(true)}>
+                          <IconPlus />
+                          {isAr ? 'إضافة إعلان' : 'Add an ad'}
+                        </button>
+                      )}
+                      {isMetaExec && can('manage_paid_ads') && (
+                        <button type="button" className="btn" disabled={syncing} onClick={() => void syncFromMeta()}>
+                          {syncing ? (isAr ? 'جارٍ المزامنة…' : 'Syncing…') : (isAr ? 'مزامنة من ميتا' : 'Sync from Meta')}
+                        </button>
+                      )}
                     </Empty>
                   </div>
                 ) : (
@@ -487,9 +555,13 @@ export default function ExecutionDetailPage() {
                                         : c
                                           ? typeLabel(c.content_type_key)
                                           : isMetaExec
-                                            ? isAr
-                                              ? 'إعلان من ميتا — اربطه بسجل المحتوى (الكرييتف)'
-                                              : 'Meta ad — attach a content record (creative)'
+                                            ? ad.platform_ad_id
+                                              ? isAr
+                                                ? 'إعلان من ميتا — اربطه بسجل المحتوى (الكرييتف)'
+                                                : 'Meta ad — attach a content record (creative)'
+                                              : isAr
+                                                ? 'مخطط — اربطه بسجل محتوى قبل «الإنشاء في ميتا»'
+                                                : 'Planned — attach a content record before «Create in Meta»'
                                             : ad.note ?? ''}
                                   </div>
                                 </td>
@@ -526,6 +598,8 @@ export default function ExecutionDetailPage() {
                                     >
                                       {isAr ? 'إزالة' : 'Remove'}
                                     </button>
+                                  ) : isMetaExec && !ad.platform_ad_id ? (
+                                    <Pill tone="wait">{isAr ? 'لم يُنشأ في ميتا بعد' : 'Not in Meta yet'}</Pill>
                                   ) : isBest ? (
                                     <Pill tone="go">{isAr ? 'الأفضل' : 'Best'}</Pill>
                                   ) : (
@@ -564,7 +638,9 @@ export default function ExecutionDetailPage() {
                             >
                               <div className="m4-vtop">
                                 <span className="id ltr">{c?.ref ?? '—'}</span>
-                                {isBest ? (
+                                {isMetaExec && !ad.platform_ad_id ? (
+                                  <Pill tone="wait">{isAr ? 'لم يُنشأ في ميتا بعد' : 'Not in Meta yet'}</Pill>
+                                ) : isBest ? (
                                   <Pill tone="go">{isAr ? 'الأفضل' : 'Best'}</Pill>
                                 ) : wrongProject ? (
                                   <Pill tone="late">{isAr ? 'المشروع الخطأ' : 'Wrong project'}</Pill>
@@ -777,10 +853,10 @@ export default function ExecutionDetailPage() {
                 }}
               >
                 <div>
-                  <b>{isAr ? 'الإعلانات تأتي من ميتا.' : 'Ads come from Meta.'}</b>{' '}
+                  <b>{isAr ? 'ميتا هي مرجع الإعلانات.' : 'Meta is the source of truth for ads.'}</b>{' '}
                   {isAr
-                    ? 'أنشئ الإعلان في ميتا ثم زامِن — يصل هنا باسمه وحالته وإنفاقه ونتائجه تلقائيًا. مهمتك هنا: اربط كل إعلان بسجل المحتوى (الكرييتف) الصحيح. المسودات في ميتا لا تظهر حتى تُنشر.'
-                    : "Build the ad in Meta, then sync — it arrives here with its name, status, spend and results automatically. Your job here: attach the right content record (creative) to each ad. Drafts in Meta don't appear until published."}
+                    ? 'خطّط الإعلان هنا (سجل المحتوى = الكرييتف + النص) ثم «إنشاء في ميتا» يبنيه موقوفًا ويربطه — أو أنشئه في ميتا ثم زامِن واربطه بسجل المحتوى. الحالة والإنفاق والنتائج تصل من ميتا تلقائيًا. المسودات في ميتا لا تظهر حتى تُنشر.'
+                    : "Plan the ad here (content record = creative + copy) and «Create in Meta» builds it paused and links it — or build it in Meta, sync, and attach its content record. Status, spend and results arrive from Meta automatically. Drafts in Meta don't appear until published."}
                 </div>
                 {can('manage_paid_ads') && (
                   <div>
@@ -1084,9 +1160,11 @@ function AdModal({
           hint={isAr ? 'تأتي من ميتا وتُحدَّث تلقائيًا' : 'comes from Meta, updated automatically'}
         >
           <div className="inp" style={{ display: 'flex', alignItems: 'center', color: 'var(--mute)' }}>
-            {(isAr ? AD_STATUS_LABELS[status]?.ar : AD_STATUS_LABELS[status]?.en) ?? status}
+            {ad?.platform_ad_id
+              ? (isAr ? AD_STATUS_LABELS[status]?.ar : AD_STATUS_LABELS[status]?.en) ?? status
+              : (isAr ? 'لم يُنشأ في ميتا بعد — يُبنى موقوفًا عند «الإنشاء في ميتا»' : 'Not in Meta yet — built (paused) on «Create in Meta»')}
             <span className="tag" style={{ marginInlineStart: 'auto', fontSize: 10 }}>
-              {isAr ? 'من ميتا' : 'from Meta'}
+              {ad?.platform_ad_id ? (isAr ? 'من ميتا' : 'from Meta') : (isAr ? 'مخطط' : 'planned')}
             </span>
           </div>
         </Field>

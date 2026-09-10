@@ -1,16 +1,19 @@
 // ============================================================================
-// Meta "push structure" payload builders — turn a PLANNED Wassell execution
-// (campaign + ad sets) into Graph-API create payloads for Campaign + Ad Sets.
+// Meta "push" payload builders — turn a PLANNED Wassell execution (campaign +
+// ad sets + ads) into Graph-API create payloads for Campaign, Ad Set, Ad
+// Creative and Ad.
 // ----------------------------------------------------------------------------
-// Why only Campaign + Ad Sets: while the Meta *App* is in Development mode,
-// Meta refuses to create an ad CREATIVE from a new inline post ("app in
-// development mode", subcode 1885183). Campaign and Ad Set creation are NOT
-// gated by app mode. So the automation builds the skeleton (paused), the media
-// buyer adds the creatives/ads in Meta, and the hourly sync matches them back.
+// History: until 2026-09-10 only Campaign + Ad Sets were pushed, because the
+// Meta *App* was in Development mode and Meta refused app-made ad CREATIVES
+// ("app in development mode", subcode 1885183). The app is now Live and the
+// business is verified — inline creatives (link, Instagram identity,
+// Click-to-WhatsApp CTA, image_hash, video) were all verified against the real
+// account on 2026-09-10 — so the push now builds the whole tree.
 //
 // Everything is created PAUSED — nothing spends until a human activates it in
 // Meta. These are pure functions (no I/O); the marketing-os action calls the
-// Graph client and does the DB write-back of the returned platform ids.
+// Graph client, uploads the media, and does the DB write-back of the returned
+// platform ids.
 // ============================================================================
 
 /** Wassell campaign objective (lowercase enum) → Meta ODAX objective. */
@@ -194,4 +197,166 @@ export function buildAdSetPayload(
   if (execution.starts_on) payload.start_time = new Date(execution.starts_on).toISOString();
 
   return payload;
+}
+
+// ============================================================================
+// Ad-level: creative + ad (added 2026-09-10, once the Meta App went Live).
+// ============================================================================
+
+/** A planned Wassell ad (`mos_execution_ads` row without a platform_ad_id). */
+export interface PushAd {
+  id: string;
+  label: string | null;
+  /** `mos_execution_ads.creative` — the five standardized copy keys
+   *  (`primary_text`/`message`, `headline`, `description`, `cta`,
+   *  `destination_url`) plus the `meta_*` ids the push writes back for resume. */
+  creative: Json | null;
+  /** Title of the content record the ad uses (fallback ad name). */
+  content_title: string | null;
+}
+
+/** Uploaded media the creative references. Video needs a thumbnail image URL
+ *  (Meta's own generated `thumbnails` edge — no upload of ours required). */
+export type PushMedia =
+  | { kind: 'image'; image_hash: string }
+  | { kind: 'video'; video_id: string; thumbnail_url: string };
+
+/** Meta CTA enums a Wassel buyer can pick for a LINK destination. Anything
+ *  else typed into `creative.cta` falls back to LEARN_MORE rather than a Graph
+ *  rejection. WhatsApp ad sets always use WHATSAPP_MESSAGE regardless. */
+const LINK_CTAS = new Set([
+  'LEARN_MORE', 'SIGN_UP', 'CONTACT_US', 'GET_QUOTE', 'BOOK_NOW', 'CALL_NOW',
+  'APPLY_NOW', 'DOWNLOAD', 'SEE_MORE', 'GET_OFFER', 'SUBSCRIBE', 'SHOP_NOW',
+  'ORDER_NOW', 'REQUEST_TIME', 'WATCH_MORE', 'NO_BUTTON',
+]);
+
+/** Fallback landing page when a link ad names none. */
+const DEFAULT_LANDING_URL = 'https://wassel.re';
+/** The link Meta wants on Click-to-WhatsApp creatives (verified live). */
+const WHATSAPP_LINK = 'https://api.whatsapp.com/send';
+
+/** Where the ad set sends people — decides the creative's CTA + link shape. */
+export function resolveAdDestination(campaign: PushCampaign, execution: PushExecution): 'WHATSAPP' | 'MESSENGER' | 'LINK' {
+  const ps = execution.platform_settings ?? null;
+  const objective = resolveObjective(campaign, ps);
+  const defaults = ADSET_DEFAULTS[objective] ?? LEADS_ADSET_DEFAULT;
+  const destination = str(ps?.destination_type) ?? defaults.destination_type ?? null;
+  if (destination === 'WHATSAPP') return 'WHATSAPP';
+  if (destination === 'MESSENGER') return 'MESSENGER';
+  return 'LINK';
+}
+
+/** The ad's display name in Meta — `<campaign ref · execution> · <ad label>`. */
+export function adName(campaign: PushCampaign, execution: PushExecution, ad: PushAd): string {
+  const label = ad.label ?? ad.content_title ?? 'Ad';
+  return `${refPrefix(campaign, execution)} · ${label}`.slice(0, 400);
+}
+
+function ctaFor(destination: 'WHATSAPP' | 'MESSENGER' | 'LINK', creative: Json | null, link: string): Json {
+  if (destination === 'WHATSAPP') {
+    return { type: 'WHATSAPP_MESSAGE', value: { link: WHATSAPP_LINK, app_destination: 'WHATSAPP' } };
+  }
+  if (destination === 'MESSENGER') {
+    return { type: 'MESSAGE_PAGE', value: { link, app_destination: 'MESSENGER' } };
+  }
+  const raw = (str(creative?.cta) ?? '').toUpperCase().replace(/[\s-]+/g, '_');
+  return { type: LINK_CTAS.has(raw) ? raw : 'LEARN_MORE', value: { link } };
+}
+
+/**
+ * Build the Ad Creative create payload (`object_story_spec` — an unpublished
+ * page post carrying the copy + media). `pageId` is required: every creative
+ * runs from a page. `instagramId`, when set, lets the same creative deliver
+ * under the Instagram identity too.
+ */
+export function buildCreativePayload(
+  campaign: PushCampaign,
+  execution: PushExecution,
+  ad: PushAd,
+  media: PushMedia,
+  pageId: string,
+  instagramId: string | null,
+): Json {
+  const c = ad.creative ?? null;
+  const destination = resolveAdDestination(campaign, execution);
+  const link = destination === 'WHATSAPP'
+    ? WHATSAPP_LINK
+    : (str(c?.destination_url) ?? DEFAULT_LANDING_URL);
+  const message = str(c?.message) ?? str(c?.primary_text) ?? '';
+  const headline = str(c?.headline);
+  const description = str(c?.description);
+  const cta = ctaFor(destination, c, link);
+
+  const spec: Json = { page_id: pageId };
+  if (instagramId) spec.instagram_user_id = instagramId;
+
+  if (media.kind === 'image') {
+    const linkData: Json = { message, link, image_hash: media.image_hash, call_to_action: cta };
+    if (headline) linkData.name = headline;
+    if (description) linkData.description = description;
+    spec.link_data = linkData;
+  } else {
+    const videoData: Json = {
+      video_id: media.video_id,
+      message,
+      image_url: media.thumbnail_url,
+      call_to_action: cta,
+    };
+    if (headline) videoData.title = headline;
+    if (description) videoData.link_description = description;
+    spec.video_data = videoData;
+  }
+
+  return { name: adName(campaign, execution, ad), object_story_spec: spec };
+}
+
+/** Build the Ad create payload (PAUSED) binding a creative to a Meta ad set. */
+export function buildAdPayload(
+  campaign: PushCampaign,
+  execution: PushExecution,
+  ad: PushAd,
+  metaAdSetId: string,
+  creativeId: string,
+): Json {
+  return {
+    name: adName(campaign, execution, ad),
+    adset_id: metaAdSetId,
+    creative: { creative_id: creativeId },
+    status: 'PAUSED',
+  };
+}
+
+/** A content's linked asset as read from `mos_asset_links` ⨝ `mos_assets`. */
+export interface CreativeAssetCandidate {
+  asset_id: string;
+  role: string | null;
+  kind: string | null;
+  mime_type: string | null;
+  file_id: string | null;
+  url: string | null;
+}
+
+/**
+ * Pick the ONE asset a content record's ad should run: the final cut wins over
+ * source/reference; an image (by mime, so a `document`-kind design export
+ * still counts) or an mp4 with our own bytes (`file_id`) or a public url.
+ * YouTube/Drive links are not uploadable media and are skipped.
+ */
+export function pickCreativeAsset(
+  candidates: CreativeAssetCandidate[],
+): { asset: CreativeAssetCandidate; kind: 'image' | 'video' } | null {
+  const ROLE_RANK: Record<string, number> = { final: 0, source: 1, reference: 2 };
+  const typed = candidates
+    .map((a) => {
+      const mime = (a.mime_type ?? '').toLowerCase();
+      const kind: 'image' | 'video' | null = mime.startsWith('image/') && mime !== 'image/heic'
+        ? 'image'
+        : mime.startsWith('video/') || (a.kind === 'video' && !mime) ? 'video' : null;
+      return { a, kind };
+    })
+    .filter((x): x is { a: CreativeAssetCandidate; kind: 'image' | 'video' } => x.kind !== null)
+    .filter((x) => Boolean(x.a.file_id) || /^https?:\/\/[^ ]+\.(jpe?g|png|webp|mp4|mov)(\?|$)/i.test(x.a.url ?? ''))
+    .sort((x, y) => (ROLE_RANK[x.a.role ?? ''] ?? 9) - (ROLE_RANK[y.a.role ?? ''] ?? 9));
+  const best = typed[0];
+  return best ? { asset: best.a, kind: best.kind } : null;
 }

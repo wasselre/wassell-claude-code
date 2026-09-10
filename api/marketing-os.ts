@@ -28,7 +28,10 @@ import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import { makeServiceClient } from './_lib/serviceClient.js';
 import { runMetaSync } from './_lib/marketing/metaSync.js';
 import { loadMetaConfig, MetaMarketingClient, MetaApiError } from './_lib/marketing/metaMarketingApi.js';
-import { buildCampaignPayload, buildAdSetPayload, type PushCampaign, type PushExecution } from './_lib/marketing/metaPush.js';
+import {
+  buildCampaignPayload, buildAdSetPayload, buildCreativePayload, buildAdPayload, adName, pickCreativeAsset,
+  type PushCampaign, type PushExecution, type PushAd, type PushMedia, type CreativeAssetCandidate,
+} from './_lib/marketing/metaPush.js';
 import {
   loadBundleConfig, isBundlePlatform, buildPlatformData, platformAcceptsKind,
   uploadFromUrl, createPost, getPost, deletePost, getTeam, extractPermalink, mapBundleStatus,
@@ -5947,7 +5950,11 @@ export default async function handler(req: Request): Promise<Response> {
 
         const [campaign, ads, daily, adSets] = await Promise.all([
           sb.from('mos_campaign_v').select('*').eq('id', row.campaign_id as string).maybeSingle(),
+          // Soft-archived placements (removed from the Content page) stay out
+          // — until 2026-09-10 they were hidden only by the Meta-side
+          // platform_ad_id filter, which no longer exists (planned ads show).
           sb.from('mos_execution_ads').select('*').eq('execution_id', id)
+            .is('archived_at', null)
             .order('created_at', { ascending: true }),
           sb.from('mos_execution_daily').select('*').eq('execution_id', id)
             .order('day', { ascending: false }).limit(90),
@@ -6031,7 +6038,8 @@ export default async function handler(req: Request): Promise<Response> {
           if (rr.error) console.error('[marketing-os] mos_reresolve_first_touch failed:', rr.error.message);
         }
         const list = await sb.from('mos_execution_ads').select('*')
-          .eq('execution_id', executionId).order('created_at', { ascending: true });
+          .eq('execution_id', executionId).is('archived_at', null)
+          .order('created_at', { ascending: true });
         const lf = dbFail(list.error);
         if (lf) return lf;
         return jsonOk({ ads: list.data ?? [] });
@@ -6045,7 +6053,8 @@ export default async function handler(req: Request): Promise<Response> {
         const df = dbFail(del.error);
         if (df) return df;
         const list = await sb.from('mos_execution_ads').select('*')
-          .eq('execution_id', executionId).order('created_at', { ascending: true });
+          .eq('execution_id', executionId).is('archived_at', null)
+          .order('created_at', { ascending: true });
         const lf = dbFail(list.error);
         if (lf) return lf;
         return jsonOk({ ads: list.data ?? [] });
@@ -6322,17 +6331,34 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       case 'meta_push_structure': {
-        // Build the PLANNED execution (its campaign + ad sets) in Meta as a
-        // PAUSED skeleton, then write the returned platform ids straight back
-        // onto Wassell so the execution is linked with no manual id typing.
-        // Ads/creatives are NOT created here — Meta blocks app-made creatives
-        // while the app is in Development mode, so the buyer adds them in Meta
-        // and the hourly sync matches them back by platform id.
+        // Build the PLANNED execution in Meta and link every returned platform
+        // id straight back onto Wassell (no manual id typing):
+        //   1) the SKELETON — campaign + one ad set per planned ad set (a single
+        //      default when none) — all-or-nothing: a rejected ad set rolls the
+        //      campaign back and links nothing;
+        //   2) the ADS — one creative (content record's final image/video +
+        //      the ad's copy) and one ad per planned ad, each PAUSED.
+        // Re-running on a LINKED execution is the resume path: what is already
+        // linked is skipped and only the missing ad sets / un-pushed ads /
+        // still-processing videos are added. Every Meta id (image hash, video
+        // id, creative id) is persisted on the ad row as soon as it exists, so a
+        // retry never re-uploads. Until 2026-09-10 ads were left to the buyer
+        // because the Meta App was in Development mode — no longer.
+        //
+        // TIME BUDGET: this is an Edge function (25s initial-response ceiling;
+        // the MOS client aborts at 23s). The ads phase stops when the budget is
+        // spent and reports the rest as `ads_pending` with `more:true`; the UI
+        // calls again to continue. Never hold this request open for a video's
+        // processing — a video that is not ready is reported pending as well.
         const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
         const executionId = str(body.execution_id);
         const validateOnly = body.validate_only === true;
         if (!executionId) return jsonError(400, 'execution_id is required');
         const cfg = loadMetaConfig(); if (!cfg) return jsonError(400, 'Meta not configured');
+        const startedAt = Date.now();
+        const BUDGET_MS = 17_000;
+        const budgetLeft = (): number => BUDGET_MS - (Date.now() - startedAt);
+        const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
         const execRes = await sb.from('mos_campaign_executions')
           .select('id, campaign_id, platform, label, budget, starts_on, ends_on, targeting, platform_settings, platform_campaign_id')
@@ -6342,9 +6368,6 @@ export default async function handler(req: Request): Promise<Response> {
         if (!execRow) return jsonError(404, 'execution not found');
         if (execRow.platform !== 'meta' && execRow.platform !== 'instagram') {
           return jsonError(400, 'Only Meta/Instagram executions can be pushed to Meta.');
-        }
-        if (execRow.platform_campaign_id) {
-          return jsonError(409, `This execution is already linked to Meta campaign ${execRow.platform_campaign_id}.`);
         }
 
         const campRes = await sb.from('mos_campaigns')
@@ -6369,28 +6392,39 @@ export default async function handler(req: Request): Promise<Response> {
           .select('id, name, platform_adset_id, sort_order').eq('execution_id', executionId)
           .is('archived_at', null).order('sort_order', { ascending: true });
         const sf = dbFail(setsRes.error); if (sf) return sf;
+        type LinkedSet = { id: string | null; name: string | null; platform_adset_id: string | null };
         const adSets = (setsRes.data ?? []) as Array<{ id: string; name: string | null; platform_adset_id: string | null }>;
 
         const client = new MetaMarketingClient(cfg);
-        try {
-          // 1) Campaign. We do NOT write platform_campaign_id yet — the execution
-          //    is only "linked" once the WHOLE skeleton (campaign + every ad set)
-          //    succeeds. Writing it here is what left a failed push showing a
-          //    false "linked to Meta" badge over a half-built campaign.
-          const campaignPayload = buildCampaignPayload(campaign, execRow);
-          const campaignResult = await client.createCampaign(campaignPayload, validateOnly);
-          const metaCampaignId = campaignResult.id;
 
-          // 2) Ad sets — one per planned ad set (a single default if none planned).
-          const plan = adSets.length
+        // ---- 1) Skeleton: campaign + ad sets ---------------------------------
+        let metaCampaignId: string | null = execRow.platform_campaign_id;
+        const campaignCreated = !metaCampaignId;
+        let campaignName: string | null = null;
+        const createdSets: Array<{ wassell_ad_set_id: string | null; platform_adset_id: string; name: string }> = [];
+        const errors: Array<{ ad_set: string; error: string }> = [];
+        // The ad sets as the ads phase sees them (existing links + this call's).
+        const linkedSets: LinkedSet[] = adSets.map((s) => ({ ...s }));
+        try {
+          if (!metaCampaignId) {
+            // We do NOT write platform_campaign_id yet — the execution is only
+            // "linked" once the WHOLE skeleton (campaign + every ad set)
+            // succeeds. Writing it here is what left a failed push showing a
+            // false "linked to Meta" badge over a half-built campaign.
+            const campaignPayload = buildCampaignPayload(campaign, execRow);
+            const campaignResult = await client.createCampaign(campaignPayload, validateOnly);
+            metaCampaignId = campaignResult.id ?? null;
+            campaignName = String(campaignPayload.name);
+          }
+
+          // One Meta ad set per planned ad set (a single default if none planned).
+          const plan: LinkedSet[] = adSets.length
             ? adSets
-            : [{ id: null as string | null, name: execRow.label ?? 'Ad set', platform_adset_id: null }];
-          const createdSets: Array<{ wassell_ad_set_id: string | null; platform_adset_id: string; name: string }> = [];
-          const errors: Array<{ ad_set: string; error: string }> = [];
+            : [{ id: null, name: execRow.label ?? 'Ad set', platform_adset_id: null }];
           for (const s of plan) {
             if (s.platform_adset_id) continue; // already linked — don't duplicate
             try {
-              const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId, cfg.pageId, audienceTargeting);
+              const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId ?? '', cfg.pageId, audienceTargeting);
               const asResult = await client.createAdSet(p, validateOnly);
               createdSets.push({ wassell_ad_set_id: s.id, platform_adset_id: asResult.id ?? '(validated)', name: String(p.name) });
             } catch (e) {
@@ -6398,11 +6432,11 @@ export default async function handler(req: Request): Promise<Response> {
             }
           }
 
-          // 3a) ANY ad set failed → all-or-nothing: undo the campaign in Meta
-          //     (deleting a campaign cascades its ad sets) and link NOTHING. The
-          //     buyer gets the real Meta rejection so they can fix the plan.
+          // ANY ad set failed → all-or-nothing on what THIS call built: undo a
+          // campaign we just created (deleting it cascades its ad sets) and
+          // link NOTHING. The buyer gets the real Meta rejection.
           if (errors.length > 0) {
-            if (!validateOnly && metaCampaignId) {
+            if (campaignCreated && !validateOnly && metaCampaignId) {
               try { await client.deleteNode(metaCampaignId); }
               catch (delErr) { console.error('[marketing-os] rollback delete failed:', metaErr(delErr)); }
             }
@@ -6416,32 +6450,221 @@ export default async function handler(req: Request): Promise<Response> {
             );
           }
 
-          // 3b) All succeeded → NOW persist the links (campaign + each ad set).
+          // All succeeded → NOW persist the links (campaign + each ad set).
           if (!validateOnly && metaCampaignId) {
-            const up = await sb.from('mos_campaign_executions')
-              .update({ platform_campaign_id: metaCampaignId, updated_at: new Date().toISOString() })
-              .eq('id', executionId);
-            const uf = dbFail(up.error); if (uf) return uf;
+            if (campaignCreated) {
+              const up = await sb.from('mos_campaign_executions')
+                .update({ platform_campaign_id: metaCampaignId, updated_at: new Date().toISOString() })
+                .eq('id', executionId);
+              const uf = dbFail(up.error); if (uf) return uf;
+            }
             for (const c of createdSets) {
-              if (c.wassell_ad_set_id && c.platform_adset_id && c.platform_adset_id !== '(validated)') {
+              if (c.platform_adset_id === '(validated)') continue;
+              if (c.wassell_ad_set_id) {
                 const su = await sb.from('mos_ad_sets')
                   .update({ platform_adset_id: c.platform_adset_id, updated_at: new Date().toISOString() })
                   .eq('id', c.wassell_ad_set_id);
                 if (su.error) console.error('[marketing-os] ad set link write failed:', su.error.message);
+                const ls = linkedSets.find((s) => s.id === c.wassell_ad_set_id);
+                if (ls) ls.platform_adset_id = c.platform_adset_id;
+              } else {
+                // The default ad set (nothing was planned) gets a real Wassell
+                // row so the ads below can bind to it and the sync matches it
+                // by platform id instead of minting a second row.
+                const ins = await sb.from('mos_ad_sets')
+                  .insert({ execution_id: executionId, name: c.name, platform_adset_id: c.platform_adset_id, status: 'paused', sort_order: 0 })
+                  .select('id').maybeSingle();
+                if (ins.error) console.error('[marketing-os] default ad set row insert failed:', ins.error.message);
+                linkedSets.push({ id: (ins.data as { id?: string } | null)?.id ?? null, name: c.name, platform_adset_id: c.platform_adset_id });
               }
             }
           }
-
-          return jsonOk({
-            ok: true,
-            validate_only: validateOnly,
-            campaign: { platform_campaign_id: metaCampaignId, name: String(campaignPayload.name) },
-            ad_sets: createdSets,
-            errors,
-          });
         } catch (e) {
           return jsonError(502, `Meta push failed at campaign: ${metaErr(e)}`);
         }
+
+        // ---- 2) Ads: creative (media + copy) + ad, per planned ad -------------
+        const adsOut: Array<{ wassell_ad_id: string; platform_ad_id: string; name: string }> = [];
+        const adsPending: Array<{ wassell_ad_id: string; name: string; reason: string }> = [];
+        const adErrors: Array<{ wassell_ad_id: string; ad: string; error: string }> = [];
+        if (!validateOnly && metaCampaignId) {
+          type PlannedAd = { id: string; label: string | null; content_id: string | null; ad_set_id: string | null; creative: Record<string, unknown> | null };
+          const plannedRes = await sb.from('mos_execution_ads')
+            .select('id, label, content_id, ad_set_id, creative')
+            .eq('execution_id', executionId).is('archived_at', null).is('platform_ad_id', null)
+            .order('created_at', { ascending: true });
+          const pf = dbFail(plannedRes.error); if (pf) return pf;
+          const planned = (plannedRes.data ?? []) as PlannedAd[];
+
+          if (planned.length > 0) {
+            const contentIds = Array.from(new Set(planned.map((a) => a.content_id).filter((c): c is string => Boolean(c))));
+            const [contentRes, linksRes] = await Promise.all([
+              contentIds.length ? sb.from('mos_content_v').select('id, title').in('id', contentIds)
+                : Promise.resolve({ data: [] as Array<{ id: string; title: string | null }>, error: null }),
+              contentIds.length ? sb.from('mos_asset_links').select('content_id, asset_id, role').in('content_id', contentIds)
+                : Promise.resolve({ data: [] as Array<{ content_id: string; asset_id: string; role: string | null }>, error: null }),
+            ]);
+            const cf2 = dbFail(contentRes.error) ?? dbFail(linksRes.error); if (cf2) return cf2;
+            const titleOf = new Map((contentRes.data ?? []).map((c) => [c.id, c.title]));
+            const links = (linksRes.data ?? []) as Array<{ content_id: string; asset_id: string; role: string | null }>;
+            const assetIds = Array.from(new Set(links.map((l) => l.asset_id)));
+            const assetsRes = assetIds.length
+              ? await sb.from('mos_assets').select('id, kind, mime_type, file_id, url').in('id', assetIds)
+              : { data: [] as Array<{ id: string; kind: string | null; mime_type: string | null; file_id: string | null; url: string | null }>, error: null };
+            const af2 = dbFail(assetsRes.error); if (af2) return af2;
+            const assetById = new Map((assetsRes.data ?? []).map((a) => [a.id, a]));
+            // File rows (bucket/path/mime/size) via the service client: the
+            // buyer can already READ the asset (RLS above), signing the private
+            // object is the only privileged step.
+            const svc = makeServiceClient('api:marketing-os');
+            const fileIds = Array.from(new Set((assetsRes.data ?? []).map((a) => a.file_id).filter((f): f is string => Boolean(f))));
+            type FileRow = { id: string; storage_bucket: string; storage_path: string; mime_type: string | null; size_bytes: number | null };
+            const fileById = new Map<string, FileRow>();
+            if (fileIds.length && svc) {
+              const fr = await svc.from('files').select('id, storage_bucket, storage_path, mime_type, size_bytes').in('id', fileIds);
+              if (fr.error) console.error('[marketing-os] files lookup for push failed:', fr.error.message);
+              for (const f of (fr.data ?? []) as FileRow[]) fileById.set(f.id, f);
+            }
+            const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+            for (const ad of planned) {
+              const pushAd: PushAd = {
+                id: ad.id, label: ad.label, creative: ad.creative ?? null,
+                content_title: ad.content_id ? titleOf.get(ad.content_id) ?? null : null,
+              };
+              const name = adName(campaign, execRow, pushAd);
+              // Everything after the skeleton must fit the Edge budget; the UI
+              // calls again for whatever is left.
+              if (budgetLeft() < 6_000) {
+                adsPending.push({ wassell_ad_id: ad.id, name, reason: 'budget' });
+                continue;
+              }
+              const creative: Record<string, unknown> = { ...(ad.creative ?? {}) };
+              const creativeBefore = JSON.stringify(creative);
+              const persistCreative = async (): Promise<void> => {
+                if (JSON.stringify(creative) === creativeBefore) return;
+                const cu = await sb.from('mos_execution_ads')
+                  .update({ creative, updated_at: new Date().toISOString() }).eq('id', ad.id);
+                if (cu.error) console.error('[marketing-os] ad creative id write-back failed:', cu.error.message);
+              };
+              try {
+                if (!cfg.pageId) throw new Error('META_PAGE_ID is not configured — every creative runs from a page');
+                const target = ad.ad_set_id
+                  ? linkedSets.find((s) => s.id === ad.ad_set_id) ?? null
+                  : linkedSets.length === 1 ? linkedSets[0] ?? null : null;
+                if (!target) throw new Error(linkedSets.length > 1 ? 'the ad is not assigned to an ad set' : 'ad set not found');
+                if (!target.platform_adset_id) throw new Error(`ad set "${target.name ?? ''}" is not linked to Meta`);
+                if (!ad.content_id) throw new Error('no content record (creative) attached');
+
+                // Media — resume-aware: an id already on the row is reused.
+                let media: PushMedia | null = null;
+                const knownHash = typeof creative.meta_image_hash === 'string' ? creative.meta_image_hash : null;
+                const knownVideo = typeof creative.meta_video_id === 'string' ? creative.meta_video_id : null;
+                if (knownHash) {
+                  media = { kind: 'image', image_hash: knownHash };
+                } else if (knownVideo) {
+                  const st = await client.getVideoStatus(knownVideo);
+                  if (st.ready && st.thumbnailUrl) media = { kind: 'video', video_id: knownVideo, thumbnail_url: st.thumbnailUrl };
+                  else { adsPending.push({ wassell_ad_id: ad.id, name, reason: 'video_processing' }); continue; }
+                } else {
+                  const candidates: CreativeAssetCandidate[] = links
+                    .filter((l) => l.content_id === ad.content_id)
+                    .map((l) => {
+                      const a = assetById.get(l.asset_id);
+                      const f = a?.file_id ? fileById.get(a.file_id) : undefined;
+                      return {
+                        asset_id: l.asset_id, role: l.role, kind: a?.kind ?? null,
+                        mime_type: f?.mime_type ?? a?.mime_type ?? null,
+                        file_id: a?.file_id ?? null, url: a?.url ?? null,
+                      };
+                    });
+                  const pick = pickCreativeAsset(candidates);
+                  if (!pick) throw new Error('the content record has no final image or video to run');
+                  const file = pick.asset.file_id ? fileById.get(pick.asset.file_id) : undefined;
+                  let srcUrl = pick.asset.url;
+                  if (file) {
+                    if (!svc) throw new Error('file signing is unavailable');
+                    const signed = await svc.storage.from(file.storage_bucket).createSignedUrl(file.storage_path, 3600);
+                    if (signed.error || !signed.data?.signedUrl) throw new Error(signed.error?.message ?? 'sign failed');
+                    srcUrl = signed.data.signedUrl;
+                  }
+                  if (!srcUrl) throw new Error('the media bytes are unreachable (no file, no public url)');
+
+                  if (pick.kind === 'image') {
+                    if (file?.size_bytes && file.size_bytes > MAX_IMAGE_BYTES) {
+                      throw new Error(`the image is ${(file.size_bytes / 1048576).toFixed(1)} MB — the push takes up to 10 MB; export a smaller final`);
+                    }
+                    const dl = await fetch(srcUrl);
+                    if (!dl.ok) throw new Error(`media download failed (${dl.status})`);
+                    const bytes = new Uint8Array(await dl.arrayBuffer());
+                    if (bytes.byteLength > MAX_IMAGE_BYTES) throw new Error('the image is over 10 MB — export a smaller final');
+                    const up = await client.uploadImageBytes(bytes, name);
+                    creative.meta_image_hash = up.hash;
+                    media = { kind: 'image', image_hash: up.hash };
+                  } else {
+                    // Meta fetches the signed URL itself and processes async.
+                    const up = await client.uploadVideoByUrl(srcUrl, name);
+                    creative.meta_video_id = up.id;
+                    let st = await client.getVideoStatus(up.id);
+                    while (!st.ready && budgetLeft() > 8_000) {
+                      await sleep(3_000);
+                      st = await client.getVideoStatus(up.id);
+                    }
+                    if (st.ready && st.thumbnailUrl) {
+                      media = { kind: 'video', video_id: up.id, thumbnail_url: st.thumbnailUrl };
+                    } else {
+                      await persistCreative();
+                      adsPending.push({ wassell_ad_id: ad.id, name, reason: 'video_processing' });
+                      continue;
+                    }
+                  }
+                }
+
+                // Creative — resume-aware.
+                let creativeId = typeof creative.meta_creative_id === 'string' ? creative.meta_creative_id : null;
+                if (!creativeId) {
+                  const cp = buildCreativePayload(campaign, execRow, pushAd, media, cfg.pageId, cfg.instagramId);
+                  creativeId = (await client.createAdCreative(cp)).id;
+                  creative.meta_creative_id = creativeId;
+                }
+
+                // Ad — PAUSED, bound to the ad set; then link the row.
+                const ap = buildAdPayload(campaign, execRow, pushAd, target.platform_adset_id, creativeId);
+                const adRes = await client.createAd(ap, false);
+                const wb = await sb.from('mos_execution_ads').update({
+                  platform_ad_id: adRes.id,
+                  ad_set_id: target.id ?? ad.ad_set_id,
+                  label: String(ap.name),
+                  status: 'paused',
+                  creative,
+                  updated_at: new Date().toISOString(),
+                }).eq('id', ad.id);
+                if (wb.error) {
+                  // The ad EXISTS in Meta; losing the link would make the next
+                  // push create a duplicate. Say so loudly.
+                  console.error('[marketing-os] ad link write-back failed:', wb.error.message);
+                  throw new Error(`created in Meta as ${adRes.id} but the link write failed: ${wb.error.message} — sync from Meta to recover`);
+                }
+                adsOut.push({ wassell_ad_id: ad.id, platform_ad_id: adRes.id, name: String(ap.name) });
+              } catch (e) {
+                await persistCreative();
+                adErrors.push({ wassell_ad_id: ad.id, ad: name, error: metaErr(e) });
+              }
+            }
+          }
+        }
+
+        return jsonOk({
+          ok: true,
+          validate_only: validateOnly,
+          campaign: { platform_campaign_id: metaCampaignId, name: campaignName, created: campaignCreated },
+          ad_sets: createdSets,
+          errors,
+          ads: adsOut,
+          ads_pending: adsPending,
+          ad_errors: adErrors,
+          more: adsPending.length > 0,
+        });
       }
 
       case 'daily_save': {

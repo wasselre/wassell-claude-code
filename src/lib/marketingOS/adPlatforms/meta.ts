@@ -147,6 +147,11 @@ export const metaSchema: PlatformSchema = {
     },
   ],
 
+  // The ad-level copy «Create in Meta» turns into the creative (2026-09-10).
+  // Keys match the five standardized placement keys the Content page's
+  // Placements tab writes (`primary_text` is mirrored to `message` there), so
+  // both entry points feed the same push. The MEDIA is never typed here — it is
+  // the content record's final asset.
   adSections: [
     {
       key: 'creative',
@@ -154,6 +159,35 @@ export const metaSchema: PlatformSchema = {
       en: 'Ad',
       fields: [
         { key: 'message', control: 'textarea', ar: 'النص الإعلاني (الكابشن)', en: 'Caption' },
+        { key: 'headline', control: 'text', ar: 'العنوان', en: 'Headline', hint_ar: 'سطر قصير تحت الصورة', hint_en: 'short line under the media' },
+        { key: 'description', control: 'text', ar: 'الوصف', en: 'Description' },
+        {
+          key: 'cta',
+          control: 'select',
+          ar: 'زر الدعوة',
+          en: 'Call to action',
+          hint_ar: 'مجموعات واتساب تستخدم «راسلنا على واتساب» دائمًا',
+          hint_en: 'WhatsApp ad sets always use “Send WhatsApp message”',
+          options: [
+            { value: 'LEARN_MORE', ar: 'اعرف المزيد', en: 'Learn more' },
+            { value: 'CONTACT_US', ar: 'تواصل معنا', en: 'Contact us' },
+            { value: 'GET_QUOTE', ar: 'اطلب عرض سعر', en: 'Get quote' },
+            { value: 'BOOK_NOW', ar: 'احجز الآن', en: 'Book now' },
+            { value: 'SIGN_UP', ar: 'سجّل', en: 'Sign up' },
+            { value: 'CALL_NOW', ar: 'اتصل الآن', en: 'Call now' },
+            { value: 'SEE_MORE', ar: 'شاهد المزيد', en: 'See more' },
+          ],
+        },
+        {
+          key: 'destination_url',
+          control: 'text',
+          ar: 'رابط الهبوط',
+          en: 'Landing URL',
+          ltr: true,
+          placeholder: 'https://wassel.re/…',
+          hint_ar: 'يُهمل في مجموعات واتساب',
+          hint_en: 'ignored for WhatsApp ad sets',
+        },
       ],
     },
   ],
