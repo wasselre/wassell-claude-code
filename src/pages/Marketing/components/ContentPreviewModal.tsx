@@ -28,9 +28,10 @@ import { useAppStore } from '@/stores/appStore';
 import {
   MosAsset, MosAssetLink, MosContentRow, MosPublication, MosScene, MosStep, MosTask,
   PLATFORM_LABELS, PUB_STATUS_LABELS, ROLE_LABELS,
-  completeTask, fetchAssets, fetchContentDetail, fetchPublications,
+  adSetRequiredChoices, completeTask, fetchAssets, fetchContentDetail, fetchPublications,
   fieldSchemaEntries, fieldSchemaKeys,
 } from '@/lib/marketingOS/client';
+import { autoAdOutcomeText } from './AutoAdApproval';
 import { useWorkspace } from '../MarketingWorkspace';
 import { Modal, Pill, Skeleton, LoadError } from './kit';
 import { IconCheck, IconLibrary } from './icons';
@@ -153,17 +154,21 @@ export default function ContentPreviewModal({
     if (!openTask) return;
     setBusy(true);
     try {
-      await completeTask(openTask.id, result);
+      const res = await completeTask(openTask.id, result);
       addToast(
-        result === 'approved'
-          ? isAr ? 'اعتُمد — انتقل إلى الخطوة التالية.' : 'Approved — it moved to the next stage.'
-          : isAr ? 'أُرسل — انتقل إلى الخطوة التالية.' : 'Submitted — it moved to the next stage.',
-        'success',
+        autoAdOutcomeText(res.auto_ad, isAr)
+          ?? (result === 'approved'
+            ? isAr ? 'اعتُمد — انتقل إلى الخطوة التالية.' : 'Approved — it moved to the next stage.'
+            : isAr ? 'أُرسل — انتقل إلى الخطوة التالية.' : 'Submitted — it moved to the next stage.'),
+        res.auto_ad?.status === 'skipped' ? 'info' : 'success',
       );
       setChanged(true);
       await load();
     } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
+      addToast(adSetRequiredChoices(e)
+        ? (isAr ? 'هذا الاعتماد يُنشئ إعلانًا في ميتا — افتح الصفحة كاملة واختر المجموعة الإعلانية من زر «اعتماد».'
+                : 'This approval creates a Meta ad — open the full page and pick the ad set from “Approve”.')
+        : e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setBusy(false);
     }
@@ -189,7 +194,11 @@ export default function ContentPreviewModal({
   // The one file to show BIG: the approved final cut, else the file marked for
   // approval, else the first linked file that can actually be rendered.
   const renderable = (a: MosAsset): boolean => !!(a.thumb_url || a.url || a.file_id);
-  const finalLink = links.find((l) => l.role === 'final');
+  // The square design is the feed-shaped one — the natural hero; then the
+  // vertical, then the legacy single final.
+  const finalLink = links.find((l) => l.role === 'final_square')
+    ?? links.find((l) => l.role === 'final_vertical')
+    ?? links.find((l) => l.role === 'final');
   const heroAsset: MosAsset | null =
     (finalLink ? assets.find((a) => a.id === finalLink.asset_id) : undefined)
     ?? (item?.approval_asset_id ? assets.find((a) => a.id === item.approval_asset_id) : undefined)
@@ -207,7 +216,11 @@ export default function ContentPreviewModal({
   const roleOf = (assetId: string): string | null => {
     const l = links.find((x) => x.asset_id === assetId);
     if (!l) return null;
-    return l.role === 'final'
+    return l.role === 'final_square'
+      ? (isAr ? 'التصميم المربّع' : 'Square design')
+      : l.role === 'final_vertical'
+        ? (isAr ? 'التصميم الطولي' : 'Vertical design')
+        : l.role === 'final'
       ? (isAr ? 'معتمد' : 'Approved')
       : l.role === 'reference'
         ? (isAr ? 'نسخة عمل' : 'Working file')

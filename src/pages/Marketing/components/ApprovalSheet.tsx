@@ -16,9 +16,10 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  MosScene, MosStep, MosTask, ROLE_LABELS, completeTask,
+  MosScene, MosStep, MosTask, ROLE_LABELS, adSetRequiredChoices, completeTask,
 } from '@/lib/marketingOS/client';
 import { daysAgo, num } from '../lib/format';
+import { AutoAdPanel, autoAdOutcomeText, useAutoAdPreview } from './AutoAdApproval';
 import '../styles/mobile-m2.css';
 
 /** `true` below the workspace's 760px phone breakpoint — live across resizes. */
@@ -70,9 +71,13 @@ interface CheckItem {
 }
 
 export default function ApprovalSheet({
-  openTask, step, reviewedStep, nextStep, scenes, data, isAr, onClose, onDone,
+  openTask, step, reviewedStep, nextStep, scenes, data, isAr, onClose, onDone, contentId, autoAd = false,
 }: {
   openTask: MosTask;
+  /** Needed when `autoAd` — the preview of what the approval does on Meta. */
+  contentId?: string;
+  /** The step carries `auto_meta_ad`: show the ad-set panel and pass the pick. */
+  autoAd?: boolean;
   /** The approval step itself — its `required_fields` seed the checklist. */
   step: MosStep | null;
   /** The step under review — names the thing being approved. */
@@ -88,6 +93,8 @@ export default function ApprovalSheet({
   const addToast = useAppStore((s) => s.addToast);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const autoAdState = useAutoAdPreview(contentId ?? openTask.content_id, autoAd);
+  const needsPick = autoAd && autoAdState.preview?.kind === 'choose' && !autoAdState.adSetId;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -152,14 +159,22 @@ export default function ApprovalSheet({
   const approve = async (): Promise<void> => {
     setBusy(true);
     try {
-      await completeTask(openTask.id, 'approved', note.trim() || undefined);
+      const res = await completeTask(openTask.id, 'approved', note.trim() || undefined, undefined,
+        autoAd ? { adSetId: autoAdState.adSetId } : undefined);
       addToast(
-        isAr ? 'اعتُمد — انتقل إلى الخطوة التالية.' : 'Approved — it moved to the next stage.',
-        'success',
+        autoAdOutcomeText(res.auto_ad, isAr)
+          ?? (isAr ? 'اعتُمد — انتقل إلى الخطوة التالية.' : 'Approved — it moved to the next stage.'),
+        res.auto_ad?.status === 'skipped' ? 'info' : 'success',
       );
       onDone();
     } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
+      const choices = adSetRequiredChoices(e);
+      if (choices) {
+        autoAdState.offerChoices(choices);
+        addToast(isAr ? 'اختر المجموعة الإعلانية أولًا.' : 'Pick the ad set first.', 'error');
+      } else {
+        addToast(e instanceof Error ? e.message : String(e), 'error');
+      }
     } finally {
       setBusy(false);
     }
@@ -201,6 +216,8 @@ export default function ApprovalSheet({
           )}
         </div>
 
+        {autoAd && <AutoAdPanel state={autoAdState} isAr={isAr} compact />}
+
         <textarea
           className="m2-note-box"
           rows={1}
@@ -224,7 +241,7 @@ export default function ApprovalSheet({
               type="button"
               className="m2-btn g stack"
               style={{ flex: 1 }}
-              disabled={busy}
+              disabled={busy || needsPick}
               onClick={() => void approve()}
             >
               <span>
@@ -239,7 +256,7 @@ export default function ApprovalSheet({
               type="button"
               className="m2-btn g"
               style={{ flex: 1 }}
-              disabled={busy}
+              disabled={busy || needsPick}
               onClick={() => void approve()}
             >
               {busy ? (isAr ? 'جارٍ…' : 'Working…') : isAr ? 'اعتماد' : 'Approve'}

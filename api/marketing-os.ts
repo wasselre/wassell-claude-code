@@ -32,6 +32,7 @@ import {
   buildCampaignPayload, buildAdSetPayload, buildCreativePayload, buildAdPayload, adName, pickCreativeAsset,
   type PushCampaign, type PushExecution, type PushAd, type PushMedia, type CreativeAssetCandidate,
 } from './_lib/marketing/metaPush.js';
+import { resolveAutoAdTarget, enqueueMetaAdJob, autoAdSkipText } from './_lib/marketing/metaAutoAd.js';
 import {
   loadBundleConfig, isBundlePlatform, buildPlatformData, platformAcceptsKind,
   uploadFromUrl, createPost, getPost, deletePost, getTeam, extractPermalink, mapBundleStatus,
@@ -701,6 +702,13 @@ interface StepDef {
   notify: boolean;
   /** Channels this step permits (AND-ed with each recipient's role settings). */
   notify_channels: NotifyChannel[];
+  /**
+   * 2026-09-10: approving this step hands the rest of the path to the Meta ad
+   * automation — the caption is written by AI and the ad is created in the
+   * campaign's ad set (worker lane 'meta-ad'). A paid-only item finishes here;
+   * one that also publishes organically continues to scheduling as before.
+   */
+  auto_meta_ad: boolean;
 }
 
 /** Defensive read of metadata.steps — metadata is jsonb, so nothing is guaranteed. */
@@ -727,6 +735,7 @@ function stepsOf(metadata: unknown): StepDef[] {
       // Absent on legacy rows → notify on, all channels (the original behavior).
       notify: r.notify !== false,
       notify_channels: 'notify_channels' in r ? channelsOf(r.notify_channels) : [...NOTIFY_CHANNELS],
+      auto_meta_ad: r.auto_meta_ad === true,
     });
   }
   return out;
@@ -1167,6 +1176,7 @@ function mapStepDefs(workflowId: string, steps: StepDef[]): Array<Record<string,
     creates_revision: s.creates_revision,
     notify: s.notify,
     notify_channels: s.notify_channels,
+    auto_meta_ad: s.auto_meta_ad,
   }));
 }
 
@@ -1929,7 +1939,7 @@ export default async function handler(req: Request): Promise<Response> {
         // Choose one preview asset per content: an asset WITH a thumb wins over
         // one without, and among those the final cut wins over source/reference.
         const assetById = new Map((assetsRes.data ?? []).map((a) => [a.id, a]));
-        const ROLE_RANK: Record<string, number> = { final: 0, source: 1, reference: 2 };
+        const ROLE_RANK: Record<string, number> = { final_square: 0, final: 0, final_vertical: 0, source: 1, reference: 2 };
         const bestByContent = new Map<string, {
           thumb: string | null; kind: string | null; fileId: string | null; score: number;
         }>();
@@ -2155,7 +2165,7 @@ export default async function handler(req: Request): Promise<Response> {
         }
 
         let tq = sb.from('workflow_role_tasks')
-          .select('id, subject_id, round')
+          .select('id, subject_id, round, step_key, workflow_version_id')
           .eq('subject_table', 'mos_content')
           .eq('status', 'open');
         tq = taskId ? tq.eq('id', taskId) : tq.eq('subject_id', contentId ?? '');
@@ -2163,8 +2173,61 @@ export default async function handler(req: Request): Promise<Response> {
         const curFail = dbFail(cur.error);
         if (curFail) return curFail;
         if (!cur.data) return jsonError(404, 'no open task found');
-        const openTask = cur.data as unknown as { id: string; subject_id: string; round: number };
+        const openTask = cur.data as unknown as {
+          id: string; subject_id: string; round: number; step_key: string | null; workflow_version_id: string | null;
+        };
         contentId = openTask.subject_id;
+
+        // 2026-09-10 — auto Meta ad. If the step being APPROVED carries
+        // `auto_meta_ad` on the pinned path, resolve the Meta ad set BEFORE the
+        // engine moves: a choice the caller must still make (several linked ad
+        // sets, none picked) returns 409 with the options and changes NOTHING;
+        // a target enqueues the worker job after the advance; a skip (not a paid
+        // item / campaign never pushed to Meta) continues the normal path and is
+        // reported so the UI can say why no ad was created.
+        let autoAdStep = false;
+        if (result === 'approved' && openTask.workflow_version_id && openTask.step_key) {
+          const verRes = await sb.from('workflow_versions')
+            .select('definition').eq('id', openTask.workflow_version_id).maybeSingle();
+          const verFail = dbFail(verRes.error);
+          if (verFail) return verFail;
+          const def = (verRes.data as { definition?: { metadata?: unknown } } | null)?.definition;
+          const stepDef = stepsOf(def?.metadata ?? null).find((st) => st.key === openTask.step_key);
+          autoAdStep = stepDef?.auto_meta_ad === true;
+        }
+        type AutoAdOutcome =
+          | { status: 'queued'; job_id: string; ad_row_id: string; ad_set_name: string; campaign_name: string | null; finished: boolean }
+          | { status: 'skipped'; reason: string; text_ar: string; text_en: string };
+        let autoAdPlan: Awaited<ReturnType<typeof resolveAutoAdTarget>> | null = null;
+        let autoAdOutcome: AutoAdOutcome | null = null;
+        let finishPath = false;
+        let contentMeta: { title: string; organic_platforms: string[] } | null = null;
+        if (autoAdStep) {
+          const svcPre = makeServiceClient('api:marketing-os');
+          if (!svcPre) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+          try {
+            autoAdPlan = await resolveAutoAdTarget(svcPre, contentId, str(body.ad_set_id));
+          } catch (e) {
+            console.error('[marketing-os] auto-ad target resolution failed', e);
+            return jsonError(500, `auto ad: ${e instanceof Error ? e.message : String(e)}`);
+          }
+          if (autoAdPlan.kind === 'choose') {
+            return new Response(JSON.stringify({
+              error: 'ad_set_required',
+              error_ar: 'الحملة تحتوي أكثر من مجموعة إعلانية — اختر المجموعة التي يُنشأ فيها الإعلان.',
+              ad_sets: autoAdPlan.choices,
+            }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+          }
+          const metaRes = await sb.from('mos_content')
+            .select('title, organic_platforms').eq('id', contentId).maybeSingle();
+          const metaFail = dbFail(metaRes.error);
+          if (metaFail) return metaFail;
+          const metaRow = metaRes.data as { title: string; organic_platforms: string[] | null } | null;
+          contentMeta = { title: metaRow?.title ?? '', organic_platforms: metaRow?.organic_platforms ?? [] };
+          // A paid-only item finishes its path here (no scheduling / publish
+          // check); one that ALSO publishes organically still needs those steps.
+          finishPath = autoAdPlan.kind === 'target' && contentMeta.organic_platforms.length === 0;
+        }
 
         // Submitted work gets a frozen snapshot of the round BEFORE the engine
         // moves on — a resubmit of the same round overwrites its own snapshot.
@@ -2197,6 +2260,7 @@ export default async function handler(req: Request): Promise<Response> {
           p_result: result,
           p_note: note,
           p_targets: targets,
+          p_finish: finishPath,
         });
         const advFail = dbFail(adv.error);
         if (advFail) return advFail;
@@ -2228,6 +2292,41 @@ export default async function handler(req: Request): Promise<Response> {
           const promo = await sb.rpc('mos_promote_approval_asset', { p_content_id: contentId });
           const promoFail = dbFail(promo.error);
           if (promoFail) return promoFail;
+        }
+
+        // The approval committed — now hand the ad to the worker. A failure to
+        // ENQUEUE is reported loudly (the approval itself stands; the manager
+        // can retry from the Placements tab via meta_auto_ad_retry).
+        if (autoAdPlan && contentMeta) {
+          if (autoAdPlan.kind === 'target') {
+            const svcQ = makeServiceClient('api:marketing-os');
+            if (!svcQ) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+            try {
+              const q = await enqueueMetaAdJob(svcQ, {
+                contentId,
+                contentTitle: contentMeta.title,
+                target: autoAdPlan.target,
+                approvedByAuthUid: user.userId,
+                approvedByUserId: await resolveAppUserId(sb, user.userId),
+              });
+              wakeWorker();
+              autoAdOutcome = {
+                status: 'queued', job_id: q.job_id, ad_row_id: q.ad_row_id,
+                ad_set_name: autoAdPlan.target.ad_set_name, campaign_name: autoAdPlan.target.campaign_name,
+                finished: finishPath,
+              };
+            } catch (e) {
+              console.error('[marketing-os] auto-ad enqueue failed', e);
+              const msg = e instanceof Error ? e.message : String(e);
+              autoAdOutcome = {
+                status: 'skipped', reason: 'enqueue_failed',
+                text_ar: `تعذّر إرسال الإعلان للإنشاء: ${msg}`, text_en: `Could not queue the ad: ${msg}`,
+              };
+            }
+          } else if (autoAdPlan.kind === 'skip') {
+            const t = autoAdSkipText(autoAdPlan.reason);
+            autoAdOutcome = { status: 'skipped', reason: autoAdPlan.reason, text_ar: t.ar, text_en: t.en };
+          }
         }
 
         const full = await sb.from('mos_content_v')
@@ -2268,7 +2367,7 @@ export default async function handler(req: Request): Promise<Response> {
                     titleEn: 'Changes requested',
                     bodyAr: `«${itemTitle}» — ${note ?? ''}`,
                     bodyEn: itemTitle,
-                    url: `/m/content/${contentId}?tab=tasks`,
+                    url: `/m/content/${contentId}`,
                     channels: notifyCfg.channels,
                   }
                 : {
@@ -2279,14 +2378,81 @@ export default async function handler(req: Request): Promise<Response> {
                     titleEn: 'A task was assigned to you',
                     bodyAr: `«${itemTitle}» بانتظار خطوتك.`,
                     bodyEn: itemTitle,
-                    url: `/m/content/${contentId}?tab=tasks`,
+                    url: `/m/content/${contentId}`,
                     channels: notifyCfg.channels,
                   });
             }
           }
         }
 
-        return jsonOk({ item: full.data, ...payload });
+        return jsonOk({ item: full.data, ...payload, auto_ad: autoAdOutcome });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Auto Meta ad — what an approval of this item WOULD do.    */
+      /* The approval dialog reads it to show the target ad set    */
+      /* (or ask which one) before the manager taps «اعتماد».      */
+      /* -------------------------------------------------------- */
+      case 'content_auto_ad_preview': {
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        // Visibility gate: the caller must be able to see the item.
+        const own = await sb.from('mos_content_v').select('id').eq('id', contentId).maybeSingle();
+        const of = dbFail(own.error); if (of) return of;
+        if (!own.data) return jsonError(404, 'content item not found');
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+        try {
+          const plan = await resolveAutoAdTarget(svc, contentId, str(body.ad_set_id));
+          if (plan.kind === 'skip') {
+            const t = autoAdSkipText(plan.reason);
+            return jsonOk({ kind: 'skip', reason: plan.reason, text_ar: t.ar, text_en: t.en, choices: [] });
+          }
+          return jsonOk(plan);
+        } catch (e) {
+          return jsonError(500, e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      /* Re-queue the Meta ad for a creative whose job failed (or never ran). */
+      case 'meta_auto_ad_retry': {
+        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+        const own = await sb.from('mos_content_v').select('id, title').eq('id', contentId).maybeSingle();
+        const of = dbFail(own.error); if (of) return of;
+        const ownRow = own.data as { id: string; title: string } | null;
+        if (!ownRow) return jsonError(404, 'content item not found');
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+        try {
+          // A retry re-creates: a row whose job failed still has no platform_ad_id,
+          // so the resolver sees it as a placeholder and fills it again.
+          const plan = await resolveAutoAdTarget(svc, contentId, str(body.ad_set_id));
+          if (plan.kind === 'choose') {
+            return new Response(JSON.stringify({
+              error: 'ad_set_required',
+              error_ar: 'الحملة تحتوي أكثر من مجموعة إعلانية — اختر المجموعة التي يُنشأ فيها الإعلان.',
+              ad_sets: plan.choices,
+            }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+          }
+          if (plan.kind === 'skip') {
+            const t = autoAdSkipText(plan.reason);
+            return new Response(JSON.stringify({ error: t.en, error_ar: t.ar, reason: plan.reason }),
+              { status: 409, headers: { 'Content-Type': 'application/json' } });
+          }
+          const q = await enqueueMetaAdJob(svc, {
+            contentId,
+            contentTitle: ownRow.title,
+            target: plan.target,
+            approvedByAuthUid: user.userId,
+            approvedByUserId: await resolveAppUserId(sb, user.userId),
+          });
+          wakeWorker();
+          return jsonOk({ ...(await loadPaidAdsPayload(sb, contentId)), job_id: q.job_id, ad_row_id: q.ad_row_id });
+        } catch (e) {
+          return dbFail(e as PostgrestError) ?? jsonError(500, e instanceof Error ? e.message : String(e));
+        }
       }
 
       /* -------------------------------------------------------- */
@@ -2489,7 +2655,7 @@ export default async function handler(req: Request): Promise<Response> {
           titleEn: 'Task reminder',
           bodyAr: `تذكير: «${title}» بانتظار خطوتك.`,
           bodyEn: `Reminder: "${title}" is waiting on your step.`,
-          url: `/m/content/${contentId}?tab=tasks`,
+          url: `/m/content/${contentId}`,
         });
         return jsonOk({ ok: true });
       }
@@ -8153,6 +8319,7 @@ export default async function handler(req: Request): Promise<Response> {
             // real state kept verbatim (the step permits nothing).
             notify: s.notify !== false,
             notify_channels: 'notify_channels' in s ? channelsOf(s.notify_channels) : [...NOTIFY_CHANNELS],
+            auto_meta_ad: s.auto_meta_ad === true,
           });
         }
 

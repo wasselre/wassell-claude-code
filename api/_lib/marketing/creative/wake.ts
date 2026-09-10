@@ -136,7 +136,8 @@ export async function resolveRefPreview(
       return null;
     }
     const rows = (links.data ?? []) as Array<{ asset_id: string; role: string }>;
-    const ordered = [...rows].sort((a, b) => (a.role === 'final' ? 0 : 1) - (b.role === 'final' ? 0 : 1));
+    const rank = (r: string): number => (r === 'final_square' ? 0 : r.startsWith('final') ? 1 : 2);
+    const ordered = [...rows].sort((a, b) => rank(a.role) - rank(b.role));
     for (const l of ordered) {
       const a = await svc.from('mos_assets').select('url, file_id').eq('id', l.asset_id).maybeSingle();
       if (a.error) {

@@ -77,6 +77,13 @@ export interface StepDef {
    * `NotificationChannel` = 'inapp' | 'push' | 'whatsapp'.
    */
   notify_channels: NotificationChannel[];
+  /**
+   * 2026-09-10: approving this step hands the rest of the path to the Meta ad
+   * automation — an AI-written caption + the ad created in the campaign's ad
+   * set. A paid-only item finishes on this approval; one that also publishes
+   * organically continues to scheduling. Absent on legacy rows → false.
+   */
+  auto_meta_ad?: boolean;
 }
 
 /** The channels a step may permit, in the order the editor renders them. */
@@ -350,6 +357,8 @@ export interface MosStep {
   notify?: boolean;
   /** See StepDef.notify_channels — the per-step permitted channels. */
   notify_channels?: NotificationChannel[];
+  /** See StepDef.auto_meta_ad — approval creates the Meta ad automatically. */
+  auto_meta_ad?: boolean;
 }
 
 export interface MosScene {
@@ -535,6 +544,11 @@ export const updateContent = (id: string, patch: Record<string, unknown>) =>
 export const deleteContent = (ids: string[]) =>
   call<{ deleted: number }>('content_delete', { ids });
 
+/** What an auto-ad approval did (task_complete → `auto_ad`). */
+export type AutoAdOutcome =
+  | { status: 'queued'; job_id: string; ad_row_id: string; ad_set_name: string; campaign_name: string | null; finished: boolean }
+  | { status: 'skipped'; reason: string; text_ar: string; text_en: string };
+
 export interface TaskAdvanceResult {
   item: MosContentRow;
   closed_task_id: string;
@@ -542,6 +556,8 @@ export interface TaskAdvanceResult {
   next_step_key: string | null;
   round: number;
   done: boolean;
+  /** Present only when the approved step carried `auto_meta_ad`. */
+  auto_ad?: AutoAdOutcome | null;
 }
 
 export const completeTask = (
@@ -549,7 +565,48 @@ export const completeTask = (
   result: 'submitted' | 'approved' | 'changes_requested',
   note?: string,
   targets?: string[],
-) => call<TaskAdvanceResult>('task_complete', { task_id: taskId, result, note, targets });
+  opts?: { adSetId?: string | null },
+) => call<TaskAdvanceResult>('task_complete', {
+  task_id: taskId, result, note, targets, ...(opts?.adSetId ? { ad_set_id: opts.adSetId } : {}),
+});
+
+/** One Meta ad set an approval could create the ad in. */
+export interface AutoAdChoice {
+  ad_set_id: string;
+  ad_set_name: string;
+  execution_id: string;
+  execution_label: string | null;
+  campaign_id: string;
+  campaign_name: string | null;
+  platform_adset_id: string;
+}
+export interface AutoAdTarget {
+  execution_id: string;
+  ad_set_id: string;
+  ad_set_name: string;
+  campaign_id: string;
+  campaign_name: string | null;
+  platform_adset_id: string;
+  ad_row_id: string | null;
+}
+/** What approving THIS item would do on Meta — shown in the approval dialog. */
+export type AutoAdPreview =
+  | { kind: 'target'; target: AutoAdTarget; choices: AutoAdChoice[] }
+  | { kind: 'choose'; choices: AutoAdChoice[] }
+  | { kind: 'skip'; reason: string; text_ar: string; text_en: string; choices: AutoAdChoice[] };
+
+export const fetchAutoAdPreview = (contentId: string, adSetId?: string | null) =>
+  call<AutoAdPreview>('content_auto_ad_preview', {
+    content_id: contentId, ...(adSetId ? { ad_set_id: adSetId } : {}),
+  });
+
+/** The 409 the server answers when several linked ad sets exist and none was picked. */
+export function adSetRequiredChoices(e: unknown): AutoAdChoice[] | null {
+  if (!(e instanceof MosApiError) || e.status !== 409) return null;
+  if (e.payload.error !== 'ad_set_required') return null;
+  const sets = e.payload.ad_sets;
+  return Array.isArray(sets) ? (sets as AutoAdChoice[]) : [];
+}
 
 export const transferTask = (taskId: string, toUserId: string) =>
   call<{ ok: true }>('task_transfer', { task_id: taskId, to_user_id: toUserId });
@@ -1094,12 +1151,30 @@ export const saveContentCaption = (contentId: string, platform: string, caption:
   });
 
 /** The five standardized ad-copy fields a paid placement carries. */
+/** The automation's trail on a paid placement (`creative.auto_ad`). */
+export interface AutoAdState {
+  state: 'queued' | 'creating' | 'created' | 'failed';
+  job_id?: string;
+  error?: string | null;
+  queued_at?: string;
+  started_at?: string;
+  created_at?: string;
+  failed_at?: string;
+  creative_id?: string;
+  creative_shape?: 'placement' | 'single';
+  placement_fallback?: string;
+  format?: 'image' | 'video';
+  caption_source?: 'deepseek' | 'fallback';
+  ad_status?: 'ACTIVE' | 'PAUSED';
+}
+
 export interface AdCreative {
   primary_text?: string;
   headline?: string;
   description?: string;
   cta?: string;
   destination_url?: string;
+  auto_ad?: AutoAdState | null;
 }
 /** ONE paid placement = one ad row for this creative, wherever it runs. The
  *  creative is decoupled from its campaign, so each placement resolves its OWN
@@ -1141,6 +1216,12 @@ export interface PaidPlacementTarget {
  *  campaign). */
 export const fetchPaidAds = (contentId: string) =>
   call<PaidPlacementsResult>('content_paid_ads', { content_id: contentId });
+
+/** Re-queue the automatic Meta ad for a creative whose job failed (manager). */
+export const retryAutoAd = (contentId: string, adSetId?: string | null) =>
+  call<PaidPlacementsResult & { job_id: string; ad_row_id: string }>('meta_auto_ad_retry', {
+    content_id: contentId, ...(adSetId ? { ad_set_id: adSetId } : {}),
+  });
 
 /** The paid campaigns / executions / ad sets available to attach a new paid
  *  placement to. */
@@ -1610,8 +1691,14 @@ export const ASSET_ASPECT_RATIOS: Array<{ value: string; ar: string; en: string 
 export interface MosAssetLink {
   asset_id: string;
   content_id: string;
-  role: 'source' | 'final' | 'reference';
+  /** `final_square` (1:1 feed) / `final_vertical` (9:16 story·reels·status)
+   *  are the two design SLOTS; plain `final` is the legacy single approved file. */
+  role: 'source' | 'final' | 'reference' | 'final_square' | 'final_vertical';
 }
+
+/** Any approved-design role — the slots or the legacy single final. */
+export const isFinalRole = (role: string | null | undefined): boolean =>
+  typeof role === 'string' && role.startsWith('final');
 
 export interface MosShootRequest {
   id: string;

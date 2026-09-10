@@ -54,6 +54,7 @@ import { getSessionStatus, restartSession, stopSession, type WahaSendConfig } fr
 // LaneDeps, so the one deps object below fits all four.)
 import { creativeJobsLoop } from './creative/lanes/creativeJobsLane.js';
 import { creativeImageLoop } from './creative/lanes/creativeImageLane.js';
+import { metaAdLoop } from './marketing/metaAdLane.js';
 import { designReadLoop } from './creative/lanes/designReadLane.js';
 import { assetMetaLaneLoop as assetMetaLoop } from './creative/lanes/assetMetaLane.js';
 import type { LaneDeps } from './creative/lanes/types.js';
@@ -3430,6 +3431,10 @@ if (env.WORKFLOW_PROOF_ONLY) {
     creativeImageLoop(creativeLaneDeps),  // generation_jobs kind='creative-image'
     designReadLoop(creativeLaneDeps),     // visual_design_reads sweep (A-VIS)
     assetMetaLoop(creativeLaneDeps),      // asset deterministic meta + enrich v2 (A-ASSETS)
+    // Auto Meta ad (2026-09-10): generation_jobs kind='meta-ad' — the manager's
+    // design approval hands the caption + ad creation to this lane. Idles
+    // (logged once) while the worker has no Meta credentials.
+    metaAdLoop(creativeLaneDeps),
   );
   console.log('[worker] creative director lanes registered (flags gate actual runs)');
   // ── end creative director lanes ──

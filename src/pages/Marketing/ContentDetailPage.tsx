@@ -20,7 +20,7 @@
  *                 banner, not a task.
  *   ceo         — read-only AND no script, scenes, or comments at all.
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   FOOTAGE_LABELS, MosAccount, MosComment, MosContentRow, MosContentVersion, MosPublication,
@@ -52,6 +52,8 @@ import PerfRatingCard from './components/PerfRatingCard';
 import RequestChangesModal from './components/RequestChangesModal';
 import ProjectMultiSelect from './components/ProjectMultiSelect';
 import ApprovalSheet, { useIsMobile } from './components/ApprovalSheet';
+import AutoAdApproveModal from './components/AutoAdApproval';
+import { phaseOfStep, tabForPhase } from './lib/stagePhase';
 import { IconBack, IconCheck, IconForward } from './components/icons';
 import MentionComposer, { renderMentions } from './components/MentionComposer';
 import CreativeTab from './components/creative/CreativeTab';
@@ -134,12 +136,18 @@ export default function ContentDetailPage() {
   // item carries no project of its own («المحتوى مرتبط بحملة مرتبطة بمشروع»).
   const [campaignProjectIds, setCampaignProjectIds] = useState<string[]>([]);
   const [tab, setTab] = useState<Tab>(() => tabFromParam(searchParams.get('tab')));
+  // Without an explicit `?tab=`, the page opens on the tab of the CURRENT step
+  // (the copy for a writing step, the material for a design review, the
+  // placements for scheduling / a finished item) — wherever the item was
+  // opened from. Applied once, after the first load, never over a user's click.
+  const autoTabDone = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingBrief, setEditingBrief] = useState(false);
   const [actBusy, setActBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [approveOpen, setApproveOpen] = useState(false);
+  const [autoAdOpen, setAutoAdOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
   const [scriptOpen, setScriptOpen] = useState(false);
   const [scriptJob, setScriptJob] = useState<ScriptJobRow | null>(null);
@@ -180,6 +188,17 @@ export default function ContentDetailPage() {
   }, [contentId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (autoTabDone.current || loading || !item || searchParams.get('tab')) return;
+    autoTabDone.current = true;
+    const open = tasks.find((t) => t.status === 'open') ?? null;
+    if (open?.step_id && steps.length > 0) {
+      setTab(tabForPhase(phaseOfStep(steps, open.step_id)));
+    } else if (item.status_key === 'done') {
+      setTab('placements');
+    }
+  }, [loading, item, tasks, steps, searchParams]);
 
   // Script Writer v2 — on mount, pick up a draft that is already waiting for
   // review (written by an earlier job, maybe from another tab). Only an
@@ -616,7 +635,10 @@ export default function ContentDetailPage() {
                   type="button"
                   className="btn btn-go"
                   disabled={actBusy}
-                  onClick={() => void runTaskAction('approved')}
+                  onClick={() => (currentStep.auto_meta_ad ? setAutoAdOpen(true) : void runTaskAction('approved'))}
+                  title={currentStep.auto_meta_ad
+                    ? (isAr ? 'بعد هذا الاعتماد يُنشأ الإعلان في ميتا تلقائيًا' : 'After this approval the Meta ad is created automatically')
+                    : undefined}
                 >
                   <IconCheck />
                   {isAr
@@ -1047,8 +1069,21 @@ export default function ContentDetailPage() {
           scenes={scenes}
           data={item.data ?? {}}
           isAr={isAr}
+          contentId={item.id}
+          autoAd={currentStep?.auto_meta_ad === true}
           onClose={() => setApproveOpen(false)}
           onDone={() => { setApproveOpen(false); void load(); }}
+        />
+      )}
+
+      {autoAdOpen && openTask && (
+        <AutoAdApproveModal
+          contentId={item.id}
+          openTask={openTask}
+          reviewedStep={reviewedStep}
+          isAr={isAr}
+          onClose={() => setAutoAdOpen(false)}
+          onDone={() => { setAutoAdOpen(false); void load(); }}
         />
       )}
 

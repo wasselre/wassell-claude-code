@@ -55,6 +55,7 @@ function withNotifyDefaults(s: StepDef): StepDef {
     ...s,
     notify: s.notify ?? true,
     notify_channels: Array.isArray(s.notify_channels) ? s.notify_channels : [...STEP_NOTIFY_CHANNELS],
+    auto_meta_ad: s.auto_meta_ad === true,
   };
 }
 
@@ -109,11 +110,15 @@ function ConsequenceLines({ steps, index, isAr }: { steps: StepDef[]; index: num
       ? (isAr ? 'دون إشعار' : 'no notification')
       : (isAr ? `يُشعر ${roleLabel(s.role_key, true)}` : `${roleLabel(s.role_key, false)} is notified`)
   );
-  const nextLine = next
+  const nextLine = step.auto_meta_ad
     ? (isAr
-      ? <>تُفتح الخطوة {num(index + 2, true)} <b>{next.label_ar}</b> · {notifyClause(next)}</>
-      : <>step {index + 2} <b>{next.label_en}</b> opens · {notifyClause(next)}</>)
-    : (isAr ? <>يكتمل المسار · يُغلق السجل</> : <>the path completes · the record closes</>);
+      ? <>يُنشأ الإعلان في ميتا تلقائيًا (كابشن بالذكاء الاصطناعي) · محتوى مدفوع فقط يكتمل هنا؛ محتوى له نشر عضوي يتابع إلى {next ? <b>{next.label_ar}</b> : 'الخطوة التالية'}</>
+      : <>the Meta ad is created automatically (AI caption) · a paid-only item completes here; one with organic placements continues to {next ? <b>{next.label_en}</b> : 'the next step'}</>)
+    : next
+      ? (isAr
+        ? <>تُفتح الخطوة {num(index + 2, true)} <b>{next.label_ar}</b> · {notifyClause(next)}</>
+        : <>step {index + 2} <b>{next.label_en}</b> opens · {notifyClause(next)}</>)
+      : (isAr ? <>يكتمل المسار · يُغلق السجل</> : <>the path completes · the record closes</>);
 
   return (
     <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
@@ -386,6 +391,11 @@ function StepRow({
                   step.creates_revision,
                   () => onChange({ ...step, creates_revision: !step.creates_revision }),
                 )}
+                {step.is_approval && flag(
+                  isAr ? 'الاعتماد يُنشئ الإعلان في ميتا تلقائيًا' : 'Approval creates the Meta ad automatically',
+                  step.auto_meta_ad === true,
+                  () => onChange({ ...step, auto_meta_ad: !step.auto_meta_ad }),
+                )}
               </div>
               {step.is_approval && (
                 <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 7 }}>
@@ -555,6 +565,7 @@ export default function SettingsWorkflows({
       approval_kind: null,
       require_note_on_reject: false,
       creates_revision: false,
+      auto_meta_ad: false,
       required_fields: [],
       required_files: [],
       notify: true,

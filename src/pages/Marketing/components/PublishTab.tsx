@@ -26,7 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import {
   MosAccount, MosAsset, MosPublication, PLATFORM_LABELS, PUB_STATUS_LABELS,
-  fetchAssets, saveAsset, savePublication, publishPublication, syncPublication, pullMetrics,
+  fetchAssets, saveAsset, savePublication, publishPublication, syncPublication, pullMetrics, isFinalRole,
 } from '@/lib/marketingOS/client';
 import { probeVideoDuration } from '../lib/upload';
 import { useWorkspace } from '../MarketingWorkspace';
@@ -156,7 +156,7 @@ export default function PublishTab({
       const res = await fetchAssets();
       setAllAssets(res.assets);
       const finalIds = new Set(
-        res.links.filter((l) => l.content_id === contentId && l.role === 'final').map((l) => l.asset_id),
+        res.links.filter((l) => l.content_id === contentId && isFinalRole(l.role)).map((l) => l.asset_id),
       );
       setFinalAssets(res.assets.filter((a) => finalIds.has(a.id)));
     } catch (e) {

@@ -17,8 +17,9 @@
 import { useState, type ReactNode } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import {
-  MosContentRow, MosScene, MosStep, MosTask, ROLE_LABELS, completeTask,
+  MosContentRow, MosScene, MosStep, MosTask, ROLE_LABELS, adSetRequiredChoices, completeTask,
 } from '@/lib/marketingOS/client';
+import { autoAdOutcomeText } from './AutoAdApproval';
 import { useWorkspace } from '../MarketingWorkspace';
 import { Check, Modal, Pill } from './kit';
 import { IconCheck, IconX } from './icons';
@@ -54,18 +55,23 @@ export default function TaskCard({
   const run = async (result: 'submitted' | 'approved' | 'changes_requested', text?: string): Promise<void> => {
     setBusy(true);
     try {
-      await completeTask(task.id, result, text);
+      const res = await completeTask(task.id, result, text);
       addToast(
-        result === 'changes_requested'
-          ? isAr ? 'أُعيدت للخطوة السابقة مع الملاحظة.' : 'Sent back a stage with your note.'
-          : isAr ? 'تم — انتقلت إلى الخطوة التالية.' : 'Done — it moved to the next stage.',
-        'success',
+        autoAdOutcomeText(res.auto_ad, isAr)
+          ?? (result === 'changes_requested'
+            ? isAr ? 'أُعيدت للخطوة السابقة مع الملاحظة.' : 'Sent back a stage with your note.'
+            : isAr ? 'تم — انتقلت إلى الخطوة التالية.' : 'Done — it moved to the next stage.'),
+        res.auto_ad?.status === 'skipped' ? 'info' : 'success',
       );
       setRejecting(false);
       setNote('');
       onDone();
     } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
+      // Several linked ad sets: the pick lives in the header's approval dialog.
+      addToast(adSetRequiredChoices(e)
+        ? (isAr ? 'هذا الاعتماد يُنشئ إعلانًا في ميتا — اختر المجموعة الإعلانية من زر «اعتماد» أعلى الصفحة.'
+                : 'This approval creates a Meta ad — pick the ad set from the “Approve” button at the top of the page.')
+        : e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setBusy(false);
     }
@@ -375,12 +381,17 @@ export function TasksApprovalsTab({
     if (!openTask) return;
     setBusy(true);
     try {
-      await completeTask(openTask.id, 'approved', note.trim() || undefined);
-      addToast(isAr ? 'اعتُمد — انتقل إلى الخطوة التالية.' : 'Approved — it moved on.', 'success');
+      const res = await completeTask(openTask.id, 'approved', note.trim() || undefined);
+      addToast(autoAdOutcomeText(res.auto_ad, isAr)
+        ?? (isAr ? 'اعتُمد — انتقل إلى الخطوة التالية.' : 'Approved — it moved on.'),
+      res.auto_ad?.status === 'skipped' ? 'info' : 'success');
       setNote('');
       onDone?.();
     } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
+      addToast(adSetRequiredChoices(e)
+        ? (isAr ? 'هذا الاعتماد يُنشئ إعلانًا في ميتا — اختر المجموعة الإعلانية من زر «اعتماد» أعلى الصفحة.'
+                : 'This approval creates a Meta ad — pick the ad set from the “Approve” button at the top of the page.')
+        : e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setBusy(false);
     }

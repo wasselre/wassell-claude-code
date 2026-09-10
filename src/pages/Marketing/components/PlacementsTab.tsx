@@ -20,10 +20,18 @@
 import { useEffect, useState } from 'react';
 import {
   AdCreative, MosAccount, MosPublication, PaidPlacement, PaidPlacementTarget, PLATFORM_LABELS,
-  fetchPaidAds, fetchPaidPlacementTargets, removePaidPlacement, saveAdCreative,
+  adSetRequiredChoices, fetchPaidAds, fetchPaidPlacementTargets, removePaidPlacement, retryAutoAd, saveAdCreative,
 } from '@/lib/marketingOS/client';
 import { useAppStore } from '@/stores/appStore';
+import { useWorkspace } from '../MarketingWorkspace';
 import PublishTab from './PublishTab';
+import { dateTimeShort } from '../lib/format';
+
+/** Is the automation still working on this placement (poll while true)? */
+const autoAdInFlight = (p: PaidPlacement): boolean => {
+  const st = p.creative?.auto_ad?.state;
+  return st === 'queued' || st === 'creating';
+};
 
 const platformLabel = (p: string, isAr: boolean): string => {
   const l = PLATFORM_LABELS[p];
@@ -146,6 +154,19 @@ function PaidPlacements({
     return () => { alive = false; };
   }, [contentId]);
 
+  // While the worker is creating an ad, refresh every 5 s so the card flips to
+  // «أُنشئ» (or the failure + retry) without a manual reload.
+  const inFlight = (placements ?? []).some(autoAdInFlight);
+  useEffect(() => {
+    if (!inFlight) return;
+    const t = setInterval(() => {
+      fetchPaidAds(contentId)
+        .then((r) => setPlacements(r.placements))
+        .catch((e: unknown) => { console.error('[marketing] paid placements refresh failed', e); });
+    }, 5000);
+    return () => clearInterval(t);
+  }, [contentId, inFlight]);
+
   return (
     <div className="write">
       <div className="doc-lbl" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -211,10 +232,25 @@ function PaidCard({
   onChanged: (pls: PaidPlacement[]) => void;
   addToast: (msg: string, kind: 'success' | 'error') => void;
 }) {
+  const { can } = useWorkspace();
   const [text, setText] = useState(placement.creative?.primary_text ?? '');
   const [busy, setBusy] = useState(false);
   useEffect(() => { setText(placement.creative?.primary_text ?? ''); }, [placement]);
   const dirty = text !== (placement.creative?.primary_text ?? '');
+  const auto = placement.creative?.auto_ad ?? null;
+
+  const retry = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const res = await retryAutoAd(contentId);
+      onChanged(res.placements);
+      addToast(isAr ? 'أُعيد إرسال الإعلان للإنشاء.' : 'The ad was queued again.', 'success');
+    } catch (e) {
+      addToast(adSetRequiredChoices(e)
+        ? (isAr ? 'الحملة تحتوي أكثر من مجموعة إعلانية — أعد المحاولة من زر «اعتماد» في الصفحة.' : 'Several ad sets — retry from the page’s Approve button.')
+        : e instanceof Error ? e.message : String(e), 'error');
+    } finally { setBusy(false); }
+  };
 
   const save = async (): Promise<void> => {
     setBusy(true);
@@ -271,6 +307,36 @@ function PaidCard({
           </div>
         )}
       </div>
+      {auto && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10,
+            fontSize: 12.5, lineHeight: 1.7,
+            color: auto.state === 'failed' ? 'var(--late)' : auto.state === 'created' ? 'var(--go)' : 'var(--ink-2)',
+          }}
+        >
+          {auto.state === 'queued' || auto.state === 'creating' ? (
+            <span>{isAr ? '⏳ جارٍ كتابة الكابشن وإنشاء الإعلان في ميتا…' : '⏳ Writing the caption and creating the Meta ad…'}</span>
+          ) : auto.state === 'created' ? (
+            <span>
+              {isAr ? '✅ أُنشئ الإعلان في ميتا تلقائيًا' : '✅ Ad created on Meta automatically'}
+              {auto.ad_status === 'PAUSED' ? (isAr ? ' (متوقف)' : ' (paused)') : ''}
+              {placement.creative?.auto_ad?.created_at ? ` · ${dateTimeShort(placement.creative.auto_ad.created_at, isAr)}` : ''}
+              {auto.caption_source === 'fallback' ? (isAr ? ' · كابشن من القالب (تعذّر الذكاء الاصطناعي)' : ' · template caption (AI unavailable)') : ''}
+              {auto.placement_fallback ? (isAr ? ' · تصميم واحد لكل الأماكن' : ' · one design for every placement') : ''}
+            </span>
+          ) : (
+            <>
+              <span>{isAr ? '⚠️ تعذّر إنشاء الإعلان: ' : '⚠️ Ad creation failed: '}{auto.error ?? '—'}</span>
+              {can('manage_paid_ads') && (
+                <button type="button" className="btn btn-sm" onClick={() => void retry()} disabled={busy}>
+                  {busy ? '…' : (isAr ? 'إعادة المحاولة' : 'Retry')}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
       <div className="fld">
         <div className="k">{isAr ? 'نص الإعلان' : 'Ad text'}</div>
         {canEdit ? (

@@ -12,8 +12,16 @@
  *   band 2 «ملفات العمل»       = asset_links role 'reference' — the working
  *                                 files (project files, VO takes, references).
  *   band 3 «نسخ المراجعة»      = mos_content_versions rows — NOT asset links.
- *   band 4 «المعتمد والمنشور»  = asset_links role 'final' — and ONLY these are
- *                                 offered in the Publishing tab's file picker.
+ *   band 4 «التصميم النهائي»    = the TWO design slots (2026-09-10):
+ *                                 asset_links role 'final_square'  — 1:1, the
+ *                                 Instagram / Facebook feed; and 'final_vertical'
+ *                                 — 9:16, stories, reels and WhatsApp status.
+ *                                 The designer uploads exactly these two files
+ *                                 (image or video); the manager's approval
+ *                                 then hands them to the Meta ad automation.
+ *                                 Legacy items may still carry one plain
+ *                                 'final' link. Only final* links are offered
+ *                                 in the Publishing tab's file picker.
  *
  * Band 1 also renders the MISSING shots: scenes with footage_status='missing'
  * appear as dashed rows carrying «إسناد تصوير» (the existing shoot-assignment
@@ -33,6 +41,14 @@ import type { FileDocumentTypeRow, FileRow } from '@/types/files';
 import PostUploadModal from '@/pages/Files/library/PostUploadModal';
 import FilePickerModal from '@/pages/Files/library/FilePickerModal';
 import { formatBytes, heicToJpeg, isHeic, kindFromFile } from '../lib/upload';
+
+/** The two design slots every creative ships with. */
+type DesignSlot = 'square' | 'vertical';
+const SLOT_ROLE: Record<DesignSlot, 'final_square' | 'final_vertical'> = { square: 'final_square', vertical: 'final_vertical' };
+const SLOT_META: Record<DesignSlot, { ar: string; en: string; ratio: string; hintAr: string; hintEn: string }> = {
+  square:   { ar: 'التصميم المربّع', en: 'Square design',   ratio: '1:1',  hintAr: 'فيد إنستقرام وفيسبوك',            hintEn: 'Instagram / Facebook feed' },
+  vertical: { ar: 'التصميم الطولي',  en: 'Vertical design', ratio: '9:16', hintAr: 'ستوري وريلز وحالة واتساب',        hintEn: 'Stories, reels and WhatsApp status' },
+};
 import { assetErrorText, canonicalAssetFields, uploadCanonicalAsset } from '../lib/canonicalUpload';
 import { useAssetUrls } from '../lib/assetUrls';
 import { useWorkspace } from '../MarketingWorkspace';
@@ -237,24 +253,6 @@ export default function MaterialsTab({
     }
   };
 
-  /** Submit (or un-submit) ONE material for approval. Single-select: marking a
-   *  new file replaces the previous one. On the manager's approval the marked
-   *  file becomes the approved ('final') version the Publishing tab reads. */
-  const toggleApproval = async (assetId: string): Promise<void> => {
-    const next = approvalAssetId === assetId ? null : assetId;
-    const prev = approvalAssetId;
-    setApprovalAssetId(next); // optimistic
-    setBusy(true);
-    try {
-      await setApprovalAsset(contentId, next);
-    } catch (e) {
-      setApprovalAssetId(prev); // roll back on failure — never silently
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   /** Move an attached file between «المواد الأصلية» (source) and «ملفات العمل»
    *  (reference) in place — the `asset_link` upsert re-roles the same row, so no
    *  unlink-and-re-pull. Never touches the approval band (final is earned via the
@@ -265,6 +263,106 @@ export default function MaterialsTab({
       const res = await linkAsset(assetId, contentId, role);
       setLinks((cur) => [...cur.filter((l) => l.content_id !== contentId), ...res.links]);
       onCount(res.links.length);
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* ── the two design slots ─────────────────────────────────────────── */
+
+  const slotLinkOf = (slot: DesignSlot): MosAssetLink | null =>
+    mine.find((l) => l.role === SLOT_ROLE[slot]) ?? null;
+
+  /** approval_asset_id follows the slots: the square (feed) design, else the
+   *  vertical — so the preview popup's hero and the approval promote keep
+   *  pointing at a real design without anyone marking anything by hand. */
+  const syncApprovalAsset = async (nextLinks: MosAssetLink[]): Promise<void> => {
+    const ours = nextLinks.filter((l) => l.content_id === contentId);
+    const want = ours.find((l) => l.role === 'final_square')?.asset_id
+      ?? ours.find((l) => l.role === 'final_vertical')?.asset_id
+      ?? null;
+    if (want === approvalAssetId) return;
+    const prev = approvalAssetId;
+    setApprovalAssetId(want);
+    try {
+      await setApprovalAsset(contentId, want);
+    } catch (e) {
+      setApprovalAssetId(prev);
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
+  const attachToSlot = async (assetId: string, slot: DesignSlot): Promise<void> => {
+    setBusy(true);
+    try {
+      // One file per slot: a previous occupant becomes a plain source link so
+      // nothing is lost, and the new file takes the slot.
+      const prevOccupant = slotLinkOf(slot);
+      if (prevOccupant && prevOccupant.asset_id !== assetId) await linkAsset(prevOccupant.asset_id, contentId, 'source');
+      const res = await linkAsset(assetId, contentId, SLOT_ROLE[slot]);
+      const next = [...links.filter((l) => l.content_id !== contentId), ...res.links];
+      setLinks(next);
+      onCount(res.links.length);
+      await syncApprovalAsset(next);
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const [slotUploading, setSlotUploading] = useState<{ slot: DesignSlot; frac: number } | null>(null);
+  const [slotPicking, setSlotPicking] = useState<DesignSlot | null>(null);
+  const slotInputs = { square: useRef<HTMLInputElement>(null), vertical: useRef<HTMLInputElement>(null) };
+
+  /** Upload one file straight into a slot: canonical Files intake → material row → slot link. */
+  const uploadToSlot = async (file: File, slot: DesignSlot): Promise<void> => {
+    setBusy(true);
+    setSlotUploading({ slot, frac: 0 });
+    try {
+      let toSend = file;
+      if (isHeic(file)) {
+        try { toSend = await heicToJpeg(file); } catch (convErr) { console.error('[marketing] HEIC conversion failed', file.name, convErr); }
+      }
+      const fileRow = await uploadCanonicalAsset(toSend, {
+        onProgress: (frac) => setSlotUploading({ slot, frac }),
+      });
+      const kind = kindFromFile(toSend);
+      const res = await saveAsset({
+        title: `${contentTitle ?? ''} — ${isAr ? SLOT_META[slot].ar : SLOT_META[slot].en}`.replace(/^ — /, ''),
+        kind: kind === 'photo' || kind === 'video' ? kind : 'design',
+        source: 'design',
+        project_id: projectId,
+        shot_on: null,
+        tags: [slot],
+        aspect_ratio: SLOT_META[slot].ratio,
+        ...canonicalAssetFields(fileRow),
+        original_name: file.name,
+      });
+      setAssets((cur) => (cur.some((a) => a.id === res.asset.id) ? cur : [res.asset, ...cur]));
+      await attachToSlot(res.asset.id, slot);
+    } catch (e) {
+      console.error('[marketing] slot upload failed', file.name, e);
+      addToast(assetErrorText(e, isAr), 'error');
+    } finally {
+      setSlotUploading(null);
+      setBusy(false);
+    }
+  };
+
+  const clearSlot = async (slot: DesignSlot): Promise<void> => {
+    const l = slotLinkOf(slot);
+    if (!l) return;
+    setBusy(true);
+    try {
+      const res = await unlinkAsset(l.asset_id, contentId);
+      const next = [...links.filter((x) => x.content_id !== contentId), ...res.links];
+      setLinks(next);
+      onCount(res.links.length);
+      if (approvalAssetId === l.asset_id) setApprovalAssetId(null);
+      await syncApprovalAsset(next);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
@@ -303,7 +401,8 @@ export default function MaterialsTab({
 
   const sourceRows = mine.filter((l) => l.role === 'source');
   const workingRows = mine.filter((l) => l.role === 'reference');
-  const finalRows = mine.filter((l) => l.role === 'final');
+  // Legacy single approved file (pre-slot items) — offered for placing into a slot.
+  const legacyFinalRows = mine.filter((l) => l.role === 'final');
 
   /** One linked-asset row. `approvable` rows (source + working files) carry the
    *  «submit for approval» toggle; the approved band never does. */
@@ -314,7 +413,6 @@ export default function MaterialsTab({
       (x) => x.asset_id === a.id && x.content_id !== contentId,
     ).length;
     const scene = sceneTagOf(a);
-    const isForApproval = approvalAssetId === a.id;
     return (
       <div key={l.asset_id} className="file">
         <div className="th">
@@ -342,11 +440,6 @@ export default function MaterialsTab({
           {scene !== null && (
             <span className="tag">{isAr ? `المشهد ${num(scene, true)}` : `Scene ${scene}`}</span>
           )}
-          {isForApproval && (
-            <span className="tag" style={{ background: 'var(--gold)', color: 'var(--ink)' }}>
-              {isAr ? 'محدّدة للاعتماد' : 'Marked for approval'}
-            </span>
-          )}
           {urlFor(a) && (
             <a className="btn btn-d btn-sm" href={urlFor(a) ?? undefined} target="_blank" rel="noreferrer">
               {isAr ? 'معاينة' : 'Preview'}
@@ -368,20 +461,16 @@ export default function MaterialsTab({
             </button>
           )}
           {approvable && canEdit && (
-            <button
-              type="button"
-              className={`btn btn-sm${isForApproval ? ' btn-p' : ''}`}
-              disabled={busy}
-              onClick={() => void toggleApproval(a.id)}
-              aria-pressed={isForApproval}
-              title={isAr
-                ? 'يعتمدها المدير فتصبح النسخة المعتمدة للنشر'
-                : 'When the manager approves, this becomes the approved file for publishing'}
-            >
-              {isForApproval
-                ? (isAr ? 'إلغاء التحديد' : 'Unmark')
-                : (isAr ? 'تحديد للاعتماد' : 'Mark for approval')}
-            </button>
+            <>
+              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void attachToSlot(a.id, 'square')}
+                title={isAr ? 'استخدم هذا الملف كالتصميم المربّع (1:1)' : 'Use this file as the square design (1:1)'}>
+                {isAr ? 'كمربّع' : 'As square'}
+              </button>
+              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void attachToSlot(a.id, 'vertical')}
+                title={isAr ? 'استخدم هذا الملف كالتصميم الطولي (9:16)' : 'Use this file as the vertical design (9:16)'}>
+                {isAr ? 'كطولي' : 'As vertical'}
+              </button>
+            </>
           )}
           {canEdit && (
             <button
@@ -415,6 +504,108 @@ export default function MaterialsTab({
             </button>
           </div>
         )}
+
+        {/* ── the two design slots — what the manager approves and the ad runs ── */}
+        <div>
+          <div className="cd2-band-h">
+            <div className="lbl">
+              {isAr ? 'التصميم النهائي · ملفان: مربّع وطولي' : 'Final design · two files: square and vertical'}
+            </div>
+            <span className="tag tag-t">
+              {isAr
+                ? `${num((['square', 'vertical'] as DesignSlot[]).filter((k) => slotLinkOf(k)).length, true)} من ٢`
+                : `${(['square', 'vertical'] as DesignSlot[]).filter((k) => slotLinkOf(k)).length} of 2`}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+            {(['square', 'vertical'] as DesignSlot[]).map((slot) => {
+              const l = slotLinkOf(slot);
+              const a = l ? assetById.get(l.asset_id) ?? null : null;
+              const up = slotUploading?.slot === slot ? slotUploading : null;
+              const meta = SLOT_META[slot];
+              return (
+                <div key={slot} className="card" style={{ padding: 12, display: 'grid', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                    <b>{isAr ? meta.ar : meta.en}</b>
+                    <span className="tag ltr">{meta.ratio}</span>
+                    <span style={{ fontSize: 12, color: 'var(--mute)' }}>{isAr ? meta.hintAr : meta.hintEn}</span>
+                  </div>
+                  <div
+                    style={{
+                      aspectRatio: slot === 'square' ? '1 / 1' : '9 / 16',
+                      maxHeight: 260, borderRadius: 10, background: 'var(--line)', overflow: 'hidden',
+                      display: 'grid', placeItems: 'center', justifySelf: 'center', width: slot === 'square' ? 200 : 146,
+                    }}
+                  >
+                    {a && a.kind === 'video' && urlFor(a)
+                      ? <video src={urlFor(a) ?? undefined} controls style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      : a && thumbFor(a)
+                        ? <img src={thumbFor(a) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        : a
+                          ? <IconLibrary />
+                          : <span style={{ fontSize: 12, color: 'var(--mute)', textAlign: 'center', padding: 8 }}>
+                              {up
+                                ? `${isAr ? 'جارٍ الرفع' : 'Uploading'} ${Math.round(up.frac * 100)}%`
+                                : isAr ? 'لا ملف بعد' : 'No file yet'}
+                            </span>}
+                  </div>
+                  {a && (
+                    <div className="mt" style={{ textAlign: 'center', overflowWrap: 'anywhere' }}>
+                      {a.title}{a.size_bytes ? ` · ${formatBytes(a.size_bytes, isAr)}` : ''}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+                    {a && urlFor(a) && (
+                      <a className="btn btn-d btn-sm" href={urlFor(a) ?? undefined} target="_blank" rel="noreferrer">
+                        {isAr ? 'معاينة' : 'Preview'}
+                      </a>
+                    )}
+                    {canEdit && (
+                      <>
+                        <input
+                          ref={slotInputs[slot]}
+                          type="file"
+                          accept="image/*,video/*"
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            e.target.value = '';
+                            if (f) void uploadToSlot(f, slot);
+                          }}
+                        />
+                        <button type="button" className={`btn btn-sm${a ? '' : ' btn-p'}`} disabled={busy} onClick={() => slotInputs[slot].current?.click()}>
+                          {a ? (isAr ? 'استبدال' : 'Replace') : (isAr ? 'رفع الملف' : 'Upload')}
+                        </button>
+                        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setSlotPicking(slot)}>
+                          <IconLibrary />
+                          {isAr ? 'من المكتبة' : 'From library'}
+                        </button>
+                        {a && (
+                          <button type="button" className="btn btn-d btn-sm" disabled={busy} onClick={() => void clearSlot(slot)} aria-label={isAr ? 'إزالة' : 'Remove'}>
+                            <IconTrash />
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {legacyFinalRows.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div className="mt" style={{ marginBottom: 6 }}>
+                {isAr ? 'نسخة معتمدة سابقة — ضعها في أحد الخانتين:' : 'Previously approved file — place it in a slot:'}
+              </div>
+              {legacyFinalRows.map((l) => assetRow(l, true))}
+            </div>
+          )}
+          <div className="cd2-side-note" style={{ marginTop: 8 }}>
+            {isAr
+              ? 'عند اعتماد المدير يُرفع المربّع لفيد إنستقرام والطولي للستوري والريلز وحالة واتساب، ويُنشأ الإعلان في ميتا تلقائيًا.'
+              : 'On the manager’s approval the square goes to the Instagram feed and the vertical to stories, reels and WhatsApp status, and the Meta ad is created automatically.'}
+          </div>
+        </div>
 
         {/* ── band 1 — المواد الأصلية + اللقطات الناقصة ─────────────── */}
         <div>
@@ -530,26 +721,6 @@ export default function MaterialsTab({
           )}
         </div>
 
-        {/* ── band 4 — المعتمد والمنشور (role 'final') ───────────────── */}
-        <div>
-          <div className="lbl" style={{ marginBottom: 9 }}>
-            {isAr ? 'المعتمد والمنشور' : 'Approved & published'}
-          </div>
-          {finalRows.length === 0 ? (
-            <div className="drop">
-              {approvalAssetId
-                ? (isAr
-                    ? 'نسخة محدّدة للاعتماد — تصبح معتمدة تلقائيًا عند اعتماد المدير لهذا العنصر، فتظهر هنا ويمكن ربطها بالنشر.'
-                    : 'A file is marked for approval — it becomes approved automatically when the manager approves this item, then appears here and can be attached to a publication.')
-                : (isAr
-                    ? 'لا شيء معتمد بعد. حدّد نسخة من المواد أعلاه بزر «تحديد للاعتماد»؛ يعتمدها المدير فتظهر هنا وتتاح للنشر.'
-                    : 'Nothing approved yet. Mark a file above with “Mark for approval”; once the manager approves, it appears here and becomes available to publish.')}
-            </div>
-          ) : (
-            finalRows.map((l) => assetRow(l))
-          )}
-        </div>
-
         {canEdit && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" className="btn" onClick={() => setPicking(true)}>
@@ -620,6 +791,21 @@ export default function MaterialsTab({
           )}
         </div>
       </div>
+
+      {slotPicking && (
+        <FilesMaterialPicker
+          isAr={isAr}
+          onClose={() => setSlotPicking(null)}
+          onLinked={(res) => {
+            setLinks(res.links);
+            setAssets((cur) => (cur.some((a) => a.id === res.asset.id) ? cur : [res.asset, ...cur]));
+            onCount(res.links.filter((l) => l.content_id === contentId).length);
+            void syncApprovalAsset(res.links);
+            setSlotPicking(null);
+          }}
+          linkFile={(fileId) => linkAssetFromFile(contentId, fileId, SLOT_ROLE[slotPicking])}
+        />
+      )}
 
       {picking && (
         <FilesMaterialPicker
