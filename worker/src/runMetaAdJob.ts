@@ -215,7 +215,9 @@ async function loadProjectFacts(sb: SupabaseClient, projectId: string | null): P
 /** Digit runs of a text, Arabic-Indic normalized, thousands separators dropped. */
 function numbersIn(text: string): Set<string> {
   const norm = text
-    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٬٦٧٨٩'.indexOf(d) >= 0 ? '٠١٢٣٤٥٦٧٨٩'.indexOf(d) : d))
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    // Arabic decimal separator → '.', then thousands separators between digits dropped.
+    .replace(/(\d)٫(?=\d)/g, '$1.')
     .replace(/(\d)[,٬،](?=\d{3}\b)/g, '$1');
   const out = new Set<string>();
   for (const m of norm.match(/\d+(?:\.\d+)?/g) ?? []) {
@@ -276,6 +278,7 @@ const CAPTION_SYSTEM = `أنت كاتب إعلانات عقارية لشركة �
 4. إن كان المشروع على الخارطة يجب ذكر ذلك صراحة.
 5. استخدم إيموجي قليلة مناسبة (🏡 📍 ✅ 📅 🛡️) في بداية بعض الأسطر.
 6. لا تزيد عن ٨٠٠ حرف. لا عناوين ولا ترويسات ولا تنسيق ماركداون.
+8. اكتب كل الأرقام بأسلوب واحد: الأرقام العربية الهندية (٠١٢٣٤٥٦٧٨٩) مع الفاصلة العليا للآلاف (٥٧٦٬٢١٦) — لا تخلط بين النمطين.
 7. استلهم النبرة والزاوية من «النص المعتمد» إن وُجد، لكن لا تنسخه حرفيًا إذا كان طويلًا.
 
 أعد الكابشن فقط، بلا أي مقدمة أو تعليق.`;
