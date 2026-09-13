@@ -2,12 +2,20 @@
  * «اعتماد هذا النص؟» — design screen 29, phone 3: the mobile approval sheet.
  *
  * The requirements checklist renders ABOVE the buttons, so a gap is seen
- * BEFORE the tap — and when something is missing the button itself says
- * «اعتماد رغم النقص» with the count under it. Approving with a gap stays
- * possible, but it is a conscious act, never a silent default. The checklist
- * derives from the approval step's own `required_fields` plus the scene
- * footage — the same recipe TaskCard prints — so it can never drift from what
- * the workflow actually asks for.
+ * BEFORE the tap. The checklist derives from the approval step's own
+ * `required_fields` plus the scene footage — the same recipe TaskCard prints —
+ * so it can never drift from what the workflow actually asks for.
+ *
+ * CHANGED 2026-09-14: `required_fields` are now enforced by the DATABASE
+ * (`workflow_advance_role_path` raises `MOS:REQUIREMENTS_MISSING`), so
+ * «اعتماد رغم النقص» is gone — the button says «لا يمكن الاعتماد بعد» and is
+ * disabled. They were advisory for a year, which is how a writing stage could
+ * close with no caption at all.
+ *
+ * Also new: on the FINAL approval (the step flagged `auto_meta_ad`) the ad
+ * preflight runs BEFORE the tap. Every requirement a Meta ad needs used to be
+ * discovered minutes later as a worker failure; now it is a checklist, and
+ * approving anyway is the explicitly-labelled «اعتماد بدون إعلان».
  *
  * اعتماد wires to the SAME `task_complete` flow the desktop header uses
  * (`completeTask(taskId, 'approved')`); the optional note rides that call.
@@ -20,6 +28,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { daysAgo, num } from '../lib/format';
 import { AutoAdPanel, autoAdOutcomeText, useAutoAdPreview } from './AutoAdApproval';
+import AdReadinessPanel, { hasAdBlockers, useAdReadiness } from './AdReadinessPanel';
 import '../styles/mobile-m2.css';
 
 /** `true` below the workspace's 760px phone breakpoint — live across resizes. */
@@ -136,6 +145,10 @@ export default function ApprovalSheet({
   ];
   const gaps = items.filter((i) => !i.ok).length;
 
+  /* ── the ad preflight (2026-09-14) — checked BEFORE the tap ─────────── */
+  const adReadiness = useAdReadiness(contentId ?? openTask.content_id ?? null, Boolean(autoAd));
+  const adBlocked = hasAdBlockers(adReadiness);
+
   /* ── the words — «اعتماد النص؟» + who waits + what approval opens ────── */
   const thing = reviewedStep
     ? (isAr ? reviewedStep.label_ar : reviewedStep.label_en)
@@ -223,6 +236,11 @@ export default function ApprovalSheet({
           )}
         </div>
 
+        {/* The ad preflight, BEFORE the tap (2026-09-14). Every requirement a
+            Meta ad needs used to be discovered minutes later as a worker
+            failure; now the manager sees it here. */}
+        {autoAd && <AdReadinessPanel state={adReadiness} isAr={isAr} />}
+
         {autoAd && <AutoAdPanel state={autoAdState} isAr={isAr} compact />}
 
         <textarea
@@ -244,6 +262,23 @@ export default function ApprovalSheet({
             {isAr ? 'إلغاء' : 'Cancel'}
           </button>
           {gaps > 0 ? (
+            /* The step's own required_fields are now enforced by the DATABASE
+               (workflow_advance_role_path raises MOS:REQUIREMENTS_MISSING), so
+               "approve despite the gap" is no longer a thing that can happen —
+               the button says what is missing instead of pretending. */
+            <button
+              type="button"
+              className="m2-btn stack"
+              style={{ flex: 1 }}
+              disabled
+              title={isAr ? 'أكمل المتطلبات أولًا' : 'Complete the requirements first'}
+            >
+              <span>{isAr ? 'لا يمكن الاعتماد بعد' : 'Cannot approve yet'}</span>
+              <span className="sub">{gapsPhrase(gaps, isAr)}</span>
+            </button>
+          ) : adBlocked ? (
+            /* Requirements are met but the ad cannot be built. Approving is a
+               deliberate choice, and it is labelled as one. */
             <button
               type="button"
               className="m2-btn g stack"
@@ -254,9 +289,13 @@ export default function ApprovalSheet({
               <span>
                 {busy
                   ? isAr ? 'جارٍ…' : 'Working…'
-                  : isAr ? 'اعتماد رغم النقص' : 'Approve despite the gap'}
+                  : isAr ? 'اعتماد بدون إعلان' : 'Approve without the ad'}
               </span>
-              <span className="sub">{gapsPhrase(gaps, isAr)}</span>
+              <span className="sub">
+                {isAr
+                  ? 'لن يُنشأ إعلان ميتا — المتطلبات أعلاه ناقصة.'
+                  : 'No Meta ad will be created — the requirements above are missing.'}
+              </span>
             </button>
           ) : (
             <button

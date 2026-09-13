@@ -12,11 +12,18 @@
  *                                         the piece needs; none is "approved" and none
  *                                         is discarded — every headline is part of the
  *                                         post, so there is no picker and no forced count.
- *   (caption + hashtags + paid ad copy) → NOT here. Distribution copy belongs to
- *                                         the PLACEMENT it runs on, so it is authored
- *                                         in PlacementCaptions (rendered by the content
- *                                         tab next to this) — organic captions on the
- *                                         publication rows, paid copy on the ad rows.
+ *   caption                             → HERE, beneath the writing (2026-09-14).
+ *                                         The caption is part of the writing stage and
+ *                                         is approved with it: the writing task cannot
+ *                                         close without a caption the writer has
+ *                                         explicitly confirmed. AI may draft it; a
+ *                                         fresh draft is never pre-confirmed.
+ *                                         This reverses the 2026-08-26 split, which
+ *                                         left the manager approving writing with no
+ *                                         caption in front of them (0 of 24 live rows
+ *                                         carried one). Per-PLATFORM overrides and paid
+ *                                         ad copy still live in PlacementCaptions and
+ *                                         are seeded from the canonical caption here.
  *   design_brief (+ references)         → the structured design brief, so "what do I
  *                                         design" never drowns in a notes box. The
  *                                         references are PICKS from the Files library
@@ -35,7 +42,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { updateContent } from '@/lib/marketingOS/client';
+import { updateContent, generateContentCaption } from '@/lib/marketingOS/client';
 import FilePickerModal from '@/pages/Files/library/FilePickerModal';
 import FilePreviewModal from '@/pages/Files/components/FilePreviewModal';
 import { listFilesByIds, signViewUrls } from '@/lib/files/client';
@@ -67,6 +74,8 @@ const GENERIC_FIELDS: Record<string, FieldDef> = {
 const COMPOSED = new Set([
   'idea', 'hook', 'core_message', 'voiceover',
   'headlines', 'approved_headline', 'caption', 'hashtags',
+  // Caption confirmation companions — rendered by the caption card, never generic.
+  'caption_confirmed_text', 'caption_confirmed_at', 'caption_source',
   // Per-platform caption companion keys (Instagram = the legacy `caption`).
   'caption_tiktok', 'caption_x', 'caption_snapchat',
   'design_brief', 'slides', 'scenes',
@@ -383,6 +392,40 @@ export default function WritingFields({
     }
   };
 
+  /* ── caption: written HERE, with the content, and approved with it ──
+     Reversal of the 2026-08-26 split, deliberately. The canonical caption is
+     `data.caption`; `mos_publications.caption` and the ad rows' primary text
+     become per-platform OVERRIDES seeded from it. The writer must confirm the
+     exact text — `caption_confirmed_text` holds what was confirmed, so any
+     later edit silently invalidates the confirmation (exact comparison, no
+     trimming: a trim-parity mismatch between JS and SQL is exactly how the
+     2026-08-05 twin-fill bug shipped). */
+  const captionText = str('caption');
+  const captionConfirmed = captionText.length > 0
+    && asString(draft.caption_confirmed_text) === captionText;
+  const [captionBusy, setCaptionBusy] = useState(false);
+  const [captionSource, setCaptionSource] = useState<'ai' | 'fallback' | null>(null);
+
+  const generateCaption = async (): Promise<void> => {
+    setCaptionBusy(true);
+    try {
+      const res = await generateContentCaption(contentId);
+      setCaptionSource(res.source);
+      setDraft((d) => ({
+        ...d,
+        caption: res.caption,
+        caption_source: res.source === 'fallback' ? 'fallback' : 'ai',
+        // A fresh draft is NOT confirmed — the writer still has to read it.
+        caption_confirmed_text: '',
+        caption_confirmed_at: '',
+      }));
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setCaptionBusy(false);
+    }
+  };
+
   /* ── headlines: the copy that makes the post. Unlimited, none "approved". ── */
   const headlines = asList(draft.headlines ?? data.headlines);
   const written = headlines.filter((h) => h.trim() !== '').length;
@@ -516,8 +559,29 @@ export default function WritingFields({
           </div>
         )}
 
-        {/* Captions/ad-copy are authored in PlacementCaptions (rendered by the
-            content tab) — they belong to the placement, not the creative. */}
+        {/* The canonical caption, as the reviewer sees it. Per-PLATFORM
+            overrides and paid ad copy stay in PlacementCaptions. */}
+        <div className="write">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <div className="doc-lbl" style={{ margin: 0 }}>
+              {isAr ? 'الكابشن' : 'Caption'}
+            </div>
+            <span
+              className={`tag ${captionConfirmed ? 'tag-ok' : 'tag-w'}`}
+              style={{ marginInlineStart: 'auto' }}
+            >
+              {captionConfirmed
+                ? (isAr ? 'راجعه الكاتب' : 'Writer confirmed')
+                : (isAr ? 'لم يُراجَع بعد' : 'Not confirmed')}
+            </span>
+          </div>
+          {captionText
+            ? captionText.split(/\n{2,}/).map((p, i) => (
+              <p key={i} style={{ lineHeight: 1.95, whiteSpace: 'pre-wrap' }}>{p}</p>
+            ))
+            : <p style={{ color: 'var(--mute)' }}>—</p>}
+        </div>
+
         {has('design_brief') && (
           <div className="write">
             <div className="doc-lbl">
@@ -683,10 +747,78 @@ export default function WritingFields({
         </div>
       )}
 
+      {/* ── الكابشن — جزء من الكتابة، لا من التوزيع (2026-09-14) ─────── */}
+      <div className="write">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <div className="doc-lbl" style={{ margin: 0 }}>
+            {isAr ? 'الكابشن' : 'Caption'}
+          </div>
+          <button
+            type="button"
+            className="btn btn-s"
+            style={{ marginInlineStart: 'auto' }}
+            disabled={captionBusy}
+            onClick={() => { void generateCaption(); }}
+          >
+            {captionBusy
+              ? (isAr ? 'يكتب…' : 'Writing…')
+              : (isAr ? 'توليد بالذكاء' : 'Generate with AI')}
+          </button>
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 8 }}>
+          {isAr
+            ? 'الكابشن يُكتب هنا مع المحتوى ويُعتمد معه. تُنسخ منه نصوص المنصات، ويمكن تعديل كل منصة على حدة لاحقًا.'
+            : 'The caption is written here with the content and approved with it. Each platform’s copy is seeded from it and can be tweaked per placement later.'}
+        </div>
+        <textarea
+          className="inp"
+          rows={6}
+          style={{ fontSize: 13 }}
+          value={str('caption')}
+          placeholder={isAr ? 'اكتب الكابشن، أو ولّده بالذكاء ثم راجعه.' : 'Write the caption, or generate it and review.'}
+          onChange={(e) => set('caption', e.target.value)}
+        />
+        {captionSource && (
+          <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 4 }}>
+            {captionSource === 'fallback'
+              ? (isAr ? 'مسودة تلقائية من العناوين — راجعها.' : 'Deterministic draft from the headlines — review it.')
+              : (isAr ? 'مسودة من الذكاء الاصطناعي — راجعها.' : 'AI draft — review it.')}
+          </div>
+        )}
+        <label
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, marginTop: 10,
+            fontSize: 12.5, cursor: captionText ? 'pointer' : 'not-allowed',
+            opacity: captionText ? 1 : 0.5,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={captionConfirmed}
+            disabled={!captionText}
+            onChange={(e) => setDraft((d) => ({
+              ...d,
+              caption_confirmed_text: e.target.checked ? captionText : '',
+              caption_confirmed_at: e.target.checked ? new Date().toISOString() : '',
+            }))}
+          />
+          <span>
+            {isAr ? 'راجعت الكابشن واعتمدته' : 'I reviewed and approved this caption'}
+          </span>
+        </label>
+        {!captionConfirmed && (
+          <div style={{ fontSize: 11.5, color: 'var(--warn, #B8734F)', marginTop: 6 }}>
+            {isAr
+              ? 'لا يمكن إرسال الكتابة للمراجعة قبل كتابة الكابشن وتأكيد مراجعته.'
+              : 'Writing cannot be sent for review until the caption is written and confirmed.'}
+          </div>
+        )}
+      </div>
+
       {/* ── موجز التصميم ───────────────────────────────────────────── */}
-      {/* Captions + paid ad-copy live in PlacementCaptions (the content tab
-          renders it next to this) — a caption belongs to the placement it runs
-          on, not to the creative. */}
+      {/* Per-PLATFORM caption overrides + paid ad copy still live in
+          PlacementCaptions (the content tab renders it next to this); they are
+          seeded from the canonical caption above. */}
       {has('design_brief') && (
         <div className="write">
           <div className="doc-lbl">
