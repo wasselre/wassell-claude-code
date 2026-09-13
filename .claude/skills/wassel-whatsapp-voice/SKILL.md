@@ -62,6 +62,8 @@ Najdi colloquial, warm, brief, a little playful, always deferential (طال عم
 **Booking a visit:**
 أرتب لك موعد زيارة؟ · أحجز لك موعد اليوم؟ · متى يناسبك؟ · عطني خبر قبلها عشان يجهزون لك المكان
 
+**The client visits, the rep arranges.** It is always «تزور / تزورين» (you visit) and «أرتب لك / أحجز لك» (I arrange) — never «نزور» (we visit) or «نرتب». The rep does not go along; the project's sales office receives the client. «أي يوم يناسبك تزورين مجبب هاوس؟», not «نزور».
+
 **Closing warmth (only when the client closes):**
 الله يحييك · في الخدمة · على خير إن شاء الله · الله يكتب لك اللي فيه الخير · في انتظارك 👍🏻
 
@@ -103,6 +105,7 @@ Rules for cards: dash lines, one fact per line, 5–9 lines, one emoji max in th
 - Is there a «•» or a colon-label? Delete it.
 - Is the client feminine? Check every verb.
 - Does it end with one short question or one clear next step?
+- Any «نزور» / «نرتب»? → «تزور / تزورين» and «أرتب لك».
 - Any «أرسل لك» as two words, or a bare «أرسل لك؟» with no object? → «أرسلك إياهم / إياه». Any «تسلم» answering a request? → «أبشر».
 - Is the last message in the chat older than today? Then it must start with a greeting, and with «المعذرة على التأخير» if we owed the reply.
 
@@ -111,3 +114,4 @@ Rules for cards: dash lines, one fact per line, 5–9 lines, one emoji max in th
 - 2026-09-13 — Operator: "the language you talk in is disgusting… learn from humans who have been sending messages, and also learn from how customers talk." → this skill; all 111 queued suggestions rewritten under it.
 - 2026-09-13 — Operator, on the Abdelmalek card: "So now we would reply to the client after 10 days, without changing 'hello', without changing anything." → rule 15 (greeting first, apology when we owed the reply); 31 queued rows re-prefixed.
 - 2026-09-13 — Operator, on the الحمدلله card: "ابشر not تسلم" / "ارسلك إياهم، not ارسلك" → phrasebook entries above; 34 queued rows corrected.
+- 2026-09-13 — Operator, on the ام عبد العزيز card: "تزور/تزورين not نزور" → the client visits, the rep arranges; pending rows corrected.
