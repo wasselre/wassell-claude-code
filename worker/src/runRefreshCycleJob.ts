@@ -694,6 +694,33 @@ export async function applyCycle(
     }
   }
 
+  // ── 4b. record the swap in the DATABASE ────────────────────────────────
+  // The Meta side is done; `mos_refresh_cycle_record_swap` owns the row state
+  // that follows from it — activated ads to `running` + `activated_at`, their
+  // slots to `active` with the bank earmark cleared, retired ads to `paused` +
+  // `retired_at` — and re-checks the min-active guard under the ledger lock.
+  // Writing the cycle status alone (as this lane used to) left every slot stuck
+  // on `ready` and every banked spare still earmarked, so the next cycle would
+  // plan against a bank that had already been spent.
+  if (active.length > 0 || paused.length > 0) {
+    const swap = await sb.rpc('mos_refresh_cycle_record_swap', {
+      p_cycle_id: cycle.id,
+      p_activated_ad_ids: active.map((a) => a.id),
+      p_paused_ad_ids: paused.map((a) => a.id),
+    });
+    if (swap.error) {
+      // The guard firing here means Meta and the database disagree about how
+      // many ads are live — never paper over it, and never leave the cycle
+      // looking finished.
+      console.error(`[refresh] cycle ${cycle.id} record_swap failed:`, swap.error.code, swap.error.message);
+      activationErrors.push(
+        /MIN_ACTIVE_GUARD/.test(swap.error.message ?? '')
+          ? 'refused: the swap would drop the ad set below its minimum active creatives'
+          : `record_swap failed: ${swap.error.message}`,
+      );
+    }
+  }
+
   // ── 5. cycle outcome ───────────────────────────────────────────────────
   const missing = Math.max(0, plan.required - active.length);
   const outcome: 'applied' | 'partial' = missing === 0 && activationErrors.length === 0 ? 'applied' : 'partial';
