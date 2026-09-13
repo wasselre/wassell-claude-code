@@ -49,10 +49,33 @@ export interface HatifDialogue {
   speakers: string[];
 }
 
-/** The company self-introduction the sales agent opens with. Deliberately
- *  strict: a loose «شركة|العقاري» matched BOTH speakers on 114 of 570 outbound
- *  calls (the customer says «شركة» too). */
-export const AGENT_SELF_INTRO = /(وصل|واصل|تواصل)\s+العقاري|معك\s+\S+\s+من\s|أنا\s+\S+\s+من\s+(شركة\s+)?(وصل|واصل|تواصل)/;
+/** The company self-introduction the sales agent opens with — TIERED, because
+ *  the customer often ECHOES the company name («من شركة؟ وصل العقارية. أهلًا»),
+ *  which made a single pattern match both sides on the 2026-06-17 call:
+ *   1. STRONG — the agent naming themself: «معك صالح من (شركة) وصل العقارية»,
+ *      «أنا فهد من وصل». Only the agent says this.
+ *   2. WEAK — the bare company name. Used only when the strong tier is silent
+ *      and exactly one speaker says it.
+ *  A loose «شركة|العقاري» is never used: it matched BOTH speakers on 114 of 570
+ *  outbound calls. */
+export const AGENT_SELF_INTRO_STRONG = /معك\s+\S+\s+من\s|أنا\s+\S+\s+من\s+(شركة\s+)?(وصل|واصل|تواصل)/;
+export const AGENT_SELF_INTRO_WEAK = /(وصل|واصل|تواصل)\s+العقاري/;
+/** @deprecated kept for callers/tests — the union of both tiers. */
+export const AGENT_SELF_INTRO = new RegExp(`${AGENT_SELF_INTRO_STRONG.source}|${AGENT_SELF_INTRO_WEAK.source}`);
+
+/**
+ * Hatif stamps `phone_calls.call_time` as UTC WITHOUT a timezone suffix
+ * («2026-06-25T12:54:03.885911»; measured 22/22 equal to call_logs.creation_time
+ * in UTC). `Date.parse` treats a suffix-less ISO string as LOCAL time, so on a
+ * Riyadh machine every call timestamp landed 3 h early. Normalise: no suffix ⇒ UTC.
+ */
+export function isoUtc(value: string | null | undefined): string | null {
+  const v = (value ?? '').trim();
+  if (!v) return null;
+  const withZone = /(Z|[+-]\d\d:?\d\d)$/i.test(v) ? v : `${v}Z`;
+  const t = Date.parse(withZone);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
 
 /** Channel-scheme rule: which channel is OUR side, per call direction.
  *  Measured on prod 2026-09-13 (see the SQL in the PRD): outbound → ch_0 on
@@ -124,10 +147,12 @@ export function hatifWordsToTurns(
   if (hasRoles) {
     labelSource = 'hatif_role';
   } else {
-    // 2. Exactly one speaker introduces the company.
+    // 2. Exactly one speaker introduces the company — strong tier first, then weak.
     const bySpeaker = new Map<string, string>();
     for (const w of words) if (!w.punct) bySpeaker.set(w.speaker, `${bySpeaker.get(w.speaker) ?? ''} ${w.text}`);
-    const intro = speakers.filter((sp) => AGENT_SELF_INTRO.test(bySpeaker.get(sp) ?? ''));
+    const strong = speakers.filter((sp) => AGENT_SELF_INTRO_STRONG.test(bySpeaker.get(sp) ?? ''));
+    const weak = speakers.filter((sp) => AGENT_SELF_INTRO_WEAK.test(bySpeaker.get(sp) ?? ''));
+    const intro = strong.length === 1 ? strong : strong.length === 0 && weak.length === 1 ? weak : [];
     if (intro.length === 1) {
       agentSpeaker = intro[0]!;
       labelSource = 'self_intro';
@@ -148,9 +173,10 @@ export function hatifWordsToTurns(
     return w.speaker === agentSpeaker ? 'agent' : 'client';
   };
 
-  const base = opts.callTimeIso ? Date.parse(opts.callTimeIso) : NaN;
+  const baseIso = isoUtc(opts.callTimeIso);
+  const base = baseIso ? Date.parse(baseIso) : NaN;
   const stampFor = (start: number | null): string | undefined => {
-    if (!Number.isFinite(base)) return opts.callTimeIso ?? undefined;
+    if (!Number.isFinite(base)) return undefined;
     return new Date(base + Math.max(0, start ?? 0) * 1000).toISOString();
   };
 

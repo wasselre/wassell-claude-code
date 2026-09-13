@@ -18,7 +18,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { DEFAULT_GEO_COUNTRY } from '../matchAgent.js';
 import { createSupabaseResolverDb } from './resolverDb.js';
 import { extract, type Conversation, type ConversationTurn } from './extractor.js';
-import { hatifWordsToTurns } from './hatifDialogue.js';
+import { hatifWordsToTurns, isoUtc } from './hatifDialogue.js';
 import { runReviewFirst } from './orchestrator.js';
 import type {
   ProposalStore, ProposalInput, ProposalRecord, RunContext,
@@ -208,10 +208,12 @@ export async function gatherClientConversations(
 
   // ── Calls: one conversation per phone_calls transcript ──
   const callRecs = await linkedRecords(supabase, 'phone_calls', clientId);
+  // call_time is UTC without a zone suffix — normalise (isoUtc) or a Riyadh
+  // machine reads it 3 h early (measured 2026-09-13).
   const calls = callRecs
     .map((r) => ({
       id: r.id,
-      ts: asStr(r.data.call_time) || asStr(r.data.creation_time) || '',
+      ts: isoUtc(asStr(r.data.call_time) || asStr(r.data.creation_time)) ?? '',
       text: asStr(r.data.transcription_text),
       direction: asStr(r.data.direction) || null,
     }))
@@ -222,20 +224,22 @@ export async function gatherClientConversations(
   // Hatif's DIARIZED transcript lives in call_logs.transcription (same id as the
   // phone_calls record). It gives speaker-labelled turns; the flattened
   // transcription_text is the fallback when a call has no diarized words.
-  const logs = new Map<string, { direction: string | null; transcription: unknown }>();
+  const logs = new Map<string, { direction: string | null; transcription: unknown; creation_time: string | null }>();
   if (calls.length) {
     const { data, error } = await supabase
       .from('call_logs')
-      .select('id, direction, transcription')
+      .select('id, direction, transcription, creation_time')
       .in('id', calls.map((c) => c.id));
     if (error) throw new Error(`gather: call_logs read failed: ${error.message}`);
-    for (const l of (data ?? []) as Array<{ id: string; direction: string | null; transcription: unknown }>) {
-      logs.set(l.id, { direction: l.direction, transcription: l.transcription });
+    for (const l of (data ?? []) as Array<{ id: string; direction: string | null; transcription: unknown; creation_time: string | null }>) {
+      logs.set(l.id, { direction: l.direction, transcription: l.transcription, creation_time: l.creation_time });
     }
   }
   for (const c of calls) {
     const log = logs.get(c.id);
-    const dialogue = log ? hatifWordsToTurns(log.transcription, { direction: log.direction ?? c.direction, ref: c.id, callTimeIso: c.ts || null }) : null;
+    // call_logs.creation_time is a real timestamptz — prefer it as the time base.
+    const callTime = (log && isoUtc(log.creation_time)) || c.ts || null;
+    const dialogue = log ? hatifWordsToTurns(log.transcription, { direction: log.direction ?? c.direction, ref: c.id, callTimeIso: callTime }) : null;
     if (dialogue) {
       out.push({ channel: 'call', id: c.id, speaker_labels: dialogue.labelSource, turns: dialogue.turns.slice(0, MAX_TURNS_PER_CONVERSATION) });
       continue;
