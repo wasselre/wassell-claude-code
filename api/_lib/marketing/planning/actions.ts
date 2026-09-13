@@ -523,6 +523,40 @@ export async function contentAdReadiness(ctx: PlanCtx): Promise<Response> {
   return jsonOk({ readiness: data });
 }
 
+/**
+ * Everything the Capacity settings screen edits, read back so it shows the
+ * LIVE values instead of the engine's seeds. Without this the step-effort grid
+ * could only display defaults, and a save would look like it had no effect.
+ */
+export async function capacityConfigGet(ctx: PlanCtx): Promise<Response> {
+  const settings = await loadPlanningSettings(ctx.sb);
+  const [capsRes, holidaysRes, effortRes, roleLoadRes, rolesRes, usersRes] = await Promise.all([
+    ctx.sb.from('mos_user_capacity').select('user_id, bucket, daily_slots'),
+    ctx.sb.from('mos_holidays').select('day, label_ar, label_en').order('day'),
+    ctx.sb.from('mos_step_effort').select('workflow_key, step_key, bucket, working_days'),
+    ctx.sb.from('mos_role_load').select('role_id, bucket, daily_new_tasks'),
+    ctx.sb.from('roles').select('id, key, label_ar, label_en').eq('domain', 'marketing'),
+    ctx.sb.from('users').select('id, email, role_assignments').eq('is_active', true),
+  ]);
+  for (const [label, res] of [
+    ['mos_user_capacity', capsRes], ['mos_holidays', holidaysRes],
+    ['mos_step_effort', effortRes], ['mos_role_load', roleLoadRes],
+    ['roles', rolesRes], ['users', usersRes],
+  ] as const) {
+    if (res.error) return fail(label, res.error);
+  }
+  return jsonOk({
+    settings,
+    user_caps: capsRes.data ?? [],
+    holidays: holidaysRes.data ?? [],
+    step_effort: effortRes.data ?? [],
+    role_load: roleLoadRes.data ?? [],
+    roles: rolesRes.data ?? [],
+    users: usersRes.data ?? [],
+    today: riyadhToday(),
+  });
+}
+
 export async function capacityConfigSave(ctx: PlanCtx): Promise<Response> {
   const svc = ctx.svc;
   if (!svc) return jsonError(500, 'service client unavailable');

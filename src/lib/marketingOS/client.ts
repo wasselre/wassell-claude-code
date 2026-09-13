@@ -3471,3 +3471,17 @@ export const saveCapacityConfig = (payload: {
   step_effort?: Array<{ workflow_key: string; step_key: string; bucket: string; working_days: number }>;
   weekend_days?: number[];
 }): Promise<{ ok: boolean }> => call('capacity_config_save', payload);
+
+export interface MosCapacityConfig {
+  settings: Record<string, unknown>;
+  user_caps: Array<{ user_id: string; bucket: string; daily_slots: number }>;
+  holidays: Array<{ day: string; label_ar: string | null; label_en: string | null }>;
+  step_effort: Array<{ workflow_key: string; step_key: string; bucket: string; working_days: number }>;
+  role_load: Array<{ role_id: string; bucket: string; daily_new_tasks: number }>;
+  roles: Array<{ id: string; key: string; label_ar: string; label_en: string }>;
+  users: Array<{ id: string; email: string | null; role_assignments: unknown }>;
+  today: string;
+}
+
+/** The LIVE capacity configuration — so the settings grid never shows only seeds. */
+export const fetchCapacityConfig = (): Promise<MosCapacityConfig> => call('capacity_config');

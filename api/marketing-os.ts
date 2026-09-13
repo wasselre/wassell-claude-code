@@ -66,7 +66,8 @@ import { enqueueWasselReadsOnPublish } from './_lib/marketing/creative/onPublish
 /* ── campaign planning (handlers — dispatch block is near the switch end) ── */
 import {
   campaignPlanPreview, campaignPlanRevise, campaignPlanCommit, campaignPlanGet,
-  campaignRollup, workloadCalendar, contentAdReadiness, capacityConfigSave,
+  campaignRollup, workloadCalendar, contentAdReadiness,
+  capacityConfigGet, capacityConfigSave,
   type PlanCtx,
 } from './_lib/marketing/planning/actions.js';
 import {
@@ -9575,6 +9576,10 @@ export default async function handler(req: Request): Promise<Response> {
       case 'content_ad_readiness': {
         const gate = await requireCap(sb, 'read'); if (gate) return gate;
         return contentAdReadiness(planCtx(sb, body, user.userId));
+      }
+      case 'capacity_config': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return capacityConfigGet(planCtx(sb, body, user.userId));
       }
       case 'capacity_config_save': {
         const gate = await requireCap(sb, 'manage_capacity'); if (gate) return gate;
