@@ -308,7 +308,7 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   const combined = `${post.caption ?? ''}\n${transcriptText}\n${visualTextBlob}`.trim();
   let candidates: NarrowedCandidate[] = [];
   try {
-    candidates = narrowProjects(combined, index, { publisherProjectIds: pubProjects, commonTokens: ctx.commonTokens, excludedTokens: ctx.excludedTokens, brandPhrases: ctx.brandPhrases });
+    candidates = narrowProjects(combined, index, { publisherProjectIds: pubProjects, commonTokens: ctx.commonTokens, excludedTokens: ctx.excludedTokens, brandPhrases: ctx.brandPhrases, catalog: ctx.catalog });
     const acctIdentity = await accountIdentity(sb, post.social_account_id as string | null);
     await sb.rpc('mkt_enrichment_upsert', {
       p_post: contentPostId, p_model: null, p_rule_version: RULE_VERSION, p_org: post.organization_id,
@@ -387,7 +387,7 @@ async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: P
   const pubProjects = await publisherProjects(sb, ctx, post.organization_id);
   const index = scopedIndex(ctx, pubProjects);
   const combined = `${post.caption ?? ''}\n${transcriptText}\n${visualTextBlob}`.trim();
-  const candidates = narrowProjects(combined, index, { publisherProjectIds: pubProjects, commonTokens: ctx.commonTokens, excludedTokens: ctx.excludedTokens, brandPhrases: ctx.brandPhrases });
+  const candidates = narrowProjects(combined, index, { publisherProjectIds: pubProjects, commonTokens: ctx.commonTokens, excludedTokens: ctx.excludedTokens, brandPhrases: ctx.brandPhrases, catalog: ctx.catalog });
   stats.attributions = candidates.length;
 
   // Nothing to re-decide when the candidate set is identical to the one the

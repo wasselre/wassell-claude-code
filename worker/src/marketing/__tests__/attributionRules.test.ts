@@ -186,3 +186,27 @@ describe('narrowProjects labels ambiguity for the reader', () => {
     expect(r.every((c) => c.ambiguous)).toBe(true);
   });
 });
+
+describe('a marketer can post about ANY catalog project (أكنان 23 outside ريفا's scope)', () => {
+  const catalog: ProjectAlias[] = [
+    { projectId: 'aknan-23', nameAr: 'أكنان 23', nameEn: null, tokens: [] },
+    { projectId: 'aknan-25', nameAr: 'أكنان 25', nameEn: null, tokens: [] },
+    { projectId: 'majdiah-174', nameAr: 'الماجدية 174', nameEn: null, tokens: [] },
+    { projectId: 'abaq', nameAr: 'عبق العارض', nameEn: null, tokens: [] },
+  ];
+  const scope = catalog.filter((p) => p.projectId === 'abaq'); // ريفا's seeded scope
+  const o = { publisherProjectIds: ['abaq'], commonTokens: computeCommonTokens(catalog), excludedTokens: new Set<string>(), catalog };
+  it('a full name outside the scope becomes a candidate', () => {
+    const r = narrowProjects('أكنان 23 بحي الرمال — تاون هاوس وشقق بتصاميم ومرافق تعيش معك', scope, o);
+    expect(r.map((c) => c.projectId)).toEqual(['aknan-23']);
+    expect(r[0]!.strength).toBe('full_name');
+  });
+  it('a bare number outside the scope does NOT (174 units is not الماجدية 174)', () => {
+    const r = narrowProjects('بقي 174 وحدة فقط في عبق العارض', scope, o);
+    expect(r.map((c) => c.projectId)).toEqual(['abaq']);
+  });
+  it('a lone word outside the scope does NOT', () => {
+    const r = narrowProjects('أكنان تفتح أبوابها', scope, o);
+    expect(r).toEqual([]);
+  });
+});

@@ -38,6 +38,16 @@ export interface NarrowOptions {
   commonTokens: Set<string>;
   excludedTokens?: Set<string>;
   brandPhrases?: string[];
+  /**
+   * The WHOLE project catalog. A marketer (ريفا) posts about any developer's
+   * project, and its relationship rows are a static seed — «أكنان 23» was in
+   * the catalog but not in ريفا's 20-project scope, so it could never be a
+   * candidate. Projects outside the publisher's scope join the candidate list
+   * ONLY on a full-name match (or a series-word + number phrase): the whole
+   * name is a concrete reference wherever it appears, whereas a lone word or
+   * a bare number across 1,000 projects would be noise.
+   */
+  catalog?: ProjectAlias[];
 }
 
 /** Deterministic narrowing: match combined evidence against the publisher's projects only. */
@@ -49,6 +59,18 @@ export function narrowProjects(combinedText: string, index: ProjectAlias[], opts
     brandPhrases: opts.brandPhrases,
   });
   const byId = new Map<string, ProjectAlias>(index.map((p) => [p.projectId, p]));
+  if (opts.catalog && opts.catalog.length > 0) {
+    const inScope = new Set(index.map((p) => p.projectId));
+    const outside = opts.catalog.filter((p) => !inScope.has(p.projectId));
+    const extra = attributeCaption(combinedText, outside, {
+      publisherProjectIds: [],
+      commonTokens: opts.commonTokens,
+      excludedTokens: opts.excludedTokens,
+      brandPhrases: opts.brandPhrases,
+    }).filter((c) => c.strength === 'full_name' || (c.strength === 'number' && c.matchedAliases.some((m) => /\D/.test(m))));
+    for (const c of extra) { cands.push(c); }
+    for (const p of outside) byId.set(p.projectId, p);
+  }
   const strongCount = cands.filter((c) => c.strength !== 'word').length;
   return cands.map((c) => {
     const p = byId.get(c.projectId);
