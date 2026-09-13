@@ -1,6 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
+**Last updated:** 2026-09-13 (**Task rows open the review popup.**)
 **Last updated:** 2026-09-10 (**Auto Meta ad on manager approval · two-slot designs · open on current step · admin «view as» drives «مهامي» — see Key behaviors.**)
 **Last updated:** 2026-09-10 (**«Create in Meta» now builds the creatives + ads too** (image/video upload, Click-to-WhatsApp creative, paused ad, resumable, Edge time-budgeted) — the Meta App is Live; planned ads show on the Ads tab with a «Not in Meta yet» pill; «Add an ad» is back for Meta executions. See the push-layer bullet under Key behaviors.)
 **Last updated:** 2026-09-08 (**Campaigns table results columns + campaign→content link; Content table «الإعلان», «الخطوة الحالية» + «معاينة».** Every content row now shows whether it is the creative of a paid ad: `content_list` returns `ads[]` (one batched read of `mos_execution_ads` joined to the execution's platform); the «الإعلان» column reads «—» when not linked, «ميتا · لم يُرفع بعد» when linked to an ad that exists only in the app, and «ميتا · يعمل» (live tone) once the ad has a `platform_ad_id` on Meta. The campaigns table now shows every result the executions report — leads, cost per lead, impressions, CTR, clicks, CPC — and no longer blanks them behind a hand-set «مخططة» status (C-041 had 5 leads and C-026 had 169 while the column read «—»); the content-count cell is a button that opens the library filtered to that campaign. The content table gained two columns: **الخطوة الحالية** — a button carrying the open stage's name when that stage is the caller's (held roles; manager/admin act on any), deep-linking to the tab that holds the work (`?tab=content|materials|placements`, derived from the workflow phase in `lib/stagePhase.ts`), else «لا شيء لديك» — and **معاينة**, an in-place popup (`ContentPreviewModal`) that renders the writing fields / the material submitted for approval / the publishing plan for the item's current phase, with the current role's «اعتماد …» / «طلب تعديلات» / «إرسال للمراجعة» in its footer, the same `task_complete` flow as the content page.)
@@ -91,6 +92,13 @@ This workspace answers the three questions the old process could not:
   `final` link is shown under the slots with «كمربّع / كطولي» buttons. The
   Publishing tab's file picker, the preview hero and the list thumbnail treat
   every `final*` role as approved (square first).
+- **A task row opens the review popup (2026-09-13).** On «مهامي», clicking
+  a task (or its action button) opens the same preview popup the content
+  table uses: the copy for a writing step, the design for a design review,
+  the plan for scheduling, with «اعتماد» / «طلب تعديلات» / «إرسال» in the
+  footer and «فتح الصفحة كاملة» for the rest. Auto-ad approvals work inside
+  it too (target ad set shown, several → pick). Coming-soon rows still open
+  the page. Files: `WorkPage.tsx`, `ContentPreviewModal.tsx`.
 - **Opening an item lands on the current step's tab (2026-09-10).** Without
   an explicit `?tab=`, the content page opens on the tab of the OPEN step
   (`phaseOfStep` → writing = المحتوى, design = المواد, scheduling/publish =

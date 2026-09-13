@@ -37,6 +37,7 @@ import { Empty, KindCell, LoadError, PageHead, Pill, Skeleton } from './componen
 import ProjectLink from './components/ProjectLink';
 import { IconSearch } from './components/icons';
 import NewTaskModal from './components/NewTaskModal';
+import ContentPreviewModal from './components/ContentPreviewModal';
 import { dayName, daysAgo, daysFromNow, num, shortDate } from './lib/format';
 import './styles/mobile-m1.css';
 
@@ -126,6 +127,13 @@ export default function WorkPage() {
   const [q, setQ] = useState('');
   const [newTask, setNewTask] = useState(false);
   const [closing, setClosing] = useState<string | null>(null);
+  // A task row opens the item's PREVIEW POPUP (the same one the content table
+  // uses): the thing under review is shown right there — the copy for a
+  // writing step, the design for a design review, the plan for scheduling —
+  // with approve / request-changes in its footer. The full page stays one
+  // click away («فتح الصفحة كاملة»). Coming-soon rows still navigate: they
+  // are not the reader's task yet.
+  const [previewId, setPreviewId] = useState<string | null>(null);
 
   // s28's chip filters — a thumb bar, no dropdowns and no filter dialog.
   const [chipProject, setChipProject] = useState<string | null>(null);
@@ -386,7 +394,7 @@ export default function WorkPage() {
                   const task = taskFor(r.id);
                   const isMine = r.owner_role === myRole;
                   return (
-                    <tr key={r.id} className="click" onClick={() => navigate(`/m/content/${r.id}`)}>
+                    <tr key={r.id} className="click" onClick={() => setPreviewId(r.id)}>
                       <td style={{ width: 38 }}>
                         <KindCell typeKey={r.content_type_key} />
                       </td>
@@ -513,8 +521,8 @@ export default function WorkPage() {
                 style={{ marginTop: 4 }}
                 role="button"
                 tabIndex={0}
-                onClick={() => navigate(`/m/content/${r.id}`)}
-                onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/m/content/${r.id}`); }}
+                onClick={() => setPreviewId(r.id)}
+                onKeyDown={(e) => { if (e.key === 'Enter') setPreviewId(r.id); }}
               >
                 <span className="m1-pill late">
                   {lateBy(r.current_task_due_at ?? r.due_at, isAr)}
@@ -534,7 +542,7 @@ export default function WorkPage() {
                   <button
                     type="button"
                     className="m1-btn p sm"
-                    onClick={(e) => { e.stopPropagation(); navigate(`/m/content/${r.id}`); }}
+                    onClick={(e) => { e.stopPropagation(); setPreviewId(r.id); }}
                   >
                     {actionLabel(r, isAr)}
                   </button>
@@ -597,8 +605,8 @@ export default function WorkPage() {
               className={`m1-card${i === 0 ? ' hot' : ''}`}
               role="button"
               tabIndex={0}
-              onClick={() => navigate(`/m/content/${r.id}`)}
-              onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/m/content/${r.id}`); }}
+              onClick={() => setPreviewId(r.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter') setPreviewId(r.id); }}
             >
               <div className="m1-t">{statusLabel(r, isAr)}</div>
               <div className="m1-m">
@@ -607,7 +615,7 @@ export default function WorkPage() {
               <button
                 type="button"
                 className={`m1-btn sm${isScheduleStep(r) ? ' g' : ''}`}
-                onClick={(e) => { e.stopPropagation(); navigate(`/m/content/${r.id}`); }}
+                onClick={(e) => { e.stopPropagation(); setPreviewId(r.id); }}
               >
                 {actionLabel(r, isAr)}
               </button>
@@ -656,8 +664,8 @@ export default function WorkPage() {
               className="m1-card faded"
               role="button"
               tabIndex={0}
-              onClick={() => navigate(`/m/content/${r.id}`)}
-              onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/m/content/${r.id}`); }}
+              onClick={() => setPreviewId(r.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter') setPreviewId(r.id); }}
             >
               <div className="m1-t" style={{ fontSize: 14 }}>
                 <span className="ltr">{r.ref}</span>
@@ -669,6 +677,23 @@ export default function WorkPage() {
             </div>
           ))}
         </div>
+
+        {previewId && (
+
+          <ContentPreviewModal
+
+            contentId={previewId}
+
+            isAr={isAr}
+
+            onClose={() => setPreviewId(null)}
+
+            onChanged={() => { void load(); }}
+
+          />
+
+        )}
+
 
         {newTask && (
           <NewTaskModal onClose={() => setNewTask(false)} onSaved={() => void load()} />
@@ -776,6 +801,23 @@ export default function WorkPage() {
           faded
         />
       </div>
+
+      {previewId && (
+
+        <ContentPreviewModal
+
+          contentId={previewId}
+
+          isAr={isAr}
+
+          onClose={() => setPreviewId(null)}
+
+          onChanged={() => { void load(); }}
+
+        />
+
+      )}
+
 
       {newTask && (
         <NewTaskModal onClose={() => setNewTask(false)} onSaved={() => void load()} />

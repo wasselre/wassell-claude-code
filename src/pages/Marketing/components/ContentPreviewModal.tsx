@@ -31,7 +31,7 @@ import {
   adSetRequiredChoices, completeTask, fetchAssets, fetchContentDetail, fetchPublications,
   fieldSchemaEntries, fieldSchemaKeys,
 } from '@/lib/marketingOS/client';
-import { autoAdOutcomeText } from './AutoAdApproval';
+import { AutoAdPanel, autoAdOutcomeText, useAutoAdPreview } from './AutoAdApproval';
 import { useWorkspace } from '../MarketingWorkspace';
 import { Modal, Pill, Skeleton, LoadError } from './kit';
 import { IconCheck, IconLibrary } from './icons';
@@ -95,6 +95,11 @@ export default function ContentPreviewModal({
   const openTask = tasks.find((t) => t.status === 'open') ?? null;
   const currentStep = openTask ? steps.find((s) => s.id === openTask.step_id) ?? null : null;
   const sortedSteps = useMemo(() => [...steps].sort((a, b) => a.position - b.position), [steps]);
+  // Auto Meta ad: when the step being approved creates the ad, the popup shows
+  // the target ad set (or asks which) exactly like the page's approval dialog.
+  const autoAdStep = currentStep?.auto_meta_ad === true && currentStep.is_approval;
+  const autoAdState = useAutoAdPreview(contentId, autoAdStep);
+  const needsAdSetPick = autoAdStep && autoAdState.preview?.kind === 'choose' && !autoAdState.adSetId;
 
   const phase: StagePhase = useMemo(() => {
     if (!item) return 'writing';
@@ -154,7 +159,8 @@ export default function ContentPreviewModal({
     if (!openTask) return;
     setBusy(true);
     try {
-      const res = await completeTask(openTask.id, result);
+      const res = await completeTask(openTask.id, result, undefined, undefined,
+        autoAdStep && result === 'approved' ? { adSetId: autoAdState.adSetId } : undefined);
       addToast(
         autoAdOutcomeText(res.auto_ad, isAr)
           ?? (result === 'approved'
@@ -165,10 +171,13 @@ export default function ContentPreviewModal({
       setChanged(true);
       await load();
     } catch (e) {
-      addToast(adSetRequiredChoices(e)
-        ? (isAr ? 'هذا الاعتماد يُنشئ إعلانًا في ميتا — افتح الصفحة كاملة واختر المجموعة الإعلانية من زر «اعتماد».'
-                : 'This approval creates a Meta ad — open the full page and pick the ad set from “Approve”.')
-        : e instanceof Error ? e.message : String(e), 'error');
+      const choices = adSetRequiredChoices(e);
+      if (choices) {
+        autoAdState.offerChoices(choices);
+        addToast(isAr ? 'اختر المجموعة الإعلانية أولًا.' : 'Pick the ad set first.', 'error');
+      } else {
+        addToast(e instanceof Error ? e.message : String(e), 'error');
+      }
     } finally {
       setBusy(false);
     }
@@ -376,6 +385,7 @@ export default function ContentPreviewModal({
       <div style={{ display: 'grid', gap: 16 }}>
         {phase === 'writing' ? (<>{writingCards}{materialsCards}</>) : (<>{materialsCards}{writingCards}</>)}
         {publishCard}
+        {openTask && canAct && autoAdStep && <AutoAdPanel state={autoAdState} isAr={isAr} />}
       </div>
     );
   };
@@ -393,7 +403,13 @@ export default function ContentPreviewModal({
           <button type="button" className="btn" disabled={busy} onClick={() => setRejectOpen(true)}>
             {isAr ? 'طلب تعديلات' : 'Request changes'}
           </button>
-          <button type="button" className="btn btn-go" disabled={busy} onClick={() => void act('approved')}>
+          <button
+            type="button"
+            className="btn btn-go"
+            disabled={busy || needsAdSetPick || (autoAdStep && autoAdState.loading)}
+            title={needsAdSetPick ? (isAr ? 'اختر المجموعة الإعلانية' : 'Pick an ad set') : undefined}
+            onClick={() => void act('approved')}
+          >
             <IconCheck />
             {isAr
               ? `اعتماد ${reviewedStep?.label_ar ?? ''}`.trim()
