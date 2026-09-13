@@ -75,8 +75,31 @@ export function normalizeAr(s: string | null | undefined): string {
     .toLowerCase();
 }
 
+/**
+ * Per-project derived data, memoised. The catalog-wide pass (2026-09-13)
+ * runs the matcher over ~1,000 projects per post; rebuilding tokens, name
+ * variants and compiled regexes for each of them on every post cost ~8 s a
+ * post on a shared-cpu machine and failed its health checks. Keyed on the
+ * name fields, so a renamed project simply gets a new entry.
+ */
+const PROJECT_CACHE = new Map<string, { tokens: string[]; variants: string[] }>();
+const REGEX_CACHE = new Map<string, RegExp>();
+function projectKey(a: ProjectAlias): string {
+  return `${a.projectId}|${a.nameAr ?? ''}|${a.nameEn ?? ''}|${a.tokens.join(',')}`;
+}
+function projectDerived(a: ProjectAlias): { tokens: string[]; variants: string[] } {
+  const k = projectKey(a);
+  let d = PROJECT_CACHE.get(k);
+  if (!d) {
+    d = { tokens: computeAliasTokens(a), variants: projectNameVariants(a) };
+    if (PROJECT_CACHE.size > 20_000) PROJECT_CACHE.clear();
+    PROJECT_CACHE.set(k, d);
+  }
+  return d;
+}
+
 /** All candidate tokens from a project name: numbers + words ≥3 chars. */
-function aliasTokens(a: ProjectAlias): string[] {
+function computeAliasTokens(a: ProjectAlias): string[] {
   const out = new Set<string>();
   for (const raw of [a.nameAr, a.nameEn, ...a.tokens]) {
     const n = normalizeAr(raw);
@@ -85,6 +108,7 @@ function aliasTokens(a: ProjectAlias): string[] {
   }
   return [...out];
 }
+function aliasTokens(a: ProjectAlias): string[] { return projectDerived(a).tokens; }
 
 /**
  * Document frequency of each token across a project set. Tokens shared by ≥2
@@ -206,8 +230,13 @@ function wordsWithinWindow(normalizedText: string, words: string[], span: number
  *  is tolerated before the first word; a trailing number must end at a
  *  non-digit so "ريفييرا 4" cannot hit "ريفييرا 44". */
 function phrasePresent(normalizedText: string, variant: string): boolean {
+  let re = REGEX_CACHE.get(variant);
+  if (!re) {
   const body = variant.split(' ').map(escapeRe).join('\\s+');
-  const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:[وبلفك]|لل)?${body}(?=$|[^\\p{L}\\p{N}])`, 'u');
+    re = new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:[وبلفك]|لل)?${body}(?=$|[^\\p{L}\\p{N}])`, 'u');
+    if (REGEX_CACHE.size > 50_000) REGEX_CACHE.clear();
+    REGEX_CACHE.set(variant, re);
+  }
   return re.test(normalizedText);
 }
 
@@ -249,7 +278,12 @@ export function attributeCaption(
   const hits: AttributionCandidate[] = [];
 
   for (const a of index) {
-    const toks = aliasTokens(a);
+    const derived = projectDerived(a);
+    const toks = derived.tokens;
+    // Cheap gate: every rule needs at least one name token (word or number)
+    // to occur somewhere in the text. A plain substring test skips the ~95%
+    // of catalog projects that cannot match before any regex runs.
+    if (!toks.some((t) => nt.includes(t))) continue;
     const nums = toks.filter((t) => /^\d+$/.test(t));
     const words = toks.filter((t) => !/^\d+$/.test(t));
     const distinctiveWords = words.filter((w) => !isCommon(w) && !isExcluded(w));
@@ -262,7 +296,7 @@ export function attributeCaption(
     //    itself distinctive (a project called just "الملقا" is not evidence
     //    every time the district is mentioned); a multi-word name always
     //    counts unless it is literally the brand.
-    for (const v of projectNameVariants(a)) {
+    for (const v of derived.variants) {
       const vw = v.split(' ');
       if (brandPhrases.has(v)) continue;
       if (vw.length === 1 && /^\d+$/.test(v)) continue; // a bare number is handled by rule 2
@@ -275,7 +309,7 @@ export function attributeCaption(
     //     reference, unlike a lone word. Two common/excluded words together
     //     ("أدوار الرمال") are not.
     if (!strength) {
-      for (const v of projectNameVariants(a)) {
+      for (const v of derived.variants) {
         const vw = v.split(' ');
         if (vw.length < 3) continue;
         for (let i = 0; i + 1 < vw.length; i++) {
@@ -294,7 +328,7 @@ export function attributeCaption(
     //     as rule 1: a multi-word name counts on its own unless it is the brand
     //     or nothing but generic words.
     if (!strength) {
-      for (const v of projectNameVariants(a)) {
+      for (const v of derived.variants) {
         const vw = v.split(' ').filter((w) => !/^\d+$/.test(w));
         if (vw.length < 2 || vw.length > 4) continue;
         if (brandPhrases.has(v)) continue;
