@@ -249,6 +249,10 @@ CREATE TRIGGER mkt_content_enrichment_sync_file_links
   FOR EACH ROW EXECUTE FUNCTION public.tg_mkt_content_enrichment_sync_file_links();
 
 -- ── 6. the queue: generation_jobs kind 'social-file' ────────────────────────
+-- enqueued by triggers / the sweep, not by a person — same exemption as listing-mirror
+ALTER TABLE public.generation_jobs DROP CONSTRAINT IF EXISTS generation_jobs_user_required_check;
+ALTER TABLE public.generation_jobs ADD CONSTRAINT generation_jobs_user_required_check
+  CHECK (user_id IS NOT NULL OR kind IN ('listing-mirror', 'social-file'));
 ALTER TABLE public.generation_jobs DROP CONSTRAINT IF EXISTS generation_jobs_kind_check;
 ALTER TABLE public.generation_jobs ADD CONSTRAINT generation_jobs_kind_check
   CHECK (kind = ANY (ARRAY['image','video','audio','clean-text','video-convert','listing-mirror','creative-image','meta-ad','social-file']));

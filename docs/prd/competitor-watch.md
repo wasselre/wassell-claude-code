@@ -92,6 +92,13 @@ that study the corpus (how competitors write posts, script reels, price offers).
   do not touch the name or developer (unit rollups) never fire it — verified
   live: inserting a test project for أكدال enqueued exactly its 47 posts, a
   no-op update on ربوة الرمز enqueued nothing.
+- **Into the Files system (2026-09-13).** Once a post has a project, its
+  stored photos/videos are registered as `files` rows and linked to that
+  project (derived origin `social`), so they show on the project's Files tab,
+  in the Business Library and in the WhatsApp picker. The entry shows «في
+  الملفات (n)». Rights follow the publisher: the project's own developer →
+  sendable; any other company → internal only. Details in `files.md`
+  («Social-media intake»).
 - **Attribution health on the Pipeline surface:** linked · fixed by a person ·
   linked without a quote naming the project · link rests on one word · names an
   unknown project · awaiting decision · queued for re-linking. These are the
