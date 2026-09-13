@@ -62,6 +62,10 @@ import {
 import { designExampleSet, designExampleList } from './_lib/marketing/creative/examples.js';
 import { creativePerformance } from './_lib/marketing/creative/performance.js';
 import { enqueueWasselReadsOnPublish } from './_lib/marketing/creative/onPublished.js';
+// ONE preview picker for every content-row endpoint (2026-09-14). Before
+// this, content_list was the only action that attached a thumbnail, so every
+// other list in the workspace was text-only by omission.
+import { withContentPreviews } from './_lib/marketing/contentPreviews.js';
 
 /* ── campaign planning (handlers — dispatch block is near the switch end) ── */
 import {
@@ -5219,7 +5223,7 @@ export default async function handler(req: Request): Promise<Response> {
 
         return jsonOk({
           role: myRole,
-          content: rows.data ?? [],
+          content: await withContentPreviews(sb, (rows.data ?? []) as unknown as Array<Record<string, unknown>>),
           tasks,
           upcoming,
           manual_tasks: manual.rows,
@@ -5487,7 +5491,9 @@ export default async function handler(req: Request): Promise<Response> {
           const t = await sb.from('mos_content_v').select('id, ref, title, content_type_key').in('id', ids);
           const tf = dbFail(t.error);
           if (tf) return tf;
-          titles = t.data ?? [];
+          // The chips carry a thumbnail too — the calendar is a content
+          // surface like any other (2026-09-14).
+          titles = await withContentPreviews(sb, (t.data ?? []) as unknown as Array<Record<string, unknown>>);
         }
         return jsonOk({ publications: pubs.data ?? [], due: due.data ?? [], titles });
       }
@@ -5632,7 +5638,7 @@ export default async function handler(req: Request): Promise<Response> {
             live_status: deriveLiveStatus(itemRow.status as string | undefined, detailLive),
           },
           executions: execs.data ?? [],
-          content: content.data ?? [],
+          content: await withContentPreviews(sb, (content.data ?? []) as unknown as Array<Record<string, unknown>>),
           comments: comments.data ?? [],
           events: events.data ?? [],
           goals,
@@ -8780,7 +8786,13 @@ export default async function handler(req: Request): Promise<Response> {
         }
         const hits: Record<SearchType, SearchHit[]> = { content: [], campaign: [], asset: [], shoot: [] };
 
-        for (const r of (contentRes.data ?? []) as unknown as Array<Record<string, unknown>>) {
+        // Content hits carry their creative, like every other content surface
+        // (2026-09-14) — a search result used to be text where the same row in
+        // the content table showed a picture.
+        const contentHits = await withContentPreviews(
+          sb, (contentRes.data ?? []) as unknown as Array<Record<string, unknown>>,
+        );
+        for (const r of contentHits) {
           const m = matchIn(
             [['title', r.title as string | null], ['ref', r.ref as string | null]],
             term,
@@ -8790,7 +8802,8 @@ export default async function handler(req: Request): Promise<Response> {
             id: r.id as string,
             ref: (r.ref as string | null) ?? null,
             title: (r.title as string) ?? '',
-            thumb_url: null,
+            thumb_url: r.thumb_url,
+            file_id: r.preview_file_id,
             ...m,
           });
         }

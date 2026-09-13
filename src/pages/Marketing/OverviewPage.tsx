@@ -28,7 +28,8 @@ import {
   signCampaign,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, LoadError, PageHead, Pill, Skeleton, Stat } from './components/kit';
+import { ContentThumb, Empty, LoadError, PageHead, Pill, Skeleton, Stat, ThumbSigner } from './components/kit';
+import { usePreview } from './components/ContentPreviewModal';
 import NewContentModal from './components/NewContentModal';
 import EmptyDayOne from './components/EmptyDayOne';
 import DateControl from './components/DateControl';
@@ -36,6 +37,7 @@ import { TrendChart } from './components/analyticsCharts';
 import { IconPlus } from './components/icons';
 import { dayLabel, daysAgo, money, monthName, monthOf, num, pct, shortDate, toArabicDigits } from './lib/format';
 import { DateSel, bucketDaily, granLabel, todayIso } from './lib/period';
+import { contentHref } from './lib/contentRoute';
 import './styles/analytics.css';
 
 const QUARTER_NAMES_AR = ['الأول', 'الثاني', 'الثالث', 'الرابع'];
@@ -96,6 +98,10 @@ function ManagerOverview() {
   }, []);
 
   useEffect(() => { void load(sel); }, [load, sel]);
+
+  // ONE preview popup: a stalled item is chased by LOOKING at it, not by
+  // reading its title.
+  const preview = usePreview(() => { void load(sel); });
 
   const remind = async (e: MouseEvent, contentId: string) => {
     e.stopPropagation();
@@ -160,7 +166,8 @@ function ManagerOverview() {
   }
 
   return (
-    <>
+    /* One signing round-trip for every preview on the overview. */
+    <ThumbSigner rows={data?.stalled ?? []}>
       <PageHead
         title={isAr ? 'نظرة عامة' : 'Overview'}
         sub={data ? periodSub(data) : undefined}
@@ -240,13 +247,16 @@ function ManagerOverview() {
                 key={r.id}
                 type="button"
                 className="m1-card m1-stall"
-                onClick={() => navigate(`/m/content/${r.id}`)}
+                onClick={() => preview.open(r.id)}
               >
                 <div className="m1-row">
                   <span className="m1-id ltr">{r.ref ?? '—'}</span>
                   <span className="pill p-late">{daysAgo(r.updated_at, isAr)}</span>
                 </div>
-                <div className="t2">{r.title}</div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 6 }}>
+                  <ContentThumb row={r} size="md" />
+                  <div className="t2" style={{ minWidth: 0 }}>{r.title}</div>
+                </div>
                 <div className="s">
                   {(isAr ? r.current_step_label_ar : r.current_step_label_en) ?? r.status_key}
                   {' · '}
@@ -356,6 +366,7 @@ function ManagerOverview() {
                     <table className="tbl">
                       <thead>
                         <tr>
+                          <th style={{ width: 52 }}>{isAr ? 'المعاينة' : 'Preview'}</th>
                           <th>{isAr ? 'الرقم' : 'Ref'}</th>
                           <th>{isAr ? 'العنوان' : 'Title'}</th>
                           <th>{isAr ? 'المرحلة' : 'Stage'}</th>
@@ -371,8 +382,15 @@ function ManagerOverview() {
                             <tr
                               key={r.id}
                               className={`click${i === 0 && stale > 2 ? ' hl' : ''}`}
-                              onClick={() => navigate(`/m/content/${r.id}`)}
+                              onClick={() => navigate(contentHref(r))}
                             >
+                              <td
+                                style={{ width: 52 }}
+                                title={isAr ? 'معاينة' : 'Preview'}
+                                onClick={(e) => { e.stopPropagation(); preview.open(r.id); }}
+                              >
+                                <ContentThumb row={r} size="sm" />
+                              </td>
                               <td className="id">{r.ref ?? '—'}</td>
                               <td className="ttl">{r.title}</td>
                               <td>
@@ -438,7 +456,9 @@ function ManagerOverview() {
       </div>
 
       {creating && <NewContentModal onClose={() => setCreating(false)} onCreatedMany={() => void load(sel)} />}
-    </>
+
+      {preview.node}
+    </ThumbSigner>
   );
 }
 
@@ -466,7 +486,9 @@ function WeekList({ data, isAr }: { data: MosOverview; isAr: boolean }) {
           key={p.id}
           type="button"
           className={`ev ${PLATFORM_CLASS[p.platform] ?? ''}`}
-          onClick={() => navigate(`/m/content/${p.content_id}`)}
+          // A scheduled publication is a PUBLISHING fact, so the link lands
+          // on the item's placements — one resolver decides that everywhere.
+          onClick={() => navigate(contentHref({ id: p.content_id }, null, { section: 'schedule' }))}
         >
           <span>
             {dayLabel(p.scheduled_at, isAr)} ·{' '}

@@ -18,6 +18,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { MosNotification, fetchNotifications, markNotificationsRead } from '@/lib/marketingOS/client';
 import { initial, num, shortDate } from '../lib/format';
+import { normalizeContentHref } from '../lib/contentRoute';
+import { usePreview } from './ContentPreviewModal';
 import '../styles/settings-engine.css';
 
 /* ------------------------------------------------------------------ */
@@ -134,28 +136,52 @@ export function useMosNotifications(pollMs?: number): MosNotificationsState {
 /* one inbox row — shared by the bell dropdown and screen 43's card    */
 /* ------------------------------------------------------------------ */
 
+/** The content id a notification points at, or null when it points elsewhere. */
+export function notificationContentId(n: MosNotification): string | null {
+  if (!n.url) return null;
+  const m = /^\/m\/content\/([^/?#]+)/.exec(n.url);
+  return m ? (m[1] ?? null) : null;
+}
+
 export function NotificationRow({
-  n, isAr, onOpen,
+  n, isAr, onOpen, onPreview,
 }: {
   n: MosNotification;
   isAr: boolean;
   onOpen: (n: MosNotification) => void;
+  /** Shows the item in place instead of navigating. Omitted = no button. */
+  onPreview?: (contentId: string) => void;
 }) {
   const title = isAr ? n.title_ar : (n.title_en ?? n.title_ar);
   const body = isAr ? n.body_ar : (n.body_en ?? n.body_ar);
+  const contentId = notificationContentId(n);
   return (
-    <button
-      type="button"
-      className={`se-notif${n.read_at ? '' : ' unread'}`}
-      onClick={() => onOpen(n)}
-    >
-      <span className="av a-c">{initial(title)}</span>
-      <span style={{ minWidth: 0, flex: 1 }}>
-        <span className="se-notif-t" style={{ display: 'block' }}>{title}</span>
-        {body && <span className="se-notif-b" style={{ display: 'block' }}>{body}</span>}
-        <span className="se-notif-w" style={{ display: 'block' }}>{timeAgo(n.created_at, isAr)}</span>
-      </span>
-    </button>
+    <span style={{ display: 'flex', alignItems: 'stretch' }}>
+      <button
+        type="button"
+        className={`se-notif${n.read_at ? '' : ' unread'}`}
+        style={{ flex: 1, minWidth: 0 }}
+        onClick={() => onOpen(n)}
+      >
+        <span className="av a-c">{initial(title)}</span>
+        <span style={{ minWidth: 0, flex: 1 }}>
+          <span className="se-notif-t" style={{ display: 'block' }}>{title}</span>
+          {body && <span className="se-notif-b" style={{ display: 'block' }}>{body}</span>}
+          <span className="se-notif-w" style={{ display: 'block' }}>{timeAgo(n.created_at, isAr)}</span>
+        </span>
+      </button>
+      {contentId && onPreview && (
+        <button
+          type="button"
+          className="btn btn-d btn-sm"
+          style={{ alignSelf: 'center', marginInlineEnd: 10, flex: '0 0 auto' }}
+          title={isAr ? 'معاينة دون مغادرة الصفحة' : 'Preview without leaving the page'}
+          onClick={() => onPreview(contentId)}
+        >
+          {isAr ? 'معاينة' : 'Preview'}
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -180,6 +206,10 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [marking, setMarking] = useState(false);
   const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
+  // A notification about a creative can be ANSWERED from the bell — the popup
+  // carries the approve / request-changes footer, so the reader never has to
+  // lose the page they were on to act on a review request.
+  const preview = usePreview(() => { void refresh(); });
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
 
@@ -217,7 +247,15 @@ export default function NotificationBell() {
         addToast(e instanceof Error ? e.message : String(e), 'error'));
     }
     setOpen(false);
-    if (n.url && n.url.startsWith('/')) navigate(n.url);
+    // Rows minted before the routing contract carry `?tab=publish` (a tab the
+    // content page never had) and, in a few cases, a step UUID in `?step=`.
+    // Both are repaired at click time; the stored rows are not rewritten.
+    if (n.url && n.url.startsWith('/')) navigate(normalizeContentHref(n.url));
+  };
+
+  const previewItem = (contentId: string): void => {
+    setOpen(false);
+    preview.open(contentId);
   };
 
   const markAllClick = async (): Promise<void> => {
@@ -277,7 +315,7 @@ export default function NotificationBell() {
               </div>
             )}
             {!error && rows.map((n) => (
-              <NotificationRow key={n.id} n={n} isAr={isAr} onOpen={openItem} />
+              <NotificationRow key={n.id} n={n} isAr={isAr} onOpen={openItem} onPreview={previewItem} />
             ))}
           </div>
           <div style={{ borderTop: '1px solid var(--line-soft)', padding: '10px 14px' }}>
@@ -293,6 +331,7 @@ export default function NotificationBell() {
         </div>,
         document.body,
       )}
+      {preview.node}
     </span>
   );
 }

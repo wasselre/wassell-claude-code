@@ -25,11 +25,14 @@ import {
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import {
-  Empty, LoadError, PageHead, Pill, RoleChip, Skeleton, StatusPill, type Tone,
+  ContentThumb, Empty, LoadError, PageHead, Pill, RoleChip, Skeleton, StatusPill,
+  ThumbSigner, type Tone,
 } from './components/kit';
+import { usePreview } from './components/ContentPreviewModal';
 import { IconSearch } from './components/icons';
 import { money, num } from './lib/format';
 import { useAssetUrls } from './lib/assetUrls';
+import { contentHref } from './lib/contentRoute';
 import './styles/pages-remaining.css';
 
 type Filter = 'all' | SearchHitType;
@@ -118,6 +121,10 @@ export default function SearchPage() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { setTerm(q); }, [q]);
 
+  // ONE preview popup: a search hit for a creative should be VIEWABLE from the
+  // results, not only openable.
+  const preview = usePreview(() => { void load(); });
+
   const results = useMemo(() => res?.results ?? [], [res]);
   const chips = useMemo(() => res?.chips ?? [], [res]);
 
@@ -154,7 +161,9 @@ export default function SearchPage() {
 
   const hitPath = (h: SearchHit): string => {
     switch (h.type) {
-      case 'content':  return `/m/content/${h.id}`;
+      // A content hit lands where its work is (or on its final materials when
+      // it is finished) - the same resolver every other surface uses.
+      case 'content':  return contentHref(contentById.get(h.id) ?? { id: h.id });
       case 'campaign': return `/m/campaigns/${h.id}`;
       case 'asset':    return `/m/library/${h.id}`;
       case 'shoot':    return `/m/shoots/${h.id}`;
@@ -191,7 +200,8 @@ export default function SearchPage() {
   const shootHits = groups.get('shoot') ?? [];
 
   return (
-    <>
+    /* One signing round-trip for the content hits on screen. */
+    <ThumbSigner rows={res?.content ?? []}>
       <PageHead
         title={isAr ? 'نتائج البحث' : 'Search results'}
         sub={q
@@ -268,6 +278,13 @@ export default function SearchPage() {
                     const row = contentById.get(h.id);
                     return (
                       <tr key={h.id} className="click" onClick={() => navigate(hitPath(h))}>
+                        <td
+                          style={{ width: 52 }}
+                          title={isAr ? 'معاينة' : 'Preview'}
+                          onClick={(e) => { e.stopPropagation(); preview.open(h.id); }}
+                        >
+                          <ContentThumb row={row ?? { title: h.title }} size="sm" />
+                        </td>
                         <td className="id" style={{ width: 70 }}>{h.ref ?? '—'}</td>
                         <td>
                           <div className="ttl">{titleNode(h)}</div>
@@ -280,6 +297,15 @@ export default function SearchPage() {
                           {row
                             ? <RoleChip role={row.owner_role} isAr={isAr} />
                             : <span style={{ color: 'var(--mute)' }}>—</span>}
+                        </td>
+                        <td style={{ width: 90 }} onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => preview.open(h.id)}
+                          >
+                            {isAr ? 'معاينة' : 'Preview'}
+                          </button>
                         </td>
                       </tr>
                     );
@@ -399,6 +425,7 @@ export default function SearchPage() {
           </div>
         )}
       </div>
-    </>
+      {preview.node}
+    </ThumbSigner>
   );
 }

@@ -33,12 +33,17 @@ import {
   statusLabel,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, KindCell, LoadError, PageHead, Pill, Skeleton } from './components/kit';
+import {
+  ContentThumb, Empty, KindCell, LoadError, PageHead, Pill, Skeleton, ThumbSigner,
+} from './components/kit';
 import ProjectLink from './components/ProjectLink';
 import { IconSearch } from './components/icons';
 import NewTaskModal from './components/NewTaskModal';
-import ContentPreviewModal from './components/ContentPreviewModal';
+import { usePreview } from './components/ContentPreviewModal';
 import { dayName, daysAgo, daysFromNow, num, shortDate } from './lib/format';
+import {
+  TASK_ACTION_LABELS, actionOfTask, contentHref, previewTargetOfTask, taskHref,
+} from './lib/contentRoute';
 import './styles/mobile-m1.css';
 
 /**
@@ -127,18 +132,19 @@ export default function WorkPage() {
   const [q, setQ] = useState('');
   const [newTask, setNewTask] = useState(false);
   const [closing, setClosing] = useState<string | null>(null);
-  // A task row opens the item's PREVIEW POPUP (the same one the content table
+  // A task row opens the item's PREVIEW POPUP (the same one every other list
   // uses): the thing under review is shown right there — the copy for a
   // writing step, the design for a design review, the plan for scheduling —
-  // with approve / request-changes in its footer. The full page stays one
-  // click away («فتح الصفحة كاملة»). Coming-soon rows still navigate: they
-  // are not the reader's task yet.
-  const [previewId, setPreviewId] = useState<string | null>(null);
+  // with approve / request-changes in its footer, opened ON the task's own
+  // section. The full page stays one click away («فتح الصفحة كاملة»).
+  // Coming-soon rows still navigate: they are not the reader's task yet.
 
   // s28's chip filters — a thumb bar, no dropdowns and no filter dialog.
   const [chipProject, setChipProject] = useState<string | null>(null);
   const [chipMine, setChipMine] = useState(false);
   const [chipVideo, setChipVideo] = useState(false);
+
+  const preview = usePreview(() => { void load(); });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -178,6 +184,18 @@ export default function WorkPage() {
   const taskFor = (contentId: string): MosTask | undefined =>
     tasks.find((t) => t.content_id === contentId);
 
+  /** The loaded content row behind an id — the thumbnail source for a task. */
+  const contentRow = (contentId: string): MosContentRow | undefined =>
+    rows.find((r) => r.id === contentId);
+
+  /**
+   * «القادم إليك» rows carry the step KEY the path will reach, so the link can
+   * point at the exact area rather than at the top of the page. This page has
+   * no pinned step list of its own; the resolver's keyword fallback handles it.
+   */
+  const upcomingHref = (u: MosUpcoming): string =>
+    contentHref({ id: u.content_id, current_step_key: u.step_key });
+
   /* ── hand-assigned tasks ─────────────────────────────────────────────── */
 
   // Late first, then by due date, then the undated — the same "start here"
@@ -212,19 +230,30 @@ export default function WorkPage() {
     }
   };
 
-  /** Where a hand-assigned task points, when it points anywhere. */
-  const manualTarget = (t: MosManualTask): string | null =>
-    t.content_id ? `/m/content/${t.content_id}`
-      : t.campaign_id ? `/m/campaigns/${t.campaign_id}`
-        : null;
-  /** A SYSTEM task (the Meta-ad caption awaiting approval) behaves like a
-   *  workflow task: the row opens the review popup, where the caption is
-   *  approved or rewritten. It is never closed with «تم». */
-  const isCaptionTask = (t: MosManualTask): boolean => t.kind === 'caption_review' && !!t.content_id;
+  /**
+   * Where a hand-assigned task points — the ONE resolver decides, so the new
+   * planning kinds (`refresh_decision`, `plan_conflict`, `ad_failed`) land
+   * somewhere sensible the day their rows appear instead of dead-ending here.
+   * `taskHref` never returns null; a task pointing at nothing goes to my work.
+   */
+  const manualTarget = (t: MosManualTask): string => taskHref(t);
+  /** What this row shows the reader in its popup, or null when it has none. */
+  const manualPreview = (t: MosManualTask) => previewTargetOfTask(t);
+  // A SYSTEM task (a caption awaiting approval, a refresh decision, a failed
+  // ad) behaves like a workflow task: the row opens the review popup, where
+  // the thing is decided. It is never closed with «تم» — `manualVerb` reads
+  // the verb off the kind, so a new kind needs no change here.
+  /** The verb on the row's button — the kind's own, never a generic «فتح». */
+  const manualVerb = (t: MosManualTask): string => {
+    const a = actionOfTask(t);
+    return isAr ? TASK_ACTION_LABELS[a].ar : TASK_ACTION_LABELS[a].en;
+  };
   const openManual = (t: MosManualTask): void => {
-    if (isCaptionTask(t)) { setPreviewId(t.content_id as string); return; }
-    const target = manualTarget(t);
-    if (target) navigate(target);
+    const target = manualPreview(t);
+    // A task about a piece of content shows the content; anything else is a
+    // navigation, because there is no popup for a cycle or a campaign.
+    if (target) { preview.open(target.contentId, target.section); return; }
+    navigate(manualTarget(t));
   };
 
   /** The project a hand-assigned task points at — its own, else its content's. */
@@ -279,15 +308,19 @@ export default function WorkPage() {
             <table className="tbl">
               <tbody>
                 {manualSorted.map((t) => {
-                  const target = manualTarget(t);
                   const projectId = manualProjectId(t);
-                  const clickable = isCaptionTask(t) || !!target;
+                  const previewable = manualPreview(t);
                   return (
                     <tr
                       key={t.id}
-                      className={clickable ? 'click' : undefined}
-                      onClick={clickable ? () => openManual(t) : undefined}
+                      className="click"
+                      onClick={() => openManual(t)}
                     >
+                      <td style={{ width: 44 }}>
+                        {t.content_id
+                          ? <ContentThumb row={contentRow(t.content_id) ?? { title: t.title }} size="sm" />
+                          : null}
+                      </td>
                       <td>
                         <div className="ttl">{t.title}</div>
                         <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
@@ -300,23 +333,37 @@ export default function WorkPage() {
                         )}
                       </td>
                       <td style={{ width: 190 }}>{duePill(t)}</td>
-                      <td style={{ width: 150, textAlign: 'end' }}>
-                        {isCaptionTask(t) ? (
+                      <td style={{ width: 210, textAlign: 'end' }}>
+                        {/* «معاينة» opens the item; the primary button carries
+                            the KIND's own verb. A plain hand-assigned task is
+                            still closed with «تم» — closing it advances
+                            nothing, which is why the two never merged. */}
+                        {previewable && (
                           <button
                             type="button"
-                            className="btn btn-p btn-sm"
+                            className="btn btn-sm"
+                            style={{ marginInlineEnd: 6 }}
                             onClick={(e) => { e.stopPropagation(); openManual(t); }}
                           >
-                            {isAr ? 'مراجعة الكابشن' : 'Review caption'}
+                            {isAr ? 'معاينة' : 'Preview'}
                           </button>
-                        ) : (
+                        )}
+                        {!t.kind || t.kind === 'manual' ? (
                           <button
                             type="button"
                             className="btn btn-p btn-sm"
                             disabled={closing === t.id}
                             onClick={(e) => { e.stopPropagation(); void closeManual(t.id); }}
                           >
-                            {closing === t.id ? (isAr ? '…' : '…') : isAr ? 'تم' : 'Done'}
+                            {closing === t.id ? '…' : isAr ? 'تم' : 'Done'}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-p btn-sm"
+                            onClick={(e) => { e.stopPropagation(); openManual(t); }}
+                          >
+                            {manualVerb(t)}
                           </button>
                         )}
                       </td>
@@ -414,8 +461,11 @@ export default function WorkPage() {
                   const task = taskFor(r.id);
                   const isMine = r.owner_role === myRole;
                   return (
-                    <tr key={r.id} className="click" onClick={() => setPreviewId(r.id)}>
-                      <td style={{ width: 38 }}>
+                    <tr key={r.id} className="click" onClick={() => preview.open(r.id)}>
+                      <td style={{ width: 44 }}>
+                        <ContentThumb row={r} size="sm" />
+                      </td>
+                      <td style={{ width: 30 }}>
                         <KindCell typeKey={r.content_type_key} />
                       </td>
                       <td>
@@ -473,7 +523,7 @@ export default function WorkPage() {
 
   if (isMobile) {
     return (
-      <>
+      <ThumbSigner rows={rows}>
         <PageHead
           title={isAr ? 'اليوم' : 'Today'}
           sub={isAr
@@ -541,8 +591,8 @@ export default function WorkPage() {
                 style={{ marginTop: 4 }}
                 role="button"
                 tabIndex={0}
-                onClick={() => setPreviewId(r.id)}
-                onKeyDown={(e) => { if (e.key === 'Enter') setPreviewId(r.id); }}
+                onClick={() => preview.open(r.id)}
+                onKeyDown={(e) => { if (e.key === 'Enter') preview.open(r.id); }}
               >
                 <span className="m1-pill late">
                   {lateBy(r.current_task_due_at ?? r.due_at, isAr)}
@@ -562,7 +612,7 @@ export default function WorkPage() {
                   <button
                     type="button"
                     className="m1-btn p sm"
-                    onClick={(e) => { e.stopPropagation(); setPreviewId(r.id); }}
+                    onClick={(e) => { e.stopPropagation(); preview.open(r.id); }}
                   >
                     {actionLabel(r, isAr)}
                   </button>
@@ -576,9 +626,7 @@ export default function WorkPage() {
             <div className="m1-lbl">{isAr ? 'مهام مُسندة إليكِ' : 'Assigned to you'}</div>
           )}
           {manualSorted.map((t) => {
-            const target = manualTarget(t);
             const projectId = manualProjectId(t);
-            const clickable = isCaptionTask(t) || !!target;
             return (
               <div key={t.id} className={`m1-card${manualOverdue(t) ? ' late2' : ''}`}>
                 {manualOverdue(t) && (
@@ -587,10 +635,10 @@ export default function WorkPage() {
                 <div
                   className="m1-t"
                   style={{ marginTop: manualOverdue(t) ? 9 : 0 }}
-                  role={clickable ? 'button' : undefined}
-                  tabIndex={clickable ? 0 : undefined}
-                  onClick={clickable ? () => openManual(t) : undefined}
-                  onKeyDown={clickable ? (e) => { if (e.key === 'Enter') openManual(t); } : undefined}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openManual(t)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') openManual(t); }}
                 >
                   {t.title}
                 </div>
@@ -605,11 +653,7 @@ export default function WorkPage() {
                     <ProjectLink projectIds={[projectId]} />
                   </div>
                 )}
-                {isCaptionTask(t) ? (
-                  <button type="button" className="m1-btn p sm" onClick={() => openManual(t)}>
-                    {isAr ? 'مراجعة الكابشن' : 'Review caption'}
-                  </button>
-                ) : (
+                {!t.kind || t.kind === 'manual' ? (
                   <button
                     type="button"
                     className="m1-btn p sm"
@@ -617,6 +661,10 @@ export default function WorkPage() {
                     onClick={() => void closeManual(t.id)}
                   >
                     {isAr ? 'تم' : 'Done'}
+                  </button>
+                ) : (
+                  <button type="button" className="m1-btn p sm" onClick={() => openManual(t)}>
+                    {manualVerb(t)}
                   </button>
                 )}
               </div>
@@ -632,17 +680,20 @@ export default function WorkPage() {
               className={`m1-card${i === 0 ? ' hot' : ''}`}
               role="button"
               tabIndex={0}
-              onClick={() => setPreviewId(r.id)}
-              onKeyDown={(e) => { if (e.key === 'Enter') setPreviewId(r.id); }}
+              onClick={() => preview.open(r.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter') preview.open(r.id); }}
             >
-              <div className="m1-t">{statusLabel(r, isAr)}</div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <ContentThumb row={r} size="md" />
+                <div className="m1-t" style={{ minWidth: 0 }}>{statusLabel(r, isAr)}</div>
+              </div>
               <div className="m1-m">
                 <span className="ltr">{r.ref}</span> · {r.title} · {dueText(r)}
               </div>
               <button
                 type="button"
                 className={`m1-btn sm${isScheduleStep(r) ? ' g' : ''}`}
-                onClick={(e) => { e.stopPropagation(); setPreviewId(r.id); }}
+                onClick={(e) => { e.stopPropagation(); preview.open(r.id); }}
               >
                 {actionLabel(r, isAr)}
               </button>
@@ -661,8 +712,8 @@ export default function WorkPage() {
                   className="m1-card"
                   role="button"
                   tabIndex={0}
-                  onClick={() => navigate(`/m/content/${u.content_id}`)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/m/content/${u.content_id}`); }}
+                  onClick={() => navigate(upcomingHref(u))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') navigate(upcomingHref(u)); }}
                 >
                   <div className="m1-row">
                     <span className="m1-t" style={{ fontSize: 14 }}>
@@ -691,8 +742,8 @@ export default function WorkPage() {
               className="m1-card faded"
               role="button"
               tabIndex={0}
-              onClick={() => setPreviewId(r.id)}
-              onKeyDown={(e) => { if (e.key === 'Enter') setPreviewId(r.id); }}
+              onClick={() => preview.open(r.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter') preview.open(r.id); }}
             >
               <div className="m1-t" style={{ fontSize: 14 }}>
                 <span className="ltr">{r.ref}</span>
@@ -705,32 +756,17 @@ export default function WorkPage() {
           ))}
         </div>
 
-        {previewId && (
-
-          <ContentPreviewModal
-
-            contentId={previewId}
-
-            isAr={isAr}
-
-            onClose={() => setPreviewId(null)}
-
-            onChanged={() => { void load(); }}
-
-          />
-
-        )}
-
+        {preview.node}
 
         {newTask && (
           <NewTaskModal onClose={() => setNewTask(false)} onSaved={() => void load()} />
         )}
-      </>
+      </ThumbSigner>
     );
   }
 
   return (
-    <>
+    <ThumbSigner rows={rows}>
       <PageHead
         title={isAr ? 'مهامي' : 'My work'}
         sub={isAr
@@ -798,7 +834,7 @@ export default function WorkPage() {
                     key={`${u.content_id}:${u.step_key}`}
                     type="button"
                     className="up-row"
-                    onClick={() => navigate(`/m/content/${u.content_id}`)}
+                    onClick={() => navigate(upcomingHref(u))}
                   >
                     <span className="up-row-main">
                       <b className="ltr">{u.ref ?? ''}</b>
@@ -829,26 +865,11 @@ export default function WorkPage() {
         />
       </div>
 
-      {previewId && (
-
-        <ContentPreviewModal
-
-          contentId={previewId}
-
-          isAr={isAr}
-
-          onClose={() => setPreviewId(null)}
-
-          onChanged={() => { void load(); }}
-
-        />
-
-      )}
-
+      {preview.node}
 
       {newTask && (
         <NewTaskModal onClose={() => setNewTask(false)} onSaved={() => void load()} />
       )}
-    </>
+    </ThumbSigner>
   );
 }

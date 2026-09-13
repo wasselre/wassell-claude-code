@@ -21,16 +21,21 @@ import {
 } from '@/lib/marketingOS/client';
 import { autoAdOutcomeText } from './AutoAdApproval';
 import { useWorkspace } from '../MarketingWorkspace';
-import { Check, Modal, Pill } from './kit';
+import { Check, ContentThumb, Modal, Pill } from './kit';
 import { IconCheck, IconX } from './icons';
 import { daysAgo, initial, num, roleAvatarClass, shortDate } from '../lib/format';
+import { SECTION_LABELS, sectionForStep } from '../lib/contentRoute';
 
 export default function TaskCard({
-  item, task, step, scenes, canAct, isAr, onDone,
+  item, task, step, steps = [], scenes, canAct, isAr, onDone,
 }: {
   item: MosContentRow;
   task: MosTask;
   step: MosStep | null;
+  /** The record's PINNED step list. Needed to name the WORKING AREA: the same
+   *  step key means «رفع التصميم» or «الكتابة» depending on what came before
+   *  it, so a single step cannot answer that on its own. */
+  steps?: MosStep[];
   scenes: MosScene[];
   canAct: boolean;
   isAr: boolean;
@@ -83,10 +88,22 @@ export default function TaskCard({
     <>
       <div className="task-card">
         <div className="hd">
+          <ContentThumb row={item} size="sm" />
           <Pill tone="now">{isAr ? 'المهمة الحالية' : 'Current task'}</Pill>
           <h4 style={{ marginInlineStart: 2 }}>
             {step ? (isAr ? step.label_ar : step.label_en) : (isAr ? 'مهمة مفتوحة' : 'Open task')}
           </h4>
+          {/* The working AREA this step belongs to — the same vocabulary every
+              deep link and preview popup uses, so «مراجعة الكاتب» on this
+              card and «مراجعة الكاتب» in a task row mean one place. */}
+          {step && (
+            <span className="tag" style={{ marginInlineStart: 2 }}>
+              {(() => {
+                const s = sectionForStep(steps.length > 0 ? steps : [step], step.key);
+                return isAr ? SECTION_LABELS[s].ar : SECTION_LABELS[s].en;
+              })()}
+            </span>
+          )}
           <span
             style={{
               marginInlineStart: 'auto',

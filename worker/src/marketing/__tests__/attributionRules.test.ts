@@ -187,7 +187,7 @@ describe('narrowProjects labels ambiguity for the reader', () => {
   });
 });
 
-describe('a marketer can post about ANY catalog project (أكنان 23 outside ريفا's scope)', () => {
+describe("a marketer can post about ANY catalog project (أكنان 23 outside ريفا's scope)", () => {
   const catalog: ProjectAlias[] = [
     { projectId: 'aknan-23', nameAr: 'أكنان 23', nameEn: null, tokens: [] },
     { projectId: 'aknan-25', nameAr: 'أكنان 25', nameEn: null, tokens: [] },

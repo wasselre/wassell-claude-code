@@ -26,9 +26,13 @@ import {
   updateTask,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, LoadError, Modal, PageHead, RoleChip, Skeleton, Stat } from './components/kit';
+import {
+  ContentThumb, Empty, LoadError, Modal, PageHead, RoleChip, Skeleton, Stat, ThumbSigner,
+} from './components/kit';
 import NewTaskModal from './components/NewTaskModal';
+import { usePreview } from './components/ContentPreviewModal';
 import { daysAgo, daysFromNow, num, shortDate } from './lib/format';
+import { contentHref } from './lib/contentRoute';
 
 /** The tile order, transcribed from the mockup: writer, editor, ops, manager. */
 const TILE_ROLES: MosRole[] = ['writer', 'montage', 'ops_supervisor', 'marketing_manager'];
@@ -89,6 +93,9 @@ export default function TeamPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // ONE preview popup for the board — the same «معاينة» every other list has.
+  const preview = usePreview(() => { void load(); });
 
   const late = useMemo(() => rows.filter((r) => isOverdue(r)), [rows]);
 
@@ -264,7 +271,8 @@ export default function TeamPage() {
     : [];
 
   return (
-    <>
+    /* One signing round-trip for every preview on the board. */
+    <ThumbSigner rows={rows}>
       <PageHead
         title={isAr ? 'متابعة الفريق' : 'Team work'}
         sub={isAr
@@ -362,6 +370,7 @@ export default function TeamPage() {
                   <table className="tbl">
                     <thead>
                       <tr>
+                        <th style={{ width: 52 }}>{isAr ? 'المعاينة' : 'Preview'}</th>
                         <th style={{ width: 60 }}>{isAr ? 'الرقم' : 'Ref'}</th>
                         <th>{isAr ? 'المهمة' : 'Task'}</th>
                         <th style={{ width: 126 }}>{isAr ? 'الدور' : 'Role'}</th>
@@ -378,8 +387,11 @@ export default function TeamPage() {
                           <tr
                             key={r.id}
                             className={`click${overdue ? ' hl' : ''}`}
-                            onClick={() => navigate(`/m/content/${r.id}`)}
+                            onClick={() => navigate(contentHref(r))}
                           >
+                            <td onClick={(e) => { e.stopPropagation(); preview.open(r.id); }}>
+                              <ContentThumb row={r} size="sm" />
+                            </td>
                             <td className="id">{r.ref ?? '—'}</td>
                             <td className="ttl">{statusLabel(r, isAr)} · {r.title}</td>
                             <td><RoleChip role={r.owner_role} isAr={isAr} /></td>
@@ -414,6 +426,15 @@ export default function TeamPage() {
                                     {isAr ? 'نقل' : 'Move'}
                                   </button>
                                 )}
+                                {/* A manager chasing a stalled item needs to
+                                    SEE it before nudging someone about it. */}
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  onClick={() => preview.open(r.id)}
+                                >
+                                  {isAr ? 'معاينة' : 'Preview'}
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -656,6 +677,7 @@ export default function TeamPage() {
           )}
         </Modal>
       )}
-    </>
+      {preview.node}
+    </ThumbSigner>
   );
 }

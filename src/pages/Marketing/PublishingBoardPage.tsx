@@ -24,8 +24,12 @@ import {
   type MosPublication,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, LoadError, PageHead, Pill, Skeleton, type Tone } from './components/kit';
+import {
+  ContentThumb, Empty, LoadError, PageHead, Pill, Skeleton, ThumbSigner, type Tone,
+} from './components/kit';
+import { usePreview } from './components/ContentPreviewModal';
 import { num, dateTimeShort } from './lib/format';
+import { contentHref } from './lib/contentRoute';
 import './styles/pages-remaining.css';
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -98,6 +102,9 @@ export default function PublishingBoardPage() {
   const [filter, setFilter] = useState<Filter>('active');
   /** Publication ids with an action in flight, so their buttons disable. */
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
+  // ONE preview popup for the queue: triage is "what is going out and is it
+  // right?", which needs the creative, not a caption snippet.
+  const preview = usePreview(() => { void load(); });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -210,7 +217,8 @@ export default function PublishingBoardPage() {
     !!p.bundle_post_id && p.status !== 'published';
 
   return (
-    <>
+    /* One signing round-trip for the whole queue. */
+    <ThumbSigner rows={pubs}>
       <PageHead
         title={isAr ? 'لوحة النشر' : 'Publishing board'}
         sub={isAr
@@ -281,6 +289,7 @@ export default function PublishingBoardPage() {
                 <table className="tbl">
                   <thead>
                     <tr>
+                      <th style={{ width: 52 }}>{isAr ? 'المعاينة' : 'Preview'}</th>
                       <th style={{ width: 96 }}>{isAr ? 'المنصة' : 'Platform'}</th>
                       <th>{isAr ? 'المنشور' : 'Post'}</th>
                       <th style={{ width: 150 }}>{isAr ? 'الموعد' : 'When'}</th>
@@ -296,6 +305,13 @@ export default function PublishingBoardPage() {
                       const whenIso = p.published_at ?? p.scheduled_at;
                       return (
                         <tr key={p.id}>
+                          <td
+                            className="click"
+                            title={isAr ? 'معاينة العنصر' : 'Preview the item'}
+                            onClick={() => preview.open(p.content_id)}
+                          >
+                            <ContentThumb row={{ title: p.caption ?? '' }} size="sm" />
+                          </td>
                           <td>
                             <span className="pdot" style={{ background: PLATFORM_COLORS[p.platform] ?? 'var(--copper)', marginInlineEnd: 6 }} />
                             {label(p.platform)}
@@ -337,7 +353,20 @@ export default function PublishingBoardPage() {
                                         : (isAr ? 'انشر الآن' : 'Publish now')}
                                 </button>
                               )}
-                              <Link to={`/m/content/${p.content_id}`} className="btn btn-d btn-sm">
+                              <button
+                                type="button"
+                                className="btn btn-d btn-sm"
+                                onClick={() => preview.open(p.content_id)}
+                              >
+                                {isAr ? 'معاينة' : 'Preview'}
+                              </button>
+                              {/* The queue is a PUBLISHING view, so the item
+                                  link lands on its placements — one resolver
+                                  decides that, here and everywhere. */}
+                              <Link
+                                to={contentHref({ id: p.content_id }, null, { section: 'schedule' })}
+                                className="btn btn-d btn-sm"
+                              >
                                 {isAr ? 'العنصر' : 'Item'}
                               </Link>
                             </div>
@@ -353,6 +382,8 @@ export default function PublishingBoardPage() {
           </>
         )}
       </div>
-    </>
+
+      {preview.node}
+    </ThumbSigner>
   );
 }

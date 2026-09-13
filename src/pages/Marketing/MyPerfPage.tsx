@@ -19,8 +19,10 @@ import {
   fetchPerfMe, requestPerfLeave,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, Field, LoadError, Modal, PageHead, Skeleton } from './components/kit';
+import { ContentThumb, Empty, Field, LoadError, Modal, PageHead, Skeleton } from './components/kit';
+import { usePreview } from './components/ContentPreviewModal';
 import { num } from './lib/format';
+import { contentHref } from './lib/contentRoute';
 
 const fmtDate = (iso: string | null | undefined, isAr: boolean): string => {
   if (!iso) return '—';
@@ -59,6 +61,10 @@ export default function MyPerfPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // ONE preview popup: an open task here is a piece of content, and the
+  // reader should be able to look at it without leaving their own numbers.
+  const preview = usePreview(() => { void load(); });
 
   const claim = async (rewardId: string): Promise<void> => {
     setBusy(true);
@@ -201,17 +207,30 @@ export default function MyPerfPage() {
                     <table className="tbl">
                       <thead>
                         <tr>
+                          <th style={{ width: 52 }}>{isAr ? 'المعاينة' : 'Preview'}</th>
                           <th>{isAr ? 'الخطوة' : 'Step'}</th>
                           <th style={{ width: 90 }}>{isAr ? 'النوع' : 'Bucket'}</th>
                           <th style={{ width: 160 }}>{isAr ? 'الموعد' : 'Due'}</th>
                           <th style={{ width: 110 }}>{isAr ? 'الحالة' : 'State'}</th>
+                          <th style={{ width: 90 }} />
                         </tr>
                       </thead>
                       <tbody>
                         {me.open_tasks.map((t) => (
                           <tr key={t.id}>
+                            <td>
+                              <ContentThumb
+                                row={{ content_type_key: t.bucket === 'video' ? 'video' : 'post', title: t.step_key }}
+                                size="sm"
+                              />
+                            </td>
                             <td className="ttl">
-                              <Link to={`/m/content/${t.subject_id}?tab=tasks`}>{t.step_key}</Link>
+                              {/* The link lands on the step's OWN working area,
+                                  not on a tasks list the reader then has to
+                                  read — one resolver decides that everywhere. */}
+                              <Link to={contentHref({ id: t.subject_id, current_step_key: t.step_key })}>
+                                {t.step_key}
+                              </Link>
                             </td>
                             <td style={{ fontSize: 12 }}>
                               {t.bucket === 'video' ? (isAr ? 'فيديو' : 'Video') : (isAr ? 'منشور' : 'Post')}
@@ -225,6 +244,15 @@ export default function MyPerfPage() {
                                 </span>
                               )}
                               {!t.blocked && !t.late_flag && <span className="tag">{isAr ? 'في الوقت' : 'On track'}</span>}
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                onClick={() => preview.open(t.subject_id)}
+                              >
+                                {isAr ? 'معاينة' : 'Preview'}
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -411,6 +439,7 @@ export default function MyPerfPage() {
           </div>
         </Modal>
       )}
+      {preview.node}
     </>
   );
 }

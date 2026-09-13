@@ -34,7 +34,7 @@ import {
 import { useAppStore } from '@/stores/appStore';
 import { useWorkspace, type Capability } from './MarketingWorkspace';
 import {
-  KindCell, LoadError, Pill, ReadField, Skeleton, StatusPill, Modal,
+  ContentThumb, KindCell, LoadError, Pill, ReadField, Skeleton, StatusPill, Modal,
 } from './components/kit';
 import StageRail from './components/StageRail';
 import ProjectLink from './components/ProjectLink';
@@ -53,7 +53,10 @@ import RequestChangesModal from './components/RequestChangesModal';
 import ProjectMultiSelect from './components/ProjectMultiSelect';
 import ApprovalSheet, { useIsMobile } from './components/ApprovalSheet';
 import AutoAdApproveModal from './components/AutoAdApproval';
-import { phaseOfStep, tabForPhase } from './lib/stagePhase';
+import {
+  SECTION_LABELS, normalizeTab, sectionForStep, tabForSection,
+  type ContentSection, type ContentTab,
+} from './lib/contentRoute';
 import { IconBack, IconCheck, IconForward } from './components/icons';
 import MentionComposer, { renderMentions } from './components/MentionComposer';
 import CreativeTab from './components/creative/CreativeTab';
@@ -61,15 +64,21 @@ import { fetchCreativeFlags, type CreativeFlagsResult } from '@/lib/marketingOS/
 import { dateTimeShort, daysAgo, daysFromNow, initial, num, roleAvatarClass, shortDate } from './lib/format';
 import './styles/mobile-m2.css';
 
-type Tab = 'overview' | 'content' | 'placements' | 'materials' | 'project_assets' | 'project_info' | 'tasks' | 'performance' | 'creative';
+type Tab = ContentTab;
 
-const TAB_KEYS: ReadonlySet<string> = new Set<Tab>([
-  'overview', 'content', 'placements', 'materials', 'project_assets', 'project_info', 'tasks', 'performance', 'creative',
-]);
-
-/** `?tab=content` deep-links straight to a tab (the list's «الخطوة الحالية» button). */
+/**
+ * `?tab=content` deep-links straight to a tab (the list's «الخطوة الحالية»
+ * button, every task row, every notification).
+ *
+ * It goes through `normalizeTab` because producers emitted tabs this page
+ * never had: `?tab=publish` was written into `mos_notifications.url` by the
+ * bundle status sync and by a 2026-08-01 sweep migration, and every one of
+ * those links silently opened «نظرة عامة» — the reader was told a post needed
+ * publishing and landed on a summary. Those rows are still in the table, so
+ * the alias («publish» → «المواضع») is permanent, not transitional.
+ */
 function tabFromParam(raw: string | null): Tab {
-  return raw && TAB_KEYS.has(raw) ? (raw as Tab) : 'overview';
+  return normalizeTab(raw);
 }
 
 /** The breadcrumb's plural type names — s06 «الفيديوهات», s08 «المنشورات». */
@@ -189,16 +198,36 @@ export default function ContentDetailPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  /**
+   * `?step=<key>` names the exact working area the link came from (a task row,
+   * a notification, the preview popup's «فتح الصفحة كاملة»). It refines the
+   * tab beyond what `?tab=` alone can say.
+   */
+  const deepStep = searchParams.get('step');
+  const deepSection: ContentSection | null = useMemo(
+    () => (deepStep ? sectionForStep(steps, deepStep) : null),
+    [deepStep, steps],
+  );
+
   useEffect(() => {
     if (autoTabDone.current || loading || !item || searchParams.get('tab')) return;
     autoTabDone.current = true;
-    const open = tasks.find((t) => t.status === 'open') ?? null;
-    if (open?.step_id && steps.length > 0) {
-      setTab(tabForPhase(phaseOfStep(steps, open.step_id)));
-    } else if (item.status_key === 'done') {
-      setTab('placements');
+    if (item.status_key === 'done') {
+      // A finished item IS its final materials — the same answer the preview
+      // popup and every deep link give. This branch used to say «المواضع»,
+      // which is how the two surfaces came to disagree.
+      setTab('materials');
+      return;
     }
-  }, [loading, item, tasks, steps, searchParams]);
+    if (deepSection) { setTab(tabForSection(deepSection)); return; }
+    const open = tasks.find((t) => t.status === 'open') ?? null;
+    // BUG FIXED 2026-09-14: this passed `open.step_id` — a UUID — into a
+    // resolver that matches on `s.key`, so it never matched, always fell
+    // through to the keyword guess on a UUID, and every item in the system
+    // opened on «المحتوى» regardless of its stage. It must be the step KEY.
+    const openStep = open?.step_id ? steps.find((s) => s.id === open.step_id) ?? null : null;
+    if (openStep) setTab(tabForSection(sectionForStep(steps, openStep.key)));
+  }, [loading, item, tasks, steps, searchParams, deepSection]);
 
   // Script Writer v2 — on mount, pick up a draft that is already waiting for
   // review (written by an earlier job, maybe from another tab). Only an
@@ -543,6 +572,10 @@ export default function ContentDetailPage() {
             </div>
             <h3>{mosText(item.title, 'title')}</h3>
             <div className="chips">
+              {/* The item's own picture, at the top of its own page — the
+                  workspace's rule is that a creative is never represented by
+                  text alone. */}
+              <ContentThumb row={item} size="sm" />
               <KindCell typeKey={item.content_type_key} label={typeLabel(item.content_type_key)} />
               {version > 1 && (
                 <span className="tag">{isAr ? `النسخة ${num(version, true)}` : `Version ${version}`}</span>
@@ -702,6 +735,30 @@ export default function ContentDetailPage() {
             </div>
           )}
 
+          {/* A deep link («?step=») names the exact area it came from. Saying
+              so, and offering the jump, is what turns a task row into a real
+              destination instead of "here is the page, find it yourself". */}
+          {deepSection && deepSection !== 'overview' && activeTab !== tabForSection(deepSection) && (
+            <div className="up-banner">
+              <Pill tone="now">
+                {isAr ? SECTION_LABELS[deepSection].ar : SECTION_LABELS[deepSection].en}
+              </Pill>
+              <span>
+                {isAr
+                  ? 'وصلتَ من مهمة تخصّ هذا الجزء.'
+                  : 'You arrived from a task about this part.'}
+              </span>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{ marginInlineStart: 'auto' }}
+                onClick={() => setTab(tabForSection(deepSection))}
+              >
+                {isAr ? 'اذهب إليه' : 'Go there'}
+              </button>
+            </div>
+          )}
+
           {/* Screen 36: «قادم إليك» is NOT a task — the montage sees the work
               coming without a queue full of things they cannot start. */}
           {upcomingForMe && (
@@ -723,6 +780,7 @@ export default function ContentDetailPage() {
                     item={item}
                     task={openTask}
                     step={currentStep}
+                    steps={steps}
                     scenes={scenes}
                     canAct={canAct}
                     isAr={isAr}

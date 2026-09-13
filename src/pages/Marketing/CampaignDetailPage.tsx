@@ -33,7 +33,10 @@ import { useWorkspace } from './MarketingWorkspace';
 import {
   PlatformSettings, defaultPlatformSettings, getPlatformSchema, objectiveKeyOf, settingsSummary,
 } from '@/lib/marketingOS/adPlatforms';
-import { Field, LoadError, Modal, Pill, ReadField, Skeleton, StatusPill, Tone } from './components/kit';
+import {
+  ContentThumb, Field, LoadError, Modal, Pill, ReadField, Skeleton, StatusPill, ThumbSigner, Tone,
+} from './components/kit';
+import { usePreview } from './components/ContentPreviewModal';
 import CampaignTreeModal from './components/CampaignTreeModal';
 import CommentThread from './components/CommentThread';
 import NewContentModal from './components/NewContentModal';
@@ -48,6 +51,7 @@ import { IconBack, IconForward } from './components/icons';
 import { money, monthOf, num, shortDate, whole } from './lib/format';
 import { measureActual, pickVolumeMeasure } from './lib/measure';
 import { executionAutoName } from './lib/autoName';
+import { contentHref } from './lib/contentRoute';
 import './styles/campaign-detail.css';
 
 type Tab = 'overview' | 'executions' | 'content' | 'results' | 'notes';
@@ -328,6 +332,10 @@ export default function CampaignDetailPage() {
   }, [campaignId, enrich, enrichOrganic]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // ONE preview popup for the campaign: "what is actually running under this
+  // campaign?" is a question about creatives, so the answer shows them.
+  const preview = usePreview(() => { void load(); });
 
   /** The «ما الذي تغيّر» ledger, re-read after any action that appends to it. */
   const refreshEvents = useCallback(async (): Promise<void> => {
@@ -990,7 +998,8 @@ export default function CampaignDetailPage() {
   /* ── render ──────────────────────────────────────────────────────── */
 
   return (
-    <>
+    /* One signing round-trip for every creative on the page. */
+    <ThumbSigner rows={content}>
       <div className="rhead">
         <div className="top">
           <div style={{ minWidth: 0 }}>
@@ -1435,8 +1444,15 @@ export default function CampaignDetailPage() {
                             <tr
                               key={s.row.id}
                               className="click"
-                              onClick={() => navigate(`/m/content/${s.row.id}`)}
+                              onClick={() => navigate(contentHref(s.row))}
                             >
+                              <td
+                                style={{ width: 52 }}
+                                title={isAr ? 'معاينة' : 'Preview'}
+                                onClick={(e) => { e.stopPropagation(); preview.open(s.row.id); }}
+                              >
+                                <ContentThumb row={s.row} size="sm" />
+                              </td>
                               <td style={{ width: 64 }} className="id">{s.row.ref ?? '—'}</td>
                               <td className="ttl">{s.row.title}</td>
                               <td style={{ width: 200 }}>
@@ -1897,6 +1913,7 @@ export default function CampaignDetailPage() {
                   <table className="tbl">
                     <thead>
                       <tr>
+                        <th style={{ width: 52 }}>{isAr ? 'المعاينة' : 'Preview'}</th>
                         <th style={{ width: 60 }}>{isAr ? 'الرقم' : 'Ref'}</th>
                         <th>{isAr ? 'المحتوى' : 'Content'}</th>
                         <th style={{ width: 80 }}>{isAr ? 'النوع' : 'Type'}</th>
@@ -1931,7 +1948,13 @@ export default function CampaignDetailPage() {
                               ? 'cd-dim click'
                               : 'click';
                         return (
-                          <tr key={s.row.id} className={rowClass} onClick={() => navigate(`/m/content/${s.row.id}`)}>
+                          <tr key={s.row.id} className={rowClass} onClick={() => navigate(contentHref(s.row))}>
+                            <td
+                              title={isAr ? 'معاينة' : 'Preview'}
+                              onClick={(e) => { e.stopPropagation(); preview.open(s.row.id); }}
+                            >
+                              <ContentThumb row={s.row} size="sm" />
+                            </td>
                             <td className="id">{s.row.ref ?? '—'}</td>
                             <td className="ttl">{s.row.title}</td>
                             <td><span className="tag">{typeLabel(s.row.content_type_key)}</span></td>
@@ -2422,11 +2445,13 @@ export default function CampaignDetailPage() {
           onClose={() => setAddingContent(false)}
           presetCampaign={item.id}
           presetProject={item.project_id}
-          onCreated={(id) => navigate(`/m/content/${id}`)}
+          onCreated={(id) => navigate(contentHref({ id }))}
           onCreatedMany={() => void load()}
         />
       )}
-    </>
+
+      {preview.node}
+    </ThumbSigner>
   );
 }
 

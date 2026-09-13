@@ -19,7 +19,10 @@ import {
   MosAssetUsage, archiveAsset, bulkAssets, deleteAsset, fetchAssetDetail, saveAsset,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, Field, LoadError, Modal, PageHead, Pill, ReadField, Skeleton } from './components/kit';
+import {
+  ContentThumb, Empty, Field, LoadError, Modal, PageHead, Pill, ReadField, Skeleton,
+} from './components/kit';
+import { usePreview } from './components/ContentPreviewModal';
 import ProjectLink from './components/ProjectLink';
 import { IconLibrary, IconPlus } from './components/icons';
 import { daysFromNow, num, shortDate, toArabicDigits } from './lib/format';
@@ -27,6 +30,7 @@ import { formatBytes } from './lib/upload';
 import { useAssetUrls, useLatchedUrl } from './lib/assetUrls';
 import { signDownloadUrl } from '@/lib/files/client';
 import { marketingLibraryHref } from '@/lib/files/libraryUrl';
+import { contentHref } from './lib/contentRoute';
 import './styles/pages-remaining.css';
 
 // In-app PDF viewer (pdf.js), lazy-loaded. Renders to canvas so it scrolls the
@@ -170,6 +174,10 @@ export default function AssetDetailPage() {
   }, [assetId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // ONE preview popup: "where is this asset used?" is only half an answer if
+  // the reader cannot look at what it was used IN.
+  const preview = usePreview(() => { void load(); });
 
   const liveAds = useMemo(() => usedIn.filter((u) => u.live_ad), [usedIn]);
   const inUse = usedIn.length > 0;
@@ -456,7 +464,18 @@ export default function AssetDetailPage() {
                     <table className="tbl">
                       <tbody>
                         {usedIn.map((u) => (
-                          <tr key={u.content_id} className="click" onClick={() => navigate(`/m/content/${u.content_id}`)}>
+                          <tr
+                            key={u.content_id}
+                            className="click"
+                            onClick={() => navigate(contentHref({ id: u.content_id }))}
+                          >
+                            <td
+                              style={{ width: 52 }}
+                              title={isAr ? 'معاينة' : 'Preview'}
+                              onClick={(e) => { e.stopPropagation(); preview.open(u.content_id); }}
+                            >
+                              <ContentThumb row={{ title: u.title }} size="sm" />
+                            </td>
                             <td style={{ width: 58 }} className="id">{u.ref ?? '—'}</td>
                             <td className="ttl">{u.title}</td>
                             <td style={{ width: 110 }}>
@@ -466,6 +485,15 @@ export default function AssetDetailPage() {
                             </td>
                             <td style={{ width: 180, fontSize: 11.5, color: 'var(--copper)', fontWeight: 700 }}>
                               {u.live_ad ? (isAr ? 'يعمل كإعلان مدفوع الآن' : 'Running as a paid ad now') : ''}
+                            </td>
+                            <td style={{ width: 90 }} onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                onClick={() => preview.open(u.content_id)}
+                              >
+                                {isAr ? 'معاينة' : 'Preview'}
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -630,7 +658,8 @@ export default function AssetDetailPage() {
                           ))}
                           {usedIn.length > 3 ? ` و${num(usedIn.length - 3, true)} غيرها` : ''}
                           {liveAds.length > 0 ? '، والإعلان العامل الآن.' : '.'}
-                        </>
+      {preview.node}
+    </>
                         : <>
                           {liveAds.length > 0 ? 'This asset is inside a paid ad right now. ' : ''}
                           Deleting it would break {(blocked ?? usedIn).slice(0, 3).map((u) => u.ref ?? u.title).join(' · ')}
@@ -673,7 +702,7 @@ export default function AssetDetailPage() {
           asset={asset}
           contentTypes={contentTypes.filter((t) => t.is_active)}
           onClose={() => setCreating(false)}
-          onCreated={(contentId) => navigate(`/m/content/${contentId}`)}
+          onCreated={(contentId) => navigate(contentHref({ id: contentId }))}
         />
       )}
 

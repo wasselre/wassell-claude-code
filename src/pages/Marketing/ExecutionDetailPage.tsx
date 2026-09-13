@@ -28,7 +28,10 @@ import {
 import { PlatformFieldsGrid, PlatformSettingsForm } from './components/PlatformSettingsForm';
 import CampaignTreeModal from './components/CampaignTreeModal';
 import CreativePicker from './components/CreativePicker';
-import { Empty, Field, LoadError, Modal, Pill, ReadField, Skeleton } from './components/kit';
+import {
+  ContentThumb, Empty, Field, LoadError, Modal, Pill, ReadField, Skeleton, ThumbSigner,
+} from './components/kit';
+import { usePreview } from './components/ContentPreviewModal';
 import { IconBack, IconForward, IconPlus } from './components/icons';
 import { num, whole } from './lib/format';
 
@@ -90,6 +93,10 @@ export default function ExecutionDetailPage() {
   }, [executionId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // ONE preview popup: an ad row is a CREATIVE plus a budget, and the reader
+  // must be able to see the creative without leaving the execution.
+  const preview = usePreview(() => { void load(); });
 
   const contentOf = (id: string | null): MosContentRow | undefined =>
     adContent.find((c) => c.id === id);
@@ -290,7 +297,8 @@ export default function ExecutionDetailPage() {
     : null;
 
   return (
-    <>
+    /* One signing round-trip for every creative in the ads table. */
+    <ThumbSigner rows={adContent}>
       <div className="rhead">
         <div className="top">
           <div style={{ minWidth: 0 }}>
@@ -488,6 +496,7 @@ export default function ExecutionDetailPage() {
                             {adSets.length > 0 && (
                               <th style={{ width: 150 }}>{isAr ? 'المجموعة الإعلانية' : 'Ad set'}</th>
                             )}
+                            <th style={{ width: 52 }}>{isAr ? 'المعاينة' : 'Preview'}</th>
                             <th className="num" style={{ width: 84 }}>{isAr ? 'الإنفاق' : 'Spend'}</th>
                             <th className="num" style={{ width: 70 }}>{isAr ? 'النقرات' : 'Clicks'}</th>
                             <th className="num" style={{ width: 64 }}>{isAr ? 'عملاء' : 'Leads'}</th>
@@ -517,6 +526,18 @@ export default function ExecutionDetailPage() {
                                 }}
                                 onClick={() => setEditingAd(ad)}
                               >
+                                <td
+                                  title={isAr ? 'معاينة الكرييتف' : 'Preview the creative'}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (ad.content_id) preview.open(ad.content_id);
+                                  }}
+                                >
+                                  {/* The ad's actual creative. An ads table
+                                      that shows only a code is how the wrong
+                                      design ends up spending money. */}
+                                  <ContentThumb row={c ?? { title: ad.label ?? '' }} size="sm" />
+                                </td>
                                 <td className="id">{c?.ref ?? '—'}</td>
                                 <td>
                                   <div className="ttl">{c?.title
@@ -623,6 +644,7 @@ export default function ExecutionDetailPage() {
                               onClick={() => setEditingAd(ad)}
                             >
                               <div className="m4-vtop">
+                                <ContentThumb row={c ?? { title: ad.label ?? '' }} size="sm" />
                                 <span className="id ltr">{c?.ref ?? '—'}</span>
                                 {isMetaExec && !ad.platform_ad_id ? (
                                   <Pill tone="wait">{isAr ? 'لم يُنشأ في ميتا بعد' : 'Not in Meta yet'}</Pill>
@@ -896,7 +918,8 @@ export default function ExecutionDetailPage() {
           onSaved={() => void load()}
         />
       )}
-    </>
+      {preview.node}
+    </ThumbSigner>
   );
 }
 

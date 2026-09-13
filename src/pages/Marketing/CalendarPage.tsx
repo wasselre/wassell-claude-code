@@ -19,14 +19,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  MosCampaign, PLATFORM_CLASS, PLATFORM_LABELS, fetchCalendar, fetchCampaigns,
+  MosCampaign, MosTitleRef, PLATFORM_CLASS, PLATFORM_LABELS, fetchCalendar, fetchCampaigns,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { LoadError, PageHead, Skeleton } from './components/kit';
+import { ContentThumb, LoadError, PageHead, Skeleton, ThumbSigner } from './components/kit';
 import CoverageStrip from './components/CoverageStrip';
 import NewContentModal from './components/NewContentModal';
+import { usePreview } from './components/ContentPreviewModal';
 import { IconBack, IconForward, IconPlus } from './components/icons';
 import { num, shortDate, toArabicDigits, whole } from './lib/format';
+import { contentHref } from './lib/contentRoute';
 
 /**
  * The shell's phone breakpoint (mobile-shell.css). No shared matchMedia hook
@@ -73,6 +75,12 @@ interface Chip {
    *  publish aim is a dashed copper chip — planned, not yet scheduled. */
   kind: 'publication' | 'target' | 'due' | 'campaign_end';
   href: string;
+  /** The content item behind the chip — null for a campaign's end date. Drives
+   *  the thumbnail and the «معاينة» popup; the calendar is a view of CONTENT
+   *  and a row of text for a picture is not a view of it. */
+  contentId: string | null;
+  /** The preview columns of the row behind the chip, when the payload has them. */
+  preview: MosTitleRef | null;
   hint: string;
   /** Split parts for the phone agenda's bold «P-019 · خمسة أسباب» line (s49). */
   ref: string | null;
@@ -144,6 +152,10 @@ export default function CalendarPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // ONE preview popup for the page: a calendar chip IS a content item, so
+  // clicking it shows the item rather than jumping the reader off the month.
+  const preview = usePreview(() => { void load(); });
+
   /* ── chips: publications, task due dates, campaign end dates ────────── */
 
   const chips = useMemo(() => {
@@ -175,7 +187,9 @@ export default function CalendarPage() {
           label: `${platform} · ${t?.ref ?? t?.title ?? ''}`.trim(),
           platform: p.platform,
           kind: 'publication',
-          href: `/m/content/${p.content_id}`,
+          href: contentHref({ id: p.content_id }),
+          contentId: p.content_id,
+          preview: t ?? null,
           hint: t?.title ?? '',
           ref: t?.ref ?? null,
           title: t?.title ?? '',
@@ -188,7 +202,9 @@ export default function CalendarPage() {
             label: `${isAr ? 'استحقاق' : 'Due'} · ${d.title}${d.ref ? ` ${d.ref}` : ''}`,
             platform: null,
             kind: 'due',
-            href: `/m/content/${d.id}`,
+            href: contentHref(d),
+            contentId: d.id,
+            preview: titles.get(d.id) ?? null,
             hint: d.title,
             ref: d.ref ?? null,
             title: d.title,
@@ -203,7 +219,9 @@ export default function CalendarPage() {
             label: `${isAr ? 'مستهدف' : 'Target'} · ${d.ref ?? d.title}`,
             platform: null,
             kind: 'target',
-            href: `/m/content/${d.id}`,
+            href: contentHref(d),
+            contentId: d.id,
+            preview: titles.get(d.id) ?? null,
             hint: d.title,
             ref: d.ref ?? null,
             title: d.title,
@@ -223,6 +241,8 @@ export default function CalendarPage() {
         platform: null,
         kind: 'campaign_end',
         href: `/m/campaigns/${c.id}`,
+        contentId: null,
+        preview: null,
         hint: c.name,
         ref: c.ref ?? null,
         title: c.name,
@@ -428,6 +448,15 @@ export default function CalendarPage() {
       : new Date(c.getFullYear(), c.getMonth() + delta, 1));
   };
 
+  /** Every content row the month shows, de-duplicated, for ONE signing batch. */
+  const previewRows = useMemo(() => {
+    const seen = new Map<string, MosTitleRef>();
+    for (const list of chips.values()) {
+      for (const c of list) if (c.preview && !seen.has(c.preview.id)) seen.set(c.preview.id, c.preview);
+    }
+    return [...seen.values()];
+  }, [chips]);
+
   const Prev = isAr ? IconForward : IconBack;
   const Next = isAr ? IconBack : IconForward;
   const todayKey = dayKey(new Date());
@@ -489,7 +518,8 @@ export default function CalendarPage() {
   );
 
   return (
-    <>
+    /* One signing round-trip for every canonical preview in the month. */
+    <ThumbSigner rows={previewRows}>
       <PageHead title={isAr ? 'التقويم' : 'Calendar'} sub={sub}>
         <div className="seg">
           <button type="button" onClick={() => move(-1)} aria-label={isAr ? 'السابق' : 'Previous'}>
@@ -593,12 +623,19 @@ export default function CalendarPage() {
                         key={c.key}
                         type="button"
                         className="m1-card m1-agcard"
-                        onClick={() => navigate(c.href)}
+                        onClick={() => (c.contentId ? preview.open(c.contentId) : navigate(c.href))}
                       >
                         <div className="top">
                           <span className={`m1-dot ${chipTone(c)}`} />
                           <span>{agendaTopLine(c)}</span>
                         </div>
+                        {c.contentId && (
+                          <ContentThumb
+                            row={c.preview ?? { title: c.title }}
+                            size="md"
+                            style={{ margin: '6px 0' }}
+                          />
+                        )}
                         <div className="t2">
                           {c.ref && (
                             <>
@@ -644,7 +681,15 @@ export default function CalendarPage() {
                   </div>
                 )}
                 {listEntries.map(({ day, chip }) => (
-                  <button key={chip.key} type="button" className="lrow" onClick={() => navigate(chip.href)}>
+                  <button
+                    key={chip.key}
+                    type="button"
+                    className="lrow"
+                    onClick={() => (chip.contentId ? preview.open(chip.contentId) : navigate(chip.href))}
+                  >
+                    {chip.contentId && (
+                      <ContentThumb row={chip.preview ?? { title: chip.title }} size="sm" />
+                    )}
                     <span className="lr-d">
                       {(isAr ? AR_DAYS : EN_DAYS)[day.getDay()]} · {num(day.getDate(), isAr)} {(isAr ? AR_MONTHS : EN_MONTHS)[day.getMonth()]}
                     </span>
@@ -689,13 +734,15 @@ export default function CalendarPage() {
         )}
       </div>
 
+      {preview.node}
+
       {creating && (
         <NewContentModal
           onClose={() => setCreating(false)}
-          onCreated={(id) => navigate(`/m/content/${id}`)}
+          onCreated={(id) => navigate(contentHref({ id }))}
         />
       )}
-    </>
+    </ThumbSigner>
   );
 }
 

@@ -29,10 +29,13 @@ import {
   statusLabel,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
-import { Empty, KindCell, LoadError, Modal, PageHead, Pill, Skeleton, StatusPill } from './components/kit';
+import {
+  ContentThumb, Empty, KindCell, LoadError, Modal, PageHead, Pill, Skeleton, StatusPill, ThumbSigner,
+} from './components/kit';
 import NewContentModal from './components/NewContentModal';
-import ContentPreviewModal from './components/ContentPreviewModal';
-import { phaseOfStep, stageIsMine, tabForPhase } from './lib/stagePhase';
+import { usePreview } from './components/ContentPreviewModal';
+import { stageIsMine } from './lib/stagePhase';
+import { contentHref } from './lib/contentRoute';
 import { IconPlus, IconSearch } from './components/icons';
 import { daysAgo, initial, num, roleAvatarClass, shortDate } from './lib/format';
 
@@ -106,14 +109,16 @@ export default function ContentListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  // «معاينة» — the row whose stage popup is open.
-  const [previewId, setPreviewId] = useState<string | null>(null);
   const [q, setQ] = useState('');
   // Multi-select for bulk delete (table view).
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const canDelete = can('delete_records');
+
+  // «معاينة» — ONE popup for the whole page; any row opens it, and it
+  // opens on the row's own section (`usePreview` → `contentRoute`).
+  const preview = usePreview(() => { void load(); });
 
   const view = params.get('view') === 'board' ? 'board' : 'table';
   const typeParam = params.get('type') ?? '';
@@ -336,17 +341,22 @@ export default function ContentListPage() {
 
   const peopleById = useMemo(() => new Map(people.map((p) => [p.user_id, p])), [people]);
 
-  /**
-   * «الخطوة الحالية» — where the row's open stage lives on the content page.
-   * The phase (writing / design / publish) is read off the workflow the row's
-   * TYPE points at (the pinned version is the same list for every live row;
-   * a drifted key falls back to a keyword guess inside phaseOfStep).
-   */
-  const tabForRow = (r: ListRow): string => {
+  /** The pinned step list behind a row — its TYPE's workflow. */
+  const stepsForRow = (r: ListRow) => {
     const wfId = contentTypes.find((t) => t.key === r.content_type_key)?.workflow_id ?? null;
-    const steps = workflows.find((w) => w.id === wfId)?.steps ?? [];
-    return tabForPhase(phaseOfStep(steps, r.status_key));
+    return workflows.find((w) => w.id === wfId)?.steps ?? [];
   };
+
+  /**
+   * Where a row goes. ONE resolver (`contentRoute.contentHref`) decides it
+   * for every surface — the table, the board, a task, a notification — so a
+   * finished item lands on its final materials wherever it was clicked, and
+   * an in-flight one lands on the tab that actually holds its work.
+   */
+  const hrefForRow = (r: ListRow): string => contentHref(r, stepsForRow(r));
+
+  /** The section a row's «معاينة» opens on — its own current stage. */
+  const openPreview = (r: ListRow): void => preview.open(r.id);
 
   const boardSub = boardWf
     ? isAr
@@ -355,7 +365,9 @@ export default function ContentListPage() {
     : undefined;
 
   return (
-    <>
+    /* One signing round-trip for every canonical preview on the screen —
+       a table of 200 rows must not open 200 signing requests. */
+    <ThumbSigner rows={rows}>
       <PageHead
         title={isAr ? 'المحتوى' : 'Content'}
         sub={view === 'board'
@@ -580,6 +592,7 @@ export default function ContentListPage() {
                         />
                       </th>
                     )}
+                    <th style={{ width: 52 }}>{isAr ? 'المعاينة' : 'Preview'}</th>
                     <th style={{ width: 64 }}>{isAr ? 'الرقم' : 'ID'}</th>
                     <th style={{ width: 78 }}>{isAr ? 'النوع' : 'Type'}</th>
                     <th>{isAr ? 'العنوان' : 'Title'}</th>
@@ -600,7 +613,7 @@ export default function ContentListPage() {
                       key={r.id}
                       className="click"
                       style={selected.has(r.id) ? { background: 'color-mix(in srgb, var(--copper) 9%, transparent)' } : undefined}
-                      onClick={() => navigate(`/m/content/${r.id}`)}
+                      onClick={() => navigate(hrefForRow(r))}
                     >
                       {canDelete && (
                         <td onClick={(e) => e.stopPropagation()}>
@@ -612,6 +625,7 @@ export default function ContentListPage() {
                           />
                         </td>
                       )}
+                      <td><ContentThumb row={r} size="sm" /></td>
                       <td className="id">{r.ref ?? '—'}</td>
                       <td><KindCell typeKey={r.content_type_key} label={typeLabel(r.content_type_key)} /></td>
                       <td className="ttl">{r.title}</td>
@@ -643,7 +657,7 @@ export default function ContentListPage() {
                             type="button"
                             className="btn btn-p btn-sm"
                             title={isAr ? 'انتقل إلى مكان العمل في هذه المرحلة' : 'Go to where this stage has its work'}
-                            onClick={() => navigate(`/m/content/${r.id}?tab=${tabForRow(r)}`)}
+                            onClick={() => navigate(hrefForRow(r))}
                           >
                             {statusLabel(r, isAr)}
                           </button>
@@ -655,7 +669,7 @@ export default function ContentListPage() {
                         <button
                           type="button"
                           className="btn btn-sm"
-                          onClick={() => setPreviewId(r.id)}
+                          onClick={() => openPreview(r)}
                         >
                           {isAr ? 'معاينة' : 'Preview'}
                         </button>
@@ -713,8 +727,11 @@ export default function ContentListPage() {
                       key={r.id}
                       type="button"
                       className={`tile${late ? ' late' : ''}`}
-                      onClick={() => navigate(`/m/content/${r.id}`)}
+                      onClick={() => navigate(hrefForRow(r))}
                     >
+                      {/* A board card without the creative on it is a card
+                          about a picture with no picture. */}
+                      <ContentThumb row={r} ratio="4 / 3" style={{ marginBottom: 7 }} />
                       <div className="id2">{r.ref ?? '—'}</div>
                       <div className="t2">{r.title}</div>
                       <div className="f2">
@@ -749,14 +766,7 @@ export default function ContentListPage() {
 
       {creating && <NewContentModal onClose={() => setCreating(false)} onCreatedMany={() => void load()} />}
 
-      {previewId && (
-        <ContentPreviewModal
-          contentId={previewId}
-          isAr={isAr}
-          onClose={() => setPreviewId(null)}
-          onChanged={() => void load()}
-        />
-      )}
+      {preview.node}
 
       {confirmOpen && (
         <Modal
@@ -785,6 +795,6 @@ export default function ContentListPage() {
           </div>
         </Modal>
       )}
-    </>
+    </ThumbSigner>
   );
 }

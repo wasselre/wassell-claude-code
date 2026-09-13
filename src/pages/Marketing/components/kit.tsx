@@ -19,6 +19,15 @@ import {
 import { initial, num, roleAvatarClass } from '../lib/format';
 import { IconCheck, IconInbox, IconX, kindIcon } from './icons';
 
+/**
+ * Thumbnails are a primitive, so they live in the kit alongside the pills and
+ * the status vocabulary — a list should never have to think about how an asset
+ * URL is resolved. The implementation is in `Thumb.tsx` (it needs its own
+ * context for batched signing); this is the door every screen comes through.
+ */
+export { default as Thumb, ContentThumb, ThumbSigner, useThumbSigner, toThumbAsset } from './Thumb';
+export type { ThumbProps, ThumbRowLike, ThumbAsset, ThumbSize } from './Thumb';
+
 /* ── Page header ─────────────────────────────────────────────────────── */
 
 export function PageHead({

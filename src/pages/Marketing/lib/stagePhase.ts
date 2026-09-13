@@ -1,56 +1,56 @@
 /**
  * Which PHASE of production a workflow step belongs to — writing, design, or
- * publishing — and therefore which tab of the content page (and which body of
- * the preview popup) shows the thing being worked on or reviewed.
+ * publishing — and therefore which tab of the content page shows the thing
+ * being worked on or reviewed.
  *
- * Workflows are user-editable data (Settings → Workflows), so the phase is NOT
- * keyed on hardcoded step keys. It is derived by walking the pinned step list
- * in order:
- *   - it starts as `writing`;
- *   - the first non-approval step owned by a production role (montage / ops)
- *     flips it to `design`, and every later step inherits that — so «مراجعة
- *     التصميم» owned by the manager, or «مراجعة الكاتب» owned by the writer,
- *     still counts as design (the reviewer looks at the DESIGN, not the copy);
- *   - a scheduling / publishing step flips it to `publish`.
- * A step key the pinned list no longer contains falls back to a keyword guess,
- * so a stale row still routes somewhere sensible instead of nowhere.
+ * SUPERSEDED, kept for back-compat. The real resolver is `contentRoute.ts`,
+ * which answers the same question one notch finer (ten sections instead of
+ * three phases) and which the server twin `api/_lib/marketing/routes.ts`
+ * mirrors. Everything here is now a projection of that: `phaseOfStep` is
+ * `sectionForStep` collapsed to three buckets. Prefer `contentHref` /
+ * `sectionForStep` / `tabForSection` in new code; this file exists so the
+ * call sites that only need "writing, design, or publishing" keep working.
+ *
+ * `stageIsMine` is NOT a routing concern and has no twin — it stays here.
  */
 import type { MosRole } from '@/lib/marketingOS/client';
+import {
+  sectionForStep, tabForSection, type ContentSection, type RouteStep,
+} from './contentRoute';
 
 export type StagePhase = 'writing' | 'design' | 'publish';
 
 /** The subset of a step the classifier needs — satisfied by StepDef and MosStep. */
-export interface PhaseStep {
-  key: string;
-  is_approval: boolean;
-  /** StepDef carries `role_key`; MosStep carries `role`. Either is accepted. */
-  role?: string | null;
-  role_key?: string | null;
-}
+export type PhaseStep = RouteStep & { is_approval: boolean };
 
-const PRODUCTION_ROLES: ReadonlySet<string> = new Set<MosRole>(['montage', 'ops_supervisor']);
-const PUBLISH_KEY = /schedul|publish|نشر|جدول/i;
-const DESIGN_KEY = /design|edit|montage|asset|version|footage|تصميم|مونتاج|مواد|نسخة/i;
+/** The three-bucket view of a section. */
+const SECTION_PHASE: Record<ContentSection, StagePhase> = {
+  writing: 'writing',
+  writing_review: 'writing',
+  caption: 'writing',
+  design_upload: 'design',
+  design_review_writer: 'design',
+  final_review: 'design',
+  materials_final: 'design',
+  schedule: 'publish',
+  publish_check: 'publish',
+  // No open stage — the writing tab is where an item with nothing in flight
+  // starts, which is what the old keyword fallback returned for an empty key.
+  overview: 'writing',
+};
 
-function keywordPhase(stepKey: string): StagePhase {
-  if (PUBLISH_KEY.test(stepKey)) return 'publish';
-  if (DESIGN_KEY.test(stepKey)) return 'design';
-  return 'writing';
+export function phaseOfSection(section: ContentSection): StagePhase {
+  return SECTION_PHASE[section] ?? 'writing';
 }
 
 /**
  * The phase of `stepKey` inside `steps` (already in workflow order). When the
- * key is absent from the list the keyword fallback decides.
+ * key is absent from the list the keyword fallback inside `sectionForStep`
+ * decides. `stepKey` is a step KEY — passing a step UUID here has always
+ * fallen through to the fallback, which is the bug `contentRoute` names.
  */
 export function phaseOfStep(steps: ReadonlyArray<PhaseStep>, stepKey: string): StagePhase {
-  let phase: StagePhase = 'writing';
-  for (const s of steps) {
-    const role = s.role ?? s.role_key ?? '';
-    if (PUBLISH_KEY.test(s.key)) phase = 'publish';
-    else if (phase === 'writing' && !s.is_approval && PRODUCTION_ROLES.has(role)) phase = 'design';
-    if (s.key === stepKey) return phase;
-  }
-  return keywordPhase(stepKey);
+  return phaseOfSection(sectionForStep(steps, stepKey));
 }
 
 /** The content-page tab that shows a phase's work. */
@@ -61,6 +61,9 @@ export function tabForPhase(phase: StagePhase): PhaseTab {
   if (phase === 'publish') return 'placements';
   return 'content';
 }
+
+/** The tab for a section — the finer-grained twin of `tabForPhase`. */
+export { tabForSection };
 
 /**
  * Whether a stage owned by `stepRole` is actionable by someone holding `roles`

@@ -9,12 +9,19 @@
  * derived `purpose` in mos_content_v), so every pick must go through
  * `content_id`.
  *
+ * 2026-09-14: the select keeps the keyboard-friendly pick, but it no longer
+ * stands alone — the CURRENT pick is rendered as its actual picture underneath,
+ * because "which creative is on this ad?" answered with a code is the exact
+ * complaint that produced `CreativePicker`. (The full visual grid is
+ * `CreativePicker`; this compact twin lives where a select has to fit.)
+ *
  * Legacy: ads created before this change may still carry a library asset in
  * their `creative` jsonb (asset_id / asset_title / …). Such a pick is still
  * RENDERED as the current value so the ad doesn't look empty, but no new
  * asset can be chosen — picking a content record (or "no content") replaces it.
  */
 import { MosContentRow } from '@/lib/marketingOS/client';
+import Thumb, { ContentThumb } from './Thumb';
 
 /** The (legacy) asset reference stored inside an ad's `creative` jsonb. */
 export interface PickedAsset {
@@ -52,6 +59,10 @@ export default function ContentPicker({
     // Re-selecting the legacy asset option is a no-op (it's already the value).
   };
 
+  const picked = value.contentId
+    ? contentOptions.find((c) => c.id === value.contentId) ?? null
+    : null;
+
   return (
     <div style={{ display: 'grid', gap: 6 }}>
       <select className="inp" value={selectValue} onChange={(e) => onSelect(e.target.value)}>
@@ -65,6 +76,26 @@ export default function ContentPicker({
           </option>
         )}
       </select>
+
+      {/* What is actually attached, as a picture. A creative identified only by
+          a code is how the wrong design ends up on a live ad. */}
+      {(picked || value.asset) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          {picked
+            ? <ContentThumb row={picked} size="md" />
+            : <Thumb thumbUrl={value.asset?.thumb ?? null} kind="photo" size="md" alt={value.asset?.title ?? ''} />}
+          <div style={{ minWidth: 0, fontSize: 11.5 }}>
+            <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {picked ? picked.title : value.asset?.title}
+            </div>
+            <div style={{ color: 'var(--mute)' }}>
+              {picked
+                ? (picked.ref ?? '—')
+                : (isAr ? 'من المكتبة (قديم)' : 'Library (legacy)')}
+            </div>
+          </div>
+        </div>
+      )}
 
       {value.contentId !== '' && (
         <span style={{ fontSize: 11.5, color: 'var(--mute)' }}>
