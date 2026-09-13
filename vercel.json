@@ -2,37 +2,80 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "ignoreCommand": "git diff --quiet $(git rev-parse -q --verify ${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}^{commit} 2>/dev/null || echo HEAD^) HEAD -- . ':!docs/prd/models' ':!docs/prd/workflows'",
   "rewrites": [
-    { "source": "/((?!api/)(?!assets/)(?!manifest\\.webmanifest$)(?!sw\\.js$).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api/)(?!assets/)(?!manifest\\.webmanifest$)(?!sw\\.js$).*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
       "source": "/assets/:name(.+-[A-Za-z0-9_-]{8,}\\.(?:js|css|woff2?|ttf|otf))",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
       ]
     },
     {
       "source": "/assets/:name(.+\\.(?:png|jpg|jpeg|gif|webp|svg|ico))",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=3600, s-maxage=3600, must-revalidate" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600, s-maxage=3600, must-revalidate"
+        }
       ]
     },
     {
       "source": "/sw.js",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
-        { "key": "Service-Worker-Allowed", "value": "/" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
       ]
     }
   ],
   "crons": [
-    { "path": "/api/sweep-due-followups", "schedule": "*/5 * * * *" },
-    { "path": "/api/sweep-appointment-noshows", "schedule": "*/30 * * * *" },
-    { "path": "/api/cron/watchdogs", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/meta-sync", "schedule": "17 * * * *" },
-    { "path": "/api/cron/bundle-metrics", "schedule": "37 6 * * *" },
-    { "path": "/api/cron/bundle-status", "schedule": "*/10 * * * *" },
-    { "path": "/api/cron/perf-sweep", "schedule": "*/10 * * * *" },
-    { "path": "/api/cron/reconcile-stranded-clients", "schedule": "0 5 * * *" }
+    {
+      "path": "/api/sweep-due-followups",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/sweep-appointment-noshows",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/watchdogs",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/meta-sync",
+      "schedule": "17 * * * *"
+    },
+    {
+      "path": "/api/cron/bundle-metrics",
+      "schedule": "37 6 * * *"
+    },
+    {
+      "path": "/api/cron/bundle-status",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/perf-sweep",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-stranded-clients",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/planning-sweep",
+      "schedule": "*/10 * * * *"
+    }
   ]
 }

@@ -63,6 +63,16 @@ import { designExampleSet, designExampleList } from './_lib/marketing/creative/e
 import { creativePerformance } from './_lib/marketing/creative/performance.js';
 import { enqueueWasselReadsOnPublish } from './_lib/marketing/creative/onPublished.js';
 
+/* ── campaign planning (handlers — dispatch block is near the switch end) ── */
+import {
+  campaignPlanPreview, campaignPlanRevise, campaignPlanCommit, campaignPlanGet,
+  campaignRollup, workloadCalendar, contentAdReadiness, capacityConfigSave,
+  type PlanCtx,
+} from './_lib/marketing/planning/actions.js';
+import {
+  contentCaptionGenerate, contentRevise, refreshCycleList, refreshCycleDecide,
+} from './_lib/marketing/planning/content.js';
+
 export const config = { runtime: 'edge' };
 
 /* ------------------------------------------------------------------ */
@@ -115,6 +125,11 @@ function wakeWorker(): void {
   void fetch(`${base.replace(/\/$/, '')}/wake`, { method: 'POST' }).catch(() => {
     /* best-effort by design */
   });
+}
+
+/** The shared context every campaign-planning handler takes. */
+function planCtx(sb: SupabaseClient, body: Record<string, unknown>, userId: string | null): PlanCtx {
+  return { sb, svc: makeServiceClient('api:marketing-os:planning'), body, userId };
 }
 
 /** Human-readable one-liner from a Meta Graph error (or any thrown value). */
@@ -674,6 +689,12 @@ const CAPABILITIES = [
   // Performance & load system (2026-08-28): rate finished creatives, and run
   // the manager desk (discipline/leave/reward decisions, KPI goals, toggles).
   'rate_creative', 'manage_performance',
+  // Campaign planning (2026-09-14): run a preflight plan against the live
+  // workload (plan_campaign), commit it and reserve people's days
+  // (approve_plan), settle a weekly creative refresh (decide_refresh), reopen
+  // an approved package (revise_approved_content), and edit per-person
+  // capacity / holidays / step effort (manage_capacity).
+  'plan_campaign', 'approve_plan', 'decide_refresh', 'revise_approved_content', 'manage_capacity',
 ] as const;
 
 /** The notification channels a step may permit; AND-ed with each role's grid. */
@@ -9524,6 +9545,56 @@ export default async function handler(req: Request): Promise<Response> {
       case 'design_example_list': {
         const gate = await requireCap(sb, 'read'); if (gate) return gate;
         return designExampleList({ sb, svc: makeServiceClient('api:marketing-os:creative'), body, userId: user.userId });
+      }
+
+      /* ---------------- campaign planning (2026-09-14) ---------------- */
+      case 'campaign_plan_preview': {
+        const gate = await requireCap(sb, 'plan_campaign'); if (gate) return gate;
+        return campaignPlanPreview(planCtx(sb, body, user.userId));
+      }
+      case 'campaign_plan_revise': {
+        const gate = await requireCap(sb, 'plan_campaign'); if (gate) return gate;
+        return campaignPlanRevise(planCtx(sb, body, user.userId));
+      }
+      case 'campaign_plan_commit': {
+        const gate = await requireCap(sb, 'approve_plan'); if (gate) return gate;
+        return campaignPlanCommit(planCtx(sb, body, user.userId));
+      }
+      case 'campaign_plan_get': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return campaignPlanGet(planCtx(sb, body, user.userId));
+      }
+      case 'campaign_rollup': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return campaignRollup(planCtx(sb, body, user.userId));
+      }
+      case 'workload_calendar': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return workloadCalendar(planCtx(sb, body, user.userId));
+      }
+      case 'content_ad_readiness': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return contentAdReadiness(planCtx(sb, body, user.userId));
+      }
+      case 'capacity_config_save': {
+        const gate = await requireCap(sb, 'manage_capacity'); if (gate) return gate;
+        return capacityConfigSave(planCtx(sb, body, user.userId));
+      }
+      case 'content_caption_generate': {
+        const gate = await requireCap(sb, 'write_content'); if (gate) return gate;
+        return contentCaptionGenerate(planCtx(sb, body, user.userId));
+      }
+      case 'content_revise': {
+        const gate = await requireCap(sb, 'revise_approved_content'); if (gate) return gate;
+        return contentRevise(planCtx(sb, body, user.userId));
+      }
+      case 'refresh_cycle_list': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return refreshCycleList(planCtx(sb, body, user.userId));
+      }
+      case 'refresh_cycle_decide': {
+        const gate = await requireCap(sb, 'decide_refresh'); if (gate) return gate;
+        return refreshCycleDecide(planCtx(sb, body, user.userId));
       }
 
       default:

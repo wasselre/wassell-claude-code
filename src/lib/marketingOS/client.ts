@@ -3316,3 +3316,148 @@ export const fetchPerfKpiStatus = (month?: string): Promise<{ month: string; goa
 export const fetchPerfCalendar = (
   opts?: { month?: string; from?: string; to?: string },
 ): Promise<PerfCalendarData> => call('perf_calendar', opts ?? {});
+
+/* ------------------------------------------------------------------ */
+/* campaign planning (2026-09-14)                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The engine's own types are the contract — re-exported here so a component
+ * never re-declares them. The engine is PURE, so importing it into the SPA
+ * costs nothing and guarantees the preview renders exactly what was planned.
+ */
+export type {
+  PlanInput, PlanResult, PlannedItem, PlannedStage, PlannedPlacement, PlanBatch,
+  PlanConflict, PlannedCycle, LoadCell, PersonCapacity, WorkCalendar,
+} from '@/lib/marketingOS/scheduling';
+
+import type {
+  PlanResult as MosPlanResult, PersonCapacity as MosPersonCapacity,
+  WorkCalendar as MosWorkCalendar, LedgerRow as MosLedgerRow,
+} from '@/lib/marketingOS/scheduling';
+
+/** Requirements the wizard collects, before any record exists. */
+export interface MosPlanRequestInput {
+  campaign_id?: string | null;
+  kind: 'organic' | 'paid';
+  projects: Array<{ project_id: string; project_name?: string; posts: number; videos: number }>;
+  platforms: string[];
+  range_start: string;
+  range_end: string;
+  frequency: Array<{ platform: string; per_day: number; weekdays?: number[] | null; times?: string[] }>;
+  cross_post?: boolean;
+  publish_buffer_days?: number;
+  paid?: Array<{
+    execution_key: string; execution_id?: string | null; platform: string;
+    policy: {
+      slate_size: number; keep_min: number; cycle_days: number;
+      min_remaining_days: number; lead_time_working_days: number;
+      fifth_policy: 'A' | 'B';
+      banked_spares?: Array<{ slot_id: string; available_from: string }>;
+    };
+  }>;
+  overrides?: {
+    locked_placements?: Array<{ item_key: string; platform: string; day: string; index: number }>;
+    locked_assignees?: Record<string, string>;
+    dropped_item_keys?: string[];
+  };
+}
+
+export interface MosPlanEnvelope {
+  plan_id: string;
+  plan: MosPlanResult;
+  people: MosPersonCapacity[];
+  today: string;
+  calendar?: MosWorkCalendar;
+}
+
+export const previewCampaignPlan = (input: MosPlanRequestInput): Promise<MosPlanEnvelope> =>
+  call('campaign_plan_preview', { input });
+
+export const reviseCampaignPlan = (
+  planId: string, overrides: NonNullable<MosPlanRequestInput['overrides']>,
+): Promise<MosPlanEnvelope> => call('campaign_plan_revise', { plan_id: planId, overrides });
+
+export interface MosPlanCommitResult {
+  ok: boolean;
+  plan_id: string;
+  already_approved?: boolean;
+  created?: Record<string, number>;
+}
+
+/**
+ * Commit. A 409 carries `{error:'plan_changed'|'capacity_conflict', diff, plan}`
+ * in `MosApiError.body` — the caller MUST show the refreshed plan rather than
+ * retrying blindly. That is the whole point of the two-phase check.
+ */
+export const commitCampaignPlan = (planId: string): Promise<MosPlanCommitResult> =>
+  call('campaign_plan_commit', { plan_id: planId });
+
+export const fetchCampaignPlans = (
+  opts: { campaign_id?: string; plan_id?: string },
+): Promise<{ plans: Array<Record<string, unknown>> }> => call('campaign_plan_get', opts);
+
+export const fetchCampaignRollup = (
+  campaignId: string, executionId?: string | null,
+): Promise<{ rollup: Record<string, unknown> }> =>
+  call('campaign_rollup', { campaign_id: campaignId, execution_id: executionId ?? null });
+
+export const fetchWorkloadCalendar = (
+  from: string, to: string,
+): Promise<{
+  today: string; calendar: MosWorkCalendar;
+  people: MosPersonCapacity[]; ledger: MosLedgerRow[];
+}> => call('workload_calendar', { from, to });
+
+export interface MosAdReadiness {
+  ok: boolean;
+  blockers: Array<{ code: string; label_ar: string; label_en: string }>;
+}
+
+export const fetchAdReadiness = (
+  contentId: string, executionId?: string | null,
+): Promise<{ readiness: MosAdReadiness }> =>
+  call('content_ad_readiness', { content_id: contentId, execution_id: executionId ?? null });
+
+export const generateContentCaption = (
+  contentId: string,
+): Promise<{ caption: string; source: 'ai' | 'fallback' }> =>
+  call('content_caption_generate', { content_id: contentId });
+
+export const reviseContent = (
+  contentId: string, note: string, scope?: Array<'writing' | 'caption' | 'design'>,
+): Promise<{ revision: Record<string, unknown> }> =>
+  call('content_revise', { content_id: contentId, note, scope: scope ?? [] });
+
+export interface MosRefreshCycle {
+  id: string; execution_id: string; round: number;
+  refresh_on: string | null; ready_by: string | null;
+  production_start_on: string | null; decision_due_on: string | null;
+  status: string; decision: Record<string, unknown> | null;
+}
+
+export interface MosCreativeSlot {
+  id: string; execution_id: string; cycle_id: string | null; slot_index: number;
+  kind: 'initial' | 'replacement' | 'fifth' | 'spare';
+  status: 'reserved' | 'producing' | 'ready' | 'active' | 'retired' | 'released';
+  content_id: string | null; ad_row_id: string | null;
+  activate_on: string | null; bank_reserved_for_cycle_id: string | null;
+}
+
+export const fetchRefreshCycles = (executionId: string): Promise<{
+  cycles: MosRefreshCycle[];
+  slots: MosCreativeSlot[];
+  performance: Array<Record<string, unknown>>;
+}> => call('refresh_cycle_list', { execution_id: executionId });
+
+export const decideRefreshCycle = (
+  cycleId: string, keepAdIds: string[], replaceAdIds: string[],
+): Promise<{ decision: Record<string, unknown> }> =>
+  call('refresh_cycle_decide', { cycle_id: cycleId, keep_ad_ids: keepAdIds, replace_ad_ids: replaceAdIds });
+
+export const saveCapacityConfig = (payload: {
+  user_caps?: Array<{ user_id: string; bucket: string; daily_slots: number }>;
+  holidays?: Array<{ day: string; label_ar?: string; label_en?: string }>;
+  step_effort?: Array<{ workflow_key: string; step_key: string; bucket: string; working_days: number }>;
+  weekend_days?: number[];
+}): Promise<{ ok: boolean }> => call('capacity_config_save', payload);

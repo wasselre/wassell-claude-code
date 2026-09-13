@@ -120,7 +120,12 @@ export type Capability =
   | 'view_content_body' | 'view_activity' | 'compare_versions'
   // Performance & load system (2026-08-28): rate finished creatives, and run
   // the manager desk (discipline/leave/reward decisions, KPI goals, toggles).
-  | 'rate_creative' | 'manage_performance';
+  | 'rate_creative' | 'manage_performance'
+  // Campaign planning (2026-09-14): preview a plan against the live workload,
+  // commit it (which reserves people's days), settle a weekly creative refresh,
+  // reopen an approved package, and edit capacity / holidays / step effort.
+  | 'plan_campaign' | 'approve_plan' | 'decide_refresh'
+  | 'revise_approved_content' | 'manage_capacity';
 
 const Ctx = createContext<WorkspaceCtx | null>(null);
 
