@@ -181,17 +181,30 @@ export function buildUnitHtml({
  */
 export async function renderUnitPdf(html: string): Promise<Buffer> {
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
+  // `--single-process --no-zygote` are REQUIRED on locked-down/constrained
+  // containers (Fly shared-cpu): chromium's default multi-process model tries to
+  // fork a zygote + renderer and stalls indefinitely when it can't, which hangs
+  // page.pdf() with no error. These flags run everything in one process instead.
   const browser = await chromium.launch({
     executablePath,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    headless: true,
+    timeout: 30_000,
+    args: [
+      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+      '--single-process', '--no-zygote', '--disable-gpu',
+    ],
   });
   try {
     const page = await browser.newPage();
-    // `networkidle` settles the embedded data: URIs (logo + plan) before print;
-    // they resolve instantly (no network), so this returns as soon as layout
-    // is stable.
-    await page.setContent(html, { waitUntil: 'networkidle' });
-    const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' } });
+    // Only data: URIs are embedded (no real network), so 'load' settles at once.
+    await page.setContent(html, { waitUntil: 'load', timeout: 30_000 });
+    // page.pdf() has no built-in timeout — race it so a stuck render fails loudly
+    // (the lane marks the job failed) instead of hanging until the 10-min watchdog.
+    const pdf = await Promise.race([
+      page.pdf({ format: 'A4', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' } }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('page.pdf timed out after 45s')), 45_000)),
+    ]);
     return Buffer.from(pdf);
   } finally {
     await browser.close().catch((e: unknown) => {
