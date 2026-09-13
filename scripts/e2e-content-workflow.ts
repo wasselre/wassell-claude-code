@@ -214,8 +214,14 @@ async function main(): Promise<void> {
     `select=id,effort_days&subject_id=eq.${content.id}&status=eq.open`);
   if (openTask) {
     const yesterday = new Date(Date.now() - 5 * 86_400_000).toISOString().slice(0, 10);
+    // An UNASSIGNED task consumes nobody's capacity by design, so give it an
+    // owner before measuring — otherwise this would measure the null case.
+    const [owner] = await get<{ user_id: string }>('mos_user_capacity', 'select=user_id&limit=1');
+    const [anyUser] = await get<{ id: string }>('users', 'select=id&is_active=is.true&limit=1');
+    const assignee = owner?.user_id ?? anyUser?.id ?? null;
     await patch('workflow_role_tasks', `id=eq.${openTask.id}`, {
-      scheduled_start: yesterday, scheduled_end: yesterday, effort_days: 2, progress_days: 0,
+      scheduled_start: yesterday, scheduled_end: yesterday,
+      effort_days: 2, progress_days: 0, assignee_user_id: assignee,
     });
     const rows = await get<{ weight: number; day: string }>('mos_work_ledger_v',
       `select=weight,day&ref_id=eq.${openTask.id}`);
