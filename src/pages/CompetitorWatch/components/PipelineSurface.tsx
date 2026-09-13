@@ -46,7 +46,7 @@ export default function PipelineSurface({ isAr }: { isAr: boolean }) {
             {([
               { k: 'attributed', ar: 'مرتبط بمشروع', en: 'Linked to a project', v: data.attribution.attributed, tone: 'ok' },
               { k: 'locked', ar: 'ثبّته إنسان', en: 'Fixed by a person', v: data.attribution.locked, tone: 'ok' },
-              { k: 'name_absent', ar: 'اسم المشروع غائب عن النص', en: 'Project name absent from the text', v: data.attribution.name_absent, tone: 'warn' },
+              { k: 'name_absent', ar: 'ربط بلا اقتباس يسمّي المشروع', en: 'Linked without a quote naming the project', v: data.attribution.name_absent, tone: 'warn' },
               { k: 'weak_picks', ar: 'ربط على كلمة واحدة', en: 'Link rests on one word', v: data.attribution.weak_picks, tone: 'warn' },
               { k: 'unknown_mentions', ar: 'يذكر مشروعًا غير مسجّل', en: 'Names an unknown project', v: data.attribution.unknown_mentions, tone: 'warn' },
               { k: 'awaiting', ar: 'بانتظار قرار الذكاء', en: 'Awaiting the AI decision', v: data.attribution.awaiting_decision, tone: 'warn' },
@@ -64,8 +64,8 @@ export default function PipelineSurface({ isAr }: { isAr: boolean }) {
             })}
             <p className="cw-note">
               {isAr
-                ? 'هذه هي الفحوصات نفسها التي كشفت الربط الخاطئ في سبتمبر 2026 — إن ارتفع «اسم المشروع غائب» أو «ربط على كلمة واحدة» فالقواعد تراجعت.'
-                : 'These are the exact checks that exposed the wrong links in September 2026 — if "name absent" or "one word" climb, the rules have regressed.'}
+                ? 'هذه هي الفحوصات نفسها التي كشفت الربط الخاطئ في سبتمبر 2026 — إن ارتفع «ربط بلا اقتباس» أو «ربط على كلمة واحدة» فالقواعد تراجعت.'
+                : 'These are the exact checks that exposed the wrong links in September 2026 — if "without a quote" or "one word" climb, the rules have regressed.'}
             </p>
           </div>
         </div>

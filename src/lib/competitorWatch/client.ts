@@ -104,7 +104,7 @@ export interface AgentActivity {
 }
 export interface AttributionHealth {
   enriched: number; attributed: number; locked: number;
-  /** attributed posts whose project name never appears in caption/OCR/transcript */
+  /** machine links whose proof quote is empty or names none of the project's words */
   name_absent: number;
   /** picks resting on a lone word */
   weak_picks: number;

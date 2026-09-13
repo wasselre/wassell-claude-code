@@ -83,7 +83,7 @@ that study the corpus (how competitors write posts, script reels, price offers).
   machine attributions and hands changed posts back to the runner. Locked
   posts are skipped.
 - **Attribution health on the Pipeline surface:** linked · fixed by a person ·
-  project name absent from the text · link rests on one word · names an
+  linked without a quote naming the project · link rests on one word · names an
   unknown project · awaiting decision · queued for re-linking. These are the
   exact checks that exposed the September 2026 mis-links.
 - **Design-read chip (2026-09-02):** expanding an entry lazily fetches its
