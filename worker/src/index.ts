@@ -3395,7 +3395,15 @@ async function scheduledWhatsappPollLoop(): Promise<void> {
 
 // Drain the queues concurrently for the lifetime of the process.
 let loops: Array<Promise<void>>;
-if (env.WORKFLOW_PROOF_ONLY) {
+if (process.env.UNIT_PDF_ONLY === '1') {
+  // DEDICATED RENDER MACHINE — runs ONLY the unit-pdf render lane (headless
+  // Chromium). The general worker machines are 512MB shared-cpu and saturated by
+  // the marketing lane, which starves chromium (renders hang / never finish). So
+  // rendering is isolated onto ONE right-sized machine via this per-machine env,
+  // and the general machines skip the unit-pdf loop entirely (see the else below).
+  console.log('[worker] UNIT_PDF_ONLY=1 — dedicated render machine: only the unit-pdf loop runs here');
+  loops = [unitPdfPollLoop()];
+} else if (env.WORKFLOW_PROOF_ONLY) {
   // LOCAL PROOF MODE ONLY — register ONLY the workflow loop so a local run
   // against a preview endpoint can't claim/process live deck/image/document/
   // migration jobs from the shared prod DB. MUST NOT be set on the prod Fly
@@ -3415,7 +3423,9 @@ if (env.WORKFLOW_PROOF_ONLY) {
     documentPollLoop(),
     migrationPollLoop(),
     scriptPollLoop(), // always-on: worker already holds ANTHROPIC_API_KEY
-    unitPdfPollLoop(), // always-on: no extra secret; WhatsApp delivery rides the WAHA scheduled-send loop
+    // NB: unitPdfPollLoop() is NOT here — headless-Chromium rendering is isolated
+    // onto a dedicated machine (UNIT_PDF_ONLY=1 above); it starves on these busy
+    // 512MB general machines.
     conflictWatchdogLoop(),
     marketingOpsPollLoop(), // always-on: ops monitoring runs even when collection is disabled
   ];
