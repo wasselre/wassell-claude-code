@@ -25,6 +25,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import Anthropic from '@anthropic-ai/sdk';
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { enqueueAiReply } from '../_lib/aiSend.js';
@@ -89,8 +90,41 @@ function detectLang(raw: string | null | undefined): 'ar' | 'en' {
   return 'ar';
 }
 
-type Action = 'greet' | 'qualify' | 'project_sheet' | 'no_service' | 'handoff' | 'kimi';
-interface Decision { action: Action; projectName?: string; reason?: string; severity?: 'info' | 'action' | 'warning'; silent?: boolean; holding?: string; reply?: string }
+type Action = 'greet' | 'qualify' | 'project_sheet' | 'unit_sheet' | 'no_service' | 'handoff' | 'kimi';
+interface Decision { action: Action; projectName?: string; unitCode?: string; reason?: string; severity?: 'info' | 'action' | 'warning'; silent?: boolean; holding?: string; reply?: string }
+
+/** A unit code as the website shows it: `U-` + serial (e.g. U-0042). Customers
+ *  arriving from a unit card paste it, sometimes without the padding/space. The
+ *  leading `U-` makes this safe against false positives (a bare "u" never matches). */
+const UNIT_CODE_RE = /\bU-\s?0*\d{1,6}\b/i;
+/** Canonicalize a matched code to `U-<digits, no leading zeros>` for lookup. */
+function normalizeUnitCode(m: string): string {
+  const digits = (m.match(/\d{1,6}/)?.[0] ?? '').replace(/^0+/, '') || '0';
+  return `U-${digits}`;
+}
+
+/** The intro line that precedes the unit PDF (the worker sends the PDF itself). */
+const unitIntro = (code: string, lang: 'ar' | 'en') =>
+  lang === 'en'
+    ? `Sure — here are the full details for unit ${code}. A PDF with everything is on its way 👇`
+    : `تفضّل، هذي تفاصيل الوحدة ${code} كاملة، وبيوصلك ملف PDF فيه كل المعلومات 👇`;
+
+/** Resolve a units record by its customer-facing unit_code. Tries the normalized
+ *  form and the zero-padded `U-0000` form (the model's auto_id format). Returns the
+ *  record id, or null when no unit carries that code. */
+async function resolveUnitByCode(supa: SupabaseClient, code: string): Promise<{ id: string } | null> {
+  const { data: unitsModel } = await supa.from('models').select('id').eq('name', 'units').maybeSingle();
+  if (!unitsModel?.id) return null;
+  const digits = code.replace(/^U-/i, '');
+  const candidates = [...new Set([code, `U-${digits.padStart(4, '0')}`])];
+  const { data } = await supa
+    .from('records').select('id')
+    .eq('model_id', unitsModel.id as string)
+    .in('data->>unit_code', candidates)
+    .limit(1);
+  const row = (data ?? [])[0] as { id: string } | undefined;
+  return row ? { id: row.id } : null;
+}
 
 /** Deterministic classifier — no LLM. Returns 'kimi' only for the ambiguous tail. */
 function classify(raw: string | null | undefined): Decision {
@@ -105,6 +139,11 @@ function classify(raw: string | null | undefined): Decision {
   // Things we don't offer.
   if (/للايجار|للإيجار|إيجار|ايجار|تأجير|أرض للبيع|ارض للبيع|محل تجاري|مكتب للايجار/.test(t))
     return { action: 'no_service' };
+
+  // Unit code (from the website) → send that unit's PDF one-pager. High-confidence
+  // deterministic signal (leading `U-`), checked before the project regexes.
+  const uc = t.match(UNIT_CODE_RE);
+  if (uc) return { action: 'unit_sheet', unitCode: normalizeUnitCode(uc[0]) };
 
   // Named-project ad lead → send that project's sheet.
   const m = t.match(/مهتم.{0,8}(?:بمشروع|في مشروع|بمشروعكم)\s+(.+)/);
@@ -228,9 +267,11 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   // kill switch ('disabled') and an actively-replying human ('human_active') — the
   // bot never talks over a rep. The bypass is threaded into sendProjectViaAiFlow
   // via `force` below so its own gate re-check doesn't re-block on the same reason.
-  const namedProjectBypass = d.action === 'project_sheet'
+  // A named project OR a website unit code is a safe, deterministic, customer-
+  // initiated ask — treat both the same way.
+  const softBypass = (d.action === 'project_sheet' || d.action === 'unit_sheet')
     && (g?.reason === 'working_hours' || g?.reason === 'reply_cap_reached');
-  if (!gateOk && !namedProjectBypass) {
+  if (!gateOk && !softBypass) {
     return jsonRes(nodeRes, 200, { skipped: true, reason: g?.reason ?? 'blocked' });
   }
 
@@ -248,6 +289,9 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   // Set true when a branch has ALREADY enqueued its own send (the project flow),
   // so the generic text send below is skipped for it.
   let sent = false;
+  // When the generic send below must bypass the working-hours / reply-cap gate
+  // (a deterministic unit-code ask), same posture as the project flow's `force`.
+  let forceSend = false;
 
   if (d.action === 'greet') {
     // Kimi may hand back an Arabic greeting in d.reply; honor it only for Arabic.
@@ -267,7 +311,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     // re-checks the gate, sends the text now and staggers the media into the queue.
     const flow = await sendProjectViaAiFlow(supa, {
       chatWid, projectName: d.projectName, deviceId: body.device_id, jobId: 'basic',
-      onlyOurProjects: true, allowAi: false, force: namedProjectBypass, lang,
+      onlyOurProjects: true, allowAi: false, force: softBypass, lang,
     });
     if (flow.blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: flow.reason });
     if (flow.queued) {
@@ -279,6 +323,34 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       // Couldn't resolve the project → hand off rather than guess.
       replyText = HOLDING; handoff = true; severity = 'action';
       summary = `العميل مهتم بمشروع «${d.projectName ?? ''}» لكن تعذّر إيجاده — يحتاج متابعة مندوب.`;
+    }
+  } else if (d.action === 'unit_sheet') {
+    // Customer sent a website unit code → send that unit's PDF one-pager. The bot
+    // can't render a PDF, so it sends the intro line now (audited, so it doesn't
+    // look human-sent) and ENQUEUES the render; the Fly worker renders the exact
+    // one-pager with headless Chromium and sends the PDF as a follow-up.
+    const unit = await resolveUnitByCode(supa, d.unitCode!);
+    if (!unit) {
+      // Unknown code → hand off rather than guess.
+      replyText = lang === 'en' ? HOLDING_EN : HOLDING; handoff = true; severity = 'action';
+      summary = `العميل أرسل كود وحدة «${d.unitCode}» غير موجود — يحتاج متابعة مندوب.`;
+    } else {
+      const { data: jobId, error: enqErr } = await supa.rpc('unit_pdf_job_enqueue', {
+        p_unit_id: unit.id, p_unit_code: d.unitCode, p_chat_wid: chatWid,
+        p_phone: body.phone ?? null, p_device_id: body.device_id ?? null, p_lang: lang,
+      });
+      if (enqErr) {
+        // Queue not deployed yet, or enqueue failed → hand off so a human sends it.
+        console.error('[basic-reply] unit_pdf enqueue failed:', enqErr.message);
+        replyText = lang === 'en' ? HOLDING_EN : HOLDING; handoff = true; severity = 'action';
+        summary = `العميل طلب الوحدة «${d.unitCode}» لكن تعذّر جدولة البطاقة — يحتاج متابعة مندوب.`;
+      } else {
+        // Send the intro now; the worker sends the PDF. jobId can be null when a
+        // duplicate job was deduped — still fine, the first job sends the PDF.
+        replyText = unitIntro(d.unitCode!, lang);
+        forceSend = softBypass;
+        summary = `تم جدولة إرسال بطاقة الوحدة «${d.unitCode}» (PDF) للعميل${jobId ? '' : ' (طلب مكرر)'}.`;
+      }
     }
   } else {
     // handoff (incl. media, b2b, kimi-handoff)
@@ -296,7 +368,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   // Send the reply (in-process: gate re-check + device + queue + audit).
   // Skipped for a project_sheet that already sent via the flow (sent=true, replyText=null).
   if (replyText) {
-    const res = await enqueueAiReply(supa, { chatWid, text: replyText, deviceId: body.device_id, jobId: 'basic' });
+    const res = await enqueueAiReply(supa, { chatWid, text: replyText, deviceId: body.device_id, jobId: 'basic', force: forceSend });
     if (res.blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: res.reason });
     sent = res.queued;
   }

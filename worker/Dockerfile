@@ -49,6 +49,13 @@ ENV NODE_ENV=production
 # release of the node:22-alpine base tag; ffmpeg (already installed) is used
 # by yt-dlp for muxing. The exact version is captured at build via
 # `yt-dlp --version` and reported. python3 comes in as a yt-dlp dependency.
+#
+# chromium — headless browser used by runUnitPdfJob.ts (via playwright-core) to
+# render the rep's unit one-pager HTML to an A4 PDF. playwright-core ships NO
+# bundled browser, so we install Alpine's system chromium (~150 MB with its
+# deps) and point playwright-core at it (CHROMIUM_PATH below). nss/freetype/
+# harfbuzz are its runtime libs; ttf-freefont gives it a base Latin font (Amiri
+# for Arabic is already registered via fc-cache above/below).
 RUN apk add --no-cache \
     ffmpeg \
     yt-dlp \
@@ -61,8 +68,18 @@ RUN apk add --no-cache \
     font-noto-arabic \
     font-noto \
     ttf-dejavu \
-    font-liberation
+    font-liberation \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ttf-freefont
 RUN yt-dlp --version
+
+# playwright-core must NOT try to download its own browser (there is none for
+# Alpine musl anyway) — use the system chromium installed above.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    CHROMIUM_PATH=/usr/bin/chromium-browser
 
 # Amiri TTFs (OFL-licensed) from the google/fonts repo — ADD fetches the
 # files at build time; fc-cache registers them so soffice can use them.

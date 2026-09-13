@@ -44,6 +44,7 @@ import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
 import { runEnrichmentJob, type EnrichmentJob } from './runEnrichmentJob.js';
 import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
+import { runUnitPdfJob, type UnitPdfJob } from './runUnitPdfJob.js';
 import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
 import { runCreativeCleanup } from './marketing/creativeCleanup.js';
 import { sweepContentBacklog } from './marketing/content/sweepBacklog.js';
@@ -187,6 +188,13 @@ let translationWakeRequested = false;
 // vice-versa). Always registered — the worker already holds ANTHROPIC_API_KEY.
 let scriptBusy = false;
 let scriptWakeRequested = false;
+// Unit-PDF sends (unit_pdf_jobs, in-app WhatsApp bot "customer sent a unit code
+// → send that unit's PDF one-pager"). Own loop so a ~5-15s headless-Chromium
+// render never head-of-line-blocks behind a deck/script (and vice-versa). Always
+// registered — no extra secret; the actual WhatsApp delivery rides the WAHA
+// scheduled-send loop, which is separately gated on the WAHA secrets.
+let unitPdfBusy = false;
+let unitPdfWakeRequested = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -778,6 +786,95 @@ async function scriptPollLoop(): Promise<void> {
     }
     const wokeAt = Date.now();
     while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !scriptWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unit-PDF sends — unit_pdf_jobs queue (WhatsApp bot unit one-pager).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued unit-PDF job (if any) and run it to completion. Mirrors the
+ * script claim-run shape against unit_pdf_jobs. runUnitPdfJob owns the job
+ * lifecycle (complete on success, fail + rethrow on error), so this just claims,
+ * runs, and logs. Returns true if a job was claimed.
+ */
+async function claimAndRunOneUnitPdf(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('unit_pdf_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] unit-pdf claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    id: string; unit_id: string; unit_code: string | null;
+    chat_wid: string; phone: string | null; device_id: string | null;
+    lang: string; attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: UnitPdfJob = {
+    id: row.id,
+    unitId: row.unit_id,
+    unitCode: row.unit_code,
+    chatWid: row.chat_wid,
+    phone: row.phone,
+    deviceId: row.device_id,
+    lang: row.lang === 'en' ? 'en' : 'ar',
+    attempts: row.attempts,
+  };
+  console.log(
+    `[worker] claimed unit-pdf job=${job.id} unit=${job.unitId} chat=${job.chatWid} attempts=${job.attempts}`,
+  );
+  try {
+    await runUnitPdfJob({ supabase, env, job });
+  } catch (err) {
+    // runUnitPdfJob already marked the job failed via unit_pdf_job_fail — just
+    // surface the stack here for the operator.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] unit-pdf job=${job.id} FAILED:`, msg);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+  }
+  return true;
+}
+
+async function runUnitPdfWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('unit_pdf_jobs_watchdog');
+    if (error) { console.error(`[worker] unit-pdf watchdog RPC error: ${error.message}`); return; }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) console.warn(`[worker] unit-pdf watchdog swept ${swept} stale job(s)`);
+  } catch (err) {
+    console.error('[worker] unit-pdf watchdog threw:', err);
+  }
+}
+
+/** Unit-PDF twin of scriptPollLoop, with its own busy/wake flags + watchdog. */
+async function unitPdfPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    unitPdfBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneUnitPdf();
+    } catch (err) {
+      console.error('[worker] unit-pdf poll iteration error:', err);
+    }
+    unitPdfBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runUnitPdfWatchdog();
+    }
+    if (didClaim || unitPdfWakeRequested) {
+      unitPdfWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !unitPdfWakeRequested && !shuttingDown) {
       await sleep(200);
     }
   }
@@ -2706,6 +2803,7 @@ const server = http.createServer((req, res) => {
         translation_busy: translationBusy,
         translation_enabled: Boolean(env.DEEPSEEK_API_KEY),
         script_busy: scriptBusy,
+        unit_pdf_busy: unitPdfBusy,
         cv_process_busy: cvProcessBusy,
         cv_analyze_busy: cvAnalyzeBusy,
         cv_lanes_enabled: cvLanesActive,
@@ -2737,6 +2835,7 @@ const server = http.createServer((req, res) => {
     marketingWakeRequested = true;
     translationWakeRequested = true;
     scriptWakeRequested = true;
+    unitPdfWakeRequested = true;
     cvProcessWakeRequested = true;
     cvAnalyzeWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
@@ -3316,6 +3415,7 @@ if (env.WORKFLOW_PROOF_ONLY) {
     documentPollLoop(),
     migrationPollLoop(),
     scriptPollLoop(), // always-on: worker already holds ANTHROPIC_API_KEY
+    unitPdfPollLoop(), // always-on: no extra secret; WhatsApp delivery rides the WAHA scheduled-send loop
     conflictWatchdogLoop(),
     marketingOpsPollLoop(), // always-on: ops monitoring runs even when collection is disabled
   ];
