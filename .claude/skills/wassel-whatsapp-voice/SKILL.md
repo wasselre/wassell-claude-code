@@ -97,6 +97,19 @@ Rules for cards: dash lines, one fact per line, 5–9 lines, one emoji max in th
 | ناسبتك وحدة يمام 17 (U-49618) اللي سألتي عنها؟ إذا تبين أرسل لك باقي الأدوار المتاحة في المشروع أو أرتب لك زيارة. | مسيتي بالخير، ناسبتك وحدة يمام 17؟ أرسل لك باقي الأدوار؟ |
 | للاستثمار، على الخارطة مناسب لأن الدفعة الأولى 5% والباقي على مراحل الإنشاء، والعائد بعد التسليم أعلى من الجاهز. لكن إذا تبي جاهز من اليوم بـ 600 ألف، عندنا الماجدية 163 شرق الرياض من 559,000 ر.س. أي اتجاه أرسل لك تفاصيله؟ | للاستثمار على الخارطة مناسب، الدفعة الأولى 5% والباقي على الإنشاء. وإذا تبي جاهز بـ 600 ألف عندنا الماجدية 163 بالشرق. أي واحد؟ |
 
+## What the operator's own edits taught (2026-09-13, 15 edits before sending)
+
+Read the `suggested_message` → `final_message` diffs in `wa_followup_suggestions` after every batch; they are the ground truth. The first batch showed:
+
+1. **Ask, don't stack.** Every trailing «وإذا تبي … عندنا …» offer got cut. One question; the alternative comes after they answer. (فهد سعد, سارة سعد, خالد)
+2. **Stale thread → check-in, not delivery.** When the client last wrote a week or more ago and the reply would need real work (plans, a fact from the developer, a menu), the operator sends «مساك الله بالخير، لازلت مهتم بشراء وحدة سكنية؟» or «كيف شفت المشاريع اللي أرسلت لك؟» and delivers only once they answer. (Saud, A, TH, Eng. Heba, سعد العتيبي)
+3. **Don't promise what you won't personally do.** «والخصم أأكده لك اليوم» was deleted. No commitments on the rep's behalf.
+4. **Don't narrate the mistake.** «أكنان بالشمال مو الشرق» was cut; just apologise and give the right thing.
+5. **Don't apologise for a missing attachment — just attach it.** «المعذرة ما وصلتك الصور، هذي…» → «هذي قائمة الوحدات، أي وحدة تبين تفاصيلها؟».
+6. **Softer close is fine:** «… من 576 ألف إذا مهتم» instead of «أرسلك إياهم؟».
+7. **Visit slots: today or tomorrow, one time.** «يناسبك بكرة أو اليوم 4 العصر؟».
+8. «عشان نشوف لك بدائل» rather than «عشان أصيب طلبك».
+
 ## Self-check before saving a message
 
 - Would فهد type this with his thumb in ten seconds? If not, cut it.
@@ -115,3 +128,4 @@ Rules for cards: dash lines, one fact per line, 5–9 lines, one emoji max in th
 - 2026-09-13 — Operator, on the Abdelmalek card: "So now we would reply to the client after 10 days, without changing 'hello', without changing anything." → rule 15 (greeting first, apology when we owed the reply); 31 queued rows re-prefixed.
 - 2026-09-13 — Operator, on the الحمدلله card: "ابشر not تسلم" / "ارسلك إياهم، not ارسلك" → phrasebook entries above; 34 queued rows corrected.
 - 2026-09-13 — Operator, on the ام عبد العزيز card: "تزور/تزورين not نزور" → the client visits, the rep arranges; pending rows corrected.
+- 2026-09-13 — Harvested the operator's 15 pre-send edits into the section above; 65 pending rows re-trimmed (one question each, stale promised threads → check-in first).
