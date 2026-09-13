@@ -313,7 +313,7 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     await sb.rpc('mkt_enrichment_upsert', {
       p_post: contentPostId, p_model: null, p_rule_version: RULE_VERSION, p_org: post.organization_id,
       p_developer: null, p_marketer: null, p_primary_project: null, p_candidates: candidates,
-      p_result: { account_identity: acctIdentity, deterministic_partial: deterministicPartial, snippet: combined.slice(0, 160) },
+      p_result: { account_identity: acctIdentity, deterministic_partial: deterministicPartial, snippet: headByCodePoints(combined, 160) },
       p_cost: 0, p_status: 'pending', p_failure: null,
     });
     stats.enriched = true; // pending row written; runner completes the decision
@@ -336,6 +336,17 @@ async function accountIdentity(sb: SupabaseClient, accountId: string | null): Pr
   if (!accountId) return 'unknown';
   const { data } = await sb.from('mkt_social_accounts').select('handle, platform').eq('id', accountId).maybeSingle();
   return data ? `@${data.handle} (${data.platform})` : 'unknown';
+}
+
+/**
+ * First N CODE POINTS of a string. `String.prototype.slice` counts UTF-16
+ * units, so cutting a caption at 160 could split an emoji surrogate pair —
+ * the lone surrogate then fails JSON encoding at PostgREST ("Empty or invalid
+ * json") and the whole enrichment upsert is refused (seen live 2026-09-13 on
+ * a caption ending in 👌 near the cut).
+ */
+function headByCodePoints(s: string, n: number): string {
+  return Array.from(s).slice(0, n).join('');
 }
 
 interface PostRow {
@@ -382,7 +393,7 @@ async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: P
   const prev = ((enr?.result ?? {}) as Record<string, unknown>);
   const deterministicPartial = prev.deterministic_partial === true || post.processing_status === 'partial';
   const acctIdentity = await accountIdentity(sb, post.social_account_id);
-  const result = { ...prev, account_identity: acctIdentity, deterministic_partial: deterministicPartial, snippet: combined.slice(0, 160), renarrowed_at: new Date().toISOString(), narrow_rule: RULE_VERSION };
+  const result = { ...prev, account_identity: acctIdentity, deterministic_partial: deterministicPartial, snippet: headByCodePoints(combined, 160), renarrowed_at: new Date().toISOString(), narrow_rule: RULE_VERSION };
 
   // Machine-made attributions from the old rules start over; human decisions
   // (confirmed / rejected) are never touched by this RPC.
