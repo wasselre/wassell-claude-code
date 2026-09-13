@@ -1,7 +1,7 @@
 # PRD: Follow-up Queue (متابعات مقترحة)
 
 **Status:** Live
-**Last updated:** 2026-09-13
+**Last updated:** 2026-09-13 (voice rules added the same day — see `.claude/skills/wassel-whatsapp-voice/SKILL.md`)
 
 ## What it is
 
@@ -23,6 +23,8 @@ The page at `/sales/follow-up-queue` lists those rows as cards. Clicking **«ا�
 - **Sidebar + access:** a `CUSTOM_PAGES` entry (`follow_up_queue`, `default_access:'admin'`) — admins see it; other profiles get it from Settings → Profiles. The route is guarded by `RequirePageAccess`.
 - **Realtime:** the page mounts `subscribeToAllChats` while open so the popup thread updates live.
 - `sent_by_user_id` / `dismissed_by_user_id` are `public.users.id` (from `currentUserId`), never `auth.uid()`.
+
+- **Voice:** every `suggested_message` is written under `.claude/skills/wassel-whatsapp-voice/SKILL.md` — the reps' measured WhatsApp style (median 29 characters, Najdi, one idea, one closing question, no bullets, no «ر.س»). The first batch was rewritten under it on 2026-09-13 after the operator rejected the original brochure-style drafts.
 
 ## User flows
 
