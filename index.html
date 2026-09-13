@@ -39,6 +39,47 @@
       </div>
     </div>
     <style>@keyframes wassel-boot-spin{to{transform:rotate(360deg)}}</style>
+    <!-- Boot recovery (classic script, runs BEFORE the entry module is fetched).
+         vercel.json stamps `Cache-Control: immutable` on /assets/<hash>.js BY PATH,
+         so a transient 404/503 for the entry bundle (edge propagation right after
+         a deploy) is cached by the browser for a year. Every later load — and the
+         version poller's forced reload that caused the first one — then shows
+         this spinner forever (live incident 2026-09-13). The entry module's
+         fetch failure fires a capture-phase `error` on the <script>; re-fetch
+         the same URL with cache:'reload' (overwrites the cached error entry),
+         then reload ONCE. If that still fails, show a retry screen instead of an
+         endless spinner. main.tsx clears the guard once the app has mounted. -->
+    <script>
+      (function () {
+        var KEY = 'wassell_boot_recovered';
+        function heal(src) {
+          return fetch(src, { cache: 'reload' }).then(function (r) { return r.ok; }, function () { return false; });
+        }
+        function retryScreen(src) {
+          var root = document.getElementById('root');
+          if (!root) return;
+          root.innerHTML =
+            '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#F5EDE0;font-family:Amiri,serif;color:#4A4E54;text-align:center;padding:24px">' +
+            '<div><div style="font-size:20px;margin-bottom:8px">تعذّر تحميل التطبيق</div>' +
+            '<div style="font-size:14px;opacity:.8;margin-bottom:16px">The app could not be loaded. Check your connection and try again.</div>' +
+            '<button id="wassel-boot-retry" style="background:#B8734F;color:#fff;border:0;border-radius:8px;padding:10px 20px;font-family:inherit;font-size:16px;cursor:pointer">إعادة المحاولة · Retry</button></div></div>';
+          var btn = document.getElementById('wassel-boot-retry');
+          if (btn) btn.onclick = function () {
+            btn.disabled = true;
+            try { sessionStorage.removeItem(KEY); } catch (_) {}
+            heal(src).then(function () { location.reload(); });
+          };
+        }
+        window.addEventListener('error', function (e) {
+          var el = e.target;
+          if (!el || el.tagName !== 'SCRIPT' || !el.src || el.src.indexOf('/assets/') === -1) return;
+          var already = false;
+          try { already = !!sessionStorage.getItem(KEY); sessionStorage.setItem(KEY, '1'); } catch (_) {}
+          if (already) { retryScreen(el.src); return; }
+          heal(el.src).then(function () { location.reload(); });
+        }, true);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
