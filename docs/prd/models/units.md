@@ -5,7 +5,7 @@
 # Model: Units / الوحدات  `units`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-02
+**Last updated (from DB):** 2026-09-07
 **Model id:** `7ca3014d-f658-418e-9c53-2d279c97f009`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -59,7 +59,7 @@
 | `unit_status` | Unit Status / حالة الوحدة | Dropdown | no | half | yes | 4 options |
 | `total_price` | Total Price / إجمالي السعر | Currency | no | half | yes |  |
 | `project_opening_date` | Project Opening Date / موعد افتتاح المشروع | Date | no | half | no |  |
-| `payment_plans` | Payment Plans / خطط السداد | Table | no | full | no | 7 columns |
+| `payment_plans` | Payment Plans / خطط السداد | Table | no | full | no | 8 columns |
 
 **Field details:**
 
@@ -76,6 +76,7 @@
   - `after_handover` "After Handover %" (number)
   - `price` "Price (AED)" (number)
   - `price_sar` "Price (SAR)" (number)
+  - `schedule` "Schedule" (text)
 
 ### 3. Layout / التصميم الداخلي  _(color #C09B5F)_
 
