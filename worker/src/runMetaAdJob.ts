@@ -384,8 +384,9 @@ async function resolveSlots(sb: SupabaseClient, content: ContentRow): Promise<Sl
   // and is exactly what the buyer had to undo by hand — so a missing slot is a
   // loud failure, not a guess.
   if (!square || !vertical) {
-    const missing = [!square ? 'square 1:1 (feed)' : null, !vertical ? 'vertical 9:16 (stories / reels / status)' : null].filter(Boolean).join(' and ');
-    throw new Error(`the ${missing} design is missing — upload BOTH design slots on the Materials tab, then retry`);
+    const missingAr = [!square ? 'المربّع (١:١ للفيد)' : null, !vertical ? 'الطولي (٩:١٦ للستوري والريلز وحالة واتساب)' : null].filter(Boolean).join(' و');
+    const missingEn = [!square ? 'square 1:1 (feed)' : null, !vertical ? 'vertical 9:16 (stories / reels / status)' : null].filter(Boolean).join(' and ');
+    throw new Error(`ينقص التصميم ${missingAr} — ارفع التصميمين معًا من تبويب المواد ثم اضغط «إعادة المحاولة». / The ${missingEn} design is missing — upload BOTH design slots on the Materials tab, then retry.`);
   }
   const ids = [...new Set([square, vertical])];
 
@@ -686,6 +687,36 @@ async function openCaptionTask(sb: SupabaseClient, args: {
   if (ins.error) console.error('[meta-ad] caption task insert failed:', ins.error.message);
 }
 
+/** Phase-2 failure → the caption task returns to the approver's list with the
+ *  reason as its details (the popup shows the failed card + retry). */
+async function reopenCaptionTaskOnFailure(sb: SupabaseClient, args: {
+  adRowId: string; contentId: string; assigneeUserId: string | null; error: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const c = await sb.from('mos_content').select('title').eq('id', args.contentId).maybeSingle();
+  const title = `تعذّر إنشاء إعلان ميتا: ${(c.data as { title?: string } | null)?.title ?? ''}`.slice(0, 200);
+  const details = args.error.slice(0, 600);
+  const last = await sb.from('mos_manual_tasks').select('id, status')
+    .eq('kind', 'caption_review').eq('ref_id', args.adRowId)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (last.error) { console.error('[meta-ad] caption task read failed:', last.error.message); return; }
+  const prev = last.data as { id: string; status: string } | null;
+  if (prev) {
+    const upd = await sb.from('mos_manual_tasks')
+      .update({ status: 'open', title, details, closed_at: null, closed_by_user_id: null, done_note: null, due_at: new Date(Date.now() + 24 * 3600_000).toISOString(), updated_at: now })
+      .eq('id', prev.id);
+    if (upd.error) console.error('[meta-ad] caption task reopen failed:', upd.error.message);
+    return;
+  }
+  if (!args.assigneeUserId) { console.error('[meta-ad] failure task NOT opened — no approver user id on the job'); return; }
+  const ins = await sb.from('mos_manual_tasks').insert({
+    kind: 'caption_review', ref_id: args.adRowId, title, details,
+    assignee_user_id: args.assigneeUserId, created_by_user_id: args.assigneeUserId,
+    content_id: args.contentId, status: 'open', due_at: new Date(Date.now() + 24 * 3600_000).toISOString(),
+  });
+  if (ins.error) console.error('[meta-ad] failure task insert failed:', ins.error.message);
+}
+
 async function closeCaptionTask(sb: SupabaseClient, adRowId: string, note: string): Promise<void> {
   const now = new Date().toISOString();
   const upd = await sb.from('mos_manual_tasks')
@@ -703,6 +734,13 @@ export async function failMetaAdJob(sb: SupabaseClient, job: MetaAdJob, message:
       await patchAdRow(sb, adRowId, {}, { state: 'failed', error: message, failed_at: new Date().toISOString() });
     } catch (e) {
       console.error('[meta-ad] could not record the failure on the ad row:', e instanceof Error ? e.message : e);
+    }
+    // The failure is the approver's to act on → it goes back to «مهامي» as the
+    // same task (reopened with the reason), not only as a notification.
+    try {
+      await reopenCaptionTaskOnFailure(sb, { adRowId, contentId: job.recordId, assigneeUserId: approvedBy, error: message });
+    } catch (e) {
+      console.error('[meta-ad] could not reopen the caption task:', e instanceof Error ? e.message : e);
     }
   }
   await notify(sb, {
@@ -838,10 +876,10 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
   const adSet = await meta.getAdSet(platformAdSetId);
   const split = placementSplit(adSet);
   if (split.uncovered.length > 0) {
-    throw new Error(`the Meta ad set «${adSet.name}» delivers on ${split.uncovered.join(', ')} — Wassel ads run on Instagram + WhatsApp only; remove those placements from the ad set in Ads Manager`);
+    throw new Error(`المجموعة الإعلانية «${adSet.name}» تعرض على ${split.uncovered.join('، ')} — إعلانات وصل على إنستقرام وواتساب فقط؛ أزل تلك الأماكن من المجموعة في Ads Manager. / The ad set delivers on ${split.uncovered.join(', ')} — Wassel ads run on Instagram + WhatsApp only; remove those placements in Ads Manager.`);
   }
   if (!split.square || !split.vertical) {
-    throw new Error(`the Meta ad set «${adSet.name}» has no ${!split.square ? 'feed' : 'story/reels/status'} placement — it needs both (Instagram feed + stories/reels, WhatsApp status)`);
+    throw new Error(`المجموعة الإعلانية «${adSet.name}» بلا مكان ${!split.square ? 'فيد' : 'ستوري/ريلز/حالة'} — تحتاج الاثنين (فيد إنستقرام + ستوري وريلز وحالة واتساب). / The ad set has no ${!split.square ? 'feed' : 'story/reels/status'} placement — it needs both.`);
   }
   const destination = String(exec?.platform_settings?.destination_type ?? adSet.destination_type ?? 'WHATSAPP').toUpperCase();
   const isWhatsapp = destination === 'WHATSAPP';
@@ -856,27 +894,61 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
   }
 
   // ── 5. creative — one per ad, square → feed, vertical → stories/reels/status
+  //
+  // SHAPE (measured live 2026-09-13, the only per-placement shape Meta accepts
+  // for OUTCOME_LEADS + Click-to-WhatsApp): the same structure Ads Manager
+  // writes when a buyer customizes placements — THREE rules (feed, stories,
+  // and a DEFAULT rule with an empty customization_spec, lowest priority),
+  // EVERY asset type labelled per rule (image/video, body, title, link_url),
+  // full `call_to_actions` objects (type + value.app_destination) next to
+  // `call_to_action_types`, and a labelled `link_urls` entry. Modelled on ad
+  // 120251030399140020 (Ads Manager, 2026-06-22). What does NOT work — each
+  // one creates fine and is then flagged «Invalid Creative For Objective»
+  // (1487891, HARD_ERROR, 30–60 s later) or rejected: two unlabelled rules
+  // with only image labels (the 2026-09-10 shape); the same without
+  // link_urls; `object_story_spec.link_data` + an asset feed (Meta reads the
+  // rules as geo/language customization, 2446501); no link_urls at all with
+  // the labelled shape («Not Valid To Add Call To Action On Photo Post»).
   const oss: Record<string, unknown> = { page_id: cfg.pageId };
   if (cfg.instagramId) oss.instagram_user_id = cfg.instagramId;
-  const labelKey = format === 'image' ? 'image_label' : 'video_label';
+  const mediaLabelKey = format === 'image' ? 'image_label' : 'video_label';
+  const lbl = (...names: string[]): { adlabels: Array<{ name: string }> } => ({ adlabels: names.map((name) => ({ name })) });
+  const rule = (spec: PlacementSpec | Record<string, never>, suffix: string, priority: number): Record<string, unknown> => ({
+    customization_spec: spec,
+    [mediaLabelKey]: { name: `media_${suffix}` },
+    body_label: { name: `body_${suffix}` },
+    title_label: { name: `title_${suffix}` },
+    link_url_label: { name: `link_${suffix}` },
+    priority,
+  });
   const afs: Record<string, unknown> = {
-    bodies: [{ text: caption }],
-    titles: [{ text: headline }],
-    link_urls: [{ website_url: linkUrl }],
+    bodies: [{ text: caption, ...lbl('body_feed', 'body_story', 'body_default') }],
+    titles: [{ text: headline, ...lbl('title_feed', 'title_story', 'title_default') }],
+    link_urls: [{ website_url: linkUrl, ...lbl('link_feed', 'link_story', 'link_default') }],
+    call_to_actions: [isWhatsapp
+      ? { type: 'WHATSAPP_MESSAGE', value: { app_destination: 'WHATSAPP' } }
+      : { type: ctaType, value: { link: linkUrl } }],
     call_to_action_types: [ctaType],
     ad_formats: [format === 'image' ? 'SINGLE_IMAGE' : 'SINGLE_VIDEO'],
     optimization_type: 'PLACEMENT',
     asset_customization_rules: [
-      { customization_spec: split.square, [labelKey]: { name: 'square' } },
-      { customization_spec: split.vertical, [labelKey]: { name: 'vertical' } },
+      rule(split.square, 'feed', 1),
+      rule(split.vertical, 'story', 2),
+      // The default (lowest-priority, empty spec) rule is REQUIRED; the square
+      // design backs it — any placement outside the two rules is feed-shaped.
+      rule({}, 'default', 3),
     ],
   };
   if (format === 'image') {
-    afs.images = (['square', 'vertical'] as Slot[]).map((s) => ({ hash: imageHashes[s], adlabels: [{ name: s }] }));
+    afs.images = [
+      { hash: imageHashes.square, ...lbl('media_feed', 'media_default') },
+      { hash: imageHashes.vertical, ...lbl('media_story') },
+    ];
   } else {
-    afs.videos = (['square', 'vertical'] as Slot[]).map((s) => ({
-      video_id: videoIds[s]!.id, ...(videoIds[s]!.thumb ? { thumbnail_url: videoIds[s]!.thumb } : {}), adlabels: [{ name: s }],
-    }));
+    const v = (slot: Slot, ...names: string[]): Record<string, unknown> => ({
+      video_id: videoIds[slot]!.id, ...(videoIds[slot]!.thumb ? { thumbnail_url: videoIds[slot]!.thumb } : {}), ...lbl(...names),
+    });
+    afs.videos = [v('square', 'media_feed', 'media_default'), v('vertical', 'media_story')];
   }
   if (isWhatsapp && welcome) afs.additional_data = { is_click_to_message: true, page_welcome_message: welcome };
 
@@ -907,6 +979,23 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
   const adStatus = await readAdStatusSetting(sb);
   const ad = await meta.createAd({ name: adName, adset_id: platformAdSetId, creative: { creative_id: creativeId }, status: adStatus });
   log(`ad ${ad.id} created ${adStatus} in ad set ${platformAdSetId}`);
+  // Meta validates the ad against the objective ASYNCHRONOUSLY: creation
+  // returns 200 and the verdict lands on `issues_info` seconds later. Wait for
+  // it — an ad flagged WITH_ISSUES is not "created", it is a failure the
+  // manager must see (the 2026-09-13 «Invalid Creative For Objective» case).
+  {
+    let verdict: { status: string | null; issues: string[] } = { status: null, issues: [] };
+    for (let i = 0; i < 8; i += 1) {
+      await new Promise((r) => setTimeout(r, 5_000));
+      verdict = await meta.getAdIssues(ad.id);
+      if (verdict.issues.length > 0 || (verdict.status && verdict.status !== 'IN_PROCESS' && verdict.status !== 'PENDING_REVIEW')) break;
+    }
+    if (verdict.issues.length > 0) {
+      try { await meta.deleteNode(ad.id); } catch (e) { console.error('[meta-ad] could not delete the flagged ad', ad.id, e instanceof Error ? e.message : e); }
+      throw new Error(`رفضت ميتا الإعلان بعد إنشائه: ${verdict.issues.join('; ')} / Meta flagged the ad after creation: ${verdict.issues.join('; ')} (ad ${ad.id} deleted)`);
+    }
+    log(`ad ${ad.id} passed Meta's validation (${verdict.status ?? 'no verdict yet'})`);
+  }
 
   // ── 7. record + notify ───────────────────────────────────────────────────
   await patchAdRow(sb, adRowId, {

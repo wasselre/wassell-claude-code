@@ -29,6 +29,7 @@ export default function CaptionReviewCard({
   const [busy, setBusy] = useState<'approve' | 'rewrite' | null>(null);
   useEffect(() => { setText(placement.creative?.primary_text ?? ''); }, [placement]);
   const auto = placement.creative?.auto_ad ?? null;
+  const failed = auto?.state === 'failed';
   const platform = PLATFORM_LABELS[placement.execution.platform];
 
   const approve = async (): Promise<void> => {
@@ -37,7 +38,9 @@ export default function CaptionReviewCard({
     try {
       const res = await approveAutoAdCaption(contentId, placement.id, text);
       onChanged(res.placements);
-      addToast(isAr ? 'اعتُمد الكابشن — جارٍ إنشاء الإعلان في ميتا.' : 'Caption approved — creating the ad in Meta.', 'success');
+      addToast(failed
+        ? (isAr ? 'أُعيدت المحاولة — جارٍ إنشاء الإعلان في ميتا.' : 'Retrying — creating the ad in Meta.')
+        : (isAr ? 'اعتُمد الكابشن — جارٍ إنشاء الإعلان في ميتا.' : 'Caption approved — creating the ad in Meta.'), 'success');
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally { setBusy(null); }
@@ -57,9 +60,11 @@ export default function CaptionReviewCard({
   };
 
   return (
-    <div className="card" style={{ borderColor: 'var(--copper)' }}>
+    <div className="card" style={{ borderColor: failed ? 'var(--late)' : 'var(--copper)' }}>
       <div className="card-h">
-        <h4>{isAr ? '✍️ كابشن الإعلان — بانتظار اعتمادك' : '✍️ Ad caption — awaiting your approval'}</h4>
+        <h4>{failed
+          ? (isAr ? '⚠️ تعذّر إنشاء الإعلان في ميتا' : '⚠️ The Meta ad could not be created')
+          : (isAr ? '✍️ كابشن الإعلان — بانتظار اعتمادك' : '✍️ Ad caption — awaiting your approval')}</h4>
         <span className="r" style={{ fontSize: 12, color: 'var(--mute)' }}>
           {platform ? (isAr ? platform.ar : platform.en) : placement.execution.platform}
           {placement.execution.campaign_name ? ` · ${placement.execution.campaign_name}` : ''}
@@ -67,8 +72,15 @@ export default function CaptionReviewCard({
         </span>
       </div>
       <div className="card-b" style={{ display: 'grid', gap: 10 }}>
+        {failed && (
+          <div className="notice" style={{ color: 'var(--late)', whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+            {auto?.error ?? '—'}
+          </div>
+        )}
         <div style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.8 }}>
-          {isAr
+          {failed
+            ? (isAr ? 'عالج السبب أعلاه (مثلًا ارفع التصميمين من تبويب المواد) ثم أعد المحاولة — الكابشن أدناه يبقى كما اعتمدته.' : 'Fix the reason above (e.g. upload both designs on the Materials tab), then retry — the caption below stays as you approved it.')
+            : isAr
             ? 'كتبه الذكاء الاصطناعي من معلومات المشروع. عدّله إن لزم، ثم اعتمده ليُنشأ الإعلان في ميتا بالنص كما تراه.'
             : 'Written by AI from the project facts. Edit if needed, then approve — the Meta ad is created with the text exactly as shown.'}
           {auto?.caption_source === 'fallback' ? (isAr ? ' (من القالب — تعذّر الذكاء الاصطناعي)' : ' (template — AI unavailable)') : ''}
@@ -91,7 +103,9 @@ export default function CaptionReviewCard({
               {busy === 'rewrite' ? '…' : (isAr ? 'إعادة الكتابة' : 'Rewrite')}
             </button>
             <button type="button" className="btn btn-go btn-sm" onClick={() => void approve()} disabled={busy !== null || !text.trim()}>
-              {busy === 'approve' ? '…' : (isAr ? 'اعتماد الكابشن وإنشاء الإعلان' : 'Approve caption & create ad')}
+              {busy === 'approve' ? '…' : failed
+                ? (isAr ? 'إعادة المحاولة' : 'Retry')
+                : (isAr ? 'اعتماد الكابشن وإنشاء الإعلان' : 'Approve caption & create ad')}
             </button>
           </div>
         )}

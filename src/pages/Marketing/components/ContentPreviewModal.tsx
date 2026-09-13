@@ -105,7 +105,7 @@ export default function ContentPreviewModal({
   useEffect(() => { void load(); }, [load]);
 
   const openTask = tasks.find((t) => t.status === 'open') ?? null;
-  const captionReviews = paid.filter((p) => p.creative?.auto_ad?.state === 'caption_review');
+  const captionReviews = paid.filter((p) => p.creative?.auto_ad?.state === 'caption_review' || p.creative?.auto_ad?.state === 'failed');
   const canReviewCaption = can('manage_paid_ads');
   const currentStep = openTask ? steps.find((s) => s.id === openTask.step_id) ?? null : null;
   const sortedSteps = useMemo(() => [...steps].sort((a, b) => a.position - b.position), [steps]);
@@ -459,7 +459,9 @@ export default function ContentPreviewModal({
         <span style={{ fontSize: 12, color: captionReviews.length > 0 ? 'var(--copper)' : 'var(--mute)' }}>
           {captionReviews.length > 0
             ? (canReviewCaption
-              ? (isAr ? 'كابشن الإعلان بانتظار اعتمادك — أعلاه.' : 'The ad caption awaits your approval — above.')
+              ? (captionReviews.some((p) => p.creative?.auto_ad?.state === 'failed')
+                ? (isAr ? 'إعلان ميتا يحتاج تدخلك — أعلاه.' : 'The Meta ad needs your attention — above.')
+                : (isAr ? 'كابشن الإعلان بانتظار اعتمادك — أعلاه.' : 'The ad caption awaits your approval — above.'))
               : (isAr ? 'كابشن الإعلان بانتظار اعتماد مدير التسويق.' : 'The ad caption awaits the marketing manager’s approval.'))
             : item.status_key === 'done'
               ? (isAr ? 'انتهى مسار العمل.' : 'The workflow is finished.')

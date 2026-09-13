@@ -361,6 +361,18 @@ export class MetaMarketingClient {
     return res.data ?? [];
   }
 
+  /** Meta's asynchronous verdict on an ad: `effective_status` + `issues_info`
+   *  (e.g. «Invalid Creative For Objective», a HARD_ERROR that never delivers). */
+  async getAdIssues(adId: string): Promise<{ status: string | null; issues: string[] }> {
+    const res = await this.request<{ effective_status?: string; issues_info?: Array<{ error_summary?: string; error_message?: string; error_type?: string }> }>(
+      'GET', adId, { fields: 'effective_status,issues_info' },
+    );
+    return {
+      status: res.effective_status ?? null,
+      issues: (res.issues_info ?? []).map((i) => i.error_message ?? i.error_summary ?? 'unknown issue'),
+    };
+  }
+
   /** Newest ads anywhere in the account (with creatives) — the fallback source
    *  of the Click-to-WhatsApp welcome template when the ad set has no sibling. */
   async listAccountAds(limit = 60): Promise<MetaSiblingAd[]> {

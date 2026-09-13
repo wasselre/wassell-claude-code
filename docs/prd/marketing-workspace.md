@@ -79,7 +79,12 @@ This workspace answers the three questions the old process could not:
   poll; **both slots required** — a missing square or vertical fails loudly,
   there is no "one file everywhere" fallback any more); ONE creative with
   placement asset customization is created — square → Instagram feed /
-  profile feed, vertical → Instagram stories + reels + WhatsApp status; the
+  profile feed, vertical → Instagram stories + reels + WhatsApp status, in
+  the Ads-Manager shape Meta accepts for Click-to-WhatsApp (three rules incl.
+  a default one, every asset labelled per rule, CTA objects; any other shape
+  is flagged «Invalid Creative For Objective» 30–60 s after creation — the
+  worker now waits for Meta's verdict and treats a flagged ad as a failure,
+  deleting it); the
   ad set must deliver on Instagram + WhatsApp only (any other platform on it
   fails loudly) — carrying the Click-to-WhatsApp welcome template
   **duplicated from an existing ad** (a sibling in the ad set, else the
@@ -102,9 +107,11 @@ This workspace answers the three questions the old process could not:
   → the approval continues the normal path and the toast says why no ad was
   created. **A paid-only item finishes its path on that approval**
   (`workflow_advance_role_path(p_finish)` — no scheduling / publish-check
-  tasks); an item with organic placements continues to scheduling. Retry
-  from the Placements card (`meta_auto_ad_retry`, `manage_paid_ads`) restarts
-  at the caption phase. Files: `api/_lib/marketing/metaAutoAd.ts`
+  tasks); an item with organic placements continues to scheduling. A phase-2 failure (missing
+  slot, Meta verdict, …) REOPENS the caption task in «مهامي» with the reason
+  (bilingual) and the popup shows the failed card: «إعادة المحاولة» rebuilds
+  with the caption as approved; «إعادة الكتابة» (`meta_auto_ad_retry`,
+  `manage_paid_ads`) restarts at the caption phase. Files: `api/_lib/marketing/metaAutoAd.ts`
   (`enqueueMetaAdJob` with `phase`, `approveMetaAdCaption`),
   `worker/src/runMetaAdJob.ts`, `worker/src/marketing/metaAdLane.ts`,
   `src/pages/Marketing/components/{AutoAdApproval,PlacementsTab}.tsx`,
