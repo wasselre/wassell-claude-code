@@ -17,11 +17,14 @@
  * storage_bucket/storage_path, and marketing-assets objects are shared
  * content-addressed blobs the Competitor Watch library still renders.
  *
- * Rights defaults (operator decision 2026-09-13):
- *   the post's publisher IS the project's developer → acquisition_source
- *   'developer', usage_rights 'approved' (sendable to customers);
- *   anyone else (a rival, a marketer) → 'competitor', 'internal_only' (visible
- *   for study, hidden from the customer picker).
+ * Rights defaults (operator decisions 2026-09-13):
+ *   the project is ONE OF OURS (an our_projects row points at it) → 'approved'
+ *   whoever published it — "we could use videos from other companies about
+ *   our projects";
+ *   else the publisher IS the project's developer → 'approved';
+ *   else (a rival's content about a rival's project) → 'internal_only' —
+ *   visible for study, hidden from the customer picker.
+ * acquisition_source records WHO published (developer | competitor) either way.
  *
  * Never sets files.record_id — that column fires files_autoregister_library
  * and would create a duplicate marketing-library asset + a second 'marketing'
@@ -115,6 +118,8 @@ export async function runSocialFileJob({ supabase, job }: { supabase: SupabaseCl
   const projectDeveloper = typeof pdata.developer === 'string' ? pdata.developer : null;
   const orgName = (org?.name_ar as string | null) || (org?.name_en as string | null) || 'حساب';
   const isOwnDeveloper = !!org?.developer_record_id && !!projectDeveloper && org.developer_record_id === projectDeveloper;
+  const isOurProject = await projectIsOurs(supabase, projectId);
+  const sendable = isOurProject || isOwnDeveloper;
 
   const result = ((enr?.result ?? {}) as Record<string, unknown>);
   const descriptionBits: string[] = [];
@@ -147,7 +152,7 @@ export async function runSocialFileJob({ supabase, job }: { supabase: SupabaseCl
       if (!fileId) {
         fileId = await copyAndRegister(supabase, cfg, folderId, m, {
           orgName, projectName, dateTag, index: pending.length > 1 ? m.carousel_index + 1 : 0,
-          description, isOwnDeveloper, projectId,
+          description, isOwnDeveloper, sendable, projectId,
         });
         registered++;
       }
@@ -160,11 +165,21 @@ export async function runSocialFileJob({ supabase, job }: { supabase: SupabaseCl
     }
   }
 
-  console.log(`[social-file] post=${postId} project=${projectName} registered=${registered} reused=${reused} failed=${failures.length} rights=${isOwnDeveloper ? 'developer/approved' : 'competitor/internal_only'}`);
+  console.log(`[social-file] post=${postId} project=${projectName} registered=${registered} reused=${reused} failed=${failures.length} rights=${isOwnDeveloper ? 'developer' : 'competitor'}/${sendable ? 'approved' : 'internal_only'}${isOurProject ? ' (our project)' : ''}`);
   if (registered + reused === 0 && failures.length > 0) {
     throw new Error(`all ${failures.length} media failed for post ${postId} — first: ${failures[0]}`);
   }
   return { post_id: postId, project_id: projectId, registered, reused, failed: failures.length, ...(failures.length ? { errors: failures.slice(0, 5) } : {}) };
+}
+
+/** True when an our_projects row points at this all_projects record. */
+async function projectIsOurs(supabase: SupabaseClient, projectId: string): Promise<boolean> {
+  const { data: model, error: mErr } = await supabase.from('models').select('id').eq('name', 'our_projects').maybeSingle();
+  if (mErr) throw new Error(`our_projects model: ${mErr.message}`);
+  if (!model?.id) return false;
+  const { count, error } = await supabase.from('records').select('id', { count: 'exact', head: true }).eq('model_id', model.id).eq('data->>project', projectId);
+  if (error) throw new Error(`our_projects lookup: ${error.message}`);
+  return (count ?? 0) > 0;
 }
 
 /** One subfolder per publishing company under the intake root, created lazily. */
@@ -185,7 +200,7 @@ async function ensureOrgFolder(supabase: SupabaseClient, cfg: Settings, orgName:
 
 async function copyAndRegister(
   supabase: SupabaseClient, cfg: Settings, folderId: string | null, m: MediaRow,
-  ctx: { orgName: string; projectName: string; dateTag: string; index: number; description: string; isOwnDeveloper: boolean; projectId: string },
+  ctx: { orgName: string; projectName: string; dateTag: string; index: number; description: string; isOwnDeveloper: boolean; sendable: boolean; projectId: string },
 ): Promise<string> {
   const fileId = randomUUID();
   const ext = extOf(m.stored_path!, m.mime_type, m.media_kind);
@@ -213,7 +228,7 @@ async function copyAndRegister(
     file_class: 'business',
     confidentiality: 'internal',
     acquisition_source: ctx.isOwnDeveloper ? 'developer' : 'competitor',
-    usage_rights: ctx.isOwnDeveloper ? 'approved' : 'internal_only',
+    usage_rights: ctx.sendable ? 'approved' : 'internal_only',
     asset_nature: 'real',
     production_state: 'published',
     primary_category: m.media_kind === 'video' ? 'raw_video' : 'raw_photo',

@@ -189,10 +189,13 @@ project file picker, with no extra upload.
   `wassel-files/<owner auth uid>/<file id>.<ext>`; `files` deletion removes the
   copy only, never the shared content-addressed blob the Library renders.
   Identical bytes across posts (same checksum) reuse ONE files row.
-- **Rights by publisher.** Post published by the project's own developer →
-  `acquisition_source=developer`, `usage_rights=approved` (sendable). Anyone
-  else (rival, marketer) → `competitor`, `internal_only` — visible for study,
-  hidden from the customer picker. Every row: `origin=social_intake`,
+- **Rights.** `usage_rights=approved` (sendable) when the project is ONE OF
+  OURS (an `our_projects` row points at it) whoever published the post — the
+  operator's rule: «we could use videos from other companies about our
+  projects» — or when the publisher is the project's own developer. Anything
+  else (a rival's content about a rival's project) → `internal_only`: visible
+  for study, hidden from the customer picker. `acquisition_source` records who
+  published (`developer` | `competitor`) independently of that. Every row: `origin=social_intake`,
   `primary_category` raw_photo/raw_video, `asset_nature=real`,
   `production_state=published`, description pre-filled from the pipeline's
   campaign message + selling points + source URL, dimensions/duration/checksum

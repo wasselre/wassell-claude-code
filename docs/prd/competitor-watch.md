@@ -96,8 +96,9 @@ that study the corpus (how competitors write posts, script reels, price offers).
   stored photos/videos are registered as `files` rows and linked to that
   project (derived origin `social`), so they show on the project's Files tab,
   in the Business Library and in the WhatsApp picker. The entry shows «في
-  الملفات (n)». Rights follow the publisher: the project's own developer →
-  sendable; any other company → internal only. Details in `files.md`
+  الملفات (n)». Rights: sendable when the project is one of ours (any publisher) or the
+  publisher is the project's developer; a rival's content about a rival's
+  project stays internal only. Details in `files.md`
   («Social-media intake»).
 - **Attribution health on the Pipeline surface:** linked · fixed by a person ·
   linked without a quote naming the project · link rests on one word · names an
