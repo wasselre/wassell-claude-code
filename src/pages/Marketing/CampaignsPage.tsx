@@ -14,24 +14,30 @@ import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, MosCampaign, MosGoal,
   PLATFORM_LABELS, ROLE_LABELS,
-  createContent, deleteCampaigns, fetchCampaigns, fetchGoals,
-  saveAdCreative, saveCampaign, saveCampaignTree, saveExecution, successMeasureSuffix,
+  commitCampaignPlan, deleteCampaigns, fetchCampaigns, fetchGoals,
+  previewCampaignPlan, reviseCampaignPlan, saveCampaign, successMeasureSuffix,
+  type MosPlanEnvelope, type MosPlanRequestInput,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from './MarketingWorkspace';
 import { Empty, Field, LoadError, Modal, PageHead, Pill, Skeleton, Stat, Tone } from './components/kit';
 import { IconCampaigns, IconContent, IconMetrics, IconPlus } from './components/icons';
 import ProjectMultiSelect from './components/ProjectMultiSelect';
 import GoalMultiSelect from './components/GoalMultiSelect';
-import CampaignExecutionsBuilder, {
-  ExecDraft, execDraftComplete, execPlanBudget,
-} from './components/CampaignExecutionsBuilder';
-import CampaignContentBuilder, { type ContentDraft } from './components/CampaignContentBuilder';
+import CampaignRequirementsStep from './components/CampaignRequirementsStep';
+import PlanPreview from './components/PlanPreview';
 import SuccessMeasuresEditor, {
   MeasureDraft, measuresToDrafts, draftsToMeasures, hasMeasureTarget,
 } from './components/SuccessMeasuresEditor';
+import {
+  buildPlanGrid, buildPlanRequest, creativeTotalsText, diffPlans, emptyRequirements,
+  itemsToDrop, mergeLockedPlacements, parseCommitConflict, pickText, planSignature,
+  requirementsProblems, swapPlacements,
+  type CommitConflict, type LockedPlacement, type PlanAlternative, type PlanDiffEntry,
+  type RequirementsDraft,
+} from './lib/planPresentation';
 import { money, num, pct, shortDate, whole } from './lib/format';
 import { measureActual, pickMainMeasure } from './lib/measure';
-import { campaignAutoName, executionAutoName } from './lib/autoName';
+import { campaignAutoName } from './lib/autoName';
 import './styles/mobile-m4.css';
 
 const AR_MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
@@ -858,16 +864,30 @@ function duration(c: MosCampaign, isAr: boolean): string {
 }
 
 /**
- * Screen 19 — the campaign brief, faithful to the design.
+ * Screen 19 — the campaign brief, now a THREE-STEP WIZARD for a new campaign.
  *
- * The fork at the top matters: picking paid or organic changes the fields below
- * it, because a budget and a cost-per-lead are meaningless on an organic push.
- * There is deliberately NO name field — the goal sentence, written as a RESULT,
- * is the campaign's identity («زيادة الوعي» ليست هدفًا). The success criterion
- * is mandatory: a campaign without one cannot be judged, and every campaign in
- * the old sheet lacked it. Nothing here spends money — executions are created
- * as drafts until someone launches them on the platform itself.
+ *   1. Requirements — the fork (paid / organic), the goal it serves, and the
+ *      quantities: which projects, how many posts and videos of each, on which
+ *      platforms, over which dates, how often.
+ *   2. Plan preview — the scheduling engine's answer, planned against the LIVE
+ *      workload: what gets made, who it lands on, when production must start,
+ *      what the feed will look like, and what is in the way.
+ *   3. Approve — the only step that writes.
+ *
+ * The old builder created content rows the moment you pressed Create, so a
+ * campaign existed before anyone knew whether the team could produce it. Now
+ * nothing at all is created until step 3, and the approval is checked twice:
+ * once by re-planning against the live ledger, and once by the database's own
+ * capacity re-check. Either can refuse with a 409 — and when it does, the
+ * refreshed plan is shown with its differences highlighted. We never re-submit
+ * automatically; a plan a human has not read is a plan nobody approved.
+ *
+ * Editing an EXISTING campaign stays a plain form: a campaign envelope's name,
+ * dates and budget are not a scheduling question, and re-planning a live
+ * campaign belongs on the campaign page where its current plan lives.
  */
+
+type WizardStep = 'requirements' | 'preview' | 'approve';
 
 export function CampaignModal({
   campaign, isAr, onClose, onSaved,
@@ -877,56 +897,689 @@ export function CampaignModal({
   onClose: () => void;
   onSaved: (campaign: MosCampaign) => void;
 }) {
-  const { projects, projectName, contentTypes } = useWorkspace();
-  const addToast = useAppStore((s) => s.addToast);
-  const isNew = !campaign;
+  if (campaign) {
+    return <EditCampaignForm campaign={campaign} isAr={isAr} onClose={onClose} onSaved={onSaved} />;
+  }
+  return <NewCampaignWizard isAr={isAr} onClose={onClose} onSaved={onSaved} />;
+}
 
-  const [kind, setKind] = useState<MosCampaign['kind']>(campaign?.kind ?? 'paid');
-  const [goal, setGoal] = useState(campaign?.goal ?? campaign?.name ?? '');
-  const [goalIds, setGoalIds] = useState<string[]>(campaign?.goal_ids ?? []);
-  const [projectIds, setProjectIds] = useState<string[]>(campaign?.project_ids ?? []);
-  // The campaign's identity — auto-generated from type + goals + projects + date,
-  // but fully editable. A blank name on a NEW campaign follows the live values
-  // (see the sync effect); on edit it starts from the saved name and is left
-  // alone. `nameEdited` flips once a human types or the record is an edit, so the
-  // auto-sync never clobbers a hand-picked name.
-  const [name, setName] = useState(campaign?.name ?? '');
-  const [nameEdited, setNameEdited] = useState(!isNew);
-  // Goals loaded by GoalMultiSelect — kept here to resolve id → name for the
-  // auto-generated campaign name.
+/* ------------------------------------------------------------------ */
+/* the wizard (new campaigns)                                         */
+/* ------------------------------------------------------------------ */
+
+function NewCampaignWizard({
+  isAr, onClose, onSaved,
+}: {
+  isAr: boolean;
+  onClose: () => void;
+  onSaved: (campaign: MosCampaign) => void;
+}) {
+  const { projects, projectName, people } = useWorkspace();
+  const addToast = useAppStore((s) => s.addToast);
+
+  const [step, setStep] = useState<WizardStep>('requirements');
+
+  // ── the campaign envelope's own fields ──────────────────────────────
+  const [kind, setKind] = useState<MosCampaign['kind']>('paid');
+  const [goal, setGoal] = useState('');
+  const [goalIds, setGoalIds] = useState<string[]>([]);
   const [goalsList, setGoalsList] = useState<MosGoal[]>([]);
-  // Bulk content planned alongside a NEW campaign (created on save; empty for edit).
-  const [drafts, setDrafts] = useState<ContentDraft[]>([]);
-  const [ownerRole, setOwnerRole] = useState<string>(campaign?.owner_role ?? 'marketing_manager');
-  const [startsOn, setStartsOn] = useState(campaign?.starts_on ?? '');
-  const [endsOn, setEndsOn] = useState(campaign?.ends_on ?? '');
-  const [budget, setBudget] = useState(campaign?.budget_total?.toString() ?? '');
-  const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(campaign?.success_measures));
-  const [status, setStatus] = useState<MosCampaign['status']>(campaign?.status ?? 'planning');
-  // Paid + new: fully-configured executions (plan → ad sets → ads) that must be
-  // complete before the parent can be created. Each execution can be saved as /
-  // started from a TEMPLATE (see CampaignExecutionsBuilder).
-  const [execDrafts, setExecDrafts] = useState<ExecDraft[]>([]);
+  const [name, setName] = useState('');
+  const [nameEdited, setNameEdited] = useState(false);
+  const [ownerRole, setOwnerRole] = useState<string>('marketing_manager');
+  const [budget, setBudget] = useState('');
+  const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(undefined));
+
+  // ── the planning requirements ───────────────────────────────────────
+  const [req, setReq] = useState<RequirementsDraft>(() => emptyRequirements('paid'));
+
+  // ── the plan under review ───────────────────────────────────────────
+  const [envelope, setEnvelope] = useState<MosPlanEnvelope | null>(null);
+  const [planInput, setPlanInput] = useState<MosPlanRequestInput | null>(null);
+  const [locks, setLocks] = useState<LockedPlacement[]>([]);
+  const [dropped, setDropped] = useState<string[]>([]);
+  /** The plan the human actually read. A commit may only ever apply THIS one. */
+  const [reviewedSignature, setReviewedSignature] = useState<string | null>(null);
+  const [diff, setDiff] = useState<PlanDiffEntry[] | null>(null);
+  const [conflict, setConflict] = useState<CommitConflict | null>(null);
+  /** Set once the envelope exists, so a retry never creates a second campaign. */
+  const [createdCampaign, setCreatedCampaign] = useState<MosCampaign | null>(null);
+
   const [busy, setBusy] = useState(false);
-  // In-app (not window.confirm) discard-guard for a dirty close.
   const [closeConfirm, setCloseConfirm] = useState(false);
 
-  // Snapshot of the form's opening state, so a stray click on the backdrop (or
-  // Escape) can't silently throw away work in progress. Compared field-by-field
-  // below; the drafts/executions arrays start empty, so any planned content or
-  // ad campaign already counts as dirty.
+  // The type fork rewrites the planning defaults (paid plans ad channels and a
+  // refresh policy; organic plans feeds and a frequency), so switching it
+  // resets the requirements rather than leaving a half-paid draft behind.
+  const switchKind = (next: MosCampaign['kind']): void => {
+    if (next === kind) return;
+    setKind(next);
+    setReq(emptyRequirements(next === 'paid' ? 'paid' : 'organic'));
+    setEnvelope(null);
+    setPlanInput(null);
+    setReviewedSignature(null);
+    setDiff(null);
+    setConflict(null);
+  };
+
+  const goalLabels = useMemo(
+    () => goalIds.map((id) => goalsList.find((g) => g.id === id)?.name ?? '').filter(Boolean),
+    [goalIds, goalsList],
+  );
+  const projectLabels = useMemo(
+    () => req.projectIds.map((id) => projectName(id)).filter(Boolean),
+    [req.projectIds, projectName],
+  );
+  const computedName = useMemo(
+    () => campaignAutoName({ kind, goalLabels, projectLabels, date: new Date(), isAr }),
+    [kind, goalLabels, projectLabels, isAr],
+  );
+  useEffect(() => {
+    if (!nameEdited) setName(computedName);
+    // computedName already folds in kind/goals/projects; nameEdited gates it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, goalLabels.join('|'), projectLabels.join('|'), nameEdited]);
+
+  const dirty = goalIds.length > 0 || goal.trim() !== '' || nameEdited
+    || req.projectIds.length > 0 || req.rangeStart !== '' || req.rangeEnd !== ''
+    || envelope !== null || measures.length > 0;
+
+  const requestClose = useCallback((): void => {
+    if (busy) return;
+    if (dirty) { setCloseConfirm(true); return; }
+    onClose();
+  }, [busy, dirty, onClose]);
+
+  /* ---------------- step 1 → 2: ask the engine ---------------------- */
+
+  const envelopeProblems = (): string[] => {
+    const out: string[] = [];
+    if (!name.trim()) out.push(isAr ? 'الحملة تحتاج اسمًا.' : 'The campaign needs a name.');
+    if (goalIds.length === 0) out.push(isAr ? 'اربط الحملة بهدف واحد على الأقل.' : 'Link the campaign to at least one goal.');
+    if (kind === 'paid' && !hasMeasureTarget(measures)) {
+      out.push(isAr
+        ? 'حدّد معيار النجاح — حملة بلا معيار لا يمكن الحكم عليها.'
+        : 'Set the success criterion — a campaign without one cannot be judged.');
+    }
+    return out;
+  };
+
+  const runPreview = async (
+    draft: RequirementsDraft,
+    opts: { lockedPlacements?: LockedPlacement[]; droppedItemKeys?: string[]; campaignId?: string | null } = {},
+  ): Promise<MosPlanEnvelope | null> => {
+    const input = buildPlanRequest(draft, {
+      campaignId: opts.campaignId ?? createdCampaign?.id ?? null,
+      lockedPlacements: opts.lockedPlacements ?? locks,
+      droppedItemKeys: opts.droppedItemKeys ?? dropped,
+      projectNameOf: (id) => projectName(id),
+    });
+    setBusy(true);
+    try {
+      const res = await previewCampaignPlan(input);
+      setEnvelope(res);
+      setPlanInput(input);
+      setReviewedSignature(planSignature(res.plan));
+      setConflict(null);
+      setDiff(null);
+      return res;
+    } catch (e) {
+      // Loud, always: a preview that silently fails is a manager staring at a
+      // stale plan and believing it.
+      console.error('[mos] campaign_plan_preview failed', e);
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const goToPreview = async (): Promise<void> => {
+    const problems = [
+      ...envelopeProblems(),
+      ...requirementsProblems(req).map((p) => pickText(p, isAr)),
+    ];
+    if (problems.length > 0) { addToast(problems[0] ?? '', 'error'); return; }
+    const res = await runPreview(req);
+    if (res) setStep('preview');
+  };
+
+  /* ---------------- revise: pins and alternatives ------------------- */
+
+  const onSwap = async (platform: string, aKey: string, bKey: string): Promise<void> => {
+    if (!envelope) return;
+    const cells = buildPlanGrid(envelope.plan.items, platform).cells;
+    const pins = swapPlacements(cells, aKey, bKey, platform);
+    if (pins.length === 0) return;
+    const merged = mergeLockedPlacements(locks, pins);
+    setLocks(merged);
+    setBusy(true);
+    try {
+      const res = await reviseCampaignPlan(envelope.plan_id, {
+        locked_placements: merged,
+        dropped_item_keys: dropped,
+      });
+      setEnvelope(res);
+      setReviewedSignature(planSignature(res.plan));
+      setDiff(null);
+    } catch (e) {
+      console.error('[mos] campaign_plan_revise failed', e);
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onAlternative = async (alt: PlanAlternative): Promise<void> => {
+    if (alt.kind === 'earliest_start' && alt.rangeStart && alt.rangeEnd) {
+      const next = { ...req, rangeStart: alt.rangeStart, rangeEnd: alt.rangeEnd };
+      setReq(next);
+      await runPreview(next);
+      return;
+    }
+    if (alt.kind === 'fewer_items' && alt.maxItems !== undefined && envelope) {
+      const keys = itemsToDrop(envelope.plan, alt.maxItems);
+      setDropped(keys);
+      await runPreview(req, { droppedItemKeys: keys });
+    }
+  };
+
+  /* ---------------- step 3: the only writes --------------------------- */
+
+  const commit = async (planId: string): Promise<boolean> => {
+    try {
+      await commitCampaignPlan(planId);
+      return true;
+    } catch (e) {
+      const c = parseCommitConflict(e);
+      if (!c) {
+        console.error('[mos] campaign_plan_commit failed', e);
+        addToast(e instanceof Error ? e.message : String(e), 'error');
+        return false;
+      }
+      // A 409 is not a retry — it is a new plan the human has not read yet.
+      console.error('[mos] campaign_plan_commit conflict', c.kind, c.diff);
+      setConflict(c);
+      if (c.plan && envelope) {
+        setDiff(diffPlans(envelope.plan, c.plan));
+        setEnvelope({ ...envelope, plan: c.plan });
+        setReviewedSignature(null);
+      }
+      setStep('preview');
+      addToast(pickText(c.message, isAr), 'error');
+      return false;
+    }
+  };
+
+  const approve = async (): Promise<void> => {
+    if (!envelope || !planInput) return;
+    setBusy(true);
+    try {
+      // 1. The envelope. Created here and NOT before, so an abandoned wizard
+      //    leaves nothing behind. Kept in state so a failed commit never makes
+      //    a second campaign on the next attempt.
+      let parent = createdCampaign;
+      if (!parent) {
+        const saved = await saveCampaign({
+          name: name.trim(),
+          goal: goal.trim(),
+          goal_ids: goalIds,
+          kind,
+          project_ids: req.projectIds,
+          owner_role: ownerRole || null,
+          objective: kind === 'organic' ? 'awareness' : 'leads',
+          status: 'planning',
+          starts_on: req.rangeStart || null,
+          ends_on: req.rangeEnd || null,
+          budget_total: kind === 'paid' && budget.trim() !== '' ? Number(budget) : null,
+          success_measures: draftsToMeasures(measures),
+        }, undefined);
+        if (!saved.item?.id) {
+          addToast(isAr ? 'تعذّر إنشاء الحملة.' : 'The campaign could not be created.', 'error');
+          return;
+        }
+        parent = saved.item;
+        setCreatedCampaign(saved.item);
+      }
+
+      // 2. The stored plan was planned with `campaign_id = null`; the commit
+      //    materialises against the input it stored, so it must be re-planned
+      //    bound to the campaign. That re-plan reads the LIVE ledger, so it can
+      //    legitimately differ from what was on screen — in which case we show
+      //    the difference and wait, rather than committing something unseen.
+      const bound = await runPreviewBound(parent.id);
+      if (!bound) return;
+      if (reviewedSignature !== null && planSignature(bound.plan) !== reviewedSignature) {
+        setDiff(diffPlans(envelope.plan, bound.plan));
+        setStep('preview');
+        addToast(
+          isAr
+            ? 'تغيّر الحمل أثناء المراجعة — راجع الخطة المحدَّثة ثم اعتمدها.'
+            : 'The workload changed while you were reviewing — read the refreshed plan, then approve it.',
+          'error',
+        );
+        return;
+      }
+      if (!bound.plan.feasible) {
+        addToast(
+          isAr ? 'الخطة المحدَّثة لم تعد قابلة للتنفيذ. راجعها.' : 'The refreshed plan is no longer feasible. Review it.',
+          'error',
+        );
+        setStep('preview');
+        return;
+      }
+
+      // 3. The write.
+      const ok = await commit(bound.plan_id);
+      if (!ok) return;
+      addToast(
+        isAr
+          ? `اعتُمدت خطة الحملة ${parent.ref ?? ''} — أُنشئ المحتوى وحُجزت أيام الفريق.`
+          : `Approved the plan for ${parent.ref ?? ''} — content created and the team’s days reserved.`,
+        'success',
+      );
+      onSaved(parent);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * A preview bound to the just-created campaign. Separate from `runPreview`
+   * only because it must not clear `reviewedSignature` — that value is what the
+   * approval is checked against.
+   */
+  const runPreviewBound = async (campaignId: string): Promise<MosPlanEnvelope | null> => {
+    const input = buildPlanRequest(req, {
+      campaignId,
+      lockedPlacements: locks,
+      droppedItemKeys: dropped,
+      projectNameOf: (id) => projectName(id),
+    });
+    try {
+      const res = await previewCampaignPlan(input);
+      setEnvelope(res);
+      setPlanInput(input);
+      return res;
+    } catch (e) {
+      console.error('[mos] campaign_plan_preview (bound) failed', e);
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+      return null;
+    }
+  };
+
+  /** Approve the plan currently on screen, after a 409 or a drifted re-plan. */
+  const approveRefreshed = async (): Promise<void> => {
+    if (!envelope) return;
+    setReviewedSignature(planSignature(envelope.plan));
+    setDiff(null);
+    setConflict(null);
+    setBusy(true);
+    try {
+      const ok = await commit(envelope.plan_id);
+      if (!ok) return;
+      const parent = createdCampaign;
+      addToast(
+        isAr ? 'اعتُمدت الخطة المحدَّثة.' : 'The refreshed plan was approved.',
+        'success',
+      );
+      if (parent) onSaved(parent);
+      else onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* ---------------- render ------------------------------------------- */
+
+  const plan = envelope?.plan ?? null;
+  const stepIndex = step === 'requirements' ? 1 : step === 'preview' ? 2 : 3;
+  const stepTitle = step === 'requirements'
+    ? (isAr ? 'المتطلبات' : 'Requirements')
+    : step === 'preview' ? (isAr ? 'معاينة الخطة' : 'Plan preview') : (isAr ? 'الاعتماد' : 'Approve');
+
+  return (
+    <>
+      <Modal
+        wide
+        title={isAr ? `حملة جديدة · ${stepTitle}` : `New campaign · ${stepTitle}`}
+        sub={isAr
+          ? `الخطوة ${num(stepIndex, true)} من ٣ — لا يُنشأ أي شيء قبل الاعتماد في الخطوة الثالثة.`
+          : `Step ${stepIndex} of 3 — nothing is created until you approve in step 3.`}
+        onClose={requestClose}
+        footer={
+          <>
+            <span className="note">
+              {step === 'requirements' && (isAr
+                ? 'المطلوب كمية، لا قائمة: المحرّك يوزّع البنود على الأيام ويحسب من ينتجها.'
+                : 'State a quantity, not a list: the engine spreads the items across the days and works out who produces them.')}
+              {step === 'preview' && (isAr
+                ? 'هذه معاينة محسوبة على الحمل الحقيقي. لا سجل واحد مكتوب حتى الآن.'
+                : 'This preview is computed against the real workload. Not one record has been written yet.')}
+              {step === 'approve' && (isAr
+                ? 'الاعتماد يُنشئ المحتوى ويحجز أيام الفريق ويكتب مواعيد النشر.'
+                : 'Approving creates the content, reserves the team’s days, and writes the publishing dates.')}
+            </span>
+            {step !== 'requirements' && (
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={() => setStep(step === 'approve' ? 'preview' : 'requirements')}
+              >
+                {isAr ? 'رجوع' : 'Back'}
+              </button>
+            )}
+            <button type="button" className="btn" onClick={requestClose} disabled={busy}>
+              {isAr ? 'إلغاء' : 'Cancel'}
+            </button>
+            {step === 'requirements' && (
+              <button type="button" className="btn btn-p" disabled={busy} onClick={() => void goToPreview()}>
+                {busy ? (isAr ? 'جارٍ الحساب…' : 'Planning…') : (isAr ? 'معاينة الخطة' : 'Preview the plan')}
+              </button>
+            )}
+            {step === 'preview' && (
+              <>
+                <button type="button" className="btn" disabled={busy} onClick={() => void runPreview(req)}>
+                  {isAr ? 'إعادة الحساب' : 'Re-plan'}
+                </button>
+                {(diff && diff.length > 0) || conflict ? (
+                  <button type="button" className="btn btn-p" disabled={busy} onClick={() => void approveRefreshed()}>
+                    {busy ? (isAr ? 'جارٍ الاعتماد…' : 'Approving…') : (isAr ? 'اعتمد الخطة المحدَّثة' : 'Approve the refreshed plan')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-p"
+                    disabled={busy || !plan || !plan.feasible}
+                    onClick={() => setStep('approve')}
+                    title={plan && !plan.feasible
+                      ? (isAr ? 'لا يمكن اعتماد خطة غير قابلة للتنفيذ.' : 'An infeasible plan cannot be approved.')
+                      : undefined}
+                  >
+                    {isAr ? 'متابعة للاعتماد' : 'Continue to approve'}
+                  </button>
+                )}
+              </>
+            )}
+            {step === 'approve' && (
+              <button type="button" className="btn btn-p" disabled={busy} onClick={() => void approve()}>
+                {busy ? (isAr ? 'جارٍ الاعتماد…' : 'Approving…') : (isAr ? 'اعتماد وإنشاء' : 'Approve and create')}
+              </button>
+            )}
+          </>
+        }
+      >
+        {/* ── the step rail ───────────────────────────────────────────── */}
+        <div className="seg" style={{ width: '100%' }}>
+          {([
+            ['requirements', isAr ? '١ · المتطلبات' : '1 · Requirements'],
+            ['preview', isAr ? '٢ · معاينة الخطة' : '2 · Plan preview'],
+            ['approve', isAr ? '٣ · الاعتماد' : '3 · Approve'],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={step === key ? 'on' : ''}
+              style={{ flex: 1, textAlign: 'center' }}
+              disabled={busy
+                || (key !== 'requirements' && !envelope)
+                || (key === 'approve' && !(plan && plan.feasible))}
+              onClick={() => setStep(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {step === 'requirements' && (
+          <>
+            <div>
+              <div className="lbl" style={{ marginBottom: 7 }}>{isAr ? 'النوع' : 'Type'}</div>
+              <div className="pick2">
+                <button type="button" className={`p2${kind === 'paid' ? ' on' : ''}`} onClick={() => switchKind('paid')}>
+                  <IconCampaigns />
+                  <div className="n4">{isAr ? 'مدفوعة' : 'Paid'}</div>
+                  <div className="s4">{isAr ? 'ميزانية وتحديث أسبوعي للتصاميم' : 'a budget and a weekly creative refresh'}</div>
+                </button>
+                <button type="button" className={`p2${kind === 'organic' ? ' on' : ''}`} onClick={() => switchKind('organic')}>
+                  <IconMetrics />
+                  <div className="n4">{isAr ? 'عضوية' : 'Organic'}</div>
+                  <div className="s4">{isAr ? 'جدول نشر على المنصات' : 'a publishing schedule across the feeds'}</div>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+                <div className="lbl">{isAr ? 'اسم الحملة' : 'Campaign name'}</div>
+                <button
+                  type="button"
+                  className="fbtn"
+                  style={{ fontSize: 11, padding: '3px 9px' }}
+                  onClick={() => { setNameEdited(false); setName(computedName); }}
+                  title={isAr ? 'إعادة توليد الاسم من الحقول' : 'Regenerate from the fields'}
+                >
+                  ↻ {isAr ? 'توليد تلقائي' : 'Auto'}
+                </button>
+              </div>
+              <input
+                className="inp"
+                value={name}
+                onChange={(e) => { setName(e.target.value); setNameEdited(true); }}
+                autoFocus
+                placeholder={computedName}
+              />
+            </div>
+
+            <div>
+              <div className="lbl" style={{ marginBottom: 6 }}>{isAr ? 'الوصف — اختياري' : 'Description — optional'}</div>
+              <input
+                className="inp"
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                placeholder={isAr ? 'حملة مينا ٥٢ لعملاء أغسطس' : 'Mina 52 campaign for August leads'}
+              />
+            </div>
+
+            <div>
+              <div className="lbl" style={{ marginBottom: 6 }}>
+                {isAr ? 'الأهداف — ما الذي تخدمه الحملة' : 'Goals — what the campaign serves'}
+              </div>
+              <GoalMultiSelect value={goalIds} onChange={setGoalIds} isAr={isAr} onLoaded={setGoalsList} />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: kind === 'paid' ? '1fr 1fr' : '1fr', gap: 13 }}>
+              <Field label={isAr ? 'المسؤول' : 'Responsible'}>
+                <select className="inp" value={ownerRole} onChange={(e) => setOwnerRole(e.target.value)}>
+                  {(['marketing_manager', 'ops_supervisor', 'writer', 'montage'] as const).map((r) => (
+                    <option key={r} value={r}>{isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}</option>
+                  ))}
+                </select>
+              </Field>
+              {kind === 'paid' && (
+                <Field label={isAr ? 'الميزانية الكلية' : 'Total budget'}>
+                  <div className="inp inp-row" style={{ padding: 0 }}>
+                    <input
+                      className="inp"
+                      style={{ border: 0, flex: 1 }}
+                      inputMode="numeric"
+                      value={budget}
+                      onChange={(e) => setBudget(e.target.value)}
+                    />
+                    <span style={{ fontSize: 11, color: 'var(--mute)', paddingInlineEnd: 11 }}>
+                      {isAr ? 'ريال' : 'SAR'}
+                    </span>
+                  </div>
+                </Field>
+              )}
+            </div>
+
+            <CampaignRequirementsStep
+              draft={req}
+              onChange={setReq}
+              projects={projects}
+              projectName={projectName}
+              isAr={isAr}
+            />
+
+            <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />
+          </>
+        )}
+
+        {step === 'preview' && plan && planInput && (
+          <>
+            {conflict && (
+              <div className="notice bad" role="alert">
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                  {conflict.kind === 'capacity_conflict'
+                    ? (isAr ? 'رفضت قاعدة البيانات الاعتماد: السعة' : 'The database refused the approval: capacity')
+                    : (isAr ? 'رفضت قاعدة البيانات الاعتماد: تغيّرت الخطة' : 'The database refused the approval: the plan changed')}
+                </div>
+                <div>{pickText(conflict.message, isAr)}</div>
+                <div style={{ marginTop: 6 }}>
+                  {isAr
+                    ? 'لم يُكتب شيء. اقرأ الخطة المحدَّثة أدناه، ثم اعتمدها صراحةً.'
+                    : 'Nothing was written. Read the refreshed plan below, then approve it explicitly.'}
+                </div>
+              </div>
+            )}
+            <PlanPreview
+              plan={plan}
+              input={planInput}
+              people={people}
+              projectName={projectName}
+              isAr={isAr}
+              busy={busy}
+              diff={diff}
+              onAlternative={(alt) => void onAlternative(alt)}
+              onSwap={(platform, a, b) => void onSwap(platform, a, b)}
+            />
+          </>
+        )}
+
+        {step === 'approve' && plan && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div className="notice">
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                {isAr ? 'ما الذي سيحدث عند الاعتماد' : 'What approving does'}
+              </div>
+              <div>
+                {isAr
+                  ? 'تُنشأ الحملة الأم وحملة فرعية لكل منصة، وقطعة محتوى لكل بند بمواعيدها، وتُحجز أيام الفريق في التقويم، وتُكتب دفعات النشر. لا يُفتح أي مهمة قبل موعد بدء إنتاجها، ولا يُنشر شيء تلقائيًا.'
+                  : 'It creates the parent campaign and one child per platform, a content piece per item with its dates, reservations on the team’s calendar, and the publishing batches. No task opens before its production start, and nothing publishes by itself.'}
+              </div>
+            </div>
+
+            <div className="grid g4" style={{ gap: 13 }}>
+              <Stat isAr={isAr} label={isAr ? 'قطع محتوى' : 'Content pieces'} value={plan.totals.items} />
+              <Stat isAr={isAr} label={isAr ? 'حملات فرعية' : 'Child campaigns'} value={req.platforms.length} />
+              <Stat isAr={isAr} label={isAr ? 'دفعات نشر' : 'Publishing batches'} value={plan.totals.batches} />
+              <Stat isAr={isAr} label={isAr ? 'حجوزات عمل' : 'Work reservations'} value={plan.reservations.length} />
+            </div>
+
+            <div className="card">
+              <div className="card-h"><h4>{isAr ? 'الحملة' : 'The campaign'}</h4></div>
+              <div className="card-b" style={{ fontSize: 12.5, lineHeight: 2 }}>
+                <div><b>{isAr ? 'الاسم' : 'Name'}:</b> {name.trim() || '—'}</div>
+                <div><b>{isAr ? 'النوع' : 'Type'}:</b> {kind === 'paid' ? (isAr ? 'مدفوعة' : 'Paid') : (isAr ? 'عضوية' : 'Organic')}</div>
+                <div>
+                  <b>{isAr ? 'المدى' : 'Range'}:</b>{' '}
+                  <span className="ltr">{req.rangeStart} → {req.rangeEnd}</span>
+                </div>
+                <div>
+                  <b>{isAr ? 'المنصات' : 'Platforms'}:</b>{' '}
+                  {req.platforms.map((p) => (isAr ? PLATFORM_LABELS[p]?.ar : PLATFORM_LABELS[p]?.en) ?? p).join(' · ')}
+                </div>
+                {kind === 'paid' && plan.totals.creatives && (
+                  <div><b>{isAr ? 'التصاميم' : 'Creatives'}:</b> {creativeTotalsText(plan.totals.creatives, isAr)}</div>
+                )}
+              </div>
+            </div>
+
+            {createdCampaign && (
+              <div className="notice">
+                {isAr
+                  ? `أُنشئت الحملة ${createdCampaign.ref ?? ''} في محاولة سابقة ولم تُعتمد خطتها بعد — لن تُنشأ حملة ثانية.`
+                  : `Campaign ${createdCampaign.ref ?? ''} was created on an earlier attempt and its plan is not approved yet — a second campaign will not be created.`}
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {closeConfirm && (
+        <Modal
+          title={isAr ? 'تجاهل التغييرات؟' : 'Discard changes?'}
+          sub={isAr ? 'لديك متطلبات أو خطة لم تُعتمد.' : 'You have requirements or a plan that were never approved.'}
+          onClose={() => setCloseConfirm(false)}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setCloseConfirm(false)}>
+                {isAr ? 'متابعة التحرير' : 'Keep editing'}
+              </button>
+              <button type="button" className="btn btn-d" onClick={() => { setCloseConfirm(false); onClose(); }}>
+                {isAr ? 'تجاهل وإغلاق' : 'Discard & close'}
+              </button>
+            </>
+          }
+        >
+          <div style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.9 }}>
+            {createdCampaign
+              ? (isAr
+                  ? `الحملة ${createdCampaign.ref ?? ''} أُنشئت بالفعل وستبقى بلا خطة معتمدة. الخطة نفسها لم تُكتب.`
+                  : `Campaign ${createdCampaign.ref ?? ''} already exists and will stay without an approved plan. The plan itself was never written.`)
+              : (isAr
+                  ? 'لم يُنشأ شيء بعد — الإغلاق الآن لا يترك أي سجل خلفه.'
+                  : 'Nothing has been created yet — closing now leaves no record behind.')}
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* the plain edit form (existing campaigns)                           */
+/* ------------------------------------------------------------------ */
+
+function EditCampaignForm({
+  campaign, isAr, onClose, onSaved,
+}: {
+  campaign: MosCampaign;
+  isAr: boolean;
+  onClose: () => void;
+  onSaved: (campaign: MosCampaign) => void;
+}) {
+  const { projects } = useWorkspace();
+  const addToast = useAppStore((s) => s.addToast);
+
+  const [kind, setKind] = useState<MosCampaign['kind']>(campaign.kind);
+  const [goal, setGoal] = useState(campaign.goal ?? campaign.name ?? '');
+  const [goalIds, setGoalIds] = useState<string[]>(campaign.goal_ids ?? []);
+  const [projectIds, setProjectIds] = useState<string[]>(campaign.project_ids ?? []);
+  const [name, setName] = useState(campaign.name ?? '');
+  const [ownerRole, setOwnerRole] = useState<string>(campaign.owner_role ?? 'marketing_manager');
+  const [startsOn, setStartsOn] = useState(campaign.starts_on ?? '');
+  const [endsOn, setEndsOn] = useState(campaign.ends_on ?? '');
+  const [budget, setBudget] = useState(campaign.budget_total?.toString() ?? '');
+  const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(campaign.success_measures));
+  const [status, setStatus] = useState<MosCampaign['status']>(campaign.status);
+  const [busy, setBusy] = useState(false);
+  const [closeConfirm, setCloseConfirm] = useState(false);
+
   const initial = useRef({
-    kind: campaign?.kind ?? 'paid',
-    name: campaign?.name ?? '',
-    goal: campaign?.goal ?? campaign?.name ?? '',
-    goalIds: JSON.stringify(campaign?.goal_ids ?? []),
-    projectIds: JSON.stringify(campaign?.project_ids ?? []),
-    ownerRole: campaign?.owner_role ?? 'marketing_manager',
-    startsOn: campaign?.starts_on ?? '',
-    endsOn: campaign?.ends_on ?? '',
-    budget: campaign?.budget_total?.toString() ?? '',
-    status: campaign?.status ?? 'planning',
-    measures: JSON.stringify(measuresToDrafts(campaign?.success_measures)),
+    kind: campaign.kind,
+    name: campaign.name ?? '',
+    goal: campaign.goal ?? campaign.name ?? '',
+    goalIds: JSON.stringify(campaign.goal_ids ?? []),
+    projectIds: JSON.stringify(campaign.project_ids ?? []),
+    ownerRole: campaign.owner_role ?? 'marketing_manager',
+    startsOn: campaign.starts_on ?? '',
+    endsOn: campaign.ends_on ?? '',
+    budget: campaign.budget_total?.toString() ?? '',
+    status: campaign.status,
+    measures: JSON.stringify(measuresToDrafts(campaign.success_measures)),
   }).current;
 
   const dirty = kind !== initial.kind
@@ -939,237 +1592,49 @@ export function CampaignModal({
     || endsOn !== initial.endsOn
     || budget !== initial.budget
     || status !== initial.status
-    || JSON.stringify(measures) !== initial.measures
-    || drafts.length > 0
-    || execDrafts.length > 0;
+    || JSON.stringify(measures) !== initial.measures;
 
-  // The auto-generated name from the current type + goals + projects + today.
-  // Goal / project labels resolve from the loaded goals list + the workspace's
-  // projectName; missing labels are simply dropped from the name.
-  const goalLabels = useMemo(
-    () => goalIds.map((id) => goalsList.find((g) => g.id === id)?.name ?? '').filter(Boolean),
-    [goalIds, goalsList],
-  );
-  const projectLabels = useMemo(
-    () => projectIds.map((id) => projectName(id)).filter(Boolean),
-    [projectIds, projectName],
-  );
-  const computedName = useMemo(
-    () => campaignAutoName({ kind, goalLabels, projectLabels, date: new Date(), isAr }),
-    [kind, goalLabels, projectLabels, isAr],
-  );
-
-  // Keep the name in step with the live values until a human takes it over. The
-  // date is captured once per mount (a re-render must not bump it), so only the
-  // type / goals / projects drive the refresh here.
-  useEffect(() => {
-    if (!nameEdited) setName(computedName);
-    // computedName already folds in kind/goals/projects; nameEdited gates it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, goalLabels.join('|'), projectLabels.join('|'), nameEdited]);
-
-  // Guarded close: while saving, ignore the request entirely; with unsaved
-  // changes, confirm before discarding. Wired to the backdrop click, Escape, the
-  // header ✕, and the Cancel button — so "click outside" can no longer wipe the
-  // form without a deliberate confirmation. Matches SettingsWorkflows' pattern.
   const requestClose = useCallback((): void => {
     if (busy) return;
-    // In-app confirm (dark, themed) instead of the browser's «app.wassel.re says»
-    // dialog. Clean close when there is nothing unsaved.
     if (dirty) { setCloseConfirm(true); return; }
     onClose();
   }, [busy, dirty, onClose]);
 
-
-  const totalBudget = budget.trim() === '' ? null : Number(budget);
-  // Create is gated for a new paid campaign: at least one execution, and every
-  // execution fully configured.
-  const execGateOk = kind !== 'paid' || !isNew
-    || (execDrafts.length > 0 && execDrafts.every(execDraftComplete));
-
   const submit = async (): Promise<void> => {
     if (!name.trim()) {
-      addToast(
-        isAr ? 'الحملة تحتاج اسمًا — وّلده تلقائيًا أو اكتبه.' : 'The campaign needs a name — auto-generate one or type it.',
-        'error',
-      );
+      addToast(isAr ? 'الحملة تحتاج اسمًا.' : 'The campaign needs a name.', 'error');
       return;
     }
-    // Every campaign must serve at least one goal (the server enforces this too).
     if (goalIds.length === 0) {
-      addToast(
-        isAr ? 'اربط الحملة بهدف واحد على الأقل.' : 'Link the campaign to at least one goal.',
-        'error',
-      );
+      addToast(isAr ? 'اربط الحملة بهدف واحد على الأقل.' : 'Link the campaign to at least one goal.', 'error');
       return;
     }
-    // The design's note: معيار النجاح إلزامي. A paid campaign without a
-    // criterion cannot be judged, so the form refuses it up front.
     if (kind === 'paid' && !hasMeasureTarget(measures)) {
       addToast(
-        isAr ? 'حدّد معيار النجاح — حملة بلا معيار لا يمكن الحكم عليها.' : 'Set the success criterion — a campaign without one cannot be judged.',
-        'error',
-      );
-      return;
-    }
-    // Every planned content piece needs a working title before we create it —
-    // content_create rejects a blank one, so we catch it here with a clear line.
-    if (isNew && drafts.some((d) => !d.title.trim())) {
-      addToast(isAr ? 'أعطِ كل محتوى عنوانًا مبدئيًا.' : 'Give every content piece a working title.', 'error');
-      return;
-    }
-    // A new paid campaign must ship with at least one FULLY-configured execution
-    // (platform plan → ad set → ad). The button is already disabled, but guard.
-    if (isNew && kind === 'paid' && !execGateOk) {
-      addToast(
-        isAr ? 'أضف حملة إعلانية واحدة على الأقل واملأ إعداداتها (المنصة، المجموعة، الإعلان).'
-          : 'Add at least one ad campaign and fill its settings (platform, ad set, ad).',
+        isAr ? 'حدّد معيار النجاح — حملة بلا معيار لا يمكن الحكم عليها.'
+          : 'Set the success criterion — a campaign without one cannot be judged.',
         'error',
       );
       return;
     }
     setBusy(true);
     try {
-      const res = await saveCampaign(
-        {
-          id: campaign?.id,
-          // The name is the campaign's identity (auto-generated, editable); the
-          // goal is now a separate human-readable description.
-          name: name.trim(),
-          goal: goal.trim(),
-          // The goals this campaign serves (many-to-many; required, ≥1).
-          goal_ids: goalIds,
-          kind,
-          // Multi-project: the server derives the primary project_id from this.
-          project_ids: projectIds,
-          owner_role: ownerRole || null,
-          objective: kind === 'organic' ? 'awareness' : 'leads',
-          status,
-          starts_on: startsOn || null,
-          ends_on: endsOn || null,
-          budget_total: kind === 'paid' ? totalBudget : null,
-          // The server derives the back-compat primary (success_metric /
-          // success_threshold) from success_measures[0].
-          success_measures: draftsToMeasures(measures),
-        },
-        // Executions are now created richly below (plan + ad sets + ads), not as
-        // lite platform rows here.
-        undefined,
-      );
-
-      // Paid + new: create each configured execution, then its ad-set/ad tree,
-      // so ONE Create writes the whole campaign → executions → ad sets → ads.
-      // A failure on one execution is surfaced but never rolls back the campaign.
-      let execOk = 0;
-      let execFail = 0;
-      const createdExecIds: string[] = [];
-      if (isNew && kind === 'paid' && res.item?.id) {
-        for (const d of execDrafts) {
-          try {
-            const platformLabel = (isAr ? PLATFORM_LABELS[d.platform]?.ar : PLATFORM_LABELS[d.platform]?.en) ?? d.platform;
-            const execRes = await saveExecution(res.item.id, {
-              platform: d.platform,
-              // Lineage label: «Paid ad campaign Meta - {campaign name}».
-              label: executionAutoName({ platformLabel, parentName: name.trim(), isAr }),
-              status: 'draft',
-              budget: execPlanBudget(d),
-              platform_settings: d.settings,
-            });
-            const execId = execRes.saved_id;
-            if (execId) {
-              createdExecIds.push(execId);
-              await saveCampaignTree({
-                execution_id: execId,
-                ad_sets: d.adSets.map((s, i) => ({
-                  name: s.name.trim(),
-                  sort_order: i,
-                  ads: s.ads.map((a) => {
-                    const cap = a.caption.trim();
-                    const assetKeys = a.asset
-                      ? {
-                          asset_id: a.asset.id,
-                          asset_title: a.asset.title,
-                          ...(a.asset.url ? { asset_url: a.asset.url } : {}),
-                          ...(a.asset.thumb ? { asset_thumb: a.asset.thumb } : {}),
-                        }
-                      : {};
-                    const merged = { ...(cap ? { message: cap } : {}), ...assetKeys };
-                    return {
-                      label: a.label.trim(),
-                      content_id: a.contentId || null,
-                      status: 'waiting',
-                      ...(Object.keys(merged).length > 0 ? { creative: merged } : {}),
-                    };
-                  }),
-                })),
-              });
-            }
-            execOk += 1;
-          } catch (err) {
-            execFail += 1;
-            console.error('[mos] execution create failed', err);
-          }
-        }
-        if (execFail > 0) {
-          addToast(
-            isAr ? `تعذّر إنشاء ${num(execFail, true)} حملة إعلانية — أكملها من صفحة الحملة.`
-              : `${execFail} ad campaign(s) failed — finish them from the campaign page.`,
-            'error',
-          );
-        }
-      }
-      // Bulk content: create each planned piece linked to the just-created
-      // campaign, so ONE save spins up the campaign AND its production line.
-      // Mirrors the single-create path — content_create opens the first task.
-      // A paid campaign's executions are AD channels («إعلانات ميتا»), not
-      // organic feeds, so each piece gets a PAID placement (an mos_execution_ads
-      // row) on every created execution — never a draft publication, which
-      // would land an ad channel in the Placements tab's organic section.
-      // A failure on one piece is surfaced but never rolls back the campaign
-      // or its siblings.
-      let contentOk = 0;
-      let contentFail = 0;
-      if (isNew && res.item?.id && drafts.length > 0) {
-        for (const d of drafts) {
-          try {
-            const cres = await createContent({
-              title: d.title.trim(),
-              content_type_key: d.typeKey,
-              project_ids: projectIds,
-              campaign_id: res.item.id,
-              // `purpose` is derived from placements now — not set here.
-              // Notes land in the content's data.notes — the field the «الموجز» shows.
-              data: { notes: d.notes.trim() || null },
-            });
-            const cid = cres.item?.id;
-            if (cid) {
-              for (const execId of createdExecIds) {
-                await saveAdCreative(cid, { executionId: execId }, {});
-              }
-            }
-            contentOk += 1;
-          } catch (err) {
-            contentFail += 1;
-            console.error('[mos] bulk content create failed', err);
-          }
-        }
-      }
-
-      if (isNew) {
-        const clauses: string[] = [];
-        if (execOk > 0) clauses.push(isAr ? `${num(execOk, true)} حملات إعلانية` : `${execOk} ad campaigns`);
-        if (contentOk > 0) clauses.push(isAr ? `${num(contentOk, true)} محتوى` : `${contentOk} content ${contentOk === 1 ? 'piece' : 'pieces'}`);
-        const tail = clauses.length > 0 ? (isAr ? ` مع ${clauses.join(' و')}` : ` with ${clauses.join(' and ')}`) : '';
-        const failTail = contentFail > 0 ? (isAr ? ` (تعذّر إنشاء ${num(contentFail, true)})` : ` (${contentFail} failed)`) : '';
-        addToast(
-          isAr
-            ? `أُنشئت الحملة ${res.item?.ref ?? ''}${tail}${failTail}.`
-            : `Created campaign ${res.item?.ref ?? ''}${tail}${failTail}.`,
-          contentFail > 0 ? 'error' : 'success',
-        );
-      } else {
-        addToast(isAr ? 'حُفظت الحملة.' : 'Campaign saved.', 'success');
-      }
+      const res = await saveCampaign({
+        id: campaign.id,
+        name: name.trim(),
+        goal: goal.trim(),
+        goal_ids: goalIds,
+        kind,
+        project_ids: projectIds,
+        owner_role: ownerRole || null,
+        objective: kind === 'organic' ? 'awareness' : 'leads',
+        status,
+        starts_on: startsOn || null,
+        ends_on: endsOn || null,
+        budget_total: kind === 'paid' ? (budget.trim() === '' ? null : Number(budget)) : null,
+        success_measures: draftsToMeasures(measures),
+      }, undefined);
+      addToast(isAr ? 'حُفظت الحملة.' : 'Campaign saved.', 'success');
       onSaved(res.item);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
@@ -1180,165 +1645,99 @@ export function CampaignModal({
 
   return (
     <>
-    <Modal
-      title={isNew ? (isAr ? 'حملة جديدة' : 'New campaign') : (isAr ? 'تعديل الحملة' : 'Edit campaign')}
-      sub={isAr
-        ? 'هدف، ومدة، والمنصات التي ستعمل عليها. تُنشأ الحملات الإعلانية كمسودات.'
-        : 'A goal, a duration, and the platforms it runs on. Ad campaigns are created as drafts.'}
-      onClose={requestClose}
-      footer={
-        <>
-          <span className="note">
-            {isNew && kind === 'paid' && !execGateOk
-              ? (isAr
-                  ? 'أكمل إعدادات كل حملة إعلانية (المنصة، المجموعة، الإعلان) لتفعيل الإنشاء.'
-                  : 'Finish every ad campaign’s settings (platform, ad set, ad) to enable Create.')
-              : isAr
-                ? 'لا شيء ينفق مالًا هنا. الحملات الإعلانية مسودات حتى يطلقها أحد على المنصة نفسها.'
-                : 'Nothing here spends money. Ad campaigns stay drafts until someone launches them on the platform itself.'}
-          </span>
-          <button type="button" className="btn" onClick={requestClose} disabled={busy}>
-            {isAr ? 'إلغاء' : 'Cancel'}
-          </button>
-          <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy || !execGateOk}>
-            {busy
-              ? (isAr ? 'جارٍ الإنشاء…' : 'Working…')
-              : isNew ? (isAr ? 'إنشاء الحملة' : 'Create campaign') : (isAr ? 'حفظ' : 'Save')}
-          </button>
-        </>
-      }
-    >
-      <div>
-        <div className="lbl" style={{ marginBottom: 7 }}>{isAr ? 'النوع' : 'Type'}</div>
-        <div className="pick2">
-          <button type="button" className={`p2${kind === 'paid' ? ' on' : ''}`} onClick={() => setKind('paid')}>
-            <IconCampaigns />
-            <div className="n4">{isAr ? 'مدفوعة' : 'Paid'}</div>
-            <div className="s4">{isAr ? 'ميزانية وتكلفة مستهدفة' : 'a budget and a target cost'}</div>
-          </button>
-          <button type="button" className={`p2${kind === 'organic' ? ' on' : ''}`} onClick={() => setKind('organic')}>
-            <IconMetrics />
-            <div className="n4">{isAr ? 'عضوية' : 'Organic'}</div>
-            <div className="s4">{isAr ? 'حجم ووصول' : 'volume and reach'}</div>
-          </button>
+      <Modal
+        title={isAr ? 'تعديل الحملة' : 'Edit campaign'}
+        sub={isAr
+          ? 'الظرف نفسه — الاسم والمدة والميزانية. جدولة المحتوى تُعاد من صفحة الحملة.'
+          : 'The envelope itself — name, duration, budget. Content scheduling is re-planned from the campaign page.'}
+        onClose={requestClose}
+        footer={
+          <>
+            <span className="note">
+              {isAr
+                ? 'لا شيء ينفق مالًا هنا. تعديل التواريخ لا يعيد جدولة المحتوى المُعتمد.'
+                : 'Nothing here spends money. Changing the dates does not re-schedule approved content.'}
+            </span>
+            <button type="button" className="btn" onClick={requestClose} disabled={busy}>
+              {isAr ? 'إلغاء' : 'Cancel'}
+            </button>
+            <button type="button" className="btn btn-p" onClick={() => void submit()} disabled={busy}>
+              {busy ? (isAr ? 'جارٍ الحفظ…' : 'Working…') : (isAr ? 'حفظ' : 'Save')}
+            </button>
+          </>
+        }
+      >
+        <div>
+          <div className="lbl" style={{ marginBottom: 7 }}>{isAr ? 'النوع' : 'Type'}</div>
+          <div className="pick2">
+            <button type="button" className={`p2${kind === 'paid' ? ' on' : ''}`} onClick={() => setKind('paid')}>
+              <IconCampaigns />
+              <div className="n4">{isAr ? 'مدفوعة' : 'Paid'}</div>
+              <div className="s4">{isAr ? 'ميزانية وتكلفة مستهدفة' : 'a budget and a target cost'}</div>
+            </button>
+            <button type="button" className={`p2${kind === 'organic' ? ' on' : ''}`} onClick={() => setKind('organic')}>
+              <IconMetrics />
+              <div className="n4">{isAr ? 'عضوية' : 'Organic'}</div>
+              <div className="s4">{isAr ? 'حجم ووصول' : 'volume and reach'}</div>
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-          <div className="lbl">{isAr ? 'اسم الحملة' : 'Campaign name'}</div>
-          <button
-            type="button"
-            className="fbtn"
-            style={{ fontSize: 11, padding: '3px 9px' }}
-            onClick={() => { setNameEdited(false); setName(computedName); }}
-            title={isAr ? 'إعادة توليد الاسم من الحقول' : 'Regenerate from the fields'}
-          >
-            ↻ {isAr ? 'توليد تلقائي' : 'Auto'}
-          </button>
-        </div>
-        <input
-          className="inp"
-          value={name}
-          onChange={(e) => { setName(e.target.value); setNameEdited(true); }}
-          autoFocus={isNew}
-          placeholder={computedName}
-        />
-        <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 5 }}>
-          {isAr
-            ? 'يُولَّد تلقائيًا من النوع والأهداف والمشروع والتاريخ، ويمكنك تعديله. تُسمّى الحملات الإعلانية ومجموعاتها وإعلاناتها تلقائيًا تبعًا له.'
-            : 'Auto-generated from type, goals, project and date — editable. Ad campaigns, ad sets and ads are named automatically from it.'}
-        </div>
-      </div>
-
-      <div>
-        <div className="lbl" style={{ marginBottom: 6 }}>
-          {isAr ? 'الوصف — اختياري' : 'Description — optional'}
-        </div>
-        <input
-          className="inp"
-          value={goal}
-          onChange={(e) => setGoal(e.target.value)}
-          placeholder={isAr ? 'حملة مينا ٥٢ لعملاء أغسطس' : 'Mina 52 campaign for August leads'}
-        />
-        <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 5 }}>
-          {isAr
-            ? 'وصف حر يقرأه البشر. الأرقام والحكم على النجاح يأتيان من معايير النجاح أدناه.'
-            : 'A free-text, human-readable note. The numbers and the success verdict come from the success measures below.'}
-        </div>
-      </div>
-
-      <div>
-        <div className="lbl" style={{ marginBottom: 6 }}>
-          {isAr ? 'الأهداف — ما الذي تخدمه الحملة' : 'Goals — what the campaign serves'}
-        </div>
-        <GoalMultiSelect value={goalIds} onChange={setGoalIds} isAr={isAr} onLoaded={setGoalsList} />
-        <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 5 }}>
-          {isAr
-            ? 'كل حملة تُربط بهدف واحد على الأقل. يمكن أن تخدم عدة أهداف.'
-            : 'Every campaign links to at least one goal. It may serve several.'}
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
-        <Field label={isAr ? 'المشروع' : 'Project'} hint={isAr ? 'اختياري · متعدد' : 'optional · multiple'}>
-          <ProjectMultiSelect
-            projects={projects}
-            value={projectIds}
-            onChange={setProjectIds}
-            isAr={isAr}
-          />
+        <Field label={isAr ? 'اسم الحملة' : 'Campaign name'}>
+          <input className="inp" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label={isAr ? 'المسؤول' : 'Responsible'}>
-          <select className="inp" value={ownerRole} onChange={(e) => setOwnerRole(e.target.value)}>
-            {(['marketing_manager', 'ops_supervisor', 'writer', 'montage'] as const).map((r) => (
-              <option key={r} value={r}>{isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}</option>
-            ))}
-          </select>
-        </Field>
-      </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: kind === 'paid' ? '1fr 1fr 1fr' : '1fr 1fr', gap: 13 }}>
-        <Field label={isAr ? 'تبدأ' : 'Starts'}>
-          <input type="date" className="inp ltr" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} />
+        <Field label={isAr ? 'الوصف — اختياري' : 'Description — optional'}>
+          <input className="inp" value={goal} onChange={(e) => setGoal(e.target.value)} />
         </Field>
-        <Field label={isAr ? 'تنتهي' : 'Ends'}>
-          <input type="date" className="inp ltr" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} />
-        </Field>
-        {kind === 'paid' && (
-          <Field label={isAr ? 'الميزانية الكلية' : 'Total budget'}>
-            <div className="inp inp-row" style={{ padding: 0 }}>
-              <input
-                className="inp"
-                style={{ border: 0, flex: 1 }}
-                inputMode="numeric"
-                value={budget}
-                onChange={(e) => setBudget(e.target.value)}
-              />
-              <span style={{ fontSize: 11, color: 'var(--mute)', paddingInlineEnd: 11 }}>
-                {isAr ? 'ريال' : 'SAR'}
-              </span>
-            </div>
+
+        <div>
+          <div className="lbl" style={{ marginBottom: 6 }}>
+            {isAr ? 'الأهداف — ما الذي تخدمه الحملة' : 'Goals — what the campaign serves'}
+          </div>
+          <GoalMultiSelect value={goalIds} onChange={setGoalIds} isAr={isAr} />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+          <Field label={isAr ? 'المشروع' : 'Project'} hint={isAr ? 'اختياري · متعدد' : 'optional · multiple'}>
+            <ProjectMultiSelect projects={projects} value={projectIds} onChange={setProjectIds} isAr={isAr} />
           </Field>
-        )}
-      </div>
+          <Field label={isAr ? 'المسؤول' : 'Responsible'}>
+            <select className="inp" value={ownerRole} onChange={(e) => setOwnerRole(e.target.value)}>
+              {(['marketing_manager', 'ops_supervisor', 'writer', 'montage'] as const).map((r) => (
+                <option key={r} value={r}>{isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
 
-      {kind === 'paid' && isNew && (
-        <CampaignExecutionsBuilder drafts={execDrafts} onChange={setExecDrafts} isAr={isAr} campaignName={name} />
-      )}
+        <div style={{ display: 'grid', gridTemplateColumns: kind === 'paid' ? '1fr 1fr 1fr' : '1fr 1fr', gap: 13 }}>
+          <Field label={isAr ? 'تبدأ' : 'Starts'}>
+            <input type="date" className="inp ltr" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} />
+          </Field>
+          <Field label={isAr ? 'تنتهي' : 'Ends'}>
+            <input type="date" className="inp ltr" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} />
+          </Field>
+          {kind === 'paid' && (
+            <Field label={isAr ? 'الميزانية الكلية' : 'Total budget'}>
+              <div className="inp inp-row" style={{ padding: 0 }}>
+                <input
+                  className="inp"
+                  style={{ border: 0, flex: 1 }}
+                  inputMode="numeric"
+                  value={budget}
+                  onChange={(e) => setBudget(e.target.value)}
+                />
+                <span style={{ fontSize: 11, color: 'var(--mute)', paddingInlineEnd: 11 }}>
+                  {isAr ? 'ريال' : 'SAR'}
+                </span>
+              </div>
+            </Field>
+          )}
+        </div>
 
-      <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />
+        <SuccessMeasuresEditor measures={measures} onChange={setMeasures} isAr={isAr} />
 
-      {isNew && (
-        <CampaignContentBuilder
-          isAr={isAr}
-          contentTypes={contentTypes}
-          drafts={drafts}
-          onChange={setDrafts}
-        />
-      )}
-
-      {!isNew && (
         <Field label={isAr ? 'الحالة' : 'Status'}>
           <div className="seg" style={{ width: '100%' }}>
             {(['planning', 'active', 'paused', 'done'] as const).map((s) => (
@@ -1354,65 +1753,29 @@ export function CampaignModal({
             ))}
           </div>
         </Field>
-      )}
-
-      {isNew && (
-        <div
-          style={{
-            background: 'var(--sand-2)',
-            border: '1px solid var(--line)',
-            borderRadius: 8,
-            padding: '11px 13px',
-            fontSize: 11.5,
-            color: 'var(--mute)',
-            lineHeight: 1.9,
-          }}
-        >
-          <b style={{ color: 'var(--ink)' }}>{isAr ? 'عند الإنشاء' : 'On create'}</b>
-          {isAr ? ' — حملة برقم ' : ' — a campaign numbered '}
-          <b style={{ color: 'var(--ink)' }} className="ltr">C-</b>
-          {kind === 'paid' && isNew && execDrafts.length > 0 && (
-            <>
-              {isAr
-                ? `، و${num(execDrafts.length, true)} حملات إعلانية بمجموعاتها وإعلاناتها`
-                : `, and ${execDrafts.length} ad campaigns with their ad sets & ads`}
-            </>
-          )}
-          {isAr
-            ? '، ويُحكم عليها بمعايير النجاح أعلاه.'
-            : ', judged by the success measures above.'}
-          <br />
-          {isAr
-            ? (drafts.length > 0
-                ? `و${num(drafts.length, true)} قطعة محتوى مربوطة بالحملة يبدأ مسار عملها فورًا.`
-                : 'لم يُضف محتوى بعد — أضِفه أعلاه، أو لاحقًا من تبويب المحتوى.')
-            : (drafts.length > 0
-                ? `and ${drafts.length} content ${drafts.length === 1 ? 'piece' : 'pieces'} linked to it, whose ${drafts.length === 1 ? 'workflow starts' : 'workflows start'} immediately.`
-                : 'No content added yet — add it above, or later from the Content tab.')}
-        </div>
-      )}
-    </Modal>
-    {closeConfirm && (
-      <Modal
-        title={isAr ? 'تجاهل التغييرات؟' : 'Discard changes?'}
-        sub={isAr ? 'لديك تغييرات غير محفوظة في هذه الحملة.' : 'You have unsaved changes on this campaign.'}
-        onClose={() => setCloseConfirm(false)}
-        footer={
-          <>
-            <button type="button" className="btn" onClick={() => setCloseConfirm(false)}>
-              {isAr ? 'متابعة التحرير' : 'Keep editing'}
-            </button>
-            <button type="button" className="btn btn-d" onClick={() => { setCloseConfirm(false); onClose(); }}>
-              {isAr ? 'تجاهل وإغلاق' : 'Discard & close'}
-            </button>
-          </>
-        }
-      >
-        <div style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.9 }}>
-          {isAr ? 'سيُفقد ما لم يُحفظ إن أغلقت الآن.' : 'Anything unsaved will be lost if you close now.'}
-        </div>
       </Modal>
-    )}
+
+      {closeConfirm && (
+        <Modal
+          title={isAr ? 'تجاهل التغييرات؟' : 'Discard changes?'}
+          sub={isAr ? 'لديك تغييرات غير محفوظة في هذه الحملة.' : 'You have unsaved changes on this campaign.'}
+          onClose={() => setCloseConfirm(false)}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setCloseConfirm(false)}>
+                {isAr ? 'متابعة التحرير' : 'Keep editing'}
+              </button>
+              <button type="button" className="btn btn-d" onClick={() => { setCloseConfirm(false); onClose(); }}>
+                {isAr ? 'تجاهل وإغلاق' : 'Discard & close'}
+              </button>
+            </>
+          }
+        >
+          <div style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.9 }}>
+            {isAr ? 'سيُفقد ما لم يُحفظ إن أغلقت الآن.' : 'Anything unsaved will be lost if you close now.'}
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

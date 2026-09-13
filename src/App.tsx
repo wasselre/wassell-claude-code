@@ -111,6 +111,10 @@ const BrandKitSettingsRoute = lazy(() => import('@/pages/Marketing/components/Se
 const WriterRulesSettingsRoute = lazy(() => import('@/pages/Marketing/components/SettingsCreativeRoutes').then((m) => ({ default: m.WriterRulesSettingsRoute })));
 const AiRolesSettingsRoute = lazy(() => import('@/pages/Marketing/components/SettingsCreativeRoutes').then((m) => ({ default: m.AiRolesSettingsRoute })));
 const CreativeFlagsSettingsRoute = lazy(() => import('@/pages/Marketing/components/SettingsCreativeRoutes').then((m) => ({ default: m.CreativeFlagsSettingsRoute })));
+// Settings → Capacity (2026-09-14): the per-person slots, weekend, holidays and
+// step effort the campaign scheduling engine plans against. Reads the workspace
+// context itself and gates every input on `manage_capacity`.
+const MarketingCapacitySettingsPage = lazy(() => import('@/pages/Marketing/components/SettingsCapacity'));
 const ProjectFinderPage = lazy(() => import('@/pages/ProjectFinder/ProjectFinderPage'));
 const GeoReviewPage = lazy(() => import('@/pages/GeoReview/GeoReviewPage'));
 const FinancingPage = lazy(() => import('@/pages/Financing/FinancingPage'));
@@ -578,6 +582,7 @@ export default function App() {
           <Route path="/m/settings/writer-rules" element={<WriterRulesSettingsRoute />} />
           <Route path="/m/settings/ai-roles" element={<AiRolesSettingsRoute />} />
           <Route path="/m/settings/creative-flags" element={<CreativeFlagsSettingsRoute />} />
+          <Route path="/m/settings/capacity" element={<MarketingCapacitySettingsPage />} />
           <Route path="/m/settings/:section" element={<SettingsSectionPage />} />
           {/* A wrong /m/* path lands on the workspace's own front door rather
               than on a blank screen inside a shell that already rendered. */}

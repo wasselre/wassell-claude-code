@@ -567,6 +567,26 @@ export default function SettingsPage() {
                 onOpen={() => navigate('/m/settings/load')}
               />
 
+              {/* Capacity — the numbers the campaign scheduling engine plans
+                  against. Distinct from Load & SLA above: that one is a
+                  deadline allowance, this one is how much WORK a stage is. */}
+              <IndexCard
+                icon={IC.matrix}
+                title={isAr ? 'الطاقة والتقويم' : 'Capacity & calendar'}
+                desc={isAr
+                  ? 'كم يستوعب كل شخص يوميًا (بما فيها الاعتمادات)، وأيام العطلة والإجازات، وكم يستغرق كل عمل فعلًا.'
+                  : 'What each person can take per day (approvals included), the weekend and holidays, and how much work each stage actually is.'}
+                tags={
+                  <>
+                    <span className="tag">{isAr ? 'منشور · فيديو · اعتمادات' : 'Post · Video · Approvals'}</span>
+                    <span className="tag">{isAr ? 'جهد لا مهلة' : 'Effort, not an allowance'}</span>
+                    <span className="tag">{isAr ? 'يخطّط عليها محرّك الجدولة' : 'What the scheduler plans against'}</span>
+                  </>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/capacity')}
+              />
+
               <IndexCard
                 icon={IC.bell}
                 title={isAr ? 'إيقاع النشر' : 'Posting cadence'}
