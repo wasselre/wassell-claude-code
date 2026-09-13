@@ -19,6 +19,7 @@ import {
 } from 'recharts';
 import { useAppStore } from '@/stores/appStore';
 import {
+  AD_STATUS_LABELS,
   CAMPAIGN_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosCampaign, MosCampaignEvent,
   MosCampaignOutcomes, MosComment, MosContentRow, MosDailyEntry, MosExecution,
   MosGoal, MosPublication,
@@ -192,6 +193,15 @@ interface ContentStat {
   watch: boolean;
   wrongProject: boolean;
   waiting: boolean;
+  /**
+   * Paid-only: what the item's ads are ACTUALLY doing on the platform, rolled
+   * up across every ad it is the creative for. `running` only when at least one
+   * ad is live; `paused` when every placed ad is paused; `planned` when the ad
+   * rows exist only in the app (no platform id yet / still waiting). Until
+   * 2026-09-13 the page called every linked item «يعمل» regardless — C-042's
+   * eight PAUSED Meta ads with zero lifetime spend all read «Running».
+   */
+  placement: 'running' | 'watch' | 'paused' | 'planned' | null;
 }
 
 export default function CampaignDetailPage() {
@@ -458,6 +468,7 @@ export default function CampaignDetailPage() {
           wrongProject,
           // Nothing is published yet — the piece is still in production.
           waiting: uniq.length === 0,
+          placement: null,
         };
       }
 
@@ -467,6 +478,12 @@ export default function CampaignDetailPage() {
       let leads: number | null = null;
       let qualified: number | null = null;
       let watch = false;
+      // What the ads are really doing — rolled up in priority order
+      // (running > watch > paused > planned). An ad that is not placed on the
+      // platform yet (Meta ad with no platform id, or any `waiting` ad) counts
+      // as planned, which is the fallback when nothing else is observed.
+      let anyRunning = false;
+      let anyPaused = false;
       for (const x of executions) {
         const ads = adsByExec[x.id] ?? [];
         const mine = ads.filter((a) => a.content_id === row.id);
@@ -476,16 +493,27 @@ export default function CampaignDetailPage() {
           spend = add(spend, a.spend);
           leads = add(leads, a.leads);
           qualified = add(qualified, a.qualified);
-          if (a.status === 'watch') watch = true;
+          const placed = x.platform !== 'meta' || Boolean(a.platform_ad_id);
+          if (placed && a.status !== 'waiting') {
+            if (a.status === 'watch') watch = true;
+            else if (a.status === 'running') anyRunning = true;
+            else anyPaused = true;
+          }
         }
-        // Envelope-level executions (no ads yet) still attribute their numbers.
+        // Envelope-level executions (no ads yet) still attribute their numbers
+        // — and their own status stands in for the missing ad rows.
         if (viaExec && ads.length === 0) {
           spend = add(spend, x.spend);
           leads = add(leads, x.leads);
           qualified = add(qualified, x.qualified);
+          if (x.status === 'running') anyRunning = true;
+          else if (x.status === 'paused' || x.status === 'ended') anyPaused = true;
         }
       }
       const uniq = Array.from(new Set(platforms));
+      const placement: ContentStat['placement'] = uniq.length === 0
+        ? null
+        : anyRunning ? 'running' : watch ? 'watch' : anyPaused ? 'paused' : 'planned';
       return {
         row,
         platforms: uniq,
@@ -502,9 +530,36 @@ export default function CampaignDetailPage() {
         watch,
         wrongProject,
         waiting: uniq.length === 0,
+        placement,
       };
     });
   }, [content, executions, adsByExec, pubsByContent, item]);
+
+  /**
+   * The paid status pill for a linked item — what its ads are doing on the
+   * platform, never a blanket «يعمل». Null when the item has no placement yet
+   * (the caller shows the workflow state instead).
+   */
+  const placementPill = (s: ContentStat): { tone: Tone; label: string } | null => {
+    const adLabel = (key: 'running' | 'watch' | 'paused'): string => {
+      const d = AD_STATUS_LABELS[key];
+      return d ? (isAr ? d.ar : d.en) : key;
+    };
+    switch (s.placement) {
+      case 'running':
+        return { tone: 'now', label: adLabel('running') };
+      case 'watch':
+        return { tone: 'wait', label: adLabel('watch') };
+      case 'paused':
+        return { tone: 'late', label: adLabel('paused') };
+      case 'planned':
+        return s.platforms.includes('meta')
+          ? { tone: 'idle', label: isAr ? 'لم يُنشأ في ميتا بعد' : 'Not in Meta yet' }
+          : { tone: 'idle', label: isAr ? 'لم يُطلق بعد' : 'Not launched yet' };
+      default:
+        return null;
+    }
+  };
 
   /**
    * «الأفضل أداءً» — computed, never assigned. Paid: most qualified, tie →
@@ -1407,7 +1462,10 @@ export default function CampaignDetailPage() {
                                   <Pill tone="late">{isAr ? 'المشروع الخطأ' : 'Wrong project'}</Pill>
                                 ) : s.waiting ? (
                                   <Pill tone="wait">{isAr ? 'ما زال في المراجعة' : 'Still in review'}</Pill>
-                                ) : null}
+                                ) : (() => {
+                                  const p = placementPill(s);
+                                  return p ? <Pill tone={p.tone}>{p.label}</Pill> : null;
+                                })()}
                               </td>
                             </tr>
                           ))}
@@ -1843,7 +1901,7 @@ export default function CampaignDetailPage() {
                         <th>{isAr ? 'المحتوى' : 'Content'}</th>
                         <th style={{ width: 80 }}>{isAr ? 'النوع' : 'Type'}</th>
                         <th style={{ width: 170 }}>
-                          {isOrganic ? (isAr ? 'نُشر في' : 'Published on') : (isAr ? 'يعمل في' : 'Runs in')}
+                          {isOrganic ? (isAr ? 'نُشر في' : 'Published on') : (isAr ? 'المنصة' : 'Platform')}
                         </th>
                         {isOrganic ? (
                           <>
@@ -1911,11 +1969,14 @@ export default function CampaignDetailPage() {
                                 <Pill tone="late">{isAr ? 'مشروع مختلف' : 'Different project'}</Pill>
                               ) : s.waiting ? (
                                 <StatusPill row={s.row} isAr={isAr} />
-                              ) : s.watch ? (
-                                <Pill tone="wait">{isAr ? 'مراقبة' : 'Watching'}</Pill>
-                              ) : (
-                                <Pill tone="now">{isOrganic ? (isAr ? 'منشور' : 'Live') : (isAr ? 'يعمل' : 'Running')}</Pill>
-                              )}
+                              ) : isOrganic ? (
+                                <Pill tone="now">{isAr ? 'منشور' : 'Live'}</Pill>
+                              ) : (() => {
+                                // Paid: the ads' real platform state — paused
+                                // ads read «موقف», not «يعمل».
+                                const p = placementPill(s);
+                                return p ? <Pill tone={p.tone}>{p.label}</Pill> : <StatusPill row={s.row} isAr={isAr} />;
+                              })()}
                             </td>
                             <td onClick={(e) => e.stopPropagation()}>
                               {!s.waiting && can('write_content') && (
