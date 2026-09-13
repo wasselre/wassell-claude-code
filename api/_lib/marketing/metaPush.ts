@@ -59,6 +59,8 @@ const DEFAULT_DAILY_BUDGET_SAR = 50;
  *  rejected «Invalid parameter» on 2026-09-13; 20 SAR passed) — each half of
  *  the pair gets at least this. */
 const MIN_HALF_BUDGET_SAR = 20;
+/** Meta's ad set name limit is 255 chars; keep a margin. */
+const MAX_ADSET_NAME = 200;
 
 type Json = Record<string, unknown>;
 
@@ -207,7 +209,12 @@ export function buildAdSetPayload(
   const defaults = ADSET_DEFAULTS[objective] ?? LEADS_ADSET_DEFAULT;
   const cbo = ps?.advantage_campaign_budget === true;
 
-  const name = `${refPrefix(campaign, execution)} · ${adSet.name ?? 'Ad set'}${VARIANT_SUFFIX[variant]}`.slice(0, 400);
+  // Meta caps ad set names (1487046 «The name is too long» at ~255 chars —
+  // hit live 2026-09-13 once the variant suffix was appended). Trim the base
+  // so the suffix always survives.
+  const suffix = VARIANT_SUFFIX[variant];
+  const base = `${refPrefix(campaign, execution)} · ${adSet.name ?? 'Ad set'}`;
+  const name = `${base.slice(0, MAX_ADSET_NAME - suffix.length)}${suffix}`;
   const destination = str(ps?.destination_type) ?? defaults.destination_type;
 
   const payload: Json = {

@@ -94,5 +94,9 @@ describe('metaPush — skeleton house rules (2026-09-13)', () => {
     const tiny = buildAdSetPayload(campaign, { ...execution, budget: 10 }, { id: 's1', name: 'x' }, 'CAMP', 'PAGE', SAVED, 'feed');
     expect(tiny.daily_budget).toBe(2000);
     expect((story.targeting as Record<string, unknown>).instagram_positions).toEqual(['story', 'reels']);
+    // a very long planned name is trimmed but the variant suffix survives (Meta 1487046)
+    const long = buildAdSetPayload(campaign, execution, { id: 's1', name: 'x'.repeat(300) }, 'CAMP', 'PAGE', SAVED, 'story');
+    expect(String(long.name).length).toBeLessThanOrEqual(200);
+    expect(String(long.name).endsWith(' — ستوري')).toBe(true);
   });
 });
