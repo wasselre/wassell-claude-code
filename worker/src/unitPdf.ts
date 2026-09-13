@@ -181,19 +181,20 @@ export function buildUnitHtml({
  */
 export async function renderUnitPdf(html: string): Promise<Buffer> {
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
-  // Headless-container flags. NB: do NOT add `--single-process` — it crashes
-  // chromium here ("Cannot use V8 Proxy resolver in single process mode" → target
-  // closed). The original hang was chromium spinning on GPU/Vulkan init (the ANGLE
-  // "Internal Vulkan error" spam), which `--disable-gpu` + `--disable-software-
-  // rasterizer` skip entirely; dbus warnings on Alpine are harmless.
+  // Headless-container flags, learned the hard way on Fly Alpine shared-cpu:
+  //   • NO `--single-process` — it crashes chromium ("Cannot use V8 Proxy resolver
+  //     in single process mode" → target closed).
+  //   • `--disable-gpu` avoids the hardware GPU/Vulkan init that hung the render
+  //     (ANGLE "Internal Vulkan error" spam) — chromium falls back to SwiftShader.
+  //   • NO `--disable-software-rasterizer` — that removes SwiftShader too, leaving
+  //     no rendering backend, so the browser never becomes ready (launch timeout).
+  //   • 60s launch timeout: cold-starting chromium on a CPU-saturated shared-cpu
+  //     machine (the marketing lane runs here too) can take >30s.
   const browser = await chromium.launch({
     executablePath,
     headless: true,
-    timeout: 30_000,
-    args: [
-      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-      '--disable-gpu', '--disable-software-rasterizer',
-    ],
+    timeout: 60_000,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
   });
   try {
     const page = await browser.newPage();
