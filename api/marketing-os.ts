@@ -2050,8 +2050,13 @@ export default async function handler(req: Request): Promise<Response> {
           steps = mapStepDefs(workflowId, stepsOf((wfRes.data as { metadata?: unknown } | null)?.metadata ?? null));
         }
 
+        // The item carries its own preview so a detail page opened straight
+        // from a link shows the creative before the Materials tab loads.
+        const [itemWithPreview] = await withContentPreviews(
+          sb, [item.data as unknown as Record<string, unknown>],
+        );
         return jsonOk({
-          item: item.data,
+          item: itemWithPreview ?? item.data,
           tasks: (tasks.data ?? []).map((t) => mapRoleTask(t as Record<string, unknown>)),
           scenes: scenes.data ?? [],
           steps,
