@@ -1,6 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
+**Last updated:** 2026-09-14 (**Campaign planning: nothing is created until a plan is approved.** Creating a campaign now runs a PREFLIGHT against the live workload instead of minting content rows on the spot. The wizard collects REQUIREMENTS (projects × posts/videos, platforms, date range, per-platform frequency; paid adds the weekly refresh policy), the engine distributes publishing first and schedules production BACKWARD from each publish date, and the preview shows the batches, the Instagram grid, the per-person per-day load, the conflicts and — when it does not fit — the earliest feasible range or the largest count that does. Only «اعتماد الخطة» writes anything. See the Campaign planning behaviours below.)
 **Last updated:** 2026-09-13 (**Campaign page: a linked item's status is what its ads are really doing, never a blanket «يعمل».** `CampaignDetailPage`'s Overview «المحتوى المستخدم» table and Content tab used to call EVERY item linked to an ad campaign «يعمل» (Running) — C-042's eight Meta ads were all PAUSED with zero lifetime spend, yet every row read «يعمل في: إعلانات ميتا · يعمل». Each `ContentStat` now carries a `placement` rolled up across the item's ads: `running` (any live ad) › `watch` › `paused` (every placed ad paused; execution status stands in when an execution has no ad rows) › `planned` (ad rows exist only in the app — no Meta `platform_ad_id`, or `waiting`). The pill reads «يعمل» / «مراقبة» / «موقف» (from `AD_STATUS_LABELS`, same words as the execution page and the Content table's «الإعلان» column) / «لم يُنشأ في ميتا بعد»; the paid column header is «المنصة» (was «يعمل في»). Organic campaigns are unchanged («منشور» from publications).)
 **Last updated:** 2026-09-13 (**Task rows open the review popup.**)
 **Last updated:** 2026-09-13 (**Meta ads: house rules + caption approval.** Every pushed ad set is built on the account's Meta SAVED AUDIENCE (never broad KSA) with Instagram + WhatsApp placements only; every ad is created by ONE path (the worker) in two phases — AI writes the caption, the manager approves it on the Placements tab, THEN the ad is built with square→feed / vertical→stories-reels-status (both slots required), the WhatsApp welcome template duplicated from an existing project with the name swapped, every Advantage+ enhancement off and multi-advertiser off. See the auto-ad and push-layer bullets.)
@@ -47,6 +48,120 @@ This workspace answers the three questions the old process could not:
 **what is stuck, who is holding it, and did it work.**
 
 ## Key behaviors
+
+- **Campaign planning — the plan comes before the records (2026-09-14).**
+  Creating a campaign used to mint content rows and fire their first tasks
+  immediately; the team found out whether the work fitted by living through it.
+  Now a campaign is planned first and materialised only on approval.
+
+  - **The engine** (`src/lib/marketingOS/scheduling/`) is PURE and
+    deterministic — the same `planCampaign` runs the preview and the commit, so
+    "preview equals commit" is checked, not promised. It is imported by the SPA
+    and by `api/**` (the blessed src↔api cross-import, like `platformRules.ts`).
+  - **Organic: publishing is distributed FIRST.** Items are dealt across
+    projects and days at the requested frequency, honouring the platform's own
+    rules — Instagram never puts the same project twice in one day, never back
+    to back, and never twice in one row of three. On the operator's own example
+    (5 projects × 3 posts, 3/day) that reproduces A1 B1 C1 · D1 E1 A2 · B2 C2 D2
+    exactly. Each (child campaign, day) becomes a **publishing batch**.
+  - **Production is scheduled BACKWARD** from each publish date:
+    `required_ready_at` is one working day before publishing, and every stage
+    must end `effort(next stage)` working days before the next one. Items are
+    placed in publishing order and each stage as late as its deadline allows, so
+    batch 1 takes the days nearest its own deadlines and later batches are
+    pushed EARLIER into their slack — a later batch's capacity problem can never
+    displace an earlier one.
+  - **Effort is an explicit estimate** (`mos_step_effort`, editable in
+    Settings → Capacity), NOT the step's `due_days`, which is a deadline
+    allowance. Conflating the two makes every plan optimistic.
+  - **Capacity is ONE ledger.** `mos_work_ledger_v` is the single definition of
+    remaining work per person per day: open tasks, reserved AND stale
+    reservations, and open manual tasks — each unit counted exactly once, never
+    on a past day. **Elapsed time is never progress**: an untouched two-day task
+    five days late still costs two slot-days, projected from today; only a
+    recorded `progress_days` reduces it. Leave and holidays are hard constraints
+    during placement, not deadline extensions applied afterwards. Approval steps
+    consume their own `approvals` bucket, so the single marketing manager shows
+    up as the bottleneck they are.
+  - **Impossible vs not-found.** Two SOUND bounds can prove a range impossible —
+    a time bound (the chain cannot finish even with infinite people) and a
+    capacity bound (required slot-days exceed every free slot-day before the
+    deadline). Placement itself is a backtracking search; when neither bound
+    fires and the search still fails, the answer is «لم نعثر على جدول ضمن حدّ
+    البحث» and never «مستحيل». The preview always offers the earliest feasible
+    range and the largest item count that fits the requested dates.
+  - **Approval is the only write.** `campaign_plan_commit` re-plans against the
+    LIVE ledger, refuses with WS409 plus a diff when anything a human read has
+    moved, then hands the write to `mos_campaign_plan_commit`, which takes the
+    shared ledger advisory lock, re-checks the snapshot hash, INDEPENDENTLY
+    re-sums every touched (person, day, bucket) in SQL, and only then
+    materialises. Two approvals therefore cannot book the same designer day.
+  - **Reservations, not tasks.** The commit creates content, plan rows, batches,
+    publications (`status='planned'`) and `mos_task_reservations` — and opens NO
+    workflow task. `/api/cron/planning-sweep` opens the first task when
+    `production_start` arrives and repairs drift, so a campaign approved three
+    weeks early does not dump twenty tasks into today's queue.
+  - **Paid refresh is calculated from the real dates**, never hardcoded. Kept
+    refresh points, ready-by, production-start and decision-due all come from
+    the working calendar. A 30-day campaign from 2026-10-01 keeps three
+    refreshes and produces **20** creatives under policy A (5 launch + 12
+    replacements + 3 fifths), 17 under policy B. Because cycle k+1 starts
+    producing BEFORE cycle k decides, replacement production never waits for a
+    winner — and a banked spare only reduces a cycle when it is a known fact at
+    that cycle's production start, earmarked exclusively to it by a unique
+    index.
+
+- **The caption is part of writing, and the writing stage cannot close without
+  it (2026-09-14).** The canonical caption lives on `mos_content.data.caption`
+  and is written on the WRITING page, directly beneath the content, with an AI
+  draft button (`content_caption_generate`, DeepSeek, every number gated to the
+  project's own facts) and a required writer confirmation. A fresh AI draft is
+  never pre-confirmed, and any later edit invalidates the confirmation. The
+  manager then approves the writing and the caption together — which they could
+  not do before: the 2026-08-26 split moved captions onto the placement rows,
+  and 0 of 24 live content items carried one. Per-platform captions and paid ad
+  copy remain as OVERRIDES seeded from the canonical text. The Meta worker skips
+  its own AI-caption phase entirely when an approved writer caption exists,
+  removing one manual approval per creative.
+
+- **Approvals are binding, and edits after them need a revision (2026-09-14).**
+  Every approval writes a `mos_content_approvals` row carrying the writing,
+  design, caption and package hashes — so "the approved version" is a specific,
+  reproducible snapshot. Editing a locked field afterwards is refused
+  (`MOS:LOCKED caption — open a revision`). `content_revise` derives the scope
+  from what actually changed and the writer can only widen it: a caption-only
+  change re-runs writing review then the final approval; a change to any field
+  flagged `affects_design` (a price on the creative, a headline) also re-runs
+  design and the writer's design review, because the existing image still shows
+  the old text. Step `required_fields` are enforced by the DATABASE now, so
+  «اعتماد رغم النقص» is gone — the button names the gap and is disabled.
+
+- **The rejection target is a choice (2026-09-14).** «إلى من تعود؟» offers every
+  prior step that creates a revision, with the engine's default pre-selected;
+  the chosen step KEY rides `task_complete`'s `return_to` and the SQL validates
+  it against the pinned list. Rejecting the FINAL approval used to always land
+  on the designer, because the writer's design-review step carries
+  `creates_revision:false` — "the copy is wrong" had nowhere to go.
+
+- **The ad preflight runs before the tap (2026-09-14).** `content_ad_readiness`
+  lists every missing requirement — both design slots, an approved caption, the
+  project, the campaign, the Meta execution and ad set, the saved audience, the
+  welcome template, the budget — on the approval sheet, BEFORE the manager
+  approves. They used to surface minutes later as a worker failure; five of
+  C-042's eight creatives failed exactly that way. Approving regardless is the
+  explicitly-labelled «اعتماد بدون إعلان». Ads are created PAUSED by default and
+  activated on their scheduled date.
+
+- **Weekly creative refresh (2026-09-14).** A Fly worker lane ranks the active
+  creatives from `mos_ad_metrics_daily` (**CPL = spend ÷ leads**; a creative
+  below the data threshold is unranked — never the default winner and never a
+  guaranteed loser; fatigue on frequency > 3.0 or a CTR drop over 40%), writes a
+  default keep/replace decision, and opens ONE `refresh_decision` task for the
+  manager. On apply it activates the replacements, polls Meta until they are
+  really ACTIVE, and only THEN pauses the outgoing ads — never the reverse, and
+  never below the ad set's minimum active count. If only some replacements are
+  ready it runs those, keeps the best outgoing creatives live, and raises a task
+  naming what is late and when it is now due.
 
 - **Auto Meta ad on the manager's final design approval (2026-09-10; two
   phases + house rules 2026-09-13).** A step can carry `auto_meta_ad`
@@ -905,6 +1020,31 @@ This workspace answers the three questions the old process could not:
 
 | File | What it does |
 |---|---|
+| `src/lib/marketingOS/scheduling/` | **The campaign scheduling engine** — pure, deterministic, shared by the SPA and `api/**`. `calendar.ts` (working days, Riyadh civil dates, holidays), `types.ts`, `defaults.ts` (workflow shapes + effort seeds), `platforms.ts` (per-platform DISTRIBUTION rules), `distribute.ts` (publishing slots + the grid), `refresh.ts` (paid cycle forecasting), `ledger.ts` (the capacity book), `schedule.ts` (backward placement + the two infeasibility proofs), `plan.ts` (`planCampaign`) |
+| `api/_lib/marketing/planning/snapshot.ts` | Turns SQL rows into the engine's `WorkloadSnapshot` + `RuleSet` — the ONLY translation point |
+| `api/_lib/marketing/planning/actions.ts` | `campaign_plan_preview` / `_revise` / `_commit` / `_get`, `campaign_rollup`, `workload_calendar`, `content_ad_readiness`, `capacity_config` (+ save) — including the re-plan-and-diff commit protocol |
+| `api/_lib/marketing/planning/content.ts` | `content_caption_generate` (fact-gated AI caption), `content_revise`, `refresh_cycle_list` / `_decide` |
+| `api/_lib/marketing/routes.ts` | The SERVER twin of the content route resolver — every notification builds its URL here, so a dead `?tab=` cannot recur |
+| `api/cron/planning-sweep.ts` | Every 10 min: opens the first task when `production_start` arrives, creates paid cycle shells, repairs stale reservations, flags batches at risk |
+| `src/pages/Marketing/components/PlanPreview.tsx` | The preview: verdict + alternatives, totals, production window, batches, grid, per-stage assignments, load table, refresh forecast |
+| `src/pages/Marketing/components/PlanGrid.tsx` | The 3-column Instagram grid preview; drag to reorder pins both sides and re-plans |
+| `src/pages/Marketing/components/PlanLoadTable.tsx` | Per person × bucket × day: existing + proposed / capacity, red when over |
+| `src/pages/Marketing/components/RefreshForecastCard.tsx` | Every refresh cycle and the creative totals, calculated from the campaign's real dates |
+| `src/pages/Marketing/components/CampaignRequirementsStep.tsx` | Step 1 of the wizard: per-project quantities, platforms, range, frequency, refresh policy |
+| `src/pages/Marketing/components/SettingsCapacity.tsx` | `/m/settings/capacity` — per-person daily slots, weekend days, holidays, step effort (`manage_capacity`) |
+| `src/pages/Marketing/components/AdReadinessPanel.tsx` | The Meta preflight checklist, shown BEFORE the final approval |
+| `src/pages/Marketing/lib/planPresentation.ts` | Pure presentation logic for the preview — feasibility wording, grid mapping, load flags, forecast rows |
+| `src/pages/Marketing/lib/contentRoute.ts` | The ONE client route resolver: step key → section → tab, plus the task/content href builders |
+| `worker/src/marketing/creativeRanking.ts` | Pure weekly ranking — CPL = spend ÷ leads, data threshold, fatigue, total-order ties |
+| `worker/src/runRefreshCycleJob.ts` | The refresh lane: decide → apply (activate, verify, then pause) → daily per-ad metrics |
+| `supabase/migrations/2026-09-14_01_campaign_planning_core.sql` | Planning tables, the work-ledger view, the batch and creative-performance views |
+| `supabase/migrations/2026-09-14_02_campaign_planning_rpcs.sql` | `mos_campaign_plan_commit`, `mos_plan_*`, `content_ad_readiness`, `content_revise`, the refresh RPCs |
+| `supabase/migrations/2026-09-14_03_campaign_planning_engine_rewire.sql` | `workflow_advance_role_path` / `_start` re-emitted with requirement enforcement, targeted return, reservation consumption and the ledger lock |
+| `scripts/verify-campaign-planning.mjs` | 26 live read-only checks against prod |
+| `scripts/e2e-campaign-plan.ts` | Live plan → commit → prove → clean up, organic and paid |
+| `scripts/e2e-concurrent-commit.ts` | Two approvals against one shared snapshot: exactly one may book the capacity |
+| `scripts/e2e-content-workflow.ts` | Requirement enforcement, ledger swap, approval locks, revision scope, overdue effort |
+| `scripts/gen-scheduling-examples.mjs` | Regenerates the plan document's worked examples FROM the engine |
 | `src/pages/Marketing/MarketingWorkspace.tsx` | The shell: rail, workspace switcher, workspace-wide context (role, content types, project names), access gate |
 | `src/pages/Marketing/mos.css` | The design system, scoped under `.mos-root` so the Sales theme is untouched |
 | `src/pages/Marketing/OverviewPage.tsx` | Overview — manager state (s01: counters, stalled, week, paid ads) and CEO state (s34: funnel, returns, production, signature) branched on the active role. Both carry the shared `DateControl` (period + prev/next); the paid card reads the period-scoped `paid` object |
