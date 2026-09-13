@@ -36,6 +36,13 @@ Everything was reachable only by query. This page is that surface.
 
 ## Key behaviors
 
+- **Project attribution was rebuilt on 2026-09-13** — the rules, the human
+  lock, the correction path and the health checks are documented in
+  [competitor-watch.md](competitor-watch.md) («How a post gets its project»).
+  In short: the publisher's brand word, a district name or a generic word is
+  never evidence; the full project name matched as a phrase is; the runner
+  must quote the words that prove a pick; a person's correction locks the post.
+
 - **Coverage strip is rendered first and never hidden.** It is the denominator
   for every number below it: posts collected, facts extracted, posts awaiting
   attribution, posts without OCR, and confirmed vs speculative attributions.
