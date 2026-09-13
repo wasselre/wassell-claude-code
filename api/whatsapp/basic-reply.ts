@@ -61,11 +61,32 @@ const NO_SERVICE = 'لا الله يسلمك، هذا الشي ما هو متو�
 const HOLDING = 'أبشر، بيتواصل معك زميلي في أقرب وقت إن شاء الله.';
 const MEDIA_HOLDING = 'أهلاً وسهلا، وصلني — لحظات ويتواصل معك زميلي.';
 
+// English mirrors — sent when the customer wrote to us in English. Same meaning,
+// same first-touch posture; the bot answers in the language it was addressed in.
+const GREETING_EN = 'Hello and welcome! How can I help you?';
+const QUALIFY_EN =
+  'Happy to help — we have 50+ projects in Riyadh. To show you the best options, could you tell us:\n' +
+  '- Which unit type do you prefer (apartment, floor, villa..)?\n' +
+  '- Which districts or areas do you prefer?\n' +
+  '- What is your maximum budget?';
+const NO_SERVICE_EN = 'Sorry, that is not something we offer at the moment.';
+const HOLDING_EN = 'Sure — a colleague will reach out to you shortly.';
+const MEDIA_HOLDING_EN = 'Hello! Received it — a colleague will contact you shortly.';
+
 /** Fold Arabic-Indic (٠-٩) and Persian (۰-۹) digits to Western so «مينا ٥٢» == «مينا 52». */
 function foldDigits(s: string): string {
   return s
     .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
     .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+}
+
+/** Which language did the customer write in? Any Arabic letter → Arabic; otherwise
+ *  a Latin word → English; digits/symbols only → Arabic (the Saudi-market default). */
+function detectLang(raw: string | null | undefined): 'ar' | 'en' {
+  const t = raw ?? '';
+  if (/[؀-ۿ]/.test(t)) return 'ar';
+  if (/[A-Za-z]{2,}/.test(t)) return 'en';
+  return 'ar';
 }
 
 type Action = 'greet' | 'qualify' | 'project_sheet' | 'no_service' | 'handoff' | 'kimi';
@@ -216,6 +237,9 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   // Only now, having decided to proceed, pay for the Kimi call on the ambiguous tail.
   if (d.action === 'kimi') d = await kimiClassify(foldDigits((body.trigger_message ?? '').trim()));
 
+  // Answer in the language the customer wrote in.
+  const lang = detectLang(body.trigger_message);
+
   // Resolve the reply text (+ handoff) per action.
   let replyText: string | null = null;
   let handoff = false;
@@ -226,23 +250,24 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   let sent = false;
 
   if (d.action === 'greet') {
-    replyText = d.reply || GREETING;
+    // Kimi may hand back an Arabic greeting in d.reply; honor it only for Arabic.
+    replyText = lang === 'en' ? GREETING_EN : (d.reply || GREETING);
     summary = 'ترحيب بسيط بعميل جديد.';
   } else if (d.action === 'qualify') {
-    replyText = QUALIFY;
+    replyText = lang === 'en' ? QUALIFY_EN : QUALIFY;
     handoff = true; severity = 'action';
     summary = 'العميل يبحث عن عقار بدون مشروع محدد — أُرسلت أسئلة التفضيلات، يحتاج متابعة مندوب للبحث.';
   } else if (d.action === 'no_service') {
-    replyText = NO_SERVICE;
+    replyText = lang === 'en' ? NO_SERVICE_EN : NO_SERVICE;
     summary = 'العميل يسأل عن خدمة غير متوفرة (إيجار/تجاري/أرض).';
   } else if (d.action === 'project_sheet') {
     // Send the FULL package — message + brochure + top 3 photos — the way a rep
-    // does. Fast mode: no per-message model call (allowAi:false), only our
-    // curated projects (onlyOurProjects:true). The flow re-checks the gate, sends
-    // the text now and staggers the media into the scheduled queue.
+    // does, in the customer's language. Fast mode: no per-message model call
+    // (allowAi:false), only our curated projects (onlyOurProjects:true). The flow
+    // re-checks the gate, sends the text now and staggers the media into the queue.
     const flow = await sendProjectViaAiFlow(supa, {
       chatWid, projectName: d.projectName, deviceId: body.device_id, jobId: 'basic',
-      onlyOurProjects: true, allowAi: false, force: namedProjectBypass,
+      onlyOurProjects: true, allowAi: false, force: namedProjectBypass, lang,
     });
     if (flow.blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: flow.reason });
     if (flow.queued) {
@@ -259,7 +284,8 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     // handoff (incl. media, b2b, kimi-handoff)
     handoff = true;
     severity = d.severity ?? 'action';
-    replyText = d.silent ? null : (d.holding || HOLDING);
+    const holdEn = d.reason === 'media' ? MEDIA_HOLDING_EN : HOLDING_EN;
+    replyText = d.silent ? null : (lang === 'en' ? holdEn : (d.holding || HOLDING));
     summary = d.reason === 'b2b'
       ? 'رسالة تسويق/جهة أعمال (ليست عميلاً) — تحتاج مراجعة بشرية.'
       : d.reason === 'media'

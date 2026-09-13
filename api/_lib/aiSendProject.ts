@@ -71,10 +71,16 @@ async function resolveMessageText(
   svc: SupabaseClient,
   projectId: string,
   sheetBodyAr: string,
+  sheetBodyEn: string,
   sheetFacts: ProjectMessageFacts,
   allowAi: boolean,
+  lang: 'ar' | 'en',
 ): Promise<{ text: string; source: NonNullable<AiSendProjectResult['message_source']> }> {
-  const pick = (ar: string, en: string) => (ar.trim() || en.trim());
+  // Answer in the customer's language: prefer that side, fall back to the other if
+  // one is empty (a saved template may exist in only one language).
+  const pick = (ar: string, en: string) =>
+    lang === 'en' ? (en.trim() || ar.trim()) : (ar.trim() || en.trim());
+  const sheetBody = lang === 'en' ? (sheetBodyEn.trim() || sheetBodyAr) : sheetBodyAr;
 
   // Saved template for this project (chat_templates.data.project_id === id).
   const { data: tplModel } = await svc.from('models').select('id').eq('name', 'chat_templates').maybeSingle();
@@ -107,7 +113,7 @@ async function resolveMessageText(
       if (fc.ok) return { text: pick(fc.body_ar, fc.body_en), source: 'saved-factchecked' };
       console.error(`[aiSendProject] fact-check failed for ${projectId} (${fc.error}) — falling back to the deterministic sheet`);
     }
-    return { text: sheetBodyAr, source: 'sheet' };
+    return { text: sheetBody, source: 'sheet' };
   }
 
   // No saved message → fresh AI rewrite (when allowed), else the deterministic sheet.
@@ -205,6 +211,8 @@ export async function sendProjectViaAiFlow(
      *  responder passes false so it never holds the webhook on a ~40s model call —
      *  it uses the saved message (when current) or the deterministic sheet. */
     allowAi?: boolean;
+    /** Language to send the message text in (media is language-agnostic). Default 'ar'. */
+    lang?: 'ar' | 'en';
   },
 ): Promise<AiSendProjectResult> {
   const chatWid = (input.chatWid ?? '').trim();
@@ -232,7 +240,7 @@ export async function sendProjectViaAiFlow(
   const allProjectsModelId = apModel?.id as string | undefined;
 
   const { text, source } = await resolveMessageText(
-    svc, projectId, sheet.body_ar, sheet.facts as unknown as ProjectMessageFacts, allowAi,
+    svc, projectId, sheet.body_ar, sheet.body_en, sheet.facts as unknown as ProjectMessageFacts, allowAi, input.lang ?? 'ar',
   );
   if (!text.trim()) return { queued: false, error: 'resolved an empty message', project_id: projectId };
 
