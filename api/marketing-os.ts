@@ -29,10 +29,10 @@ import { makeServiceClient } from './_lib/serviceClient.js';
 import { runMetaSync } from './_lib/marketing/metaSync.js';
 import { loadMetaConfig, MetaMarketingClient, MetaApiError } from './_lib/marketing/metaMarketingApi.js';
 import {
-  buildCampaignPayload, buildAdSetPayload, buildCreativePayload, buildAdPayload, adName, pickCreativeAsset,
-  type PushCampaign, type PushExecution, type PushAd, type PushMedia, type CreativeAssetCandidate,
+  buildCampaignPayload, buildAdSetPayload,
+  type PushCampaign, type PushExecution,
 } from './_lib/marketing/metaPush.js';
-import { resolveAutoAdTarget, enqueueMetaAdJob, autoAdSkipText } from './_lib/marketing/metaAutoAd.js';
+import { resolveAutoAdTarget, enqueueMetaAdJob, approveMetaAdCaption, autoAdSkipText } from './_lib/marketing/metaAutoAd.js';
 import {
   loadBundleConfig, isBundlePlatform, buildPlatformData, platformAcceptsKind,
   uploadFromUrl, createPost, getPost, deletePost, getTeam, extractPermalink, mapBundleStatus,
@@ -120,7 +120,13 @@ function wakeWorker(): void {
 /** Human-readable one-liner from a Meta Graph error (or any thrown value). */
 function metaErr(e: unknown): string {
   if (e instanceof MetaApiError) {
-    return `${e.message}${e.code != null ? ` (code ${e.code}${e.subcode != null ? `/${e.subcode}` : ''})` : ''}`;
+    // Meta's user-facing text ("Creative should not include standard
+    // enhancements …") is far more actionable than the generic "Invalid
+    // parameter" — surface it when present (2026-09-13).
+    const raw = (e.raw as { error?: { error_user_msg?: unknown; error_user_title?: unknown } } | null)?.error;
+    const user = typeof raw?.error_user_msg === 'string' ? raw.error_user_msg
+      : typeof raw?.error_user_title === 'string' ? raw.error_user_title : null;
+    return `${user ?? e.message}${e.code != null ? ` (code ${e.code}${e.subcode != null ? `/${e.subcode}` : ''})` : ''}`;
   }
   return e instanceof Error ? e.message : String(e);
 }
@@ -2452,6 +2458,32 @@ export default async function handler(req: Request): Promise<Response> {
           return jsonOk({ ...(await loadPaidAdsPayload(sb, contentId)), job_id: q.job_id, ad_row_id: q.ad_row_id });
         } catch (e) {
           return dbFail(e as PostgrestError) ?? jsonError(500, e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      /* The manager approved the AI caption → phase 2: build the ad on Meta. */
+      case 'meta_auto_ad_approve_caption': {
+        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
+        const contentId = str(body.content_id);
+        const adId = str(body.ad_id);
+        const caption = typeof body.caption === 'string' ? body.caption : '';
+        if (!contentId || !adId) return jsonError(400, 'content_id and ad_id are required');
+        if (!caption.trim()) return jsonError(400, 'caption is required');
+        const own = await sb.from('mos_content_v').select('id').eq('id', contentId).maybeSingle();
+        const of = dbFail(own.error); if (of) return of;
+        if (!own.data) return jsonError(404, 'content item not found');
+        const svc = makeServiceClient('api:marketing-os');
+        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+        try {
+          const q = await approveMetaAdCaption(svc, {
+            contentId, adRowId: adId, caption,
+            approvedByAuthUid: user.userId,
+            approvedByUserId: await resolveAppUserId(sb, user.userId),
+          });
+          wakeWorker();
+          return jsonOk({ ...(await loadPaidAdsPayload(sb, contentId)), job_id: q.job_id, ad_row_id: q.ad_row_id });
+        } catch (e) {
+          return dbFail(e as PostgrestError) ?? jsonError(409, e instanceof Error ? e.message : String(e));
         }
       }
 
@@ -6501,30 +6533,24 @@ export default async function handler(req: Request): Promise<Response> {
         // id straight back onto Wassell (no manual id typing):
         //   1) the SKELETON — campaign + one ad set per planned ad set (a single
         //      default when none) — all-or-nothing: a rejected ad set rolls the
-        //      campaign back and links nothing;
-        //   2) the ADS — one creative (content record's final image/video +
-        //      the ad's copy) and one ad per planned ad, each PAUSED.
+        //      campaign back and links nothing. Every ad set carries the
+        //      account's Meta SAVED AUDIENCE + Instagram/WhatsApp-only
+        //      placements (metaPush.ts house rules) — never a broad audience;
+        //   2) the ADS — NOT built here any more (2026-09-13). Each planned ad
+        //      is handed to the Fly worker's meta-ad lane in its 'caption'
+        //      phase: AI writes the caption from the project facts, the
+        //      manager approves it on the creative's Placements tab, and only
+        //      THEN the worker uploads the square + vertical designs and
+        //      creates the creative + ad. One ad-creation path for both the
+        //      manual push and the approval automation.
         // Re-running on a LINKED execution is the resume path: what is already
-        // linked is skipped and only the missing ad sets / un-pushed ads /
-        // still-processing videos are added. Every Meta id (image hash, video
-        // id, creative id) is persisted on the ad row as soon as it exists, so a
-        // retry never re-uploads. Until 2026-09-10 ads were left to the buyer
-        // because the Meta App was in Development mode — no longer.
-        //
-        // TIME BUDGET: this is an Edge function (25s initial-response ceiling;
-        // the MOS client aborts at 23s). The ads phase stops when the budget is
-        // spent and reports the rest as `ads_pending` with `more:true`; the UI
-        // calls again to continue. Never hold this request open for a video's
-        // processing — a video that is not ready is reported pending as well.
+        // linked is skipped and only the missing ad sets / un-queued ads are
+        // added.
         const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
         const executionId = str(body.execution_id);
         const validateOnly = body.validate_only === true;
         if (!executionId) return jsonError(400, 'execution_id is required');
         const cfg = loadMetaConfig(); if (!cfg) return jsonError(400, 'Meta not configured');
-        const startedAt = Date.now();
-        const BUDGET_MS = 17_000;
-        const budgetLeft = (): number => BUDGET_MS - (Date.now() - startedAt);
-        const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
         const execRes = await sb.from('mos_campaign_executions')
           .select('id, campaign_id, platform, label, budget, starts_on, ends_on, targeting, platform_settings, platform_campaign_id')
@@ -6542,16 +6568,57 @@ export default async function handler(req: Request): Promise<Response> {
         const campaign = campRes.data as (PushCampaign & { audience_id: string | null }) | null;
         if (!campaign) return jsonError(404, 'campaign not found');
 
-        // Option B: if the campaign's audience is linked to a Meta Saved Audience,
-        // push its cached targeting spec as the ad set targeting (else metaPush
-        // falls back to the KSA default and the buyer refines in Meta).
-        let audienceTargeting: Record<string, unknown> | null = null;
+        const client = new MetaMarketingClient(cfg);
+
+        // ---- Saved audience (REQUIRED) ---------------------------------------
+        // Resolution: the campaign's linked Wassel audience → its Meta Saved
+        // Audience; else mos_settings.meta_push.saved_audience_id; else the
+        // account's ONLY saved audience. Several and none chosen → refuse with
+        // the names, so a broad audience can never slip through. The spec is
+        // always read FRESH from Graph (a cached copy could drift from what the
+        // buyer edited in Ads Manager).
+        let wantedAudienceId: string | null = null;
+        let audienceSource = '';
         if (campaign.audience_id) {
           const audRes = await sb.from('mos_audiences')
-            .select('meta_targeting').eq('id', campaign.audience_id).maybeSingle();
+            .select('name, meta_saved_audience_id').eq('id', campaign.audience_id).maybeSingle();
           const af = dbFail(audRes.error); if (af) return af;
-          const t = (audRes.data as { meta_targeting?: unknown } | null)?.meta_targeting;
-          if (t && typeof t === 'object') audienceTargeting = t as Record<string, unknown>;
+          const a = audRes.data as { name?: string; meta_saved_audience_id?: string | null } | null;
+          if (a?.meta_saved_audience_id) { wantedAudienceId = a.meta_saved_audience_id; audienceSource = `campaign audience «${a.name ?? ''}»`; }
+        }
+        if (!wantedAudienceId) {
+          const st = await sb.from('mos_settings').select('value').eq('key', 'meta_push').maybeSingle();
+          const stf = dbFail(st.error); if (stf) return stf;
+          const v = (st.data as { value?: { saved_audience_id?: unknown } } | null)?.value;
+          if (typeof v?.saved_audience_id === 'string' && v.saved_audience_id) { wantedAudienceId = v.saved_audience_id; audienceSource = 'settings default'; }
+        }
+        let savedAudienceTargeting: Record<string, unknown> | null = null;
+        let savedAudienceName: string | null = null;
+        try {
+          const audiences = await client.listSavedAudiences();
+          const pick = wantedAudienceId
+            ? audiences.find((a) => a.id === wantedAudienceId) ?? null
+            : audiences.length === 1 ? audiences[0] ?? null : null;
+          if (!pick) {
+            const names = audiences.map((a) => `«${a.name}»`).join('، ');
+            const why = wantedAudienceId
+              ? `saved audience ${wantedAudienceId} (${audienceSource}) no longer exists in the ad account`
+              : audiences.length === 0
+                ? 'the ad account has no saved audience — create one in Ads Manager first'
+                : `the ad account has ${audiences.length} saved audiences (${names}) — pick the default in Settings → Platforms → Meta, or link one to the campaign audience`;
+            return new Response(JSON.stringify({
+              error: `Refusing to create an ad set without a saved audience: ${why}.`,
+              error_ar: `لن تُنشأ مجموعة إعلانية بدون جمهور محفوظ: ${why}.`,
+            }), { status: 422, headers: { 'Content-Type': 'application/json' } });
+          }
+          if (!pick.targeting || typeof pick.targeting !== 'object') {
+            return jsonError(422, `saved audience «${pick.name}» carries no targeting spec`);
+          }
+          savedAudienceTargeting = pick.targeting as Record<string, unknown>;
+          savedAudienceName = pick.name;
+          if (!audienceSource) audienceSource = 'the account’s only saved audience';
+        } catch (e) {
+          return jsonError(502, `Meta saved audiences failed: ${metaErr(e)}`);
         }
 
         const setsRes = await sb.from('mos_ad_sets')
@@ -6560,8 +6627,6 @@ export default async function handler(req: Request): Promise<Response> {
         const sf = dbFail(setsRes.error); if (sf) return sf;
         type LinkedSet = { id: string | null; name: string | null; platform_adset_id: string | null };
         const adSets = (setsRes.data ?? []) as Array<{ id: string; name: string | null; platform_adset_id: string | null }>;
-
-        const client = new MetaMarketingClient(cfg);
 
         // ---- 1) Skeleton: campaign + ad sets ---------------------------------
         let metaCampaignId: string | null = execRow.platform_campaign_id;
@@ -6590,7 +6655,7 @@ export default async function handler(req: Request): Promise<Response> {
           for (const s of plan) {
             if (s.platform_adset_id) continue; // already linked — don't duplicate
             try {
-              const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId ?? '', cfg.pageId, audienceTargeting);
+              const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId ?? '', cfg.pageId, savedAudienceTargeting);
               const asResult = await client.createAdSet(p, validateOnly);
               createdSets.push({ wassell_ad_set_id: s.id, platform_adset_id: asResult.id ?? '(validated)', name: String(p.name) });
             } catch (e) {
@@ -6649,10 +6714,13 @@ export default async function handler(req: Request): Promise<Response> {
           return jsonError(502, `Meta push failed at campaign: ${metaErr(e)}`);
         }
 
-        // ---- 2) Ads: creative (media + copy) + ad, per planned ad -------------
-        const adsOut: Array<{ wassell_ad_id: string; platform_ad_id: string; name: string }> = [];
-        const adsPending: Array<{ wassell_ad_id: string; name: string; reason: string }> = [];
+        // ---- 2) Ads: hand every planned ad to the worker (caption phase) ------
+        // A planned ad = mos_execution_ads row with no platform_ad_id. Rows the
+        // automation is already handling (queued / creating / caption_review)
+        // are left alone; rows whose job failed are re-queued (fresh caption).
+        const adsQueued: Array<{ wassell_ad_id: string; name: string; job_id: string }> = [];
         const adErrors: Array<{ wassell_ad_id: string; ad: string; error: string }> = [];
+        let adsWaiting = 0;
         if (!validateOnly && metaCampaignId) {
           type PlannedAd = { id: string; label: string | null; content_id: string | null; ad_set_id: string | null; creative: Record<string, unknown> | null };
           const plannedRes = await sb.from('mos_execution_ads')
@@ -6661,162 +6729,47 @@ export default async function handler(req: Request): Promise<Response> {
             .order('created_at', { ascending: true });
           const pf = dbFail(plannedRes.error); if (pf) return pf;
           const planned = (plannedRes.data ?? []) as PlannedAd[];
-
           if (planned.length > 0) {
-            const contentIds = Array.from(new Set(planned.map((a) => a.content_id).filter((c): c is string => Boolean(c))));
-            const [contentRes, linksRes] = await Promise.all([
-              contentIds.length ? sb.from('mos_content_v').select('id, title').in('id', contentIds)
-                : Promise.resolve({ data: [] as Array<{ id: string; title: string | null }>, error: null }),
-              contentIds.length ? sb.from('mos_asset_links').select('content_id, asset_id, role').in('content_id', contentIds)
-                : Promise.resolve({ data: [] as Array<{ content_id: string; asset_id: string; role: string | null }>, error: null }),
-            ]);
-            const cf2 = dbFail(contentRes.error) ?? dbFail(linksRes.error); if (cf2) return cf2;
-            const titleOf = new Map((contentRes.data ?? []).map((c) => [c.id, c.title]));
-            const links = (linksRes.data ?? []) as Array<{ content_id: string; asset_id: string; role: string | null }>;
-            const assetIds = Array.from(new Set(links.map((l) => l.asset_id)));
-            const assetsRes = assetIds.length
-              ? await sb.from('mos_assets').select('id, kind, mime_type, file_id, url').in('id', assetIds)
-              : { data: [] as Array<{ id: string; kind: string | null; mime_type: string | null; file_id: string | null; url: string | null }>, error: null };
-            const af2 = dbFail(assetsRes.error); if (af2) return af2;
-            const assetById = new Map((assetsRes.data ?? []).map((a) => [a.id, a]));
-            // File rows (bucket/path/mime/size) via the service client: the
-            // buyer can already READ the asset (RLS above), signing the private
-            // object is the only privileged step.
             const svc = makeServiceClient('api:marketing-os');
-            const fileIds = Array.from(new Set((assetsRes.data ?? []).map((a) => a.file_id).filter((f): f is string => Boolean(f))));
-            type FileRow = { id: string; storage_bucket: string; storage_path: string; mime_type: string | null; size_bytes: number | null };
-            const fileById = new Map<string, FileRow>();
-            if (fileIds.length && svc) {
-              const fr = await svc.from('files').select('id, storage_bucket, storage_path, mime_type, size_bytes').in('id', fileIds);
-              if (fr.error) console.error('[marketing-os] files lookup for push failed:', fr.error.message);
-              for (const f of (fr.data ?? []) as FileRow[]) fileById.set(f.id, f);
+            if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+            const contentIds = Array.from(new Set(planned.map((a) => a.content_id).filter((c): c is string => Boolean(c))));
+            const titleOf = new Map<string, string>();
+            if (contentIds.length) {
+              const cr = await sb.from('mos_content_v').select('id, title').in('id', contentIds);
+              const cf2 = dbFail(cr.error); if (cf2) return cf2;
+              for (const c of (cr.data ?? []) as Array<{ id: string; title: string | null }>) titleOf.set(c.id, c.title ?? '');
             }
-            const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-
+            const approverId = await resolveAppUserId(sb, user.userId);
             for (const ad of planned) {
-              const pushAd: PushAd = {
-                id: ad.id, label: ad.label, creative: ad.creative ?? null,
-                content_title: ad.content_id ? titleOf.get(ad.content_id) ?? null : null,
-              };
-              const name = adName(campaign, execRow, pushAd);
-              // Everything after the skeleton must fit the Edge budget; the UI
-              // calls again for whatever is left.
-              if (budgetLeft() < 6_000) {
-                adsPending.push({ wassell_ad_id: ad.id, name, reason: 'budget' });
-                continue;
-              }
-              const creative: Record<string, unknown> = { ...(ad.creative ?? {}) };
-              const creativeBefore = JSON.stringify(creative);
-              const persistCreative = async (): Promise<void> => {
-                if (JSON.stringify(creative) === creativeBefore) return;
-                const cu = await sb.from('mos_execution_ads')
-                  .update({ creative, updated_at: new Date().toISOString() }).eq('id', ad.id);
-                if (cu.error) console.error('[marketing-os] ad creative id write-back failed:', cu.error.message);
-              };
+              const name = ad.label ?? (ad.content_id ? titleOf.get(ad.content_id) : null) ?? ad.id.slice(0, 8);
+              const auto = (ad.creative?.auto_ad ?? null) as { state?: unknown } | null;
+              const state = typeof auto?.state === 'string' ? auto.state : null;
+              if (state === 'queued' || state === 'creating' || state === 'caption_review') { adsWaiting += 1; continue; }
+              if (!ad.content_id) { adErrors.push({ wassell_ad_id: ad.id, ad: name, error: 'no content record (creative) attached' }); continue; }
+              const target = ad.ad_set_id
+                ? linkedSets.find((s) => s.id === ad.ad_set_id) ?? null
+                : linkedSets.length === 1 ? linkedSets[0] ?? null : null;
+              if (!target) { adErrors.push({ wassell_ad_id: ad.id, ad: name, error: linkedSets.length > 1 ? 'the ad is not assigned to an ad set' : 'ad set not found' }); continue; }
+              if (!target.id || !target.platform_adset_id) { adErrors.push({ wassell_ad_id: ad.id, ad: name, error: `ad set "${target.name ?? ''}" is not linked to Meta` }); continue; }
               try {
-                if (!cfg.pageId) throw new Error('META_PAGE_ID is not configured — every creative runs from a page');
-                const target = ad.ad_set_id
-                  ? linkedSets.find((s) => s.id === ad.ad_set_id) ?? null
-                  : linkedSets.length === 1 ? linkedSets[0] ?? null : null;
-                if (!target) throw new Error(linkedSets.length > 1 ? 'the ad is not assigned to an ad set' : 'ad set not found');
-                if (!target.platform_adset_id) throw new Error(`ad set "${target.name ?? ''}" is not linked to Meta`);
-                if (!ad.content_id) throw new Error('no content record (creative) attached');
-
-                // Media — resume-aware: an id already on the row is reused.
-                let media: PushMedia | null = null;
-                const knownHash = typeof creative.meta_image_hash === 'string' ? creative.meta_image_hash : null;
-                const knownVideo = typeof creative.meta_video_id === 'string' ? creative.meta_video_id : null;
-                if (knownHash) {
-                  media = { kind: 'image', image_hash: knownHash };
-                } else if (knownVideo) {
-                  const st = await client.getVideoStatus(knownVideo);
-                  if (st.ready && st.thumbnailUrl) media = { kind: 'video', video_id: knownVideo, thumbnail_url: st.thumbnailUrl };
-                  else { adsPending.push({ wassell_ad_id: ad.id, name, reason: 'video_processing' }); continue; }
-                } else {
-                  const candidates: CreativeAssetCandidate[] = links
-                    .filter((l) => l.content_id === ad.content_id)
-                    .map((l) => {
-                      const a = assetById.get(l.asset_id);
-                      const f = a?.file_id ? fileById.get(a.file_id) : undefined;
-                      return {
-                        asset_id: l.asset_id, role: l.role, kind: a?.kind ?? null,
-                        mime_type: f?.mime_type ?? a?.mime_type ?? null,
-                        file_id: a?.file_id ?? null, url: a?.url ?? null,
-                      };
-                    });
-                  const pick = pickCreativeAsset(candidates);
-                  if (!pick) throw new Error('the content record has no final image or video to run');
-                  const file = pick.asset.file_id ? fileById.get(pick.asset.file_id) : undefined;
-                  let srcUrl = pick.asset.url;
-                  if (file) {
-                    if (!svc) throw new Error('file signing is unavailable');
-                    const signed = await svc.storage.from(file.storage_bucket).createSignedUrl(file.storage_path, 3600);
-                    if (signed.error || !signed.data?.signedUrl) throw new Error(signed.error?.message ?? 'sign failed');
-                    srcUrl = signed.data.signedUrl;
-                  }
-                  if (!srcUrl) throw new Error('the media bytes are unreachable (no file, no public url)');
-
-                  if (pick.kind === 'image') {
-                    if (file?.size_bytes && file.size_bytes > MAX_IMAGE_BYTES) {
-                      throw new Error(`the image is ${(file.size_bytes / 1048576).toFixed(1)} MB — the push takes up to 10 MB; export a smaller final`);
-                    }
-                    const dl = await fetch(srcUrl);
-                    if (!dl.ok) throw new Error(`media download failed (${dl.status})`);
-                    const bytes = new Uint8Array(await dl.arrayBuffer());
-                    if (bytes.byteLength > MAX_IMAGE_BYTES) throw new Error('the image is over 10 MB — export a smaller final');
-                    const up = await client.uploadImageBytes(bytes, name);
-                    creative.meta_image_hash = up.hash;
-                    media = { kind: 'image', image_hash: up.hash };
-                  } else {
-                    // Meta fetches the signed URL itself and processes async.
-                    const up = await client.uploadVideoByUrl(srcUrl, name);
-                    creative.meta_video_id = up.id;
-                    let st = await client.getVideoStatus(up.id);
-                    while (!st.ready && budgetLeft() > 8_000) {
-                      await sleep(3_000);
-                      st = await client.getVideoStatus(up.id);
-                    }
-                    if (st.ready && st.thumbnailUrl) {
-                      media = { kind: 'video', video_id: up.id, thumbnail_url: st.thumbnailUrl };
-                    } else {
-                      await persistCreative();
-                      adsPending.push({ wassell_ad_id: ad.id, name, reason: 'video_processing' });
-                      continue;
-                    }
-                  }
-                }
-
-                // Creative — resume-aware.
-                let creativeId = typeof creative.meta_creative_id === 'string' ? creative.meta_creative_id : null;
-                if (!creativeId) {
-                  const cp = buildCreativePayload(campaign, execRow, pushAd, media, cfg.pageId, cfg.instagramId);
-                  creativeId = (await client.createAdCreative(cp)).id;
-                  creative.meta_creative_id = creativeId;
-                }
-
-                // Ad — PAUSED, bound to the ad set; then link the row.
-                const ap = buildAdPayload(campaign, execRow, pushAd, target.platform_adset_id, creativeId);
-                const adRes = await client.createAd(ap, false);
-                const wb = await sb.from('mos_execution_ads').update({
-                  platform_ad_id: adRes.id,
-                  ad_set_id: target.id ?? ad.ad_set_id,
-                  label: String(ap.name),
-                  status: 'paused',
-                  creative,
-                  updated_at: new Date().toISOString(),
-                }).eq('id', ad.id);
-                if (wb.error) {
-                  // The ad EXISTS in Meta; losing the link would make the next
-                  // push create a duplicate. Say so loudly.
-                  console.error('[marketing-os] ad link write-back failed:', wb.error.message);
-                  throw new Error(`created in Meta as ${adRes.id} but the link write failed: ${wb.error.message} — sync from Meta to recover`);
-                }
-                adsOut.push({ wassell_ad_id: ad.id, platform_ad_id: adRes.id, name: String(ap.name) });
+                const q = await enqueueMetaAdJob(svc, {
+                  contentId: ad.content_id,
+                  contentTitle: titleOf.get(ad.content_id) ?? name,
+                  target: {
+                    execution_id: executionId, ad_set_id: target.id, ad_set_name: target.name ?? '',
+                    campaign_id: campaign.id, campaign_name: campaign.name, platform_adset_id: target.platform_adset_id,
+                    ad_row_id: ad.id,
+                  },
+                  approvedByAuthUid: user.userId,
+                  approvedByUserId: approverId,
+                  phase: 'caption',
+                });
+                adsQueued.push({ wassell_ad_id: ad.id, name, job_id: q.job_id });
               } catch (e) {
-                await persistCreative();
-                adErrors.push({ wassell_ad_id: ad.id, ad: name, error: metaErr(e) });
+                adErrors.push({ wassell_ad_id: ad.id, ad: name, error: e instanceof Error ? e.message : String(e) });
               }
             }
+            if (adsQueued.length > 0) wakeWorker();
           }
         }
 
@@ -6825,11 +6778,11 @@ export default async function handler(req: Request): Promise<Response> {
           validate_only: validateOnly,
           campaign: { platform_campaign_id: metaCampaignId, name: campaignName, created: campaignCreated },
           ad_sets: createdSets,
+          audience: { id: wantedAudienceId, name: savedAudienceName, source: audienceSource },
           errors,
-          ads: adsOut,
-          ads_pending: adsPending,
+          ads_queued: adsQueued,
+          ads_waiting: adsWaiting,
           ad_errors: adErrors,
-          more: adsPending.length > 0,
         });
       }
 

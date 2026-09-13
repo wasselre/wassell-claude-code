@@ -361,6 +361,16 @@ export class MetaMarketingClient {
     return res.data ?? [];
   }
 
+  /** Newest ads anywhere in the account (with creatives) — the fallback source
+   *  of the Click-to-WhatsApp welcome template when the ad set has no sibling. */
+  async listAccountAds(limit = 60): Promise<MetaSiblingAd[]> {
+    const res = await this.request<{ data?: MetaSiblingAd[] }>('GET', `${this.act}/ads`, {
+      fields: 'id,name,status,created_time,creative{id,object_story_spec,asset_feed_spec}',
+      limit,
+    });
+    return res.data ?? [];
+  }
+
   private withValidate(input: Record<string, unknown>, validateOnly: boolean): Record<string, unknown> {
     return validateOnly ? { ...input, execution_options: ['validate_only'] } : input;
   }
@@ -505,7 +515,10 @@ export interface MetaSiblingAd {
   status?: string;
   creative?: {
     id?: string;
-    object_story_spec?: { link_data?: { page_welcome_message?: string; message?: string } } & Record<string, unknown>;
+    object_story_spec?: {
+      link_data?: { page_welcome_message?: string; message?: string };
+      video_data?: { page_welcome_message?: string; message?: string };
+    } & Record<string, unknown>;
     asset_feed_spec?: { additional_data?: { page_welcome_message?: string } } & Record<string, unknown>;
   };
 }

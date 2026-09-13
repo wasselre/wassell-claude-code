@@ -4,9 +4,16 @@
  * When the marketing manager approves a step flagged `auto_meta_ad`, the app
  * resolves WHERE the ad should be created (which Meta ad set) and enqueues a
  * `generation_jobs` row of kind 'meta-ad'. The Fly worker
- * (worker/src/runMetaAdJob.ts) does the long part: uploads the square +
- * vertical designs, writes the caption with AI, creates the creative + ad on
- * Meta, and records the result on the mos_execution_ads row.
+ * (worker/src/runMetaAdJob.ts) does the long part in TWO PHASES (2026-09-13):
+ *   phase 'caption' — writes the ad caption with AI from the project facts and
+ *                     parks it on the ad row (`auto_ad.state='caption_review'`)
+ *                     for the manager to read, edit and approve;
+ *   phase 'create'  — after `meta_auto_ad_approve_caption`: uploads the square
+ *                     + vertical designs, builds the creative + ad on Meta with
+ *                     the APPROVED caption, records the result on the row.
+ * No ad reaches Meta with a caption a human has not approved. The manual
+ * «Create in Meta» push enqueues the same 'caption' job per planned ad, so
+ * there is exactly one ad-creation path.
  *
  * This module is PURE resolution + enqueue — no Graph calls, no LLM. It never
  * holds the approval request open for anything slower than a few DB reads.
@@ -173,6 +180,8 @@ export async function resolveAutoAdTarget(
   return { kind: 'choose', choices };
 }
 
+export type MetaAdPhase = 'caption' | 'create';
+
 export interface EnqueueMetaAdInput {
   contentId: string;
   contentTitle: string;
@@ -181,6 +190,9 @@ export interface EnqueueMetaAdInput {
   approvedByAuthUid: string;
   /** public.users id of the approver — who gets the result notification. */
   approvedByUserId: string | null;
+  /** 'caption' (default) writes the caption for review; 'create' builds the ad
+   *  from the caption already approved on the row. */
+  phase?: MetaAdPhase;
 }
 
 /**
@@ -193,10 +205,12 @@ export async function enqueueMetaAdJob(
 ): Promise<{ ad_row_id: string; job_id: string }> {
   const now = new Date().toISOString();
   const jobId = crypto.randomUUID();
+  const phase: MetaAdPhase = input.phase ?? 'caption';
   let adRowId = input.target.ad_row_id;
 
   const autoAd = {
     state: 'queued',
+    phase,
     job_id: jobId,
     queued_at: now,
     approved_by_user_id: input.approvedByUserId,
@@ -247,11 +261,98 @@ export async function enqueueMetaAdJob(
       ad_set_id: input.target.ad_set_id,
       platform_adset_id: input.target.platform_adset_id,
       approved_by_user_id: input.approvedByUserId,
+      phase,
     },
   });
   if (job.error) throw job.error;
 
   return { ad_row_id: adRowId, job_id: jobId };
+}
+
+export interface ApproveCaptionInput {
+  contentId: string;
+  adRowId: string;
+  /** The caption as the manager approved it (possibly edited). */
+  caption: string;
+  approvedByAuthUid: string;
+  approvedByUserId: string | null;
+}
+
+/**
+ * The manager approved the AI caption (phase 1 output) → save the approved
+ * text on the ad row and enqueue phase 2 ('create'). Refuses rows that are
+ * already on Meta or still being written. Returns the job id.
+ */
+export async function approveMetaAdCaption(
+  svc: SupabaseClient,
+  input: ApproveCaptionInput,
+): Promise<{ ad_row_id: string; job_id: string }> {
+  const caption = input.caption.trim();
+  if (!caption) throw new Error('caption is empty');
+  const rowRes = await svc.from('mos_execution_ads')
+    .select('id, execution_id, ad_set_id, content_id, platform_ad_id, creative, archived_at')
+    .eq('id', input.adRowId).maybeSingle();
+  if (rowRes.error) throw rowRes.error;
+  const row = rowRes.data as {
+    id: string; execution_id: string; ad_set_id: string | null; content_id: string | null;
+    platform_ad_id: string | null; creative: Record<string, unknown> | null; archived_at: string | null;
+  } | null;
+  if (!row || row.archived_at) throw new Error('ad row not found');
+  if (row.content_id !== input.contentId) throw new Error('ad row does not belong to this creative');
+  if (row.platform_ad_id) throw new Error(`this creative already has Meta ad ${row.platform_ad_id}`);
+  if (!row.ad_set_id) throw new Error('the ad row has no ad set');
+  const auto = ((row.creative?.auto_ad ?? {}) as Record<string, unknown>);
+  const state = typeof auto.state === 'string' ? auto.state : null;
+  if (state === 'queued' || state === 'creating') throw new Error('the automation is still working on this ad — wait for it');
+
+  const setRes = await svc.from('mos_ad_sets').select('id, execution_id, platform_adset_id').eq('id', row.ad_set_id).maybeSingle();
+  if (setRes.error) throw setRes.error;
+  const set = setRes.data as { id: string; execution_id: string; platform_adset_id: string | null } | null;
+  if (!set?.platform_adset_id) throw new Error('the ad set is not linked to Meta — run «Create in Meta» on the campaign first');
+
+  const now = new Date().toISOString();
+  const jobId = crypto.randomUUID();
+  const upd = await svc.from('mos_execution_ads').update({
+    creative: {
+      ...(row.creative ?? {}),
+      primary_text: caption,
+      message: caption,
+      auto_ad: {
+        ...auto,
+        state: 'queued',
+        phase: 'create',
+        job_id: jobId,
+        queued_at: now,
+        caption_approved_at: now,
+        caption_approved_by_user_id: input.approvedByUserId,
+        error: null,
+      },
+    },
+    updated_at: now,
+  }).eq('id', row.id);
+  if (upd.error) throw upd.error;
+
+  const job = await svc.from('generation_jobs').insert({
+    id: jobId,
+    record_id: input.contentId,
+    message_id: row.id,
+    generation_id: null,
+    user_id: input.approvedByAuthUid,
+    kind: 'meta-ad',
+    status: 'queued',
+    prompt: null,
+    params: {
+      content_id: input.contentId,
+      ad_row_id: row.id,
+      execution_id: set.execution_id,
+      ad_set_id: set.id,
+      platform_adset_id: set.platform_adset_id,
+      approved_by_user_id: input.approvedByUserId,
+      phase: 'create',
+    },
+  });
+  if (job.error) throw job.error;
+  return { ad_row_id: row.id, job_id: jobId };
 }
 
 /** Bilingual sentence for a skip reason — shown in the approval dialog / toast. */

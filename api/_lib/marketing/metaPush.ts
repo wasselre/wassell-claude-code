@@ -1,19 +1,28 @@
 // ============================================================================
 // Meta "push" payload builders — turn a PLANNED Wassell execution (campaign +
-// ad sets + ads) into Graph-API create payloads for Campaign, Ad Set, Ad
-// Creative and Ad.
+// ad sets) into Graph-API create payloads for Campaign and Ad Set.
 // ----------------------------------------------------------------------------
-// History: until 2026-09-10 only Campaign + Ad Sets were pushed, because the
-// Meta *App* was in Development mode and Meta refused app-made ad CREATIVES
-// ("app in development mode", subcode 1885183). The app is now Live and the
-// business is verified — inline creatives (link, Instagram identity,
-// Click-to-WhatsApp CTA, image_hash, video) were all verified against the real
-// account on 2026-09-10 — so the push now builds the whole tree.
+// History: until 2026-09-10 only Campaign + Ad Sets were pushed (Meta App in
+// Development mode). 2026-09-10 added creatives + ads built inline in the Edge
+// function. 2026-09-13 the ads moved OUT of here again — every ad (manual push
+// or approval automation) is now created by ONE place, the Fly worker's
+// meta-ad lane (worker/src/runMetaAdJob.ts), after the manager approves the
+// AI-written caption. This module only builds the skeleton.
 //
 // Everything is created PAUSED — nothing spends until a human activates it in
 // Meta. These are pure functions (no I/O); the marketing-os action calls the
-// Graph client, uploads the media, and does the DB write-back of the returned
-// platform ids.
+// Graph client and does the DB write-back of the returned platform ids.
+//
+// HOUSE RULES the ad set builder enforces (operator decision 2026-09-13 —
+// every rule below was violated by the first C-042 push and is now hard-coded):
+//   1. TARGETING = the account's Meta Saved Audience («عام - ألرياض - 18+»),
+//      never a broad KSA fallback. The caller MUST pass the saved audience's
+//      spec; there is no default. (Resolution order lives in marketing-os:
+//      the campaign's linked audience → mos_settings.meta_push → the account's
+//      only saved audience → refuse.)
+//   2. PLACEMENTS = Instagram (feed, stories, reels, profile feed) + WhatsApp
+//      status ONLY. Never Facebook, Messenger, Audience Network or Threads.
+//      Mobile only. Unknown-age WhatsApp users excluded.
 // ============================================================================
 
 /** Wassell campaign objective (lowercase enum) → Meta ODAX objective. */
@@ -124,29 +133,60 @@ export function buildCampaignPayload(campaign: PushCampaign, execution: PushExec
   return payload;
 }
 
-/** Build targeting from platform_settings / execution.targeting, defaulting to KSA. */
-function buildTargeting(execution: PushExecution): Json {
-  const ps = execution.platform_settings ?? null;
-  const t = execution.targeting ?? null;
-  const countries = (Array.isArray(ps?.countries) && ps?.countries.length ? ps?.countries
-    : Array.isArray(t?.countries) && (t?.countries as unknown[]).length ? t?.countries
-    : ['SA']) as unknown[];
-  // Meta requires acknowledging Advantage+ audience whenever detailed targeting
-  // is set (age/gender/interests): advantage_audience 0 = respect the audience as
-  // a hard constraint, 1 = let Meta expand it. Default 0.
-  const targeting: Json = { geo_locations: { countries }, targeting_automation: { advantage_audience: 0 } };
-  const ageMin = numOr(ps?.age_min, 0);
-  const ageMax = numOr(ps?.age_max, 0);
-  if (ageMin) targeting.age_min = Math.round(ageMin);
-  if (ageMax) targeting.age_max = Math.round(ageMax);
-  const genders = str(ps?.genders);
-  if (genders === '1' || genders === '2') targeting.genders = [Number(genders)];
-  return targeting;
+/**
+ * The ONLY placements a Wassel ad set may run (operator rule): Instagram feed
+ * / stories / reels / profile feed + WhatsApp status, mobile. Copied verbatim
+ * from the buyer's hand-made C-041 ad set (120253343756200020, 2026-09-07) and
+ * validated against Graph on 2026-09-13.
+ */
+export const WASSEL_PLACEMENTS: Readonly<{
+  publisher_platforms: string[];
+  instagram_positions: string[];
+  whatsapp_positions: string[];
+  device_platforms: string[];
+}> = Object.freeze({
+  publisher_platforms: ['instagram', 'whatsapp'],
+  instagram_positions: ['stream', 'story', 'reels', 'profile_feed'],
+  whatsapp_positions: ['status'],
+  device_platforms: ['mobile'],
+});
+
+/** Keys Meta returns on a saved audience but that only describe placements —
+ *  stripped so the house placements above are the single source of truth. */
+const PLACEMENT_KEYS = new Set([
+  'publisher_platforms', 'facebook_positions', 'instagram_positions', 'messenger_positions',
+  'whatsapp_positions', 'audience_network_positions', 'threads_positions', 'device_platforms',
+]);
+
+/**
+ * Ad-set targeting = the Saved Audience's spec (verbatim: geo, age, gender,
+ * Advantage+ audience flags) + the house placements + «unknown age on WhatsApp
+ * excluded». Pure; throws when the spec is empty so a caller can never sneak a
+ * broad audience through.
+ */
+export function buildAdSetTargeting(savedAudienceTargeting: Json): Json {
+  if (!savedAudienceTargeting || typeof savedAudienceTargeting !== 'object' || Object.keys(savedAudienceTargeting).length === 0) {
+    throw new Error('saved audience targeting is empty — an ad set is never created with a broad audience');
+  }
+  const base: Json = {};
+  for (const [k, v] of Object.entries(savedAudienceTargeting)) {
+    if (PLACEMENT_KEYS.has(k)) continue;
+    base[k] = v;
+  }
+  return {
+    ...base,
+    publisher_platforms: [...WASSEL_PLACEMENTS.publisher_platforms],
+    instagram_positions: [...WASSEL_PLACEMENTS.instagram_positions],
+    whatsapp_positions: [...WASSEL_PLACEMENTS.whatsapp_positions],
+    device_platforms: [...WASSEL_PLACEMENTS.device_platforms],
+    user_age_unknown: false,
+  };
 }
 
 /**
  * Build an Ad Set create payload (PAUSED). `metaCampaignId` is the id Meta
  * returned for the campaign. `pageId` backs WhatsApp/Messenger promoted_object.
+ * `savedAudienceTargeting` is REQUIRED — the resolved Meta Saved Audience spec.
  */
 export function buildAdSetPayload(
   campaign: PushCampaign,
@@ -154,10 +194,7 @@ export function buildAdSetPayload(
   adSet: PushAdSet,
   metaCampaignId: string,
   pageId: string | null,
-  /** Option B: targeting spec from the campaign's linked Meta Saved Audience.
-   *  When present it is sent verbatim as the ad set targeting; else we fall back
-   *  to the execution's own targeting / KSA default. */
-  audienceTargeting: Json | null = null,
+  savedAudienceTargeting: Json,
 ): Json {
   const ps = execution.platform_settings ?? null;
   const objective = resolveObjective(campaign, ps);
@@ -173,11 +210,7 @@ export function buildAdSetPayload(
     status: 'PAUSED',
     billing_event: str(ps?.billing_event) ?? defaults.billing_event,
     optimization_goal: str(ps?.optimization_goal) ?? defaults.optimization_goal,
-    // A linked Meta Saved Audience's spec wins; ensure the Advantage+ flag is set
-    // (the saved audience may already carry its own — spreading it lets it win).
-    targeting: audienceTargeting
-      ? { targeting_automation: { advantage_audience: 0 }, ...audienceTargeting }
-      : buildTargeting(execution),
+    targeting: buildAdSetTargeting(savedAudienceTargeting),
     bid_strategy: str(ps?.bid_strategy) ?? 'LOWEST_COST_WITHOUT_CAP',
   };
 
@@ -197,166 +230,4 @@ export function buildAdSetPayload(
   if (execution.starts_on) payload.start_time = new Date(execution.starts_on).toISOString();
 
   return payload;
-}
-
-// ============================================================================
-// Ad-level: creative + ad (added 2026-09-10, once the Meta App went Live).
-// ============================================================================
-
-/** A planned Wassell ad (`mos_execution_ads` row without a platform_ad_id). */
-export interface PushAd {
-  id: string;
-  label: string | null;
-  /** `mos_execution_ads.creative` — the five standardized copy keys
-   *  (`primary_text`/`message`, `headline`, `description`, `cta`,
-   *  `destination_url`) plus the `meta_*` ids the push writes back for resume. */
-  creative: Json | null;
-  /** Title of the content record the ad uses (fallback ad name). */
-  content_title: string | null;
-}
-
-/** Uploaded media the creative references. Video needs a thumbnail image URL
- *  (Meta's own generated `thumbnails` edge — no upload of ours required). */
-export type PushMedia =
-  | { kind: 'image'; image_hash: string }
-  | { kind: 'video'; video_id: string; thumbnail_url: string };
-
-/** Meta CTA enums a Wassel buyer can pick for a LINK destination. Anything
- *  else typed into `creative.cta` falls back to LEARN_MORE rather than a Graph
- *  rejection. WhatsApp ad sets always use WHATSAPP_MESSAGE regardless. */
-const LINK_CTAS = new Set([
-  'LEARN_MORE', 'SIGN_UP', 'CONTACT_US', 'GET_QUOTE', 'BOOK_NOW', 'CALL_NOW',
-  'APPLY_NOW', 'DOWNLOAD', 'SEE_MORE', 'GET_OFFER', 'SUBSCRIBE', 'SHOP_NOW',
-  'ORDER_NOW', 'REQUEST_TIME', 'WATCH_MORE', 'NO_BUTTON',
-]);
-
-/** Fallback landing page when a link ad names none. */
-const DEFAULT_LANDING_URL = 'https://wassel.re';
-/** The link Meta wants on Click-to-WhatsApp creatives (verified live). */
-const WHATSAPP_LINK = 'https://api.whatsapp.com/send';
-
-/** Where the ad set sends people — decides the creative's CTA + link shape. */
-export function resolveAdDestination(campaign: PushCampaign, execution: PushExecution): 'WHATSAPP' | 'MESSENGER' | 'LINK' {
-  const ps = execution.platform_settings ?? null;
-  const objective = resolveObjective(campaign, ps);
-  const defaults = ADSET_DEFAULTS[objective] ?? LEADS_ADSET_DEFAULT;
-  const destination = str(ps?.destination_type) ?? defaults.destination_type ?? null;
-  if (destination === 'WHATSAPP') return 'WHATSAPP';
-  if (destination === 'MESSENGER') return 'MESSENGER';
-  return 'LINK';
-}
-
-/** The ad's display name in Meta — `<campaign ref · execution> · <ad label>`. */
-export function adName(campaign: PushCampaign, execution: PushExecution, ad: PushAd): string {
-  const label = ad.label ?? ad.content_title ?? 'Ad';
-  return `${refPrefix(campaign, execution)} · ${label}`.slice(0, 400);
-}
-
-function ctaFor(destination: 'WHATSAPP' | 'MESSENGER' | 'LINK', creative: Json | null, link: string): Json {
-  if (destination === 'WHATSAPP') {
-    return { type: 'WHATSAPP_MESSAGE', value: { link: WHATSAPP_LINK, app_destination: 'WHATSAPP' } };
-  }
-  if (destination === 'MESSENGER') {
-    return { type: 'MESSAGE_PAGE', value: { link, app_destination: 'MESSENGER' } };
-  }
-  const raw = (str(creative?.cta) ?? '').toUpperCase().replace(/[\s-]+/g, '_');
-  return { type: LINK_CTAS.has(raw) ? raw : 'LEARN_MORE', value: { link } };
-}
-
-/**
- * Build the Ad Creative create payload (`object_story_spec` — an unpublished
- * page post carrying the copy + media). `pageId` is required: every creative
- * runs from a page. `instagramId`, when set, lets the same creative deliver
- * under the Instagram identity too.
- */
-export function buildCreativePayload(
-  campaign: PushCampaign,
-  execution: PushExecution,
-  ad: PushAd,
-  media: PushMedia,
-  pageId: string,
-  instagramId: string | null,
-): Json {
-  const c = ad.creative ?? null;
-  const destination = resolveAdDestination(campaign, execution);
-  const link = destination === 'WHATSAPP'
-    ? WHATSAPP_LINK
-    : (str(c?.destination_url) ?? DEFAULT_LANDING_URL);
-  const message = str(c?.message) ?? str(c?.primary_text) ?? '';
-  const headline = str(c?.headline);
-  const description = str(c?.description);
-  const cta = ctaFor(destination, c, link);
-
-  const spec: Json = { page_id: pageId };
-  if (instagramId) spec.instagram_user_id = instagramId;
-
-  if (media.kind === 'image') {
-    const linkData: Json = { message, link, image_hash: media.image_hash, call_to_action: cta };
-    if (headline) linkData.name = headline;
-    if (description) linkData.description = description;
-    spec.link_data = linkData;
-  } else {
-    const videoData: Json = {
-      video_id: media.video_id,
-      message,
-      image_url: media.thumbnail_url,
-      call_to_action: cta,
-    };
-    if (headline) videoData.title = headline;
-    if (description) videoData.link_description = description;
-    spec.video_data = videoData;
-  }
-
-  return { name: adName(campaign, execution, ad), object_story_spec: spec };
-}
-
-/** Build the Ad create payload (PAUSED) binding a creative to a Meta ad set. */
-export function buildAdPayload(
-  campaign: PushCampaign,
-  execution: PushExecution,
-  ad: PushAd,
-  metaAdSetId: string,
-  creativeId: string,
-): Json {
-  return {
-    name: adName(campaign, execution, ad),
-    adset_id: metaAdSetId,
-    creative: { creative_id: creativeId },
-    status: 'PAUSED',
-  };
-}
-
-/** A content's linked asset as read from `mos_asset_links` ⨝ `mos_assets`. */
-export interface CreativeAssetCandidate {
-  asset_id: string;
-  role: string | null;
-  kind: string | null;
-  mime_type: string | null;
-  file_id: string | null;
-  url: string | null;
-}
-
-/**
- * Pick the ONE asset a content record's ad should run: the final cut wins over
- * source/reference; an image (by mime, so a `document`-kind design export
- * still counts) or an mp4 with our own bytes (`file_id`) or a public url.
- * YouTube/Drive links are not uploadable media and are skipped.
- */
-export function pickCreativeAsset(
-  candidates: CreativeAssetCandidate[],
-): { asset: CreativeAssetCandidate; kind: 'image' | 'video' } | null {
-  const ROLE_RANK: Record<string, number> = { final: 0, source: 1, reference: 2 };
-  const typed = candidates
-    .map((a) => {
-      const mime = (a.mime_type ?? '').toLowerCase();
-      const kind: 'image' | 'video' | null = mime.startsWith('image/') && mime !== 'image/heic'
-        ? 'image'
-        : mime.startsWith('video/') || (a.kind === 'video' && !mime) ? 'video' : null;
-      return { a, kind };
-    })
-    .filter((x): x is { a: CreativeAssetCandidate; kind: 'image' | 'video' } => x.kind !== null)
-    .filter((x) => Boolean(x.a.file_id) || /^https?:\/\/[^ ]+\.(jpe?g|png|webp|mp4|mov)(\?|$)/i.test(x.a.url ?? ''))
-    .sort((x, y) => (ROLE_RANK[x.a.role ?? ''] ?? 9) - (ROLE_RANK[y.a.role ?? ''] ?? 9));
-  const best = typed[0];
-  return best ? { asset: best.a, kind: best.kind } : null;
 }

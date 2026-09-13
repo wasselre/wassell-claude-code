@@ -80,6 +80,14 @@ const EVENTS: EventRow[] = [
     sub_en: 'Only for the role that publishes',
     publisherOnly: true,
   },
+  {
+    key: 'ad_caption_ready',
+    ar: 'كابشن إعلان ينتظر اعتمادك', en: 'An ad caption awaits your approval',
+    sub_ar: 'كتبه الذكاء الاصطناعي — الإعلان يُنشأ في ميتا بعد اعتمادك',
+    sub_en: 'Written by AI — the Meta ad is created after you approve it',
+  },
+  { key: 'ad_created', ar: 'أُنشئ الإعلان في ميتا', en: 'The Meta ad was created' },
+  { key: 'ad_failed', ar: 'تعذّر إنشاء الإعلان في ميتا', en: 'The Meta ad could not be created' },
   { key: 'budget_signature', ar: 'ميزانية تنتظر توقيعك', en: 'A budget awaits your signature', ceoOnly: true },
   { key: 'monthly_report_ready', ar: 'التقرير الشهري جاهز', en: 'The monthly report is ready', ceoOnly: true },
 ];

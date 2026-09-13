@@ -20,7 +20,7 @@
 import { useEffect, useState } from 'react';
 import {
   AdCreative, MosAccount, MosPublication, PaidPlacement, PaidPlacementTarget, PLATFORM_LABELS,
-  adSetRequiredChoices, fetchPaidAds, fetchPaidPlacementTargets, removePaidPlacement, retryAutoAd, saveAdCreative,
+  adSetRequiredChoices, approveAutoAdCaption, fetchPaidAds, fetchPaidPlacementTargets, removePaidPlacement, retryAutoAd, saveAdCreative,
 } from '@/lib/marketingOS/client';
 import { useAppStore } from '@/stores/appStore';
 import { useWorkspace } from '../MarketingWorkspace';
@@ -244,11 +244,25 @@ function PaidCard({
     try {
       const res = await retryAutoAd(contentId);
       onChanged(res.placements);
-      addToast(isAr ? 'أُعيد إرسال الإعلان للإنشاء.' : 'The ad was queued again.', 'success');
+      addToast(isAr ? 'جارٍ كتابة كابشن جديد — سيصلك للاعتماد.' : 'Writing a fresh caption — it will come back for your approval.', 'success');
     } catch (e) {
       addToast(adSetRequiredChoices(e)
         ? (isAr ? 'الحملة تحتوي أكثر من مجموعة إعلانية — أعد المحاولة من زر «اعتماد» في الصفحة.' : 'Several ad sets — retry from the page’s Approve button.')
         : e instanceof Error ? e.message : String(e), 'error');
+    } finally { setBusy(false); }
+  };
+
+  /** Phase 2: the manager approves the caption AS SHOWN (edits included) →
+   *  the worker builds the ad on Meta. */
+  const approveCaption = async (): Promise<void> => {
+    if (!text.trim()) { addToast(isAr ? 'الكابشن فارغ.' : 'The caption is empty.', 'error'); return; }
+    setBusy(true);
+    try {
+      const res = await approveAutoAdCaption(contentId, placement.id, text);
+      onChanged(res.placements);
+      addToast(isAr ? 'اعتُمد الكابشن — جارٍ إنشاء الإعلان في ميتا.' : 'Caption approved — creating the ad in Meta.', 'success');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally { setBusy(false); }
   };
 
@@ -316,7 +330,28 @@ function PaidCard({
           }}
         >
           {auto.state === 'queued' || auto.state === 'creating' ? (
-            <span>{isAr ? '⏳ جارٍ كتابة الكابشن وإنشاء الإعلان في ميتا…' : '⏳ Writing the caption and creating the Meta ad…'}</span>
+            <span>
+              {auto.phase === 'create'
+                ? (isAr ? '⏳ جارٍ رفع التصميمين وإنشاء الإعلان في ميتا…' : '⏳ Uploading the two designs and creating the Meta ad…')
+                : (isAr ? '⏳ الذكاء الاصطناعي يكتب الكابشن الآن…' : '⏳ AI is writing the caption…')}
+            </span>
+          ) : auto.state === 'caption_review' ? (
+            <>
+              <span style={{ color: 'var(--copper)' }}>
+                {isAr ? '✍️ الكابشن جاهز — راجعه أو عدّله ثم اعتمده ليُنشأ الإعلان في ميتا.' : '✍️ Caption ready — review or edit it, then approve to create the Meta ad.'}
+                {auto.caption_source === 'fallback' ? (isAr ? ' (من القالب — تعذّر الذكاء الاصطناعي)' : ' (template — AI unavailable)') : ''}
+              </span>
+              {can('manage_paid_ads') && (
+                <span style={{ display: 'flex', gap: 6, marginInlineStart: 'auto' }}>
+                  <button type="button" className="btn btn-go btn-sm" onClick={() => void approveCaption()} disabled={busy || !text.trim()}>
+                    {busy ? '…' : (isAr ? 'اعتماد الكابشن وإنشاء الإعلان' : 'Approve caption & create ad')}
+                  </button>
+                  <button type="button" className="btn btn-sm" onClick={() => void retry()} disabled={busy} title={isAr ? 'كابشن جديد بالذكاء الاصطناعي' : 'A fresh AI caption'}>
+                    {isAr ? 'إعادة الكتابة' : 'Rewrite'}
+                  </button>
+                </span>
+              )}
+            </>
           ) : auto.state === 'created' ? (
             <span>
               {isAr ? '✅ أُنشئ الإعلان في ميتا تلقائيًا' : '✅ Ad created on Meta automatically'}

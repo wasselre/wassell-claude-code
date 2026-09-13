@@ -3,6 +3,7 @@
 **Status:** Live
 **Last updated:** 2026-09-13 (**Campaign page: a linked item's status is what its ads are really doing, never a blanket «يعمل».** `CampaignDetailPage`'s Overview «المحتوى المستخدم» table and Content tab used to call EVERY item linked to an ad campaign «يعمل» (Running) — C-042's eight Meta ads were all PAUSED with zero lifetime spend, yet every row read «يعمل في: إعلانات ميتا · يعمل». Each `ContentStat` now carries a `placement` rolled up across the item's ads: `running` (any live ad) › `watch` › `paused` (every placed ad paused; execution status stands in when an execution has no ad rows) › `planned` (ad rows exist only in the app — no Meta `platform_ad_id`, or `waiting`). The pill reads «يعمل» / «مراقبة» / «موقف» (from `AD_STATUS_LABELS`, same words as the execution page and the Content table's «الإعلان» column) / «لم يُنشأ في ميتا بعد»; the paid column header is «المنصة» (was «يعمل في»). Organic campaigns are unchanged («منشور» from publications).)
 **Last updated:** 2026-09-13 (**Task rows open the review popup.**)
+**Last updated:** 2026-09-13 (**Meta ads: house rules + caption approval.** Every pushed ad set is built on the account's Meta SAVED AUDIENCE (never broad KSA) with Instagram + WhatsApp placements only; every ad is created by ONE path (the worker) in two phases — AI writes the caption, the manager approves it on the Placements tab, THEN the ad is built with square→feed / vertical→stories-reels-status (both slots required), the WhatsApp welcome template duplicated from an existing project with the name swapped, every Advantage+ enhancement off and multi-advertiser off. See the auto-ad and push-layer bullets.)
 **Last updated:** 2026-09-10 (**Auto Meta ad on manager approval · two-slot designs · open on current step · admin «view as» drives «مهامي» — see Key behaviors.**)
 **Last updated:** 2026-09-10 (**«Create in Meta» now builds the creatives + ads too** (image/video upload, Click-to-WhatsApp creative, paused ad, resumable, Edge time-budgeted) — the Meta App is Live; planned ads show on the Ads tab with a «Not in Meta yet» pill; «Add an ad» is back for Meta executions. See the push-layer bullet under Key behaviors.)
 **Last updated:** 2026-09-08 (**Campaigns table results columns + campaign→content link; Content table «الإعلان», «الخطوة الحالية» + «معاينة».** Every content row now shows whether it is the creative of a paid ad: `content_list` returns `ads[]` (one batched read of `mos_execution_ads` joined to the execution's platform); the «الإعلان» column reads «—» when not linked, «ميتا · لم يُرفع بعد» when linked to an ad that exists only in the app, and «ميتا · يعمل» (live tone) once the ad has a `platform_ad_id` on Meta. The campaigns table now shows every result the executions report — leads, cost per lead, impressions, CTR, clicks, CPC — and no longer blanks them behind a hand-set «مخططة» status (C-041 had 5 leads and C-026 had 169 while the column read «—»); the content-count cell is a button that opens the library filtered to that campaign. The content table gained two columns: **الخطوة الحالية** — a button carrying the open stage's name when that stage is the caller's (held roles; manager/admin act on any), deep-linking to the tab that holds the work (`?tab=content|materials|placements`, derived from the workflow phase in `lib/stagePhase.ts`), else «لا شيء لديك» — and **معاينة**, an in-place popup (`ContentPreviewModal`) that renders the writing fields / the material submitted for approval / the publishing plan for the item's current phase, with the current role's «اعتماد …» / «طلب تعديلات» / «إرسال للمراجعة» in its footer, the same `task_complete` flow as the content page.)
@@ -47,41 +48,61 @@ This workspace answers the three questions the old process could not:
 
 ## Key behaviors
 
-- **Auto Meta ad on the manager's final design approval (2026-09-10).** A
-  step can carry `auto_meta_ad` (workflow editor toggle «الاعتماد يُنشئ
-  الإعلان في ميتا تلقائيًا»; backfilled onto `post_std.design_review` and
-  `video_std.review`, including the pinned versions in-flight items follow).
-  Approving such a step: the caption is written by DeepSeek from the
-  project's own facts (name, district/city, unit types, available price and
-  area ranges, bedrooms, available units, off-plan + handover, payment plan,
-  features, nearby landmarks, guarantees) plus the writer's approved copy for
-  tone — every number in the output must exist in the facts (one retry, then a
-  deterministic caption from the same facts); the two design slots are
-  uploaded to the ad account (images by bytes, videos by URL + processing
-  poll); ONE creative with placement asset customization is created (square
-  → feed positions of the ad set's targeting, vertical → story / reels /
-  WhatsApp status; falls back to a single-design creative if Meta refuses the
-  per-placement shape) carrying the Click-to-WhatsApp welcome message copied
-  from a sibling ad in the same ad set; the ad is created in the ad set
+- **Auto Meta ad on the manager's final design approval (2026-09-10; two
+  phases + house rules 2026-09-13).** A step can carry `auto_meta_ad`
+  (workflow editor toggle «الاعتماد يُنشئ الإعلان في ميتا تلقائيًا»;
+  backfilled onto `post_std.design_review` and `video_std.review`, including
+  the pinned versions in-flight items follow). Approving such a step hands the
+  ad to the Fly worker lane `meta-ad` (generation_jobs; the API only
+  enqueues) which runs in **two phases**, each its own queue row:
+  **phase 1 «caption»** — DeepSeek writes the caption from the project's own
+  facts (name, district/city, unit types, available price and area ranges,
+  bedrooms, available units, off-plan + handover, payment plan, features,
+  nearby landmarks, guarantees) plus the writer's approved copy for tone —
+  every number in the output must exist in the facts (one retry, then a
+  deterministic caption from the same facts) — and PARKS it on the
+  `mos_execution_ads` row (`creative.primary_text/message`,
+  `creative.auto_ad.state='caption_review'`), notifying the manager
+  (`ad_caption_ready`, inapp + whatsapp + push). Nothing reaches Meta yet.
+  **The manager reads / edits / approves the caption on the creative's
+  Placements tab** («اعتماد الكابشن وإنشاء الإعلان», or «إعادة الكتابة» for a
+  fresh AI caption) → `meta_auto_ad_approve_caption` (`manage_paid_ads`)
+  saves the text AS APPROVED and enqueues **phase 2 «create»**: the TWO
+  design slots are uploaded (images by bytes, videos by URL + processing
+  poll; **both slots required** — a missing square or vertical fails loudly,
+  there is no "one file everywhere" fallback any more); ONE creative with
+  placement asset customization is created — square → Instagram feed /
+  profile feed, vertical → Instagram stories + reels + WhatsApp status; the
+  ad set must deliver on Instagram + WhatsApp only (any other platform on it
+  fails loudly) — carrying the Click-to-WhatsApp welcome template
+  **duplicated from an existing ad** (a sibling in the ad set, else the
+  newest Click-to-WhatsApp ad in the account) **with the source project's
+  name swapped for the campaign's project** (read off the template's own
+  «مهتم بمشروع …» ice-breaker; no template in the account = loud failure),
+  **every Advantage+ creative enhancement OFF** (`degrees_of_freedom_spec`,
+  83 individual feature keys, all `OPT_OUT`; the umbrella `standard_enhancements` is deprecated and rejected — no music, overlays,
+  touch-ups, text improvements, animation) and **multi-advertiser OFF**
+  (`contextual_multi_ads: OPT_OUT`); then the ad in the ad set
   (`mos_settings.meta_auto_ad = {status}`, `ACTIVE` unless set to `PAUSED`).
-  Result on the `mos_execution_ads` row: `platform_ad_id`, caption in
-  `creative.primary_text/message`, and `creative.auto_ad = {state:
-  queued|creating|created|failed, …}`; notifications `ad_created` /
-  `ad_failed` (manager inapp + whatsapp). **Where the ad goes:** an existing
-  placeholder ad row of the creative under a Meta-linked execution, else the
-  content's campaign's linked Meta executions' linked ad sets — exactly one →
-  automatic; several → the approval dialog (desktop modal / phone sheet
-  panel) asks which (server answers 409 `ad_set_required` until picked);
-  none linked / no paid campaign → the approval continues the normal path and
-  the toast says why no ad was created. **A paid-only item finishes its path
-  on that approval** (`workflow_advance_role_path(p_finish)` — no scheduling /
-  publish-check tasks); an item with organic placements continues to
-  scheduling. Retry from the Placements card (`meta_auto_ad_retry`,
-  `manage_paid_ads`). The Fly worker lane `meta-ad` (generation_jobs) does the
-  long part — the API only enqueues. Files: `api/_lib/marketing/metaAutoAd.ts`,
+  Result on the row: `platform_ad_id`, `creative.auto_ad = {state:
+  queued|creating|caption_review|created|failed, phase, caption_source,
+  welcome_template, …}`; notifications `ad_created` / `ad_failed` (manager
+  inapp + whatsapp). **Where the ad goes:** an existing placeholder ad row of
+  the creative under a Meta-linked execution, else the content's campaign's
+  linked Meta executions' linked ad sets — exactly one → automatic; several →
+  the approval dialog (desktop modal / phone sheet panel) asks which (server
+  answers 409 `ad_set_required` until picked); none linked / no paid campaign
+  → the approval continues the normal path and the toast says why no ad was
+  created. **A paid-only item finishes its path on that approval**
+  (`workflow_advance_role_path(p_finish)` — no scheduling / publish-check
+  tasks); an item with organic placements continues to scheduling. Retry
+  from the Placements card (`meta_auto_ad_retry`, `manage_paid_ads`) restarts
+  at the caption phase. Files: `api/_lib/marketing/metaAutoAd.ts`
+  (`enqueueMetaAdJob` with `phase`, `approveMetaAdCaption`),
   `worker/src/runMetaAdJob.ts`, `worker/src/marketing/metaAdLane.ts`,
-  `src/pages/Marketing/components/AutoAdApproval.tsx`, migration
-  `2026-09-10_meta_auto_ad.sql`.
+  `src/pages/Marketing/components/{AutoAdApproval,PlacementsTab}.tsx`,
+  migrations `2026-09-10_meta_auto_ad.sql`,
+  `2026-09-13_meta_ad_caption_review.sql`.
 - **Materials tab = two design slots (2026-09-10).** The designer uploads
   exactly two files per creative — «التصميم المربّع» (1:1, Instagram /
   Facebook feed) and «التصميم الطولي» (9:16, stories, reels, WhatsApp
@@ -563,43 +584,46 @@ This workspace answers the three questions the old process could not:
   renderer), so adding Google Ads later is a schema file, not a component.
   Field research: `docs/reference/ad-platforms/`. Money is entered in SAR;
   minor-unit/micro conversion is handled by the push layer below.
-- **«إنشاء في ميتا» (Create in Meta) — the push layer (2026-08-19).** A
-  `manage_paid_ads` role on a Meta/Instagram execution that is not yet linked
+- **«إنشاء في ميتا» (Create in Meta) — the push layer (2026-08-19; house
+  rules 2026-09-13).** A `manage_paid_ads` role on a Meta/Instagram execution
   sees a **Create in Meta** button in the execution header. It builds the
-  PLANNED structure — the campaign (`mos_campaigns.objective` → ODAX objective)
-  plus one Meta ad set per planned `mos_ad_sets` row (a single default when none
-  are planned) — directly in the real ad account via the Marketing API, **all
-  PAUSED so nothing spends**, then writes the returned `platform_campaign_id` /
-  `platform_adset_id` back onto the Wassell rows so the execution is linked with
-  **no manual id typing**. Payloads come from `platform_settings` where present,
-  else objective-driven defaults (leads → Click-to-WhatsApp: CONVERSATIONS /
-  IMPRESSIONS / WHATSAPP destination / promoted page; geo defaults to KSA;
-  SAR→halalas ×100). **Since 2026-09-10 the push also builds the ADS** (the
-  Meta App is Live + the business verified, so app-made creatives are no longer
-  refused): for every PLANNED ad row (`mos_execution_ads` without a
-  `platform_ad_id` — added via «Add an ad» on the execution, or as a paid
-  placement from the Content page) it uploads the content record's final
-  image (bytes → `adimages`, ≤10 MB) or video (signed URL → `advideos`, then
-  waits for Meta's processing and takes Meta's own thumbnail), builds ONE ad
-  creative from that media + the ad's copy (`creative` jsonb: caption
-  `message`/`primary_text`, `headline`, `description`, `cta`,
-  `destination_url`; WhatsApp ad sets always get the WHATSAPP_MESSAGE CTA,
-  link ad sets the chosen CTA + landing URL, default LEARN_MORE / wassel.re;
-  page + Instagram identity), creates the ad PAUSED under the ad's Meta ad
-  set (the single ad set when the ad is unassigned), and writes
-  `platform_ad_id` + status + the Meta ids (`meta_image_hash` /
-  `meta_video_id` / `meta_creative_id`) back onto the row. Ads are
-  per-ad best-effort (a rejected ad never rolls back the skeleton; its error is
-  reported) and **resumable**: re-running on a linked execution skips what is
-  linked and only adds missing ad sets / un-pushed ads, reusing any uploaded
-  media. The action runs under the Edge 25s ceiling, so it stops at a time
-  budget and answers `more:true`; the page keeps calling until done and waits
-  out still-processing videos between calls (never inside a request). Action
-  `meta_push_structure` in `api/marketing-os.ts` (gated `manage_paid_ads`),
-  builders in `api/_lib/marketing/metaPush.ts` (`buildCreativePayload`,
-  `buildAdPayload`, `pickCreativeAsset`), media methods on
-  `MetaMarketingClient` (`uploadImageBytes`, `uploadVideoByUrl`,
-  `getVideoStatus`), client `mosMetaPushStructure`. The header button reads
+  PLANNED skeleton — the campaign (`mos_campaigns.objective` → ODAX objective)
+  plus one Meta ad set per planned `mos_ad_sets` row (a single default when
+  none are planned) — directly in the real ad account via the Marketing API,
+  **all PAUSED so nothing spends**, then writes the returned
+  `platform_campaign_id` / `platform_adset_id` back onto the Wassell rows so
+  the execution is linked with **no manual id typing**. **Every ad set is
+  built on the account's Meta SAVED AUDIENCE** — resolution: the campaign's
+  linked Wassel audience (`mos_audiences.meta_saved_audience_id`) → the
+  default in `mos_settings.meta_push.saved_audience_id` (Settings → Platforms
+  → Meta card, «الجمهور المحفوظ لكل مجموعة إعلانية جديدة») → the account's ONLY
+  saved audience → otherwise the push REFUSES (422) naming the audiences; the
+  spec is read fresh from Graph each push (never a cached copy, never a broad
+  KSA fallback). **Placements are fixed** (`WASSEL_PLACEMENTS` in
+  `metaPush.ts`): Instagram feed / stories / reels / profile feed + WhatsApp
+  status, mobile, unknown-age WhatsApp users excluded — never Facebook,
+  Messenger, Audience Network or Threads, even if the saved audience carries
+  its own placement keys. Other payload fields come from `platform_settings`
+  where present, else objective-driven defaults (leads → Click-to-WhatsApp:
+  CONVERSATIONS / IMPRESSIONS / WHATSAPP destination / promoted page;
+  SAR→halalas ×100). **The push no longer builds ads itself (2026-09-13):**
+  every PLANNED ad row (`mos_execution_ads` without a `platform_ad_id` —
+  added via «Add an ad» on the execution, or as a paid placement from the
+  Content page) is handed to the worker's `meta-ad` lane in its caption phase
+  (the same path the approval automation uses — see the auto-ad bullet): AI
+  writes the caption, the manager approves it on the creative's Placements
+  tab, and only then the ad is created with the two design slots, the
+  duplicated welcome template, enhancements off and multi-advertiser off.
+  Rows already being handled (caption being written / awaiting approval) are
+  left alone; failed ones are re-queued. The response reports
+  `ads_queued` / `ads_waiting` / `ad_errors` and the audience used; the page
+  toasts each. Re-running on a linked execution skips what is linked and only
+  adds missing ad sets / un-queued ads. Action `meta_push_structure` in
+  `api/marketing-os.ts` (gated `manage_paid_ads`), builders in
+  `api/_lib/marketing/metaPush.ts` (`buildCampaignPayload`,
+  `buildAdSetPayload`, `buildAdSetTargeting`), client `mosMetaPushStructure`;
+  unit tests `api/_lib/marketing/__tests__/metaPush.test.ts`, live skeleton
+  test `metaPush.live.test.ts` (`META_LIVE=1`). The header button reads
   «Create in Meta» on an unlinked execution and «Create N ads in Meta» on a
   linked one with un-pushed ads; «✓ Linked to Meta» once nothing is pending.
 - **Meta is the source of truth for ADS (the execution's Ads tab).** After the

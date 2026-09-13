@@ -71,8 +71,8 @@ export function autoAdOutcomeText(outcome: AutoAdOutcome | null | undefined, isA
   if (!outcome) return null;
   if (outcome.status === 'queued') {
     return isAr
-      ? `اعتُمد — جارٍ كتابة الكابشن وإنشاء الإعلان في «${outcome.ad_set_name}»${outcome.finished ? '. اكتمل مسار المحتوى.' : '.'}`
-      : `Approved — writing the caption and creating the ad in “${outcome.ad_set_name}”${outcome.finished ? '. The content path is complete.' : '.'}`;
+      ? `اعتُمد — الذكاء الاصطناعي يكتب الكابشن الآن؛ ستعتمده من تبويب «الأماكن» ثم يُنشأ الإعلان في «${outcome.ad_set_name}»${outcome.finished ? '. اكتمل مسار المحتوى.' : '.'}`
+      : `Approved — AI is writing the caption; approve it on the Placements tab and the ad is created in “${outcome.ad_set_name}”${outcome.finished ? '. The content path is complete.' : '.'}`;
   }
   return isAr ? `اعتُمد — ${outcome.text_ar}` : `Approved — ${outcome.text_en}`;
 }
@@ -114,13 +114,13 @@ export function AutoAdPanel({ state, isAr, compact }: { state: AutoAdPreviewStat
     return (
       <div style={{ ...box, borderColor: 'var(--copper)' }}>
         <div className="k" style={{ marginBottom: 4 }}>
-          {isAr ? 'عند الاعتماد يُنشأ الإعلان تلقائيًا في' : 'On approval the ad is created automatically in'}
+          {isAr ? 'عند الاعتماد يُكتب كابشن الإعلان لاعتمادك، ثم يُنشأ في' : 'On approval the ad caption is written for your approval, then the ad is created in'}
         </div>
         <div><b>{t.campaign_name ?? (isAr ? 'الحملة' : 'Campaign')}</b> ← {t.ad_set_name}</div>
         <div style={{ color: 'var(--mute)', fontSize: 12 }}>
           {isAr
-            ? 'الكابشن يُكتب بالذكاء الاصطناعي من معلومات المشروع، ويُرفع التصميمان المربّع والطولي (فيد إنستقرام / ستوري وريلز وحالة واتساب).'
-            : 'The caption is written by AI from the project facts; the square and vertical designs are uploaded (Instagram feed / stories, reels and WhatsApp status).'}
+            ? 'الذكاء الاصطناعي يكتب الكابشن من معلومات المشروع ويرسله لك في تبويب «الأماكن»؛ بعد اعتمادك يُرفع التصميم المربّع لفيد إنستقرام والطولي للستوري والريلز وحالة واتساب، بلا تحسينات ميتا ولا إعلانات متعددة المعلنين.'
+            : 'AI writes the caption from the project facts and sends it to you on the Placements tab; after your approval the square design goes to the Instagram feed and the vertical one to stories, reels and WhatsApp status — no Meta enhancements, no multi-advertiser ads.'}
         </div>
       </div>
     );
@@ -200,8 +200,8 @@ export default function AutoAdApproveModal({
     <Modal
       title={isAr ? `اعتماد ${thing}؟` : `Approve ${thing}?`}
       sub={isAr
-        ? 'هذا الاعتماد هو الأخير على التصميم — بعده يُنشأ الإعلان في ميتا بلا خطوات بشرية إضافية.'
-        : 'This is the final approval of the design — after it the Meta ad is created with no further human steps.'}
+        ? 'هذا الاعتماد هو الأخير على التصميم — بعده يبقى اعتماد واحد: كابشن الإعلان الذي يكتبه الذكاء الاصطناعي.'
+        : 'This is the final approval of the design — one approval remains after it: the AI-written ad caption.'}
       onClose={() => { if (!busy) onClose(); }}
       footer={(
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -219,7 +219,7 @@ export default function AutoAdApproveModal({
               ? (isAr ? 'جارٍ…' : 'Working…')
               : state.preview?.kind === 'skip'
                 ? (isAr ? 'اعتماد' : 'Approve')
-                : (isAr ? 'اعتماد وإنشاء الإعلان' : 'Approve & create the ad')}
+                : (isAr ? 'اعتماد وكتابة الكابشن' : 'Approve & write the caption')}
           </button>
         </div>
       )}

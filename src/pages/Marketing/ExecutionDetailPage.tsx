@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  AD_STATUS_LABELS, EXEC_STATUS_LABELS, MetaPushResult, MosAd, MosAdSet, MosCampaign, MosContentRow,
+  AD_STATUS_LABELS, EXEC_STATUS_LABELS, MosAd, MosAdSet, MosCampaign, MosContentRow,
   MosExecution, MosTargeting, PLATFORM_LABELS,
   deleteAd, fetchContentList, fetchExecutionDetail, mosMetaPushStructure, mosMetaSync,
   saveAd, saveExecution,
@@ -138,61 +138,47 @@ export default function ExecutionDetailPage() {
     if (!execution) return;
     setBusy(true);
     try {
-      // The skeleton (campaign + ad sets) is all-or-nothing on the server: a
-      // rejected ad set rolls it back and throws with Meta's reason. The ads
-      // phase then runs under the Edge time budget and reports whatever it
-      // could not reach as pending (`more`) — so keep calling until it is
-      // done. A video still processing in Meta is waited out HERE, between
-      // calls, never inside a request.
-      let campaignMade = false;
-      let sets = 0;
-      let created = 0;
-      let pending: MetaPushResult['ads_pending'] = [];
-      const errorsByAd = new Map<string, MetaPushResult['ad_errors'][number]>();
-      let videoWaits = 0;
-      for (let round = 0; round < 40; round++) {
-        const r = await mosMetaPushStructure(execution.id);
-        if (r.campaign.created) campaignMade = true;
-        sets += r.ad_sets.length;
-        created += r.ads.length;
-        for (const e of r.ad_errors) errorsByAd.set(e.wassell_ad_id, e);
-        pending = r.ads_pending;
-        if (!r.more) break;
-        if (pending.every((p) => p.reason === 'video_processing')) {
-          // ~2 minutes of Meta-side video processing before giving up (the
-          // upload is remembered — pressing again later just resumes).
-          if (videoWaits++ >= 12) break;
-          await new Promise((res) => setTimeout(res, 10_000));
-        }
-      }
+      // The skeleton (campaign + ad sets on the saved audience, Instagram +
+      // WhatsApp only) is all-or-nothing on the server: a rejected ad set
+      // rolls it back and throws with Meta's reason. The ads are NOT built
+      // here: each planned ad is handed to the worker, which writes the
+      // caption with AI; the manager approves it on the creative's Placements
+      // tab, and only then the ad is created.
+      const r = await mosMetaPushStructure(execution.id);
       const parts: string[] = [];
-      if (campaignMade) parts.push(isAr ? 'الحملة' : 'the campaign');
-      if (sets > 0) parts.push(isAr ? `${num(sets, true)} مجموعة إعلانية` : `${sets} ad set${sets === 1 ? '' : 's'}`);
-      if (created > 0) parts.push(isAr ? `${num(created, true)} إعلان` : `${created} ad${created === 1 ? '' : 's'}`);
+      if (r.campaign.created) parts.push(isAr ? 'الحملة' : 'the campaign');
+      if (r.ad_sets.length > 0) {
+        parts.push(isAr
+          ? `${num(r.ad_sets.length, true)} مجموعة إعلانية على جمهور «${r.audience.name ?? ''}»`
+          : `${r.ad_sets.length} ad set${r.ad_sets.length === 1 ? '' : 's'} on audience “${r.audience.name ?? ''}”`);
+      }
       if (parts.length > 0) {
+        addToast(isAr ? `أُنشئ في ميتا (موقوف): ${parts.join(' + ')}.` : `Created in Meta (paused): ${parts.join(' + ')}.`, 'success');
+      }
+      if (r.ads_queued.length > 0) {
         addToast(
           isAr
-            ? `أُنشئ في ميتا (موقوف): ${parts.join(' + ')}.`
-            : `Created in Meta (paused): ${parts.join(' + ')}.`,
-          'success',
+            ? `${num(r.ads_queued.length, true)} إعلان: يكتب الذكاء الاصطناعي الكابشن الآن — اعتمده من تبويب «الأماكن» في صفحة كل محتوى ليُنشأ الإعلان في ميتا.`
+            : `${r.ads_queued.length} ad${r.ads_queued.length === 1 ? '' : 's'}: AI is writing the caption now — approve it on each creative's Placements tab to create the ad in Meta.`,
+          'info',
         );
-      } else if (pending.length === 0 && errorsByAd.size === 0) {
+      } else if (parts.length === 0 && r.ads_waiting === 0 && r.ad_errors.length === 0) {
         addToast(isAr ? 'لا شيء جديد لإنشائه — كل شيء مربوط بميتا.' : 'Nothing new to create — everything is already in Meta.', 'success');
       }
-      if (pending.length > 0) {
+      if (r.ads_waiting > 0) {
         addToast(
           isAr
-            ? `${num(pending.length, true)} إعلان ما زال فيديوه يُعالَج في ميتا — اضغط «إنشاء في ميتا» بعد دقيقة لإكماله.`
-            : `${pending.length} ad${pending.length === 1 ? '' : 's'} still have a video processing in Meta — press Create in Meta again in a minute to finish.`,
-          'error',
+            ? `${num(r.ads_waiting, true)} إعلان بانتظار اعتماد الكابشن (أو ما زال يُكتب).`
+            : `${r.ads_waiting} ad${r.ads_waiting === 1 ? '' : 's'} awaiting caption approval (or still being written).`,
+          'info',
         );
       }
-      if (errorsByAd.size > 0) {
-        const first = Array.from(errorsByAd.values())[0];
+      if (r.ad_errors.length > 0) {
+        const first = r.ad_errors[0];
         addToast(
           isAr
-            ? `رفضت ميتا ${num(errorsByAd.size, true)} إعلان — «${first?.ad ?? ''}»: ${first?.error ?? ''}`
-            : `Meta rejected ${errorsByAd.size} ad${errorsByAd.size === 1 ? '' : 's'} — "${first?.ad ?? ''}": ${first?.error ?? ''}`,
+            ? `تعذّر إرسال ${num(r.ad_errors.length, true)} إعلان — «${first?.ad ?? ''}»: ${first?.error ?? ''}`
+            : `${r.ad_errors.length} ad${r.ad_errors.length === 1 ? '' : 's'} could not be queued — "${first?.ad ?? ''}": ${first?.error ?? ''}`,
           'error',
         );
       }
@@ -419,8 +405,8 @@ export default function ExecutionDetailPage() {
                   disabled={busy}
                   onClick={() => void pushToMeta()}
                   title={isAr
-                    ? 'تُنشئ الحملة والمجموعات الإعلانية والإعلانات (الكرييتف من المحتوى + النص) في ميتا موقوفة، وتربط المعرفات تلقائيًا. لا يُصرف شيء حتى يُشغّلها إنسان في ميتا.'
-                    : 'Creates the campaign + ad sets + ads (creative from the content record + the copy) in Meta, all paused, and links the ids automatically. Nothing spends until a human activates them in Meta.'}
+                    ? 'تُنشئ الحملة والمجموعات الإعلانية في ميتا موقوفة على الجمهور المحفوظ (إنستقرام + واتساب فقط) وتربط المعرفات تلقائيًا، ثم يكتب الذكاء الاصطناعي كابشن كل إعلان لاعتمادك قبل إنشائه في ميتا.'
+                    : 'Creates the campaign + ad sets in Meta, paused, on the saved audience (Instagram + WhatsApp only) and links the ids; then AI writes each ad’s caption for your approval before the ad is created in Meta.'}
                 >
                   {busy
                     ? (isAr ? 'جارٍ الإنشاء في ميتا…' : 'Creating in Meta…')

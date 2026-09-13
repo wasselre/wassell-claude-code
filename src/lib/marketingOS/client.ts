@@ -1153,18 +1153,26 @@ export const saveContentCaption = (contentId: string, platform: string, caption:
 /** The five standardized ad-copy fields a paid placement carries. */
 /** The automation's trail on a paid placement (`creative.auto_ad`). */
 export interface AutoAdState {
-  state: 'queued' | 'creating' | 'created' | 'failed';
+  /** queued/creating = the worker is on it (phase says which half);
+   *  caption_review = the AI caption is parked for the manager's approval;
+   *  created = the ad exists on Meta; failed = see `error`, retry offered. */
+  state: 'queued' | 'creating' | 'caption_review' | 'created' | 'failed';
+  /** 'caption' = writing the caption; 'create' = building the ad on Meta. */
+  phase?: 'caption' | 'create';
   job_id?: string;
   error?: string | null;
   queued_at?: string;
   started_at?: string;
   created_at?: string;
   failed_at?: string;
+  caption_ready_at?: string;
+  caption_approved_at?: string;
   creative_id?: string;
   creative_shape?: 'placement' | 'single';
   placement_fallback?: string;
   format?: 'image' | 'video';
   caption_source?: 'deepseek' | 'fallback';
+  welcome_template?: 'duplicated' | null;
   ad_status?: 'ACTIVE' | 'PAUSED';
 }
 
@@ -1217,10 +1225,18 @@ export interface PaidPlacementTarget {
 export const fetchPaidAds = (contentId: string) =>
   call<PaidPlacementsResult>('content_paid_ads', { content_id: contentId });
 
-/** Re-queue the automatic Meta ad for a creative whose job failed (manager). */
+/** Re-queue the automatic Meta ad for a creative whose job failed (manager) —
+ *  restarts at the caption phase (a fresh AI caption for approval). */
 export const retryAutoAd = (contentId: string, adSetId?: string | null) =>
   call<PaidPlacementsResult & { job_id: string; ad_row_id: string }>('meta_auto_ad_retry', {
     content_id: contentId, ...(adSetId ? { ad_set_id: adSetId } : {}),
+  });
+
+/** The manager approved the AI caption (as shown, possibly edited) → the
+ *  worker builds the ad on Meta (manage_paid_ads). */
+export const approveAutoAdCaption = (contentId: string, adId: string, caption: string) =>
+  call<PaidPlacementsResult & { job_id: string; ad_row_id: string }>('meta_auto_ad_approve_caption', {
+    content_id: contentId, ad_id: adId, caption,
   });
 
 /** The paid campaigns / executions / ad sets available to attach a new paid
@@ -3044,16 +3060,18 @@ export interface MetaPushResult {
    *  and the push only added what was missing under it. */
   campaign: { platform_campaign_id: string; name: string | null; created: boolean };
   ad_sets: Array<{ wassell_ad_set_id: string | null; platform_adset_id: string; name: string }>;
+  /** The Meta Saved Audience every new ad set was built on (never broad). */
+  audience: { id: string | null; name: string | null; source: string };
   errors: Array<{ ad_set: string; error: string }>;
-  /** Planned ads that now exist in Meta (paused) — creative uploaded + ad created. */
-  ads: Array<{ wassell_ad_id: string; platform_ad_id: string; name: string }>;
-  /** Ads whose video is still processing in Meta — run the push again in a
-   *  minute; the upload is remembered so nothing is re-sent. */
-  ads_pending: Array<{ wassell_ad_id: string; name: string; reason: string }>;
-  /** Ads Meta (or our media lookup) rejected. The skeleton stays; fix + re-run. */
+  /** Planned ads handed to the worker: AI writes each caption, the manager
+   *  approves it on the creative's Placements tab, THEN the ad is built. */
+  ads_queued: Array<{ wassell_ad_id: string; name: string; job_id: string }>;
+  /** Planned ads the automation was already handling (caption being written
+   *  or awaiting approval) — left alone. */
+  ads_waiting: number;
+  /** Ads that could not be queued (no creative / no linked ad set). The
+   *  skeleton stays; fix + re-run. */
   ad_errors: Array<{ wassell_ad_id: string; ad: string; error: string }>;
-  /** True while `ads_pending` is non-empty — call again to continue. */
-  more: boolean;
 }
 
 /**
