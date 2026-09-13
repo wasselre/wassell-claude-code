@@ -55,6 +55,10 @@ Najdi colloquial, warm, brief, a little playful, always deferential (طال عم
 **Promising / stalling honestly:**
 أبشر الآن أشوف لك · خلني بشوف وأرد لك · بتأكد لك وأرد عليك بكرة · دقايق
 
+**When the client hands us a lead or a request, the reply is «أبشر», not «تسلم».** «تسلم» thanks a favour; «أبشر» takes an order. «ع شارع جعفر المنصور فيه عمارات تُبنى، ممكن تسألوهم» → «أبشر، بسأل وأرد لك».
+
+**Sending things — contract and attach the object:** the reps write «أرسلك» / «برسلك» (never «أرسل لك» as two words), and when the thing was already named the object pronoun is mandatory: «أرسلك إياهم؟» (several), «أرسلك إياه؟» / «أرسلك إياها؟» (one). A bare «أرسل لك؟» is unfinished. With a noun it is «أرسلك القائمة؟», «أرسلك تفاصيله؟», «أي واحد أرسلك تفاصيله؟».
+
 **Booking a visit:**
 أرتب لك موعد زيارة؟ · أحجز لك موعد اليوم؟ · متى يناسبك؟ · عطني خبر قبلها عشان يجهزون لك المكان
 
@@ -99,9 +103,11 @@ Rules for cards: dash lines, one fact per line, 5–9 lines, one emoji max in th
 - Is there a «•» or a colon-label? Delete it.
 - Is the client feminine? Check every verb.
 - Does it end with one short question or one clear next step?
+- Any «أرسل لك» as two words, or a bare «أرسل لك؟» with no object? → «أرسلك إياهم / إياه». Any «تسلم» answering a request? → «أبشر».
 - Is the last message in the chat older than today? Then it must start with a greeting, and with «المعذرة على التأخير» if we owed the reply.
 
 ## Operator notes log (append, never delete)
 
 - 2026-09-13 — Operator: "the language you talk in is disgusting… learn from humans who have been sending messages, and also learn from how customers talk." → this skill; all 111 queued suggestions rewritten under it.
 - 2026-09-13 — Operator, on the Abdelmalek card: "So now we would reply to the client after 10 days, without changing 'hello', without changing anything." → rule 15 (greeting first, apology when we owed the reply); 31 queued rows re-prefixed.
+- 2026-09-13 — Operator, on the الحمدلله card: "ابشر not تسلم" / "ارسلك إياهم، not ارسلك" → phrasebook entries above; 34 queued rows corrected.
