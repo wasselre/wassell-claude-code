@@ -22,7 +22,12 @@ try {
 
 const URL_ = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const RUN = 'calib-001';
+// CALIB_RUN: the backfill run id (a run's done jobs are never re-claimed, so a
+// re-extraction needs a NEW run id). CALIB_BATCH_ID: when set, the existing
+// labeling batch row is UPDATED with the fresh subjects (its grader URL keeps
+// working) instead of inserting a new batch.
+const RUN = process.env.CALIB_RUN?.trim() || 'calib-001';
+const BATCH_ID = process.env.CALIB_BATCH_ID?.trim() || '';
 
 // The 26 stratified DEV proxy-positive calibration clients (see report for the
 // per-category breakdown). Deterministic list captured from the selection query.
@@ -61,7 +66,10 @@ describe.skipIf(!process.env.RUN_CALIB || !URL_ || !KEY)('CALIBRATION run (persi
     expect(res.processed).toBeGreaterThanOrEqual(CLIENTS.length - 2); // tolerate a rare transient
 
     // Counts.
-    const ev = await supabase.from('geo_pref_evidence').select('id, conversation_id, client_id').in('client_id', CLIENTS).eq('origin', 'model');
+    const ev = await supabase.from('geo_pref_evidence').select('id, conversation_id, client_id, source_channel').in('client_id', CLIENTS).eq('origin', 'model');
+    const byChannel: Record<string, number> = {};
+    for (const e of ev.data ?? []) byChannel[e.source_channel as string] = (byChannel[e.source_channel as string] ?? 0) + 1;
+    console.log('[CALIB] evidence by source_channel:', JSON.stringify(byChannel));
     const cp = await supabase.from('geo_pref_checkpoints').select('id', { count: 'exact', head: true }).in('client_id', CLIENTS).eq('origin_tag', 'model');
     const props = await supabase.from('geo_pref_proposals').select('client_id, checkpoint_id, proposed_action, status').in('client_id', CLIENTS);
     console.log('[CALIB] evidence:', ev.data?.length, 'checkpoints:', cp.count, 'proposals:', props.data?.length);
@@ -73,19 +81,26 @@ describe.skipIf(!process.env.RUN_CALIB || !URL_ || !KEY)('CALIBRATION run (persi
     console.log('[CALIB] duplicate proposals:', dupes);
     expect(dupes).toBe(0);
 
-    // Build ONE labeling batch from the persisted evidence.
+    // Build ONE labeling batch from the persisted evidence — or refresh an existing one.
     const subjects = (ev.data ?? []).map((e) => ({ subject_kind: 'evidence', subject_ref: e.id, conversation_id: e.conversation_id, client_id: e.client_id }));
-    const { data: batch, error: bErr } = await supabase.from('geo_pref_calibration_batch').insert({
-      label: RUN, split: 'dev', status: 'open', adjudication_open: false, subjects,
-      assignments: [
-        { annotator_id: '00000000-0000-0000-0000-0000000000a1', role: 'meaning' },
-        { annotator_id: '00000000-0000-0000-0000-0000000000a2', role: 'meaning' },
-        { annotator_id: '00000000-0000-0000-0000-0000000000b1', role: 'geo_operator' },
-        { annotator_id: '00000000-0000-0000-0000-0000000000c1', role: 'adjudicator' },
-      ],
-    }).select('id').single();
-    expect(bErr).toBeNull();
-    console.log('[CALIB] labeling batch:', batch?.id, 'subjects:', subjects.length);
+    if (BATCH_ID) {
+      const { data: batch, error: bErr } = await supabase.from('geo_pref_calibration_batch')
+        .update({ subjects }).eq('id', BATCH_ID).select('id, label').single();
+      expect(bErr).toBeNull();
+      console.log('[CALIB] labeling batch REFRESHED:', batch?.id, batch?.label, 'subjects:', subjects.length);
+    } else {
+      const { data: batch, error: bErr } = await supabase.from('geo_pref_calibration_batch').insert({
+        label: RUN, split: 'dev', status: 'open', adjudication_open: false, subjects,
+        assignments: [
+          { annotator_id: '00000000-0000-0000-0000-0000000000a1', role: 'meaning' },
+          { annotator_id: '00000000-0000-0000-0000-0000000000a2', role: 'meaning' },
+          { annotator_id: '00000000-0000-0000-0000-0000000000b1', role: 'geo_operator' },
+          { annotator_id: '00000000-0000-0000-0000-0000000000c1', role: 'adjudicator' },
+        ],
+      }).select('id').single();
+      expect(bErr).toBeNull();
+      console.log('[CALIB] labeling batch:', batch?.id, 'subjects:', subjects.length);
+    }
 
     // Monitor: client-write activity — location_items MUST be unchanged for all 26.
     let changed = 0;
