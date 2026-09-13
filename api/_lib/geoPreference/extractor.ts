@@ -76,6 +76,12 @@ export interface Conversation {
   turns: ConversationTurn[];
   /** chat_wid (chat) or the phone_calls record id (call); the source.ref fallback. */
   id?: string;
+  /**
+   * Calls only — how the agent/client speaker labels on the turns were decided
+   * (see hatifDialogue.ts). Absent or 'none' ⇒ the turns are NOT reliably
+   * labelled and the unlabelled-call rules apply.
+   */
+  speaker_labels?: 'hatif_role' | 'self_intro' | 'channel' | 'none';
 }
 
 export interface ExtractResult {
@@ -147,6 +153,11 @@ export const EXTRACT_SYSTEM_PROMPT = `أنت محلّل دلالي لفريق ع
 - holder_role: سلطة الشراء — buyer / co_decision_maker / beneficiary_occupant / influencer / unrelated_third_party / unknown. «زوجتي تبي شمال» غالبًا co_decision_maker أو influencer، وليست buyer تلقائيًا. «أمي بتسكن معنا وتفضّل كذا» = beneficiary_occupant. طرفٌ لا علاقة له = unrelated_third_party.
 - quoted_speaker: إن كان الكلام منقولًا (client / agent / third_party / none).
 
+مبدأ حاكم — ليست كل كلمة مكانًا، وليس كل مكان تفضيلًا:
+- الكلمات العامة مثل «الموقع»، «المكان»، «الجهة»، أو نداءٌ مثل «يا الشيخ» ليست إشارةً إلى موقع جغرافي — لا تُخرِج لها سجلًا.
+- المكان الذي يذكره العميل للمقارنة أو كأصلٍ له فقط («عندنا في الخبر أرخص»، «في مدينتي الأسعار أقل») ليس تفضيلًا للشراء: preference_role='none'.
+- الإشارة النسبية التي تُعيد ذكر أماكن سبق تسجيلها («بين المناطق هذي»، «هناك») ليست إشارةً مستقلة — لا تُخرِج لها سجلًا.
+
 مبدأ حاكم — أنت تُخرِج رموز المرجع + العلاقات فقط:
 - لا تحلّ الإحداثيات، لا تختار «أي حي باسم كذا»، لا تُخمّن جغرافيا. أخرِج anchors كرموز typed فقط.
 - كل anchor: { anchor_type, span (النص الحرفي كما قاله), normalized_token (بعد طيّ ة→ه، ى→ي، حذف «حي» والتطويل), role_in_relation? }.
@@ -215,13 +226,27 @@ export const CALL_TRANSCRIPT_RULES = `تنبيه إلزامي — هذه مكا�
 - الموقع الذي يذكره المندوب (عرض، اقتراح، «عندنا مشروع في القروان»، سؤال) ليس تفضيلًا للعميل ولا يُخرَج له سجلّ — إلا إذا ردّ العميل عليه بقبولٍ أو اهتمامٍ أو رفضٍ صريح، فحينها السجلّ لكلام العميل (mention_span = كلمات العميل نفسها) بـ speaker='client'.
 - إن تعذّر تحديد المتحدث بثقة: speaker='unknown' و preference_applicability='unclear'. لا تفترض أبدًا أن العميل هو المتكلم.`;
 
+/** Rules for a call whose turns ARE speaker-labelled (from Hatif's diarized
+ *  transcript — see hatifDialogue.ts). The labels are trusted, with one honest
+ *  caveat: they were inferred, so an obviously mis-assigned line may be marked
+ *  unknown rather than forced. */
+export const CALL_LABELLED_RULES = `تنبيه — هذه مكالمة هاتفية مُفرَّغة آليًا، والمتحدثون مُصنّفون (المندوب / العميل) اعتمادًا على تفريق الأصوات وتعريف المندوب بنفسه. اعتمد على التصنيف.
+- الموقع الذي يذكره المندوب (عرض، اقتراح، سؤال) ليس تفضيلًا للعميل ولا يُخرَج له سجلّ — إلا إذا ردّ العميل عليه بقبولٍ أو اهتمامٍ أو رفضٍ صريح، فحينها السجلّ لكلام العميل بـ speaker='client'.
+- إن بدا سطرٌ مُصنّفًا خطأً بوضوح (المندوب يعرّف بنفسه في سطر «العميل» مثلًا): speaker='unknown' و preference_applicability='unclear' — لا تفترض.`;
+
 /** The user message for one conversation: channel header (+ the call rules when
- *  the channel is a call), then the numbered, speaker-labelled turns. Exported so
- *  tests can assert the call rules are present without calling an LLM. */
+ *  the channel is a call — the labelled variant when the turns carry reliable
+ *  speaker labels, else the unlabelled one), then the numbered turns. Exported
+ *  so tests can assert the rules are present without calling an LLM. */
 export function buildExtractionUserText(conversation: Conversation): string {
-  const header = conversation.channel === 'call'
-    ? `المحادثة (مكالمة هاتفية):\n${CALL_TRANSCRIPT_RULES}\n\nنص المكالمة:`
-    : 'المحادثة (شات واتساب):';
+  let header: string;
+  if (conversation.channel !== 'call') {
+    header = 'المحادثة (شات واتساب):';
+  } else if (conversation.speaker_labels && conversation.speaker_labels !== 'none') {
+    header = `المحادثة (مكالمة هاتفية — المتحدثون مُصنّفون):\n${CALL_LABELLED_RULES}\n\nنص المكالمة:`;
+  } else {
+    header = `المحادثة (مكالمة هاتفية):\n${CALL_TRANSCRIPT_RULES}\n\nنص المكالمة:`;
+  }
   return `${header}\n${renderConversation(conversation)}`;
 }
 

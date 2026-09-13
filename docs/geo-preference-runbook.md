@@ -104,6 +104,15 @@ Extractor version bumped to `geo-extract/v8`.
 
 Agent-only chat threads (the customer never wrote) are skipped — nothing to interpret.
 
+**Calls are speaker-labelled from Hatif's diarized words (2026-09-13, second pass).**
+`gatherClientConversations` reads `call_logs.transcription.words[]` for each call
+(same id as the phone_calls record) and `hatifDialogue.ts` turns them into
+agent/client turns (Hatif `role` → unique company self-introduction → outbound
+`ch_0` = our leg → else `unknown`). `Conversation.speaker_labels` records which;
+the prompt uses `CALL_LABELLED_RULES` when labels exist and the unlabelled
+`CALL_TRANSCRIPT_RULES` otherwise. The flattened `transcription_text` is only the
+fallback for calls with no diarized words. Calls are HATIF — not Retell.
+
 **Re-backfilling an already-extracted client (do NOT skip):**
 1. `persistExtraction` clears prior model rows by the NEW `conversation_id`, so rows
    from the old scheme (`conversation_id` = the client uuid) are not matched — purge

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
   extract, parseExtractorOutput, buildExtractionUserText, attributeMentionSource,
-  CALL_TRANSCRIPT_RULES, type Conversation,
+  CALL_TRANSCRIPT_RULES, CALL_LABELLED_RULES, type Conversation,
 } from '../extractor.js';
 import { isActivePreference, type Evidence, type EvidenceRelation } from '../ontology.js';
 
@@ -149,6 +149,15 @@ describe('per-mention provenance — channel from the conversation, ref/timestam
     expect(callText).toContain(CALL_TRANSCRIPT_RULES);
     expect(callText).toContain('[1] (المتحدث غير معروف): ألو ألو');
     expect(CALL_TRANSCRIPT_RULES).toContain('القروان'); // the agent-suggestion case that caused the 2026-09-13 bug
+
+    // A call whose turns are speaker-labelled (Hatif diarization) gets the LABELLED rules instead.
+    const labelled = buildExtractionUserText({ channel: 'call', id: 'c', speaker_labels: 'self_intro', turns: [{ speaker: 'agent', text: 'معك فهد من وصل العقارية' }, { speaker: 'client', text: 'أبي المهدية' }] });
+    expect(labelled).toContain(CALL_LABELLED_RULES);
+    expect(labelled).not.toContain(CALL_TRANSCRIPT_RULES);
+    expect(labelled).toContain('[1] المندوب: معك فهد من وصل العقارية');
+    expect(labelled).toContain('[2] العميل: أبي المهدية');
+    // speaker_labels:'none' ⇒ still the unlabelled rules.
+    expect(buildExtractionUserText({ channel: 'call', id: 'c', speaker_labels: 'none', turns: [{ speaker: 'unknown', text: 'ألو' }] })).toContain(CALL_TRANSCRIPT_RULES);
   });
 
   it('attributeMentionSource: trusts a `turn` hint only when that turn contains the span, else unique verbatim match, else conversation-level', () => {

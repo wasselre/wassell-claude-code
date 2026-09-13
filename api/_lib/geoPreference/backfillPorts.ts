@@ -18,6 +18,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { DEFAULT_GEO_COUNTRY } from '../matchAgent.js';
 import { createSupabaseResolverDb } from './resolverDb.js';
 import { extract, type Conversation, type ConversationTurn } from './extractor.js';
+import { hatifWordsToTurns } from './hatifDialogue.js';
 import { runReviewFirst } from './orchestrator.js';
 import type {
   ProposalStore, ProposalInput, ProposalRecord, RunContext,
@@ -168,9 +169,12 @@ function transcriptToTurns(text: string, timestamp: string, callRecordId: string
 /**
  * Gather a client's history as SEPARATE conversations — one per phone call and
  * one per WhatsApp thread — each on its own channel with its real id, ordered
- * oldest-first. NEVER merged: a call transcript has no speaker labels, so it needs
- * the call-specific extraction rules and its own review; a chat has `flow` per
- * message, so the speaker is known. Returns [] when there is nothing to interpret.
+ * oldest-first. NEVER merged: a call and a chat are extracted + reviewed apart.
+ * Calls are built from Hatif's DIARIZED words in call_logs (speaker-labelled
+ * turns, agent decided by hatifDialogue.ts) and fall back to the flattened
+ * transcription_text — unlabelled — only when no diarized words exist; a chat
+ * has `flow` per message, so the speaker is a fact. Returns [] when there is
+ * nothing to interpret.
  *
  * Chat threads where the customer never wrote (agent-only broadcasts, 14 of the
  * 20 calibration threads) are skipped: the extractor only records CLIENT
@@ -209,14 +213,36 @@ export async function gatherClientConversations(
       id: r.id,
       ts: asStr(r.data.call_time) || asStr(r.data.creation_time) || '',
       text: asStr(r.data.transcription_text),
+      direction: asStr(r.data.direction) || null,
     }))
     .filter((c) => c.text)
     .sort((a, b) => a.ts.localeCompare(b.ts))
     .slice(0, MAX_CALLS);
+
+  // Hatif's DIARIZED transcript lives in call_logs.transcription (same id as the
+  // phone_calls record). It gives speaker-labelled turns; the flattened
+  // transcription_text is the fallback when a call has no diarized words.
+  const logs = new Map<string, { direction: string | null; transcription: unknown }>();
+  if (calls.length) {
+    const { data, error } = await supabase
+      .from('call_logs')
+      .select('id, direction, transcription')
+      .in('id', calls.map((c) => c.id));
+    if (error) throw new Error(`gather: call_logs read failed: ${error.message}`);
+    for (const l of (data ?? []) as Array<{ id: string; direction: string | null; transcription: unknown }>) {
+      logs.set(l.id, { direction: l.direction, transcription: l.transcription });
+    }
+  }
   for (const c of calls) {
+    const log = logs.get(c.id);
+    const dialogue = log ? hatifWordsToTurns(log.transcription, { direction: log.direction ?? c.direction, ref: c.id, callTimeIso: c.ts || null }) : null;
+    if (dialogue) {
+      out.push({ channel: 'call', id: c.id, speaker_labels: dialogue.labelSource, turns: dialogue.turns.slice(0, MAX_TURNS_PER_CONVERSATION) });
+      continue;
+    }
     const turns = transcriptToTurns(c.text, c.ts, c.id).slice(0, MAX_TURNS_PER_CONVERSATION);
     if (turns.length === 0) continue;
-    out.push({ channel: 'call', id: c.id, turns });
+    out.push({ channel: 'call', id: c.id, speaker_labels: 'none', turns });
   }
 
   // Oldest conversation first (by its first timestamp; blanks sort first, stable).
