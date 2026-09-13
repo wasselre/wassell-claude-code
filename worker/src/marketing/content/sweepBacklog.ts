@@ -39,7 +39,7 @@
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
 
 /** Stage 5 ceilings. A cv_process job is a multi-minute GPU run on Modal, so
  *  the re-enqueue is deliberately small per tick; anything it does not reach
@@ -191,7 +191,7 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
-  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, skipped_queue_full: false, skipped_not_leader: false };
+  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, skipped_queue_full: false, skipped_not_leader: false };
 
   if (!(await acquireSweepLease(sb, workerId))) { stats.skipped_not_leader = true; return stats; }
 
@@ -452,6 +452,18 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
         stats.cv_reenqueue++;
       }
     }
+  }
+
+  // ── stage 6: social-media → Files registration (2026-09-13) ─────────────
+  // Attributed posts whose stored photos/videos have no `files` row yet.
+  // social_file_backfill is capped by social_file_settings.max_queue_depth and
+  // is a no-op while the bridge is disabled, so this costs nothing when idle.
+  try {
+    const { data, error } = await sb.rpc('social_file_backfill', { p_limit: 50 });
+    if (error) console.error(`[sweep] social_file_backfill failed: ${error.message}`);
+    else stats.social_file = Number(data ?? 0);
+  } catch (e) {
+    console.error(`[sweep] social_file_backfill threw: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   return stats;

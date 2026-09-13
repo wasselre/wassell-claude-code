@@ -44,6 +44,7 @@ export interface LibraryRow {
   attribution_strength: 'full_name' | 'number' | 'word' | null; // how the chosen candidate matched
   unknown_projects: string[] | null;                // projects the post names that are not in our catalog / candidates
   is_general_branding: boolean;
+  files_registered: number;                         // how many of the post's media are registered in Files
 }
 
 export interface LibraryResult {

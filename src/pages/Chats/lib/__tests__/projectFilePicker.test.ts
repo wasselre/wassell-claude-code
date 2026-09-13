@@ -143,3 +143,27 @@ describe('defaultBulkSelection', () => {
     expect([...defaultBulkSelection(items)]).toEqual(['p1']);
   });
 });
+
+describe('social-intake files (Competitor Watch → Files bridge)', () => {
+  it('hides files whose rights forbid sending, keeps the rest', () => {
+    const items = buildPickerItems([
+      entry('own', 'image', { origin: 'social_intake', usage_rights: 'approved', acquisition_source: 'developer' } as Partial<BusinessFileRow>),
+      entry('rival', 'image', { origin: 'social_intake', usage_rights: 'internal_only', acquisition_source: 'competitor' } as Partial<BusinessFileRow>),
+      entry('nope', 'image', { usage_rights: 'do_not_use' } as Partial<BusinessFileRow>),
+      entry('plain', 'image'),
+    ], []);
+    expect(items.map((i) => i.ref)).toEqual(['own', 'plain']);
+    expect(items[0]).toMatchObject({ isSocial: true, acquisitionSource: 'developer' });
+    expect(items[1]).toMatchObject({ isSocial: false });
+  });
+  it('never pre-checks social photos in the bulk default', () => {
+    const items = buildPickerItems([
+      entry('s1', 'image', { origin: 'social_intake', usage_rights: 'approved' } as Partial<BusinessFileRow>),
+      entry('s2', 'image', { origin: 'social_intake', usage_rights: 'approved' } as Partial<BusinessFileRow>),
+      entry('g1', 'image'),
+      entry('g2', 'image'),
+    ], []);
+    const sel = defaultBulkSelection(items);
+    expect([...sel].sort()).toEqual(['g1', 'g2']);
+  });
+});

@@ -217,7 +217,9 @@ export type FileOrigin =
   | 'integration_inbound'
   | 'generated_document'
   | 'derived_rendition'
-  | 'system_artifact';
+  | 'system_artifact'
+  /** Registered from a collected competitor/developer social post (Competitor Watch → Files bridge, 2026-09-13). */
+  | 'social_intake';
 
 /** business = eligible for the Library. system = machine artefact (a compressed
  *  copy, a preview rendition), shown only under its parent. */

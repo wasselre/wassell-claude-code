@@ -421,6 +421,11 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPa
             {typeof views === 'number' && <span className="cw-mono">▷ {views.toLocaleString()}</span>}
             {row.published_at && <span className="cw-mono">{fmtDate(row.published_at, isAr)}</span>}
             {row.has_transcript && <span className="cw-tx">{isAr ? 'مُفرّغ' : 'transcript'}</span>}
+            {row.files_registered > 0 && (
+              <span className="cw-tx" title={isAr ? 'وسائط هذا المنشور مسجّلة في الملفات ومربوطة بالمشروع' : 'This post\'s media is registered in Files and linked to the project'}>
+                {isAr ? `في الملفات (${row.files_registered})` : `in Files (${row.files_registered})`}
+              </span>
+            )}
             {reads && reads.length > 0 && (
               <span className="cw-tx" title={reads.map((r) => designReadSummary(r, isAr)).join('\n')}>
                 {isAr ? 'قراءة تصميم' : 'design read'}

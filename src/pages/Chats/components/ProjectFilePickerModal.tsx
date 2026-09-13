@@ -270,6 +270,11 @@ export default function ProjectFilePickerModal({
                               <div className="px-2 py-1.5">
                                 <div className="text-[11px] text-charcoal/70 truncate" title={it.name}>{it.name}</div>
                                 {it.isUrl && <div className="text-[9px] text-charcoal/40">{L('رابط فيديو', 'video link')}</div>}
+                                {it.isSocial && (
+                                  <div className="text-[9px] text-copper/80" title={L('مأخوذ من حسابات التواصل الاجتماعي', 'Taken from social media accounts')}>
+                                    {it.acquisitionSource === 'developer' ? L('من حسابات المطوّر', "developer's social") : L('من التواصل الاجتماعي', 'from social media')}
+                                  </div>
+                                )}
                               </div>
                             </button>
                           </div>

@@ -28,6 +28,7 @@ export type FileLinkRole =
   | 'reference'
   | 'source'
   | 'marketing_asset'
+  | 'social_post'
   | 'supporting_document'
   | 'attachment'
   | 'unmapped';
@@ -56,6 +57,7 @@ export const FILE_LINK_ROLE_LABELS: Record<FileLinkRole, { ar: string; en: strin
   reference:           { ar: 'مرجع',             en: 'Reference' },
   source:              { ar: 'مصدر',             en: 'Source' },
   marketing_asset:     { ar: 'مادة تسويقية',     en: 'Marketing material' },
+  social_post:         { ar: 'منشور تواصل اجتماعي', en: 'Social media post' },
   supporting_document: { ar: 'مستند مساند',      en: 'Supporting document' },
   // Role-neutral: "attached to this record; relationship type not asserted".
   attachment:          { ar: 'مرفق',             en: 'Attached' },

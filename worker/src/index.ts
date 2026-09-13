@@ -31,6 +31,7 @@ import { runCallAnalysisJob, type CallAnalysisJob } from './runCallAnalysisJob.j
 import { runCleanTextJob, type CleanTextJob } from './runCleanTextJob.js';
 import { runVideoConvertJob, type VideoConvertJob } from './runVideoConvertJob.js';
 import { runListingMirrorJob, type ListingMirrorJob } from './runListingMirrorJob.js';
+import { runSocialFileJob, type SocialFileJob } from './runSocialFileJob.js';
 import { runTranslationJob } from './runTranslationJob.js';
 import { runCompressJob, type CompressJob } from './runCompressJob.js';
 import { configurePush, runPushJob, type PushOutboxRow } from './runPushJob.js';
@@ -101,6 +102,11 @@ let videoWakeRequested = false;
 // watchdog sweeps stale jobs of ALL kinds.
 let mirrorBusy = false;
 let mirrorWakeRequested = false;
+// Social-media → Files registration (generation_jobs kind='social-file'): one
+// Storage copy + one files insert per photo/video of an attributed competitor
+// post. Own loop so a backfill burst never sits in front of the user-facing
+// cleaning or mirroring lanes.
+let socialFileBusy = false;
 // AI call-result suggestions (call_result_suggestions) get their own loop: a
 // rep is waiting on the popup, so a 5-10s DeepSeek read must never queue behind
 // a 12-minute deck build.
@@ -643,6 +649,59 @@ async function claimAndRunOneListingMirror(): Promise<boolean> {
     }
   }
   return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Social-media → Files registration — generation_jobs (kind='social-file').
+// ─────────────────────────────────────────────────────────────────────────
+async function claimAndRunOneSocialFile(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('generation_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+    p_kind: 'social-file',
+  });
+  if (error) {
+    console.error(`[worker] social-file claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{ job_id: string; record_id: string; params: Record<string, unknown>; attempts: number }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: SocialFileJob = { id: row.job_id, recordId: row.record_id, params: row.params ?? {}, attempts: row.attempts };
+  console.log(`[worker] claimed social-file job=${job.id} post=${job.recordId} attempts=${job.attempts}`);
+  try {
+    const result = await runSocialFileJob({ supabase, job });
+    const { error: doneErr } = await supabase.rpc('generation_job_complete', { p_job_id: job.id, p_result: result ?? {} });
+    if (doneErr) console.error(`[worker] generation_job_complete (social-file) RPC failed: ${doneErr.message}`);
+    else console.log(`[worker] completed social-file job=${job.id}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] social-file job=${job.id} FAILED:`, msg);
+    try {
+      const { error: failErr } = await supabase.rpc('generation_job_fail', { p_job_id: job.id, p_error: msg });
+      if (failErr) console.error(`[worker] generation_job_fail (social-file) RPC failed: ${failErr.message}`);
+    } catch (innerErr) {
+      console.error(`[worker] could not mark social-file job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true;
+}
+
+async function socialFilePollLoop(): Promise<void> {
+  while (!shuttingDown) {
+    socialFileBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneSocialFile();
+    } catch (err) {
+      console.error('[worker] social-file poll iteration error:', err);
+    }
+    socialFileBusy = false;
+    if (didClaim) continue;
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !shuttingDown) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
 }
 
 /** Listing-mirror twin of videoConvertPollLoop (own busy/wake flags). */
@@ -2777,6 +2836,7 @@ const server = http.createServer((req, res) => {
         clean_busy: cleanBusy,
         video_busy: videoBusy,
         mirror_busy: mirrorBusy,
+        social_file_busy: socialFileBusy,
         call_analysis_busy: callAnalysisBusy,
         call_analysis_enabled: Boolean(env.DEEPSEEK_API_KEY),
         preview_busy: previewBusy,
@@ -3419,6 +3479,7 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
     cleanTextPollLoop(),
     videoConvertPollLoop(),
     listingMirrorPollLoop(),
+    socialFilePollLoop(),
     previewPollLoop(),
     enrichmentPollLoop(),
     compressPollLoop(),

@@ -37,6 +37,11 @@ export interface PickerItem {
    *  'brochure', or the name says so). Drives the bulk picker's default: only
    *  the brochure is pre-checked, not every document. */
   isBrochure: boolean;
+  /** True for files registered from a collected social-media post (origin
+   *  `social_intake`) — shown with a source badge and never pre-checked. */
+  isSocial: boolean;
+  /** Where the bytes came from, for the badge: developer's own account vs another company. */
+  acquisitionSource: string | null;
   /** Signed thumbnail URL for image items (filled in later, best-effort). Small
    *  transformed image when Storage transforms are on, else the full URL. */
   thumb?: string;
@@ -73,7 +78,19 @@ export function nameFromUrl(url: string): string {
 /** The minimal file shape the picker tiles need — satisfied by both the full
  *  RecordFileEntry and the lean SendableFile path (listSendableProjectFiles).
  *  `primary_category` is included so the tile can tell a brochure apart. */
-type PickerSource = { file: Pick<BusinessFileRow, 'id' | 'kind' | 'title' | 'original_name' | 'primary_category'> };
+type PickerSource = { file: Pick<BusinessFileRow, 'id' | 'kind' | 'title' | 'original_name' | 'primary_category'> & Pick<Partial<BusinessFileRow>, 'origin' | 'usage_rights' | 'acquisition_source'> };
+
+/**
+ * Usage rights that must never reach a customer. The picker is the send
+ * surface, so a file the business marked "internal only" / "do not use" /
+ * "restricted" is not offered at all — competitor content registered by the
+ * Competitor Watch bridge arrives as `internal_only` for exactly this reason.
+ * Until 2026-09-13 the picker checked rights on nothing.
+ */
+const UNSENDABLE_RIGHTS = new Set(['internal_only', 'do_not_use', 'restricted']);
+export function isSendable(file: Pick<Partial<BusinessFileRow>, 'usage_rights'>): boolean {
+  return !file.usage_rights || !UNSENDABLE_RIGHTS.has(file.usage_rights);
+}
 
 /** A document reads as a brochure when its name says so (AR «بروشور»/«كتيّب» or
  *  EN «brochure»). Name is the STRONGEST signal — it's what the rep titled it. */
@@ -98,6 +115,7 @@ export function buildPickerItems(entries: PickerSource[], externalVideoUrls: str
   for (const e of entries) {
     if (seen.has(e.file.id)) continue;
     seen.add(e.file.id);
+    if (!isSendable(e.file)) continue;
     const name = e.file.title || e.file.original_name || e.file.id;
     const group = groupOfKind(e.file.kind);
     out.push({
@@ -107,12 +125,14 @@ export function buildPickerItems(entries: PickerSource[], externalVideoUrls: str
       name,
       isUrl: false,
       isBrochure: group === 'document' && isBrochureFile(e.file, name),
+      isSocial: e.file.origin === 'social_intake',
+      acquisitionSource: e.file.acquisition_source ?? null,
     });
   }
   for (const url of externalVideoUrls) {
     if (!url || seen.has(url)) continue;
     seen.add(url);
-    out.push({ ref: url, group: 'video', kind: 'video', name: nameFromUrl(url), isUrl: true, isBrochure: false });
+    out.push({ ref: url, group: 'video', kind: 'video', name: nameFromUrl(url), isUrl: true, isBrochure: false, isSocial: false, acquisitionSource: null });
   }
   return out;
 }
@@ -157,7 +177,9 @@ export function defaultBulkSelection(items: PickerItem[]): Set<string> {
   const out = new Set<string>();
   let photos = 0;
   for (const it of items) {
-    if (it.group === 'photo' && photos < BULK_DEFAULT_PHOTO_COUNT) {
+    // Social-intake photos (a developer's Instagram gallery can be 170 items)
+    // are offered but never pre-checked — the rep opts in per photo.
+    if (it.group === 'photo' && !it.isSocial && photos < BULK_DEFAULT_PHOTO_COUNT) {
       out.add(it.ref);
       photos++;
     }

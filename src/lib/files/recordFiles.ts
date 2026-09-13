@@ -14,6 +14,7 @@
  *     field:<model>:<record>:<field>:<index>:<file>   → derived, READ-ONLY
  *     attachment:<file>:<model>:<record>              → derived, READ-ONLY
  *     marketing:<asset>:<file>:<model>:<record>       → derived, READ-ONLY
+ *     social:<media>:<file>:<model>:<record>          → derived, READ-ONLY (Competitor Watch intake)
  *     manual:<file>:<model>:<record>                  → a person made it
  *
  * Only a `manual:` source can be removed from this UI. Everything else is a
@@ -52,7 +53,7 @@ function surfaceError(scope: string, err: unknown): Error {
 
 /** How a relationship came to exist. Ordered weakest-claim to strongest so a
  *  UI can pick one label for an edge with several sources. */
-export type LinkOrigin = 'manual' | 'field' | 'attachment' | 'marketing' | 'unknown';
+export type LinkOrigin = 'manual' | 'field' | 'attachment' | 'marketing' | 'social' | 'unknown';
 
 export interface RecordFileEntry {
   /** `file_links.id` — the edge, not the file and not the manual link. */
@@ -73,7 +74,7 @@ export interface RecordFileEntry {
 
 export function originOf(sourceKey: string): LinkOrigin {
   const head = sourceKey.split(':', 1)[0];
-  if (head === 'manual' || head === 'field' || head === 'attachment' || head === 'marketing') {
+  if (head === 'manual' || head === 'field' || head === 'attachment' || head === 'marketing' || head === 'social') {
     return head;
   }
   return 'unknown';
@@ -181,7 +182,7 @@ export async function listRecordFiles(
 export type SendableFile = Pick<
   BusinessFileRow,
   'id' | 'kind' | 'title' | 'original_name' | 'document_type' | 'primary_category'
->;
+> & Pick<Partial<BusinessFileRow>, 'origin' | 'usage_rights' | 'acquisition_source'>;
 
 /**
  * Lean sibling of listRecordFiles for the project→customer file picker.
@@ -210,7 +211,7 @@ export async function listSendableProjectFiles(
 
   const { data: files, error: fileErr } = await supabase
     .from('files')
-    .select('id, kind, title, original_name, document_type, primary_category')
+    .select('id, kind, title, original_name, document_type, primary_category, origin, usage_rights, acquisition_source')
     .in('id', ids);
   if (fileErr) throw surfaceError('load project files', fileErr);
 
