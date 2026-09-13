@@ -134,6 +134,23 @@ describe('partial names (two consecutive words incl. a distinctive one) are stro
   });
 });
 
+describe('word order does not matter for a full name (فلل سديم → سديم فلل)', () => {
+  const idx: ProjectAlias[] = [
+    { projectId: 'sadeem-villas', nameAr: 'سديم فلل', nameEn: null, tokens: [] },
+    { projectId: 'sadeem-town', nameAr: 'سديم تاون - شقق', nameEn: null, tokens: [] },
+  ];
+  const o = { publisherProjectIds: ['sadeem-villas', 'sadeem-town'], commonTokens: computeCommonTokens(idx), excludedTokens: new Set<string>() };
+  it('reversed order matches as a full name', () => {
+    const r = attributeCaption('تحديثات مشروع فلل سديم بفضل الله نعلن عن أبرز إنجازاتنا', idx, o);
+    expect(r.map((x) => x.projectId)).toEqual(['sadeem-villas']);
+    expect(r[0]!.strength).toBe('full_name');
+  });
+  it('the words far apart do not match', () => {
+    const r = attributeCaption('فلل فاخرة في شمال الرياض بجوار سديم', idx, o);
+    expect(r).toEqual([]);
+  });
+});
+
 describe('name variants', () => {
   it('parenthesised alternates and dash segments become variants', () => {
     const v = projectNameVariants(CATALOG.find((p) => p.projectId === 'majdiah-village')!);

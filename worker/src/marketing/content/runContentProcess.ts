@@ -390,6 +390,16 @@ async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: P
   const candidates = narrowProjects(combined, index, { publisherProjectIds: pubProjects, commonTokens: ctx.commonTokens, excludedTokens: ctx.excludedTokens, brandPhrases: ctx.brandPhrases });
   stats.attributions = candidates.length;
 
+  // Nothing to re-decide when the candidate set is identical to the one the
+  // runner already decided on under the current rules — a targeted re-score
+  // (e.g. after a matcher tweak) must not spend AI time on unchanged posts.
+  const fingerprint = (c: Array<{ projectId: string; strength: string }>) => c.map((x) => `${x.projectId}:${x.strength}`).sort().join('|');
+  const prevCands = (Array.isArray(enr?.candidate_projects) ? enr!.candidate_projects : []) as Array<{ projectId: string; strength: string }>;
+  if (enr?.status === 'done' && enr.rule_version === 'enrich-runner-v2' && fingerprint(prevCands) === fingerprint(candidates)) {
+    stats.status = 'unchanged';
+    return stats;
+  }
+
   const prev = ((enr?.result ?? {}) as Record<string, unknown>);
   const deterministicPartial = prev.deterministic_partial === true || post.processing_status === 'partial';
   const acctIdentity = await accountIdentity(sb, post.social_account_id);

@@ -183,6 +183,24 @@ export function projectNameVariants(a: ProjectAlias): string[] {
   return [...out];
 }
 
+/** All of `words` present as whole words inside some window of `span`
+ *  consecutive text words (any order). Returns the matched window text. */
+function wordsWithinWindow(normalizedText: string, words: string[], span: number): string | null {
+  const strip = (w: string) => w.replace(/^(?:[وبلفك]|لل)(?=.{3})/, '');
+  const toks = normalizedText.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+  const want = new Set(words);
+  for (let i = 0; i < toks.length; i++) {
+    const seen = new Set<string>();
+    for (let j = i; j < Math.min(toks.length, i + span); j++) {
+      const t = toks[j]!;
+      if (want.has(t)) seen.add(t);
+      else if (want.has(strip(t))) seen.add(strip(t));
+      if (seen.size === want.size) return toks.slice(i, j + 1).join(' ');
+    }
+  }
+  return null;
+}
+
 /** Whole-phrase presence with word boundaries. Spaces in the variant match any
  *  run of whitespace; a single attached Arabic prefix letter (بربوة، وستون، للماجدية)
  *  is tolerated before the first word; a trailing number must end at a
@@ -267,6 +285,22 @@ export function attributeCaption(
           if (brandPhrases.has(pair)) continue;
           if (phrasePresent(nt, pair)) { matched.push(pair); strength = 'full_name'; }
         }
+      }
+    }
+    // 1c. the whole name with its words in ANY order, ADJACENT — people write
+    //     "فلل سديم" for "سديم فلل". Every word of the name must appear as a
+    //     whole word inside a window exactly as wide as the name (a contiguous
+    //     permutation), so "سديم تاون فلل" cannot become سديم فلل. Same policy
+    //     as rule 1: a multi-word name counts on its own unless it is the brand
+    //     or nothing but generic words.
+    if (!strength) {
+      for (const v of projectNameVariants(a)) {
+        const vw = v.split(' ').filter((w) => !/^\d+$/.test(w));
+        if (vw.length < 2 || vw.length > 4) continue;
+        if (brandPhrases.has(v)) continue;
+        if (!vw.some((w) => !GENERIC_TOKENS.has(w))) continue;
+        const hit = wordsWithinWindow(nt, vw, vw.length);
+        if (hit) { matched.push(hit); strength = 'full_name'; break; }
       }
     }
     // 2. a LONG number (≥3 digits) standalone — distinctive on its own (174, 163)
