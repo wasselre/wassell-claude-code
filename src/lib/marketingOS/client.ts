@@ -565,9 +565,19 @@ export const completeTask = (
   result: 'submitted' | 'approved' | 'changes_requested',
   note?: string,
   targets?: string[],
-  opts?: { adSetId?: string | null },
+  opts?: { adSetId?: string | null; returnTo?: string | null },
 ) => call<TaskAdvanceResult>('task_complete', {
-  task_id: taskId, result, note, targets, ...(opts?.adSetId ? { ad_set_id: opts.adSetId } : {}),
+  task_id: taskId,
+  result,
+  note,
+  targets,
+  ...(opts?.adSetId ? { ad_set_id: opts.adSetId } : {}),
+  // `return_to` is a STEP KEY, validated server-side against the pinned step
+  // list (it must be a prior step that creates a revision). Omitted = the
+  // engine's own default: the last such step. This is what lets a manager
+  // rejecting the FINAL approval send it back to the writer when the problem
+  // is the copy, instead of always landing on the designer.
+  ...(opts?.returnTo ? { return_to: opts.returnTo } : {}),
 });
 
 /** One Meta ad set an approval could create the ad in. */

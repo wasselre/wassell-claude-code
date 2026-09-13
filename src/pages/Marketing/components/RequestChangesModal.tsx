@@ -9,11 +9,18 @@
  * BEFORE sending, because seeing «١٠ ← ١٢ أغسطس» sometimes changes a reviewer's
  * mind.
  *
- * The engine decides where the work returns (last prior creates_revision step,
- * falling back to the first) — the «إلى من تعود؟» cards display that decision;
- * the alternative role is shown dimmed, exactly as the mockup draws it, because
- * the SQL transition cannot honor a different target and a selectable lie is
- * worse than a visible default.
+ * «إلى من تعود؟» is a real CHOICE since 2026-09-14. Every prior step that
+ * creates a revision is offered; the engine's own default (the last one) is
+ * pre-selected and labelled as such. The chosen step KEY rides
+ * `task_complete`'s `return_to` and `workflow_advance_role_path` validates it
+ * against the pinned step list, so the picker cannot lie.
+ *
+ * It used to be a single card with the alternative drawn dimmed, because the
+ * SQL transition could not honour a different target. That made one real case
+ * unreachable: rejecting the FINAL approval always landed on the DESIGNER,
+ * since the writer's design-review step carries `creates_revision:false` — so
+ * "the copy is wrong" had nowhere to go and the manager had to approve and fix
+ * it afterwards.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -122,8 +129,21 @@ export default function RequestChangesModal({
       : returnStep.role
     : '';
   const returnStepLabel = returnStep ? (isAr ? returnStep.label_ar : returnStep.label_en) : '';
-  // One OTHER role on the path, drawn dimmed like the mockup's «دور آخر» card.
-  const otherRole = steps.find((s) => returnStep && s.role !== returnStep.role)?.role ?? null;
+
+  /* ── the return target is now a CHOICE (2026-09-14) ──────────────────
+     Every prior step that creates a revision is a legitimate destination, and
+     `workflow_advance_role_path` validates the key against the pinned list. The
+     case that forced this: a manager rejecting the FINAL approval always landed
+     on the designer, because the writer's review step carries
+     `creates_revision:false` — so "the copy is wrong" had nowhere to go. */
+  const returnChoices = useMemo(() => {
+    if (!currentStep) return steps.filter((s) => s.creates_revision).slice(0, 1);
+    return steps
+      .filter((s) => s.position < currentStep.position && s.creates_revision)
+      .sort((a, b) => b.position - a.position);
+  }, [steps, currentStep]);
+  const [returnToKey, setReturnToKey] = useState<string | null>(null);
+  const chosenReturn = returnChoices.find((s) => s.key === returnToKey) ?? returnStep;
 
   // The thing under revision is the RETURN step's work — s38 says «النسخة ٢ من
   // النص» and «تعديل النص», never the review step's own name.
@@ -163,7 +183,8 @@ export default function RequestChangesModal({
   const submit = async (): Promise<void> => {
     setBusy(true);
     try {
-      const res = await completeTask(openTask.id, 'changes_requested', note.trim(), targets);
+      const res = await completeTask(openTask.id, 'changes_requested', note.trim(), targets,
+        chosenReturn ? { returnTo: chosenReturn.key } : undefined);
       // The due date rides a second call: task_complete advances the path, then
       // task_update moves the NEW task's due date. A failure here must be
       // visible — the rejection already landed, so say exactly what didn't.
@@ -263,38 +284,51 @@ export default function RequestChangesModal({
         </div>
       </div>
 
-      {/* ── إلى من تعود؟ ── */}
-      {returnStep && (
+      {/* ── إلى من تعود؟ — قابل للاختيار الآن ── */}
+      {chosenReturn && (
         <div>
           <div className="lbl" style={{ marginBottom: 7 }}>
             {isAr ? 'إلى من تعود؟' : 'Who does it go back to?'}
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <div className="s38-role on">
-              <span className={`av ${roleAvatarClass(returnStep.role)}`}>{returnRoleLabel.slice(0, 1)}</span>
-              <div>
-                <div style={{ fontSize: 12.5, fontWeight: 700 }}>{returnRoleLabel}</div>
-                <div style={{ fontSize: 11, color: 'var(--mute)' }}>
-                  {isAr ? 'الدور الذي أرسل — الافتراضي' : 'The role that submitted — the default'}
-                </div>
-              </div>
-            </div>
-            {otherRole && (
-              <div className="s38-role" style={{ flex: '0 0 150px', opacity: 0.65 }}>
-                <span className={`av ${roleAvatarClass(otherRole)}`}>
-                  {(ROLE_LABELS[otherRole] ? (isAr ? ROLE_LABELS[otherRole].ar : ROLE_LABELS[otherRole].en) : otherRole).slice(0, 1)}
-                </span>
-                <div>
-                  <div style={{ fontSize: 12.5, fontWeight: 700 }}>
-                    {ROLE_LABELS[otherRole] ? (isAr ? ROLE_LABELS[otherRole].ar : ROLE_LABELS[otherRole].en) : otherRole}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {returnChoices.map((s, i) => {
+              const label = ROLE_LABELS[s.role]
+                ? (isAr ? ROLE_LABELS[s.role].ar : ROLE_LABELS[s.role].en)
+                : s.role;
+              const selected = chosenReturn.key === s.key;
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  className={`s38-role${selected ? ' on' : ''}`}
+                  style={{
+                    flex: '0 0 auto', minWidth: 150, textAlign: 'start',
+                    cursor: 'pointer', border: 0, background: 'transparent',
+                    opacity: selected ? 1 : 0.7,
+                  }}
+                  onClick={() => setReturnToKey(s.key)}
+                  aria-pressed={selected}
+                >
+                  <span className={`av ${roleAvatarClass(s.role)}`}>{label.slice(0, 1)}</span>
+                  <div>
+                    <div style={{ fontSize: 12.5, fontWeight: 700 }}>{label}</div>
+                    <div style={{ fontSize: 11, color: 'var(--mute)' }}>
+                      {i === 0
+                        ? (isAr ? `${isAr ? s.label_ar : s.label_en} — الافتراضي` : `${s.label_en} — the default`)
+                        : (isAr ? s.label_ar : s.label_en)}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--mute)' }}>
-                    {isAr ? 'دور آخر' : 'Another role'}
-                  </div>
-                </div>
-              </div>
-            )}
+                </button>
+              );
+            })}
           </div>
+          {returnChoices.length > 1 && (
+            <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 6 }}>
+              {isAr
+                ? 'اختر الخطوة التي فيها المشكلة فعلًا — إن كان الخلل في النص فأعِدها للكاتب، لا للمصمم.'
+                : 'Pick the step where the problem actually is — if the copy is wrong, send it to the writer, not the designer.'}
+            </div>
+          )}
         </div>
       )}
 
