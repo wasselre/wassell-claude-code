@@ -66,6 +66,7 @@ const SalesValuationSettingsPage = lazy(() => import('@/pages/SalesValuation/Set
 const SalesTasksPage = lazy(() => import('@/pages/Sales/SalesTasksPage'));
 const MyClientsPage = lazy(() => import('@/pages/Sales/MyClientsPage'));
 const MyTasksPage = lazy(() => import('@/pages/Sales/MyTasksPage'));
+const FollowUpQueuePage = lazy(() => import('@/pages/Sales/FollowUpQueuePage'));
 const SalesProcessStudioPage = lazy(() => import('@/pages/SalesProcess/SalesProcessStudioPage'));
 const SalesManagerPage = lazy(() => import('@/pages/Sales/SalesManagerPage'));
 const MarketIntelligencePage = lazy(() => import('@/pages/MarketIntelligence/MarketIntelligencePage'));
@@ -420,6 +421,7 @@ export default function App() {
               (my_clients / my_tasks). Opt-in via Settings → Profiles. */}
           <Route path="/sales/my-clients" element={<RequirePageAccess pageId="my_clients"><MyClientsPage /></RequirePageAccess>} />
           <Route path="/sales/my-tasks" element={<RequirePageAccess pageId="my_tasks"><MyTasksPage /></RequirePageAccess>} />
+          <Route path="/sales/follow-up-queue" element={<RequirePageAccess pageId="follow_up_queue"><FollowUpQueuePage /></RequirePageAccess>} />
           <Route path="/sales/tasks" element={<RequirePageAccess pageId="sales_tasks"><SalesTasksPage /></RequirePageAccess>} />
           {/* Sales Studio 2.0 — strategy layer (process library → journey, experiments).
               Sub-routes share the sales_studio page-access gate. */}

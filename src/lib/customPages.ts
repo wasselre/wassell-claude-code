@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText } from 'lucide-react';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -39,7 +39,8 @@ export type CustomPageId =
   | 'marketing_management'
   | 'financing_calculator'
   | 'market_automation'
-  | 'competitor_watch';
+  | 'competitor_watch'
+  | 'follow_up_queue';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -85,6 +86,16 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_ar: 'مهامي',
     label_en: 'My Tasks',
     icon: ListChecks,
+    default_access: 'admin',
+  },
+  {
+    id: 'follow_up_queue',
+    route: '/sales/follow-up-queue',
+    label_ar: 'متابعات مقترحة',
+    label_en: 'Follow-up Queue',
+    icon: MessageSquareText,
+    // Claude-suggested WhatsApp follow-ups awaiting a human's read + confirm.
+    // Opt-in: an admin grants it to the profiles that work the queue.
     default_access: 'admin',
   },
   {
