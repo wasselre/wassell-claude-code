@@ -228,9 +228,12 @@ async function main() {
       throw new Error('the commit accepted a wrong hash');
     } catch (e) {
       const body = String(e.body ?? e.message);
-      assert(/plan_changed|not found|WS409/i.test(body), `unexpected refusal: ${body.slice(0, 200)}`);
+      assert(/plan_changed|not[_ ]found|capacity_conflict|WS409/i.test(body),
+        `unexpected refusal: ${body.slice(0, 200)}`);
+      // The whole point: a refusal must never be 40001/40P01, or PostgREST
+      // re-runs the transaction forever (the 2026-09-07 conflict-storm root cause).
       assert(!/40001|40P01/.test(body), 'the commit raised a RETRYABLE sqlstate — PostgREST would loop forever');
-      return 'refused, and not with a retryable sqlstate';
+      return `refused with ${/plan_changed/i.test(body) ? 'plan_changed' : 'a non-retryable error'}`;
     }
   });
 
