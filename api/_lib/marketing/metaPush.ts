@@ -55,6 +55,10 @@ const ADSET_DEFAULTS: Record<string, AdSetDefault> = {
 
 /** Default daily budget (SAR) when neither the ad set nor execution names one. */
 const DEFAULT_DAILY_BUDGET_SAR = 50;
+/** Meta refuses a tiny daily budget on a CONVERSATIONS ad set (10 SAR was
+ *  rejected «Invalid parameter» on 2026-09-13; 20 SAR passed) — each half of
+ *  the pair gets at least this. */
+const MIN_HALF_BUDGET_SAR = 20;
 
 type Json = Record<string, unknown>;
 
@@ -134,22 +138,21 @@ export function buildCampaignPayload(campaign: PushCampaign, execution: PushExec
 }
 
 /**
- * The ONLY placements a Wassel ad set may run (operator rule): Instagram feed
- * / stories / reels / profile feed + WhatsApp status, mobile. Copied verbatim
- * from the buyer's hand-made C-041 ad set (120253343756200020, 2026-09-07) and
- * validated against Graph on 2026-09-13.
+ * A Wassel ad set is a PAIR of Meta ad sets (2026-09-13): Meta will not let
+ * one Click-to-WhatsApp ad switch designs by placement, so the square design
+ * runs in a FEED set and the vertical one in a STORY set — Instagram only,
+ * mobile only (operator rule; WhatsApp status was dropped 2026-09-13).
  */
-export const WASSEL_PLACEMENTS: Readonly<{
+export type PlacementVariant = 'feed' | 'story';
+export const PLACEMENTS_BY_VARIANT: Readonly<Record<PlacementVariant, Readonly<{
   publisher_platforms: string[];
   instagram_positions: string[];
-  whatsapp_positions: string[];
   device_platforms: string[];
-}> = Object.freeze({
-  publisher_platforms: ['instagram', 'whatsapp'],
-  instagram_positions: ['stream', 'story', 'reels', 'profile_feed'],
-  whatsapp_positions: ['status'],
-  device_platforms: ['mobile'],
+}>>> = Object.freeze({
+  feed: Object.freeze({ publisher_platforms: ['instagram'], instagram_positions: ['stream', 'profile_feed'], device_platforms: ['mobile'] }),
+  story: Object.freeze({ publisher_platforms: ['instagram'], instagram_positions: ['story', 'reels'], device_platforms: ['mobile'] }),
 });
+export const VARIANT_SUFFIX: Readonly<Record<PlacementVariant, string>> = Object.freeze({ feed: ' — فيد', story: ' — ستوري' });
 
 /** Keys Meta returns on a saved audience but that only describe placements —
  *  stripped so the house placements above are the single source of truth. */
@@ -164,7 +167,7 @@ const PLACEMENT_KEYS = new Set([
  * excluded». Pure; throws when the spec is empty so a caller can never sneak a
  * broad audience through.
  */
-export function buildAdSetTargeting(savedAudienceTargeting: Json): Json {
+export function buildAdSetTargeting(savedAudienceTargeting: Json, variant: PlacementVariant): Json {
   if (!savedAudienceTargeting || typeof savedAudienceTargeting !== 'object' || Object.keys(savedAudienceTargeting).length === 0) {
     throw new Error('saved audience targeting is empty — an ad set is never created with a broad audience');
   }
@@ -173,20 +176,22 @@ export function buildAdSetTargeting(savedAudienceTargeting: Json): Json {
     if (PLACEMENT_KEYS.has(k)) continue;
     base[k] = v;
   }
+  const pl = PLACEMENTS_BY_VARIANT[variant];
   return {
     ...base,
-    publisher_platforms: [...WASSEL_PLACEMENTS.publisher_platforms],
-    instagram_positions: [...WASSEL_PLACEMENTS.instagram_positions],
-    whatsapp_positions: [...WASSEL_PLACEMENTS.whatsapp_positions],
-    device_platforms: [...WASSEL_PLACEMENTS.device_platforms],
+    publisher_platforms: [...pl.publisher_platforms],
+    instagram_positions: [...pl.instagram_positions],
+    device_platforms: [...pl.device_platforms],
     user_age_unknown: false,
   };
 }
 
 /**
- * Build an Ad Set create payload (PAUSED). `metaCampaignId` is the id Meta
- * returned for the campaign. `pageId` backs WhatsApp/Messenger promoted_object.
- * `savedAudienceTargeting` is REQUIRED — the resolved Meta Saved Audience spec.
+ * Build an Ad Set create payload (PAUSED) for ONE variant of the pair.
+ * `metaCampaignId` is the id Meta returned for the campaign. `pageId` backs
+ * WhatsApp/Messenger promoted_object. `savedAudienceTargeting` is REQUIRED —
+ * the resolved Meta Saved Audience spec. The planned budget is split evenly
+ * between the two variants (each Meta ad set gets half).
  */
 export function buildAdSetPayload(
   campaign: PushCampaign,
@@ -195,13 +200,14 @@ export function buildAdSetPayload(
   metaCampaignId: string,
   pageId: string | null,
   savedAudienceTargeting: Json,
+  variant: PlacementVariant,
 ): Json {
   const ps = execution.platform_settings ?? null;
   const objective = resolveObjective(campaign, ps);
   const defaults = ADSET_DEFAULTS[objective] ?? LEADS_ADSET_DEFAULT;
   const cbo = ps?.advantage_campaign_budget === true;
 
-  const name = `${refPrefix(campaign, execution)} · ${adSet.name ?? 'Ad set'}`.slice(0, 400);
+  const name = `${refPrefix(campaign, execution)} · ${adSet.name ?? 'Ad set'}${VARIANT_SUFFIX[variant]}`.slice(0, 400);
   const destination = str(ps?.destination_type) ?? defaults.destination_type;
 
   const payload: Json = {
@@ -210,7 +216,7 @@ export function buildAdSetPayload(
     status: 'PAUSED',
     billing_event: str(ps?.billing_event) ?? defaults.billing_event,
     optimization_goal: str(ps?.optimization_goal) ?? defaults.optimization_goal,
-    targeting: buildAdSetTargeting(savedAudienceTargeting),
+    targeting: buildAdSetTargeting(savedAudienceTargeting, variant),
     bid_strategy: str(ps?.bid_strategy) ?? 'LOWEST_COST_WITHOUT_CAP',
   };
 
@@ -221,10 +227,10 @@ export function buildAdSetPayload(
   }
 
   if (!cbo) {
-    // Non-CBO: budget must sit on the ad set.
+    // Non-CBO: budget must sit on the ad set — half per variant of the pair.
     const lifetime = str(ps?.budget_mode) === 'LIFETIME';
     const sar = numOr(ps?.[lifetime ? 'lifetime_budget' : 'daily_budget'] ?? execution.budget, DEFAULT_DAILY_BUDGET_SAR);
-    payload[lifetime ? 'lifetime_budget' : 'daily_budget'] = toMinor(sar);
+    payload[lifetime ? 'lifetime_budget' : 'daily_budget'] = toMinor(Math.max(sar / 2, MIN_HALF_BUDGET_SAR));
     if (lifetime && execution.ends_on) payload.end_time = new Date(execution.ends_on).toISOString();
   }
   if (execution.starts_on) payload.start_time = new Date(execution.starts_on).toISOString();

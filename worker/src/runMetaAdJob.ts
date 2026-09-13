@@ -33,7 +33,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
-import { loadMetaConfig, MetaApiError, MetaMarketingClient, type MetaAdSetDetail, type MetaSiblingAd } from './marketing/metaMarketingApi.js';
+import { loadMetaConfig, MetaApiError, MetaMarketingClient, type MetaSiblingAd } from './marketing/metaMarketingApi.js';
 
 export interface MetaAdJob {
   id: string;
@@ -429,67 +429,6 @@ async function fetchBytes(url: string): Promise<Uint8Array> {
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
-/* Placement rules                                                            */
-/* ────────────────────────────────────────────────────────────────────────── */
-
-interface PlacementSpec {
-  publisher_platforms: string[];
-  instagram_positions?: string[];
-  whatsapp_positions?: string[];
-}
-type PositionKey = Exclude<keyof PlacementSpec, 'publisher_platforms'>;
-
-/**
- * HOUSE RULE (operator, 2026-09-13): a Wassel ad runs on Instagram + WhatsApp
- * ONLY. The ad set decides delivery, but the creative's per-placement rules
- * cover exactly these two — a Facebook / Messenger / Audience Network /
- * Threads placement on the ad set is NOT covered and Meta refuses the
- * creative loudly, which is the intended signal to fix the ad set.
- */
-const ALLOWED_PLATFORMS = new Set(['instagram', 'whatsapp']);
-const VERTICAL_POSITIONS: Record<string, Set<string>> = {
-  instagram: new Set(['story', 'reels', 'profile_reels', 'ig_search']),
-  whatsapp: new Set(['status']),
-};
-const DEFAULT_POSITIONS: Record<string, string[]> = {
-  instagram: ['stream', 'story', 'reels', 'profile_feed'],
-  whatsapp: ['status'],
-};
-const POSITION_KEY: Record<string, PositionKey> = {
-  instagram: 'instagram_positions', whatsapp: 'whatsapp_positions',
-};
-
-/** Split the ad set's placements into the vertical (9:16) and square (1:1)
- *  buckets. Square = Instagram feed/explore/profile feed; vertical = stories,
- *  reels and WhatsApp status. Returns the platforms the ad set carries that the
- *  house rule does NOT cover, so the caller can say so. */
-function placementSplit(adSet: MetaAdSetDetail): { vertical: PlacementSpec | null; square: PlacementSpec | null; uncovered: string[] } {
-  const t = adSet.targeting ?? {};
-  const platforms = (t.publisher_platforms && t.publisher_platforms.length > 0)
-    ? t.publisher_platforms
-    : ['instagram', 'whatsapp'];
-  const vertical: PlacementSpec = { publisher_platforms: [] };
-  const square: PlacementSpec = { publisher_platforms: [] };
-  const uncovered: string[] = [];
-  for (const p of platforms) {
-    if (!ALLOWED_PLATFORMS.has(p)) { uncovered.push(p); continue; }
-    const key = POSITION_KEY[p];
-    if (!key) continue;
-    const explicit = (t as Record<string, unknown>)[key];
-    const positions = Array.isArray(explicit) && explicit.length > 0 ? (explicit as string[]) : (DEFAULT_POSITIONS[p] ?? []);
-    const v = positions.filter((x) => VERTICAL_POSITIONS[p]?.has(x));
-    const s = positions.filter((x) => !VERTICAL_POSITIONS[p]?.has(x));
-    if (v.length) { vertical.publisher_platforms.push(p); vertical[key] = v; }
-    if (s.length) { square.publisher_platforms.push(p); square[key] = s; }
-  }
-  return {
-    vertical: vertical.publisher_platforms.length ? vertical : null,
-    square: square.publisher_platforms.length ? square : null,
-    uncovered,
-  };
-}
-
-/* ────────────────────────────────────────────────────────────────────────── */
 /* Creative enhancements — ALL OFF                                            */
 /* ────────────────────────────────────────────────────────────────────────── */
 
@@ -872,142 +811,134 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
     }
   }
 
-  // ── 4. ad set placements + welcome template ──────────────────────────────
-  const adSet = await meta.getAdSet(platformAdSetId);
-  const split = placementSplit(adSet);
-  if (split.uncovered.length > 0) {
-    throw new Error(`المجموعة الإعلانية «${adSet.name}» تعرض على ${split.uncovered.join('، ')} — إعلانات وصل على إنستقرام وواتساب فقط؛ أزل تلك الأماكن من المجموعة في Ads Manager. / The ad set delivers on ${split.uncovered.join(', ')} — Wassel ads run on Instagram + WhatsApp only; remove those placements in Ads Manager.`);
+  // ── 4. the ad-set PAIR (feed / story) + welcome template ─────────────────
+  // Meta will not let one WhatsApp ad switch designs by placement (see the
+  // header), so a Wassel ad set is a PAIR of Meta ad sets: the primary row
+  // (variant 'feed') and its shadow (variant 'story', same pair_id). Each
+  // design becomes a plain link_data ad in its own set. A legacy set with no
+  // pair (hand-made, synced) gets ONE ad with the square design.
+  const setRes = await sb.from('mos_ad_sets')
+    .select('id, name, execution_id, platform_adset_id, placement_variant, pair_id')
+    .eq('id', adSetId).maybeSingle();
+  if (setRes.error) throw new Error(`ad set read: ${setRes.error.message}`);
+  type SetRow = { id: string; name: string; execution_id: string; platform_adset_id: string | null; placement_variant: string | null; pair_id: string | null };
+  const primarySet = setRes.data as SetRow | null;
+  if (!primarySet?.platform_adset_id) throw new Error('the ad set is not linked to Meta');
+  let storySet: SetRow | null = null;
+  if (primarySet.placement_variant === 'feed' && primarySet.pair_id) {
+    const sr = await sb.from('mos_ad_sets')
+      .select('id, name, execution_id, platform_adset_id, placement_variant, pair_id')
+      .eq('pair_id', primarySet.pair_id).eq('placement_variant', 'story').is('archived_at', null).maybeSingle();
+    if (sr.error) throw new Error(`story ad set read: ${sr.error.message}`);
+    storySet = (sr.data as SetRow | null) ?? null;
+    if (!storySet?.platform_adset_id) throw new Error(`المجموعة الإعلانية «${primarySet.name}» بلا شريكة للستوري في ميتا — أعد «إنشاء في ميتا» على الحملة. / The ad set has no linked stories partner — run «Create in Meta» on the campaign again.`);
   }
-  if (!split.square || !split.vertical) {
-    throw new Error(`المجموعة الإعلانية «${adSet.name}» بلا مكان ${!split.square ? 'فيد' : 'ستوري/ريلز/حالة'} — تحتاج الاثنين (فيد إنستقرام + ستوري وريلز وحالة واتساب). / The ad set has no ${!split.square ? 'feed' : 'story/reels/status'} placement — it needs both.`);
-  }
+  type Target = { variant: 'feed' | 'story' | 'single'; slot: Slot; setRowId: string; platformAdSetId: string; suffixAr: string };
+  const targets: Target[] = storySet
+    ? [
+      { variant: 'feed', slot: 'square', setRowId: primarySet.id, platformAdSetId: primarySet.platform_adset_id, suffixAr: 'فيد' },
+      { variant: 'story', slot: 'vertical', setRowId: storySet.id, platformAdSetId: storySet.platform_adset_id as string, suffixAr: 'ستوري' },
+    ]
+    : [{ variant: 'single', slot: 'square', setRowId: primarySet.id, platformAdSetId: primarySet.platform_adset_id, suffixAr: '' }];
+  if (!storySet) log(`ad set «${primarySet.name}» is a legacy single set — one ad with the square design`);
+
+  const adSet = await meta.getAdSet(primarySet.platform_adset_id);
   const destination = String(exec?.platform_settings?.destination_type ?? adSet.destination_type ?? 'WHATSAPP').toUpperCase();
   const isWhatsapp = destination === 'WHATSAPP';
   const linkUrl = isWhatsapp ? 'https://api.whatsapp.com/send' : (str(camp?.destination_url) ?? 'https://wassel.re');
   const ctaType = isWhatsapp ? 'WHATSAPP_MESSAGE' : 'LEARN_MORE';
   const headline = isWhatsapp ? 'تواصل معنا على الواتساب' : 'اعرف المزيد';
+  const cta = isWhatsapp
+    ? { type: 'WHATSAPP_MESSAGE', value: { app_destination: 'WHATSAPP' } }
+    : { type: 'LEARN_MORE', value: { link: linkUrl } };
 
   let welcome: string | null = null;
   if (isWhatsapp) {
-    const template = await findWelcomeTemplate(meta, platformAdSetId, log);
+    const template = await findWelcomeTemplate(meta, primarySet.platform_adset_id, log);
     welcome = retargetWelcomeTemplate(template, facts?.name ?? null, log);
   }
 
-  // ── 5. creative — one per ad, square → feed, vertical → stories/reels/status
-  //
-  // SHAPE (measured live 2026-09-13, the only per-placement shape Meta accepts
-  // for OUTCOME_LEADS + Click-to-WhatsApp): the same structure Ads Manager
-  // writes when a buyer customizes placements — THREE rules (feed, stories,
-  // and a DEFAULT rule with an empty customization_spec, lowest priority),
-  // EVERY asset type labelled per rule (image/video, body, title, link_url),
-  // full `call_to_actions` objects (type + value.app_destination) next to
-  // `call_to_action_types`, and a labelled `link_urls` entry. Modelled on ad
-  // 120251030399140020 (Ads Manager, 2026-06-22). What does NOT work — each
-  // one creates fine and is then flagged «Invalid Creative For Objective»
-  // (1487891, HARD_ERROR, 30–60 s later) or rejected: two unlabelled rules
-  // with only image labels (the 2026-09-10 shape); the same without
-  // link_urls; `object_story_spec.link_data` + an asset feed (Meta reads the
-  // rules as geo/language customization, 2446501); no link_urls at all with
-  // the labelled shape («Not Valid To Add Call To Action On Photo Post»).
+  // ── 5 + 6. one plain creative + ad per target — the Ads-Manager shape ────
+  // (object_story_spec.link_data / video_data: the ONLY shape Meta both
+  // accepts for Click-to-WhatsApp and lets Ads Manager open; measured
+  // 2026-09-13 — every asset-feed variant was flagged or unreadable.)
   const oss: Record<string, unknown> = { page_id: cfg.pageId };
   if (cfg.instagramId) oss.instagram_user_id = cfg.instagramId;
-  const mediaLabelKey = format === 'image' ? 'image_label' : 'video_label';
-  const lbl = (...names: string[]): { adlabels: Array<{ name: string }> } => ({ adlabels: names.map((name) => ({ name })) });
-  const rule = (spec: PlacementSpec | Record<string, never>, suffix: string, priority: number): Record<string, unknown> => ({
-    customization_spec: spec,
-    [mediaLabelKey]: { name: `media_${suffix}` },
-    body_label: { name: `body_${suffix}` },
-    title_label: { name: `title_${suffix}` },
-    link_url_label: { name: `link_${suffix}` },
-    priority,
-  });
-  const afs: Record<string, unknown> = {
-    bodies: [{ text: caption, ...lbl('body_feed', 'body_story', 'body_default') }],
-    titles: [{ text: headline, ...lbl('title_feed', 'title_story', 'title_default') }],
-    link_urls: [{ website_url: linkUrl, ...lbl('link_feed', 'link_story', 'link_default') }],
-    call_to_actions: [isWhatsapp
-      ? { type: 'WHATSAPP_MESSAGE', value: { app_destination: 'WHATSAPP' } }
-      : { type: ctaType, value: { link: linkUrl } }],
-    call_to_action_types: [ctaType],
-    ad_formats: [format === 'image' ? 'SINGLE_IMAGE' : 'SINGLE_VIDEO'],
-    optimization_type: 'PLACEMENT',
-    asset_customization_rules: [
-      rule(split.square, 'feed', 1),
-      rule(split.vertical, 'story', 2),
-      // The default (lowest-priority, empty spec) rule is REQUIRED; the square
-      // design backs it — any placement outside the two rules is feed-shaped.
-      rule({}, 'default', 3),
-    ],
-  };
-  if (format === 'image') {
-    afs.images = [
-      { hash: imageHashes.square, ...lbl('media_feed', 'media_default') },
-      { hash: imageHashes.vertical, ...lbl('media_story') },
-    ];
-  } else {
-    const v = (slot: Slot, ...names: string[]): Record<string, unknown> => ({
-      video_id: videoIds[slot]!.id, ...(videoIds[slot]!.thumb ? { thumbnail_url: videoIds[slot]!.thumb } : {}), ...lbl(...names),
-    });
-    afs.videos = [v('square', 'media_feed', 'media_default'), v('vertical', 'media_story')];
-  }
-  if (isWhatsapp && welcome) afs.additional_data = { is_click_to_message: true, page_welcome_message: welcome };
-
-  let creativeId: string;
-  try {
-    creativeId = (await meta.createAdCreative({
-      name: adName,
-      object_story_spec: oss,
-      asset_feed_spec: afs,
-      degrees_of_freedom_spec: noEnhancementsSpec(),
-      contextual_multi_ads: NO_MULTI_ADVERTISER,
-    })).id;
-  } catch (e) {
-    // No silent "one design everywhere" fallback (that was the 2026-09-13
-    // complaint) — the rejection reaches the manager as the failure reason.
-    const userMsg = e instanceof MetaApiError
-      ? (((e.raw as { error?: { error_user_title?: string; error_user_msg?: string } } | null)?.error?.error_user_msg)
-        ?? (e.raw as { error?: { error_user_title?: string } } | null)?.error?.error_user_title ?? null)
-      : null;
-    const why = e instanceof MetaApiError
-      ? `${userMsg ?? e.message} (code ${e.code}/${e.subcode})`
-      : (e instanceof Error ? e.message : String(e));
-    throw new Error(`Meta refused the per-placement creative: ${why}`);
-  }
-  log(`creative ${creativeId} (placement: square→feed, vertical→stories/reels/status; enhancements off; multi-advertiser off)`);
-
-  // ── 6. ad ────────────────────────────────────────────────────────────────
   const adStatus = await readAdStatusSetting(sb);
-  const ad = await meta.createAd({ name: adName, adset_id: platformAdSetId, creative: { creative_id: creativeId }, status: adStatus });
-  log(`ad ${ad.id} created ${adStatus} in ad set ${platformAdSetId}`);
+  const built: Array<Target & { adId: string; creativeId: string; name: string }> = [];
+  const undo = async (): Promise<void> => {
+    for (const b of built) {
+      try { await meta.deleteNode(b.adId); } catch (e) { console.error('[meta-ad] undo: ad delete failed', b.adId, e instanceof Error ? e.message : e); }
+      try { await meta.deleteNode(b.creativeId); } catch (e) { console.error('[meta-ad] undo: creative delete failed', b.creativeId, e instanceof Error ? e.message : e); }
+    }
+  };
+  for (const t of targets) {
+    const name = t.suffixAr ? `${adName} · ${t.suffixAr}` : adName;
+    let story: Record<string, unknown>;
+    if (format === 'image') {
+      const link_data: Record<string, unknown> = { link: linkUrl, message: caption, name: headline, image_hash: imageHashes[t.slot], call_to_action: cta };
+      if (isWhatsapp && welcome) link_data.page_welcome_message = welcome;
+      story = { ...oss, link_data };
+    } else {
+      const v = videoIds[t.slot]!;
+      const video_data: Record<string, unknown> = { video_id: v.id, message: caption, title: headline, call_to_action: cta };
+      if (v.thumb) video_data.image_url = v.thumb;
+      if (isWhatsapp && welcome) video_data.page_welcome_message = welcome;
+      story = { ...oss, video_data };
+    }
+    let creativeId: string;
+    try {
+      creativeId = (await meta.createAdCreative({
+        name, object_story_spec: story,
+        degrees_of_freedom_spec: noEnhancementsSpec(),
+        contextual_multi_ads: NO_MULTI_ADVERTISER,
+      })).id;
+    } catch (e) {
+      await undo();
+      const userMsg = e instanceof MetaApiError
+        ? ((e.raw as { error?: { error_user_msg?: string; error_user_title?: string } } | null)?.error?.error_user_msg
+          ?? (e.raw as { error?: { error_user_title?: string } } | null)?.error?.error_user_title ?? null)
+        : null;
+      throw new Error(`رفضت ميتا الكرييتف (${t.suffixAr || 'الإعلان'}): ${userMsg ?? (e instanceof Error ? e.message : String(e))} / Meta refused the ${t.variant} creative`);
+    }
+    const ad = await meta.createAd({ name, adset_id: t.platformAdSetId, creative: { creative_id: creativeId }, status: adStatus });
+    built.push({ ...t, adId: ad.id, creativeId, name });
+    log(`${t.variant} ad ${ad.id} created ${adStatus} in ad set ${t.platformAdSetId} (creative ${creativeId})`);
+  }
+
   // Meta validates the ad against the objective ASYNCHRONOUSLY: creation
   // returns 200 and the verdict lands on `issues_info` seconds later. Wait for
   // it — an ad flagged WITH_ISSUES is not "created", it is a failure the
   // manager must see (the 2026-09-13 «Invalid Creative For Objective» case).
-  {
-    let verdict: { status: string | null; issues: string[] } = { status: null, issues: [] };
-    for (let i = 0; i < 8; i += 1) {
-      await new Promise((r) => setTimeout(r, 5_000));
-      verdict = await meta.getAdIssues(ad.id);
-      if (verdict.issues.length > 0 || (verdict.status && verdict.status !== 'IN_PROCESS' && verdict.status !== 'PENDING_REVIEW')) break;
+  for (let i = 0; i < 8; i += 1) {
+    await new Promise((r) => setTimeout(r, 5_000));
+    const verdicts = await Promise.all(built.map((b) => meta.getAdIssues(b.adId)));
+    const flagged = verdicts.flatMap((v, idx) => v.issues.map((issue) => `${built[idx]!.variant}: ${issue}`));
+    if (flagged.length > 0) {
+      await undo();
+      throw new Error(`رفضت ميتا الإعلان بعد إنشائه: ${flagged.join('; ')} / Meta flagged the ad after creation: ${flagged.join('; ')} (deleted)`);
     }
-    if (verdict.issues.length > 0) {
-      try { await meta.deleteNode(ad.id); } catch (e) { console.error('[meta-ad] could not delete the flagged ad', ad.id, e instanceof Error ? e.message : e); }
-      throw new Error(`رفضت ميتا الإعلان بعد إنشائه: ${verdict.issues.join('; ')} / Meta flagged the ad after creation: ${verdict.issues.join('; ')} (ad ${ad.id} deleted)`);
-    }
-    log(`ad ${ad.id} passed Meta's validation (${verdict.status ?? 'no verdict yet'})`);
+    if (verdicts.every((v) => v.status && v.status !== 'IN_PROCESS')) break;
   }
+  log(`Meta accepted ${built.length} ad(s): ${built.map((b) => `${b.variant}=${b.adId}`).join(', ')}`);
 
   // ── 7. record + notify ───────────────────────────────────────────────────
+  const primary = built.find((b) => b.variant !== 'story')!;
+  const shadow = built.find((b) => b.variant === 'story') ?? null;
+  const rowStatus = adStatus === 'ACTIVE' ? 'running' : 'paused';
+  const copy = { primary_text: caption, message: caption, headline, cta: ctaType, destination_url: linkUrl };
   await patchAdRow(sb, adRowId, {
-    platform_ad_id: ad.id,
-    label: adName,
-    status: adStatus === 'ACTIVE' ? 'running' : 'paused',
-    creative: { primary_text: caption, message: caption, headline, cta: ctaType, destination_url: linkUrl },
+    platform_ad_id: primary.adId,
+    label: primary.name,
+    status: rowStatus,
+    creative: copy,
+    ...(shadow ? { placement_variant: 'feed', pair_id: adRowId } : {}),
   }, {
     state: 'created',
     phase: 'create',
-    creative_id: creativeId,
-    creative_shape: 'placement',
+    creative_id: primary.creativeId,
+    creative_shape: shadow ? 'pair' : 'single',
+    platform_ad_ids: Object.fromEntries(built.map((b) => [b.variant, b.adId])),
     format,
     image_hashes: imageHashes,
     video_ids: Object.fromEntries(Object.entries(videoIds).map(([k, v]) => [k, v.id])),
@@ -1017,16 +948,35 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
     created_at: new Date().toISOString(),
     error: null,
   });
-  await closeCaptionTask(sb, adRowId, `ad created on Meta (${ad.id})`);
+  if (shadow) {
+    // The stories ad lives on a SHADOW row (variant 'story', pair_id = the
+    // primary row) so the execution's Ads tab and the Meta sync see it by its
+    // own platform id; the Placements tab hides it behind the primary.
+    const existing = await sb.from('mos_execution_ads').select('id')
+      .eq('pair_id', adRowId).eq('placement_variant', 'story').is('archived_at', null).maybeSingle();
+    if (existing.error) throw new Error(`shadow row read: ${existing.error.message}`);
+    const shadowPatch = {
+      execution_id: adRow.execution_id, ad_set_id: shadow.setRowId, content_id: contentId,
+      label: shadow.name, status: rowStatus, platform_ad_id: shadow.adId,
+      placement_variant: 'story', pair_id: adRowId,
+      creative: { ...copy, auto_ad: { state: 'created', shadow_of: adRowId, creative_id: shadow.creativeId, created_at: new Date().toISOString() } },
+      updated_at: new Date().toISOString(),
+    };
+    const w = existing.data
+      ? await sb.from('mos_execution_ads').update(shadowPatch).eq('id', (existing.data as { id: string }).id)
+      : await sb.from('mos_execution_ads').insert(shadowPatch);
+    if (w.error) throw new Error(`shadow row write: ${w.error.message} (Meta ads ${built.map((b) => b.adId).join(', ')} exist — sync from Meta to recover)`);
+  }
+  await closeCaptionTask(sb, adRowId, `ads created on Meta (${built.map((b) => b.adId).join(', ')})`);
   await notify(sb, {
     event: 'ad_created',
     users: approvedBy ? [approvedBy] : [],
     titleAr: adStatus === 'ACTIVE' ? 'أُنشئ الإعلان في ميتا وهو يعمل' : 'أُنشئ الإعلان في ميتا (متوقف)',
     titleEn: adStatus === 'ACTIVE' ? 'The Meta ad was created and is running' : 'The Meta ad was created (paused)',
-    bodyAr: `«${content.title}» — ${adSet.name}`,
-    bodyEn: `“${content.title}” — ${adSet.name}`,
+    bodyAr: `«${content.title}» — ${shadow ? 'إعلانان: فيد + ستوري' : adSet.name}`,
+    bodyEn: `“${content.title}” — ${shadow ? 'two ads: feed + stories' : adSet.name}`,
     url: `/m/content/${contentId}?tab=placements`,
   });
 
-  return { phase: 'create', platform_ad_id: ad.id, creative_id: creativeId, caption_source: captionSource, format };
+  return { phase: 'create', platform_ad_id: primary.adId, creative_id: primary.creativeId, caption_source: captionSource, format };
 }

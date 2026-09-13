@@ -63,8 +63,8 @@ export type AutoAdResolution =
 interface ExecRow {
   id: string; campaign_id: string; platform: string; label: string | null; platform_campaign_id: string | null;
 }
-interface AdSetRow { id: string; execution_id: string; name: string; platform_adset_id: string | null }
-interface AdRow { id: string; execution_id: string; ad_set_id: string | null; platform_ad_id: string | null }
+interface AdSetRow { id: string; execution_id: string; name: string; platform_adset_id: string | null; placement_variant: string | null }
+interface AdRow { id: string; execution_id: string; ad_set_id: string | null; platform_ad_id: string | null; placement_variant: string | null }
 
 const META_PLATFORMS = new Set(['meta', 'instagram']);
 
@@ -86,10 +86,11 @@ export async function resolveAutoAdTarget(
 
   // Existing placements of this creative (any campaign).
   const adsRes = await svc.from('mos_execution_ads')
-    .select('id, execution_id, ad_set_id, platform_ad_id')
+    .select('id, execution_id, ad_set_id, platform_ad_id, placement_variant')
     .eq('content_id', contentId).is('archived_at', null);
   if (adsRes.error) throw adsRes.error;
-  const ads = (adsRes.data ?? []) as AdRow[];
+  // The stories shadow of a feed/story pair is never a target of its own.
+  const ads = ((adsRes.data ?? []) as AdRow[]).filter((a) => a.placement_variant !== 'story');
 
   const execIds = new Set<string>(ads.map((a) => a.execution_id));
   const campaignIds = new Set<string>();
@@ -120,11 +121,13 @@ export async function resolveAutoAdTarget(
   if (linkedExecs.length === 0) return { kind: 'skip', reason: 'not_linked', choices: [] };
 
   const setsRes = await svc.from('mos_ad_sets')
-    .select('id, execution_id, name, platform_adset_id')
+    .select('id, execution_id, name, platform_adset_id, placement_variant')
     .in('execution_id', linkedExecs.map((e) => e.id)).is('archived_at', null)
     .order('sort_order', { ascending: true });
   if (setsRes.error) throw setsRes.error;
-  const sets = ((setsRes.data ?? []) as AdSetRow[]).filter((s) => s.platform_adset_id);
+  // Only the FEED (primary) half of a pair — or a legacy single set — is a
+  // choice; the worker finds the story half by pair_id.
+  const sets = ((setsRes.data ?? []) as AdSetRow[]).filter((s) => s.platform_adset_id && s.placement_variant !== 'story');
   if (sets.length === 0) return { kind: 'skip', reason: 'not_linked', choices: [] };
 
   const campNames = new Map<string, string>();

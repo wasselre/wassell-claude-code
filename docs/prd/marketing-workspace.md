@@ -77,14 +77,22 @@ This workspace answers the three questions the old process could not:
   saves the text AS APPROVED and enqueues **phase 2 «create»**: the TWO
   design slots are uploaded (images by bytes, videos by URL + processing
   poll; **both slots required** — a missing square or vertical fails loudly,
-  there is no "one file everywhere" fallback any more); ONE creative with
-  placement asset customization is created — square → Instagram feed /
-  profile feed, vertical → Instagram stories + reels + WhatsApp status, in
-  the Ads-Manager shape Meta accepts for Click-to-WhatsApp (three rules incl.
-  a default one, every asset labelled per rule, CTA objects; any other shape
-  is flagged «Invalid Creative For Objective» 30–60 s after creation — the
-  worker now waits for Meta's verdict and treats a flagged ad as a failure,
-  deleting it); the
+  there is no "one file everywhere" fallback any more); TWO plain
+  link_data ads are created — the square design in the FEED ad set
+  (Instagram feed + profile feed) and the vertical one in the STORY ad set
+  (Instagram stories + reels): a Wassel ad set is a PAIR of Meta ad sets
+  (`mos_ad_sets.placement_variant` feed/story + `pair_id`), because Meta will
+  not let one Click-to-WhatsApp ad switch designs by placement (every
+  asset-feed shape was either flagged «Invalid Creative For Objective» or
+  unreadable in Ads Manager's editor — measured 2026-09-13; the plain pair
+  passes review and opens normally in Ads Manager). The stories ad lives on
+  a SHADOW `mos_execution_ads` row (variant 'story', `pair_id` = the primary
+  row) that the execution's Ads tab and the Meta sync see by its own platform
+  id while the Placements tab hides it behind the primary
+  (`auto_ad.creative_shape='pair'`, `platform_ad_ids={feed,story}`). A legacy
+  single ad set (hand-made / synced, no pair) gets ONE ad with the square
+  design. The worker waits for Meta's asynchronous verdict on every ad and
+  treats a flagged one as a failure (all ads of the pair deleted); the
   ad set must deliver on Instagram + WhatsApp only (any other platform on it
   fails loudly) — carrying the Click-to-WhatsApp welcome template
   **duplicated from an existing ad** (a sibling in the ad set, else the
@@ -116,7 +124,8 @@ This workspace answers the three questions the old process could not:
   `worker/src/runMetaAdJob.ts`, `worker/src/marketing/metaAdLane.ts`,
   `src/pages/Marketing/components/{AutoAdApproval,PlacementsTab}.tsx`,
   migrations `2026-09-10_meta_auto_ad.sql`,
-  `2026-09-13_meta_ad_caption_review.sql`, `2026-09-13_02_manual_task_kind.sql`.
+  `2026-09-13_meta_ad_caption_review.sql`, `2026-09-13_02_manual_task_kind.sql`,
+  `2026-09-13_03_placement_variant.sql`.
 - **Materials tab = two design slots (2026-09-10).** The designer uploads
   exactly two files per creative — «التصميم المربّع» (1:1, Instagram /
   Facebook feed) and «التصميم الطولي» (9:16, stories, reels, WhatsApp
@@ -613,11 +622,16 @@ This workspace answers the three questions the old process could not:
   → Meta card, «الجمهور المحفوظ لكل مجموعة إعلانية جديدة») → the account's ONLY
   saved audience → otherwise the push REFUSES (422) naming the audiences; the
   spec is read fresh from Graph each push (never a cached copy, never a broad
-  KSA fallback). **Placements are fixed** (`WASSEL_PLACEMENTS` in
-  `metaPush.ts`): Instagram feed / stories / reels / profile feed + WhatsApp
-  status, mobile, unknown-age WhatsApp users excluded — never Facebook,
-  Messenger, Audience Network or Threads, even if the saved audience carries
-  its own placement keys. Other payload fields come from `platform_settings`
+  KSA fallback). **Every planned Wassel ad set becomes a PAIR of Meta ad sets**
+  (`PLACEMENTS_BY_VARIANT` in `metaPush.ts`, 2026-09-13): «… — فيد» delivers
+  to Instagram feed + profile feed, «… — ستوري» to Instagram stories + reels
+  — Instagram only, mobile only, unknown-age users excluded, never Facebook,
+  Messenger, Audience Network, Threads or WhatsApp status, even if the saved
+  audience carries its own placement keys. The planned budget is split in
+  half between the two. The planned row becomes the feed half
+  (`placement_variant='feed'`, `pair_id`); the story half is inserted as its
+  own row (hidden from the paid-placement picker and the auto-ad chooser; the
+  worker finds it by `pair_id`). Other payload fields come from `platform_settings`
   where present, else objective-driven defaults (leads → Click-to-WhatsApp:
   CONVERSATIONS / IMPRESSIONS / WHATSAPP destination / promoted page;
   SAR→halalas ×100). **The push no longer builds ads itself (2026-09-13):**

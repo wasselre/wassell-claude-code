@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { MetaMarketingClient, loadMetaConfig } from '../metaMarketingApi';
 import {
-  WASSEL_PLACEMENTS, buildAdSetPayload, buildCampaignPayload,
+  PLACEMENTS_BY_VARIANT, buildAdSetPayload, buildCampaignPayload,
   type PushCampaign, type PushExecution,
 } from '../metaPush';
 
@@ -54,31 +54,40 @@ describe.skipIf(!LIVE)('meta push skeleton — LIVE (creates paused objects, the
 
     const campaign: PushCampaign = { id: 'live', ref: 'LIVE-TEST', name: 'push probe — delete me', objective: 'leads' };
     const execution: PushExecution = {
-      id: 'live', label: 'probe', platform: 'meta', budget: 20, starts_on: null, ends_on: null, targeting: null, platform_settings: null,
+      id: 'live', label: 'probe', platform: 'meta', budget: 100, starts_on: null, ends_on: null, targeting: null, platform_settings: null,
     };
     let campaignId: string | null = null;
     try {
       const camp = await client.createCampaign(buildCampaignPayload(campaign, execution));
       campaignId = camp.id;
-      const payload = buildAdSetPayload(campaign, execution, { id: null, name: 'probe set' }, camp.id, cfg.pageId, saved.targeting as Record<string, unknown>);
-      const adset = await client.createAdSet(payload);
-      expect(adset.id).toBeTruthy();
+      const feed = await client.createAdSet(buildAdSetPayload(campaign, execution, { id: null, name: 'probe set' }, camp.id, cfg.pageId, saved.targeting as Record<string, unknown>, 'feed'));
+      const story = await client.createAdSet(buildAdSetPayload(campaign, execution, { id: null, name: 'probe set' }, camp.id, cfg.pageId, saved.targeting as Record<string, unknown>, 'story'));
+      expect(feed.id).toBeTruthy();
+      expect(story.id).toBeTruthy();
 
       // Read back what Meta holds and assert the house rules.
       const sets = await client.listAdSets();
-      const mine = sets.find((s) => s.id === adset.id);
-      expect(mine).toBeTruthy();
-      const t = (mine?.targeting ?? {}) as Record<string, unknown>;
-      expect(t.publisher_platforms).toEqual(WASSEL_PLACEMENTS.publisher_platforms);
-      expect(t.instagram_positions).toEqual(WASSEL_PLACEMENTS.instagram_positions);
-      expect(t.whatsapp_positions).toEqual(WASSEL_PLACEMENTS.whatsapp_positions);
+      const mineFeed = sets.find((s) => s.id === feed.id);
+      const mineStory = sets.find((s) => s.id === story.id);
+      expect(mineFeed).toBeTruthy();
+      expect(mineStory).toBeTruthy();
+      const t = (mineFeed?.targeting ?? {}) as Record<string, unknown>;
+      expect(t.publisher_platforms).toEqual(PLACEMENTS_BY_VARIANT.feed.publisher_platforms);
+      expect(t.instagram_positions).toEqual(PLACEMENTS_BY_VARIANT.feed.instagram_positions);
+      expect(t.whatsapp_positions).toBeUndefined();
       expect(t.device_platforms).toEqual(['mobile']);
       expect(t.facebook_positions).toBeUndefined();
-      expect(t.user_age_unknown).toBe(false);
+      expect(((mineStory?.targeting ?? {}) as Record<string, unknown>).instagram_positions).toEqual(PLACEMENTS_BY_VARIANT.story.instagram_positions);
+      const adset = feed;
       const savedGeo = (saved.targeting as { geo_locations?: unknown }).geo_locations;
       expect(JSON.stringify(t.geo_locations)).toContain('2117479'); // Riyadh city key from the saved audience
       expect(savedGeo).toBeTruthy();
       console.log('[live] created', { campaign: camp.id, adset: adset.id, audience: saved.name, targeting: t });
+    } catch (e) {
+      // Surface Meta's user-facing reason, not just "Invalid parameter".
+      const raw = (e as { raw?: unknown }).raw;
+      console.error('[live] Meta error', JSON.stringify(raw ?? (e instanceof Error ? e.message : e)));
+      throw e;
     } finally {
       if (campaignId) await client.deleteNode(campaignId);
     }

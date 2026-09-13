@@ -458,14 +458,16 @@ interface PaidPlacementsPayload {
  */
 async function loadPaidAdsPayload(sb: SupabaseClient, contentId: string): Promise<PaidPlacementsPayload> {
   const adsRes = await sb.from('mos_execution_ads')
-    .select('id, execution_id, ad_set_id, content_id, creative, status')
+    .select('id, execution_id, ad_set_id, content_id, creative, status, placement_variant')
     .eq('content_id', contentId).is('archived_at', null)
     .order('created_at', { ascending: true });
   if (adsRes.error) throw adsRes.error;
-  const ads = (adsRes.data ?? []) as Array<{
+  // The stories SHADOW row (feed/story pair) is hidden behind its primary —
+  // one placement card per creative; the primary's auto_ad carries both ids.
+  const ads = ((adsRes.data ?? []) as Array<{
     id: string; execution_id: string; ad_set_id: string | null;
-    content_id: string | null; creative: Record<string, unknown> | null; status: string;
-  }>;
+    content_id: string | null; creative: Record<string, unknown> | null; status: string; placement_variant: string | null;
+  }>).filter((a) => a.placement_variant !== 'story');
   if (ads.length === 0) return { placements: [] };
 
   const execIds = [...new Set(ads.map((a) => a.execution_id))];
@@ -3713,8 +3715,8 @@ export default async function handler(req: Request): Promise<Response> {
         let adRows: Array<{ id: string; ad_set_id: string | null; label: string | null; content_id: string | null; platform_ad_id: string | null }> = [];
         if (execRows.length > 0) {
           const [sets, ads] = await Promise.all([
-            sb.from('mos_ad_sets').select('id, execution_id, name, sort_order')
-              .in('execution_id', execRows.map((e) => e.id)).is('archived_at', null)
+            sb.from('mos_ad_sets').select('id, execution_id, name, sort_order, placement_variant')
+              .in('execution_id', execRows.map((e) => e.id)).is('archived_at', null).or('placement_variant.is.null,placement_variant.neq.story')
               .order('sort_order', { ascending: true }),
             sb.from('mos_execution_ads').select('id, ad_set_id, label, content_id, platform_ad_id')
               .in('execution_id', execRows.map((e) => e.id)).is('archived_at', null),
@@ -6634,17 +6636,19 @@ export default async function handler(req: Request): Promise<Response> {
         }
 
         const setsRes = await sb.from('mos_ad_sets')
-          .select('id, name, platform_adset_id, sort_order').eq('execution_id', executionId)
+          .select('id, name, platform_adset_id, sort_order, placement_variant, pair_id').eq('execution_id', executionId)
           .is('archived_at', null).order('sort_order', { ascending: true });
         const sf = dbFail(setsRes.error); if (sf) return sf;
         type LinkedSet = { id: string | null; name: string | null; platform_adset_id: string | null };
-        const adSets = (setsRes.data ?? []) as Array<{ id: string; name: string | null; platform_adset_id: string | null }>;
+        type PlannedSet = { id: string; name: string | null; platform_adset_id: string | null; sort_order: number | null; placement_variant: string | null; pair_id: string | null };
+        // Story rows are the push's own shadows — never a plan of their own.
+        const adSets = ((setsRes.data ?? []) as PlannedSet[]).filter((x) => x.placement_variant !== 'story');
 
         // ---- 1) Skeleton: campaign + ad sets ---------------------------------
         let metaCampaignId: string | null = execRow.platform_campaign_id;
         const campaignCreated = !metaCampaignId;
         let campaignName: string | null = null;
-        const createdSets: Array<{ wassell_ad_set_id: string | null; platform_adset_id: string; name: string }> = [];
+        const createdSets: Array<{ wassell_ad_set_id: string | null; platform_adset_id: string; name: string; variant: 'feed' | 'story'; pair_id: string; sort_order: number }> = [];
         const errors: Array<{ ad_set: string; error: string }> = [];
         // The ad sets as the ads phase sees them (existing links + this call's).
         const linkedSets: LinkedSet[] = adSets.map((s) => ({ ...s }));
@@ -6660,18 +6664,23 @@ export default async function handler(req: Request): Promise<Response> {
             campaignName = String(campaignPayload.name);
           }
 
-          // One Meta ad set per planned ad set (a single default if none planned).
-          const plan: LinkedSet[] = adSets.length
-            ? adSets
-            : [{ id: null, name: execRow.label ?? 'Ad set', platform_adset_id: null }];
+          // A Wassel ad set = a PAIR of Meta ad sets (feed + story) on the
+          // saved audience — one per planned row (a single default if none).
+          type PlanRow = { id: string | null; name: string | null; platform_adset_id: string | null; sort_order: number | null; pair_id: string | null };
+          const plan: PlanRow[] = adSets.length
+            ? adSets.map((x) => ({ id: x.id, name: x.name, platform_adset_id: x.platform_adset_id, sort_order: x.sort_order, pair_id: x.pair_id }))
+            : [{ id: null, name: execRow.label ?? 'Ad set', platform_adset_id: null, sort_order: 0, pair_id: null }];
           for (const s of plan) {
             if (s.platform_adset_id) continue; // already linked — don't duplicate
-            try {
-              const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId ?? '', cfg.pageId, savedAudienceTargeting);
-              const asResult = await client.createAdSet(p, validateOnly);
-              createdSets.push({ wassell_ad_set_id: s.id, platform_adset_id: asResult.id ?? '(validated)', name: String(p.name) });
-            } catch (e) {
-              errors.push({ ad_set: s.name ?? '(unnamed)', error: metaErr(e) });
+            const pairId = s.pair_id ?? crypto.randomUUID();
+            for (const variant of ['feed', 'story'] as const) {
+              try {
+                const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId ?? '', cfg.pageId, savedAudienceTargeting, variant);
+                const asResult = await client.createAdSet(p, validateOnly);
+                createdSets.push({ wassell_ad_set_id: s.id, platform_adset_id: asResult.id ?? '(validated)', name: String(p.name), variant, pair_id: pairId, sort_order: s.sort_order ?? 0 });
+              } catch (e) {
+                errors.push({ ad_set: `${s.name ?? '(unnamed)'} (${variant})`, error: metaErr(e) });
+              }
             }
           }
 
@@ -6703,22 +6712,25 @@ export default async function handler(req: Request): Promise<Response> {
             }
             for (const c of createdSets) {
               if (c.platform_adset_id === '(validated)') continue;
-              if (c.wassell_ad_set_id) {
+              if (c.wassell_ad_set_id && c.variant === 'feed') {
+                // The planned row becomes the FEED (primary) half of the pair.
                 const su = await sb.from('mos_ad_sets')
-                  .update({ platform_adset_id: c.platform_adset_id, updated_at: new Date().toISOString() })
+                  .update({ platform_adset_id: c.platform_adset_id, placement_variant: 'feed', pair_id: c.pair_id, updated_at: new Date().toISOString() })
                   .eq('id', c.wassell_ad_set_id);
                 if (su.error) console.error('[marketing-os] ad set link write failed:', su.error.message);
                 const ls = linkedSets.find((s) => s.id === c.wassell_ad_set_id);
                 if (ls) ls.platform_adset_id = c.platform_adset_id;
               } else {
-                // The default ad set (nothing was planned) gets a real Wassell
-                // row so the ads below can bind to it and the sync matches it
-                // by platform id instead of minting a second row.
+                // The STORY half (always a new row), or both halves of the
+                // default set — real Wassell rows so the worker finds the
+                // pair and the sync matches by platform id instead of minting
+                // a second row.
                 const ins = await sb.from('mos_ad_sets')
-                  .insert({ execution_id: executionId, name: c.name, platform_adset_id: c.platform_adset_id, status: 'paused', sort_order: 0 })
+                  .insert({ execution_id: executionId, name: c.name, platform_adset_id: c.platform_adset_id, status: 'paused',
+                    sort_order: c.sort_order, placement_variant: c.variant, pair_id: c.pair_id })
                   .select('id').maybeSingle();
-                if (ins.error) console.error('[marketing-os] default ad set row insert failed:', ins.error.message);
-                linkedSets.push({ id: (ins.data as { id?: string } | null)?.id ?? null, name: c.name, platform_adset_id: c.platform_adset_id });
+                if (ins.error) console.error('[marketing-os] ad set row insert failed:', ins.error.message);
+                if (c.variant === 'feed') linkedSets.push({ id: (ins.data as { id?: string } | null)?.id ?? null, name: c.name, platform_adset_id: c.platform_adset_id });
               }
             }
           }
@@ -6734,13 +6746,13 @@ export default async function handler(req: Request): Promise<Response> {
         const adErrors: Array<{ wassell_ad_id: string; ad: string; error: string }> = [];
         let adsWaiting = 0;
         if (!validateOnly && metaCampaignId) {
-          type PlannedAd = { id: string; label: string | null; content_id: string | null; ad_set_id: string | null; creative: Record<string, unknown> | null };
+          type PlannedAd = { id: string; label: string | null; content_id: string | null; ad_set_id: string | null; creative: Record<string, unknown> | null; placement_variant: string | null };
           const plannedRes = await sb.from('mos_execution_ads')
-            .select('id, label, content_id, ad_set_id, creative')
+            .select('id, label, content_id, ad_set_id, creative, placement_variant')
             .eq('execution_id', executionId).is('archived_at', null).is('platform_ad_id', null)
             .order('created_at', { ascending: true });
           const pf = dbFail(plannedRes.error); if (pf) return pf;
-          const planned = (plannedRes.data ?? []) as PlannedAd[];
+          const planned = ((plannedRes.data ?? []) as PlannedAd[]).filter((a) => a.placement_variant !== 'story');
           if (planned.length > 0) {
             const svc = makeServiceClient('api:marketing-os');
             if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');

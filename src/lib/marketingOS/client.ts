@@ -1168,7 +1168,10 @@ export interface AutoAdState {
   caption_ready_at?: string;
   caption_approved_at?: string;
   creative_id?: string;
-  creative_shape?: 'placement' | 'single';
+  /** 'pair' = square ad in the feed set + vertical ad in the stories set
+   *  (`platform_ad_ids` = {feed, story}); 'single' = one ad (legacy set). */
+  creative_shape?: 'placement' | 'single' | 'pair';
+  platform_ad_ids?: Partial<Record<'feed' | 'story' | 'single', string>>;
   placement_fallback?: string;
   format?: 'image' | 'video';
   caption_source?: 'deepseek' | 'fallback';

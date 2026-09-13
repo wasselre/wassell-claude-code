@@ -357,6 +357,7 @@ function PaidCard({
               {isAr ? '✅ أُنشئ الإعلان في ميتا تلقائيًا' : '✅ Ad created on Meta automatically'}
               {auto.ad_status === 'PAUSED' ? (isAr ? ' (متوقف)' : ' (paused)') : ''}
               {placement.creative?.auto_ad?.created_at ? ` · ${dateTimeShort(placement.creative.auto_ad.created_at, isAr)}` : ''}
+              {auto.creative_shape === 'pair' ? (isAr ? ' · إعلانان: المربّع في الفيد والطولي في الستوري والريلز' : ' · two ads: square in feed, vertical in stories & reels') : ''}
               {auto.caption_source === 'fallback' ? (isAr ? ' · كابشن من القالب (تعذّر الذكاء الاصطناعي)' : ' · template caption (AI unavailable)') : ''}
               {auto.placement_fallback ? (isAr ? ' · تصميم واحد لكل الأماكن' : ' · one design for every placement') : ''}
             </span>
