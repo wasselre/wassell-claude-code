@@ -39,6 +39,7 @@ Najdi colloquial, warm, brief, a little playful, always deferential (طال عم
 12. **No placeholders sent to a client.** If a fact is missing (discount, deposit, plan) the rep writes «بتأكد لك وأرد عليك اليوم» — a promise with a deadline — and the queue row keeps the bracketed note for the operator only.
 13. **No project names as marketing:** «أكنان 25» not «مشروع أكنان 25 في قلب حي النرجس». No adjectives (فاخر، مميز، راقي) in a chat line.
 14. **English clients:** same rules in plain English. «Sure», «Sorry we don't offer rent», «Which one should I send?». No paragraphs, no bullet menus.
+15. **Re-entry after silence (never skip this).** A follow-up is never the first message of the day in that chat, so it must open the way a rep re-enters: **greeting first, answer second.** Same day → no greeting needed. A day or more since the last message → «مساك الله بالخير» (feminine «مسيتي بالخير»), then the content. If **we** are the one who went quiet — the client asked and got nothing, or we promised and never sent — the greeting is followed by «المعذرة على التأخير» before the answer: «مساك الله بالخير، المعذرة على التأخير. فيه بالماجدية 163 …». If the **client** went quiet after we answered, no apology: «مساك الله بالخير، ناسبك المشروع؟». Jumping straight into «فهمت عليك صغيرة» after ten days is how a bot sounds. (Operator caught this on 2026-09-13 on the Abdelmalek card.)
 
 ## Phrasebook (measured, most frequent first)
 
@@ -98,7 +99,9 @@ Rules for cards: dash lines, one fact per line, 5–9 lines, one emoji max in th
 - Is there a «•» or a colon-label? Delete it.
 - Is the client feminine? Check every verb.
 - Does it end with one short question or one clear next step?
+- Is the last message in the chat older than today? Then it must start with a greeting, and with «المعذرة على التأخير» if we owed the reply.
 
 ## Operator notes log (append, never delete)
 
 - 2026-09-13 — Operator: "the language you talk in is disgusting… learn from humans who have been sending messages, and also learn from how customers talk." → this skill; all 111 queued suggestions rewritten under it.
+- 2026-09-13 — Operator, on the Abdelmalek card: "So now we would reply to the client after 10 days, without changing 'hello', without changing anything." → rule 15 (greeting first, apology when we owed the reply); 31 queued rows re-prefixed.
