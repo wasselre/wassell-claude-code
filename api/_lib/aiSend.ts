@@ -10,6 +10,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveDefaultDeviceId } from './whatsappGateway.js';
 
+/** whatsapp_ai_replies.job_id is a uuid FK — a non-uuid jobId (e.g. the basic
+ *  bot's 'basic' sentinel) must be stored as null, not fed to the uuid column. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface EnqueueResult {
   queued: boolean;
   sent: boolean;
@@ -67,8 +71,17 @@ export async function enqueueAiReply(
 
   // Audit + the human-vs-AI discriminator. A missing row makes this look
   // human-sent and would suppress future AI replies — so log loudly on failure.
+  //
+  // `job_id` is a uuid FK to claude_jobs, but the BASIC serverless bot passes the
+  // sentinel string 'basic' (it has no claude_jobs row). Writing that into a uuid
+  // column raised `invalid input syntax for type uuid` and the audit insert failed
+  // for EVERY basic-bot send — so the bot's own outbound messages were never
+  // recorded, the `human_active` gate treated them as a human replying, and the
+  // bot blocked its own follow-ups for 6h (one reply per chat, ever). Only store a
+  // real uuid here; the row's existence + message_wid is the discriminator, not the FK.
+  const jobUuid = opts.jobId && UUID_RE.test(opts.jobId) ? opts.jobId : null;
   const { error: auditErr } = await supa.from('whatsapp_ai_replies').insert({
-    message_wid: wid, chat_wid: chatWid, job_id: opts.jobId ?? null, body: text.slice(0, 2000),
+    message_wid: wid, chat_wid: chatWid, job_id: jobUuid, body: text.slice(0, 2000),
   });
   if (auditErr) console.error('[aiSend] AUDIT INSERT FAILED — this message will look human-sent:', auditErr.message, wid);
 
