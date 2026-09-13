@@ -373,6 +373,25 @@ export class MetaMarketingClient {
     };
   }
 
+  /**
+   * PER-DAY insights over a window — ONE Graph call for the whole account, one
+   * row per (ad, day) thanks to `time_increment: 1`. This is what fills
+   * `mos_ad_metrics_daily`; `getInsightsRange` (no increment) collapses the
+   * window into a single row per entity and cannot answer "how did Tuesday go".
+   *
+   * One call per sync tick keeps the `development_access` budget (300 calls an
+   * hour) intact even with a 14-day backfill: cursor pages of 200 rows are the
+   * only extra requests.
+   */
+  async getInsightsDaily(level: MetaInsightLevel, since: string, until: string): Promise<MetaInsightRow[]> {
+    return this.getAll<MetaInsightRow>(`${this.act}/insights`, {
+      level,
+      time_range: JSON.stringify({ since, until }),
+      time_increment: 1,
+      fields: 'campaign_id,adset_id,ad_id,date_start,date_stop,spend,impressions,clicks,inline_link_clicks,actions,cost_per_action_type,reach,frequency',
+    });
+  }
+
   /** Newest ads anywhere in the account (with creatives) — the fallback source
    *  of the Click-to-WhatsApp welcome template when the ad set has no sibling. */
   async listAccountAds(limit = 60): Promise<MetaSiblingAd[]> {

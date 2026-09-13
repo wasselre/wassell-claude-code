@@ -13,7 +13,10 @@
  */
 import type { LaneDeps, LaneLoop } from '../creative/lanes/types.js';
 import { loadMetaConfig } from './metaMarketingApi.js';
-import { failMetaAdJob, runMetaAdJob, type MetaAdJob } from '../runMetaAdJob.js';
+import {
+  failMetaAdJob, requeueAttemptOf, requeueMetaAdJob, runMetaAdJob,
+  TransientMetaAdError, type MetaAdJob,
+} from '../runMetaAdJob.js';
 
 const POLL_MS = 4_000;
 const NO_CREDS_SLEEP_MS = 60_000;
@@ -29,13 +32,15 @@ export async function claimAndRunOneMetaAd(deps: LaneDeps): Promise<boolean> {
     return false;
   }
   const rows = (data ?? []) as Array<{
-    job_id: string; record_id: string; user_id: string; params: Record<string, unknown>; attempts: number;
+    job_id: string; record_id: string; message_id: string | null; user_id: string;
+    params: Record<string, unknown>; attempts: number;
   }>;
   if (rows.length === 0) return false;
   const row = rows[0]!;
   const job: MetaAdJob = {
     id: row.job_id,
     recordId: row.record_id,
+    messageId: row.message_id ?? null,
     userId: row.user_id,
     params: row.params ?? {},
     attempts: row.attempts,
@@ -59,6 +64,28 @@ export async function claimAndRunOneMetaAd(deps: LaneDeps): Promise<boolean> {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[metaAdLane] meta-ad job=${job.id} FAILED:`, msg);
     if (err instanceof Error && err.stack) console.error(err.stack);
+
+    // A transient Meta failure that survived the in-job retries (5xx, rate
+    // limit, network) is requeued ONCE — no ad-row failure, no reopened task,
+    // no notification. Only the second exhaustion is a human's problem.
+    if (err instanceof TransientMetaAdError && requeueAttemptOf(job) === 0) {
+      let requeued = false;
+      try {
+        requeued = await requeueMetaAdJob(sb, job, msg, (m, extra) => log(`[meta-ad ${job.id.slice(0, 8)}] ${m}`, extra));
+      } catch (inner) {
+        console.error(`[metaAdLane] requeue threw: ${(inner as Error).message}`);
+      }
+      if (requeued) {
+        const { error: doneErr } = await sb.rpc('generation_job_complete', {
+          p_job_id: job.id,
+          p_result: { requeued: true, reason: msg.slice(0, 400) },
+        });
+        if (doneErr) console.error(`[metaAdLane] closing the requeued job failed: ${doneErr.message}`);
+        return true;
+      }
+      console.error('[metaAdLane] requeue could not be written — failing the job instead so the manager sees it');
+    }
+
     try {
       await failMetaAdJob(sb, job, msg);
     } catch (inner) {

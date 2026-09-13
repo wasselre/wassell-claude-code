@@ -22,6 +22,26 @@
  *      enhancement OFF and multi-advertiser OFF, then the ad in the target ad
  *      set; records platform ids + state on the row; notifies the manager.
  *
+ * Campaign planning (2026-09-13) changed three things:
+ *
+ *   1. **The caption phase is skipped when the writer already produced one.**
+ *      A content row with `data.caption`, `data.caption_confirmed_by_writer_at`
+ *      and a `mos_content_approvals` row on its final approval step carries an
+ *      APPROVED canonical caption — the manager approved it at writing review.
+ *      That caption is copied onto the ad row and the job continues straight to
+ *      phase 'create': no DeepSeek, no `caption_review` task, no
+ *      `ad_caption_ready` notification. Legacy items (no approved caption) keep
+ *      the two-phase flow unchanged. Which path ran is always logged.
+ *   2. **Ads are created PAUSED by default** (`mos_settings.planning
+ *      .ads_created_paused`, default true) and activated on schedule by the
+ *      refresh lane; the linked `mos_creative_slots` row becomes `ready`.
+ *      `mos_settings.meta_auto_ad.status` stays the explicit override for tests.
+ *   3. **Transient Graph failures retry instead of paging a human**: 5xx,
+ *      codes 1/2, rate limits (4/17/32/613/80000/80004) and network timeouts
+ *      are retried 3× (2 s / 8 s / 30 s) after a full undo of anything already
+ *      built; still failing, the job is requeued ONCE by the lane. Permanent
+ *      errors (missing design, policy verdict, bad target) never retry.
+ *
  * Failure at any step patches `creative.auto_ad = {state:'failed', error}` on
  * the ad row and notifies `ad_failed` — the Placements tab offers a retry.
  *
@@ -39,6 +59,8 @@ export interface MetaAdJob {
   id: string;
   /** generation_jobs.record_id = mos_content.id */
   recordId: string;
+  /** generation_jobs.message_id = the mos_execution_ads row id. */
+  messageId?: string | null;
   userId: string;
   params: Record<string, unknown>;
   attempts: number;
@@ -46,9 +68,17 @@ export interface MetaAdJob {
 
 export type MetaAdPhase = 'caption' | 'create';
 
+/** 'writer' = the canonical caption the writer wrote and the manager approved
+ *  at writing review (no AI involved); the other two are the legacy AI path. */
+export type MetaCaptionSource = 'deepseek' | 'fallback' | 'writer';
+
 export type MetaAdJobResult =
-  | { phase: 'caption'; caption_source: 'deepseek' | 'fallback'; caption_chars: number }
-  | { phase: 'create'; platform_ad_id: string; creative_id: string; caption_source: 'deepseek' | 'fallback'; format: 'image' | 'video' };
+  | { phase: 'caption'; caption_source: MetaCaptionSource; caption_chars: number }
+  | {
+    phase: 'create'; platform_ad_id: string; creative_id: string;
+    caption_source: MetaCaptionSource; format: 'image' | 'video';
+    ad_status: 'ACTIVE' | 'PAUSED'; slot_id: string | null;
+  };
 
 interface Deps {
   supabase: SupabaseClient;
@@ -550,11 +580,225 @@ async function findWelcomeTemplate(meta: MetaMarketingClient, platformAdSetId: s
 /* Job                                                                        */
 /* ────────────────────────────────────────────────────────────────────────── */
 
-async function readAdStatusSetting(sb: SupabaseClient): Promise<'ACTIVE' | 'PAUSED'> {
-  const res = await sb.from('mos_settings').select('value').eq('key', 'meta_auto_ad').maybeSingle();
-  if (res.error) console.error('[meta-ad] mos_settings.meta_auto_ad read failed:', res.error.message);
-  const v = (res.data as { value?: { status?: unknown } } | null)?.value;
-  return v?.status === 'PAUSED' ? 'PAUSED' : 'ACTIVE';
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Transient vs permanent Graph failures                                      */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A Meta failure that is worth trying again: the request never expressed an
+ * opinion about our ad, it just did not land. Everything else — a refused
+ * creative, a policy verdict, a missing design, a target that does not exist —
+ * is PERMANENT and goes straight to the human, because retrying it only burns
+ * time and produces the same refusal.
+ *
+ * | Signal                                            | Class      |
+ * |---------------------------------------------------|------------|
+ * | HTTP 5xx from Graph                                | transient  |
+ * | code 1 (API_UNKNOWN) / 2 (API_SERVICE)             | transient  |
+ * | code 4 / 17 / 32 / 613 (rate + throttling limits)  | transient  |
+ * | code 80000 / 80004 (ads-API rate limits)           | transient  |
+ * | HTTP 429                                           | transient  |
+ * | fetch/network/DNS/socket/abort/timeout             | transient  |
+ * | anything else (100, 190, 200, 368, 2635 …)         | permanent  |
+ * | a non-Meta Error we threw ourselves                | permanent  |
+ */
+const TRANSIENT_META_CODES = new Set([1, 2, 4, 17, 32, 613, 80000, 80004]);
+const NETWORK_HINTS = [
+  'fetch failed', 'network', 'socket hang up', 'econnreset', 'econnrefused', 'etimedout',
+  'enotfound', 'eai_again', 'epipe', 'timeout', 'aborted', 'terminated',
+];
+
+export function classifyMetaError(err: unknown): 'transient' | 'permanent' {
+  if (err instanceof TransientMetaAdError) return 'transient';
+  if (err instanceof MetaApiError) {
+    if (err.httpStatus >= 500 || err.httpStatus === 429) return 'transient';
+    return TRANSIENT_META_CODES.has(err.code ?? -1) ? 'transient' : 'permanent';
+  }
+  const name = err instanceof Error ? err.name.toLowerCase() : '';
+  if (name === 'aborterror' || name === 'timeouterror') return 'transient';
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && NETWORK_HINTS.some((h) => code.toLowerCase() === h)) return 'transient';
+  return NETWORK_HINTS.some((h) => msg.includes(h)) ? 'transient' : 'permanent';
+}
+
+/** Thrown when the retries are exhausted and the failure is still transient —
+ *  the lane requeues the job ONCE instead of failing it in the manager's face. */
+export class TransientMetaAdError extends Error {
+  /** The last underlying failure (named `lastError`, not `cause`: `cause` is a
+   *  member of Error itself and overriding it needs an `override` modifier). */
+  readonly lastError: unknown;
+  constructor(message: string, lastError?: unknown) {
+    super(message);
+    this.name = 'TransientMetaAdError';
+    this.lastError = lastError;
+  }
+}
+
+/** 3 retries after the first attempt. */
+export const META_RETRY_BACKOFF_MS = [2_000, 8_000, 30_000] as const;
+
+const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Run `fn`, retrying only transient failures. `fn` MUST leave nothing
+ * half-built behind when it throws (the ad build undoes itself), so every
+ * attempt starts from a clean state.
+ */
+export async function withTransientRetry<T>(
+  label: string, fn: (attempt: number) => Promise<T>, log: Deps['log'],
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fn(attempt);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (classifyMetaError(e) === 'permanent') {
+        console.error(`[meta-ad] ${label} failed permanently (no retry): ${msg}`);
+        throw e;
+      }
+      if (attempt >= META_RETRY_BACKOFF_MS.length) {
+        console.error(`[meta-ad] ${label} still failing after ${attempt + 1} attempts: ${msg}`);
+        throw new TransientMetaAdError(msg, e);
+      }
+      const backoff = META_RETRY_BACKOFF_MS[attempt]!;
+      log(`${label}: transient failure (${msg}) — retry ${attempt + 1}/${META_RETRY_BACKOFF_MS.length} in ${Math.round(backoff / 1000)}s`);
+      await wait(backoff);
+    }
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Settings, slots and the writer's approved caption                          */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The status a NEW ad is created with.
+ *
+ * Planning default: PAUSED (`mos_settings.planning.ads_created_paused`, true),
+ * because the launch date and the weekly refresh decide when a creative starts
+ * spending — not the moment its ad happened to be built.
+ * `mos_settings.meta_auto_ad.status` is the explicit override (tests, and the
+ * pre-planning behaviour) and wins whenever it is set to ACTIVE or PAUSED.
+ */
+async function resolveAdStatus(sb: SupabaseClient, log: Deps['log']): Promise<'ACTIVE' | 'PAUSED'> {
+  const res = await sb.from('mos_settings').select('key, value').in('key', ['meta_auto_ad', 'planning']);
+  if (res.error) {
+    console.error('[meta-ad] mos_settings read failed:', res.error.message, '— defaulting to PAUSED (safe: nothing spends)');
+    return 'PAUSED';
+  }
+  const rows = (res.data ?? []) as Array<{ key: string; value: Record<string, unknown> | null }>;
+  const byKey = new Map(rows.map((r) => [r.key, r.value ?? {}]));
+  const override = byKey.get('meta_auto_ad')?.status;
+  if (override === 'ACTIVE' || override === 'PAUSED') {
+    log(`ad status ${override} — mos_settings.meta_auto_ad.status override`);
+    return override;
+  }
+  const paused = byKey.get('planning')?.ads_created_paused;
+  const createPaused = typeof paused === 'boolean' ? paused : true;
+  log(`ad status ${createPaused ? 'PAUSED' : 'ACTIVE'} — planning.ads_created_paused=${createPaused}`);
+  return createPaused ? 'PAUSED' : 'ACTIVE';
+}
+
+/** The creative slot this ad row fills, when the planning layer created one. */
+async function readSlotId(sb: SupabaseClient, adRowId: string): Promise<string | null> {
+  const res = await sb.from('mos_execution_ads').select('slot_id').eq('id', adRowId).maybeSingle();
+  if (res.error) {
+    // The column arrives with the planning migration; before it lands this is
+    // an unknown-column error, which means "no slots yet", not a job failure.
+    console.error('[meta-ad] slot_id read failed (planning migration not applied yet?):', res.error.code, res.error.message);
+    return null;
+  }
+  return str((res.data as { slot_id?: unknown } | null)?.slot_id);
+}
+
+/**
+ * A built-but-paused ad makes its slot `ready` — the refresh lane activates it
+ * on the cycle's refresh date (§7.5 step 3: "the refresh date arrived" proves
+ * nothing; a slot is ready only when its ad exists and passed the verdict).
+ */
+async function markSlotReady(sb: SupabaseClient, slotId: string, adRowId: string, log: Deps['log']): Promise<void> {
+  const upd = await sb.from('mos_creative_slots')
+    .update({ status: 'ready', ad_row_id: adRowId, updated_at: new Date().toISOString() })
+    .eq('id', slotId).in('status', ['reserved', 'producing', 'ready']);
+  if (upd.error) {
+    console.error(`[meta-ad] creative slot ${slotId} could not be marked ready:`, upd.error.code, upd.error.message);
+    return;
+  }
+  log(`creative slot ${slotId} → ready (ad built, waiting for its activation date)`);
+}
+
+/**
+ * The canonical caption the WRITER wrote and the manager approved — the whole
+ * reason the AI caption phase can be skipped.
+ *
+ * Three conditions, all required:
+ *   1. `mos_content.data.caption` is non-empty;
+ *   2. `data.caption_confirmed_by_writer_at` is set (the writer's «راجعت
+ *      الكابشن» confirmation; a caption edit CLEARS it — that invalidation is
+ *      the SQL side's job, `content_revise`);
+ *   3. a `mos_content_approvals` row exists for the content's FINAL approval
+ *      step (the step flagged `auto_meta_ad` on its pinned workflow version).
+ *
+ * Anything missing → null, and the legacy two-phase AI flow runs unchanged.
+ */
+async function loadApprovedWriterCaption(
+  sb: SupabaseClient, contentId: string, content: ContentRow, log: Deps['log'],
+): Promise<{ caption: string; hashtags: string | null; confirmedAt: string; stepKey: string; approvedAt: string | null } | null> {
+  const d = content.data ?? {};
+  const caption = str(d.caption);
+  const confirmedAt = str(d.caption_confirmed_by_writer_at);
+  if (!caption) return null;
+  if (!confirmedAt) {
+    log('content carries a caption but no writer confirmation — legacy AI caption phase');
+    return null;
+  }
+
+  // The final approval step = the step that triggers the ad on the pinned path.
+  const finalSteps: string[] = [];
+  const pin = await sb.from('mos_content').select('workflow_version_id').eq('id', contentId).maybeSingle();
+  if (pin.error) {
+    console.error('[meta-ad] pinned workflow read failed:', pin.error.message);
+  } else {
+    const versionId = str((pin.data as { workflow_version_id?: unknown } | null)?.workflow_version_id);
+    if (versionId) {
+      const ver = await sb.from('workflow_versions').select('definition').eq('id', versionId).maybeSingle();
+      if (ver.error) console.error('[meta-ad] workflow version read failed:', ver.error.message);
+      const steps = ((ver.data as { definition?: { metadata?: { steps?: unknown } } } | null)?.definition?.metadata?.steps);
+      if (Array.isArray(steps)) {
+        for (const s of steps) {
+          const o = (s ?? {}) as { key?: unknown; auto_meta_ad?: unknown };
+          if (o.auto_meta_ad === true && typeof o.key === 'string') finalSteps.push(o.key);
+        }
+      }
+    }
+  }
+  // Fallback for content whose pinned version has no flagged step (legacy rows,
+  // hand-made paths): the two step keys that ARE the final manager approval.
+  if (finalSteps.length === 0) finalSteps.push('design_review', 'final_review');
+
+  const appr = await sb.from('mos_content_approvals')
+    .select('step_key, approved_at, caption_hash')
+    .eq('content_id', contentId).in('step_key', finalSteps)
+    .order('approved_at', { ascending: false }).limit(1).maybeSingle();
+  if (appr.error) {
+    // 42P01 = the planning migration has not been applied on this database.
+    console.error('[meta-ad] mos_content_approvals read failed:', appr.error.code, appr.error.message,
+      '— falling back to the legacy AI caption phase');
+    return null;
+  }
+  const row = appr.data as { step_key: string; approved_at: string | null } | null;
+  if (!row) {
+    log(`no final approval row (${finalSteps.join('/')}) for this caption — legacy AI caption phase`);
+    return null;
+  }
+  return {
+    caption,
+    hashtags: str(d.hashtags),
+    confirmedAt,
+    stepKey: row.step_key,
+    approvedAt: row.approved_at,
+  };
 }
 
 async function patchAdRow(sb: SupabaseClient, adRowId: string, patch: Record<string, unknown>, autoAd: Record<string, unknown>): Promise<void> {
@@ -664,6 +908,60 @@ async function closeCaptionTask(sb: SupabaseClient, adRowId: string, note: strin
   if (upd.error) console.error('[meta-ad] caption task close failed:', upd.error.message);
 }
 
+/** How many times this job has already been requeued after exhausted retries. */
+export function requeueAttemptOf(job: MetaAdJob): number {
+  const n = Number(job.params.requeue_attempt ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Put ONE more copy of this job on the queue after the in-job retries were
+ * exhausted on a transient Meta failure (§9.5: "transient Graph errors … retried
+ * ×3 with backoff by the worker"). The ad row stays `creating` with the last
+ * error recorded, so the Placements tab keeps saying «جارٍ الإنشاء» — which is
+ * true — instead of paging the manager for something the machine is still
+ * handling. The SECOND exhaustion fails the job for real.
+ *
+ * Returns false when the requeue itself could not be written; the caller then
+ * falls back to the normal failure path (never a silent drop).
+ */
+export async function requeueMetaAdJob(
+  sb: SupabaseClient, job: MetaAdJob, reason: string, log: Deps['log'],
+): Promise<boolean> {
+  const attempt = requeueAttemptOf(job) + 1;
+  const newId = crypto.randomUUID();
+  const ins = await sb.from('generation_jobs').insert({
+    id: newId,
+    record_id: job.recordId,
+    message_id: job.messageId ?? str(job.params.ad_row_id) ?? job.recordId,
+    generation_id: null,
+    user_id: job.userId,
+    kind: 'meta-ad',
+    status: 'queued',
+    prompt: null,
+    params: { ...job.params, requeue_attempt: attempt, requeue_of: job.id, requeue_reason: reason.slice(0, 400) },
+  });
+  if (ins.error) {
+    console.error('[meta-ad] requeue insert failed:', ins.error.code, ins.error.message);
+    return false;
+  }
+  const adRowId = str(job.params.ad_row_id);
+  if (adRowId) {
+    try {
+      await patchAdRow(sb, adRowId, {}, {
+        state: 'creating',
+        retry_queued_at: new Date().toISOString(),
+        retry_attempt: attempt,
+        last_transient_error: reason.slice(0, 400),
+      });
+    } catch (e) {
+      console.error('[meta-ad] could not record the requeue on the ad row:', e instanceof Error ? e.message : e);
+    }
+  }
+  log(`transient failure survived the retries — requeued as job ${newId} (attempt ${attempt}): ${reason}`);
+  return true;
+}
+
 /** Mark the ad row failed + notify. Called by the lane on ANY thrown error. */
 export async function failMetaAdJob(sb: SupabaseClient, job: MetaAdJob, message: string): Promise<void> {
   const adRowId = str(job.params.ad_row_id);
@@ -741,8 +1039,39 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
   const facts = await loadProjectFacts(sb, projectId);
   if (!facts) log(`no project facts (project=${projectId ?? 'none'}) — caption from the approved copy only`);
 
-  /* ════════════ PHASE 1 — caption for the manager's approval ═══════════ */
+  /* ════════════ PHASE 0 — is the caption already approved? ═════════════ */
+  // The writer writes the caption and the manager approves it at writing
+  // review, so for planned content there is nothing left for the AI phase to
+  // do: copy the approved text onto the ad row and build the ad now.
+  let writerCaption: string | null = null;
+  let effectivePhase: MetaAdPhase = phase;
   if (phase === 'caption') {
+    const approved = await loadApprovedWriterCaption(sb, contentId, content, log);
+    if (approved) {
+      const tags = approved.hashtags;
+      writerCaption = tags && !approved.caption.includes(tags)
+        ? `${approved.caption}\n\n${tags}`
+        : approved.caption;
+      await patchAdRow(sb, adRowId, {
+        creative: { primary_text: writerCaption, message: writerCaption },
+      }, {
+        state: 'creating',
+        phase: 'create',
+        caption_source: 'writer',
+        caption_approved_step: approved.stepKey,
+        caption_approved_at: approved.approvedAt,
+        caption_confirmed_by_writer_at: approved.confirmedAt,
+        error: null,
+      });
+      effectivePhase = 'create';
+      log(`caption path: WRITER-APPROVED (${writerCaption.length} chars, approved at step '${approved.stepKey}') — skipping the AI phase, the caption task and the ad_caption_ready notification`);
+    } else {
+      log('caption path: LEGACY two-phase (AI caption → manager approval)');
+    }
+  }
+
+  /* ════════════ PHASE 1 — caption for the manager's approval ═══════════ */
+  if (effectivePhase === 'caption') {
     const { caption, source: captionSource } = await writeCaption(env, content, facts, { name: camp?.name ?? null, offer: camp?.offer ?? null }, log);
     log(`caption ready (${captionSource}, ${caption.length} chars) — parked for approval`);
     await patchAdRow(sb, adRowId, {
@@ -773,9 +1102,12 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
 
   /* ════════════ PHASE 2 — build the ad with the APPROVED caption ═══════ */
   const cr = adRow.creative ?? {};
-  const caption = str(cr.primary_text) ?? str(cr.message);
+  const caption = writerCaption ?? str(cr.primary_text) ?? str(cr.message);
   if (!caption) throw new Error('no approved caption on the ad row — approve the caption on the Placements tab first');
-  const captionSource: 'deepseek' | 'fallback' = ((cr.auto_ad as { caption_source?: unknown } | undefined)?.caption_source === 'fallback') ? 'fallback' : 'deepseek';
+  const storedSource = (cr.auto_ad as { caption_source?: unknown } | undefined)?.caption_source;
+  const captionSource: MetaCaptionSource = writerCaption ? 'writer'
+    : storedSource === 'fallback' ? 'fallback'
+      : storedSource === 'writer' ? 'writer' : 'deepseek';
 
   // ── 3. designs → Meta (BOTH slots required) ──────────────────────────────
   const slots = await resolveSlots(sb, content);
@@ -784,32 +1116,39 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
   const format: 'image' | 'video' = slots[0]!.kind;
   const adName = `${content.ref ?? ''} · ${content.title}`.replace(/^ · /, '').slice(0, 120);
 
+  // Media uploads live OUTSIDE the retry closure on purpose: an image hash is
+  // content-addressed and a transcoded video costs minutes, so a retry of the
+  // build reuses what already landed instead of re-uploading it.
   const imageHashes: Partial<Record<Slot, string>> = {};
   const videoIds: Partial<Record<Slot, { id: string; thumb: string | null }>> = {};
-  for (const s of slots) {
-    if (s.kind === 'image') {
-      const bytes = await fetchBytes(s.url);
-      const up = await meta.uploadImageBytes(bytes, `${adName} · ${s.slot}`);
-      imageHashes[s.slot] = up.hash;
-      log(`uploaded ${s.slot} image → ${up.hash}`);
-    } else {
-      const up = await meta.uploadVideoByUrl(s.url, `${adName} · ${s.slot}`);
-      // Meta transcodes asynchronously; a creative on an unready video fails.
-      let status = 'processing';
-      let thumb: string | null = null;
-      const deadline = Date.now() + 6 * 60_000;
-      while (Date.now() < deadline) {
-        const st = await meta.getVideoStatus(up.id);
-        status = st.status ?? 'processing'; thumb = st.thumbnailUrl;
-        if (st.ready) break;
-        if (status === 'error') throw new Error(`Meta could not process the ${s.slot} video`);
-        await new Promise((r) => setTimeout(r, 5_000));
+  const uploadSlots = async (): Promise<void> => {
+    for (const s of slots) {
+      if (s.kind === 'image') {
+        if (imageHashes[s.slot]) continue;
+        const bytes = await fetchBytes(s.url);
+        const up = await meta.uploadImageBytes(bytes, `${adName} · ${s.slot}`);
+        imageHashes[s.slot] = up.hash;
+        log(`uploaded ${s.slot} image → ${up.hash}`);
+      } else {
+        if (videoIds[s.slot]) continue;
+        const up = await meta.uploadVideoByUrl(s.url, `${adName} · ${s.slot}`);
+        // Meta transcodes asynchronously; a creative on an unready video fails.
+        let status = 'processing';
+        let thumb: string | null = null;
+        const deadline = Date.now() + 6 * 60_000;
+        while (Date.now() < deadline) {
+          const st = await meta.getVideoStatus(up.id);
+          status = st.status ?? 'processing'; thumb = st.thumbnailUrl;
+          if (st.ready) break;
+          if (status === 'error') throw new Error(`Meta could not process the ${s.slot} video`);
+          await new Promise((r) => setTimeout(r, 5_000));
+        }
+        if (status !== 'ready') throw new Error(`the ${s.slot} video was still processing after 6 minutes`);
+        videoIds[s.slot] = { id: up.id, thumb };
+        log(`uploaded ${s.slot} video → ${up.id}`);
       }
-      if (status !== 'ready') throw new Error(`the ${s.slot} video was still processing after 6 minutes`);
-      videoIds[s.slot] = { id: up.id, thumb };
-      log(`uploaded ${s.slot} video → ${up.id}`);
     }
-  }
+  };
 
   // ── 4. the ad-set PAIR (feed / story) + welcome template ─────────────────
   // Meta will not let one WhatsApp ad switch designs by placement (see the
@@ -842,7 +1181,9 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
     : [{ variant: 'single', slot: 'square', setRowId: primarySet.id, platformAdSetId: primarySet.platform_adset_id, suffixAr: '' }];
   if (!storySet) log(`ad set «${primarySet.name}» is a legacy single set — one ad with the square design`);
 
-  const adSet = await meta.getAdSet(primarySet.platform_adset_id);
+  const adSet = await withTransientRetry(
+    'ad set read', () => meta.getAdSet(primarySet.platform_adset_id as string), log,
+  );
   const destination = String(exec?.platform_settings?.destination_type ?? adSet.destination_type ?? 'WHATSAPP').toUpperCase();
   const isWhatsapp = destination === 'WHATSAPP';
   const linkUrl = isWhatsapp ? 'https://api.whatsapp.com/send' : (str(camp?.destination_url) ?? 'https://wassel.re');
@@ -852,74 +1193,101 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
     ? { type: 'WHATSAPP_MESSAGE', value: { app_destination: 'WHATSAPP' } }
     : { type: 'LEARN_MORE', value: { link: linkUrl } };
 
-  let welcome: string | null = null;
-  if (isWhatsapp) {
-    const template = await findWelcomeTemplate(meta, primarySet.platform_adset_id, log);
-    welcome = retargetWelcomeTemplate(template, facts?.name ?? null, log);
-  }
-
   // ── 5 + 6. one plain creative + ad per target — the Ads-Manager shape ────
   // (object_story_spec.link_data / video_data: the ONLY shape Meta both
   // accepts for Click-to-WhatsApp and lets Ads Manager open; measured
   // 2026-09-13 — every asset-feed variant was flagged or unreadable.)
+  //
+  // The WHOLE Meta build is one retryable unit: uploads (cached), the welcome
+  // template, the creatives, the ads and the verdict. Anything that throws
+  // first UNDOES every node this attempt created, so a retry can never leave a
+  // second copy of the ad behind, and a permanent refusal is re-thrown at once
+  // with the buyer-readable reason.
   const oss: Record<string, unknown> = { page_id: cfg.pageId };
   if (cfg.instagramId) oss.instagram_user_id = cfg.instagramId;
-  const adStatus = await readAdStatusSetting(sb);
-  const built: Array<Target & { adId: string; creativeId: string; name: string }> = [];
-  const undo = async (): Promise<void> => {
-    for (const b of built) {
-      try { await meta.deleteNode(b.adId); } catch (e) { console.error('[meta-ad] undo: ad delete failed', b.adId, e instanceof Error ? e.message : e); }
-      try { await meta.deleteNode(b.creativeId); } catch (e) { console.error('[meta-ad] undo: creative delete failed', b.creativeId, e instanceof Error ? e.message : e); }
+  const adStatus = await resolveAdStatus(sb, log);
+  type BuiltAd = Target & { adId: string; creativeId: string; name: string };
+  let welcome: string | null = null;
+
+  const buildAds = async (): Promise<BuiltAd[]> => {
+    const built: BuiltAd[] = [];
+    /** Deletes everything THIS attempt created, then forgets it (so a second
+     *  call — e.g. the flagged-verdict path — is a no-op, not a double delete). */
+    const undo = async (): Promise<void> => {
+      const list = built.splice(0, built.length);
+      for (const b of list) {
+        try { await meta.deleteNode(b.adId); } catch (e) { console.error('[meta-ad] undo: ad delete failed', b.adId, e instanceof Error ? e.message : e); }
+        try { await meta.deleteNode(b.creativeId); } catch (e) { console.error('[meta-ad] undo: creative delete failed', b.creativeId, e instanceof Error ? e.message : e); }
+      }
+    };
+
+    try {
+      await uploadSlots();
+
+      if (isWhatsapp && welcome === null) {
+        const template = await findWelcomeTemplate(meta, primarySet.platform_adset_id as string, log);
+        welcome = retargetWelcomeTemplate(template, facts?.name ?? null, log);
+      }
+
+      for (const t of targets) {
+        const name = t.suffixAr ? `${adName} · ${t.suffixAr}` : adName;
+        let story: Record<string, unknown>;
+        if (format === 'image') {
+          const link_data: Record<string, unknown> = { link: linkUrl, message: caption, name: headline, image_hash: imageHashes[t.slot], call_to_action: cta };
+          if (isWhatsapp && welcome) link_data.page_welcome_message = welcome;
+          story = { ...oss, link_data };
+        } else {
+          const v = videoIds[t.slot]!;
+          const video_data: Record<string, unknown> = { video_id: v.id, message: caption, title: headline, call_to_action: cta };
+          if (v.thumb) video_data.image_url = v.thumb;
+          if (isWhatsapp && welcome) video_data.page_welcome_message = welcome;
+          story = { ...oss, video_data };
+        }
+        let creativeId: string;
+        try {
+          creativeId = (await meta.createAdCreative({
+            name, object_story_spec: story,
+            degrees_of_freedom_spec: noEnhancementsSpec(),
+            contextual_multi_ads: NO_MULTI_ADVERTISER,
+          })).id;
+        } catch (e) {
+          // A transient failure keeps its own identity so the retry wrapper can
+          // see it; a real refusal becomes the sentence the buyer reads.
+          if (classifyMetaError(e) === 'transient') throw e;
+          const userMsg = e instanceof MetaApiError
+            ? ((e.raw as { error?: { error_user_msg?: string; error_user_title?: string } } | null)?.error?.error_user_msg
+              ?? (e.raw as { error?: { error_user_title?: string } } | null)?.error?.error_user_title ?? null)
+            : null;
+          throw new Error(`رفضت ميتا الكرييتف (${t.suffixAr || 'الإعلان'}): ${userMsg ?? (e instanceof Error ? e.message : String(e))} / Meta refused the ${t.variant} creative`);
+        }
+        const ad = await meta.createAd({ name, adset_id: t.platformAdSetId, creative: { creative_id: creativeId }, status: adStatus });
+        built.push({ ...t, adId: ad.id, creativeId, name });
+        log(`${t.variant} ad ${ad.id} created ${adStatus} in ad set ${t.platformAdSetId} (creative ${creativeId})`);
+      }
+
+      // Meta validates the ad against the objective ASYNCHRONOUSLY: creation
+      // returns 200 and the verdict lands on `issues_info` seconds later. Wait
+      // for it — an ad flagged WITH_ISSUES is not "created", it is a failure the
+      // manager must see (the 2026-09-13 «Invalid Creative For Objective» case).
+      for (let i = 0; i < 8; i += 1) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        const verdicts = await Promise.all(built.map((b) => meta.getAdIssues(b.adId)));
+        const flagged = verdicts.flatMap((v, idx) => v.issues.map((issue) => `${built[idx]!.variant}: ${issue}`));
+        if (flagged.length > 0) {
+          throw new Error(`رفضت ميتا الإعلان بعد إنشائه: ${flagged.join('; ')} / Meta flagged the ad after creation: ${flagged.join('; ')} (deleted)`);
+        }
+        if (verdicts.every((v) => v.status && v.status !== 'IN_PROCESS')) break;
+      }
+      return built;
+    } catch (e) {
+      // NEVER leave a half-built ad: whatever happened, the nodes this attempt
+      // created go away before the error travels on.
+      await undo();
+      throw e;
     }
   };
-  for (const t of targets) {
-    const name = t.suffixAr ? `${adName} · ${t.suffixAr}` : adName;
-    let story: Record<string, unknown>;
-    if (format === 'image') {
-      const link_data: Record<string, unknown> = { link: linkUrl, message: caption, name: headline, image_hash: imageHashes[t.slot], call_to_action: cta };
-      if (isWhatsapp && welcome) link_data.page_welcome_message = welcome;
-      story = { ...oss, link_data };
-    } else {
-      const v = videoIds[t.slot]!;
-      const video_data: Record<string, unknown> = { video_id: v.id, message: caption, title: headline, call_to_action: cta };
-      if (v.thumb) video_data.image_url = v.thumb;
-      if (isWhatsapp && welcome) video_data.page_welcome_message = welcome;
-      story = { ...oss, video_data };
-    }
-    let creativeId: string;
-    try {
-      creativeId = (await meta.createAdCreative({
-        name, object_story_spec: story,
-        degrees_of_freedom_spec: noEnhancementsSpec(),
-        contextual_multi_ads: NO_MULTI_ADVERTISER,
-      })).id;
-    } catch (e) {
-      await undo();
-      const userMsg = e instanceof MetaApiError
-        ? ((e.raw as { error?: { error_user_msg?: string; error_user_title?: string } } | null)?.error?.error_user_msg
-          ?? (e.raw as { error?: { error_user_title?: string } } | null)?.error?.error_user_title ?? null)
-        : null;
-      throw new Error(`رفضت ميتا الكرييتف (${t.suffixAr || 'الإعلان'}): ${userMsg ?? (e instanceof Error ? e.message : String(e))} / Meta refused the ${t.variant} creative`);
-    }
-    const ad = await meta.createAd({ name, adset_id: t.platformAdSetId, creative: { creative_id: creativeId }, status: adStatus });
-    built.push({ ...t, adId: ad.id, creativeId, name });
-    log(`${t.variant} ad ${ad.id} created ${adStatus} in ad set ${t.platformAdSetId} (creative ${creativeId})`);
-  }
 
-  // Meta validates the ad against the objective ASYNCHRONOUSLY: creation
-  // returns 200 and the verdict lands on `issues_info` seconds later. Wait for
-  // it — an ad flagged WITH_ISSUES is not "created", it is a failure the
-  // manager must see (the 2026-09-13 «Invalid Creative For Objective» case).
-  for (let i = 0; i < 8; i += 1) {
-    await new Promise((r) => setTimeout(r, 5_000));
-    const verdicts = await Promise.all(built.map((b) => meta.getAdIssues(b.adId)));
-    const flagged = verdicts.flatMap((v, idx) => v.issues.map((issue) => `${built[idx]!.variant}: ${issue}`));
-    if (flagged.length > 0) {
-      await undo();
-      throw new Error(`رفضت ميتا الإعلان بعد إنشائه: ${flagged.join('; ')} / Meta flagged the ad after creation: ${flagged.join('; ')} (deleted)`);
-    }
-    if (verdicts.every((v) => v.status && v.status !== 'IN_PROCESS')) break;
-  }
+  const built = await withTransientRetry('meta ad build', buildAds, log);
   log(`Meta accepted ${built.length} ad(s): ${built.map((b) => `${b.variant}=${b.adId}`).join(', ')}`);
 
   // ── 7. record + notify ───────────────────────────────────────────────────
@@ -967,16 +1335,39 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
       : await sb.from('mos_execution_ads').insert(shadowPatch);
     if (w.error) throw new Error(`shadow row write: ${w.error.message} (Meta ads ${built.map((b) => b.adId).join(', ')} exist — sync from Meta to recover)`);
   }
+  // A PAUSED ad is a creative WAITING for its date: its slot becomes `ready`
+  // and the refresh lane activates it on schedule (§7.5). An ACTIVE one (the
+  // explicit meta_auto_ad override) is already live, so its slot is `active`.
+  const slotId = await readSlotId(sb, adRowId);
+  if (slotId) {
+    if (adStatus === 'PAUSED') {
+      await markSlotReady(sb, slotId, adRowId, log);
+    } else {
+      const upd = await sb.from('mos_creative_slots')
+        .update({ status: 'active', ad_row_id: adRowId, activated_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', slotId);
+      if (upd.error) console.error(`[meta-ad] creative slot ${slotId} could not be marked active:`, upd.error.code, upd.error.message);
+    }
+  }
+
   await closeCaptionTask(sb, adRowId, `ads created on Meta (${built.map((b) => b.adId).join(', ')})`);
   await notify(sb, {
     event: 'ad_created',
     users: approvedBy ? [approvedBy] : [],
-    titleAr: adStatus === 'ACTIVE' ? 'أُنشئ الإعلان في ميتا وهو يعمل' : 'أُنشئ الإعلان في ميتا (متوقف)',
-    titleEn: adStatus === 'ACTIVE' ? 'The Meta ad was created and is running' : 'The Meta ad was created (paused)',
+    titleAr: adStatus === 'ACTIVE' ? 'أُنشئ الإعلان في ميتا وهو يعمل' : 'أُنشئ الإعلان في ميتا (متوقف حتى موعد التشغيل)',
+    titleEn: adStatus === 'ACTIVE' ? 'The Meta ad was created and is running' : 'The Meta ad was created (paused until its scheduled start)',
     bodyAr: `«${content.title}» — ${shadow ? 'إعلانان: فيد + ستوري' : adSet.name}`,
     bodyEn: `“${content.title}” — ${shadow ? 'two ads: feed + stories' : adSet.name}`,
     url: `/m/content/${contentId}?tab=placements`,
   });
 
-  return { phase: 'create', platform_ad_id: primary.adId, creative_id: primary.creativeId, caption_source: captionSource, format };
+  return {
+    phase: 'create',
+    platform_ad_id: primary.adId,
+    creative_id: primary.creativeId,
+    caption_source: captionSource,
+    format,
+    ad_status: adStatus,
+    slot_id: slotId,
+  };
 }

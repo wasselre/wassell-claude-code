@@ -57,6 +57,7 @@ import { getSessionStatus, restartSession, stopSession, type WahaSendConfig } fr
 import { creativeJobsLoop } from './creative/lanes/creativeJobsLane.js';
 import { creativeImageLoop } from './creative/lanes/creativeImageLane.js';
 import { metaAdLoop } from './marketing/metaAdLane.js';
+import { refreshCycleLoop } from './marketing/refreshLane.js';
 import { designReadLoop } from './creative/lanes/designReadLane.js';
 import { assetMetaLaneLoop as assetMetaLoop } from './creative/lanes/assetMetaLane.js';
 import type { LaneDeps } from './creative/lanes/types.js';
@@ -3608,6 +3609,13 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
     // design approval hands the caption + ad creation to this lane. Idles
     // (logged once) while the worker has no Meta credentials.
     metaAdLoop(creativeLaneDeps),
+    // Weekly paid creative refresh (campaign planning, 2026-09-13): a SWEEP
+    // lane — ranks cycles whose decision is due, applies decided ones on Meta
+    // (activate → verify ACTIVE → only then pause), and fills
+    // mos_ad_metrics_daily with one batched insights call an hour. Idles
+    // (logged once) while planning.refresh_loop_enabled is off or the planning
+    // tables are not in the database yet.
+    refreshCycleLoop(creativeLaneDeps),
   );
   console.log('[worker] creative director lanes registered (flags gate actual runs)');
   // ── end creative director lanes ──
