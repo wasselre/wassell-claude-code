@@ -112,6 +112,28 @@ describe('lone distinctive words are WEAK, never auto-accepted', () => {
   });
 });
 
+describe('partial names (two consecutive words incl. a distinctive one) are strong', () => {
+  const idx: ProjectAlias[] = [
+    { projectId: 'jadeel', nameAr: 'أدوار جديل الرمال', nameEn: null, tokens: [] },
+    { projectId: 'other-adwar', nameAr: 'أدوار النخيل', nameEn: null, tokens: [] }, // makes أدوار common
+  ];
+  const o = { publisherProjectIds: ['jadeel'], commonTokens: computeCommonTokens(idx), excludedTokens: new Set(['الرمال', 'النخيل']) };
+  it('«أدوار جديل» links to أدوار جديل الرمال as a full-name match', () => {
+    const r = attributeCaption('تشهد أدوار جديل اكتمالاً في التفاصيل وإنجازًا في أعمالها النهائية', [idx[0]!], o);
+    expect(r.map((x) => x.projectId)).toEqual(['jadeel']);
+    expect(r[0]!.strength).toBe('full_name');
+    expect(r[0]!.autoAccept).toBe(true);
+  });
+  it('«جديل» alone stays a weak lone word', () => {
+    const r = attributeCaption('مشروع جديل يقترب من الاكتمال', [idx[0]!], o);
+    expect(r[0]!.strength).toBe('word');
+  });
+  it('two non-distinctive words together («أدوار الرمال») are not a match', () => {
+    const r = attributeCaption('أدوار الرمال تجربة مختلفة', [idx[0]!], o);
+    expect(r).toEqual([]);
+  });
+});
+
 describe('name variants', () => {
   it('parenthesised alternates and dash segments become variants', () => {
     const v = projectNameVariants(CATALOG.find((p) => p.projectId === 'majdiah-village')!);

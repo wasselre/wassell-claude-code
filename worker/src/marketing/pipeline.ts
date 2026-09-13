@@ -251,6 +251,24 @@ export function attributeCaption(
       if (vw.length === 1 && (isCommon(v) || isExcluded(v))) continue;
       if (phrasePresent(nt, v)) { matched.push(v); strength = 'full_name'; }
     }
+    // 1b. a PARTIAL name — two consecutive words of a longer name that include
+    //     a distinctive word ("أدوار جديل" for "أدوار جديل الرمال", "جديل
+    //     الرمال"). People shorten names; the pair is still a concrete
+    //     reference, unlike a lone word. Two common/excluded words together
+    //     ("أدوار الرمال") are not.
+    if (!strength) {
+      for (const v of projectNameVariants(a)) {
+        const vw = v.split(' ');
+        if (vw.length < 3) continue;
+        for (let i = 0; i + 1 < vw.length; i++) {
+          const pair = `${vw[i]} ${vw[i + 1]}`;
+          if (/^\d+$/.test(vw[i]!) || /^\d+$/.test(vw[i + 1]!)) continue;
+          if (!(distinctiveWords.includes(vw[i]!) || distinctiveWords.includes(vw[i + 1]!))) continue;
+          if (brandPhrases.has(pair)) continue;
+          if (phrasePresent(nt, pair)) { matched.push(pair); strength = 'full_name'; }
+        }
+      }
+    }
     // 2. a LONG number (≥3 digits) standalone — distinctive on its own (174, 163)
     if (!strength) {
       for (const num of nums) if (num.length >= 3 && new RegExp(`(^|\\D)${num}(\\D|$)`).test(nt)) { matched.push(num); strength = 'number'; }
