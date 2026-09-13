@@ -28,6 +28,8 @@ const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // working) instead of inserting a new batch.
 const RUN = process.env.CALIB_RUN?.trim() || 'calib-001';
 const BATCH_ID = process.env.CALIB_BATCH_ID?.trim() || '';
+// CALIB_LABEL: label for a NEW batch (defaults to the run id).
+const LABEL = process.env.CALIB_LABEL?.trim() || RUN;
 
 // The 26 stratified DEV proxy-positive calibration clients (see report for the
 // per-category breakdown). Deterministic list captured from the selection query.
@@ -90,7 +92,7 @@ describe.skipIf(!process.env.RUN_CALIB || !URL_ || !KEY)('CALIBRATION run (persi
       console.log('[CALIB] labeling batch REFRESHED:', batch?.id, batch?.label, 'subjects:', subjects.length);
     } else {
       const { data: batch, error: bErr } = await supabase.from('geo_pref_calibration_batch').insert({
-        label: RUN, split: 'dev', status: 'open', adjudication_open: false, subjects,
+        label: LABEL, split: 'dev', status: 'open', adjudication_open: false, subjects,
         assignments: [
           { annotator_id: '00000000-0000-0000-0000-0000000000a1', role: 'meaning' },
           { annotator_id: '00000000-0000-0000-0000-0000000000a2', role: 'meaning' },
