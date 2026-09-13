@@ -33,7 +33,8 @@ const LABEL = process.env.CALIB_LABEL?.trim() || RUN;
 
 // The 26 stratified DEV proxy-positive calibration clients (see report for the
 // per-category breakdown). Deterministic list captured from the selection query.
-const CLIENTS = [
+// CALIB_CLIENTS (comma-separated uuids) overrides it for a different cohort.
+const DEFAULT_CLIENTS = [
   '088b82db-3f2c-42a8-8f3b-fbc46625c3fb','1cbca1a8-a773-4aa4-a833-29384b66f4e3','1ecd790d-4b45-4975-ba31-cc766437d1ae',
   '2639ff1c-71e5-4704-a220-312ab7b979f5','44de75e5-c6d8-49c3-9568-9b9349792357','4b91d26c-b2ea-48bb-866f-b8459dec9f30',
   '4f3aa350-d57a-467a-b4e7-410200aacaff','5535106b-4603-44ed-a8ca-e4bf60267afc','5fc56ec9-e02a-4f34-81a9-e7aae21de405',
@@ -44,6 +45,10 @@ const CLIENTS = [
   'c69d996e-db60-4015-aa85-b62bc55874ab','c7d831ea-403e-44a1-881f-19f335667809','c9313d1f-bbe7-4f35-a16a-b5c7c368b6aa',
   'cd3a88c9-9666-4629-bb1a-e104e7b13390','f71a4c27-de60-4734-adf9-e2fd90af0875',
 ];
+
+const CLIENTS: string[] = (process.env.CALIB_CLIENTS ?? '').split(',').map((s) => s.trim()).filter(Boolean).length
+  ? (process.env.CALIB_CLIENTS ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+  : DEFAULT_CLIENTS;
 
 let supabase: SupabaseClient;
 beforeAll(() => { if (URL_ && KEY) supabase = createClient(URL_, KEY, { auth: { persistSession: false } }); });

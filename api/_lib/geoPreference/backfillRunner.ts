@@ -38,7 +38,7 @@ import type {
   OrchestratorPorts,
   ProposalStore,
 } from './orchestrator.js';
-import type { Evidence, EvidenceRelation } from './ontology.js';
+import type { Evidence, EvidenceRelation, RelationMemberRef } from './ontology.js';
 
 /** A claimed geo_pref_backfill_jobs row. */
 export interface BackfillJob {
@@ -110,7 +110,7 @@ export interface BackfillDeps {
     conversation: Conversation,
     evidence: Evidence[],
     relations: EvidenceRelation[],
-  ): Promise<{ checkpointId: string; evidenceIds: string[] }>;
+  ): Promise<{ checkpointId: string; evidenceIds: string[]; idMap?: Record<string, string> }>;
   /** Optional structured logger. */
   log?(msg: string): void;
 }
@@ -148,11 +148,16 @@ export async function processBackfillJob(
     // idempotent per conversation and the proposal store dedups per checkpoint).
     let hadProposal = false;
     for (const conversation of conversations) {
-      const { evidence, relations } = await deps.extract(conversation);
+      const extracted = await deps.extract(conversation);
+      let { evidence, relations } = extracted;
       let checkpointId: string | null = null;
       if (deps.persistExtraction) {
         const persisted = await deps.persistExtraction(job.clientId, conversation, evidence, relations);
         checkpointId = persisted.checkpointId;
+        // Persistence re-mints evidence ids. Review on the PERSISTED ids so the
+        // compiled expression's `geo:<id>` refs and the proposal's
+        // source_evidence_ids point at real geo_pref_evidence rows.
+        if (persisted.idMap) ({ evidence, relations } = remapExtractionIds(evidence, relations, persisted.idMap));
       }
       const ctx = await deps.buildRunContext(job.clientId, evidence.length);
       if (checkpointId) ctx.checkpoint_id = checkpointId;
@@ -181,6 +186,25 @@ export async function processBackfillJob(
     log(`[geo-backfill] client=${job.clientId} FAILED: ${msg}`);
     return { jobId: job.jobId, clientId: job.clientId, status: 'failed', hadProposal: false, error: msg };
   }
+}
+
+/** Rewrite extractor-minted evidence ids (and every relation ref) to persisted ids. PURE. */
+export function remapExtractionIds(
+  evidence: Evidence[],
+  relations: EvidenceRelation[],
+  idMap: Record<string, string>,
+): { evidence: Evidence[]; relations: EvidenceRelation[] } {
+  const map = (id: string): string => idMap[id] ?? id;
+  const ref = (r: RelationMemberRef): RelationMemberRef => (r.type === 'evidence' ? { type: 'evidence', id: map(r.id) } : { ...r });
+  return {
+    evidence: evidence.map((e) => ({ ...e, id: map(e.id) })),
+    relations: relations.map((r) => ({
+      ...r,
+      members: r.members.map(ref),
+      ...(r.ordering ? { ordering: r.ordering.map(ref) } : {}),
+      ...(r.target ? { target: ref(r.target) } : {}),
+    })),
+  };
 }
 
 /**

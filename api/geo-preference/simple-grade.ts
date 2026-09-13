@@ -20,6 +20,35 @@
  */
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import { makeServiceClient } from '../_lib/serviceClient.js';
+import { geoPreferenceToLocationItems } from './review.js';
+import type { GeoPreference } from '../_lib/geoPreference/ontology.js';
+
+const isUuid = (v: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
+/** Per-mention placement from a compiled expression: `geo:<evidence id>` refs → recipe. */
+interface Placement { polarity: 'include' | 'exclude'; operation: string; element_ids: string[]; resolved: boolean; label: string }
+function placementsByEvidence(expr: GeoPreference | null | undefined): Record<string, Placement> {
+  const out: Record<string, Placement> = {};
+  if (!expr || !Array.isArray(expr.groups)) return out;
+  for (const g of expr.groups) {
+    for (const c of g.clauses ?? []) {
+      for (const ref of c.anyOf ?? []) {
+        const eid = typeof ref.geometry_id === 'string' && ref.geometry_id.startsWith('geo:') ? ref.geometry_id.slice(4) : '';
+        const r = ref.recipe;
+        if (!eid || !r) continue;
+        const ids = Array.isArray(r.resolved_element_ids) ? r.resolved_element_ids.map(String) : [];
+        out[eid] = {
+          polarity: c.op === 'exclude' ? 'exclude' : 'include',
+          operation: String(r.operation ?? ''),
+          element_ids: ids,
+          resolved: r.geo_data_version !== 'stub' && ids.length > 0,
+          label: (Array.isArray(r.source_anchors) ? r.source_anchors : []).map((a) => a.span).filter(Boolean).join(' / '),
+        };
+      }
+    }
+  }
+  return out;
+}
 
 export const config = { runtime: 'edge' };
 
@@ -73,6 +102,63 @@ export default async function handler(req: Request): Promise<Response> {
       const { data: mine } = await sb.from('geo_pref_labels')
         .select('subject_ref, value').eq('batch_id', batchId).eq('annotator_id', user.userId).eq('field', 'overall.verdict');
       const verdictOf = new Map<string, string | null>((mine ?? []).map((m) => [m.subject_ref as string, m.value as string | null]));
+      const { data: mapMine } = await sb.from('geo_pref_labels')
+        .select('subject_ref, value').eq('batch_id', batchId).eq('annotator_id', user.userId).eq('field', 'map.verdict');
+      const mapVerdictOf = new Map<string, string | null>((mapMine ?? []).map((m) => [m.subject_ref as string, m.value as string | null]));
+
+      // ── Conversation view: checkpoint + proposal (what the AI put on the map) per conversation ──
+      const convIds = [...new Set((evs ?? []).map((e) => e.conversation_id as string).filter(Boolean))];
+      const cpByConv = new Map<string, string>();
+      if (convIds.length) {
+        const { data: cps, error: cpErr } = await sb.from('geo_pref_checkpoints').select('id, conversation_id').in('conversation_id', convIds).eq('origin_tag', 'model');
+        if (cpErr) return jsonError(500, `checkpoints read failed: ${cpErr.message}`);
+        for (const c of cps ?? []) cpByConv.set(c.conversation_id as string, c.id as string);
+      }
+      const propByCp = new Map<string, { id: string; proposed_action: string; expression: GeoPreference }>();
+      const cpIds = [...cpByConv.values()];
+      if (cpIds.length) {
+        const { data: props, error: pErr } = await sb.from('geo_pref_proposals')
+          .select('id, checkpoint_id, proposed_action, proposed_expression, final_expression, status, created_at')
+          .in('checkpoint_id', cpIds).order('created_at', { ascending: false });
+        if (pErr) return jsonError(500, `proposals read failed: ${pErr.message}`);
+        for (const p of props ?? []) {
+          const cp = p.checkpoint_id as string;
+          if (propByCp.has(cp)) continue; // newest wins
+          propByCp.set(cp, { id: p.id as string, proposed_action: p.proposed_action as string, expression: ((p.final_expression ?? p.proposed_expression) as GeoPreference) });
+        }
+      }
+      const districtIds = new Set<string>();
+      const conversations = convIds.map((cid) => {
+        const rows = (evs ?? []).filter((e) => e.conversation_id === cid);
+        const first = rows[0]!;
+        const cpId = cpByConv.get(cid) ?? null;
+        const prop = cpId ? propByCp.get(cpId) : undefined;
+        let proposal: null | { id: string; action: string; items: ReturnType<typeof geoPreferenceToLocationItems>; by_evidence: Record<string, Placement> } = null;
+        if (prop) {
+          const items = geoPreferenceToLocationItems(prop.expression).filter((li) => li.kind !== 'district' || isUuid(li.district_id));
+          const by_evidence = placementsByEvidence(prop.expression);
+          for (const li of items) if (li.kind === 'district') districtIds.add(li.district_id);
+          for (const pl of Object.values(by_evidence)) for (const id of pl.element_ids) if (isUuid(id)) districtIds.add(id);
+          proposal = { id: prop.id, action: prop.proposed_action, items, by_evidence };
+        }
+        return {
+          conversation_id: cid,
+          client_id: first.client_id as string,
+          client: nameOf.get(first.client_id as string) ?? '',
+          channel: first.source_channel === 'call' ? 'call' : 'chat',
+          timestamp: (first.source_timestamp as string | null) ?? null,
+          evidence_ids: rows.map((e) => e.id as string),
+          checkpoint_id: cpId,
+          proposal,
+          map_verdict: cpId ? (mapVerdictOf.get(cpId) ?? null) : null,
+        };
+      });
+      const districts: Record<string, { name_ar: string; name_en: string; city: string }> = {};
+      if (districtIds.size) {
+        const { data: ds, error: dErr } = await sb.from('districts').select('id, name_ar, name_en, city_name_ar').in('id', [...districtIds]);
+        if (dErr) return jsonError(500, `districts read failed: ${dErr.message}`);
+        for (const d of ds ?? []) districts[d.id as string] = { name_ar: String(d.name_ar ?? ''), name_en: String(d.name_en ?? ''), city: String(d.city_name_ar ?? '') };
+      }
 
       // The SOURCE the AI read — so a grader can verify — keyed by the REAL
       // conversation: one entry per phone call (its record id) and per WhatsApp
@@ -135,13 +221,23 @@ export default async function handler(req: Request): Promise<Response> {
         conversation_id: e.conversation_id,
         my_verdict: verdictOf.get(e.id as string) ?? null,
       }));
-      return jsonOk({ batch: { id: b.id, label: b.label }, items, transcripts, total: items.length, graded: items.filter((i) => i.my_verdict).length });
+      return jsonOk({ batch: { id: b.id, label: b.label }, items, transcripts, conversations, districts, total: items.length, graded: items.filter((i) => i.my_verdict).length });
     }
 
-    // ── POST: save one verdict (upsert; re-grading edits) ──
+    // ── POST: save one verdict (upsert; re-grading edits) — a mention's, or a conversation's MAP verdict ──
     if (req.method === 'POST') {
-      let body: { batch?: string; evidence_id?: string; verdict?: string; note?: string };
+      let body: { batch?: string; evidence_id?: string; verdict?: string; note?: string; checkpoint_id?: string; map_verdict?: string };
       try { body = (await req.json()) as typeof body; } catch { return jsonError(400, 'invalid JSON'); }
+      if (body.checkpoint_id && body.map_verdict) {
+        if (!body.batch) return jsonError(400, 'batch required');
+        if (!VERDICTS.has(body.map_verdict)) return jsonError(400, 'map_verdict must be right|wrong|unsure');
+        const { error } = await sb.from('geo_pref_labels').upsert(
+          { batch_id: body.batch, subject_kind: 'checkpoint', subject_ref: body.checkpoint_id, annotator_id: user.userId, role: 'geo_operator', round: 'blind', is_escape: false, field: 'map.verdict', value: body.map_verdict },
+          { onConflict: 'batch_id,subject_ref,field,annotator_id,round' },
+        );
+        if (error) return jsonError(500, `save failed: ${error.message}`);
+        return jsonOk({ ok: true });
+      }
       if (!body.batch || !body.evidence_id) return jsonError(400, 'batch + evidence_id required');
       if (!body.verdict || !VERDICTS.has(body.verdict)) return jsonError(400, "verdict must be right|wrong|unsure");
 

@@ -51,6 +51,8 @@ export interface ProposalInput {
   proposed_action: ProposalAction;
   proposed_expression: GeoPreference;
   gate_signals: GateSignals;
+  /** The evidence rows (persisted ids) this proposal was compiled from. */
+  source_evidence_ids?: string[];
 }
 
 export interface ProposalRecord extends ProposalInput {
@@ -146,9 +148,19 @@ export async function runReviewFirst(
     },
   );
 
-  // 2. Compile adjudicated evidence + relations into a Boolean expression.
+  // 2. Compile adjudicated evidence + relations into a Boolean expression, then
+  //    overwrite each mention's STUB recipe (names, geo_data_version='stub') with
+  //    the resolver's REAL recipe (district / element ids) wherever every anchor
+  //    of that mention resolved. Until 2026-09-13 the resolver's output only fed
+  //    the gate signals and the stored expression carried names — so nothing was
+  //    ever actually "selected on the map".
   const compileResult = compile(evidence, relations);
-  const compiled = compileResult.preference;
+  const merged = mergeResolutionsIntoPreference(compileResult.preference, evidence, resolutions);
+  const compiled = merged.preference;
+  obs.event({
+    stage: 'resolution', outcome: 'ok', ...meta, result: 'merged',
+    detail: { resolved_mentions: merged.resolved_evidence, unresolved_mentions: merged.unresolved_evidence },
+  });
 
   // 3. Static satisfiability of the compiled expression against the universe.
   const satisfiability = classify(compiled, ctx.universe);
@@ -183,6 +195,7 @@ export async function runReviewFirst(
           proposed_action: action,
           proposed_expression: compiled,
           gate_signals: signals,
+          source_evidence_ids: evidence.map((e) => e.id),
         }),
     );
   } else {
@@ -190,6 +203,74 @@ export async function runReviewFirst(
   }
 
   return { decision, proposal, signals, ambiguity, compiled, satisfiability, resolutions };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Resolution → compiled expression. PURE.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Operations whose geometry is a union of admin polygons (mergeable into one district_union). */
+const ADMIN_UNION_OPS = new Set<string>(['district_polygon', 'district_union', 'zone_union', 'pin_containing_district']);
+
+export interface MergedPreference {
+  preference: GeoPreference;
+  /** Mentions whose stub recipe was replaced by resolver output. */
+  resolved_evidence: number;
+  /** Mentions left as stubs (some anchor needs_confirm / unresolvable). */
+  unresolved_evidence: number;
+}
+
+/**
+ * Overwrite the compiler's per-mention stub recipes with the resolver's recipes.
+ * `resolutions` is in evidence × anchor order (exactly how runReviewFirst
+ * produced it). A mention is replaced only when EVERY anchor resolved — a
+ * partial result is never mixed (ids beside names) so consumers can trust that
+ * `geo_data_version !== 'stub'` means "real ids". Never mutates its inputs.
+ */
+export function mergeResolutionsIntoPreference(
+  pref: GeoPreference,
+  evidence: Evidence[],
+  resolutions: ResolutionResult[],
+): MergedPreference {
+  const perEvidence = new Map<string, ResolutionResult[]>();
+  let cursor = 0;
+  for (const e of evidence) {
+    perEvidence.set(e.id, resolutions.slice(cursor, cursor + e.anchors.length));
+    cursor += e.anchors.length;
+  }
+  const evById = new Map(evidence.map((e) => [e.id, e] as const));
+
+  const out = JSON.parse(JSON.stringify(pref)) as GeoPreference;
+  let resolved = 0;
+  let unresolved = 0;
+  for (const group of out.groups ?? []) {
+    for (const clause of group.clauses ?? []) {
+      for (const ref of clause.anyOf ?? []) {
+        const eid = typeof ref.geometry_id === 'string' && ref.geometry_id.startsWith('geo:') ? ref.geometry_id.slice(4) : '';
+        const ev = eid ? evById.get(eid) : undefined;
+        const rs = eid ? perEvidence.get(eid) : undefined;
+        if (!ev || !rs || rs.length === 0) continue;
+        const allResolved = rs.every((r) => r.status === 'resolved' && r.recipe);
+        if (!allResolved) { unresolved += 1; continue; }
+        const recipes = rs.map((r) => r.recipe!);
+        if (recipes.length === 1) {
+          ref.recipe = { ...recipes[0]!, source_anchors: ev.anchors };
+        } else {
+          const ids = Array.from(new Set(recipes.flatMap((r) => r.resolved_element_ids)));
+          const primary = recipes.find((r) => !ADMIN_UNION_OPS.has(r.operation)) ?? recipes[0]!;
+          const allAdmin = recipes.every((r) => ADMIN_UNION_OPS.has(r.operation));
+          ref.recipe = {
+            ...primary,
+            operation: allAdmin ? 'district_union' : primary.operation,
+            source_anchors: ev.anchors,
+            resolved_element_ids: ids,
+          };
+        }
+        resolved += 1;
+      }
+    }
+  }
+  return { preference: out, resolved_evidence: resolved, unresolved_evidence: unresolved };
 }
 
 // ────────────────────────────────────────────────────────────────────────────

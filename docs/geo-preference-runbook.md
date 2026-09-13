@@ -104,6 +104,15 @@ Extractor version bumped to `geo-extract/v8`.
 
 Agent-only chat threads (the customer never wrote) are skipped — nothing to interpret.
 
+**Proposals carry REAL district ids (2026-09-13, third pass).** The orchestrator
+merges the resolver's recipes into the compiled expression
+(`mergeResolutionsIntoPreference`); the resolver runs with the client's
+established city (`preferred_city` if exactly one, else الرياض) so namesake
+districts resolve instead of needs_confirm. `geo_data_version='stub'` on a recipe
+means "names only — the resolver could not pick". The conversation grader
+(`/geo-grade?batch=…&view=chat`) draws these on the map. Run a cohort with
+`CALIB_CLIENTS=<uuid,uuid,…> CALIB_RUN=<run id> CALIB_LABEL=<batch label>`.
+
 **Calls are speaker-labelled from Hatif's diarized words (2026-09-13, second pass).**
 `gatherClientConversations` reads `call_logs.transcription.words[]` for each call
 (same id as the phone_calls record) and `hatifDialogue.ts` turns them into

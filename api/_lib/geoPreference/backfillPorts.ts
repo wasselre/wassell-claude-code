@@ -48,7 +48,7 @@ export async function persistExtraction(
   conversation: Conversation,
   evidence: Evidence[],
   relations: EvidenceRelation[],
-): Promise<{ checkpointId: string; evidenceIds: string[] }> {
+): Promise<{ checkpointId: string; evidenceIds: string[]; idMap: Record<string, string> }> {
   const conversationId = conversation.id;
   if (!conversationId) throw new Error('persistExtraction: conversation has no id (expected a phone_calls id or chat_wid)');
 
@@ -109,7 +109,30 @@ export async function persistExtraction(
     lifecycle_by_mention: {}, origin_tag: 'model',
   }).select('id').single();
   if (cpErr) throw new Error(`persist checkpoint failed: ${cpErr.message}`);
-  return { checkpointId: cp!.id as string, evidenceIds };
+  return { checkpointId: cp!.id as string, evidenceIds, idMap: Object.fromEntries(idMap) };
+}
+
+/** Organisational default universe: Wassel sells in Riyadh, so a bare district
+ *  name («النرجس» — 6 namesakes across the Kingdom) resolves against Riyadh
+ *  unless the client record says otherwise. */
+export const DEFAULT_ESTABLISHED_CITY = 'الرياض';
+
+/**
+ * The client's established city for the resolver: their `preferred_city`
+ * (clients model multiselect of Arabic city names) when exactly ONE is set,
+ * else the organisational default. Without this every namesake district was
+ * needs_confirm (margin 0) and no proposal ever carried a real district id.
+ */
+export async function clientEstablishedCity(
+  supabase: SupabaseClient, clientId: string,
+): Promise<{ city: string; universe: 'explicit' | 'organizational_default' }> {
+  const { data, error } = await supabase.from('unified_records').select('data').eq('id', clientId).maybeSingle();
+  if (error) throw new Error(`gather: client read for established city failed: ${error.message}`);
+  const pc = (data?.data as Record<string, unknown> | null)?.preferred_city;
+  if (Array.isArray(pc) && pc.length === 1 && typeof pc[0] === 'string' && pc[0].trim()) {
+    return { city: pc[0].trim(), universe: 'explicit' };
+  }
+  return { city: DEFAULT_ESTABLISHED_CITY, universe: 'organizational_default' };
 }
 
 // Bounds so a very chatty client can't blow the extractor's token budget.
@@ -321,6 +344,7 @@ export function createSupabaseProposalStore(supabase: SupabaseClient): ProposalS
           proposed_action: input.proposed_action,
           proposed_expression: input.proposed_expression,
           gate_signals: input.gate_signals,
+          source_evidence_ids: input.source_evidence_ids ?? [],
           status: 'pending',
         })
         .select('id, client_id, checkpoint_id, proposed_action, proposed_expression, gate_signals, status')
@@ -376,6 +400,7 @@ export function makeSupabaseBackfillDeps(
     extract,
     async buildRunContext(clientId: string, evidenceCount: number): Promise<RunContext> {
       const config = await loadGateConfig(supabase);
+      const established = await clientEstablishedCity(supabase, clientId);
       return {
         client_id: clientId,
         checkpoint_id: null,
@@ -383,7 +408,12 @@ export function makeSupabaseBackfillDeps(
         // proposal). Any active evidence ⇒ 'propose' (gate → 'confirm', a
         // review-first pending proposal, since auto_write is off).
         maximum_safe_action: evidenceCount > 0 ? 'propose' : 'ignore',
-        resolution: { db: resolverDb, preferCountry: DEFAULT_GEO_COUNTRY },
+        resolution: {
+          db: resolverDb,
+          preferCountry: DEFAULT_GEO_COUNTRY,
+          established_city: established.city,
+          universe_hint: established.universe,
+        },
         universe: INERT_UNIVERSE,
         config,
       };

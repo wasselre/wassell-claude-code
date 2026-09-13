@@ -68,9 +68,11 @@ class FakeQueue {
 // ── fake proposal store: dedup on (client_id, checkpoint_id) among 'pending' ──
 class FakeProposalStore implements ProposalStore {
   rows: Array<{ id: string; client_id: string; checkpoint_id: string | null; status: 'pending' }> = [];
+  inputs: ProposalInput[] = [];
   inserts = 0;
   private seq = 0;
   async createProposal(input: ProposalInput): Promise<ProposalRecord> {
+    this.inputs.push(input);
     const existing = this.rows.find(
       (r) => r.client_id === input.client_id && r.checkpoint_id === (input.checkpoint_id ?? null),
     );
@@ -236,7 +238,9 @@ describe('geo backfill — processing', () => {
       // Fake persistence mints ONE checkpoint per conversation (as the real one does).
       persistExtraction: async (_clientId, conversation, evidence) => {
         persisted.push({ conversationId: conversation.id, sources: evidence.map((e) => e.source) });
-        return { checkpointId: `cp-${conversation.id}`, evidenceIds: evidence.map((e) => e.id) };
+        // Mint "database" ids like the real persist does.
+        const idMap = Object.fromEntries(evidence.map((e, i) => [e.id, `db-${conversation.id}-${i + 1}`]));
+        return { checkpointId: `cp-${conversation.id}`, evidenceIds: Object.values(idMap), idMap };
       },
     };
     queue.enqueue('run-f', ['both']);
@@ -257,6 +261,14 @@ describe('geo backfill — processing', () => {
     const mine = store.rows.filter((r) => r.client_id === 'both');
     expect(mine.map((r) => r.checkpoint_id).sort()).toEqual(['cp-966500000001@c.us', 'cp-call-rec-1']);
     expect(store.inserts).toBe(2);
+    // The proposal references the PERSISTED evidence ids, and its expression's
+    // geometry refs use the same ids (so the grader can join them).
+    for (const input of store.inputs) {
+      expect(input.source_evidence_ids!.length).toBeGreaterThan(0);
+      for (const id of input.source_evidence_ids!) expect(id).toMatch(/^db-/);
+      const refs = input.proposed_expression.groups.flatMap((g) => g.clauses.flatMap((c) => c.anyOf));
+      for (const r of refs) expect(input.source_evidence_ids).toContain(r.geometry_id.replace(/^geo:/, ''));
+    }
   });
 
   it('a client with no history completes without a proposal', async () => {
