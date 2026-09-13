@@ -16,11 +16,12 @@ import { storeCreative } from './creativeStore.js';
 import { normalizeLandingUrl, campaignSignature, urlKey, insightKey } from './adIntel.js';
 import { scoreCandidates, decideAutoConfirm, type OrgIdentity } from './advertiserScoring.js';
 import {
-  attributeCaption, shouldSnapshot, browserbaseFallbackEligible, computeCommonTokens, normalizeAr,
+  attributeCaption, shouldSnapshot, browserbaseFallbackEligible,
   type ProjectAlias, type Metrics,
 } from './pipeline.js';
 import { runOrganizationDiscovery } from './discovery/discoveryEngine.js';
 import { runContentProcess } from './content/runContentProcess.js';
+import { loadAttributionContext, publisherProjects, scopedIndex, type AttributionContext } from './content/attributionContext.js';
 import { runCampaignGroup } from './content/runCampaignGroup.js';
 import { runAssetProcess } from './assets/runAssetProcess.js';
 
@@ -36,66 +37,19 @@ interface RunStats { received: number; inserted: number; updated: number; skippe
 // (a developer posts about ITS projects). Matching against all 980 all_projects
 // produced hundreds of number-collision false candidates — scoping fixes both the
 // noise and the correctness ("don't assign a post to unrelated projects").
-async function loadProjectIndex(sb: SupabaseClient, projectIds: string[]): Promise<ProjectAlias[]> {
-  if (projectIds.length === 0) return [];
-  const { data } = await sb
-    .from('unified_records')
-    .select('id, data')
-    .eq('model_id', '220c49b9-de57-492d-9eca-c0d9f54fd40f') // all_projects
-    .in('id', projectIds);
-  return (data ?? []).map((r) => {
-    const d = (r.data ?? {}) as Record<string, unknown>;
-    return { projectId: r.id as string, nameAr: (d.project_name as string) ?? null, nameEn: (d.project_name_en as string) ?? null, tokens: [] };
-  }).filter((p) => p.nameAr || p.nameEn);
-}
-
-/** ALL project names — used only to compute the global common-token set. */
-async function loadAllProjectNames(sb: SupabaseClient): Promise<ProjectAlias[]> {
-  const { data } = await sb
-    .from('unified_records')
-    .select('id, data')
-    .eq('model_id', '220c49b9-de57-492d-9eca-c0d9f54fd40f');
-  return (data ?? []).map((r) => {
-    const d = (r.data ?? {}) as Record<string, unknown>;
-    return { projectId: r.id as string, nameAr: (d.project_name as string) ?? null, nameEn: (d.project_name_en as string) ?? null, tokens: [] };
-  }).filter((p) => p.nameAr || p.nameEn);
-}
-
 /**
- * Developer / marketer NAMES are never distinctive for a SPECIFIC project — a
- * project is usually "<developer> <number/suffix>" (الماجدية 174, ريفييرا 61) and
- * the developer's logo/name sits on every post, including pure brand posts. So
- * treat every tracked org's name tokens as non-distinctive: a match on the
- * developer name ALONE must never score as a project match. This fixes the case
- * computeCommonTokens misses — a developer with a SINGLE catalogued project, where
- * the ≥2-project frequency rule never flags the developer word, so a logo-only
- * brand post scored 0.95 for that one project (the ديارا مشارف / آبه incidents).
+ * Everything the matcher needs for one publisher, from the SHARED loader
+ * (content/attributionContext.ts) — the same catalog, common-token set, brand /
+ * place exclusions and live developer-field project scope the content pipeline
+ * uses, so ingest-time attribution and the AI's candidate list can never drift
+ * apart again (they did: this file excluded developer names, the content path
+ * did not, and the content path is the one that feeds the runner).
  */
-async function loadDeveloperTokens(sb: SupabaseClient): Promise<string[]> {
-  const out = new Set<string>();
-  const { data } = await sb.from('mkt_organizations').select('name_ar, name_en');
-  for (const r of data ?? []) {
-    for (const raw of [r.name_ar as string | null, r.name_en as string | null]) {
-      for (const w of normalizeAr(raw).split(/\s+/)) {
-        if (w.length >= 3 && !/^\d+$/.test(w)) out.add(w);
-      }
-    }
-  }
-  return [...out];
-}
-
-/** Global non-distinctive token set: series/developer names shared across ≥2
- *  projects PLUS every tracked org's own name tokens (loadDeveloperTokens). */
-async function loadCommonTokens(sb: SupabaseClient): Promise<Set<string>> {
-  const common = computeCommonTokens(await loadAllProjectNames(sb));
-  for (const t of await loadDeveloperTokens(sb)) common.add(t);
-  return common;
-}
-
-async function publisherProjectIds(sb: SupabaseClient, orgId: string | null): Promise<string[]> {
-  if (!orgId) return [];
-  const { data } = await sb.from('mkt_project_organizations').select('project_id').eq('organization_id', orgId);
-  return (data ?? []).map((r) => r.project_id as string);
+async function attributionScope(sb: SupabaseClient, orgId: string | null): Promise<{ ctx: AttributionContext; pubProjects: string[]; index: ProjectAlias[]; matchOpts: Parameters<typeof attributeCaption>[2] }> {
+  const ctx = await loadAttributionContext(sb);
+  const pubProjects = await publisherProjects(sb, ctx, orgId);
+  const index = scopedIndex(ctx, pubProjects);
+  return { ctx, pubProjects, index, matchOpts: { publisherProjectIds: pubProjects, commonTokens: ctx.commonTokens, excludedTokens: ctx.excludedTokens, brandPhrases: ctx.brandPhrases } };
 }
 
 async function lastSnapshot(sb: SupabaseClient, subjectId: string): Promise<{ metrics: Metrics; capturedAt: string } | null> {
@@ -112,8 +66,7 @@ function toMetricsJson(m?: NormalizedMetrics): Metrics {
 // ── ingest one post: raw → upsert → snapshot(suppressed) → attribute ────────
 async function ingestPost(
   ctx: Ctx, post: NormalizedContentPost, orgId: string | null, accountId: string | null,
-  runId: string, index: ProjectAlias[], pubProjects: string[], minIntervalHours: number, stats: RunStats,
-  commonTokens: Set<string>,
+  runId: string, index: ProjectAlias[], matchOpts: Parameters<typeof attributeCaption>[2], minIntervalHours: number, stats: RunStats,
 ): Promise<string | null> {
   const sb = ctx.supabase;
   const rawId = (await sb.rpc('mkt_raw_ingestion_insert', {
@@ -146,7 +99,7 @@ async function ingestPost(
   }
 
   // attribution (caption-based; ownership boosts, never proves)
-  const candidates = attributeCaption(post.caption ?? '', index, { publisherProjectIds: pubProjects, commonTokens });
+  const candidates = attributeCaption(post.caption ?? '', index, matchOpts);
   for (const c of candidates) {
     await sb.rpc('mkt_attribution_upsert', {
       p_content_post_id: row.id, p_project_id: c.projectId, p_method: c.method, p_confidence: c.confidence,
@@ -188,9 +141,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
         stats.errors.push(`discover not implemented for ${job.provider} (handle already known)`);
       }
     } else if (job.kind === 'incremental' || job.kind === 'backfill') {
-      const pubProjects = await publisherProjectIds(sb, orgId);
-      const index = await loadProjectIndex(sb, pubProjects);
-      const commonTokens = await loadCommonTokens(sb);
+      const { index, matchOpts } = await attributionScope(sb, orgId);
       // Explicit params.limit wins (capped 50) — used for bounded validation runs;
       // else backfill uses the settings default, incremental a fixed recent window.
       const paramLimit = typeof job.params.limit === 'number' ? Math.min(50, Math.max(1, job.params.limit)) : null;
@@ -217,7 +168,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       stats.received = batch.posts.length;
       const ingestedIds: string[] = [];
       for (const post of batch.posts) {
-        try { const id = await ingestPost(ctx, post, orgId, acct!.id as string, runId, index, pubProjects, minIntervalHours, stats, commonTokens); if (id) ingestedIds.push(id); }
+        try { const id = await ingestPost(ctx, post, orgId, acct!.id as string, runId, index, matchOpts, minIntervalHours, stats); if (id) ingestedIds.push(id); }
         catch (e) { stats.errors.push(`${post.externalId}: ${e instanceof Error ? e.message : String(e)}`); }
       }
       // Media recovery for each freshly-collected post, RIGHT NOW, so ephemeral
@@ -318,7 +269,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       const postId = job.params.content_post_id as string | undefined;
       if (!postId) throw new ProviderError('content_process needs content_post_id', 'config_invalid');
       // params.media_only: recover the bytes and stop (see ContentProcessOptions).
-      const r = await runContentProcess(sb, postId, { mediaOnly: job.params.media_only === true });
+      const r = await runContentProcess(sb, postId, { mediaOnly: job.params.media_only === true, narrowOnly: job.params.mode === 'narrow_only' });
       stats.received = r.media_total;
       stats.inserted = r.media_stored;
       stats.skipped = r.media_failed + r.transcribe_failed;
@@ -388,9 +339,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       const limit = typeof job.params.limit === 'number' ? Math.min(200, Math.max(1, job.params.limit)) : 50;
       const result = await collectMetaAdsByPage(sb, { pageId: orgRow.meta_page_id as string, country: (job.params.country as string) ?? 'SA', limit });
       apifyCost = result.cost;
-      const pubProjects = await publisherProjectIds(sb, adOrgId);
-      const index = await loadProjectIndex(sb, pubProjects);
-      const commonTokens = await loadCommonTokens(sb);
+      const { index, matchOpts } = await attributionScope(sb, adOrgId);
       const seen: string[] = [];
       const touchedCampaigns = new Set<string>();
       const newCampaignIds = new Set<string>();
@@ -441,7 +390,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
           if (stored?.fingerprint) fpCounts.set(stored.fingerprint, (fpCounts.get(stored.fingerprint) ?? 0) + 1);
           // attribution (ad text → monitored developer's projects)
           const text = [ad.headline, ad.body, ad.description].filter(Boolean).join(' ');
-          for (const c of attributeCaption(text, index, { publisherProjectIds: pubProjects, commonTokens })) {
+          for (const c of attributeCaption(text, index, matchOpts)) {
             await sb.rpc('mkt_ad_attribution_upsert', { p_paid_ad_id: up.id, p_project_id: c.projectId, p_method: c.method, p_confidence: c.confidence, p_evidence: c.evidence, p_auto_accept: c.autoAccept });
           }
           // per-new-creative insight + notification
@@ -484,14 +433,12 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
     } else if (job.kind === 'attribution' || job.kind === 'reprocess') {
       const { data: posts } = await sb.from('mkt_content_posts').select('id, caption, organization_id').limit(500);
       stats.received = posts?.length ?? 0;
-      const commonTokens = await loadCommonTokens(sb);
-      const indexCache = new Map<string, ProjectAlias[]>();
+      const scopeCache = new Map<string, Awaited<ReturnType<typeof attributionScope>>>();
       for (const p of posts ?? []) {
         const org = (p.organization_id as string) ?? '';
-        const pub = await publisherProjectIds(sb, org || null);
-        let index = indexCache.get(org);
-        if (!index) { index = await loadProjectIndex(sb, pub); indexCache.set(org, index); }
-        for (const c of attributeCaption((p.caption as string) ?? '', index, { publisherProjectIds: pub, commonTokens })) {
+        let scope = scopeCache.get(org);
+        if (!scope) { scope = await attributionScope(sb, org || null); scopeCache.set(org, scope); }
+        for (const c of attributeCaption((p.caption as string) ?? '', scope.index, scope.matchOpts)) {
           await sb.rpc('mkt_attribution_upsert', { p_content_post_id: p.id, p_project_id: c.projectId, p_method: c.method, p_confidence: c.confidence, p_evidence: c.evidence, p_matched_aliases: c.matchedAliases, p_auto_accept: c.autoAccept });
         }
       }

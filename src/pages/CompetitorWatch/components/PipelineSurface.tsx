@@ -39,6 +39,38 @@ export default function PipelineSurface({ isAr }: { isAr: boolean }) {
         ))}
       </div>
 
+      {data.attribution && (
+        <div className="cw-panel">
+          <div className="cw-panelh"><h3>{isAr ? 'صحة ربط المشاريع' : 'Project-link health'}</h3></div>
+          <div className="cw-panelb">
+            {([
+              { k: 'attributed', ar: 'مرتبط بمشروع', en: 'Linked to a project', v: data.attribution.attributed, tone: 'ok' },
+              { k: 'locked', ar: 'ثبّته إنسان', en: 'Fixed by a person', v: data.attribution.locked, tone: 'ok' },
+              { k: 'name_absent', ar: 'اسم المشروع غائب عن النص', en: 'Project name absent from the text', v: data.attribution.name_absent, tone: 'warn' },
+              { k: 'weak_picks', ar: 'ربط على كلمة واحدة', en: 'Link rests on one word', v: data.attribution.weak_picks, tone: 'warn' },
+              { k: 'unknown_mentions', ar: 'يذكر مشروعًا غير مسجّل', en: 'Names an unknown project', v: data.attribution.unknown_mentions, tone: 'warn' },
+              { k: 'awaiting', ar: 'بانتظار قرار الذكاء', en: 'Awaiting the AI decision', v: data.attribution.awaiting_decision, tone: 'warn' },
+              { k: 'rerun', ar: 'في طابور إعادة الربط', en: 'Queued for re-linking', v: data.attribution.rerun_queued, tone: 'warn' },
+            ] as Array<{ k: string; ar: string; en: string; v: number; tone: string }>).map((st) => {
+              const base = data.attribution!.enriched || 1;
+              const pct = Math.max(1, Math.round((st.v / base) * 100));
+              return (
+                <div className="cw-meter" key={st.k}>
+                  <span className="cw-meterlbl"><span className={`cw-dot ${st.v > 0 || st.tone === 'ok' ? st.tone : 'ok'}`} /> {isAr ? st.ar : st.en}</span>
+                  <span className="cw-track"><span className={`cw-fill ${st.tone}`} style={{ width: `${pct}%` }} /></span>
+                  <span className="cw-meterval cw-mono">{num(st.v)}</span>
+                </div>
+              );
+            })}
+            <p className="cw-note">
+              {isAr
+                ? 'هذه هي الفحوصات نفسها التي كشفت الربط الخاطئ في سبتمبر 2026 — إن ارتفع «اسم المشروع غائب» أو «ربط على كلمة واحدة» فالقواعد تراجعت.'
+                : 'These are the exact checks that exposed the wrong links in September 2026 — if "name absent" or "one word" climb, the rules have regressed.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="cw-panel">
         <div className="cw-panelh"><h3>{isAr ? 'حالة المنشورات' : 'Where posts stand'}</h3></div>
         <div className="cw-panelb">

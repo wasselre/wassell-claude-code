@@ -72,7 +72,9 @@ import { validateSlideReads, validatePostReads } from './lib/visual-design-valid
 // Thrown when Claude reports a subscription/usage limit — the runner parks the
 // job (claude_job_block) and cools down instead of failing/retrying it.
 class RateLimitError extends Error {}
-const ENRICH_RULE_VERSION = 'enrich-runner-v1';
+// v2 (2026-09-13): candidates carry strength/ambiguity, brand words are
+// excluded upstream, and a pick must carry a verbatim evidence quote.
+const ENRICH_RULE_VERSION = 'enrich-runner-v2';
 const CAMPAIGN_SUMMARY_VERSION = 'campaign-summary-v1';
 const DESIGN_READ_RULE_VERSION = 'v1';
 const DESIGN_READ_MODEL = 'claude-runner:design-read';
@@ -390,10 +392,12 @@ async function handleMktContentEnrichment(job) {
         p_primary_project: v.primaryProjectId, p_candidates: v.candidates, p_result: v.result,
         p_cost: 0, p_status: 'done', p_failure: null,
       });
-      if (v.primaryProjectId) {
-        await supa.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: v.primaryProjectId, p_method: 'caption', p_confidence: 0.9, p_evidence: { matched: 'claude-runner', snippet: (ev?.snippet ?? '').slice(0, 160) }, p_matched_aliases: [], p_auto_accept: true });
+      // A human-locked post keeps its project: the upsert RPC preserved the
+      // pointer, and we must not add a competing auto-accepted attribution.
+      if (!v.locked && v.primaryProjectId) {
+        await supa.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: v.primaryProjectId, p_method: 'caption', p_confidence: 0.9, p_evidence: { matched: 'claude-runner', quote: v.evidenceQuote, snippet: (ev?.snippet ?? '').slice(0, 160) }, p_matched_aliases: [], p_auto_accept: true });
       }
-      for (const s of v.secondary) {
+      if (!v.locked) for (const s of v.secondary) {
         await supa.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: s.projectId, p_method: 'caption', p_confidence: s.confidence, p_evidence: { matched: s.matched.join(','), snippet: (ev?.snippet ?? '').slice(0, 160) }, p_matched_aliases: s.matched, p_auto_accept: false });
       }
       await supa.rpc('mkt_content_set_status', { p_post: v.postId, p_status: v.deterministicPartial ? 'partial' : 'processed', p_media_count: null });

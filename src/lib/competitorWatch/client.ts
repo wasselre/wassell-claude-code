@@ -40,6 +40,10 @@ export interface LibraryRow {
   project_record_id: string | null;                // all_projects record when confidently attributed
   thumb_url: string | null;                         // best poster / first image
   media: Array<{ kind: string; url: string }> | null; // every stored image/video
+  attribution_locked: boolean;                      // a human fixed the project — machine re-runs keep it
+  attribution_strength: 'full_name' | 'number' | 'word' | null; // how the chosen candidate matched
+  unknown_projects: string[] | null;                // projects the post names that are not in our catalog / candidates
+  is_general_branding: boolean;
 }
 
 export interface LibraryResult {
@@ -98,10 +102,23 @@ export interface AgentActivity {
   discovery: { last_run: string | null; runs: number; confirmed: number };
   runs: Array<{ provider: string | null; platform: string | null; handle: string | null; received: number | null; inserted: number | null; started_at: string; status: string }>;
 }
+export interface AttributionHealth {
+  enriched: number; attributed: number; locked: number;
+  /** attributed posts whose project name never appears in caption/OCR/transcript */
+  name_absent: number;
+  /** picks resting on a lone word */
+  weak_picks: number;
+  /** posts naming a project we could not link (catalog gap) */
+  unknown_mentions: number;
+  awaiting_decision: number;
+  rerun_queued: number;
+  checked_at: string;
+}
 export interface PipelineHealth {
   collected: number; media_stored: number; media_failed: number; ocr_done: number;
   transcribed: number; enriched: number; facts: number; attributed: number;
   by_status: Record<string, number>;
+  attribution?: AttributionHealth;
 }
 export interface StorageUsage {
   media_bytes: number; media_rows: number; raw_asset_bytes: number;
@@ -153,6 +170,19 @@ export interface AttributionQueue { remaining: number; items: QueueItem[]; }
 
 export const fetchAttributionQueue = (limit = 30) =>
   callAction<AttributionQueue>('attribution_queue', 'queue', { limit });
+
+/** Fix a post's project by hand — null = "no project (general branding)". Locks the post. */
+export async function setAttribution(post_id: string, project_id: string | null, note?: string): Promise<void> {
+  const res = await fetch('/api/marketing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ action: 'attribution_set', post_id, project_id, note: note ?? null }),
+  });
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(b?.error ?? `attribution_set failed (${res.status})`);
+  }
+}
 
 export async function reviewAttribution(post_id: string, project_id: string, accept: boolean): Promise<void> {
   const res = await fetch('/api/marketing', {

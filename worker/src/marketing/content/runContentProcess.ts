@@ -7,7 +7,6 @@
 // from PERMANENT storage (never the expired CDN) and every write is an upsert.
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { computeCommonTokens, type ProjectAlias } from '../pipeline.js';
 import { extractMedia } from './mediaExtract.js';
 import { downloadAndStore, fetchBytes, uploadBytes } from './contentStore.js';
 import { toTempFile, cleanup, probeDurationMs, hasAudioStream, extractAudio, sampleFrames } from './ffmpegMedia.js';
@@ -16,10 +15,9 @@ import { transcribeAudioUrl } from './falTranscribe.js';
 import { readFile } from 'node:fs/promises';
 import { extractVisualText, classifyVisionError, MAX_IMAGES } from './vision.js';
 import { narrowProjects, RULE_VERSION, type NarrowedCandidate } from './enrich.js';
+import { loadAttributionContext, publisherProjects, scopedIndex } from './attributionContext.js';
 import { sha256Hex } from '../adIntel.js';
 import { cvEnabled } from '../cv/settings.js';
-
-const ALL_PROJECTS_MODEL = '220c49b9-de57-492d-9eca-c0d9f54fd40f';
 
 export interface ContentProcessStats {
   post_id: string; media_total: number; media_stored: number; media_failed: number;
@@ -38,16 +36,6 @@ export interface ContentProcessStats {
   degraded: boolean;
 }
 
-async function loadProjectIndex(sb: SupabaseClient, projectIds: string[]): Promise<ProjectAlias[]> {
-  if (projectIds.length === 0) return [];
-  const { data } = await sb.from('unified_records').select('id, data').eq('model_id', ALL_PROJECTS_MODEL).in('id', projectIds);
-  return (data ?? []).map((r) => { const d = (r.data ?? {}) as Record<string, unknown>; return { projectId: r.id as string, nameAr: (d.project_name as string) ?? null, nameEn: (d.project_name_en as string) ?? null, tokens: [] }; }).filter((p) => p.nameAr || p.nameEn);
-}
-async function loadAllProjectNames(sb: SupabaseClient): Promise<ProjectAlias[]> {
-  const { data } = await sb.from('unified_records').select('id, data').eq('model_id', ALL_PROJECTS_MODEL);
-  return (data ?? []).map((r) => { const d = (r.data ?? {}) as Record<string, unknown>; return { projectId: r.id as string, nameAr: (d.project_name as string) ?? null, nameEn: (d.project_name_en as string) ?? null, tokens: [] }; }).filter((p) => p.nameAr || p.nameEn);
-}
-
 export interface ContentProcessOptions {
   /**
    * Media-recovery pass: download + permanently store every media asset, then
@@ -60,6 +48,16 @@ export interface ContentProcessOptions {
    * slow AI lane could cost us the bytes permanently. Split, they cannot.
    */
   mediaOnly?: boolean;
+  /**
+   * Attribution-only pass (2026-09-13): re-score an ALREADY processed post's
+   * project candidates from the evidence it already has (caption + stored
+   * transcript + stored visual text), reset its machine-made attributions and
+   * hand it back to the runner for a fresh decision. Downloads nothing, calls
+   * no vision/transcription — it is what makes "re-run everything" a
+   * candidate-rule change instead of a full reprocess bill. Human-locked
+   * posts are left untouched.
+   */
+  narrowOnly?: boolean;
 }
 
 export async function runContentProcess(sb: SupabaseClient, contentPostId: string, opts: ContentProcessOptions = {}): Promise<ContentProcessStats> {
@@ -76,8 +74,9 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     return stats;
   };
 
-  const { data: post } = await sb.from('mkt_content_posts').select('id, platform, external_id, social_account_id, organization_id, post_type, caption').eq('id', contentPostId).maybeSingle();
+  const { data: post } = await sb.from('mkt_content_posts').select('id, platform, external_id, social_account_id, organization_id, post_type, caption, processing_status').eq('id', contentPostId).maybeSingle();
   if (!post) throw new Error(`content post not found: ${contentPostId}`);
+  if (opts.narrowOnly) return narrowOnlyPass(sb, contentPostId, post as PostRow, stats);
   await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'processing' });
 
   // latest raw payload holds the media URLs (media_refs was historically empty)
@@ -303,13 +302,13 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     stats.fatal_errors.push('no media stored — nothing to process');
     return failPost();
   }
-  const pubProjects = await publisherProjectIds(sb, post.organization_id as string | null);
-  const index = await loadProjectIndex(sb, pubProjects);
-  const commonTokens = computeCommonTokens(await loadAllProjectNames(sb));
+  const ctx = await loadAttributionContext(sb);
+  const pubProjects = await publisherProjects(sb, ctx, post.organization_id as string | null);
+  const index = scopedIndex(ctx, pubProjects);
   const combined = `${post.caption ?? ''}\n${transcriptText}\n${visualTextBlob}`.trim();
   let candidates: NarrowedCandidate[] = [];
   try {
-    candidates = narrowProjects(combined, index, pubProjects, commonTokens);
+    candidates = narrowProjects(combined, index, { publisherProjectIds: pubProjects, commonTokens: ctx.commonTokens, excludedTokens: ctx.excludedTokens, brandPhrases: ctx.brandPhrases });
     const acctIdentity = await accountIdentity(sb, post.social_account_id as string | null);
     await sb.rpc('mkt_enrichment_upsert', {
       p_post: contentPostId, p_model: null, p_rule_version: RULE_VERSION, p_org: post.organization_id,
@@ -333,13 +332,77 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   return stats;
 }
 
-async function publisherProjectIds(sb: SupabaseClient, orgId: string | null): Promise<string[]> {
-  if (!orgId) return [];
-  const { data } = await sb.from('mkt_project_organizations').select('project_id').eq('organization_id', orgId);
-  return (data ?? []).map((r) => r.project_id as string);
-}
 async function accountIdentity(sb: SupabaseClient, accountId: string | null): Promise<string> {
   if (!accountId) return 'unknown';
   const { data } = await sb.from('mkt_social_accounts').select('handle, platform').eq('id', accountId).maybeSingle();
   return data ? `@${data.handle} (${data.platform})` : 'unknown';
+}
+
+interface PostRow {
+  id: string; platform: string; external_id: string; social_account_id: string | null;
+  organization_id: string | null; post_type: string | null; caption: string | null; processing_status: string | null;
+}
+
+/**
+ * The narrow-only pass — see ContentProcessOptions.narrowOnly.
+ *
+ * Outcomes (stats.status):
+ *   locked         a human fixed this post's project; nothing is touched
+ *   no_candidates  the new rules find no project reference at all → the
+ *                  deterministic answer is "no project": the pointer is cleared,
+ *                  machine attributions are reset, no runner call is spent
+ *   renarrowed     candidates changed or exist → pointer cleared, candidates
+ *                  stored, post handed back to the runner (awaiting_intelligence)
+ */
+async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: PostRow, stats: ContentProcessStats): Promise<ContentProcessStats> {
+  const { data: enr, error: enrErr } = await sb.from('mkt_content_enrichment')
+    .select('id, model, rule_version, status, primary_project_id, candidate_projects, result, attribution_locked_at')
+    .eq('content_post_id', contentPostId).maybeSingle();
+  if (enrErr) throw new Error(`narrow: load enrichment: ${enrErr.message}`);
+  if (enr?.attribution_locked_at) { stats.status = 'locked'; return stats; }
+
+  const [{ data: tx, error: txErr }, { data: vt, error: vtErr }] = await Promise.all([
+    sb.from('mkt_transcripts').select('text').eq('content_post_id', contentPostId).eq('status', 'done'),
+    sb.from('mkt_visual_text').select('text').eq('content_post_id', contentPostId),
+  ]);
+  if (txErr) throw new Error(`narrow: load transcripts: ${txErr.message}`);
+  if (vtErr) throw new Error(`narrow: load visual text: ${vtErr.message}`);
+  const transcriptText = (tx ?? []).map((r) => (r.text as string) ?? '').filter(Boolean).join(' ');
+  const visualTextBlob = (vt ?? []).map((r) => (r.text as string) ?? '').filter(Boolean).join(' ');
+  stats.transcribed = tx?.length ?? 0;
+  stats.images_analyzed = vt?.length ?? 0;
+
+  const ctx = await loadAttributionContext(sb);
+  const pubProjects = await publisherProjects(sb, ctx, post.organization_id);
+  const index = scopedIndex(ctx, pubProjects);
+  const combined = `${post.caption ?? ''}\n${transcriptText}\n${visualTextBlob}`.trim();
+  const candidates = narrowProjects(combined, index, { publisherProjectIds: pubProjects, commonTokens: ctx.commonTokens, excludedTokens: ctx.excludedTokens, brandPhrases: ctx.brandPhrases });
+  stats.attributions = candidates.length;
+
+  const prev = ((enr?.result ?? {}) as Record<string, unknown>);
+  const deterministicPartial = prev.deterministic_partial === true || post.processing_status === 'partial';
+  const acctIdentity = await accountIdentity(sb, post.social_account_id);
+  const result = { ...prev, account_identity: acctIdentity, deterministic_partial: deterministicPartial, snippet: combined.slice(0, 160), renarrowed_at: new Date().toISOString(), narrow_rule: RULE_VERSION };
+
+  // Machine-made attributions from the old rules start over; human decisions
+  // (confirmed / rejected) are never touched by this RPC.
+  const { error: resetErr } = await sb.rpc('mkt_attribution_reset_auto', { p_post: contentPostId });
+  if (resetErr) throw new Error(`narrow: reset attributions: ${resetErr.message}`);
+
+  const status = enr?.status === 'pending' ? 'pending' : 'done';
+  const { error: upErr } = await sb.rpc('mkt_enrichment_upsert', {
+    p_post: contentPostId, p_model: (enr?.model as string | null) ?? null, p_rule_version: RULE_VERSION, p_org: post.organization_id,
+    p_developer: null, p_marketer: null, p_primary_project: null, p_candidates: candidates,
+    p_result: result, p_cost: 0, p_status: status, p_failure: null,
+  });
+  if (upErr) throw new Error(`narrow: enrichment upsert: ${upErr.message}`);
+
+  if (candidates.length === 0) {
+    stats.status = 'no_candidates';
+    return stats;
+  }
+  await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'awaiting_intelligence' });
+  stats.enriched = true;
+  stats.status = 'renarrowed';
+  return stats;
 }

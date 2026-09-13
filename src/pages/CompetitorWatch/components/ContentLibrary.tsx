@@ -4,7 +4,7 @@
  * post, organised by purpose shelf, filterable and searchable.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { fetchContentLibrary, type LibraryResult, type LibraryRow, fetchDesignRead } from '@/lib/competitorWatch/client';
+import { fetchContentLibrary, type LibraryResult, type LibraryRow, fetchDesignRead, setAttribution } from '@/lib/competitorWatch/client';
 import { setDesignExample } from '@/lib/marketingOS/creativeClient';
 import type { PostRead, SlideRead, VisualDesignReadRow } from '@/lib/creative/contracts';
 import { useAppStore } from '@/stores/appStore';
@@ -20,6 +20,14 @@ const SHELVES: Array<{ key: string; ar: string; en: string; color: string }> = [
   { key: 'testimonial', ar: 'شهادة', en: 'Testimonial', color: 'var(--cw-bad)' },
 ];
 const SHELF_MAP = new Map(SHELVES.map((s) => [s.key, s]));
+interface ProjectChoice { id: string; name: string; nameEn: string }
+/** Loose contains-match over Arabic/English names for the correction picker. */
+function matchChoice(c: ProjectChoice, q: string): boolean {
+  const fold = (t: string) => t.normalize('NFKC').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').toLowerCase();
+  const n = fold(q.trim());
+  if (!n) return false;
+  return fold(c.name).includes(n) || fold(c.nameEn).includes(n);
+}
 const FORMATS: Array<{ key: string; ar: string; en: string }> = [
   { key: 'reel', ar: 'ريل', en: 'Reel' },
   { key: 'video', ar: 'فيديو', en: 'Video' },
@@ -41,7 +49,23 @@ function shelfLabel(key: string, isAr: boolean): string {
 }
 
 export default function ContentLibrary({ isAr }: { isAr: boolean }) {
-  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
+  const { currentUserId, users, profiles, previewProfileId, models, records } = useAppStore();
+  // Project choices for the «تصحيح المشروع» picker — the live All Projects
+  // catalog from the store (id + name), no extra fetch.
+  const projectChoices = useMemo<ProjectChoice[]>(() => {
+    const m = models.find((x) => x.name === 'all_projects');
+    if (!m) return [];
+    return (records[m.id] ?? []).map((r) => {
+      const d = (r.data ?? {}) as Record<string, unknown>;
+      const name = typeof d.project_name === 'string' ? d.project_name : '';
+      const nameEn = typeof d.project_name_en === 'string' ? d.project_name_en : '';
+      return { id: r.id, name: name || nameEn || r.id, nameEn };
+    }).filter((c) => c.name);
+  }, [models, records]);
+  // A correction updates the row in place so the fixed link shows without a refetch.
+  const patchRow = (id: string, patch: Partial<LibraryRow>) => {
+    setData((d) => (d ? { ...d, rows: d.rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) } : d));
+  };
   const currentUser = users.find((u) => u.id === currentUserId);
   // Admins see the «مثال للدراسة» action (it writes mos_design_examples).
   const isAdmin = !!resolveEffectiveProfile(currentUser, profiles, previewProfileId)?.is_admin;
@@ -192,6 +216,8 @@ export default function ContentLibrary({ isAr }: { isAr: boolean }) {
             open={openId === row.id}
             onToggle={() => setOpenId(openId === row.id ? null : row.id)}
             onOrg={() => { if (row.organization_id) setOrg({ id: row.organization_id, name: row.org_name ?? '' }); }}
+            projectChoices={projectChoices}
+            onPatch={(patch) => patchRow(row.id, patch)}
           />
         ))}
 
@@ -227,9 +253,35 @@ function designReadSummary(read: VisualDesignReadRow, isAr: boolean): string {
   return bits.join(' · ');
 }
 
-function Entry({ row, isAr, isAdmin, open, onToggle, onOrg }: {
+function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPatch }: {
   row: LibraryRow; isAr: boolean; isAdmin: boolean; open: boolean; onToggle: () => void; onOrg: () => void;
+  projectChoices: ProjectChoice[]; onPatch: (patch: Partial<LibraryRow>) => void;
 }) {
+  // «تصحيح المشروع» — the one correction path (writes both tables, locks the post).
+  const [fixOpen, setFixOpen] = useState(false);
+  const [fixQ, setFixQ] = useState('');
+  const [fixBusy, setFixBusy] = useState(false);
+  const [fixError, setFixError] = useState<string | null>(null);
+  const fixMatches = useMemo(() => (fixQ.trim() ? projectChoices.filter((c) => matchChoice(c, fixQ)).slice(0, 8) : []), [fixQ, projectChoices]);
+  const applyFix = async (choice: ProjectChoice | null): Promise<void> => {
+    setFixBusy(true);
+    setFixError(null);
+    try {
+      await setAttribution(row.id, choice ? choice.id : null);
+      onPatch({
+        project_record_id: choice ? choice.id : null,
+        project_name: choice ? choice.name : null,
+        attribution_locked: true,
+        attribution_strength: null,
+      });
+      setFixOpen(false);
+      setFixQ('');
+    } catch (e) {
+      setFixError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFixBusy(false);
+    }
+  };
   const shelfDef = SHELF_MAP.get(row.shelf ?? '');
   // Visual design read — fetched lazily on first expand (Post Creative
   // Director, 2026-09-02). 'none' = no read exists for this post yet.
@@ -339,6 +391,21 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg }: {
                 )
                 : <span dir="rtl">· {row.project_name}</span>
             )}
+            {row.attribution_locked && (
+              <span className="cw-tx" title={isAr ? 'ثبّته إنسان — لا تغيّره إعادة المعالجة' : 'Fixed by a person — re-runs keep it'}>
+                {isAr ? '🔒 مثبّت' : '🔒 fixed'}
+              </span>
+            )}
+            {!row.attribution_locked && row.project_record_id && row.attribution_strength === 'word' && (
+              <span className="cw-tx" style={{ color: 'var(--cw-warn)' }} title={isAr ? 'الربط مبني على كلمة واحدة فقط' : 'Link rests on a single word'}>
+                {isAr ? '؟ ربط ضعيف' : '? weak link'}
+              </span>
+            )}
+            {!row.project_record_id && row.unknown_projects && row.unknown_projects.length > 0 && (
+              <span className="cw-tx" style={{ color: 'var(--cw-warn)' }} dir="rtl" title={isAr ? 'يذكر مشروعًا غير مسجّل في الكتالوج' : 'Names a project not in our catalog'}>
+                {isAr ? 'مشروع غير مسجّل: ' : 'unknown project: '}{row.unknown_projects.slice(0, 2).join('، ')}
+              </span>
+            )}
             {shelfDef && <span className="cw-pill" style={{ background: shelfDef.color, color: '#fff' }}>{isAr ? shelfDef.ar : shelfDef.en}</span>}
           </div>
           {row.summary && <p className="cw-desc" dir="auto">{row.summary}</p>}
@@ -372,6 +439,15 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg }: {
                 onClick={(e) => { e.stopPropagation(); if (!open) onToggle(); setExOpen((v) => !v); }}
               >
                 {isAr ? 'مثال للدراسة' : 'Study example'}
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                className="cw-expand"
+                type="button"
+                onClick={(e) => { e.stopPropagation(); if (!open) onToggle(); setFixOpen((v) => !v); }}
+              >
+                {row.project_record_id ? (isAr ? 'تصحيح المشروع' : 'Fix project') : (isAr ? 'اربط بمشروع' : 'Link project')}
               </button>
             )}
           </div>
@@ -436,6 +512,45 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg }: {
           )}
           {readFailed && (
             <div className="cw-txnote">{isAr ? `تعذّر جلب قراءة التصميم: ${readFailed}` : `Design read unavailable: ${readFailed}`}</div>
+          )}
+          {fixOpen && (
+            <div className="cw-dblock">
+              <div className="cw-k">{isAr ? 'أي مشروع يخصّ هذا المنشور؟' : 'Which project is this post about?'}</div>
+              <div style={{ display: 'grid', gap: 6, maxWidth: 560 }}>
+                <input
+                  value={fixQ}
+                  onChange={(e) => setFixQ(e.target.value)}
+                  placeholder={isAr ? 'ابحث باسم المشروع…' : 'Search project name…'}
+                  autoFocus
+                  style={{
+                    border: '1px solid var(--cw-line)', background: 'var(--cw-card)',
+                    borderRadius: 8, padding: '7px 10px', fontSize: 13, fontFamily: 'inherit',
+                    color: 'inherit', width: '100%',
+                  }}
+                />
+                {fixMatches.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {fixMatches.map((c) => (
+                      <button key={c.id} className="cw-rvbtn" type="button" disabled={fixBusy} dir="auto" onClick={() => void applyFix(c)}>
+                        {c.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {fixQ.trim() && fixMatches.length === 0 && (
+                  <div className="cw-txnote">{isAr ? 'لا مشروع بهذا الاسم في الكتالوج — أضفه في «جميع المشاريع» أولاً.' : 'No catalog project by that name — add it under All Projects first.'}</div>
+                )}
+                {fixError && <div className="cw-error">{fixError}</div>}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="cw-rvbtn bad" type="button" disabled={fixBusy} onClick={() => void applyFix(null)}>
+                    {fixBusy ? (isAr ? 'يُحفظ…' : 'Saving…') : (isAr ? 'لا مشروع — هوية عامة' : 'No project — general branding')}
+                  </button>
+                  <button className="cw-rvbtn" type="button" disabled={fixBusy} onClick={() => { setFixOpen(false); setFixQ(''); }}>
+                    {isAr ? 'إلغاء' : 'Cancel'}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
           {exOpen && (
             <div className="cw-dblock">

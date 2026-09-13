@@ -46,6 +46,7 @@ interface Body {
   attribution_id?: string;
   decision?: 'confirm' | 'reject' | 'reassign';
   new_project_id?: string;
+  note?: string | null;
   // collection ops
   account_id?: string;
   kind?: string;
@@ -517,6 +518,41 @@ export default async function handler(req: Request): Promise<Response> {
         });
         if (error) return jsonError(500, error.message);
         return jsonOk({ ok: true });
+      }
+
+      case 'attribution_set': {
+        // The ONE human correction path (2026-09-13): sets the post's project
+        // (or "no project" when project_id is null), writes both the Library
+        // pointer and the attribution rows as confirmed, and LOCKS the post so
+        // no machine re-decision can undo it. Admin-gated write.
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+        if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
+        const pid = str(body.post_id);
+        if (!pid) return jsonError(400, 'post_id required');
+        const proj = body.project_id === null || body.project_id === undefined || body.project_id === '' ? null : str(body.project_id);
+        const { data, error } = await svc.rpc('mkt_attribution_set', {
+          p_post: pid, p_project: proj, p_user: user.userId, p_note: str(body.note) || null,
+        });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ result: data });
+      }
+
+      case 'attribution_rerun': {
+        // Re-score every processed post's project candidates with the current
+        // rules and hand changed ones back to the runner. Bounded by p_limit;
+        // human-locked posts are skipped by the RPC.
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+        if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
+        const { data, error } = await svc.rpc('mkt_enqueue_attribution_rerun', {
+          p_org: str(body.organization_id) || null,
+          p_limit: typeof body.limit === 'number' ? Math.min(20000, Math.max(1, body.limit)) : 10000,
+        });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ enqueued: data });
       }
 
       case 'insight_dismiss': {
