@@ -95,18 +95,19 @@ const config: GateConfig = {
   min_action_assurance: { write_soft: 0.9, write_hard: 0.98, supersede: 0.99 },
 };
 
-/** A GOOD client's history contains a stub token so extraction yields evidence. */
-function goodHistory(clientId: string): Conversation {
-  return { channel: 'chat', id: `client:${clientId}`, turns: [{ speaker: 'client', text: 'أبي المهدية', timestamp: '2026-09-03T10:00:00Z' }] };
+/** A GOOD client's history: ONE WhatsApp thread containing a stub token so
+ *  extraction yields evidence. Real ids: chat_wid + chat_messages.id. */
+function goodHistory(clientId: string): Conversation[] {
+  return [{ channel: 'chat', id: `9665${clientId}@c.us`, turns: [{ speaker: 'client', text: 'أبي المهدية', timestamp: '2026-09-03T10:00:00Z', ref: `msg-${clientId}-1` }] }];
 }
 
-interface WireOpts { queue: FakeQueue; store: FakeProposalStore; throwFor?: Set<string>; history?: Record<string, Conversation | null> }
+interface WireOpts { queue: FakeQueue; store: FakeProposalStore; throwFor?: Set<string>; history?: Record<string, Conversation[]> }
 function wireDeps({ queue, store, throwFor = new Set(), history = {} }: WireOpts): BackfillDeps {
   return {
     claimNext: async (runId) => queue.claimNext(runId),
     completeJob: async (jobId) => queue.complete(jobId),
     failJob: async (jobId, err) => queue.fail(jobId, err),
-    gatherConversation: async (clientId) => {
+    gatherConversations: async (clientId) => {
       if (throwFor.has(clientId)) throw new Error(`gather failed for ${clientId}`);
       return clientId in history ? history[clientId]! : goodHistory(clientId);
     },
@@ -214,11 +215,55 @@ describe('geo backfill — processing', () => {
     expect(store.inserts).toBe(1); // no second insert — deduped
   });
 
+  it('a client with a CALL and a CHAT is reviewed per conversation: two checkpoints, two proposals, correct channel + real ids on the evidence', async () => {
+    const queue = new FakeQueue();
+    const store = new FakeProposalStore();
+    const call: Conversation = {
+      channel: 'call', id: 'call-rec-1',
+      // A real transcript: ONE unlabelled line — the agent suggests one district, the client wants another.
+      turns: [{ speaker: 'unknown', text: 'معك فهد من وصل العقارية، عندنا مشروع في القروان. لا أنا أبي المهدية.', timestamp: '2026-06-21T13:31:18Z', ref: 'call-rec-1' }],
+    };
+    const chat: Conversation = {
+      channel: 'chat', id: '966500000001@c.us',
+      turns: [
+        { speaker: 'agent', text: 'أي حي تفضّل؟', timestamp: '2026-07-01T09:00:00Z', ref: 'm-a' },
+        { speaker: 'client', text: 'بالمناسبة عندكم فلل بالنرجس؟', timestamp: '2026-07-01T09:01:00Z', ref: 'm-b' },
+      ],
+    };
+    const persisted: Array<{ conversationId: string | undefined; sources: Array<{ channel: string; ref: string; timestamp: string }> }> = [];
+    const deps: BackfillDeps = {
+      ...wireDeps({ queue, store, history: { both: [call, chat] } }),
+      // Fake persistence mints ONE checkpoint per conversation (as the real one does).
+      persistExtraction: async (_clientId, conversation, evidence) => {
+        persisted.push({ conversationId: conversation.id, sources: evidence.map((e) => e.source) });
+        return { checkpointId: `cp-${conversation.id}`, evidenceIds: evidence.map((e) => e.id) };
+      },
+    };
+    queue.enqueue('run-f', ['both']);
+    const result = await runBackfillBatch(deps, { runId: 'run-f' });
+    expect(result).toMatchObject({ processed: 1, done: 1, failed: 0 });
+
+    // Persisted under the REAL conversation ids, never `client:<id>`.
+    expect(persisted.map((p) => p.conversationId)).toEqual(['call-rec-1', '966500000001@c.us']);
+    // Every call mention is stamped call + the phone_calls id; every chat mention chat + the message id.
+    const callSources = persisted[0]!.sources;
+    expect(callSources.length).toBeGreaterThan(0);
+    for (const src of callSources) expect(src).toMatchObject({ channel: 'call', ref: 'call-rec-1', timestamp: '2026-06-21T13:31:18Z' });
+    const chatSources = persisted[1]!.sources;
+    expect(chatSources.length).toBeGreaterThan(0);
+    for (const src of chatSources) expect(src).toMatchObject({ channel: 'chat', ref: 'm-b', timestamp: '2026-07-01T09:01:00Z' });
+
+    // One proposal PER conversation (a chat review is separate from a call review).
+    const mine = store.rows.filter((r) => r.client_id === 'both');
+    expect(mine.map((r) => r.checkpoint_id).sort()).toEqual(['cp-966500000001@c.us', 'cp-call-rec-1']);
+    expect(store.inserts).toBe(2);
+  });
+
   it('a client with no history completes without a proposal', async () => {
     const queue = new FakeQueue();
     const store = new FakeProposalStore();
     queue.enqueue('run-e', ['empty']);
-    const deps = wireDeps({ queue, store, history: { empty: null } });
+    const deps = wireDeps({ queue, store, history: { empty: [] } });
 
     const result = await runBackfillBatch(deps, { runId: 'run-e' });
     expect(result).toMatchObject({ processed: 1, done: 1, failed: 0, proposals: 0 });

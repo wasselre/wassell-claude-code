@@ -8,7 +8,12 @@
  * geo_pref_evidence and saving a single `overall.verdict` label. Admin-only.
  *
  *   GET  ?batch=<id>   → { batch, items:[{ id, client, mention, role, commitment,
- *                          holder, applicability, anchor_type, my_verdict }], total, graded }
+ *                          holder, applicability, anchor_type, source_channel,
+ *                          conversation_id, my_verdict }], transcripts, total, graded }
+ *        `transcripts` is keyed by conversation_id — the phone_calls record id for a
+ *        call, the chat_wid for a WhatsApp thread — so each card shows the ONE
+ *        conversation its mention came from (a client-keyed merge is also emitted
+ *        for legacy batches whose conversation_id is the client id).
  *   POST { batch, evidence_id, verdict:'right'|'wrong'|'unsure', note? } → { ok }
  *
  * NEVER writes a client record. Nothing here is auto-write.
@@ -51,7 +56,7 @@ export default async function handler(req: Request): Promise<Response> {
 
       const { data: evs, error: evErr } = await sb
         .from('geo_pref_evidence')
-        .select('id, client_id, mention_span, preference_role, commitment, holder_role, preference_applicability, anchors, source_timestamp')
+        .select('id, client_id, conversation_id, source_channel, mention_span, preference_role, commitment, holder_role, preference_applicability, anchors, source_timestamp')
         .in('id', evIds)
         .order('client_id', { ascending: true }).order('source_timestamp', { ascending: true });
       if (evErr) return jsonError(500, `evidence read failed: ${evErr.message}`);
@@ -69,19 +74,25 @@ export default async function handler(req: Request): Promise<Response> {
         .select('subject_ref, value').eq('batch_id', batchId).eq('annotator_id', user.userId).eq('field', 'overall.verdict');
       const verdictOf = new Map<string, string | null>((mine ?? []).map((m) => [m.subject_ref as string, m.value as string | null]));
 
-      // The SOURCE the AI read — so a grader can verify. Call transcripts + inbound
-      // chat, per client, phone-numbers scrubbed. (Calls dominate the calibration.)
+      // The SOURCE the AI read — so a grader can verify — keyed by the REAL
+      // conversation: one entry per phone call (its record id) and per WhatsApp
+      // thread (its chat_wid). A call and a chat are never shown merged, because
+      // they were never extracted merged. Phone numbers scrubbed. The client-keyed
+      // merge is kept only for legacy batches (conversation_id = client id).
       const PHONE = /(\+?\d[\d\s().-]{6,}\d)/g;
       const transcripts: Record<string, string> = {};
+      const legacyByClient: Record<string, string> = {};
       const mdl = await sb.from('models').select('id, name').in('name', ['phone_calls', 'chats']);
       const pcId = (mdl.data ?? []).find((m) => m.name === 'phone_calls')?.id as string | undefined;
       const chatId = (mdl.data ?? []).find((m) => m.name === 'chats')?.id as string | undefined;
       if (pcId) {
-        const { data: calls } = await sb.from('records').select('data').eq('model_id', pcId).in('data->>client_link', clientIds);
+        const { data: calls } = await sb.from('records').select('id, data').eq('model_id', pcId).in('data->>client_link', clientIds);
         for (const c of calls ?? []) {
           const cid = String((c.data as Record<string, unknown>).client_link ?? '');
           const t = String((c.data as Record<string, unknown>).transcription_text ?? '').trim();
-          if (cid && t) transcripts[cid] = (transcripts[cid] ? transcripts[cid] + '\n\n──────\n\n' : '') + t;
+          if (!cid || !t) continue;
+          transcripts[c.id as string] = t;
+          legacyByClient[cid] = (legacyByClient[cid] ? legacyByClient[cid] + '\n\n──────\n\n' : '') + t;
         }
       }
       if (chatId) {
@@ -97,12 +108,17 @@ export default async function handler(req: Request): Promise<Response> {
           // Both sides — the agent's question is what makes a one-word reply gradeable.
           const { data: msgs } = await sb.from('chat_messages').select('chat_wid, body, flow, date').in('chat_wid', wids).order('date', { ascending: true }).limit(600);
           for (const m of msgs ?? []) {
-            const cid = widToClient.get(m.chat_wid as string);
+            const wid = m.chat_wid as string;
+            const cid = widToClient.get(wid);
             const bd = String(m.body ?? '').trim();
-            if (cid && bd) transcripts[cid] = (transcripts[cid] ? transcripts[cid] + '\n' : '') + (m.flow === 'in' ? '🧑 ' : '🏢 ') + bd;
+            if (!cid || !bd) continue;
+            const line = (m.flow === 'in' ? '🧑 ' : '🏢 ') + bd;
+            transcripts[wid] = (transcripts[wid] ? transcripts[wid] + '\n' : '') + line;
+            legacyByClient[cid] = (legacyByClient[cid] ? legacyByClient[cid] + '\n' : '') + line;
           }
         }
       }
+      for (const [cid, t] of Object.entries(legacyByClient)) if (!transcripts[cid]) transcripts[cid] = t;
       for (const k of Object.keys(transcripts)) transcripts[k] = (transcripts[k] ?? '').replace(PHONE, '[رقم]').slice(0, 8000);
 
       const items = (evs ?? []).map((e) => ({
@@ -115,6 +131,8 @@ export default async function handler(req: Request): Promise<Response> {
         holder: e.holder_role,
         applicability: e.preference_applicability,
         anchor_type: (Array.isArray(e.anchors) && e.anchors[0] ? (e.anchors[0] as { anchor_type?: string }).anchor_type : null) ?? null,
+        source_channel: e.source_channel === 'call' ? 'call' : 'chat',
+        conversation_id: e.conversation_id,
         my_verdict: verdictOf.get(e.id as string) ?? null,
       }));
       return jsonOk({ batch: { id: b.id, label: b.label }, items, transcripts, total: items.length, graded: items.filter((i) => i.my_verdict).length });

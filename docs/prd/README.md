@@ -53,6 +53,8 @@ This folder contains the **living source of truth** for what every section of th
 
 | 39 | [job-applications.md](job-applications.md) | **Job Applications** (طلبات التوظيف) — public Arabic, mobile-first, one-question-at-a-time application page for the مستشار مبيعات عقارية role (ad traffic), plus an admin-only internal review screen. Card flow with conditional Q5 (results shown only if experienced), refresh-safe localStorage draft, submission-id idempotency + 24h phone soft-dedupe, UTM/click-id attribution capture. CV (PDF/DOC/DOCX) + a 1–3 min voice recording (record-in-browser or upload) go to a **private** `job-applications` bucket via one-shot signed upload urls; the submit endpoint re-validates every field + sniffs the real file bytes (magic numbers) + IP-rate-limits (never trusting the client). Internal page is `RequireAdmin` + table RLS `wassell_is_admin`: search name/phone, filter status+experience, view/download CV + play audio via short-lived signed urls, set status جديد→قيد المراجعة→للمقابلة→مرفوض/تم التوظيف. Not a Builder model — dedicated table. Key files: `src/pages/Careers/**`, `src/lib/careers/**`, `api/careers/{upload-url,submit,file-url}.ts`, `api/_lib/careers.ts`, `supabase/migrations/2026-09-05_job_applications.sql` |
 
+| 40 | [geo-preference-ability.md](geo-preference-ability.md) | **Geography Understanding Ability** — extracts where a customer wants to buy from their WhatsApp chats and phone-call transcripts (one conversation per call / per chat thread, never merged; calls get unlabelled-speaker rules), review-first proposals (auto-write OFF), and the admin `/geo-grade` one-card grader |
+
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 
 ## Auto-generated PRDs (models & workflows)

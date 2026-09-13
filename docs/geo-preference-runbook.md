@@ -77,6 +77,44 @@ tokens) before a real run, and start with a small `maxCalls` to prove the wiring
 
 ---
 
+## 2a. Unit of work — one conversation per call and per chat (added 2026-09-13)
+
+The backfill gathers a client's history as **separate conversations**: one per
+`phone_calls` transcript (`channel='call'`, `conversation_id` = the phone_calls
+record id) and one per WhatsApp thread (`channel='chat'`, `conversation_id` = the
+`chat_wid`). They are **never merged**. Each conversation is extracted, persisted
+(`geo_pref_evidence` / `geo_pref_relations` / one `geo_pref_checkpoints` row under
+its real id) and reviewed on its own — so a client with one call and one chat gets
+**two pending proposals**, each reviewable against the one transcript it came from.
+That is by design: a chat review is separate from a call review.
+
+**Why (the 2026-09-13 bug):** until then `gatherClientConversation` merged both
+channels into one conversation and hard-coded `channel:'chat'` + `id:'client:<id>'`,
+so all 113 calibration mentions were stamped `source_channel='chat'` with
+`source_ref='client:<uuid>'` and ONE timestamp per client — although 23/23
+calibration clients' evidence was mostly phone calls. Worse, a call transcript is one
+machine-transcribed line with **no speaker labels**, so the merged extraction could
+not tell a district the salesperson *suggested* from one the customer *chose* (it
+recorded القروان as a client preference after the agent recommended it). Calls now
+get `CALL_TRANSCRIPT_RULES` in the prompt (infer the speaker from content; an
+agent-offered place is not a client preference; default `speaker='unknown'`), and
+every mention's `source_ref` / `source_timestamp` come from the specific turn
+(`attributeMentionSource` in `extractor.ts`; for a call the ref is the call itself).
+Extractor version bumped to `geo-extract/v8`.
+
+Agent-only chat threads (the customer never wrote) are skipped — nothing to interpret.
+
+**Re-backfilling an already-extracted client (do NOT skip):**
+1. `persistExtraction` clears prior model rows by the NEW `conversation_id`, so rows
+   from the old scheme (`conversation_id` = the client uuid) are not matched — purge
+   them first: `DELETE FROM geo_pref_evidence / geo_pref_relations WHERE origin='model'
+   AND client_id = ANY(<ids>)` and `geo_pref_checkpoints WHERE origin_tag='model' AND
+   client_id = ANY(<ids>)`; then the orphaned `pending` proposals for those clients
+   (`checkpoint_id` is set NULL by the FK) — supersede or delete them.
+2. Evidence ids are re-minted, so any `geo_pref_calibration_batch` built on the old
+   ids (e.g. `calib-001`) shows nothing — rebuild the batch from the new evidence.
+3. `auto_write_enabled` stays `false` throughout.
+
 ## 3. How review works
 
 1. The pipeline (`runReviewFirst` in `orchestrator.ts`) writes **one `pending`

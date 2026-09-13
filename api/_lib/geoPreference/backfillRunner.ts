@@ -3,11 +3,16 @@
  * Understanding Ability, expressed as pure, dependency-injected orchestration.
  *
  * For one claimed job (a client) it:
- *   1. gathers the client's chat + call history as ONE {@link Conversation}
- *   2. runs Stage-A {@link extract}
- *   3. builds a per-client {@link RunContext} and runs {@link runReviewFirst}
- *      — whose ONLY side effect is a `pending` row in geo_pref_proposals
- *   4. marks the job done, or failed (attempts already ++ by claim) on error.
+ *   1. gathers the client's history as SEPARATE {@link Conversation}s — one per
+ *      phone call and one per WhatsApp thread (never merged: a call transcript has
+ *      no speaker labels and needs its own extraction rules + its own review)
+ *   2. for EACH conversation: runs Stage-A {@link extract}, persists the evidence
+ *      under that conversation's real id, builds a {@link RunContext} and runs
+ *      {@link runReviewFirst} — whose ONLY side effect is a `pending` row in
+ *      geo_pref_proposals. So a client with a call and a chat gets TWO proposals,
+ *      each reviewable against its own transcript (by design — a chat review is
+ *      separate from a call review).
+ *   3. marks the job done, or failed (attempts already ++ by claim) on error.
  *
  * SAFETY BOUNDARY (why this is safe to run over real clients):
  *   - It NEVER contacts a customer. It only READS history and writes a
@@ -78,8 +83,9 @@ export interface BackfillDeps {
   completeJob(jobId: string): Promise<void>;
   /** Mark a job `failed` with an error message. */
   failJob(jobId: string, error: string): Promise<void>;
-  /** Gather a client's chat + call history as ONE conversation, null if none. */
-  gatherConversation(clientId: string): Promise<Conversation | null>;
+  /** Gather a client's history as one conversation PER call and PER chat thread
+   *  (each on its own channel, with its real id). Empty when there is none. */
+  gatherConversations(clientId: string): Promise<Conversation[]>;
   /** Stage-A extraction (conversation ⇒ evidence + relations). */
   extract(conversation: Conversation): Promise<ExtractResult>;
   /** Build the per-client review-first run context. `evidenceCount` lets the
@@ -95,11 +101,13 @@ export interface BackfillDeps {
   ): Promise<ReviewFirstResult>;
   /** Dedup-aware proposal store handed to runReviewFirst. */
   proposals: ProposalStore;
-  /** Persist evidence + relations + a checkpoint (origin='model') so the labeling
-   *  workflow has real subjects and the proposal can link to a checkpoint. Optional
-   *  — a fake without it simply skips persistence. Returns the checkpoint id. */
+  /** Persist ONE conversation's evidence + relations + a checkpoint (origin='model')
+   *  under the conversation's real id, so the labeling workflow has real subjects
+   *  and the proposal can link to a checkpoint. Optional — a fake without it simply
+   *  skips persistence. Returns the checkpoint id. */
   persistExtraction?(
     clientId: string,
+    conversation: Conversation,
     evidence: Evidence[],
     relations: EvidenceRelation[],
   ): Promise<{ checkpointId: string; evidenceIds: string[] }>;
@@ -127,34 +135,39 @@ export async function processBackfillJob(
 ): Promise<JobOutcome> {
   const log = deps.log ?? (() => {});
   try {
-    const conversation = await deps.gatherConversation(job.clientId);
-    if (!conversation || conversation.turns.length === 0) {
+    const conversations = (await deps.gatherConversations(job.clientId)).filter((c) => c.turns.length > 0);
+    if (conversations.length === 0) {
       // No history to interpret — a legitimate, non-error terminal state.
       await deps.completeJob(job.jobId);
       log(`[geo-backfill] client=${job.clientId} no history → done (no proposal)`);
       return { jobId: job.jobId, clientId: job.clientId, status: 'done', hadProposal: false };
     }
 
-    const { evidence, relations } = await deps.extract(conversation);
-    // Persist evidence + checkpoint (origin='model') so labeling has subjects and
-    // the proposal links to a checkpoint. Skipped when the dep isn't provided.
-    let checkpointId: string | null = null;
-    if (deps.persistExtraction) {
-      const persisted = await deps.persistExtraction(job.clientId, evidence, relations);
-      checkpointId = persisted.checkpointId;
+    // Each conversation is its own unit: extract → persist under ITS id → review.
+    // A failure in any one fails the whole job (it retries; persistence is
+    // idempotent per conversation and the proposal store dedups per checkpoint).
+    let hadProposal = false;
+    for (const conversation of conversations) {
+      const { evidence, relations } = await deps.extract(conversation);
+      let checkpointId: string | null = null;
+      if (deps.persistExtraction) {
+        const persisted = await deps.persistExtraction(job.clientId, conversation, evidence, relations);
+        checkpointId = persisted.checkpointId;
+      }
+      const ctx = await deps.buildRunContext(job.clientId, evidence.length);
+      if (checkpointId) ctx.checkpoint_id = checkpointId;
+      const result = await deps.runReviewFirst(evidence, relations, ctx, {
+        proposals: deps.proposals,
+      });
+      if (result.proposal !== null) hadProposal = true;
+      log(
+        `[geo-backfill] client=${job.clientId} ${conversation.channel}=${conversation.id ?? '?'} ` +
+          `decision=${result.decision} evidence=${evidence.length} proposal=${result.proposal ? result.proposal.id : 'none'}`,
+      );
     }
-    const ctx = await deps.buildRunContext(job.clientId, evidence.length);
-    if (checkpointId) ctx.checkpoint_id = checkpointId;
-    const result = await deps.runReviewFirst(evidence, relations, ctx, {
-      proposals: deps.proposals,
-    });
 
     await deps.completeJob(job.jobId);
-    const hadProposal = result.proposal !== null;
-    log(
-      `[geo-backfill] client=${job.clientId} → done decision=${result.decision} ` +
-        `evidence=${evidence.length} proposal=${hadProposal ? result.proposal!.id : 'none'}`,
-    );
+    log(`[geo-backfill] client=${job.clientId} → done conversations=${conversations.length} proposal=${hadProposal}`);
     return { jobId: job.jobId, clientId: job.clientId, status: 'done', hadProposal };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

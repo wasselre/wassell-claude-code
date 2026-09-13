@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import Button from '@/components/ui/Button';
-import { Loader2, Check, X, HelpCircle, ChevronRight, ChevronLeft, MapPin, PartyPopper } from 'lucide-react';
+import { Loader2, Check, X, HelpCircle, ChevronRight, ChevronLeft, MapPin, PartyPopper, Phone, MessageCircle } from 'lucide-react';
 
 /**
  * The DEAD-SIMPLE geography grader. One mention at a time: the customer's exact
@@ -13,6 +13,10 @@ import { Loader2, Check, X, HelpCircle, ChevronRight, ChevronLeft, MapPin, Party
 
 interface Item {
   id: string; client_id: string; client: string; mention: string;
+  /** Which channel the mention came from — a phone call or a WhatsApp thread. */
+  source_channel: 'chat' | 'call';
+  /** The phone_calls record id (call) or chat_wid (chat) — the transcript key. */
+  conversation_id: string;
   role: 'positive' | 'negative' | 'exploratory' | 'none';
   commitment: string; holder: string; applicability: string; anchor_type: string | null;
   my_verdict: 'right' | 'wrong' | 'unsure' | null;
@@ -169,14 +173,20 @@ export default function GeoGradePage() {
         </div>
       ) : it && (
         <div className="card p-5">
-          {it.client && <p className="mb-2 text-xs font-semibold text-charcoal/40">{isAr ? `مكالمة العميل: ${it.client}` : `Customer call: ${it.client}`}</p>}
+          {/* Channel-aware header: a call and a chat are graded separately. */}
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-charcoal/40">
+            {it.source_channel === 'call' ? <Phone size={12} /> : <MessageCircle size={12} />}
+            {it.source_channel === 'call'
+              ? (isAr ? `مكالمة هاتفية${it.client ? `: ${it.client}` : ''}` : `Phone call${it.client ? `: ${it.client}` : ''}`)
+              : (isAr ? `محادثة واتساب${it.client ? `: ${it.client}` : ''}` : `WhatsApp chat${it.client ? `: ${it.client}` : ''}`)}
+          </p>
 
-          {/* The full conversation the AI read — highlighted where the mention is */}
-          {transcripts[it.client_id]?.trim() ? (
+          {/* The ONE conversation the AI read (by its real id; legacy batches fall back to the client) — highlighted where the mention is */}
+          {(transcripts[it.conversation_id] ?? transcripts[it.client_id])?.trim() ? (
             <>
-              <p className="mb-1 text-xs text-charcoal/50">{isAr ? 'المحادثة (اقرأها بنفسك):' : 'The conversation (read it yourself):'}</p>
+              <p className="mb-1 text-xs text-charcoal/50">{it.source_channel === 'call' ? (isAr ? 'نص المكالمة (اقرأه بنفسك):' : 'The call transcript (read it yourself):') : (isAr ? 'المحادثة (اقرأها بنفسك):' : 'The chat (read it yourself):')}</p>
               <div className="mb-4 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl border border-sand/40 bg-cream/20 px-4 py-3 text-sm leading-relaxed text-charcoal/80" dir="rtl">
-                <Transcript text={transcripts[it.client_id]!} mention={it.mention} />
+                <Transcript text={(transcripts[it.conversation_id] ?? transcripts[it.client_id])!} mention={it.mention} />
               </div>
             </>
           ) : (

@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { extract, parseExtractorOutput, type Conversation } from '../extractor.js';
+import {
+  extract, parseExtractorOutput, buildExtractionUserText, attributeMentionSource,
+  CALL_TRANSCRIPT_RULES, type Conversation,
+} from '../extractor.js';
 import { isActivePreference, type Evidence, type EvidenceRelation } from '../ontology.js';
 
 /**
@@ -113,6 +116,76 @@ describe('geoPreference Stage-A extractor (stub mode)', () => {
     const { evidence, relations } = await extract({ channel: 'chat', turns: [] });
     expect(evidence).toEqual([]);
     expect(relations).toEqual([]);
+  });
+});
+
+describe('per-mention provenance — channel from the conversation, ref/timestamp from the turn', () => {
+  it('stub mode attributes each تركي mention to the message it was said in', async () => {
+    const { evidence } = await extract(TURKI_CONVERSATION);
+    const refOf = (needle: string) => evidence.find((e) => e.anchors.some((a) => a.span.includes(needle)))!.source;
+    expect(refOf('المهدية')).toEqual({ channel: 'chat', ref: 'm3', timestamp: '2026-09-03T10:01:00Z' });
+    expect(refOf('الجبيلة')).toEqual({ channel: 'chat', ref: 'm3', timestamp: '2026-09-03T10:01:00Z' });
+    expect(refOf('شمال')).toEqual({ channel: 'chat', ref: 'm4', timestamp: '2026-09-03T10:01:30Z' });
+    expect(refOf('النرجس')).toEqual({ channel: 'chat', ref: 'm5', timestamp: '2026-09-03T10:02:00Z' });
+  });
+
+  it('a phone call is ONE unlabelled turn: every mention carries channel=call + the phone_calls id', async () => {
+    const call: Conversation = {
+      channel: 'call', id: 'call-rec-9',
+      turns: [{ speaker: 'unknown', text: 'معك فهد من وصل العقارية. أبي المهدية أو الجبيلة. عندكم فلل بالنرجس؟', timestamp: '2026-06-21T13:31:18Z', ref: 'call-rec-9' }],
+    };
+    const { evidence } = await extract(call);
+    expect(evidence.length).toBeGreaterThan(0);
+    for (const e of evidence) expect(e.source).toEqual({ channel: 'call', ref: 'call-rec-9', timestamp: '2026-06-21T13:31:18Z' });
+  });
+
+  it('the LLM user text numbers the turns and carries the unlabelled-call rules ONLY for a call', () => {
+    const chatText = buildExtractionUserText(TURKI_CONVERSATION);
+    expect(chatText).toContain('[1] المندوب:');
+    expect(chatText).toContain('[5] العميل:');
+    expect(chatText).not.toContain(CALL_TRANSCRIPT_RULES);
+
+    const callText = buildExtractionUserText({ channel: 'call', id: 'c', turns: [{ speaker: 'unknown', text: 'ألو ألو' }] });
+    expect(callText).toContain(CALL_TRANSCRIPT_RULES);
+    expect(callText).toContain('[1] (المتحدث غير معروف): ألو ألو');
+    expect(CALL_TRANSCRIPT_RULES).toContain('القروان'); // the agent-suggestion case that caused the 2026-09-13 bug
+  });
+
+  it('attributeMentionSource: trusts a `turn` hint only when that turn contains the span, else unique verbatim match, else conversation-level', () => {
+    const conv: Conversation = {
+      channel: 'chat', id: 'wid-1',
+      turns: [
+        { speaker: 'agent', text: 'أي حي؟', ref: 'a1', timestamp: '2026-01-01T00:00:00Z' },
+        { speaker: 'client', text: 'أبي المهدية', ref: 'c2', timestamp: '2026-01-01T00:01:00Z' },
+        { speaker: 'client', text: 'الرياض حلوة', ref: 'c3', timestamp: '2026-01-01T00:02:00Z' },
+        { speaker: 'client', text: 'الرياض غالية', ref: 'c4', timestamp: '2026-01-01T00:03:00Z' },
+      ],
+    };
+    // Correct hint → that turn.
+    expect(attributeMentionSource(conv, 'المهدية', ['المهدية'], 2)).toEqual({ source: { channel: 'chat', ref: 'c2', timestamp: '2026-01-01T00:01:00Z' }, method: 'turn' });
+    // Wrong hint (turn 1 does not contain the span) → unique verbatim match wins.
+    expect(attributeMentionSource(conv, 'المهدية', ['المهدية'], 1)).toEqual({ source: { channel: 'chat', ref: 'c2', timestamp: '2026-01-01T00:01:00Z' }, method: 'span' });
+    // Ambiguous span («الرياض» in two turns) with a valid hint → the hint.
+    expect(attributeMentionSource(conv, 'الرياض', ['الرياض'], 4).source.ref).toBe('c4');
+    // Ambiguous span, no hint → conversation-level fallback (first turn's ref).
+    expect(attributeMentionSource(conv, 'الرياض', ['الرياض'], undefined)).toEqual({ source: { channel: 'chat', ref: 'a1', timestamp: '2026-01-01T00:00:00Z' }, method: 'conversation' });
+  });
+
+  it('parseExtractorOutput uses the model `turn` index per mention when the conversation is supplied', () => {
+    const conv: Conversation = {
+      channel: 'chat', id: 'wid-2',
+      turns: [
+        { speaker: 'client', text: 'أبي المهدية', ref: 'x1', timestamp: '2026-01-01T00:00:00Z' },
+        { speaker: 'client', text: 'أو الجبيلة', ref: 'x2', timestamp: '2026-01-01T00:05:00Z' },
+      ],
+    };
+    const raw = JSON.stringify({ evidence: [
+      { id: 'e1', turn: 1, mention_span: 'المهدية', anchors: [{ anchor_type: 'district', span: 'المهدية' }], preference_role: 'positive' },
+      { id: 'e2', turn: 2, mention_span: 'الجبيلة', anchors: [{ anchor_type: 'district', span: 'الجبيلة' }], preference_role: 'positive' },
+    ], relations: [] });
+    const { evidence } = parseExtractorOutput(raw, { channel: 'chat', ref: 'wid-2', timestamp: '' }, conv);
+    expect(evidence.map((e) => e.source.ref)).toEqual(['x1', 'x2']);
+    expect(evidence.map((e) => e.source.timestamp)).toEqual(['2026-01-01T00:00:00Z', '2026-01-01T00:05:00Z']);
   });
 });
 

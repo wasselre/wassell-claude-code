@@ -2,8 +2,9 @@
  * /api/geo-preference/backfill — enqueue + drive a review-first BACKFILL run of
  * the Geography Understanding Ability over a set of clients.
  *
- * A run replays each client's chat + call history through extract → runReviewFirst
- * and lands ONE `pending` row in geo_pref_proposals per client. It NEVER contacts
+ * A run replays each client's history — one conversation PER phone call and PER
+ * WhatsApp thread, never merged — through extract → runReviewFirst and lands ONE
+ * `pending` row in geo_pref_proposals per conversation. It NEVER contacts
  * a customer and NEVER writes a client's active preferences — auto_write stays
  * false. See api/_lib/geoPreference/backfillRunner.ts for the safety boundary.
  *

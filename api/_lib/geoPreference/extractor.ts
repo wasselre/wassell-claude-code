@@ -53,16 +53,19 @@ import type {
   RelationMemberRef,
 } from './ontology.js';
 
-export const EXTRACTOR_VERSION = 'geo-extract/v7';
+export const EXTRACTOR_VERSION = 'geo-extract/v8'; // v8: one conversation per channel + per-mention turn attribution + unlabelled-call rules
 const CLAUDE_FALLBACK_MODEL = 'claude-haiku-4-5-20251001';
 
 // ────────────────────────────────────────────────────────────────────────────
-// Input shape — a speaker-labelled conversation (chat messages or call segments).
+// Input shape — ONE conversation on ONE channel: a WhatsApp thread (speaker-
+// labelled per message) or a single phone call (a machine transcript with NO
+// speaker labels — see CALL_TRANSCRIPT_RULES). Never merge channels into one
+// Conversation: the channel + id here become every mention's provenance.
 // ────────────────────────────────────────────────────────────────────────────
 export interface ConversationTurn {
   speaker: Speaker;
   text: string;
-  /** message_id (chat) or transcript_segment id (call). */
+  /** chat_messages.id (chat) or the phone_calls record id (call). */
   ref?: string;
   /** ISO timestamp. */
   timestamp?: string;
@@ -71,7 +74,7 @@ export interface ConversationTurn {
 export interface Conversation {
   channel: 'chat' | 'call';
   turns: ConversationTurn[];
-  /** optional conversation id, only used for source.ref fallbacks. */
+  /** chat_wid (chat) or the phone_calls record id (call); the source.ref fallback. */
   id?: string;
 }
 
@@ -130,7 +133,7 @@ function pickStrict<T extends string>(allowed: readonly T[], v: unknown): T | nu
 // (whether the preference is live). Written bilingually: rules the model must
 // reason with are in Arabic (the input is Arabic); the JSON contract in English.
 // ────────────────────────────────────────────────────────────────────────────
-export const EXTRACT_SYSTEM_PROMPT = `أنت محلّل دلالي لفريق عقاري سعودي. تقرأ محادثة (شات أو مكالمة) مُصنّفة حسب المتحدث (العميل/المندوب)، وتُخرِج — لكل *إشارة إلى موقع جغرافي* ذكرها العميل أو نُقلت عنه — سجلّ Evidence كاملًا وفق النظام أدناه، بالإضافة إلى علاقات EvidenceRelation المكتوبة بين الإشارات.
+export const EXTRACT_SYSTEM_PROMPT = `أنت محلّل دلالي لفريق عقاري سعودي. تقرأ محادثة واحدة على قناة واحدة: إمّا شات واتساب مُصنّف حسب المتحدث (العميل/المندوب)، أو مكالمة هاتفية مفرَّغة آليًا وغير مُصنّفة حسب المتحدث (تصلك قواعدها الإلزامية مع النص). كل سطر في المحادثة يبدأ برقمه [n]. تُخرِج — لكل *إشارة إلى موقع جغرافي* ذكرها العميل أو نُقلت عنه — سجلّ Evidence كاملًا وفق النظام أدناه، بالإضافة إلى علاقات EvidenceRelation المكتوبة بين الإشارات. لا تُخرِج سجلًا لموقع ذكره المندوب وحده.
 
 مبدأ حاكم — القواعد النحوية لا تُقرّر المعنى أبدًا (grammar-independence):
 - السؤال قد يكون تفضيلًا إيجابيًا. «عندكم فلل بالنرجس؟» = preference_role='positive' للنرجس، وليس 'none'. لا تجعل صيغة السؤال (dialogue_act='question') تُلغي التفضيل.
@@ -158,6 +161,7 @@ export const EXTRACT_SYSTEM_PROMPT = `أنت محلّل دلالي لفريق ع
   "evidence": [
     {
       "id": "e1",
+      "turn": 1,
       "mention_span": "النص الحرفي للإشارة",
       "anchors": [ { "anchor_type": "district", "span": "النرجس", "normalized_token": "النرجس", "role_in_relation": "" } ],
       "speaker": "client",
@@ -179,6 +183,8 @@ export const EXTRACT_SYSTEM_PROMPT = `أنت محلّل دلالي لفريق ع
   ]
 }
 
+- turn: رقم السطر [n] الذي وردت فيه الإشارة (عدد صحيح). إلزامي — هو مصدر الإشارة الذي يُحفظ.
+
 قِيَم مسموحة (استخدمها حرفيًا):
 - speaker: ${SPEAKERS.join(' | ')}
 - preference_holder: ${PREFERENCE_HOLDERS.join(' | ')}
@@ -196,6 +202,69 @@ export const EXTRACT_SYSTEM_PROMPT = `أنت محلّل دلالي لفريق ع
 - anchor_type: ${ANCHOR_TYPES.join(' | ')}
 
 إن لم يذكر العميل أي موقع جغرافي، أعِد {"evidence": [], "relations": []}.`;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phone calls: the transcript is ONE machine-transcribed blob with NO speaker
+// labels (measured on prod 2026-09-13: 27/27 calibration calls, zero labels, zero
+// newlines). Without these rules the model attributed a district the SALESPERSON
+// suggested (القروان) to the customer. Chats never need this — every WhatsApp
+// message carries its `flow` (in/out), so the speaker is a fact, not a guess.
+// ────────────────────────────────────────────────────────────────────────────
+export const CALL_TRANSCRIPT_RULES = `تنبيه إلزامي — هذه مكالمة هاتفية بنصٍّ مفرَّغ آليًا وغير مُصنّف حسب المتحدث: الجمل متتابعة في سطر واحد ولا يُعرف من قال أيّها.
+- استنتج المتحدث من المضمون فقط. من يعرّف نفسه («معك فلان من وصل العقارية»)، أو يعرض مشاريع/أسعار/مواقع، أو يسأل «وش الحي اللي تبيه؟» هو المندوب (agent). من يذكر ميزانيته أو احتياجه أو يجيب عن الأسئلة هو العميل (client).
+- الموقع الذي يذكره المندوب (عرض، اقتراح، «عندنا مشروع في القروان»، سؤال) ليس تفضيلًا للعميل ولا يُخرَج له سجلّ — إلا إذا ردّ العميل عليه بقبولٍ أو اهتمامٍ أو رفضٍ صريح، فحينها السجلّ لكلام العميل (mention_span = كلمات العميل نفسها) بـ speaker='client'.
+- إن تعذّر تحديد المتحدث بثقة: speaker='unknown' و preference_applicability='unclear'. لا تفترض أبدًا أن العميل هو المتكلم.`;
+
+/** The user message for one conversation: channel header (+ the call rules when
+ *  the channel is a call), then the numbered, speaker-labelled turns. Exported so
+ *  tests can assert the call rules are present without calling an LLM. */
+export function buildExtractionUserText(conversation: Conversation): string {
+  const header = conversation.channel === 'call'
+    ? `المحادثة (مكالمة هاتفية):\n${CALL_TRANSCRIPT_RULES}\n\nنص المكالمة:`
+    : 'المحادثة (شات واتساب):';
+  return `${header}\n${renderConversation(conversation)}`;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Per-mention source attribution. The channel is the conversation's (one
+// conversation = one channel, by construction); the ref + timestamp come from the
+// TURN the mention was said in: the model's `turn` index when its text actually
+// contains the span, else the unique turn containing the span verbatim, else the
+// conversation itself (first turn's ref/timestamp — the pre-v8 behaviour).
+// ────────────────────────────────────────────────────────────────────────────
+export type SourceAttributionMethod = 'turn' | 'span' | 'conversation';
+
+export function attributeMentionSource(
+  conversation: Conversation,
+  mentionSpan: string,
+  anchorSpans: readonly string[],
+  turnHint: unknown,
+): { source: Evidence['source']; method: SourceAttributionMethod } {
+  const turns = conversation.turns;
+  const fallback = conversationSource(conversation);
+  const fromTurn = (t: ConversationTurn): Evidence['source'] => ({
+    channel: conversation.channel,
+    ref: t.ref ?? conversation.id ?? fallback.ref,
+    timestamp: t.timestamp ?? fallback.timestamp,
+  });
+  const needles = [mentionSpan, ...anchorSpans].map((x) => (x ?? '').trim()).filter(Boolean);
+  const contains = (t: ConversationTurn): boolean => needles.some((n) => t.text.includes(n));
+
+  const hint = typeof turnHint === 'number' && Number.isInteger(turnHint) ? turnHint
+    : typeof turnHint === 'string' && /^\d+$/.test(turnHint.trim()) ? Number(turnHint.trim()) : NaN;
+  const hinted = Number.isFinite(hint) && hint >= 1 && hint <= turns.length ? turns[hint - 1]! : null;
+  if (hinted && contains(hinted)) return { source: fromTurn(hinted), method: 'turn' };
+
+  const span = (mentionSpan ?? '').trim();
+  if (span) {
+    const hits = turns.filter((t) => t.text.includes(span));
+    if (hits.length === 1) return { source: fromTurn(hits[0]!), method: 'span' };
+  }
+  // A single-turn conversation (every phone call today) is unambiguous by construction.
+  if (turns.length === 1) return { source: fromTurn(turns[0]!), method: 'span' };
+  if (hinted) return { source: fromTurn(hinted), method: 'turn' };
+  return { source: fallback, method: 'conversation' };
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Stub mode — deterministic, offline. Token-driven so it stays input-sensitive
@@ -335,6 +404,7 @@ function stubExtract(conversation: Conversation): ExtractResult {
   for (const st of STUB_TOKENS) {
     if (!text.includes(st.token)) continue;
     const e = st.build(idx, source);
+    e.source = attributeMentionSource(conversation, e.mention_span, e.anchors.map((a) => a.span), undefined).source;
     evidence.push(e);
     if (st.tag) byTag[st.tag] = e.id;
     idx += 1;
@@ -468,8 +538,14 @@ function repairRelations(raw: unknown, validIds: Set<string>): EvidenceRelation[
   return out;
 }
 
-/** Parse raw model text ⇒ validated ExtractResult. Never throws. */
-export function parseExtractorOutput(raw: string, source: Evidence['source']): ExtractResult {
+/** Parse raw model text ⇒ validated ExtractResult. Never throws. When the
+ *  conversation is supplied, every mention's `source` is attributed to the turn
+ *  it came from (see attributeMentionSource); otherwise `source` is used as-is. */
+export function parseExtractorOutput(
+  raw: string,
+  source: Evidence['source'],
+  conversation?: Conversation,
+): ExtractResult {
   let text = String(raw ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   text = text.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
   const a = text.indexOf('{');
@@ -489,6 +565,10 @@ export function parseExtractorOutput(raw: string, source: Evidence['source']): E
   rawEvidence.forEach((e, i) => {
     const rep = repairEvidence(e, i, source);
     if (!rep) return;
+    if (conversation) {
+      const turnHint = e != null && typeof e === 'object' ? (e as Record<string, unknown>).turn : undefined;
+      rep.source = attributeMentionSource(conversation, rep.mention_span, rep.anchors.map((a) => a.span), turnHint).source;
+    }
     // Guarantee unique ids so relation refs are unambiguous.
     let id = rep.id;
     let k = 1;
@@ -507,9 +587,9 @@ export function parseExtractorOutput(raw: string, source: Evidence['source']): E
 // ────────────────────────────────────────────────────────────────────────────
 function renderConversation(conversation: Conversation): string {
   return conversation.turns
-    .map((t) => {
-      const who = t.speaker === 'client' ? 'العميل' : t.speaker === 'agent' ? 'المندوب' : 'غير معروف';
-      return `${who}: ${t.text}`;
+    .map((t, i) => {
+      const who = t.speaker === 'client' ? 'العميل' : t.speaker === 'agent' ? 'المندوب' : '(المتحدث غير معروف)';
+      return `[${i + 1}] ${who}: ${t.text}`;
     })
     .join('\n');
 }
@@ -558,7 +638,7 @@ export async function extract(
   }
 
   const source = conversationSource(conversation);
-  const userText = `المحادثة (${conversation.channel === 'call' ? 'مكالمة' : 'شات'}):\n${renderConversation(conversation)}`;
+  const userText = buildExtractionUserText(conversation);
 
   // Per-call token estimate for the budget. Over-estimates on purpose (see
   // estimateExtractionTokens) so the cost ceiling errs toward stopping early.
@@ -580,7 +660,7 @@ export async function extract(
         temperature: 0,
         json: true,
       });
-      return parseExtractorOutput(raw, source);
+      return parseExtractorOutput(raw, source, conversation);
     } catch (err) {
       logLlmFallback('geoPreference/extract', err);
     } finally {
@@ -592,7 +672,7 @@ export async function extract(
   const releaseFallback = budget ? await budget.begin(estTokens) : null;
   try {
     const raw = await claudeExtract(userText);
-    return parseExtractorOutput(raw, source);
+    return parseExtractorOutput(raw, source, conversation);
   } catch (err) {
     console.error('[geoPreference/extract] Claude fallback failed:', err instanceof Error ? err.message : String(err));
     // No provider succeeded — return well-formed empty rather than throwing.

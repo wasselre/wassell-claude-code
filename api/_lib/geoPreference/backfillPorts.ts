@@ -7,7 +7,8 @@
  * uses) — and adds the three things a run needs on top of them:
  *   1. a dedup-aware {@link ProposalStore} (no second proposal for an already-open
  *      client+checkpoint),
- *   2. server-side history gathering (chats + phone_calls linked to the client),
+ *   2. server-side history gathering — ONE conversation per call and per chat
+ *      thread (never merged; see gatherClientConversations),
  *   3. a per-client {@link RunContext} whose gate config forces auto_write OFF.
  *
  * It NEVER contacts a customer and NEVER writes a client record — see the runner.
@@ -29,26 +30,32 @@ import type { BackfillDeps, BackfillJob } from './backfillRunner.js';
 const randomUuid = (): string => globalThis.crypto.randomUUID();
 
 /**
- * Persist a run's extraction (evidence + relations + one checkpoint) as
- * `origin='model'` rows, so the labeling workflow has real subjects to label and
- * the proposal can link to a checkpoint. Idempotent per client: a re-run replaces
- * the prior model rows for this conversation. Evidence ids are re-minted to fresh
- * uuids and relation member refs of kind 'evidence' are remapped to them, so the
- * persisted graph is self-consistent regardless of what the extractor emitted.
+ * Persist ONE conversation's extraction (evidence + relations + one checkpoint)
+ * as `origin='model'` rows, so the labeling workflow has real subjects to label
+ * and the proposal can link to a checkpoint. `conversation_id` is the REAL source
+ * conversation — the phone_calls record id or the chat_wid — never the client
+ * (that was the 2026-09-13 provenance bug: every mention stamped `chat` +
+ * `client:<id>`). Idempotent per conversation: a re-run replaces the prior model
+ * rows for THIS conversation only. Evidence ids are re-minted to fresh uuids and
+ * relation member refs of kind 'evidence' are remapped to them, so the persisted
+ * graph is self-consistent regardless of what the extractor emitted.
  * NEVER touches a client record.
  */
 export async function persistExtraction(
   supabase: SupabaseClient,
   clientId: string,
+  conversation: Conversation,
   evidence: Evidence[],
   relations: EvidenceRelation[],
 ): Promise<{ checkpointId: string; evidenceIds: string[] }> {
-  const conversationId = clientId; // one aggregate conversation per client for a backfill run
+  const conversationId = conversation.id;
+  if (!conversationId) throw new Error('persistExtraction: conversation has no id (expected a phone_calls id or chat_wid)');
 
   // Idempotency: clear this conversation's prior MODEL rows (never touches gold).
-  await supabase.from('geo_pref_evidence').delete().eq('conversation_id', conversationId).eq('origin', 'model');
-  await supabase.from('geo_pref_relations').delete().eq('conversation_id', conversationId).eq('origin', 'model');
-  await supabase.from('geo_pref_checkpoints').delete().eq('conversation_id', conversationId).eq('origin_tag', 'model');
+  for (const [table, col] of [['geo_pref_evidence', 'origin'], ['geo_pref_relations', 'origin'], ['geo_pref_checkpoints', 'origin_tag']] as const) {
+    const { error } = await supabase.from(table).delete().eq('conversation_id', conversationId).eq(col, 'model');
+    if (error) throw new Error(`persist: clearing prior ${table} rows failed: ${error.message}`);
+  }
 
   const idMap = new Map<string, string>();
   const evRows = evidence.map((e) => {
@@ -62,7 +69,9 @@ export async function persistExtraction(
       temporal_reference: e.temporal_reference, preference_applicability: e.preference_applicability,
       preference_role: e.preference_role, commitment: e.commitment, hardness_evidence: e.hardness_evidence,
       modality: e.modality, interpretation_confidence: e.interpretation_confidence ?? null,
-      source_channel: e.source.channel, source_ref: e.source.ref, source_timestamp: e.source.timestamp,
+      // Per-mention provenance: the conversation's channel + the turn's ref/timestamp
+      // (attributed by the extractor). For a call the ref IS the phone_calls id.
+      source_channel: e.source.channel, source_ref: e.source.ref, source_timestamp: e.source.timestamp || null,
       extraction_version: e.extraction_version ?? null,
     };
   });
@@ -84,10 +93,17 @@ export async function persistExtraction(
     if (error) throw new Error(`persist relations failed: ${error.message}`);
   }
 
+  // One checkpoint per conversation, dated by the conversation's LAST turn so
+  // versioning's "newer evidence supersedes" compares real conversation times,
+  // not the wall clock of the backfill.
+  const stamps = conversation.turns.map((t) => t.timestamp ?? '').filter(Boolean).sort();
+  const asOf = stamps.length ? new Date(stamps[stamps.length - 1]!) : new Date();
+  const memberIds = Array.from(new Set(conversation.turns.map((t) => t.ref ?? '').filter(Boolean)));
   const evidenceIds = evRows.map((r) => r.id);
   const { data: cp, error: cpErr } = await supabase.from('geo_pref_checkpoints').insert({
     conversation_id: conversationId, client_id: clientId, turn_id: 'aggregate',
-    as_of_timestamp: new Date().toISOString(), member_message_ids: [],
+    as_of_timestamp: (Number.isNaN(asOf.getTime()) ? new Date() : asOf).toISOString(),
+    member_message_ids: memberIds,
     expected_processing: 'evaluate_now', evidence_visible_so_far: evidenceIds,
     lifecycle_by_mention: {}, origin_tag: 'model',
   }).select('id').single();
@@ -98,12 +114,13 @@ export async function persistExtraction(
 // Bounds so a very chatty client can't blow the extractor's token budget.
 const MAX_MESSAGES_PER_CHAT = 120;
 const MAX_CALLS = 30;
-const MAX_TURNS = 300;
+const MAX_TURNS_PER_CONVERSATION = 300;
 
 const asStr = (v: unknown): string => (typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '');
 
 async function modelId(supabase: SupabaseClient, name: string): Promise<string | null> {
-  const { data } = await supabase.from('models').select('id').eq('name', name).maybeSingle();
+  const { data, error } = await supabase.from('models').select('id').eq('name', name).maybeSingle();
+  if (error) throw new Error(`gather: models lookup for ${name} failed: ${error.message}`);
   return (data?.id as string | undefined) ?? null;
 }
 
@@ -119,13 +136,18 @@ async function linkedRecords(
     .eq('model_id', mId)
     .or(`data->>client_link.eq.${clientId},data->client_link->>0.eq.${clientId}`)
     .limit(500);
-  if (error || !data) return [];
-  return data as Array<{ id: string; data: Record<string, unknown> }>;
+  // Loud, not silent: a failed read must fail the job (it retries), never
+  // masquerade as "this client has no history".
+  if (error) throw new Error(`gather: ${modelName} read failed: ${error.message}`);
+  return (data ?? []) as Array<{ id: string; data: Record<string, unknown> }>;
 }
 
-/** A finished call's transcript → speaker-labelled turns. Falls back to one
- *  'unknown' turn for an unlabelled blob (the extractor tolerates that). */
-function transcriptToTurns(text: string, timestamp: string): ConversationTurn[] {
+/** A finished call's transcript → turns. Real transcripts are ONE unlabelled
+ *  line (no speaker labels, no newlines), which yields exactly ONE 'unknown'
+ *  turn — so a call's provenance is the call itself. Labelled/multi-line
+ *  transcripts (if a provider ever adds diarization) split per line. Every
+ *  turn carries the phone_calls record id as its ref. */
+function transcriptToTurns(text: string, timestamp: string, callRecordId: string): ConversationTurn[] {
   const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   if (lines.length === 0) return [];
   const out: ConversationTurn[] = [];
@@ -138,47 +160,53 @@ function transcriptToTurns(text: string, timestamp: string): ConversationTurn[] 
       speaker = /العميل|الزبون|المتصل|customer|client/.test(label) ? 'client' : 'agent';
       body = m[2]!.trim();
     }
-    if (body) out.push({ speaker, text: body, timestamp });
+    if (body) out.push({ speaker, text: body, timestamp, ref: callRecordId });
   }
   return out;
 }
 
 /**
- * Gather a client's chat + call history into ONE conversation (rendered
- * chat-like), chronologically ordered and bounded. Returns null when there is
- * nothing to interpret.
+ * Gather a client's history as SEPARATE conversations — one per phone call and
+ * one per WhatsApp thread — each on its own channel with its real id, ordered
+ * oldest-first. NEVER merged: a call transcript has no speaker labels, so it needs
+ * the call-specific extraction rules and its own review; a chat has `flow` per
+ * message, so the speaker is known. Returns [] when there is nothing to interpret.
+ *
+ * Chat threads where the customer never wrote (agent-only broadcasts, 14 of the
+ * 20 calibration threads) are skipped: the extractor only records CLIENT
+ * mentions, so such a thread can only cost an LLM call and yield nothing.
  */
-export async function gatherClientConversation(
+export async function gatherClientConversations(
   supabase: SupabaseClient, clientId: string,
-): Promise<Conversation | null> {
-  const turns: ConversationTurn[] = [];
+): Promise<Conversation[]> {
+  const out: Conversation[] = [];
 
-  // ── WhatsApp: the client's linked chats → their messages ──
+  // ── WhatsApp: the client's linked chats → one conversation per thread ──
   const chatRecs = await linkedRecords(supabase, 'chats', clientId);
   const wids = Array.from(new Set(chatRecs.map((r) => asStr(r.data.wid)).filter(Boolean)));
   for (const wid of wids) {
     const { data: msgs, error } = await supabase
       .from('chat_messages')
-      .select('flow, body, date')
+      .select('id, flow, body, date')
       .eq('chat_wid', wid)
       .order('date', { ascending: true })
       .limit(MAX_MESSAGES_PER_CHAT);
-    if (error || !msgs) continue;
-    for (const m of msgs as Array<{ flow: string | null; body: string | null; date: string | null }>) {
+    if (error) throw new Error(`gather: chat_messages read for ${wid} failed: ${error.message}`);
+    const turns: ConversationTurn[] = [];
+    for (const m of (msgs ?? []) as Array<{ id: string; flow: string | null; body: string | null; date: string | null }>) {
       const body = asStr(m.body);
       if (!body) continue;
-      turns.push({
-        speaker: m.flow === 'in' ? 'client' : 'agent',
-        text: body,
-        timestamp: asStr(m.date),
-      });
+      turns.push({ speaker: m.flow === 'in' ? 'client' : 'agent', text: body, timestamp: asStr(m.date), ref: m.id });
     }
+    if (!turns.some((t) => t.speaker === 'client')) continue; // agent-only thread — nothing to interpret
+    out.push({ channel: 'chat', id: wid, turns: turns.slice(0, MAX_TURNS_PER_CONVERSATION) });
   }
 
-  // ── Calls: the client's phone_calls transcripts ──
+  // ── Calls: one conversation per phone_calls transcript ──
   const callRecs = await linkedRecords(supabase, 'phone_calls', clientId);
   const calls = callRecs
     .map((r) => ({
+      id: r.id,
       ts: asStr(r.data.call_time) || asStr(r.data.creation_time) || '',
       text: asStr(r.data.transcription_text),
     }))
@@ -186,15 +214,14 @@ export async function gatherClientConversation(
     .sort((a, b) => a.ts.localeCompare(b.ts))
     .slice(0, MAX_CALLS);
   for (const c of calls) {
-    for (const t of transcriptToTurns(c.text, c.ts)) turns.push(t);
+    const turns = transcriptToTurns(c.text, c.ts, c.id).slice(0, MAX_TURNS_PER_CONVERSATION);
+    if (turns.length === 0) continue;
+    out.push({ channel: 'call', id: c.id, turns });
   }
 
-  if (turns.length === 0) return null;
-
-  // Chronological across both channels; blank timestamps sort first (stable).
-  turns.sort((a, b) => (a.timestamp ?? '').localeCompare(b.timestamp ?? ''));
-  const bounded = turns.slice(0, MAX_TURNS);
-  return { channel: 'chat', id: `client:${clientId}`, turns: bounded };
+  // Oldest conversation first (by its first timestamp; blanks sort first, stable).
+  const firstTs = (c: Conversation): string => c.turns.find((t) => t.timestamp)?.timestamp ?? '';
+  return out.sort((a, b) => firstTs(a).localeCompare(firstTs(b)));
 }
 
 /** The gate config row → {@link GateConfig}, with auto_write FORCED off. The
@@ -315,7 +342,7 @@ export function makeSupabaseBackfillDeps(
       const { error } = await supabase.rpc('geo_pref_backfill_fail', { p_job_id: jobId, p_error: err.slice(0, 1000) });
       if (error) throw new Error(`geo_pref_backfill_fail failed: ${error.message}`);
     },
-    gatherConversation: (clientId: string) => gatherClientConversation(supabase, clientId),
+    gatherConversations: (clientId: string) => gatherClientConversations(supabase, clientId),
     extract,
     async buildRunContext(clientId: string, evidenceCount: number): Promise<RunContext> {
       const config = await loadGateConfig(supabase);
@@ -333,7 +360,8 @@ export function makeSupabaseBackfillDeps(
     },
     runReviewFirst,
     proposals,
-    persistExtraction: (clientId, evidence, relations) => persistExtraction(supabase, clientId, evidence, relations),
+    persistExtraction: (clientId, conversation, evidence, relations) =>
+      persistExtraction(supabase, clientId, conversation, evidence, relations),
     log: opts.log,
   };
 }

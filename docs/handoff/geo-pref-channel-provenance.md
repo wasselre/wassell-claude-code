@@ -2,7 +2,7 @@
 
 **Branch:** `claude/whatsapp-ai-agents-count-c8ec81-8ycb1o` (HEAD `8e9ded5` at time of writing)
 **Written:** 2026-09-13 · by the cloud session, to be continued locally
-**Status:** bug diagnosed with proof; **fix NOT yet started** (waiting on a design decision — see §5)
+**Status (2026-09-13, local session):** **DECIDED + IMPLEMENTED as Option B** — the operator ruled that calls and chats must be extracted and reviewed **separately**: a call transcript has no speaker labels, so a merged extraction could not tell a salesperson's suggestion (القروان) from the customer's choice. Code: `gatherClientConversations` (one `Conversation` per call / per chat thread), per-conversation `persistExtraction`, `CALL_TRANSCRIPT_RULES` + per-mention turn attribution in `extractor.ts` (`geo-extract/v8`), channel-aware grader. **Re-backfill + `calib-001` rebuild NOT yet run** — see runbook §2a for the purge steps. The diagnosis below is kept as the record.
 **Safety:** `auto_write_enabled = false` on prod. The ability is review-first; nothing here writes a client record.
 
 ---
