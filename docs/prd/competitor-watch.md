@@ -82,6 +82,16 @@ that study the corpus (how competitors write posts, script reels, price offers).
   re-scores candidates from stored evidence — no download, no vision — resets
   machine attributions and hands changed posts back to the runner. Locked
   posts are skipped.
+- **A project added later catches up by itself.** Inserting an All Projects
+  record, renaming one, or changing its developer (and linking a developer to
+  a tracked organization) enqueues an attribution-only re-score of every post
+  of the organizations linked to that project (`records_rescore_on_project_insert`
+  / `_update`, `mkt_organizations_rescore_on_developer_change` →
+  `mkt_rescore_project_organizations`). Unchanged posts are skipped in
+  milliseconds; only posts that now match reach the AI. Plain data writes that
+  do not touch the name or developer (unit rollups) never fire it — verified
+  live: inserting a test project for أكدال enqueued exactly its 47 posts, a
+  no-op update on ربوة الرمز enqueued nothing.
 - **Attribution health on the Pipeline surface:** linked · fixed by a person ·
   linked without a quote naming the project · link rests on one word · names an
   unknown project · awaiting decision · queued for re-linking. These are the
