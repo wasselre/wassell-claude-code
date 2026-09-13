@@ -181,17 +181,18 @@ export function buildUnitHtml({
  */
 export async function renderUnitPdf(html: string): Promise<Buffer> {
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
-  // `--single-process --no-zygote` are REQUIRED on locked-down/constrained
-  // containers (Fly shared-cpu): chromium's default multi-process model tries to
-  // fork a zygote + renderer and stalls indefinitely when it can't, which hangs
-  // page.pdf() with no error. These flags run everything in one process instead.
+  // Headless-container flags. NB: do NOT add `--single-process` — it crashes
+  // chromium here ("Cannot use V8 Proxy resolver in single process mode" → target
+  // closed). The original hang was chromium spinning on GPU/Vulkan init (the ANGLE
+  // "Internal Vulkan error" spam), which `--disable-gpu` + `--disable-software-
+  // rasterizer` skip entirely; dbus warnings on Alpine are harmless.
   const browser = await chromium.launch({
     executablePath,
     headless: true,
     timeout: 30_000,
     args: [
       '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-      '--single-process', '--no-zygote', '--disable-gpu',
+      '--disable-gpu', '--disable-software-rasterizer',
     ],
   });
   try {
