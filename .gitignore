@@ -129,3 +129,5 @@ docs/marketing-reference/tools/render-page.html
 dev-api-shim.mjs
 vite.config.local.mjs
 .kimi-logs/
+
+.wf-token*.local
