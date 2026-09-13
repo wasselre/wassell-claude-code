@@ -64,9 +64,16 @@ This workspace answers the three questions the old process could not:
   `mos_execution_ads` row (`creative.primary_text/message`,
   `creative.auto_ad.state='caption_review'`), notifying the manager
   (`ad_caption_ready`, inapp + whatsapp + push). Nothing reaches Meta yet.
-  **The manager reads / edits / approves the caption on the creative's
-  Placements tab** («اعتماد الكابشن وإنشاء الإعلان», or «إعادة الكتابة» for a
-  fresh AI caption) → `meta_auto_ad_approve_caption` (`manage_paid_ads`)
+  **The parked caption is a TASK in «مهامي»**: the worker opens a
+  `mos_manual_tasks` row (`kind='caption_review'`, `ref_id` = the ad row,
+  assigned to the approver, due in 24 h) titled «اعتماد كابشن إعلان ميتا:
+  <title>»; the row opens the review popup (ContentPreviewModal) with the
+  caption card (`CaptionReviewCard`) FIRST — read / edit in place / «اعتماد
+  الكابشن وإنشاء الإعلان» or «إعادة الكتابة» for a fresh AI caption. «تم» is
+  not offered on it and the API refuses `manual_task_complete` on a caption
+  task (409): the approval is its completion (also closed when the ad is
+  created). The same card sits on the creative's Placements tab. →
+  `meta_auto_ad_approve_caption` (`manage_paid_ads`)
   saves the text AS APPROVED and enqueues **phase 2 «create»**: the TWO
   design slots are uploaded (images by bytes, videos by URL + processing
   poll; **both slots required** — a missing square or vertical fails loudly,
@@ -102,7 +109,7 @@ This workspace answers the three questions the old process could not:
   `worker/src/runMetaAdJob.ts`, `worker/src/marketing/metaAdLane.ts`,
   `src/pages/Marketing/components/{AutoAdApproval,PlacementsTab}.tsx`,
   migrations `2026-09-10_meta_auto_ad.sql`,
-  `2026-09-13_meta_ad_caption_review.sql`.
+  `2026-09-13_meta_ad_caption_review.sql`, `2026-09-13_02_manual_task_kind.sql`.
 - **Materials tab = two design slots (2026-09-10).** The designer uploads
   exactly two files per creative — «التصميم المربّع» (1:1, Instagram /
   Facebook feed) and «التصميم الطولي» (9:16, stories, reels, WhatsApp

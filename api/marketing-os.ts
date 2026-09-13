@@ -5363,6 +5363,18 @@ export default async function handler(req: Request): Promise<Response> {
         const id = str(body.id);
         if (!id) return jsonError(400, 'id is required');
         const me = await resolveAppUserId(sb, user.userId);
+        // A caption-review task is closed by APPROVING the caption (or by the
+        // ad being created) — never by «تم», which would leave the ad unbuilt.
+        if (action !== 'manual_task_reopen') {
+          const kindRes = await sb.from('mos_manual_tasks').select('kind').eq('id', id).maybeSingle();
+          const kf = dbFail(kindRes.error); if (kf) return kf;
+          if ((kindRes.data as { kind?: string } | null)?.kind === 'caption_review') {
+            return new Response(JSON.stringify({
+              error: 'This task closes when you approve the ad caption — open it and approve or rewrite the caption.',
+              error_ar: 'هذه المهمة تُغلق باعتماد كابشن الإعلان — افتحها واعتمد الكابشن أو أعد كتابته.',
+            }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+          }
+        }
         const patch: Record<string, unknown> = action === 'manual_task_reopen'
           ? { status: 'open', closed_at: null, closed_by_user_id: null, done_note: null }
           : {

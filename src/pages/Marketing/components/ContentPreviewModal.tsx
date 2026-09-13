@@ -26,12 +26,13 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'r
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  MosAsset, MosAssetLink, MosContentRow, MosPublication, MosScene, MosStep, MosTask,
+  MosAsset, MosAssetLink, MosContentRow, MosPublication, MosScene, MosStep, MosTask, PaidPlacement,
   PLATFORM_LABELS, PUB_STATUS_LABELS, ROLE_LABELS,
-  adSetRequiredChoices, completeTask, fetchAssets, fetchContentDetail, fetchPublications,
+  adSetRequiredChoices, completeTask, fetchAssets, fetchContentDetail, fetchPaidAds, fetchPublications,
   fieldSchemaEntries, fieldSchemaKeys,
 } from '@/lib/marketingOS/client';
 import { AutoAdPanel, autoAdOutcomeText, useAutoAdPreview } from './AutoAdApproval';
+import CaptionReviewCard from './CaptionReviewCard';
 import { useWorkspace } from '../MarketingWorkspace';
 import { Modal, Pill, Skeleton, LoadError } from './kit';
 import { IconCheck, IconLibrary } from './icons';
@@ -67,6 +68,10 @@ export default function ContentPreviewModal({
   const [assets, setAssets] = useState<MosAsset[]>([]);
   const [links, setLinks] = useState<MosAssetLink[]>([]);
   const [publications, setPublications] = useState<MosPublication[]>([]);
+  // Paid placements whose AI caption is parked for approval — the body of the
+  // «مهامي» caption task (2026-09-13). Fetched for every viewer (RLS decides
+  // what comes back); only manage_paid_ads can act.
+  const [paid, setPaid] = useState<PaidPlacement[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -83,6 +88,13 @@ export default function ContentPreviewModal({
       setTasks(detail.tasks);
       setScenes(detail.scenes);
       setSteps(detail.steps);
+      // Not fatal to the popup: the caption card is simply absent, and the
+      // failure is logged loudly rather than swallowed.
+      try {
+        setPaid((await fetchPaidAds(contentId)).placements);
+      } catch (pe) {
+        console.error('[marketing] preview paid placements unavailable', pe);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -93,6 +105,8 @@ export default function ContentPreviewModal({
   useEffect(() => { void load(); }, [load]);
 
   const openTask = tasks.find((t) => t.status === 'open') ?? null;
+  const captionReviews = paid.filter((p) => p.creative?.auto_ad?.state === 'caption_review');
+  const canReviewCaption = can('manage_paid_ads');
   const currentStep = openTask ? steps.find((s) => s.id === openTask.step_id) ?? null : null;
   const sortedSteps = useMemo(() => [...steps].sort((a, b) => a.position - b.position), [steps]);
   // Auto Meta ad: when the step being approved creates the ad, the popup shows
@@ -383,6 +397,18 @@ export default function ContentPreviewModal({
     if (!item) return null;
     return (
       <div style={{ display: 'grid', gap: 16 }}>
+        {/* The caption task comes FIRST: it is the one thing the manager is here to do. */}
+        {captionReviews.map((p) => (
+          <CaptionReviewCard
+            key={p.id}
+            contentId={contentId}
+            placement={p}
+            canAct={canReviewCaption}
+            isAr={isAr}
+            onChanged={(pls) => { setPaid(pls); setChanged(true); }}
+            addToast={addToast}
+          />
+        ))}
         {phase === 'writing' ? (<>{writingCards}{materialsCards}</>) : (<>{materialsCards}{writingCards}</>)}
         {publishCard}
         {openTask && canAct && autoAdStep && <AutoAdPanel state={autoAdState} isAr={isAr} />}
@@ -430,10 +456,14 @@ export default function ContentPreviewModal({
         </span>
       )}
       {!openTask && item && (
-        <span style={{ fontSize: 12, color: 'var(--mute)' }}>
-          {item.status_key === 'done'
-            ? (isAr ? 'انتهى مسار العمل.' : 'The workflow is finished.')
-            : (isAr ? 'لا مهمة مفتوحة.' : 'No open task.')}
+        <span style={{ fontSize: 12, color: captionReviews.length > 0 ? 'var(--copper)' : 'var(--mute)' }}>
+          {captionReviews.length > 0
+            ? (canReviewCaption
+              ? (isAr ? 'كابشن الإعلان بانتظار اعتمادك — أعلاه.' : 'The ad caption awaits your approval — above.')
+              : (isAr ? 'كابشن الإعلان بانتظار اعتماد مدير التسويق.' : 'The ad caption awaits the marketing manager’s approval.'))
+            : item.status_key === 'done'
+              ? (isAr ? 'انتهى مسار العمل.' : 'The workflow is finished.')
+              : (isAr ? 'لا مهمة مفتوحة.' : 'No open task.')}
         </span>
       )}
     </>

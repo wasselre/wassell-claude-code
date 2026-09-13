@@ -2006,6 +2006,12 @@ export interface MosManualTask {
   closed_by_user_id: string | null;
   created_at: string;
   updated_at: string;
+  /** 'manual' = a person's coordination task (closed with «تم»);
+   *  'caption_review' = a SYSTEM task opened by the Meta-ad worker when an AI
+   *  caption is parked for approval — closed by approving the caption, never
+   *  by «تم». `ref_id` = the mos_execution_ads row the caption lives on. */
+  kind?: 'manual' | 'caption_review';
+  ref_id?: string | null;
 }
 
 /** How a repeating task repeats. Weekday numbers are 0 = Sunday … 6 = Saturday. */

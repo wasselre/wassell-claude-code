@@ -260,6 +260,7 @@ export async function enqueueMetaAdJob(
       execution_id: input.target.execution_id,
       ad_set_id: input.target.ad_set_id,
       platform_adset_id: input.target.platform_adset_id,
+      ad_set_name: input.target.ad_set_name,
       approved_by_user_id: input.approvedByUserId,
       phase,
     },
@@ -305,9 +306,9 @@ export async function approveMetaAdCaption(
   const state = typeof auto.state === 'string' ? auto.state : null;
   if (state === 'queued' || state === 'creating') throw new Error('the automation is still working on this ad — wait for it');
 
-  const setRes = await svc.from('mos_ad_sets').select('id, execution_id, platform_adset_id').eq('id', row.ad_set_id).maybeSingle();
+  const setRes = await svc.from('mos_ad_sets').select('id, execution_id, name, platform_adset_id').eq('id', row.ad_set_id).maybeSingle();
   if (setRes.error) throw setRes.error;
-  const set = setRes.data as { id: string; execution_id: string; platform_adset_id: string | null } | null;
+  const set = setRes.data as { id: string; execution_id: string; name: string | null; platform_adset_id: string | null } | null;
   if (!set?.platform_adset_id) throw new Error('the ad set is not linked to Meta — run «Create in Meta» on the campaign first');
 
   const now = new Date().toISOString();
@@ -347,11 +348,19 @@ export async function approveMetaAdCaption(
       execution_id: set.execution_id,
       ad_set_id: set.id,
       platform_adset_id: set.platform_adset_id,
+      ad_set_name: set.name,
       approved_by_user_id: input.approvedByUserId,
       phase: 'create',
     },
   });
   if (job.error) throw job.error;
+
+  // The «مهامي» caption task is done — the approval IS its completion.
+  const closed = await svc.from('mos_manual_tasks')
+    .update({ status: 'done', done_note: 'caption approved', closed_at: now, closed_by_user_id: input.approvedByUserId, updated_at: now })
+    .eq('kind', 'caption_review').eq('ref_id', row.id).eq('status', 'open');
+  if (closed.error) console.error('[metaAutoAd] caption task close failed:', closed.error.message);
+
   return { ad_row_id: row.id, job_id: jobId };
 }
 

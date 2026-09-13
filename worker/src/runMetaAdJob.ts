@@ -645,6 +645,55 @@ async function notify(sb: SupabaseClient, args: {
   if (error) console.error('[meta-ad] notify_emit failed', args.event, error.code, error.message);
 }
 
+/**
+ * The caption task in «مهامي» (2026-09-13). A parked caption is a TASK for
+ * the approver — it appears in their task list like every other task and
+ * opens the review popup. One open task per ad row (a rewrite refreshes it);
+ * the approval (API) or the ad's creation (below) closes it.
+ */
+async function openCaptionTask(sb: SupabaseClient, args: {
+  adRowId: string; contentId: string; campaignId: string | null; projectId: string | null;
+  assigneeUserId: string | null; title: string; adSetName: string | null;
+}): Promise<void> {
+  if (!args.assigneeUserId) {
+    console.error('[meta-ad] caption task NOT opened — no approver user id on the job (the notification still went out)');
+    return;
+  }
+  const now = new Date().toISOString();
+  const title = `اعتماد كابشن إعلان ميتا: ${args.title}`.slice(0, 200);
+  const details = args.adSetName ? `المجموعة الإعلانية: ${args.adSetName}` : null;
+  const open = await sb.from('mos_manual_tasks').select('id')
+    .eq('kind', 'caption_review').eq('ref_id', args.adRowId).eq('status', 'open').maybeSingle();
+  if (open.error) { console.error('[meta-ad] caption task read failed:', open.error.message); return; }
+  if (open.data) {
+    const upd = await sb.from('mos_manual_tasks').update({ title, details, updated_at: now }).eq('id', (open.data as { id: string }).id);
+    if (upd.error) console.error('[meta-ad] caption task refresh failed:', upd.error.message);
+    return;
+  }
+  const ins = await sb.from('mos_manual_tasks').insert({
+    kind: 'caption_review',
+    ref_id: args.adRowId,
+    title,
+    details,
+    assignee_user_id: args.assigneeUserId,
+    created_by_user_id: args.assigneeUserId,
+    content_id: args.contentId,
+    campaign_id: args.campaignId,
+    project_id: args.projectId,
+    status: 'open',
+    due_at: new Date(Date.now() + 24 * 3600_000).toISOString(),
+  });
+  if (ins.error) console.error('[meta-ad] caption task insert failed:', ins.error.message);
+}
+
+async function closeCaptionTask(sb: SupabaseClient, adRowId: string, note: string): Promise<void> {
+  const now = new Date().toISOString();
+  const upd = await sb.from('mos_manual_tasks')
+    .update({ status: 'done', done_note: note, closed_at: now, updated_at: now })
+    .eq('kind', 'caption_review').eq('ref_id', adRowId).eq('status', 'open');
+  if (upd.error) console.error('[meta-ad] caption task close failed:', upd.error.message);
+}
+
 /** Mark the ad row failed + notify. Called by the lane on ANY thrown error. */
 export async function failMetaAdJob(sb: SupabaseClient, job: MetaAdJob, message: string): Promise<void> {
   const adRowId = str(job.params.ad_row_id);
@@ -728,6 +777,10 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
       caption_source: captionSource,
       caption_ready_at: new Date().toISOString(),
       error: null,
+    });
+    await openCaptionTask(sb, {
+      adRowId, contentId, campaignId: exec?.campaign_id ?? null, projectId, assigneeUserId: approvedBy,
+      title: content.title, adSetName: str(job.params.ad_set_name),
     });
     await notify(sb, {
       event: 'ad_caption_ready',
@@ -875,6 +928,7 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
     created_at: new Date().toISOString(),
     error: null,
   });
+  await closeCaptionTask(sb, adRowId, `ad created on Meta (${ad.id})`);
   await notify(sb, {
     event: 'ad_created',
     users: approvedBy ? [approvedBy] : [],

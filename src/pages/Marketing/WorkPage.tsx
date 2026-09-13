@@ -217,6 +217,15 @@ export default function WorkPage() {
     t.content_id ? `/m/content/${t.content_id}`
       : t.campaign_id ? `/m/campaigns/${t.campaign_id}`
         : null;
+  /** A SYSTEM task (the Meta-ad caption awaiting approval) behaves like a
+   *  workflow task: the row opens the review popup, where the caption is
+   *  approved or rewritten. It is never closed with «تم». */
+  const isCaptionTask = (t: MosManualTask): boolean => t.kind === 'caption_review' && !!t.content_id;
+  const openManual = (t: MosManualTask): void => {
+    if (isCaptionTask(t)) { setPreviewId(t.content_id as string); return; }
+    const target = manualTarget(t);
+    if (target) navigate(target);
+  };
 
   /** The project a hand-assigned task points at — its own, else its content's. */
   const manualProjectId = (t: MosManualTask): string | null =>
@@ -272,11 +281,12 @@ export default function WorkPage() {
                 {manualSorted.map((t) => {
                   const target = manualTarget(t);
                   const projectId = manualProjectId(t);
+                  const clickable = isCaptionTask(t) || !!target;
                   return (
                     <tr
                       key={t.id}
-                      className={target ? 'click' : undefined}
-                      onClick={target ? () => navigate(target) : undefined}
+                      className={clickable ? 'click' : undefined}
+                      onClick={clickable ? () => openManual(t) : undefined}
                     >
                       <td>
                         <div className="ttl">{t.title}</div>
@@ -290,15 +300,25 @@ export default function WorkPage() {
                         )}
                       </td>
                       <td style={{ width: 190 }}>{duePill(t)}</td>
-                      <td style={{ width: 130, textAlign: 'end' }}>
-                        <button
-                          type="button"
-                          className="btn btn-p btn-sm"
-                          disabled={closing === t.id}
-                          onClick={(e) => { e.stopPropagation(); void closeManual(t.id); }}
-                        >
-                          {closing === t.id ? (isAr ? '…' : '…') : isAr ? 'تم' : 'Done'}
-                        </button>
+                      <td style={{ width: 150, textAlign: 'end' }}>
+                        {isCaptionTask(t) ? (
+                          <button
+                            type="button"
+                            className="btn btn-p btn-sm"
+                            onClick={(e) => { e.stopPropagation(); openManual(t); }}
+                          >
+                            {isAr ? 'مراجعة الكابشن' : 'Review caption'}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-p btn-sm"
+                            disabled={closing === t.id}
+                            onClick={(e) => { e.stopPropagation(); void closeManual(t.id); }}
+                          >
+                            {closing === t.id ? (isAr ? '…' : '…') : isAr ? 'تم' : 'Done'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -558,6 +578,7 @@ export default function WorkPage() {
           {manualSorted.map((t) => {
             const target = manualTarget(t);
             const projectId = manualProjectId(t);
+            const clickable = isCaptionTask(t) || !!target;
             return (
               <div key={t.id} className={`m1-card${manualOverdue(t) ? ' late2' : ''}`}>
                 {manualOverdue(t) && (
@@ -566,10 +587,10 @@ export default function WorkPage() {
                 <div
                   className="m1-t"
                   style={{ marginTop: manualOverdue(t) ? 9 : 0 }}
-                  role={target ? 'button' : undefined}
-                  tabIndex={target ? 0 : undefined}
-                  onClick={target ? () => navigate(target) : undefined}
-                  onKeyDown={target ? (e) => { if (e.key === 'Enter') navigate(target); } : undefined}
+                  role={clickable ? 'button' : undefined}
+                  tabIndex={clickable ? 0 : undefined}
+                  onClick={clickable ? () => openManual(t) : undefined}
+                  onKeyDown={clickable ? (e) => { if (e.key === 'Enter') openManual(t); } : undefined}
                 >
                   {t.title}
                 </div>
@@ -584,14 +605,20 @@ export default function WorkPage() {
                     <ProjectLink projectIds={[projectId]} />
                   </div>
                 )}
-                <button
-                  type="button"
-                  className="m1-btn p sm"
-                  disabled={closing === t.id}
-                  onClick={() => void closeManual(t.id)}
-                >
-                  {isAr ? 'تم' : 'Done'}
-                </button>
+                {isCaptionTask(t) ? (
+                  <button type="button" className="m1-btn p sm" onClick={() => openManual(t)}>
+                    {isAr ? 'مراجعة الكابشن' : 'Review caption'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="m1-btn p sm"
+                    disabled={closing === t.id}
+                    onClick={() => void closeManual(t.id)}
+                  >
+                    {isAr ? 'تم' : 'Done'}
+                  </button>
+                )}
               </div>
             );
           })}
