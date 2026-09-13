@@ -3395,13 +3395,15 @@ async function scheduledWhatsappPollLoop(): Promise<void> {
 
 // Drain the queues concurrently for the lifetime of the process.
 let loops: Array<Promise<void>>;
-if (process.env.UNIT_PDF_ONLY === '1') {
+if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'render') {
   // DEDICATED RENDER MACHINE — runs ONLY the unit-pdf render lane (headless
   // Chromium). The general worker machines are 512MB shared-cpu and saturated by
   // the marketing lane, which starves chromium (renders hang / never finish). So
-  // rendering is isolated onto ONE right-sized machine via this per-machine env,
-  // and the general machines skip the unit-pdf loop entirely (see the else below).
-  console.log('[worker] UNIT_PDF_ONLY=1 — dedicated render machine: only the unit-pdf loop runs here');
+  // rendering is isolated onto a right-sized machine. Durable: the `render`
+  // process group in fly.toml (its own bigger [[vm]]) sets FLY_PROCESS_GROUP=render
+  // automatically, so this survives every deploy; UNIT_PDF_ONLY stays as a manual
+  // override. The general machines skip the unit-pdf loop entirely (see else).
+  console.log('[worker] render-only machine (unit-pdf) — group=' + (process.env.FLY_PROCESS_GROUP ?? 'n/a'));
   loops = [unitPdfPollLoop()];
 } else if (env.WORKFLOW_PROOF_ONLY) {
   // LOCAL PROOF MODE ONLY — register ONLY the workflow loop so a local run

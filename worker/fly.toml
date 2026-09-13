@@ -14,6 +14,16 @@ primary_region = 'sin'
   PORT = '8080'
   WATCHDOG_INTERVAL_MS = '300000'
 
+# Two process groups, same image/command:
+#   app    — the general worker: all lanes EXCEPT the unit-pdf renderer. 512MB × 5.
+#   render — headless-Chromium unit-pdf renderer ONLY (Fly sets FLY_PROCESS_GROUP=
+#            'render', which index.ts reads to run render-only). Bigger VM because
+#            chromium starves on the busy 512MB general machines. Durable across
+#            deploys — the group + its [[vm]] live here, not as a per-machine hack.
+[processes]
+  app = 'node dist/index.js'
+  render = 'node dist/index.js'
+
 [http_service]
   internal_port = 8080
   force_https = true
@@ -24,6 +34,7 @@ primary_region = 'sin'
   # job. With ~3 KB of code and a 200ms cold start, the only reason a machine
   # is idle is the queue itself being empty.
   min_machines_running = 5
+  processes = ['app']
 
   [[http_service.checks]]
     interval = '30s'
@@ -35,3 +46,9 @@ primary_region = 'sin'
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '512mb'
+  processes = ['app']
+
+[[vm]]
+  size = 'shared-cpu-2x'
+  memory = '2048mb'
+  processes = ['render']
