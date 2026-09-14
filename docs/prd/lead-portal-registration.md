@@ -1,6 +1,6 @@
 # Lead-portal registration
 
-**Last updated:** 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **two real portals configured**. **Riva** (`riva.sa/broker`, email + password, no OTP) linked to marketer «ريفا». **Al Ramz** (`brokerportal.alramzre.com`, phone + 6-box SMS OTP) linked to developer «الرمز» — the OTP handshake verified end-to-end through the real engine (rep's code relayed via the job row). Field specs gained `hidden`, `map`, `default`; targets gained `exact`; filters `ksa_short`; steps `fill_otp` (segmented OTP) and `screenshot.full`.)
+**Last updated:** 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **three real portals configured**. **Riva** (`riva.sa/broker`, email + password, no OTP) → marketer «ريفا». **Al Ramz** (`brokerportal.alramzre.com`, phone + 6-box SMS OTP) → developer «الرمز», OTP handshake verified end-to-end through the real engine. **Safa / Kasb** (`broker.safainv.sa`, phone + 4-box SMS OTP, a Select2 "create opportunity" modal) → developer «صفا للاستثمار», every step verified live in a real session. Field specs gained `hidden`, `map`, `default`; targets gained `exact`; filters `ksa_short`; steps `fill_otp` (segmented OTP) and `screenshot.full`.)
 
 ## What it is
 
@@ -44,6 +44,16 @@ the app, not a deploy. The recipe language is documented in
   line lists them); a hidden required field with no value blocks Start with
   "missing on the client record". The sign-in phone (`login_phone`) is shown
   only for portals that sign in by phone.
+- **Safa / Kasb (2026-09-14).** Sign-in by phone + a 4-box SMS OTP (boxes are
+  `.otp__digit`; a hidden `otp-autofill` helper sits alongside, so the recipe
+  targets the class, not `input[type=text]`). The rep sees only the notes field;
+  name, phone, and project are sent silently. The project is Safa's «إنشاء فرصة
+  جديدة» Select2 dropdown whose option values are numeric ids, so the field maps
+  each CRM Safa project name to its id (all 12 map). Units are left empty. Every
+  step was verified live (login, OTP, Select2 project pick, form fill); the
+  assembled recipe was not run end-to-end through the engine and the submit is
+  untested (option C). Note: Safa's login occasionally returns a transient
+  "Server Error" on the first attempt, then succeeds.
 - **Al Ramz (2026-09-14).** Sign-in by phone + a 6-box SMS OTP, so it exercises
   the full pause/resume handshake: the rep enters the code the portal texts to
   the stored sign-in phone. The rep sees 3 fields: project (Al Ramz's name,
