@@ -31,7 +31,28 @@ export interface PlanCtx {
   sb: SupabaseClient;
   svc: SupabaseClient | null;
   body: Record<string, unknown>;
+  /** The AUTH uid (`auth.users.id`) — NOT the `public.users` row id. */
   userId: string | null;
+}
+
+/**
+ * The `public.users` row id for the caller.
+ *
+ * `ctx.userId` is the AUTH uid; every `*_user_id` column in the `mos_*` schema
+ * is a foreign key to `public.users(id)`. Writing the auth uid into one of them
+ * fails the constraint — which is exactly how the first live preview died
+ * («violates foreign key constraint mos_campaign_plans_created_by_user_id_fkey»),
+ * because every local test ran as service_role with a null actor and never
+ * exercised the mapping.
+ */
+async function appUserId(ctx: PlanCtx): Promise<string | null> {
+  if (!ctx.userId) return null;
+  const { data, error } = await ctx.sb.rpc('wassell_app_user_id', { auth_user_id: ctx.userId });
+  if (error) {
+    console.error('[planning] wassell_app_user_id failed', error.code, error.message);
+    return null;
+  }
+  return (data as string | null) ?? null;
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
@@ -263,7 +284,7 @@ export async function campaignPlanPreview(ctx: PlanCtx): Promise<Response> {
     },
     snapshot_hash: plan.snapshotHash,
     engine_version: plan.engineVersion,
-    created_by_user_id: ctx.userId,
+    created_by_user_id: await appUserId(ctx),
   }).select('id').single();
   if (error) return fail('mos_campaign_plans insert', error);
 
@@ -444,7 +465,7 @@ export async function campaignPlanCommit(ctx: PlanCtx): Promise<Response> {
     p_reservations: reservationsPayload(fresh),
     p_expected_hash: fresh.snapshotHash,
     p_materialise: materialisePayload(parsed, fresh),
-    p_actor: ctx.userId,
+    p_actor: await appUserId(ctx),
   });
   if (rpcErr) {
     const msg = rpcErr.message ?? '';
@@ -616,7 +637,7 @@ export async function capacityConfigSave(ctx: PlanCtx): Promise<Response> {
     const { data: cur } = await svc.from('mos_settings').select('value').eq('key', 'planning').maybeSingle();
     const value = { ...asRecord((cur as { value?: unknown } | null)?.value), weekend_days: days };
     const { error } = await svc.from('mos_settings').upsert({
-      key: 'planning', value, updated_by_user_id: ctx.userId, updated_at: new Date().toISOString(),
+      key: 'planning', value, updated_by_user_id: await appUserId(ctx), updated_at: new Date().toISOString(),
     });
     if (error) return fail('mos_settings.planning upsert', error);
   }
