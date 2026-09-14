@@ -4,7 +4,7 @@
 
 # Models — auto-generated index
 
-**52 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
+**53 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
 
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -31,6 +31,7 @@
 | [Follow-ups](followups.md) | `followups` | JSONB | New Group | 3 | 44 | no | 2026-09-03 |
 | [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-08-20 |
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
+| [Lead portals](lead-portals.md) | `lead_portals` | JSONB | — | 2 | 14 | no | 2026-09-14 |
 | [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 86 | no | 2026-08-30 |
 | [Marketers](marketers.md) | `marketers` | JSONB | Projects | 1 | 3 | no | 2026-08-31 |
 | [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 17 | yes | 2026-08-20 |
