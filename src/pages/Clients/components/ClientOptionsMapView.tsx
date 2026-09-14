@@ -1,8 +1,10 @@
 import { useMemo, type ReactNode } from 'react';
+import { useJsApiLoader } from '@react-google-maps/api';
 import { useAppStore } from '@/stores/appStore';
 import {
   buildColoredPinIcon, buildPillIcon,
 } from '@/lib/locationUtils';
+import { getMapsLoaderOptions } from '@/lib/mapsLoader';
 import {
   CLIENT_OPTION_STATUS_META, CLIENT_OPTION_STATUS_ORDER,
   type ClientOptionStatus, type ClientOptionSourceType,
@@ -51,10 +53,21 @@ const SOURCE_MODEL: Record<ClientOptionSourceType, string> = {
   market_listing: 'market_listings',
 };
 
+// Our brand copper — project options render as NAMED pills in this colour so they
+// never read the same as a market ad's status-coloured teardrop pin.
+const OUR_PROJECTS_COLOR = '#B8734F';
+
 export default function ClientOptionsMapView({ options, isAr, renderCard, heightClass = 'h-[65vh]', areaItems }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
+
+  // Track when the Maps script is ready. Icon builders return `undefined` until
+  // `window.google.maps` exists; keying the memos below on `isLoaded` makes them
+  // rebuild once it does — otherwise a map opened before the script finished
+  // loading would cache `undefined` icons forever and every pin would fall back
+  // to Google's default RED marker.
+  const { isLoaded } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
 
   const optionById = useMemo(() => {
     const m = new Map<string, AppRecord>();
@@ -70,7 +83,8 @@ export default function ClientOptionsMapView({ options, isAr, renderCard, height
       if (!cache.has(color)) cache.set(color, buildColoredPinIcon(color) as google.maps.Icon | undefined);
       return cache.get(color);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded]);
 
   // facts snapshot first; source record's own coordinates as the fallback. The main
   // option renders as a named pill (solo, on top); the rest are status-colored pins.
@@ -94,41 +108,74 @@ export default function ClientOptionsMapView({ options, isAr, renderCard, height
       if (lat == null || lng == null) continue;
       const status = d.status as ClientOptionStatus;
       const isMain = d.is_main === true;
+      const isProject = (d.source_type as ClientOptionSourceType) === 'project';
       const name = typeof d.source_name === 'string' && d.source_name ? d.source_name : L('بدون اسم', 'Untitled');
+      // Our projects (and the main option) render as a NAMED copper pill — the
+      // name inside the marker, in our brand colour — so they never read the same
+      // as a market ad's status-coloured teardrop. Market listings & units keep
+      // their status-coloured pins.
+      const asPill = isMain || isProject;
       out.push({
         id: r.id,
         lat,
         lng,
-        icon: isMain
-          ? (buildPillIcon(name, CLIENT_OPTION_STATUS_META.main_focus.color) as google.maps.Icon | undefined)
+        icon: asPill
+          ? (buildPillIcon(name, OUR_PROJECTS_COLOR) as google.maps.Icon | undefined)
           : iconFor(status),
         title: name,
-        // The main option sits on top so it's never hidden under another pin, and is
-        // a solo marker so its named pill is never absorbed into a cluster.
-        zIndex: isMain ? 1000 : undefined,
-        solo: isMain,
-        // Rebuild the marker when the STATUS color (or the pill name / main flag) changes.
-        sig: isMain ? `main:${name}` : status,
+        // Pills sit on top (main above the rest) so they're never hidden under
+        // another pin, and are solo markers so a named pill is never absorbed
+        // into a cluster.
+        zIndex: isMain ? 1000 : isProject ? 900 : undefined,
+        solo: asPill,
+        // Rebuild the marker when the STATUS color (or the pill name / main /
+        // project flag) changes.
+        sig: asPill ? `${isMain ? 'main' : 'proj'}:${name}` : status,
       });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options, models, records, isAr]);
+  }, [options, models, records, isAr, isLoaded]);
 
   const missingCount = options.length - pins.length;
 
+  // Status legend covers only the status-coloured teardrops (market listings /
+  // units). Project & main options render as copper "Our Projects" pills, so
+  // they're represented by their own swatch instead of a status colour.
   const statusesPresent = useMemo(() => {
     const present = new Set<string>();
-    for (const r of options) present.add(String((r.data as Record<string, unknown>).status));
+    for (const r of options) {
+      const d = r.data as Record<string, unknown>;
+      if (d.is_main === true || d.source_type === 'project') continue;
+      present.add(String(d.status));
+    }
     return CLIENT_OPTION_STATUS_ORDER.filter((s) => present.has(s));
   }, [options]);
 
-  const legend = statusesPresent.map((s) => (
-    <span key={s} className="inline-flex items-center gap-1">
-      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: CLIENT_OPTION_STATUS_META[s].color }} />
-      {isAr ? CLIENT_OPTION_STATUS_META[s].ar : CLIENT_OPTION_STATUS_META[s].en}
-    </span>
-  ));
+  const hasProjectPills = useMemo(
+    () => options.some((r) => {
+      const d = r.data as Record<string, unknown>;
+      return d.is_main === true || d.source_type === 'project';
+    }),
+    [options],
+  );
+
+  const legend = (
+    <>
+      {hasProjectPills && (
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: OUR_PROJECTS_COLOR }} />
+          {L('مشاريعنا', 'Our Projects')}
+        </span>
+      )}
+      {statusesPresent.map((s) => (
+        <span key={s} className="inline-flex items-center gap-1">
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: CLIENT_OPTION_STATUS_META[s].color }} />
+          {isAr ? CLIENT_OPTION_STATUS_META[s].ar : CLIENT_OPTION_STATUS_META[s].en}
+        </span>
+      ))}
+    </>
+  );
 
   return (
     <BaseMapView
