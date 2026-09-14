@@ -6,7 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film, Bot, ShieldCheck,
+  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film, Bot, ShieldCheck, Wallet,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -174,6 +174,17 @@ const CARDS: SettingsCard[] = [
     color: '#7C3AED',
     bg: '#7C3AED14',
     route: '/settings/audit-log',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'استهلاك الذكاء الاصطناعي والرصيد',
+    titleEn: 'AI Usage & Credit',
+    descAr: 'تكلفة كل نداء للذكاء الاصطناعي، ورصيد كل مزوّد وما تبقّى منه',
+    descEn: 'What every AI call costs, and how much credit is left per provider',
+    icon: Wallet,
+    color: '#0F766E',
+    bg: '#0F766E14',
+    route: '/settings/ai-usage',
     adminOnly: true,
   },
   {

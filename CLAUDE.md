@@ -656,6 +656,25 @@ implementation runs on Vercel Edge, Node and Deno alike.
    the file, so an exemption cannot decay into a hole. Fix the call site, not
    the allowlist.
 
+**Credit balances (same migration day):** `ai_provider_accounts` +
+`ai_credit_entries` (`supabase/migrations/2026-09-14_ai_credit_accounts.sql`)
+track how much is LEFT. No provider here exposes a balance an API key can read,
+so the operator enters an opening balance and the app subtracts metered spend
+from it — surfaced at **Settings → AI Usage & Credit**
+(`src/pages/Settings/AiUsagePage.tsx`).
+
+8. **Spend is attributed by PROVIDER**, so exactly ONE active account per
+   provider is allowed (unique partial index). Two separately-billed keys for
+   the same provider need per-key attribution on `ai_usage` first.
+9. **Counting starts at the earliest credit entry**, never before. Usage that
+   predates the opening balance must never eat into it.
+10. **Never edit a credit entry in place** — correct it with an `adjustment`
+    (the only kind allowed to be negative) so the history stays readable.
+11. **An account with no entries is "not tracked", NOT "$0 left".** The page
+    excludes it from every total; a zero there would be a lie.
+12. **A balance resting on unpriced usage is an UPPER BOUND** and must be
+    labelled as one (`remaining_is_upper_bound`). Don't present it as fact.
+
 **Where the money actually goes** (measured 2026-09-14, $87.50 all-time before
 this ledger existed): Modal GPU $53.27 (competitor video), Anthropic $25.37,
 fal $8.85. Detail in `docs/prd/ai-usage-tracking.md`.

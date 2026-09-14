@@ -1,4 +1,4 @@
-# PRD: AI Usage & Cost Tracking
+# PRD: AI Usage, Cost & Credit Tracking
 
 **Status:** Live
 **Last updated:** 2026-09-14
@@ -18,6 +18,13 @@ whose rate nobody has entered yet. The moment someone types that rate in, the
 entire history re-prices itself. An unknown price shows as "unknown", never as
 zero — so a cost report can never quietly under-report by treating an unpriced
 provider as free.
+
+On top of that sits a **credit tracker**. None of the five providers exposes a
+balance an API key can read, so the operator types in what each account holds —
+once, as an opening balance — and the app subtracts the metered spend from it
+from that moment on. Later top-ups are added the same way. A page at
+**Settings → AI Usage & Credit** shows what is left per account, the daily burn
+rate, and how many days that leaves.
 
 ## Why it exists
 
@@ -60,6 +67,22 @@ app — was invisible.
   There is no retry queue — a lost row is a metering gap, and the gap is visible
   in the daily view rather than hidden.
 
+### Credit balances
+
+- **Balances are entered, spend is automatic.** An account with no entries reads
+  as "not tracked yet", never as "$0 left" — those are different statements and
+  the page says which one it means.
+- **Spend before tracking started is never subtracted.** Counting begins at the
+  earliest credit entry's effective date, so usage that predates the opening
+  balance cannot eat into it.
+- **Nothing is edited in place.** A wrong figure is corrected with an
+  `adjustment` entry (the only kind allowed to be negative), so the record of
+  what was believed, and when, survives.
+- **A balance resting on unpriced usage is labelled an upper bound.** The page
+  says so on the card rather than presenting the number as fact.
+- **Runway is measured, not projected.** Days remaining come from the last 30
+  days of actual metered spend; with no spend in the window it shows "—".
+
 ## User flows
 
 1. **Reading the bill.** Query `v_ai_usage_daily` — spend per day, area, call
@@ -72,7 +95,14 @@ app — was invisible.
    The return value is how many historical rows just became costed.
 3. **Attributing a spike.** Group by `call_site` — each is a stable slug naming
    one file, so a spike points at one feature rather than a department.
-4. **Empty state.** A brand-new environment records nothing and says so: if
+4. **Starting to track an account.** Settings → AI Usage & Credit → the account
+   card → *Set opening balance*. Enter what the account holds right now. From
+   that moment every recorded call is subtracted from it.
+5. **Topping up.** Same card → *Record credit* → *Top-up*, with the amount and
+   the date the money landed.
+6. **Fixing a mistake.** *Record credit* → *Adjustment*, which accepts a negative
+   number. The original entry stays in the history.
+7. **Empty state.** A brand-new environment records nothing and says so: if
    `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` are not both set, the recorder
    logs `AI usage is NOT being recorded in this environment` once per process.
 
@@ -80,8 +110,12 @@ app — was invisible.
 
 - Writes: `ai_usage` (append-only, one row per model call)
 - Reads/writes: `ai_price_book` (via `ai_price_set()`, admin-only)
-- Reads: `v_ai_usage_daily`, `v_ai_usage_unpriced`
-- RLS: service-role writes only; admins read. A browser cannot forge a usage row.
+- Reads/writes: `ai_provider_accounts`, `ai_credit_entries` (via `ai_account_upsert()`,
+  `ai_credit_add()`, `ai_credit_delete()` — all admin-only, all SECURITY DEFINER)
+- Reads: `v_ai_usage_daily`, `v_ai_usage_unpriced`, `v_ai_account_balances`,
+  `v_ai_account_runway`
+- RLS: service-role writes only; admins read. A browser cannot forge a usage row
+  or write a balance directly.
 
 ## Coverage — every AI call site
 
@@ -131,6 +165,11 @@ app — was invisible.
 | `worker/src/marketing/cv/ledger.ts` | Records `cv_process` (the Modal call nothing else sees) |
 | `api/_lib/__tests__/aiUsageCoverage.test.ts` | The guard that keeps coverage complete |
 | `api/_lib/__tests__/aiUsage.test.ts` | Recorder unit tests |
+| `supabase/migrations/2026-09-14_ai_credit_accounts.sql` | Accounts + credit ledger, balance/runway views, write RPCs, RLS |
+| `src/pages/Settings/AiUsagePage.tsx` | The page: balances, burn rate, spend breakdown, unpriced worklist |
+| `src/pages/Settings/components/AddCreditModal.tsx` | Opening balance / top-up / adjustment entry |
+| `src/lib/aiUsage/client.ts` | Browser client + the pure aggregation helpers |
+| `src/lib/aiUsage/__tests__/aggregation.test.ts` | Tests for the page's arithmetic |
 
 ## Open questions / known limitations
 
@@ -148,5 +187,15 @@ app — was invisible.
   `cv_process` in only one of them.
 - **No retention policy yet.** At current volumes (~10k rows/month) this is not
   urgent, but the table grows forever.
-- **No in-app UI.** Reporting is SQL against the two views. A Settings screen
-  showing spend by area would be the obvious next step.
+- **Balances cannot be auto-synced.** No provider here exposes a readable
+  balance, so the opening figure is only as current as the last time someone
+  typed it in. If the operator tops up without recording it, the page
+  under-reports what is left.
+- **Spend is attributed by PROVIDER, not by key.** v1 allows exactly one active
+  account per provider (a unique partial index enforces it). Two Anthropic keys
+  billed separately would need per-key attribution on `ai_usage` first.
+- **The authenticated page view has not been eyeballed by Claude.** The admin
+  guard requires an AAL2 session (TOTP), which Claude cannot and should not
+  obtain, so the page was verified by rendering it without a backend (both
+  RTL and LTR), by unit tests over its arithmetic, and by proving the balance
+  SQL directly. The populated view needs a human's eyes once.
