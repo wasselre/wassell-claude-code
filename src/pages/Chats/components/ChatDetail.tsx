@@ -24,6 +24,8 @@ import ContactIntakeModal from './ContactIntakeModal';
 import OfficerIntakeModal from './OfficerIntakeModal';
 import LogInteractionModal from './LogInteractionModal';
 import NotifyOfficerModal from './NotifyOfficerModal';
+import RegisterLeadPortalModal from './RegisterLeadPortalModal';
+import { Globe as PortalIcon } from 'lucide-react';
 import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointmentModal';
 import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
 import StudyJobCard from './StudyJobCard';
@@ -270,6 +272,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const [showRecordVisit, setShowRecordVisit] = useState(false);
   // Notify the project's officer FROM THE OPS LINE that a customer wants to visit.
   const [showNotifyOfficer, setShowNotifyOfficer] = useState(false);
+  // Register the linked client in the project's developer/marketer/officer
+  // broker portal (Browserbase run on the worker; OTP typed in the modal).
+  const [showRegisterPortal, setShowRegisterPortal] = useState(false);
   // In-chat record popup for a matched CONTACT / ADVERTISER (a plain record with
   // no bespoke page). Opening it never navigates away — RecordFormModal overlay
   // with an "Open full page" escape hatch.
@@ -404,6 +409,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     onBookAppointment: () => setShowBookAppointment(true),
     onRecordVisit: () => setShowRecordVisit(true),
     onNotifyOfficer: () => setShowNotifyOfficer(true),
+    onRegisterPortal: () => setShowRegisterPortal(true),
     onLeadIntake: () => setShowLeadIntake(true),
     onContactIntake: () => setShowContactIntake(true),
     onOfficerIntake: () => setShowOfficerIntake(true),
@@ -770,6 +776,18 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         />
       )}
 
+      {/* Register in portal — the linked client is registered in the broker
+          portal behind the project (developer / marketer / officer) by a worker-
+          driven browser; the rep types the portal's OTP here. Linked client only. */}
+      {showRegisterPortal && clientLinkId && (
+        <RegisterLeadPortalModal
+          clientId={clientLinkId}
+          clientName={linkedClientName ?? name}
+          preferredProjectIds={preferredProjectIds}
+          onClose={() => setShowRegisterPortal(false)}
+        />
+      )}
+
       {/* Complete WhatsApp Follow-Up — records the outcome on the existing
           follow-up (workflow moves the client), then resolves the chat. */}
       {showCompleteFollowup && activeWaFollowup && followupsModel && (
@@ -862,6 +880,7 @@ function CrmActions({
   onBookAppointment,
   onRecordVisit,
   onNotifyOfficer,
+  onRegisterPortal,
   onLeadIntake,
   onContactIntake,
   onOfficerIntake,
@@ -887,6 +906,7 @@ function CrmActions({
   onBookAppointment: () => void;
   onRecordVisit: () => void;
   onNotifyOfficer: () => void;
+  onRegisterPortal: () => void;
   onLeadIntake: () => void;
   onContactIntake: () => void;
   onOfficerIntake: () => void;
@@ -1001,6 +1021,14 @@ function CrmActions({
           >
             <UserCheck size={12} />
             {isAr ? 'إشعار المسؤول' : 'Notify officer'}
+          </button>
+          <button
+            onClick={run(onRegisterPortal)}
+            className={`inline-flex items-center gap-1 rounded-full border border-terracotta/40 bg-terracotta/5 ${pad} font-medium text-terracotta transition-colors hover:bg-terracotta/10`}
+            title={isAr ? 'تسجيل العميل في بوابة المطور/المسوّق تلقائياً' : "Register the client in the developer's/marketer's portal automatically"}
+          >
+            <PortalIcon size={12} />
+            {isAr ? 'تسجيل في البوابة' : 'Register in portal'}
           </button>
           {/* AI handover is a self-contained toggle (a fetch, no overlay) — it
               stays mounted in the sheet so its busy spinner + result toast show;

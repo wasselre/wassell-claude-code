@@ -44,6 +44,7 @@ import { runMigrationJob, type MigrationJob } from './runMigrationJob.js';
 import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
 import { runEnrichmentJob, type EnrichmentJob } from './runEnrichmentJob.js';
 import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
+import { runPortalRegistrationJob, type PortalRegistrationJob } from './runPortalRegistrationJob.js';
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
 import { runUnitPdfJob, type UnitPdfJob } from './runUnitPdfJob.js';
 import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
@@ -165,6 +166,11 @@ let workflowAuthFailures = 0;
 // Registered only when BROWSERBASE_API_KEY + BROWSERBASE_PROJECT_ID are set.
 let regaBusy = false;
 let regaWakeRequested = false;
+// Lead-portal registration (portal_registration_jobs). Replays a portal's
+// recipe in a Browserbase session to register a client; pauses for the rep's
+// OTP mid-run. Same Browserbase gate as the rega loop.
+let portalBusy = false;
+let portalWakeRequested = false;
 // Scheduled WhatsApp sends (scheduled_whatsapp_jobs, TENTH loop). Time-gated:
 // claim rows whose deliver_at has passed and send them via WAHA (WAHA has no
 // native deliverAt). Plus a WAHA session watchdog that restarts a session that
@@ -2234,6 +2240,128 @@ async function regaPollLoop(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Lead-portal registration — portal_registration_jobs queue (Browserbase).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued portal-registration job and run it to completion (which may
+ * include minutes of waiting for the rep's OTP — the run keeps the browser open
+ * and heart-beats the row meanwhile). Mirrors claimAndRunOneRega. The runner
+ * returns {outcome:'cancelled'} when the rep cancelled; the row is already
+ * 'cancelled' then, so complete/fail are no-ops (both guard on a live status).
+ */
+async function claimAndRunOnePortal(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('portal_registration_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] portal claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    id: string;
+    portal_record_id: string;
+    client_record_id: string;
+    project_record_id: string | null;
+    user_id: string;
+    lead_data: Record<string, unknown> | null;
+    login_phone: string | null;
+    attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: PortalRegistrationJob = {
+    id: row.id,
+    portalRecordId: row.portal_record_id,
+    clientRecordId: row.client_record_id,
+    projectRecordId: row.project_record_id,
+    userId: row.user_id,
+    leadData: row.lead_data ?? {},
+    loginPhone: row.login_phone,
+    attempts: row.attempts,
+  };
+  console.log(
+    `[worker] claimed portal job=${job.id} portal=${job.portalRecordId} client=${job.clientRecordId} attempts=${job.attempts}`,
+  );
+
+  try {
+    const result = await runPortalRegistrationJob({ supabase, env, job });
+    const { error: doneErr } = await supabase.rpc('portal_registration_job_complete', {
+      p_job_id: job.id,
+      p_result: result ?? {},
+    });
+    if (doneErr) {
+      console.error(`[worker] portal_registration_job_complete RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(`[worker] completed portal job=${job.id} → ${(result as { outcome?: string }).outcome ?? 'ok'}`);
+    }
+  } catch (err) {
+    // RecipeError carries "<arabic>\n<english>" — stored verbatim; the modal
+    // shows the line matching the UI language.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] portal job=${job.id} FAILED:`, msg.replace(/\n/g, ' | '));
+    if (err instanceof Error && err.stack && err.name !== 'RecipeError') console.error(err.stack);
+    try {
+      const { error: failErr } = await supabase.rpc('portal_registration_job_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) {
+        console.error(`[worker] portal_registration_job_fail RPC failed: ${failErr.message}`);
+      }
+    } catch (innerErr) {
+      console.error(`[worker] could not mark portal job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true;
+}
+
+async function runPortalWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('portal_registration_jobs_watchdog');
+    if (error) {
+      console.error(`[worker] portal watchdog RPC error: ${error.message}`);
+      return;
+    }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) {
+      console.warn(`[worker] portal watchdog swept ${swept} stale job(s)`);
+    }
+  } catch (err) {
+    console.error(`[worker] portal watchdog threw:`, err);
+  }
+}
+
+/** Portal-queue twin of regaPollLoop — own busy/wake flags + watchdog tick. */
+async function portalPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    portalBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOnePortal();
+    } catch (err) {
+      console.error('[worker] portal poll iteration error:', err);
+    }
+    portalBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runPortalWatchdog();
+    }
+
+    if (didClaim || portalWakeRequested) {
+      portalWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !portalWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Scheduled Reports — time-gated. scheduled_report_claim_due returns only
 // reports whose next_run_at has passed (SKIP LOCKED), so no separate scheduler
 // is needed. Each due report is run by POSTing the owner-scoped runner endpoint
@@ -2858,6 +2986,8 @@ const server = http.createServer((req, res) => {
         workflow_busy: workflowBusy,
         rega_busy: regaBusy,
         rega_enabled: !!(env.BROWSERBASE_API_KEY && env.BROWSERBASE_PROJECT_ID),
+        portal_busy: portalBusy,
+        portal_enabled: !!(env.BROWSERBASE_API_KEY && env.BROWSERBASE_PROJECT_ID),
         marketing_busy: marketingBusy,
         marketing_enabled: env.MARKETING_COLLECTION_ENABLED,
         marketing_ops_busy: marketingOpsBusy,
@@ -2899,6 +3029,7 @@ const server = http.createServer((req, res) => {
     reportsWakeRequested = true;
     workflowWakeRequested = true;
     regaWakeRequested = true;
+    portalWakeRequested = true;
     pushWakeRequested = true;
     notificationWakeRequested = true;
     scheduledWaWakeRequested = true;
@@ -2928,7 +3059,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || previewBusy || enrichmentBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || previewBusy || enrichmentBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || portalBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -3562,8 +3693,10 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
   if (env.BROWSERBASE_API_KEY && env.BROWSERBASE_PROJECT_ID) {
     console.log('[worker] rega lookup loop enabled');
     loops.push(regaPollLoop());
+    console.log('[worker] portal registration loop enabled');
+    loops.push(portalPollLoop());
   } else {
-    console.log('[worker] rega lookup loop disabled (BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID unset)');
+    console.log('[worker] rega lookup + portal registration loops disabled (BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID unset)');
   }
   // Scheduled-WhatsApp + WAHA-session-watchdog loop — only when the WAHA gateway
   // is configured (deploying this code is a no-op for the queue until both

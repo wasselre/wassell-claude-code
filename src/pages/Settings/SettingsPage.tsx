@@ -210,6 +210,17 @@ const CARDS: SettingsCard[] = [
     adminOnly: true,
   },
   {
+    titleAr: 'بوابات تسجيل العملاء',
+    titleEn: 'Lead Portals',
+    descAr: 'بوابات المطورين/المسوّقين التي نسجّل فيها العملاء تلقائياً — الرابط، رقم الدخول، الحقول المطلوبة، وخطوات الأتمتة',
+    descEn: 'Developer/marketer portals we register leads into automatically — login URL, sign-in phone, required fields, and the automation recipe',
+    icon: Globe,
+    color: '#B8734F',
+    bg: '#B8734F14',
+    route: '/model/lead_portals',
+    adminOnly: true,
+  },
+  {
     titleAr: 'قوالب المستندات',
     titleEn: 'Document Templates',
     descAr: 'قوالب وصل الرسمية لإنشاء مستندات العملاء (الحجوزات، العروض…) كـ PDF مُوحّد',

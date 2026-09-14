@@ -527,6 +527,17 @@ nothing was deleted. The scrapers (`aqar-sync-rayan`, `wassel-claude-aqar`,
 2026-08-30. **Restore = delete that one list entry + flip the api constant.**
 Everything in the mirror / ingest / publish-gate sections below still describes
 the dormant machinery accurately; none of it runs while archived.
+## Lead-portal registration (Browserbase + rep-typed OTP) (added 2026-09-14)
+
+"Register in portal" (next to "Notify officer" in a chat) registers a client in a developer's / marketer's / officer's broker portal. Each portal is a **`lead_portals` record** (login URL, coverage links, sign-in phone, `required_fields` JSON, `recipe` JSON) — adding a portal is DATA, not a deploy. A run is a `portal_registration_jobs` row: `POST /api/portal-registration {action:'start'}` enqueues, the Fly worker (`runPortalRegistrationJob.ts`, gated on the same `BROWSERBASE_*` secrets as the REGA lane) replays the recipe (`worker/src/portals/recipe.ts`) in a Browserbase session, and the SPA follows the row via Realtime. PRD: `docs/prd/lead-portal-registration.md`; recipe language: `docs/lead-portal-recipes.md`.
+
+**Hard rules — never violate:**
+1. **Never hold an HTTP request open for the browser.** Same rule as every other queue. The OTP is a ROW handshake: worker `request_input` → `status='awaiting_input'`; the rep's code goes through `{action:'input'}` → `portal_registration_job_submit_input` (owner-gated); the worker polls its own row and `resume`s. Don't "simplify" it into a request that waits for the code.
+2. **The worker heart-beats while it waits; the watchdog sweeps on `heartbeat_at`, not `started_at`.** A rep legitimately takes minutes to type a code. Sweeping on start time would kill live runs.
+3. **complete/fail/progress/session/request_input only touch a LIVE row** (`running`/`awaiting_input`); cancel + watchdog win any race. Keep those guards.
+4. **No arbitrary JavaScript in recipes.** The step vocabulary is deliberately closed (no `eval`). Extend the engine with a NEW named step, documented in `docs/lead-portal-recipes.md`, rather than a generic escape hatch.
+5. **Secrets are referenced, never pasted into steps** (`{{portal.login_password}}`). Recipes and required_fields are stored in record data and rendered to reps in error messages.
+6. **Screenshots live in the PRIVATE `portal-registrations` bucket** and reach the SPA only as signed URLs from the API — they show customer PII on third-party portals.
 
 ## Listing photo mirror (Aqar → our bucket) (added 2026-07-29)
 
