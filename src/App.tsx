@@ -88,6 +88,9 @@ const MarketingAccountPage = lazy(() => import('@/pages/Marketing/AccountPage'))
 const MarketingContentListPage = lazy(() => import('@/pages/Marketing/ContentListPage'));
 const MarketingSearchPage = lazy(() => import('@/pages/Marketing/SearchPage'));
 const MarketingContentDetailPage = lazy(() => import('@/pages/Marketing/ContentDetailPage'));
+// The publication task (2026-09-14): ONE finished creative, ONE destination,
+// ONE date. Its own screen, never a tab on the content record — see ReleasePage.
+const MarketingReleasePage = lazy(() => import('@/pages/Marketing/ReleasePage'));
 const MarketingCalendarPage = lazy(() => import('@/pages/Marketing/CalendarPage'));
 const MarketingMyPerfPage = lazy(() => import('@/pages/Marketing/MyPerfPage'));
 const MarketingPerformanceDeskPage = lazy(() => import('@/pages/Marketing/PerformanceDeskPage'));
@@ -552,6 +555,9 @@ export default function App() {
           <Route path="/m/search" element={<MarketingSearchPage />} />
           <Route path="/m/content" element={<MarketingContentListPage />} />
           <Route path="/m/content/:contentId" element={<MarketingContentDetailPage />} />
+          {/* The publication task — the destination `taskHref` sends a
+              `publication` task to. One release per screen. */}
+          <Route path="/m/releases/:releaseId" element={<MarketingReleasePage />} />
           <Route path="/m/calendar" element={<MarketingCalendarPage />} />
           <Route path="/m/me" element={<MarketingMyPerfPage />} />
           <Route path="/m/performance" element={<MarketingPerformanceDeskPage />} />

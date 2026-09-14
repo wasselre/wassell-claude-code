@@ -33,6 +33,7 @@ import { useWorkspace } from '../MarketingWorkspace';
 import { preflightPublishSet } from '@/lib/marketingOS/platformRules';
 import { Field, Modal, Pill, type Tone } from './kit';
 import OrganicCampaignSelect from './OrganicCampaignSelect';
+import ReleasesCard from './ReleasesCard';
 import { IconPlus } from './icons';
 import { dateTimeShort, isoDateTimeLocal, num, shortDate, toArabicDigits } from '../lib/format';
 import { useAssetUrls } from '../lib/assetUrls';
@@ -799,6 +800,11 @@ export default function PublishTab({
             </button>
           </div>
         )}
+
+        {/* The RELEASES of this creative — one job per destination per date,
+            each with its own screen (and its own task when a person is needed).
+            The rows above are the plan; this is what actually goes out. */}
+        <ReleasesCard contentId={contentId} isAr={isAr} />
 
         <div className="notice">
           {isAr

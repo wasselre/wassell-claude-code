@@ -1,6 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
+**Last updated:** 2026-09-14 (**Making a creative and publishing it are TWO task types now.** The content task ends at the manager's final approval — the old `scheduling` and `publish_check` steps are gone from the path. Putting a creative out is a **publication task**: one finished creative, one destination, one date, on its own screen at `/m/releases/:releaseId`, so a creative cross-posted to three platforms has three of them instead of one shared step nobody could complete twice. The screen shows exactly three sections — the finished material (read-only), where it is going, and what that platform demands — and a release only becomes a TASK when a person is actually needed. See "The two task types" under Key behaviors.)
 **Last updated:** 2026-09-14 (**Campaign planning: nothing is created until a plan is approved.** Creating a campaign now runs a PREFLIGHT against the live workload instead of minting content rows on the spot. The wizard collects REQUIREMENTS (projects × posts/videos, platforms, date range, per-platform frequency; paid adds the weekly refresh policy), the engine distributes publishing first and schedules production BACKWARD from each publish date, and the preview shows the per-person per-day load, the conflicts and — when it does not fit — the earliest feasible range or the largest count that does. **The publishing half of that preview is ORGANIC ONLY**: organic adds the publishing batches and the Instagram grid, paid replaces them with the refresh forecast, because an ad has no feed and no posting day. Only «اعتماد الخطة» writes anything. See the Campaign planning behaviours below.)
 **Last updated:** 2026-09-13 (**Campaign page: a linked item's status is what its ads are really doing, never a blanket «يعمل».** `CampaignDetailPage`'s Overview «المحتوى المستخدم» table and Content tab used to call EVERY item linked to an ad campaign «يعمل» (Running) — C-042's eight Meta ads were all PAUSED with zero lifetime spend, yet every row read «يعمل في: إعلانات ميتا · يعمل». Each `ContentStat` now carries a `placement` rolled up across the item's ads: `running` (any live ad) › `watch` › `paused` (every placed ad paused; execution status stands in when an execution has no ad rows) › `planned` (ad rows exist only in the app — no Meta `platform_ad_id`, or `waiting`). The pill reads «يعمل» / «مراقبة» / «موقف» (from `AD_STATUS_LABELS`, same words as the execution page and the Content table's «الإعلان» column) / «لم يُنشأ في ميتا بعد»; the paid column header is «المنصة» (was «يعمل في»). Organic campaigns are unchanged («منشور» from publications).)
 **Last updated:** 2026-09-13 (**Task rows open the review popup.**)
@@ -48,6 +49,46 @@ This workspace answers the three questions the old process could not:
 **what is stuck, who is holding it, and did it work.**
 
 ## Key behaviors
+
+- **The two task types — making a creative, and putting it out (2026-09-14).**
+  Until now one linear workflow carried a creative from the brief all the way to
+  "posted", ending in a `scheduling` step and a `publish_check` step. That broke
+  wherever a creative went to more than one place: two destinations shared ONE
+  publish check, so closing it declared the whole creative published and the
+  second destination had no owner, no date and no way to be completed.
+
+  - **The CONTENT task ends at the manager's final approval.** The workflow no
+    longer carries `scheduling` or `publish_check`. Work already in production
+    keeps its PINNED workflow version, so nothing mid-flight changed path.
+  - **The PUBLICATION task is one release: one finished creative, one
+    destination, one date.** A creative published to Instagram, TikTok and
+    Snapchat has three of them, each with its own owner, timing and result.
+  - **A release becomes a task only when a person is needed** — the account
+    cannot publish by itself, the operator keeps that platform manual, the
+    platform preflight blocks, or an automatic publish failed. Where a connected
+    account can post on its own, the system does it and asks nobody.
+  - **Its screen is `/m/releases/:releaseId` and shows THREE sections and
+    nothing else:** (a) the finished material — the approved file(s) and the
+    caption, read-only, with copy and open/download; (b) where it is going —
+    platform, account handle, date, time, timezone; (c) what that platform
+    demands — the shared rulebook's issues (blockers in the error tone, warnings
+    softer) and the caption length against that platform's ceiling. No brief, no
+    references, no revision history, no approval controls, no activity feed:
+    those belong to the content task, which is a different job.
+  - **The act lives with its gate.** An automatic destination gets «انشر الآن»
+    under the requirements that allow or refuse it — disabled while a blocker
+    stands, and the reason is printed beside the button, never a silent disable.
+    A manual destination gets a link field and «سجّل النشر» with the
+    destination facts, because the resulting link IS a destination fact. An
+    already-published release is read-only: published time and post link.
+  - **Tasks route through the one resolver.** `taskHref` sends a task whose
+    entity is a `publication` to `/m/releases/:id` and the row's verb is «نشر»;
+    «معاينة» still opens the finished creative, so the publisher can look at
+    what is going out without being sent into the brief that produced it.
+  - **The content record lists its releases.** The Publish tab carries a
+    «عمليات النشر» card — platform, account, due date, status, and whether the
+    destination is automatic or needs a person — each row opening its release
+    screen. The publication rows above it are the PLAN; these are the jobs.
 
 - **Campaign planning — the plan comes before the records (2026-09-14).**
   Creating a campaign used to mint content rows and fire their first tasks
@@ -1030,7 +1071,11 @@ This workspace answers the three questions the old process could not:
   `mos_audiences`, `mos_goals`, `mos_campaign_goals`, `mos_workflows`,
   `mos_workflow_steps`, `mos_platform_accounts`, `mos_ref_counters`,
   `mos_manual_tasks` + `mos_task_series` (hand-assigned work and its repeat
-  rules — deliberately separate from the workflow queue).
+  rules — deliberately separate from the workflow queue). A **publication task**
+  is a `mos_manual_tasks` row with `kind='publish'`, `entity_kind='publication'`
+  and `ref_id` = the release; the release screen reads `mos_release_v` (one row
+  per publication, joined to its content and account) and writes only through
+  `publication_publish` / `release_mark_published`.
 - **Workflow engine + notifications:** `workflows` / `workflow_versions`
   (canonical role paths + pinned per-record snapshots, steps live in
   `metadata.steps` including each step's `notify` + `notify_channels`),
@@ -1074,7 +1119,12 @@ This workspace answers the three questions the old process could not:
 | `src/pages/Marketing/components/SettingsCapacity.tsx` | `/m/settings/capacity` — per-person daily slots, weekend days, holidays, step effort (`manage_capacity`) |
 | `src/pages/Marketing/components/AdReadinessPanel.tsx` | The Meta preflight checklist, shown BEFORE the final approval |
 | `src/pages/Marketing/lib/planPresentation.ts` | Pure presentation logic for the preview — feasibility wording, grid mapping, load flags, forecast rows |
-| `src/pages/Marketing/lib/contentRoute.ts` | The ONE client route resolver: step key → section → tab, plus the task/content href builders |
+| `src/pages/Marketing/lib/contentRoute.ts` | The ONE client route resolver: step key → section → tab, plus the task/content href builders (a `publication` task → `/m/releases/:id`) |
+| `src/pages/Marketing/ReleasePage.tsx` | **The publication task** (`/m/releases/:releaseId`) — three sections only: the finished material (read-only, copy + open/download), where it is going, and what the platform demands (issues + caption counter). Hosts «انشر الآن» for an automatic destination and the link + «سجّل النشر» for a manual one |
+| `src/pages/Marketing/components/ReleasesCard.tsx` | «عمليات النشر» on the Publish tab — this creative's releases: platform, account, due date, status, automatic vs needs-a-person, each linking to its release screen |
+| `api/_lib/marketing/planning/releaseActions.ts` | `release_get` / `release_list` / `release_mark_published` / `release_open_task`; requirements come from the SAME `preflightPublishSet` rulebook the publish gate uses |
+| `api/cron/release-sweep.ts` | Publishes what the platforms can publish themselves and raises a publication task for everything that needs a person |
+| `supabase/migrations/2026-09-14_05_release_tasks.sql` | The split: `mos_release_v`, `mos_platform_automatable`, `mos_release_open_task` / `_close_task` / `_due` / `_sweep`, the `publish` manual-task kind, the shortened workflow versions, and the three stranded publish checks closed |
 | `worker/src/marketing/creativeRanking.ts` | Pure weekly ranking — CPL = spend ÷ leads, data threshold, fatigue, total-order ties |
 | `worker/src/runRefreshCycleJob.ts` | The refresh lane: decide → apply (activate, verify, then pause) → daily per-ad metrics |
 | `supabase/migrations/2026-09-14_01_campaign_planning_core.sql` | Planning tables, the work-ledger view, the batch and creative-performance views |

@@ -248,12 +248,20 @@ export default function WorkPage() {
     const a = actionOfTask(t);
     return isAr ? TASK_ACTION_LABELS[a].ar : TASK_ACTION_LABELS[a].en;
   };
-  const openManual = (t: MosManualTask): void => {
+  /** «معاينة» — always the popup when there is one to show. */
+  const previewManual = (t: MosManualTask): void => {
     const target = manualPreview(t);
     // A task about a piece of content shows the content; anything else is a
     // navigation, because there is no popup for a cycle or a campaign.
     if (target) { preview.open(target.contentId, target.section); return; }
     navigate(manualTarget(t));
+  };
+  const openManual = (t: MosManualTask): void => {
+    // A PUBLICATION task is done on its own screen — the finished material, the
+    // destination and that platform's rules, and nothing else. Its «معاينة»
+    // still shows the approved creative; the verb goes where the work happens.
+    if (actionOfTask(t) === 'publish') { navigate(manualTarget(t)); return; }
+    previewManual(t);
   };
 
   /** The project a hand-assigned task points at — its own, else its content's. */
@@ -343,7 +351,7 @@ export default function WorkPage() {
                             type="button"
                             className="btn btn-sm"
                             style={{ marginInlineEnd: 6 }}
-                            onClick={(e) => { e.stopPropagation(); openManual(t); }}
+                            onClick={(e) => { e.stopPropagation(); previewManual(t); }}
                           >
                             {isAr ? 'معاينة' : 'Preview'}
                           </button>
