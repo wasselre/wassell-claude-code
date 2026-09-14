@@ -17,18 +17,18 @@ The Marketing OS is two months old in production. Lifetime totals: 24 content re
 **2. The team is one writer, one manager, and one designer.**
 Role holders in production: one marketing manager (you), one writer, one designer, and nobody at all holding the operations role that owned every publish check until three days ago. A second montage account exists under your own name and is not a second designer. Five roles were designed; one carries every approval and two carry nothing.
 
-**3. Design capacity is the constraint, and whether it fits depends on one unmeasured setting.**
-Load is items × effort per item ÷ (slots per day × working days). Both effort and slots are settings. The effort figure the engine currently holds, two working days per design, was a placeholder seeded last week and flagged "to be confirmed"; it never was. The real history says otherwise: the 33 design tasks actually completed in production took a median of 0.4 days from open to close, with the slowest fifth around one day. For one designer at the configured four slots a day:
+**3. Capacity is three numbers, and the month fits.**
+Capacity is counted the way you count it: how many tasks each person finishes in a day, times the working days in the month. There is no "days per task". A video counts as more than one slot, set once in settings. October has 26 working days with Friday off.
 
-| Effort assumption | October | November | February |
-|---|---|---|---|
-| 2 days per design (the current seed) | 219% | 213% | 225% |
-| 1 day (the slowest fifth of real tasks) | 110% | 107% | 113% |
-| 0.4 days (the typical real task) | 44% | 43% | 45% |
+| Who | Per day | October needs | Average per day | Load |
+|---|---|---|---|---|
+| Writer (post and caption are one task) | 10 | 114 | 4.4 | 44% |
+| Designer | 4, a floor they exceed | 114 | 4.4 | 110% of the floor |
+| Marketing manager, two approvals per item | no limit, by decision | 228 | 8.8 | fits |
 
-At the pace the designer actually works, the month fits one designer with room. It breaks only if design genuinely takes a full day per item. Elapsed time overstates effort, so 0.4 is an upper bound on what a task cost, which strengthens the fit case. The writer sits well under half capacity on any assumption. You do roughly nine approvals every working day, which fits the approvals budget but makes you the single point of delay on every one of the 114 items.
+The writer has room. The designer is at the floor with about ten designs over the month, which you have said they absorb. You approve about nine items a day, every working day, and you have chosen not to cap that. So the month fits the current team.
 
-Two things follow. The effort setting must be seeded from measured medians, not from a default, and the month screen must show this arithmetic before anything is generated, so a wrong number is a visible line rather than a hidden assumption. And the first decision only you can make (section 8) is no longer "add a designer"; it is "confirm the real effort", which the system can propose from history.
+Two things follow. The engine I built last week counts capacity with two knobs, slots per day and days per task, and I had seeded days per task at two for design; that silently halved the designer's throughput and produced a false "does not fit". The month screen must count throughput per person per day, one number each, and show the daily average next to the floor so you judge it yourself. And the one dependency no number removes is that every item passes through you twice; that is a fact about the design of the workflow, not a capacity problem.
 
 ---
 
@@ -253,7 +253,7 @@ The Meta integration core, the creative ranking, the workflow engine, the conten
 | The scheduling engine | A month compiler: the same calendar, backward scheduling, ledger and commit, but fed a standing template instead of a wizard, run once a month, with no search and no alternatives. Capacity conflicts become exceptions with a proposed smallest fix, never a red line of text above a live commit button. |
 | The refresh cycle | Automatic by default. The decision task appears only when the ranking is uncertain, and it has a screen. Round zero is applied like any other round. |
 | Ad activation | Part of the batch, not a human act. Created paused, activated on the batch date by the same lane that retires the outgoing ones. |
-| Capacity | Enforced, not advisory. One set of numbers, one screen, read by the placer and the compiler alike. |
+| Capacity | One number per person per day, the throughput you already think in. Enforced at confirmation, one screen, read by the placer and the compiler alike. "Days per task" leaves the engine for posts; a video counts as more than one slot, set once. |
 | Tasks | One table. The five system kinds stop wearing the manual-task table's clothes. |
 | Roles | Three: manager, writer, designer. Approvals go to the manager; a second approver is a capacity setting, not a role. |
 
@@ -281,6 +281,7 @@ Partly, and the honest split matters.
 - Per-campaign refresh policy fields. The policy is a standing rule.
 - The fifth-creative policy choice. Five per week is the rule; the "banked spare" mechanism stays as an internal optimisation.
 - The alternatives search (earliest feasible range, largest count that fits). Replaced by exception rows with one proposed fix each.
+- Per-step "effort in working days" for posts. It was a second knob on top of slots per day, and the seed I gave it doubled the designer's load. Throughput per day is the only capacity number a post needs.
 
 **So**: roughly the algorithmic third of last week's work is the foundation of this proposal. The user-facing two thirds should not remain the normal path. That is a real reduction, not a screen on top.
 
@@ -308,8 +309,8 @@ Rollback at every phase is a rail edit, because nothing is deleted until phase 4
 
 These are business decisions, not implementation choices. Each changes what the compiler produces.
 
-1. **Confirm the real design effort.** The engine holds a placeholder of two days per design; history says about half a day. With one designer, the month fits at the measured pace and breaks at the placeholder. The system should propose the setting from the median of completed tasks and you confirm it. If you believe designs will genuinely take a full day at the new volume, then the fallbacks apply: treat paid creatives as template variants, add a designer, or cut the slate to four.
-2. **The second montage account** is yours, not a designer's. It should lose the montage role so capacity is not double-counted.
+1. **The three capacity numbers.** Writer 10 a day, designer 4 a day as a floor, manager uncapped. Confirmed in this discussion; the system holds them as settings and shows the daily average against them.
+2. **The second montage account** is yours, not a designer's. It should lose the montage role so capacity is never double-counted.
 3. **Paid budget per project per month.** One number, standing. Today budget is typed in three places that disagree.
 4. **Ads live on the batch date, or paused until you look?** Automatic activation is what makes the week run without you. It is also money spent by a machine. I recommend automatic, with a spend cap per project as the safety.
 5. **Automatic refresh decisions.** The ranking is sound. Letting it apply by default means creatives are retired by a machine. I recommend yes, with the uncertain case routed to you.
@@ -329,7 +330,7 @@ Some of these change the arithmetic in section 0.
 - **Suggest the three projects.** From units available, days since last featured, and last month's cost per lead. The screen pre-fills; you confirm or swap one. Most months the choice is a glance.
 - **A topic bank for Saturday.** Twenty evergreen topics in settings, rotated, so the general row never needs a monthly decision.
 - **Same three projects next month by default.** Rollover is the common case. The reminder says "keep these three?" with a yes.
-- **One approver is a bottleneck by design.** Nine approvals a day, every day, is the real ceiling on the whole month. A second approver for writing reviews, leaving you the final approvals only, halves your daily load. This is a capacity decision, not a role.
+- **Every item passes through you twice.** You have chosen not to cap approvals, and nine a day fits. It is still the one dependency the month cannot route around: a day you are away is a day nothing advances. A second approver for writing reviews, leaving you finals only, is the option if that ever matters. A capacity setting, not a role.
 - **Retire the ad-set pair from the interface.** Feed and story ad sets are a Meta constraint, not a decision. The month template holds them; nobody names them.
 
 ---
@@ -378,13 +379,11 @@ One page, no tabs. Arabic, right to left.
 │   اختيار نوفمبر مطلوب قبل: ٢٠ أكتوبر                                     │
 │                                                                          │
 │  هل يتّسع الفريق؟                                                        │
-│   الكتابة  ████████░░░░░░░░░░  ٤٤٪                                        │
-│   التصميم  ████████░░░░░░░░░░  ٤٤٪    (بالجهد المقاس؛ ٢١٩٪ بالإعداد الحالي) │
-│   الاعتماد ████████░░░░░░░░░░  ٤٤٪    ٩ اعتمادات يوميًا                   │
+│   الكتابة   ٤٫٤ يوميًا من ١٠         ████████░░░░░░░░░░  ٤٤٪               │
+│   التصميم   ٤٫٤ يوميًا من ٤ حدًّا أدنى ██████████████████▓ ١١٠٪ ضمن المتاح  │
+│   الاعتماد  ٨٫٨ يوميًا · بلا حد                                           │
 │                                                                          │
-│   ⓘ جهد التصميم المضبوط (يومان) أعلى من المقاس (٠٫٤ يوم من ٣٣ مهمة).     │
-│     ○ اعتماد الجهد المقاس                                                │
-│     ○ الإبقاء على يومين وقبول أن الشهر لا يتّسع (٢١٩٪)                   │
+│   ✓ الشهر يتّسع للفريق الحالي.                                            │
 │                                                                          │
 │                                                     [ اعتماد الشهر ]     │
 ├──────────────────────────────────────────────────────────────────────────┤
@@ -425,7 +424,7 @@ What actually has to exist for this to be reliable, and how much of it does.
 | **The exceptions list** | missing; one query over six existing sources |
 | **The next-month reminder** | missing; one cron rule |
 | **Batch approval** | missing; one approval action over three items |
-| Enforced capacity from one set of numbers | half; two tables must become one |
+| Enforced capacity, one throughput number per person per day | half; two tables must become one, and the per-step effort knob goes |
 | One task table | half; the six kinds already exist, the split is cosmetic |
 
 Roughly: eight small things missing, the foundation largely present. Nothing here is a rewrite. The work is mostly removal, which is the point.
@@ -436,4 +435,4 @@ Roughly: eight small things missing, the foundation largely present. Nothing her
 
 Choosing three projects can run a reliable month because the month is a constant. Everything that made the current app hard, the forms, the wizards, the builders, the six approval surfaces, exists to express choices that this company does not make. Take those choices out of the interface and into one settings row, compile them against the calendar and the team once a month, put every deviation on one list with one decision each, and the app that remains is small, and yours.
 
-The one thing no compiler can remove is an unmeasured number sitting where a measured one should be. The month fits one designer at the pace history shows and breaks at the placeholder the engine currently holds. That arithmetic belongs at the top of the month screen, from real medians, so it is the first thing you see and not the last thing you find out.
+The month fits the team you have, counted the way you count it: ten a day, four a day, and no limit on you. The engine must count the same way, one number per person, so the month screen can show 4.4 designs a day against a floor of 4 and let you judge it, instead of hiding a seed that says otherwise.
