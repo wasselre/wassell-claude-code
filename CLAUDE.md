@@ -619,7 +619,9 @@ that becomes costed the moment someone enters one rate. Read
 `v_ai_usage_daily` for spend and `v_ai_usage_unpriced` for the operator worklist.
 
 **Recorder:** `api/_lib/aiUsage.ts`. `worker/src/lib/aiUsage.ts` is GENERATED
-from it by `node scripts/sync-ai-usage-copy.mjs` (`--check` in CI);
+from it by `node scripts/sync-ai-usage-copy.mjs`; the copy staying in sync is
+enforced in CI by the guard test (`npm test`), not by the script — run the
+script with `--check` locally for a faster, more explicit failure message.
 `supabase/functions/_shared/aiUsage.ts` is a hand-maintained Deno port. All three
 POST to PostgREST with plain `fetch` — deliberately not the Supabase SDK, so one
 implementation runs on Vercel Edge, Node and Deno alike.
