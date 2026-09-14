@@ -149,27 +149,79 @@ async function main() {
   console.log('\nthe commit drift check');
   const planId = preview.body?.plan_id;
   if (planId) {
-    // Move the ledger under the reader, then commit: it must refuse.
-    const bump = await fetch(`${BASE}/rest/v1/mos_holidays`, {
-      method: 'POST', headers: { ...SVC, Prefer: 'return=representation' },
+    // 1. An IRRELEVANT change must NOT block the commit. The guard compares the
+    //    PLAN, not the raw hash, so a holiday five years out — which moves no
+    //    2026 assignment — has to sail through. Refusing here would be noise
+    //    that trains people to click past the warning that matters.
+    await fetch(`${BASE}/rest/v1/mos_holidays`, {
+      method: 'POST', headers: SVC,
       body: JSON.stringify({ day: '2031-01-01', label_ar: 'اختبار', label_en: 'smoke' }),
     });
+    const irrelevant = await mos('campaign_plan_revise', { plan_id: planId, overrides: {} });
+    check('an irrelevant change does not derail the plan', irrelevant.ok,
+      irrelevant.ok ? 'still feasible' : JSON.stringify(irrelevant.body).slice(0, 120));
+    await fetch(`${BASE}/rest/v1/mos_holidays?day=eq.2031-01-01`, { method: 'DELETE', headers: SVC });
+
+    // 2. A RELEVANT change must refuse. Take away the designer the plan booked
+    //    and the re-plan has to move that stage, so the signature the human
+    //    approved no longer holds.
+    const designer = plan?.items?.[0]?.stages?.find((st) => st.bucket === 'post' && !st.stepKey.includes('review'))?.assigneeUserId
+      ?? plan?.items?.[0]?.stages?.[0]?.assigneeUserId;
+    let restore = null;
+    if (designer) {
+      const existing = await (await fetch(
+        `${BASE}/rest/v1/mos_user_capacity?select=*&user_id=eq.${designer}&bucket=eq.post`, { headers: SVC },
+      )).json();
+      restore = existing[0] ?? null;
+      await fetch(`${BASE}/rest/v1/mos_user_capacity`, {
+        method: 'POST', headers: { ...SVC, Prefer: 'resolution=merge-duplicates' },
+        body: JSON.stringify({ user_id: designer, bucket: 'post', daily_slots: 0 }),
+      });
+    }
     const commit = await mos('campaign_plan_commit', { plan_id: planId });
-    check('a commit after the workload moved is REFUSED', !commit.ok && commit.status === 409,
+    check('a commit after the plan actually moved is REFUSED', !commit.ok && commit.status === 409,
       commit.ok ? 'it committed anyway' : `HTTP ${commit.status}`);
     const errText = typeof commit.body?.error === 'string' ? commit.body.error : JSON.stringify(commit.body ?? {});
-    check('the refusal names the drift and carries Arabic', /plan_changed|capacity_conflict/.test(errText) && /error_ar|تغيّر|السعة/.test(errText),
+    check('the refusal names the drift and carries Arabic',
+      /plan_changed|capacity_conflict/.test(errText) && /error_ar|تغيّر|السعة/.test(errText),
       errText.slice(0, 110).replace(/\s+/g, ' '));
     check('and it is NOT a retryable sqlstate', !/40001|40P01/.test(errText));
-    if (bump.ok) await fetch(`${BASE}/rest/v1/mos_holidays?day=eq.2031-01-01`, { method: 'DELETE', headers: SVC });
+
+    // Put the designer's capacity back EXACTLY as it was.
+    if (designer) {
+      await fetch(`${BASE}/rest/v1/mos_user_capacity?user_id=eq.${designer}&bucket=eq.post`, {
+        method: 'DELETE', headers: SVC,
+      });
+      if (restore) {
+        await fetch(`${BASE}/rest/v1/mos_user_capacity`, {
+          method: 'POST', headers: SVC, body: JSON.stringify(restore),
+        });
+      }
+      const back = await (await fetch(
+        `${BASE}/rest/v1/mos_user_capacity?select=daily_slots&user_id=eq.${designer}&bucket=eq.post`, { headers: SVC },
+      )).json();
+      check('the designer capacity was restored exactly',
+        (back[0]?.daily_slots ?? null) === (restore?.daily_slots ?? null),
+        `${back[0]?.daily_slots ?? 'absent'}`);
+    }
   }
 
   console.log('\ncleaning up…');
+  const madeIds = (await (await fetch(
+    `${BASE}/rest/v1/mos_content?select=id&campaign_id=eq.${campaignId}`, { headers: SVC },
+  )).json()).map((c) => c.id);
+  if (madeIds.length) {
+    for (const t of ['mos_content_approvals', 'mos_content_events', 'mos_content_versions', 'mos_content_plan']) {
+      await fetch(`${BASE}/rest/v1/${t}?content_id=in.(${madeIds.join(',')})`, { method: 'DELETE', headers: SVC });
+    }
+    await fetch(`${BASE}/rest/v1/workflow_role_tasks?subject_id=in.(${madeIds.join(',')})`, { method: 'DELETE', headers: SVC });
+  }
   for (const [t, q] of [
     ['mos_task_reservations', `plan_id=eq.${planId}`],
     ['mos_publications', `campaign_id=eq.${campaignId}`],
     ['mos_publish_batches', `campaign_id=eq.${campaignId}`],
     ['mos_campaign_executions', `campaign_id=eq.${campaignId}`],
+    ['mos_content', `campaign_id=eq.${campaignId}`],
     ['mos_campaign_plans', `campaign_id=eq.${campaignId}`],
     ['mos_campaigns', `id=eq.${campaignId}`],
   ]) await fetch(`${BASE}/rest/v1/${t}?${q}`, { method: 'DELETE', headers: SVC });
