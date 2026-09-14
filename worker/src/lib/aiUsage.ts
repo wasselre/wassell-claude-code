@@ -82,7 +82,7 @@ export interface AiUsageInput extends AiCallRef, AiTokenUsage {
   fallbackFrom?: AiProvider | null;
   /** Non-token billing: images generated, GPU seconds, audio minutes. */
   units?: number | null;
-  unitKind?: 'image' | 'gpu_second' | 'minute' | 'video' | null;
+  unitKind?: 'image' | 'gpu_second' | 'minute' | 'video' | 'query' | null;
   latencyMs?: number;
   userId?: string | null;
   entityKind?: string | null;

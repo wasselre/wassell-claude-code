@@ -144,6 +144,56 @@ describe('AI usage coverage', () => {
     expect(offenders, `Untracked DeepSeek spend:${NL}  ${offenders.join(NL + '  ')}`).toEqual([]);
   });
 
+  /**
+   * Files that speak to Modal but do not record, because their CALLER does.
+   * Same proof discipline as the Anthropic allowlist: delete the mechanism the
+   * reason names and the proof stops matching.
+   */
+  const MODAL_TRANSPORT_ALLOWLIST: Record<string, { reason: string; proof: string }> = {
+    'worker/src/marketing/cv/modalClient.ts': {
+      reason: 'transport only; the cv lane records the /process call through cv/ledger.ts addCost()',
+      proof: 'ModalCvClient',
+    },
+    'worker/src/ai/providers/modalEmbed.ts': {
+      reason: 'embedding provider; its caller embed() in ai/roles.ts records every result',
+      proof: 'EmbeddingProvider',
+    },
+    'worker/src/env.ts': {
+      reason: 'names the auth header in a comment while declaring the env var; makes no call',
+      proof: 'MODAL_CV_TOKEN',
+    },
+  };
+
+  it('every direct Modal call records usage', () => {
+    // This rule exists because its absence cost us: api/_lib/marketing/modalCv.ts
+    // called Modal's /embed_query on every visual search and was missed by the
+    // original sweep, because the guard only knew about Anthropic and DeepSeek.
+    // Modal is the largest single line in the bill, so it gets its own rule.
+    //
+    // The detector is Modal's auth header rather than the env var name: the
+    // worker's index.ts mentions MODAL_CV_URL purely to gate the lanes and
+    // makes no call, and a rule that flags it teaches people to ignore the rule.
+    const offenders: string[] = [];
+    for (const { path, src } of FILES) {
+      if (RECORDER_FILES.has(path)) continue;
+      if (!src.includes('x-wassel-token')) continue;
+
+      const allow = MODAL_TRANSPORT_ALLOWLIST[path];
+      if (allow) {
+        if (!src.includes(allow.proof)) {
+          offenders.push(
+            `${path} is allowlisted ("${allow.reason}") but no longer contains "${allow.proof}" — the exemption has become a hole`,
+          );
+        }
+        continue;
+      }
+      if (!src.includes('recordAiUsage')) {
+        offenders.push(`${path} calls Modal directly but never calls recordAiUsage`);
+      }
+    }
+    expect(offenders, `Untracked Modal spend:${NL}  ${offenders.join(NL + '  ')}`).toEqual([]);
+  });
+
   it('the shared DeepSeek client forces every caller to declare a call site', () => {
     const src = FILES.find((f) => f.path === 'api/_lib/deepseek.ts')?.src ?? '';
     expect(src).toContain('recordAiUsage');

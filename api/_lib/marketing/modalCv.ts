@@ -15,6 +15,8 @@
  * Used by api/marketing-os.ts (scene references) and api/marketing.ts (cv_search).
  */
 
+import { recordAiUsage } from '../aiUsage.js';
+
 export interface QueryEmbedding {
   image_vec: number[];
   text_vec: number[];
@@ -38,6 +40,25 @@ export async function embedQuery(text: string): Promise<QueryEmbedding | null> {
     console.error('[modal-cv] MODAL_CV_URL / MODAL_CV_TOKEN not set — visual search unavailable');
     return null;
   }
+  // Modal bills GPU seconds, which this endpoint does not report, so the row
+  // carries one `query` unit and no cost. Recorded anyway: this is a live
+  // Vercel -> Modal path that runs on every visual search, independently of the
+  // `cv.enabled` switch that gates the worker's lanes, and a spend nobody can
+  // see is exactly what the ledger exists to prevent.
+  const started = Date.now();
+  const bill = (status: 'ok' | 'error', error?: string) =>
+    recordAiUsage({
+      area: 'competitors',
+      callSite: 'api/_lib/marketing/modalCv',
+      operation: 'embed_query',
+      provider: 'modal',
+      model: 'modal-cv-embed-query',
+      status,
+      error: error ?? null,
+      units: 1,
+      unitKind: 'query',
+      latencyMs: Date.now() - started,
+    });
   try {
     const res = await fetch(`${base.replace(/\/$/, '')}/embed_query`, {
       method: 'POST',
@@ -46,7 +67,9 @@ export async function embedQuery(text: string): Promise<QueryEmbedding | null> {
       signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
     });
     if (!res.ok) {
-      console.error('[modal-cv] embed_query failed', res.status, (await res.text()).slice(0, 300));
+      const body = (await res.text()).slice(0, 300);
+      console.error('[modal-cv] embed_query failed', res.status, body);
+      await bill('error', `HTTP ${res.status}: ${body}`);
       return null;
     }
     const json = (await res.json()) as { image_vec?: unknown; text_vec?: unknown };
@@ -54,13 +77,18 @@ export async function embedQuery(text: string): Promise<QueryEmbedding | null> {
       console.error('[modal-cv] embed_query returned malformed vectors',
         Array.isArray(json.image_vec) ? json.image_vec.length : typeof json.image_vec,
         Array.isArray(json.text_vec) ? json.text_vec.length : typeof json.text_vec);
+      // The GPU time was still spent, so this is billed as an error, not skipped.
+      await bill('error', 'malformed vectors');
       return null;
     }
+    await bill('ok');
     return { image_vec: json.image_vec, text_vec: json.text_vec };
   } catch (e) {
     // Network / timeout / JSON parse — all mean "the visual system is not
     // reachable right now". Logged, then degraded to unavailable by the caller.
-    console.error('[modal-cv] embed_query threw', e instanceof Error ? e.message : String(e));
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[modal-cv] embed_query threw', msg);
+    await bill('error', msg);
     return null;
   }
 }
