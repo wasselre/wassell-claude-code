@@ -8,9 +8,21 @@
 --   * mos_user_capacity from mos_role_load × the people who hold those roles
 --   * the plan §18 compatibility backfills
 --
--- EVERY LAYER SHIPS DARK: planning.preview_enabled is the only switch that is
--- on. reservations_enforced / refresh_loop_enabled / auto_apply_default_decision
--- stay OFF until the operator turns them on.
+-- SWITCHES AS SEEDED (this used to claim every layer ships dark; it does not,
+-- and the claim was wrong the day it was written — the brief was one complete
+-- phase with nothing left for a later release):
+--   * preview_enabled        = true  — planning a campaign is read-only.
+--   * reservations_enforced  = true  — an approved plan actually books capacity.
+--     With it off, two approvals can book the same designer on the same day,
+--     which is the whole failure this work exists to prevent.
+--   * refresh_loop_enabled   = true  — the weekly sweep ranks creatives and
+--     opens the decision, but never decides: see the next line.
+--   * auto_apply_default_decision = false — the ONE switch that is off, and the
+--     only one whose default is a judgement call rather than a capability. With
+--     it off a human picks the winner and approves each swap; turning it on lets
+--     the ranking act by itself. Ads are created paused either way
+--     (ads_created_paused = true), so nothing spends before someone looks.
+-- Flipping any of these is a data edit in Marketing → Settings, not a deploy.
 --
 -- Idempotent: ON CONFLICT DO NOTHING everywhere; the settings rows merge rather
 -- than overwrite, so an operator's edit is never clobbered by a re-run.

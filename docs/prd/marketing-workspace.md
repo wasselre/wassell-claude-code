@@ -74,6 +74,13 @@ This workspace answers the three questions the old process could not:
   - **Effort is an explicit estimate** (`mos_step_effort`, editable in
     Settings → Capacity), NOT the step's `due_days`, which is a deadline
     allowance. Conflating the two makes every plan optimistic.
+  - **What is switched on.** `mos_settings.planning` holds the switches, all of
+    them editable in Settings, none of them a deploy. Previewing, capacity
+    reservation and the weekly refresh sweep are ON.
+    `auto_apply_default_decision` is the one left OFF: the sweep ranks the
+    creatives and opens the decision, but a person picks the winner and approves
+    each swap. New ads are created paused (`ads_created_paused`), so nothing
+    spends before someone looks at it.
   - **Capacity is ONE ledger.** `mos_work_ledger_v` is the single definition of
     remaining work per person per day: open tasks, reserved AND stale
     reservations, and open manual tasks — each unit counted exactly once, never
