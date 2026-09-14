@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { LoadCell, PlanResult, PlannedCycle, PlannedItem } from '@/lib/marketingOS/scheduling';
 import {
   buildLoadTable, buildPlanGrid, buildRefreshRows, alternativeOptions,
+  gridPlatformsFor, showsPublishingBatches,
   creativeTotalsText, feasibilityVerdict, isOverCapacity, mergeLockedPlacements,
   parseCommitConflict, projectColorMap, resolveStepEffort, resolveUserCap,
   swapPlacements, weekendFromSettings,
@@ -153,6 +154,73 @@ describe('feasibilityVerdict — the impossible / not-found distinction', () => 
       alternatives: { earliestFeasibleStart: null, earliestFeasibleEnd: null, maxItemsInRange: 6 },
     }), 6);
     expect(alts).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 1b. organic vocabulary must not leak into a paid plan               */
+/* ------------------------------------------------------------------ */
+
+describe('paid plans get no feed grid and no publishing batches', () => {
+  // A paid creative as the planner actually emits one: the day is the REFRESH
+  // date, the batch key is the cycle, and grid row/col are null because an ad
+  // has no feed position. Reproduced from plan.ts's paid branch.
+  const paidCreative = (slot: number, round: number, day: string): PlannedItem => ({
+    key: `exec:meta:c${round}:s${slot + 1}`,
+    title: round === 0 ? `إطلاق — تصميم ${slot + 1}` : `تحديث ${round} — بديل ${slot + 1}`,
+    contentTypeKey: 'post',
+    bucket: 'post',
+    projectId: 'aknan23',
+    projectName: 'أكنان 23',
+    workflowKey: 'post_std',
+    needAt: `${day}T09:00:00.000Z`,
+    requiredReadyAt: day,
+    productionStart: day,
+    priority: 1000 + slot,
+    stages: [],
+    placements: [{
+      platform: 'meta',
+      executionKey: 'exec:meta',
+      plannedAt: `${day}T09:00:00.000Z`,
+      day,
+      batchKey: `exec:meta|c${round}`,
+      slotIndex: slot,
+      gridRow: null,
+      gridCol: null,
+    }],
+  });
+
+  const paidItems = [
+    ...[0, 1, 2, 3, 4].map((i) => paidCreative(i, 0, '2026-09-26')),
+    ...[0, 1, 2, 3, 4].map((i) => paidCreative(i, 1, '2026-10-03')),
+  ];
+
+  it('draws NO grid for a paid campaign, whatever the platform', () => {
+    expect(gridPlatformsFor(paidItems, 'paid')).toEqual([]);
+  });
+
+  it('would otherwise have invented an Instagram-shaped grid over Meta ads', () => {
+    // The regression, spelled out: buildPlanGrid fills a missing row/col from
+    // the array index, so without the kind gate ten ad creatives become a
+    // four-row 3-wide feed with fabricated positions. That fallback is correct
+    // for a stream platform and a lie for an ad — hence the gate, not a change
+    // to buildPlanGrid.
+    const g = buildPlanGrid(paidItems, 'meta', { columns: 3 });
+    expect(g.cells.length).toBe(10);
+    expect(g.cells[0]?.row).toBe(0);
+    expect(g.cells[4]?.row).toBe(1);
+    expect(paidItems.every((i) => i.placements[0]?.gridRow === null)).toBe(true);
+  });
+
+  it('still draws the grid for organic', () => {
+    expect(gridPlatformsFor(WORKED_EXAMPLE_ITEMS, 'organic')).toEqual(['instagram']);
+  });
+
+  it('hides the publishing-batches table for paid and keeps it for organic', () => {
+    // For paid a "batch" is a refresh cycle; RefreshForecastCard shows those
+    // same rows with the ready / production / decision dates attached.
+    expect(showsPublishingBatches('paid')).toBe(false);
+    expect(showsPublishingBatches('organic')).toBe(true);
   });
 });
 

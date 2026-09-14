@@ -1,7 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
-**Last updated:** 2026-09-14 (**Campaign planning: nothing is created until a plan is approved.** Creating a campaign now runs a PREFLIGHT against the live workload instead of minting content rows on the spot. The wizard collects REQUIREMENTS (projects × posts/videos, platforms, date range, per-platform frequency; paid adds the weekly refresh policy), the engine distributes publishing first and schedules production BACKWARD from each publish date, and the preview shows the batches, the Instagram grid, the per-person per-day load, the conflicts and — when it does not fit — the earliest feasible range or the largest count that does. Only «اعتماد الخطة» writes anything. See the Campaign planning behaviours below.)
+**Last updated:** 2026-09-14 (**Campaign planning: nothing is created until a plan is approved.** Creating a campaign now runs a PREFLIGHT against the live workload instead of minting content rows on the spot. The wizard collects REQUIREMENTS (projects × posts/videos, platforms, date range, per-platform frequency; paid adds the weekly refresh policy), the engine distributes publishing first and schedules production BACKWARD from each publish date, and the preview shows the per-person per-day load, the conflicts and — when it does not fit — the earliest feasible range or the largest count that does. **The publishing half of that preview is ORGANIC ONLY**: organic adds the publishing batches and the Instagram grid, paid replaces them with the refresh forecast, because an ad has no feed and no posting day. Only «اعتماد الخطة» writes anything. See the Campaign planning behaviours below.)
 **Last updated:** 2026-09-13 (**Campaign page: a linked item's status is what its ads are really doing, never a blanket «يعمل».** `CampaignDetailPage`'s Overview «المحتوى المستخدم» table and Content tab used to call EVERY item linked to an ad campaign «يعمل» (Running) — C-042's eight Meta ads were all PAUSED with zero lifetime spend, yet every row read «يعمل في: إعلانات ميتا · يعمل». Each `ContentStat` now carries a `placement` rolled up across the item's ads: `running` (any live ad) › `watch` › `paused` (every placed ad paused; execution status stands in when an execution has no ad rows) › `planned` (ad rows exist only in the app — no Meta `platform_ad_id`, or `waiting`). The pill reads «يعمل» / «مراقبة» / «موقف» (from `AD_STATUS_LABELS`, same words as the execution page and the Content table's «الإعلان» column) / «لم يُنشأ في ميتا بعد»; the paid column header is «المنصة» (was «يعمل في»). Organic campaigns are unchanged («منشور» from publications).)
 **Last updated:** 2026-09-13 (**Task rows open the review popup.**)
 **Last updated:** 2026-09-13 (**Meta ads: house rules + caption approval.** Every pushed ad set is built on the account's Meta SAVED AUDIENCE (never broad KSA) with Instagram + WhatsApp placements only; every ad is created by ONE path (the worker) in two phases — AI writes the caption, the manager approves it on the Placements tab, THEN the ad is built with square→feed / vertical→stories-reels-status (both slots required), the WhatsApp welcome template duplicated from an existing project with the name swapped, every Advantage+ enhancement off and multi-advertiser off. See the auto-ad and push-layer bullets.)
@@ -90,6 +90,22 @@ This workspace answers the three questions the old process could not:
     during placement, not deadline extensions applied afterwards. Approval steps
     consume their own `approvals` bucket, so the single marketing manager shows
     up as the bottleneck they are.
+  - **Paid and organic are not the same preview screen.** Publishing vocabulary
+    belongs to organic and is hidden for paid. Organic gets the publishing
+    batches table and the feed grid, where the grid exists so a human can SEE
+    that the placement rules hold and drag one cell onto another to override
+    them. Paid gets neither: an ad has no feed, no grid row and no neighbouring
+    post, so there is no rule for a grid to show. Its schedule is the refresh
+    forecast, which carries the same cycles with their ready, production-start
+    and decision dates. The headline figures change words with the kind too —
+    creatives and refresh cycles rather than content items and placements, and
+    an ad run range rather than a publishing range. Until 2026-09-14 the preview
+    drew both cards for paid: the grid positions were fabricated from the item's
+    position in the list (a deliberate fallback for a stream platform like
+    TikTok, meaningless for an ad), and the refresh calendar appeared twice, once
+    mislabelled «دفعات النشر» with the project name repeated once per creative.
+    The two kind decisions live in `planPresentation.ts` (`gridPlatformsFor`,
+    `showsPublishingBatches`) so they are unit-tested rather than an `&&` in JSX.
   - **Impossible vs not-found.** Two SOUND bounds can prove a range impossible —
     a time bound (the chain cannot finish even with infinite people) and a
     capacity bound (required slot-days exceed every free slot-day before the

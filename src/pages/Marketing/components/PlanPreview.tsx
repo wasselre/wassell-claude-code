@@ -11,6 +11,17 @@
  * what will the feed look like · when does each wave publish · what is in the
  * way · and for paid, how many creatives across how many refreshes.
  *
+ * ORGANIC AND PAID ARE NOT THE SAME SCREEN. Everything about PUBLISHING — the
+ * feed grid, the publishing batches, the word «نشر» itself — belongs to organic
+ * and is hidden for paid, because an ad has no feed, no grid row and no posting
+ * day. The engine already says so: it sets `gridRow`/`gridCol` to null for paid
+ * placements, and reuses `batches` to mean one REFRESH CYCLE. Rendering those
+ * through the organic cards drew a fake Instagram grid for Meta ads (the grid
+ * builder fills a missing row/col from the array index — deliberate for stream
+ * platforms like TikTok, a lie for ads) and printed the refresh calendar under
+ * the heading «دفعات النشر», one card above the refresh forecast that shows the
+ * same dates properly. For paid the refresh forecast IS the schedule.
+ *
  * The one wording rule that must never slip lives in `planPresentation.ts`:
  * an unproven failure is «لم نعثر على جدول», never «مستحيل».
  */
@@ -22,8 +33,9 @@ import PlanGrid from './PlanGrid';
 import PlanLoadTable from './PlanLoadTable';
 import RefreshForecastCard from './RefreshForecastCard';
 import {
-  alternativeOptions, conflictLines, feasibilityVerdict, personName, pickText,
-  productionWindowText, rangeText, stageColumns, stepLabel,
+  alternativeOptions, conflictLines, feasibilityVerdict, gridPlatformsFor,
+  personName, pickText, productionWindowText, rangeText, showsPublishingBatches,
+  stageColumns, stepLabel,
   type NamedPerson, type PlanAlternative, type PlanDiffEntry,
 } from '../lib/planPresentation';
 import { num, shortDate } from '../lib/format';
@@ -56,9 +68,15 @@ export default function PlanPreview({
   const stages = stageColumns(plan.items);
   const movedKeys = new Set((diff ?? []).map((d) => d.item));
 
-  const gridPlatforms = [...new Set(
-    plan.items.flatMap((i) => i.placements.map((p) => p.platform)),
-  )];
+  const isPaid = input.kind === 'paid';
+  const creatives = plan.totals.creatives;
+  // Both of these are kind-dependent and both are unit-tested — see the note on
+  // `gridPlatformsFor` for why paid gets neither a grid nor a batches table.
+  const gridPlatforms = gridPlatformsFor(plan.items, input.kind);
+  /** «بنود» for organic, «تصاميم» for paid — an ad creative is not a post. */
+  const unitWord = isPaid
+    ? (isAr ? 'تصاميم' : 'Creatives')
+    : (isAr ? 'بنود' : 'Items');
 
   return (
     <div>
@@ -91,22 +109,43 @@ export default function PlanPreview({
       <div className="grid g4" style={{ marginTop: 16, gap: 13 }}>
         <Stat
           isAr={isAr}
-          label={isAr ? 'بنود المحتوى' : 'Content items'}
+          label={isPaid
+            ? (isAr ? 'التصاميم المطلوبة' : 'Creatives required')
+            : (isAr ? 'بنود المحتوى' : 'Content items')}
           value={plan.totals.items}
-          detail={isAr
-            ? `${num(plan.totals.posts, true)} منشورًا · ${num(plan.totals.videos, true)} فيديو`
-            : `${plan.totals.posts} posts · ${plan.totals.videos} videos`}
+          detail={isPaid && creatives
+            ? (isAr
+              ? `${num(creatives.initial, true)} إطلاق · ${num(creatives.replacements + creatives.fifths, true)} تحديثًا`
+              : `${creatives.initial} launch · ${creatives.replacements + creatives.fifths} refresh`)
+            : (isAr
+              ? `${num(plan.totals.posts, true)} منشورًا · ${num(plan.totals.videos, true)} فيديو`
+              : `${plan.totals.posts} posts · ${plan.totals.videos} videos`)}
         />
-        <Stat
-          isAr={isAr}
-          label={isAr ? 'مرات النشر' : 'Placements'}
-          value={plan.totals.placements}
-          detail={isAr
-            ? `${num(plan.totals.batches, true)} دفعة نشر`
-            : `${plan.totals.batches} publishing batches`}
-        />
+        {/* Organic counts PLACEMENTS (one post can go out several times);
+            paid counts REFRESHES, because a creative runs, it is not posted. */}
+        {isPaid ? (
+          <Stat
+            isAr={isAr}
+            label={isAr ? 'دورات التحديث' : 'Refresh cycles'}
+            value={creatives?.cycles ?? 0}
+            detail={isAr ? 'إضافةً إلى دفعة الإطلاق' : 'plus the launch slate'}
+          />
+        ) : (
+          <Stat
+            isAr={isAr}
+            label={isAr ? 'مرات النشر' : 'Placements'}
+            value={plan.totals.placements}
+            detail={isAr
+              ? `${num(plan.totals.batches, true)} دفعة نشر`
+              : `${plan.totals.batches} publishing batches`}
+          />
+        )}
         <div className="stat">
-          <div className="k">{isAr ? 'مدى النشر المطلوب' : 'Requested publishing range'}</div>
+          <div className="k">
+            {isPaid
+              ? (isAr ? 'مدى تشغيل الإعلانات' : 'Ad run range')
+              : (isAr ? 'مدى النشر المطلوب' : 'Requested publishing range')}
+          </div>
           <div className="v" style={{ fontSize: 16, marginTop: 12 }} dir="ltr">
             {rangeText(input.range_start, input.range_end, false)}
           </div>
@@ -167,7 +206,7 @@ export default function PlanPreview({
               <thead>
                 <tr>
                   <th>{isAr ? 'المشروع' : 'Project'}</th>
-                  <th className="num">{isAr ? 'بنود' : 'Items'}</th>
+                  <th className="num">{unitWord}</th>
                 </tr>
               </thead>
               <tbody>
@@ -185,13 +224,19 @@ export default function PlanPreview({
           </div>
         </div>
         <div className="card">
-          <div className="card-h"><h4>{isAr ? 'المطلوب لكل منصة' : 'Required per platform'}</h4></div>
+          <div className="card-h">
+            <h4>
+              {isPaid
+                ? (isAr ? 'المطلوب لكل قناة' : 'Required per channel')
+                : (isAr ? 'المطلوب لكل منصة' : 'Required per platform')}
+            </h4>
+          </div>
           <div className="tbl-wrap">
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>{isAr ? 'المنصة' : 'Platform'}</th>
-                  <th className="num">{isAr ? 'مرات النشر' : 'Placements'}</th>
+                  <th>{isPaid ? (isAr ? 'القناة' : 'Channel') : (isAr ? 'المنصة' : 'Platform')}</th>
+                  <th className="num">{isPaid ? unitWord : (isAr ? 'مرات النشر' : 'Placements')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -246,8 +291,12 @@ export default function PlanPreview({
         />
       ))}
 
-      {/* ── the publishing batches ──────────────────────────────────── */}
-      {plan.batches.length > 0 && (
+      {/* ── the publishing batches — ORGANIC ONLY ───────────────────
+          For paid, a "batch" is a refresh cycle, and RefreshForecastCard below
+          shows those same rows with the ready / production / decision dates
+          attached. Printing them here too, under a publishing heading with the
+          project name repeated once per creative, was noise. */}
+      {showsPublishingBatches(input.kind) && plan.batches.length > 0 && (
         <div className="card" style={{ marginTop: 16 }}>
           <div className="card-h">
             <h4>{isAr ? 'دفعات النشر' : 'Publishing batches'}</h4>

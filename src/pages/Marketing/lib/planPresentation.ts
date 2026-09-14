@@ -234,6 +234,41 @@ export interface PlanGridModel {
 }
 
 /**
+ * Which platforms get a FEED GRID, and whether the publishing-batches table is
+ * shown at all. Both answers turn on the campaign KIND, which is why they live
+ * here and are tested rather than being an `&&` inside the JSX.
+ *
+ * Paid gets neither, because neither exists for an ad:
+ *
+ *   • There is no feed. An ad has no row of three, no post before it and no
+ *     post after it, so «لا نكرر المشروع في الصف نفسه» — the only reason the
+ *     grid exists — has nothing to check. The engine says so itself by leaving
+ *     `gridRow`/`gridCol` null on every paid placement; `buildPlanGrid` then
+ *     fills the gap from the array index (deliberate for a stream platform like
+ *     TikTok, where publish ORDER is real), and that fabricated r/c is what
+ *     drew an Instagram-shaped grid over a set of Meta ad creatives.
+ *   • There is no publishing batch. The planner REUSES `batches` for paid to
+ *     mean one refresh cycle, so the table rendered the refresh calendar under
+ *     the heading «دفعات النشر», with a «اليوم» column holding the refresh date
+ *     and a content column repeating the project name once per creative — one
+ *     card above `RefreshForecastCard`, which shows the same cycles with their
+ *     ready, production-start and decision dates. For paid that card IS the
+ *     schedule.
+ */
+export function gridPlatformsFor(
+  items: PlannedItem[],
+  kind: MosPlanRequestInput['kind'],
+): string[] {
+  if (kind === 'paid') return [];
+  return [...new Set(items.flatMap((i) => i.placements.map((pl) => pl.platform)))];
+}
+
+/** Organic publishes in batches; for paid a "batch" is a refresh cycle. */
+export function showsPublishingBatches(kind: MosPlanRequestInput['kind']): boolean {
+  return kind !== 'paid';
+}
+
+/**
  * Map a platform's placements onto a grid.
  *
  * The engine already assigns `gridRow`/`gridCol` for grid platforms; we honour
