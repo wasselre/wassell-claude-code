@@ -114,7 +114,7 @@ export default async function handler(req: Request): Promise<Response> {
     // ── Fallback: Claude (original path, unchanged) ────────────────────
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
-    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'internal', callSite: 'api/doc-assist', isFallback: true, fallbackFrom: 'deepseek' });
+    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'internal', callSite: 'api/doc-assist', isFallback: llmRoutingEnabled(), fallbackFrom: llmRoutingEnabled() ? 'deepseek' : null });
     try {
       const response = await client.messages.create({
         model: MODEL,

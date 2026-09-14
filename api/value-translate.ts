@@ -191,7 +191,7 @@ export default async function handler(req: Request): Promise<Response> {
       if (!results) {
         const apiKey = process.env.ANTHROPIC_API_KEY;
         if (!apiKey) return jsonError(502, 'translation providers are not configured');
-        const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'translation', callSite: 'api/value-translate', isFallback: true, fallbackFrom: 'deepseek' });
+        const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'translation', callSite: 'api/value-translate', isFallback: deepseekEnabled(), fallbackFrom: deepseekEnabled() ? 'deepseek' : null });
         let response;
         try {
           response = await client.messages.create({

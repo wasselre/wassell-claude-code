@@ -488,7 +488,7 @@ async function callModel(args: {
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured');
-  const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'marketing', callSite: 'api/templates/posts-content', isFallback: true, fallbackFrom: 'deepseek' });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'marketing', callSite: 'api/templates/posts-content', isFallback: llmRoutingEnabled(), fallbackFrom: llmRoutingEnabled() ? 'deepseek' : null });
   const response = await client.messages.create({
     model: 'claude-opus-4-7',
     max_tokens: 2_000,

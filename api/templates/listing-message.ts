@@ -325,7 +325,7 @@ ${facts.description ?? '(no description provided)'}`;
     // ── Fallback: Claude force-tool (original path, unchanged) ─────────
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
-    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'sales', callSite: 'api/templates/listing-message', isFallback: true, fallbackFrom: 'deepseek' });
+    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'sales', callSite: 'api/templates/listing-message', isFallback: llmRoutingEnabled(), fallbackFrom: llmRoutingEnabled() ? 'deepseek' : null });
     let response;
     try {
       response = await client.messages.create({

@@ -174,7 +174,7 @@ export default async function handler(req: Request): Promise<Response> {
     // ── Fallback: Claude Haiku force-tool (original path, unchanged) ───
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
-    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'translation', callSite: 'api/translate', isFallback: true, fallbackFrom: 'deepseek' });
+    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'translation', callSite: 'api/translate', isFallback: deepseekEnabled(), fallbackFrom: deepseekEnabled() ? 'deepseek' : null });
 
     let response;
     try {

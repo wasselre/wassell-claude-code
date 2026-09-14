@@ -629,7 +629,7 @@ function conversationSource(conversation: Conversation): Evidence['source'] {
 async function claudeExtract(userText: string): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured');
-  const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'sales', callSite: 'api/_lib/geoPreference/extractor', isFallback: true, fallbackFrom: 'deepseek' });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'sales', callSite: 'api/_lib/geoPreference/extractor', isFallback: llmRoutingEnabled(), fallbackFrom: llmRoutingEnabled() ? 'deepseek' : null });
   const resp = await client.messages.create({
     model: CLAUDE_FALLBACK_MODEL,
     max_tokens: 4000,
