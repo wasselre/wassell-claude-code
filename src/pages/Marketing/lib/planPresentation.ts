@@ -901,7 +901,10 @@ export function requirementsProblems(draft: RequirementsDraft): BiText[] {
   if (draft.projectIds.length === 0) {
     out.push(bi('اختر مشروعًا واحدًا على الأقل.', 'Pick at least one project.'));
   }
-  if (requestedItemCount(draft) === 0) {
+  // Organic only. A paid plan's item count comes from the refresh policy, not
+  // from posts/videos, so demanding a quantity here would block a campaign on a
+  // number the planner never reads.
+  if (draft.kind !== 'paid' && requestedItemCount(draft) === 0) {
     out.push(bi('حدّد عدد المنشورات أو الفيديوهات المطلوبة.', 'Set how many posts or videos are needed.'));
   }
   if (draft.platforms.length === 0) {
@@ -914,13 +917,17 @@ export function requirementsProblems(draft: RequirementsDraft): BiText[] {
   } else if (draft.rangeEnd < draft.rangeStart) {
     out.push(bi('تاريخ النهاية قبل تاريخ البداية.', 'The end date precedes the start date.'));
   }
-  for (const p of draft.platforms) {
-    const f = frequencyOf(draft, p);
-    if (!Number.isFinite(f.perDay) || f.perDay < 1) {
-      out.push(bi(`عدد المنشورات اليومية في «${p}» يجب أن يكون ١ أو أكثر.`, `Posts per day on “${p}” must be 1 or more.`));
-    }
-    if (f.weekdays && f.weekdays.length === 0) {
-      out.push(bi(`اختر يومًا واحدًا على الأقل للنشر في «${p}».`, `Pick at least one publishing weekday for “${p}”.`));
+  // Publishing frequency is an organic idea and the paid branch ignores it —
+  // «عدد المنشورات اليومية في إعلانات ميتا» is not a question an ad answers.
+  if (draft.kind !== 'paid') {
+    for (const p of draft.platforms) {
+      const f = frequencyOf(draft, p);
+      if (!Number.isFinite(f.perDay) || f.perDay < 1) {
+        out.push(bi(`عدد المنشورات اليومية في «${p}» يجب أن يكون ١ أو أكثر.`, `Posts per day on “${p}” must be 1 or more.`));
+      }
+      if (f.weekdays && f.weekdays.length === 0) {
+        out.push(bi(`اختر يومًا واحدًا على الأقل للنشر في «${p}».`, `Pick at least one publishing weekday for “${p}”.`));
+      }
     }
   }
   if (draft.kind === 'paid') {

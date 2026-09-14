@@ -61,6 +61,43 @@ function QtyInput({
   );
 }
 
+/**
+ * What replaces the per-project quantity card on a paid campaign.
+ *
+ * It states the two things the hidden card was getting wrong: where the number
+ * of creatives actually comes from, and — when more than one project is
+ * selected — that the planner files every creative under the FIRST one and
+ * ignores the rest. That second point is a real limitation of the paid branch,
+ * not a display choice, so it is said out loud rather than left silent.
+ */
+function PaidQuantityNote({
+  projectIds, projectName, isAr,
+}: {
+  projectIds: string[];
+  projectName: (id: string | null | undefined) => string;
+  isAr: boolean;
+}) {
+  const first = projectIds[0];
+  return (
+    <div className="card" style={{ marginTop: 11 }}>
+      <div className="card-b" style={{ fontSize: 12.5, lineHeight: 1.9 }}>
+        <div>
+          {isAr
+            ? 'عدد التصاميم يحسبه المحرّك من سياسة التحديث أدناه — دفعة الإطلاق، ثم دفعة لكل تحديث يقع داخل المدى. لا تُحدَّد كمية لكل مشروع في الحملة المدفوعة.'
+            : 'The engine works the number of creatives out from the refresh policy below: the launch slate, then one slate per refresh that fits the range. A paid campaign has no per-project quantity.'}
+        </div>
+        {projectIds.length > 1 && first && (
+          <div className="notice bad" style={{ marginTop: 10 }}>
+            {isAr
+              ? `تُنسب كل التصاميم إلى «${projectName(first)}». المشاريع الأخرى المختارة لا تدخل خطة الحملة المدفوعة — أنشئ حملة مستقلة لكل مشروع.`
+              : `Every creative is filed under “${projectName(first)}”. The other selected projects do not enter a paid plan — create a separate campaign per project.`}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function CampaignRequirementsStep({
   draft, onChange, projects, projectName, isAr,
 }: {
@@ -113,6 +150,21 @@ export default function CampaignRequirementsStep({
           isAr={isAr}
         />
 
+        {/* ── how much content, PER PROJECT — ORGANIC ONLY ──────────────
+            Paid never reads these numbers. `planCampaign`'s paid branch builds
+            its items from the refresh forecast (launch slate + one slate per
+            kept refresh) and touches `projects[0]` only, for the project id to
+            file the creatives under. So on a paid campaign this card asked for
+            a number that changed nothing and reported a total («٣ بندًا في
+            المجموع») that the plan then contradicted — a month of Meta on the
+            default policy is 25 creatives whatever is typed here. */}
+        {isPaid ? (
+          <PaidQuantityNote
+            projectIds={draft.projectIds}
+            projectName={projectName}
+            isAr={isAr}
+          />
+        ) : (
         <div className="card" style={{ marginTop: 11 }}>
           <div className="card-h">
             <h4>{isAr ? 'لكل مشروع' : 'Per project'}</h4>
@@ -214,6 +266,7 @@ export default function CampaignRequirementsStep({
             </table>
           </div>
         </div>
+        )}
       </div>
 
       {/* ── platforms ───────────────────────────────────────────────── */}

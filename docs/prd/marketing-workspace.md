@@ -90,6 +90,23 @@ This workspace answers the three questions the old process could not:
     during placement, not deadline extensions applied afterwards. Approval steps
     consume their own `approvals` bucket, so the single marketing manager shows
     up as the bottleneck they are.
+  - **A paid campaign has no per-project quantity.** The requirements step's
+    «لكل مشروع» card — the global posts/videos default plus per-project
+    overrides — is ORGANIC ONLY. The paid branch of `planCampaign` never reads
+    those numbers: it builds its items from the refresh policy (the launch
+    slate, then one slate per refresh that fits the range), so the card asked
+    for a figure that changed nothing and printed a total the plan then
+    contradicted. A month of Meta on the default policy is 25 creatives
+    whatever was typed. Paid now shows a line saying where the number comes
+    from instead. The same card also hid a real limitation, now stated in the
+    UI: **the paid planner reads only `projects[0]`** and files every creative
+    under it, so selecting more than one project silently dropped the rest —
+    the note says so and points at one campaign per project. Two validations
+    followed: a paid campaign is no longer blocked for having no post/video
+    quantity, and is no longer asked for a posts-per-day figure on an ad
+    channel (`frequency` is ignored by the paid branch). Everything that does
+    apply to paid still blocks — a project, an ad channel, the dates, and the
+    refresh policy bounds.
   - **Paid and organic are not the same preview screen.** Publishing vocabulary
     belongs to organic and is hidden for paid. Organic gets the publishing
     batches table and the feed grid, where the grid exists so a human can SEE

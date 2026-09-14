@@ -3,6 +3,7 @@ import type { LoadCell, PlanResult, PlannedCycle, PlannedItem } from '@/lib/mark
 import {
   buildLoadTable, buildPlanGrid, buildRefreshRows, alternativeOptions,
   gridPlatformsFor, showsPublishingBatches,
+  emptyRequirements, requirementsProblems,
   creativeTotalsText, feasibilityVerdict, isOverCapacity, mergeLockedPlacements,
   parseCommitConflict, projectColorMap, resolveStepEffort, resolveUserCap,
   swapPlacements, weekendFromSettings,
@@ -221,6 +222,57 @@ describe('paid plans get no feed grid and no publishing batches', () => {
     // same rows with the ready / production / decision dates attached.
     expect(showsPublishingBatches('paid')).toBe(false);
     expect(showsPublishingBatches('organic')).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 1c. paid requirements are not judged by organic rules               */
+/* ------------------------------------------------------------------ */
+
+describe('requirementsProblems — paid does not answer organic questions', () => {
+  const ready = (kind: 'organic' | 'paid') => ({
+    ...emptyRequirements(kind),
+    projectIds: ['p1'],
+    rangeStart: '2026-10-01',
+    rangeEnd: '2026-10-31',
+  });
+  const messages = (d: ReturnType<typeof ready>) =>
+    requirementsProblems(d).map((m) => m.en);
+
+  it('does not demand a post/video quantity on a paid campaign', () => {
+    // The paid branch builds its items from the refresh policy and never reads
+    // posts/videos, so blocking on that number would refuse a campaign over an
+    // input the planner ignores.
+    const d = { ...ready('paid'), globalPosts: 0, globalVideos: 0 };
+    expect(messages(d)).toEqual([]);
+  });
+
+  it('still demands a quantity on an organic campaign', () => {
+    const d = { ...ready('organic'), globalPosts: 0, globalVideos: 0 };
+    expect(messages(d)).toContain('Set how many posts or videos are needed.');
+  });
+
+  it('does not ask an ad channel for a posts-per-day figure', () => {
+    // «عدد المنشورات اليومية في إعلانات ميتا» is not a question an ad answers;
+    // the paid branch ignores `frequency` entirely.
+    const d = { ...ready('paid'), frequency: { meta: { perDay: 0, weekdays: null } } };
+    expect(messages(d)).toEqual([]);
+  });
+
+  it('still enforces publishing frequency on organic', () => {
+    const d = { ...ready('organic'), frequency: { instagram: { perDay: 0, weekdays: null } } };
+    expect(messages(d).some((m) => /Posts per day/.test(m))).toBe(true);
+  });
+
+  it('keeps the checks that DO apply to paid', () => {
+    expect(messages({ ...ready('paid'), projectIds: [] }))
+      .toContain('Pick at least one project.');
+    expect(messages({ ...ready('paid'), platforms: [] }))
+      .toContain('Pick at least one ad channel.');
+    expect(messages({ ...ready('paid'), rangeEnd: '' }))
+      .toContain('Set the publishing start and end dates.');
+    expect(messages({ ...ready('paid'), refresh: { ...ready('paid').refresh, cycle_days: 0 } }))
+      .toContain('The cycle length must be one day or more.');
   });
 });
 
