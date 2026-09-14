@@ -21,7 +21,26 @@ import {
 const POLL_MS = 4_000;
 const NO_CREDS_SLEEP_MS = 60_000;
 
+/**
+ * What /healthz reports for this lane — see the note on `refreshLaneState`.
+ * `enabled` is null until the loop has actually evaluated the credentials once,
+ * so "we never looked" never reads as "credentials present".
+ */
+export const metaAdLaneState: { busy: boolean; enabled: boolean | null } = {
+  busy: false,
+  enabled: null,
+};
+
 export async function claimAndRunOneMetaAd(deps: LaneDeps): Promise<boolean> {
+  metaAdLaneState.busy = true;
+  try {
+    return await claimOne(deps);
+  } finally {
+    metaAdLaneState.busy = false;
+  }
+}
+
+async function claimOne(deps: LaneDeps): Promise<boolean> {
   const { supabase: sb, workerId, log } = deps;
   const { data, error } = await sb.rpc('generation_job_claim_next', {
     p_worker_id: workerId,
@@ -108,7 +127,9 @@ export const metaAdLoop: LaneLoop = async (deps) => {
     if (isShuttingDown()) return;
     let sleepMs = POLL_MS;
     try {
-      if (!loadMetaConfig()) {
+      const hasCreds = !!loadMetaConfig();
+      metaAdLaneState.enabled = hasCreds;
+      if (!hasCreds) {
         if (!warnedNoCreds) {
           console.error('[metaAdLane] Meta credentials missing (META_SYSTEM_USER_TOKEN / META_AD_ACCOUNT_ID) — lane idle');
           warnedNoCreds = true;

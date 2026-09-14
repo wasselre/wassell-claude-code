@@ -28,11 +28,36 @@ const POLL_MS = 60_000;
 const NO_SCHEMA_SLEEP_MS = 5 * 60_000;
 
 const OFF_REASON = 'planning.refresh_loop_enabled is off';
+
+/**
+ * What /healthz reports for this lane. Every other lane on this worker
+ * publishes a busy flag; a brand-new always-on lane that publishes nothing is
+ * indistinguishable from one that died in its first tick — which is the exact
+ * silent-partial-outage shape this repo keeps getting burned by.
+ *
+ * `enabled` is the OPERATOR's kill switch as the last sweep observed it, not a
+ * guess from env: the tick reads planning.refresh_loop_enabled itself, so this
+ * is the only place that knows the live answer. It starts null — "no sweep has
+ * reported yet" — so a lane that never ran cannot masquerade as an enabled one.
+ */
+export const refreshLaneState: { busy: boolean; enabled: boolean | null } = {
+  busy: false,
+  enabled: null,
+};
 const MISSING_LOG_EVERY_MS = 10 * 60_000;
 const missingLoggedAt = new Map<string, number>();
 
 /** One sweep. Returns true when the operator's kill switch is off. */
 export async function runRefreshCycleSweep(deps: LaneDeps): Promise<boolean> {
+  refreshLaneState.busy = true;
+  try {
+    return await sweep(deps);
+  } finally {
+    refreshLaneState.busy = false;
+  }
+}
+
+async function sweep(deps: LaneDeps): Promise<boolean> {
   const res = await runRefreshCycleTick({
     supabase: deps.supabase,
     log: (msg, extra) => deps.log(`[refresh] ${msg}`, extra),
@@ -48,7 +73,9 @@ export async function runRefreshCycleSweep(deps: LaneDeps): Promise<boolean> {
     missingLoggedAt.set(label, now);
     console.error(`[refreshLane] sweep disabled — ${m}`);
   }
-  return res.metrics?.reason === OFF_REASON;
+  const off = res.metrics?.reason === OFF_REASON;
+  refreshLaneState.enabled = !off;
+  return off;
 }
 
 export const refreshCycleLoop: LaneLoop = async (deps) => {

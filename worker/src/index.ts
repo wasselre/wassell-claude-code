@@ -56,8 +56,8 @@ import { getSessionStatus, restartSession, stopSession, type WahaSendConfig } fr
 // LaneDeps, so the one deps object below fits all four.)
 import { creativeJobsLoop } from './creative/lanes/creativeJobsLane.js';
 import { creativeImageLoop } from './creative/lanes/creativeImageLane.js';
-import { metaAdLoop } from './marketing/metaAdLane.js';
-import { refreshCycleLoop } from './marketing/refreshLane.js';
+import { metaAdLoop, metaAdLaneState } from './marketing/metaAdLane.js';
+import { refreshCycleLoop, refreshLaneState } from './marketing/refreshLane.js';
 import { designReadLoop } from './creative/lanes/designReadLane.js';
 import { assetMetaLaneLoop as assetMetaLoop } from './creative/lanes/assetMetaLane.js';
 import type { LaneDeps } from './creative/lanes/types.js';
@@ -2868,6 +2868,15 @@ const server = http.createServer((req, res) => {
         cv_process_busy: cvProcessBusy,
         cv_analyze_busy: cvAnalyzeBusy,
         cv_lanes_enabled: cvLanesActive,
+        // Campaign planning (2026-09-14). `*_enabled` is null until the lane
+        // has looked once: the refresh lane reads the operator's kill switch
+        // from the database and the Meta lane reads its credentials, so an
+        // unreported flag means "no tick has happened yet", which must not be
+        // confused with "on".
+        meta_ad_busy: metaAdLaneState.busy,
+        meta_ad_enabled: metaAdLaneState.enabled,
+        refresh_cycle_busy: refreshLaneState.busy,
+        refresh_cycle_enabled: refreshLaneState.enabled,
         worker_id: env.WORKER_ID,
         uptime_s: Math.round(process.uptime()),
       }),
