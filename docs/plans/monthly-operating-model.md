@@ -14,21 +14,21 @@ Before the map, three measurements that reframe the whole question.
 **1. The system has never run at the volume the monthly model requires.**
 The Marketing OS is two months old in production. Lifetime totals: 24 content records, 6 campaigns, 10 publications, 42 ads. The stated monthly model is 54 organic posts plus 60 paid creatives in October, about 114 items. That is four to five times the entire lifetime usage, every month. A workflow that asks a person to create each item by hand cannot survive that. The monthly model is not a nice-to-have on top of the current app; it is the only way the current app could ever be used at the intended scale.
 
-**2. The team is one writer, one manager, and one or two designers.**
-Role holders in production: one marketing manager (you), one writer, two montage accounts (one of which is a second account under your own name), and nobody at all holding the operations role that owned every publish check until three days ago. Five roles were designed; one carries every approval and two carry nothing.
+**2. The team is one writer, one manager, and one designer.**
+Role holders in production: one marketing manager (you), one writer, one designer, and nobody at all holding the operations role that owned every publish check until three days ago. A second montage account exists under your own name and is not a second designer. Five roles were designed; one carries every approval and two carry nothing.
 
-**3. Design capacity is the binding constraint, and the model is over it.**
-Using the live effort estimates (design = 2 working days per item) and live daily capacity (two designers at 4 slots a day):
+**3. Design capacity is the constraint, and whether it fits depends on one unmeasured setting.**
+Load is items × effort per item ÷ (slots per day × working days). Both effort and slots are settings. The effort figure the engine currently holds, two working days per design, was a placeholder seeded last week and flagged "to be confirmed"; it never was. The real history says otherwise: the 33 design tasks actually completed in production took a median of 0.4 days from open to close, with the slowest fifth around one day. For one designer at the configured four slots a day:
 
-| Month | Working days | Items | Design days needed | Design days available | Load |
-|---|---|---|---|---|---|
-| October 2026 | 26 | 114 | 228 | 208 | 110% |
-| November 2026 | 26 | 111 | 222 | 208 | 107% |
-| February 2027 | 24 | 108 | 216 | 192 | 113% |
+| Effort assumption | October | November | February |
+|---|---|---|---|
+| 2 days per design (the current seed) | 219% | 213% | 225% |
+| 1 day (the slowest fifth of real tasks) | 110% | 107% | 113% |
+| 0.4 days (the typical real task) | 44% | 43% | 45% |
 
-If the second montage account is not a real full-time designer, the load is 219% to 225%. The writer sits at 44%. The manager does roughly nine approvals every working day, which fits inside the approvals budget but makes you the single point of delay on every one of the 114 items.
+At the pace the designer actually works, the month fits one designer with room. It breaks only if design genuinely takes a full day per item. Elapsed time overstates effort, so 0.4 is an upper bound on what a task cost, which strengthens the fit case. The writer sits well under half capacity on any assumption. You do roughly nine approvals every working day, which fits the approvals budget but makes you the single point of delay on every one of the 114 items.
 
-This is the first thing the monthly screen must say, before anything is generated. It is also the first genuine decision only you can make (section 8).
+Two things follow. The effort setting must be seeded from measured medians, not from a default, and the month screen must show this arithmetic before anything is generated, so a wrong number is a visible line rather than a hidden assumption. And the first decision only you can make (section 8) is no longer "add a designer"; it is "confirm the real effort", which the system can propose from history.
 
 ---
 
@@ -308,8 +308,8 @@ Rollback at every phase is a rail edit, because nothing is deleted until phase 4
 
 These are business decisions, not implementation choices. Each changes what the compiler produces.
 
-1. **Design capacity.** The model needs about 220 design days a month and the team has 208 on paper, or 104 if the second montage account is not a full-time designer. Three ways out, each a different business: cut design effort for paid creatives to one day by treating them as template variants (load falls to about 75%), add a designer, or reduce the paid slate from five to four per project per week. Which one?
-2. **Is the second montage account a real designer?** The compiler must know.
+1. **Confirm the real design effort.** The engine holds a placeholder of two days per design; history says about half a day. With one designer, the month fits at the measured pace and breaks at the placeholder. The system should propose the setting from the median of completed tasks and you confirm it. If you believe designs will genuinely take a full day at the new volume, then the fallbacks apply: treat paid creatives as template variants, add a designer, or cut the slate to four.
+2. **The second montage account** is yours, not a designer's. It should lose the montage role so capacity is not double-counted.
 3. **Paid budget per project per month.** One number, standing. Today budget is typed in three places that disagree.
 4. **Ads live on the batch date, or paused until you look?** Automatic activation is what makes the week run without you. It is also money spent by a machine. I recommend automatic, with a spend cap per project as the safety.
 5. **Automatic refresh decisions.** The ranking is sound. Letting it apply by default means creatives are retired by a machine. I recommend yes, with the uncertain case routed to you.
@@ -325,7 +325,7 @@ These are business decisions, not implementation choices. Each changes what the 
 Some of these change the arithmetic in section 0.
 
 - **Approve rows, not posts.** The three posts on a project day are one batch. Let the manager approve the batch as one unit, with the three previews side by side. That cuts final approvals from 54 to 18 a month for organic, and matches how the batch is meant to be judged.
-- **Derive paid creatives from the organic row.** Each week, the project's three organic posts already exist as approved square and vertical designs. Use them as three of the five paid creatives, produce two fresh. Design load for paid drops from 120 to 48 days a month, and the month fits comfortably inside the current team. This is the single change with the largest effect.
+- **Derive paid creatives from the organic row.** Each week, the project's three organic posts already exist as approved square and vertical designs. Use them as three of the five paid creatives, produce two fresh. At the placeholder effort, paid design load drops from 120 to 48 days a month; at the measured pace it is a smaller saving but still the largest single lever, and it also halves the number of fresh designs the one designer must invent each week.
 - **Suggest the three projects.** From units available, days since last featured, and last month's cost per lead. The screen pre-fills; you confirm or swap one. Most months the choice is a glance.
 - **A topic bank for Saturday.** Twenty evergreen topics in settings, rotated, so the general row never needs a monthly decision.
 - **Same three projects next month by default.** Rollover is the common case. The reminder says "keep these three?" with a yes.
@@ -379,13 +379,12 @@ One page, no tabs. Arabic, right to left.
 │                                                                          │
 │  هل يتّسع الفريق؟                                                        │
 │   الكتابة  ████████░░░░░░░░░░  ٤٤٪                                        │
-│   التصميم  ██████████████████▓  ١١٠٪   ▲ ٢٠ يومًا فوق الطاقة              │
+│   التصميم  ████████░░░░░░░░░░  ٤٤٪    (بالجهد المقاس؛ ٢١٩٪ بالإعداد الحالي) │
 │   الاعتماد ████████░░░░░░░░░░  ٤٤٪    ٩ اعتمادات يوميًا                   │
 │                                                                          │
-│   ▲ التصميم لا يتّسع. أصغر تغيير يحلّه:                                   │
-│     ○ اعتبار التصاميم المدفوعة نسخًا من منشورات الأسبوع  (١٠٤٪ ← ٧٣٪)     │
-│     ○ أربعة تصاميم مدفوعة لكل مشروع أسبوعيًا بدل خمسة    (١١٠٪ ← ٩٨٪)     │
-│     ○ المتابعة كما هي وقبول تأخر الدفعة الأخيرة                          │
+│   ⓘ جهد التصميم المضبوط (يومان) أعلى من المقاس (٠٫٤ يوم من ٣٣ مهمة).     │
+│     ○ اعتماد الجهد المقاس                                                │
+│     ○ الإبقاء على يومين وقبول أن الشهر لا يتّسع (٢١٩٪)                   │
 │                                                                          │
 │                                                     [ اعتماد الشهر ]     │
 ├──────────────────────────────────────────────────────────────────────────┤
@@ -437,4 +436,4 @@ Roughly: eight small things missing, the foundation largely present. Nothing her
 
 Choosing three projects can run a reliable month because the month is a constant. Everything that made the current app hard, the forms, the wizards, the builders, the six approval surfaces, exists to express choices that this company does not make. Take those choices out of the interface and into one settings row, compile them against the calendar and the team once a month, put every deviation on one list with one decision each, and the app that remains is small, and yours.
 
-The one thing no compiler can remove is the fact that the current team does not fit the stated model. That is section 0, and it is the first decision on the month screen, not the last thing you find out.
+The one thing no compiler can remove is an unmeasured number sitting where a measured one should be. The month fits one designer at the pace history shows and breaks at the placeholder the engine currently holds. That arithmetic belongs at the top of the month screen, from real medians, so it is the first thing you see and not the last thing you find out.
