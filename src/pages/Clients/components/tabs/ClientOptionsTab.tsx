@@ -1,3 +1,4 @@
+import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { buildGeoNameMap } from '@/lib/geo/geoNameMap';
 import { pickLocalized } from '@/lib/geo/localizedName';
 import { useMemo, useState } from 'react';
@@ -689,7 +690,11 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
 
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            {onOpenSource ? (
+            {d.source_type === 'market_listing' && MARKET_LISTINGS_ARCHIVED ? (
+              // Archived market listing (2026-09-14): the source page is gone,
+              // so there is nothing to open — the saved facts above are the record.
+              null
+            ) : onOpenSource ? (
               // In-place overlay (in-chat popups): the host can return here.
               <button
                 type="button"
@@ -726,7 +731,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
             {/* Send THIS option to the client over WhatsApp — the prepared
                 message if one exists, else the creation flow. Projects +
                 market listings (units have no message flow). */}
-            {(d.source_type === 'project' || d.source_type === 'market_listing') && (
+            {(d.source_type === 'project' || (d.source_type === 'market_listing' && !MARKET_LISTINGS_ARCHIVED)) && (
               <button
                 type="button"
                 onClick={() => setSendTarget({
@@ -744,7 +749,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
             {/* Market-listing options: contact the advertiser — opens the
                 WhatsApp chat if the phone is already on the listing, else
                 runs the REGA lookup and opens it when the number lands. */}
-            {d.source_type === 'market_listing' && (
+            {d.source_type === 'market_listing' && !MARKET_LISTINGS_ARCHIVED && (
               <ContactAdvertiserButton listingId={d.source_id} isAr={isAr} />
             )}
 

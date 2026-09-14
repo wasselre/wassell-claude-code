@@ -10,6 +10,7 @@
  * reloaded tab picks its work back up instead of orphaning it.
  */
 
+import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2, X } from 'lucide-react';
@@ -31,6 +32,10 @@ export default function JobsIndicator() {
   // One-shot rehydration once the chat_templates records have loaded.
   useEffect(() => {
     if (rehydratedRef.current) return;
+    // Listing-message jobs belong to the archived market-listings module
+    // (2026-09-14) — nothing to rehydrate, and their hrefs point at a page
+    // that now renders the archived notice.
+    if (MARKET_LISTINGS_ARCHIVED) return;
     const ctModel = models.find((m) => m.name === 'chat_templates');
     if (!ctModel) return;
     const rows = records[ctModel.id];

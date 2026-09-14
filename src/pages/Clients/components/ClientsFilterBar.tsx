@@ -1,3 +1,4 @@
+import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { Search, X } from 'lucide-react';
 import type { ClientFilters, LifecycleSegment } from '../lib/clientFilters';
 
@@ -123,7 +124,9 @@ export default function ClientsFilterBar({ filters, onChange, onReset, options, 
           <Select value={filters.district} onChange={(v) => onChange({ district: v })} placeholder={isAr ? 'الحي' : 'District'} options={options.districts} />
         )}
         <Select value={filters.preferredProjectId} onChange={(v) => onChange({ preferredProjectId: v })} placeholder={isAr ? 'مشروع مفضل' : 'Preferred project'} options={options.projects} />
-        <Select value={filters.preferredMarketListingId} onChange={(v) => onChange({ preferredMarketListingId: v })} placeholder={isAr ? 'إعلان سوق مفضل' : 'Preferred listing'} options={options.listings} />
+        {!MARKET_LISTINGS_ARCHIVED && (
+          <Select value={filters.preferredMarketListingId} onChange={(v) => onChange({ preferredMarketListingId: v })} placeholder={isAr ? 'إعلان سوق مفضل' : 'Preferred listing'} options={options.listings} />
+        )}
         <Select
           value={filters.minVisitRating !== null ? String(filters.minVisitRating) : null}
           onChange={(v) => onChange({ minVisitRating: v ? Number(v) : null })}

@@ -28,7 +28,10 @@
 // ─────────────────────────────────────────────────────────────────
 
 /** Model `name` slugs loaded as a SLIM full set into the normal store,
- *  in the background after boot. (market_listings: all ~46k rows.) */
+ *  in the background after boot. (market_listings: all ~46k rows.)
+ *  ARCHIVED 2026-09-14: market_listings stays listed so the BOOT EXCLUSION keeps
+ *  working (the frozen table holds ~318k rows), but its slim set is never paged in
+ *  while `MARKET_LISTINGS_ARCHIVED` (featureFlags.ts) is on — see appStore.loadSummaryRecords. */
 export const SUMMARY_MODEL_NAMES = new Set<string>(['market_listings']);
 
 /** Model `name` slugs paged in on demand via record_search (no model

@@ -510,6 +510,24 @@ SEVENTH queue on the same Fly worker: `data_migration_jobs` runs the Data Migrat
 3. **SOLE-WRITER rule (echo-dedup):** during a job the BROWSER must never write the migration record via the store — a browser write registers a null-`updated_at` entry in the realtime echo-dedup (`src/lib/realtime/dedup.ts`) that would SUPPRESS the worker's next update. So the busy/status flip + message append happen server-side in `/api/migrate` (service role), and all job-time writes are the worker's. **Those worker writes use `record_save` with `p_expected_version: null` (VERSION-UNAWARE) — do NOT use optimistic concurrency here.** The data_migration draft is a single-logical-owner record that the browser wizard ALSO writes version-unaware (`MigrationWizard` `patch` + `jobRunner.patchMigrationRecord`, `expectedVersion:null`), which freely bumps the row's `version`; an optimistic worker write therefore loses every race and tight-loops on the 40001 retry → **Postgres CPU storm** (the 2026-06-23 الماجدية 174 incident — `runMigrationJob.patchRecord` originally copied the image_chats `p_expected_version`+retry posture; fixed to version-unaware in commit 44d0200). `p_expected_version`+retry is correct ONLY for image_chats (where every writer is optimistic), NOT here. The browser only reads via Realtime. (The `import` step is the lone exception — it writes the record from the tab, but no worker touches the record then.)
 4. **complete/fail RPCs only touch `status='running'` jobs; the cancel/watchdog patch the record per-kind** (extract → `status='failed'`; plan/discuss → clear `prep_busy`/`discuss_busy`, status untouched). `data_migration_jobs_watchdog()` sweeps running >45 min (well above the worst-case sequential multi-batch run) — so a crashed worker can never leave a record stuck forever.
 
+## Market listings module is ARCHIVED (2026-09-14)
+
+The whole market-listings feature — the `market_listings` model pages, the Market
+Automation ingest cockpit (`/market-automation`), Market Intelligence
+(`/market-intelligence`), the "market listings" Finder source, the client record's «سوق العميل» tab, the market-listing
+tab / send / contact-advertiser actions on client options, the preferred-listing
+client filter, and listing-message job rehydration — is hidden behind ONE switch:
+`'market_listings'` in `ARCHIVED_MODULE_MODELS` (`src/lib/featureFlags.ts`), read
+everywhere as `MARKET_LISTINGS_ARCHIVED`. `api/project-finder.ts` mirrors the
+flag as a local constant (server bundles cannot import featureFlags) and strips
+`market_listings` from `VALID_SOURCES`. NON-DESTRUCTIVE: the frozen table
+(~318k rows), every related table, the worker lanes below and all page code stay;
+nothing was deleted. The scrapers (`aqar-sync-rayan`, `wassel-claude-aqar`,
+`wassel-uae-enrich` on Fly) were already suspended and the last listing write was
+2026-08-30. **Restore = delete that one list entry + flip the api constant.**
+Everything in the mirror / ingest / publish-gate sections below still describes
+the dormant machinery accurately; none of it runs while archived.
+
 ## Listing photo mirror (Aqar → our bucket) (added 2026-07-29)
 
 Market-listing photos are copied into a bucket we own **at scan/import time**, so nothing user-facing ever downloads from `images.aqar.fm`. Rides the existing `generation_jobs` queue as `kind='listing-mirror'` (the same shape as `video-convert`).

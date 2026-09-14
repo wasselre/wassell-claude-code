@@ -87,7 +87,17 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim
 const strArr = (v: unknown): string[] | undefined =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : undefined;
 
-const VALID_SOURCES: MatchSource[] = ['our_projects', 'all_projects', 'market_listings'];
+/**
+ * Market listings archived 2026-09-14 (mirrors `MARKET_LISTINGS_ARCHIVED` in
+ * src/lib/featureFlags.ts — a server bundle cannot import that module, so the
+ * flag is repeated here). While true, `market_listings` is stripped from every
+ * request's `sources`, so a stale client build or a hand-crafted call can't
+ * pull the archived dataset into a search. Flip both together to restore.
+ */
+const MARKET_LISTINGS_ARCHIVED = true;
+const VALID_SOURCES: MatchSource[] = MARKET_LISTINGS_ARCHIVED
+  ? ['our_projects', 'all_projects']
+  : ['our_projects', 'all_projects', 'market_listings'];
 
 /**
  * Area-weighted centroid (shoelace) of a CLOSED GeoJSON ring `[lng, lat][]`
@@ -246,8 +256,9 @@ export default async function handler(req: Request): Promise<Response> {
     // Default to the boundary-verified catalog (our_projects + all_projects).
     // market_listings is OPT-IN via an explicit `sources` (external/unverified +
     // its area scan can exceed the edge timeout for ultra-dense districts).
-    const sources = (strArr(body.sources)?.filter((s): s is MatchSource => (VALID_SOURCES as string[]).includes(s)) ??
-      DEFAULT_FINDER_SOURCES) as MatchSource[];
+    const requestedSources = strArr(body.sources)?.filter((s): s is MatchSource => (VALID_SOURCES as string[]).includes(s));
+    // A request that named ONLY archived sources would otherwise search nothing.
+    const sources = (requestedSources && requestedSources.length > 0 ? requestedSources : DEFAULT_FINDER_SOURCES) as MatchSource[];
 
     // Language for the deterministic per-card explanation string (default Arabic —
     // this is an Arabic-first app; the caller passes 'en' for the English UI).

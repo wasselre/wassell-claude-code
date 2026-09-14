@@ -46,7 +46,7 @@ const ProjectDetailsBridgePage = lazy(() => import('@/pages/Settings/ProjectDeta
 const ChatsSplitPage = lazy(() => import('@/pages/Chats/ChatsSplitPage'));
 const ChatTemplateFormPage = lazy(() => import('@/pages/Chats/ChatTemplateFormPage'));
 import RetiredAssistantNotice from '@/components/RetiredAssistantNotice';
-import { isRetiredModel } from '@/lib/featureFlags';
+import { isRetiredModel, MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { useDeepLinkRecordPending } from '@/hooks/useDeepLinkRecord';
 import { Loader2 } from 'lucide-react';
 const FollowUpWorkspacePage = lazy(() => import('@/pages/Followups/FollowUpWorkspacePage'));
@@ -272,6 +272,8 @@ function RecordDetailDispatcher() {
  */
 function RecordNewDispatcher() {
   const { modelName } = useParams();
+  // Retired assistants + archived modules — no new records either.
+  if (isRetiredModel(modelName)) return <RetiredAssistantNotice />;
   if (modelName === 'chat_templates') return <ChatTemplateFormPage key="new" />;
   return <RecordFormPage />;
 }
@@ -439,8 +441,12 @@ export default function App() {
           <Route path="/sales/studio/processes/:processId" element={<RequirePageAccess pageId="sales_studio"><ProcessJourneyPage /></RequirePageAccess>} />
           <Route path="/sales/process" element={<RequirePageAccess pageId="sales_process"><SalesProcessStudioPage /></RequirePageAccess>} />
           <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
-          <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
-          <Route path="/market-automation" element={<RequirePageAccess pageId="market_automation"><MarketAutomationPage /></RequirePageAccess>} />
+          {/* Market Intelligence + Market Automation ride the archived
+              market-listings module (2026-09-14): a bookmark lands on the
+              archived-module notice instead of a page over a dataset nobody
+              maintains. Flip MARKET_LISTINGS_ARCHIVED to bring both back. */}
+          <Route path="/market-intelligence" element={MARKET_LISTINGS_ARCHIVED ? <RetiredAssistantNotice /> : <RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
+          <Route path="/market-automation" element={MARKET_LISTINGS_ARCHIVED ? <RetiredAssistantNotice /> : <RequirePageAccess pageId="market_automation"><MarketAutomationPage /></RequirePageAccess>} />
           <Route path="/marketing-intelligence" element={<RequirePageAccess pageId="marketing_intelligence"><MarketingIntelligencePage /></RequirePageAccess>} />
           <Route path="/competitor-watch" element={<RequirePageAccess pageId="competitor_watch"><CompetitorWatchPage /></RequirePageAccess>} />
           {/* The old in-Sales marketing page is gone. Anyone with a bookmark

@@ -1,3 +1,4 @@
+import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { buildGeoNameMap } from '@/lib/geo/geoNameMap';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown, ChevronUp, TimerOff, RefreshCw, CheckSquare, List, Map as MapIcon, Maximize2, Columns2 } from 'lucide-react';
@@ -354,7 +355,9 @@ export default function SuggestedProjectsView({
         followupId,
         perGroup: 0,
         minScore: FETCH_FLOOR,
-        sources: ['our_projects', 'all_projects', 'market_listings'],
+        // Market listings ride the archived module (2026-09-14) — the follow-up
+        // search runs on our catalog only while the flag is on.
+        sources: MARKET_LISTINGS_ARCHIVED ? ['our_projects', 'all_projects'] : ['our_projects', 'all_projects', 'market_listings'],
         locale: isAr ? 'ar' : 'en',
         // Compile the geo gate from the DRAFT rules the rep is looking at (so an
         // unsaved "south of the road" filters immediately), not the saved record.
@@ -719,7 +722,7 @@ export default function SuggestedProjectsView({
   // there ARE results (kept always-on at zero results, where they explain the
   // emptiness). The collapsed strip keeps a small count so nothing is hidden silently.
   const constraintDropSummary = summarizeConstraintDrops(resp?.metadata.constraint_drops, isAr);
-  const hasMarketNotice = market?.status === 'too_many' || market?.status === 'needs_district' || market?.status === 'unavailable';
+  const hasMarketNotice = !MARKET_LISTINGS_ARCHIVED && (market?.status === 'too_many' || market?.status === 'needs_district' || market?.status === 'unavailable');
   const topNoticeCount = (constraintDropSummary ? 1 : 0) + (hasMarketNotice ? 1 : 0);
   const showTopNotices = showControls || fetchedTotal === 0;
   const selectedVisible = FINDER_GROUP_KEYS.reduce(

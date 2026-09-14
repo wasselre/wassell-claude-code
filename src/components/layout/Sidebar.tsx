@@ -311,7 +311,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
               profile in Settings → Profiles. Entries flagged
               `hidden_from_sidebar` keep their route + access rules but get no
               nav link. */}
-          {CUSTOM_PAGES.filter((pg) => !pg.hidden_from_sidebar && canPage(pg.id)).map((pg) => {
+          {CUSTOM_PAGES.filter((pg) => !pg.hidden_from_sidebar && !pg.archived && canPage(pg.id)).map((pg) => {
             const Icon = pg.icon;
             const label = isAr ? pg.label_ar : pg.label_en;
             return (

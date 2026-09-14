@@ -1,3 +1,4 @@
+import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -1650,7 +1651,7 @@ export default function RecordFormPage() {
 
       {/* On an advertiser record, list every market listing linked to it
         * (reverse lookup on the `advertiser` field). */}
-      {model?.name === 'advertisers' && existingRecord?.id && (
+      {model?.name === 'advertisers' && existingRecord?.id && !MARKET_LISTINGS_ARCHIVED && (
         <div className="mt-6">
           <RelatedRecordsPanel
             recordId={existingRecord.id}

@@ -1,3 +1,4 @@
+import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { useMemo, useState } from 'react';
 import { useParams, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, LayoutGrid, SlidersHorizontal, ListChecks, Clock, MessageCircle, Phone, Link2, FileText, LineChart } from 'lucide-react';
@@ -31,7 +32,7 @@ import MarketTab from './components/tabs/MarketTab';
 
 type TabKey = 'overview' | 'preferences' | 'market' | 'options' | 'timeline' | 'whatsapp' | 'calls' | 'related' | 'notes';
 
-const TABS: { key: TabKey; label_ar: string; label_en: string; icon: typeof LayoutGrid }[] = [
+const ALL_TABS: { key: TabKey; label_ar: string; label_en: string; icon: typeof LayoutGrid }[] = [
   { key: 'overview', label_ar: 'نظرة عامة', label_en: 'Overview', icon: LayoutGrid },
   { key: 'preferences', label_ar: 'التفضيلات', label_en: 'Preferences', icon: SlidersHorizontal },
   { key: 'market', label_ar: 'سوق العميل', label_en: 'Their Market', icon: LineChart },
@@ -42,6 +43,9 @@ const TABS: { key: TabKey; label_ar: string; label_en: string; icon: typeof Layo
   { key: 'related', label_ar: 'السجلات المرتبطة', label_en: 'Related', icon: Link2 },
   { key: 'notes', label_ar: 'ملاحظات المبيعات', label_en: 'Sales Notes', icon: FileText },
 ];
+// «سوق العميل» is built on the scraped market listings (client_area over
+// market_listings) — it rides the archived module (2026-09-14).
+const TABS = ALL_TABS.filter((t) => !(MARKET_LISTINGS_ARCHIVED && t.key === 'market'));
 
 /** Find the slug on `targetModel` that links back to clients (for create prefill). */
 function clientLookupSlug(modelId: string | undefined, models: ClientViewCtx['models'], clientsModelId: string): string | null {
@@ -218,7 +222,7 @@ export default function ClientDetailPage({ clientId, onClose }: { clientId?: str
           />
         )}
         {activeTab === 'preferences' && <PreferencesTab client={client} clientsModel={clientsModel} isAr={isAr} canEdit={canEdit} />}
-        {activeTab === 'market' && (
+        {activeTab === 'market' && !MARKET_LISTINGS_ARCHIVED && (
           <MarketTab client={client} isAr={isAr} onOpenPreferences={() => setActiveTab('preferences')} />
         )}
         {activeTab === 'options' && (

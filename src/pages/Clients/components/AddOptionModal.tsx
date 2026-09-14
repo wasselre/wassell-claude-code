@@ -1,3 +1,4 @@
+import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { useMemo, useState } from 'react';
 import { Plus, Search, X, Loader2, Building2, MapPin, Check } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -18,7 +19,9 @@ interface Props {
   onClose: () => void;
 }
 
-const SOURCE_TABS: ClientOptionSourceType[] = ['project', 'unit', 'market_listing'];
+// The market-listing tab drops out while the module is archived (2026-09-14):
+// its candidates come from the in-memory listing slice, which no longer loads.
+const SOURCE_TABS: ClientOptionSourceType[] = MARKET_LISTINGS_ARCHIVED ? ['project', 'unit'] : ['project', 'unit', 'market_listing'];
 const MAX_RESULTS = 30;
 
 /** One row in the picker: the source record + its resolved display strings. */

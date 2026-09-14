@@ -47,6 +47,7 @@ import {
 } from '@/lib/recordsCache';
 import type { PaginatedRecordsByModel, RecordsPageCache } from '@/lib/recordsCache';
 import { bootExcludedModelIds, bootDeferredModelIds, isSummaryModelName, summaryViewName } from '@/lib/lazyModels';
+import { isRetiredModel } from '@/lib/featureFlags';
 import type {
   AppState,
   AppModel,
@@ -3248,6 +3249,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { force = false } = opts;
     const model = get().models.find((m) => m.id === modelId);
     if (!model || !isSummaryModelName(model.name)) return;
+    // An archived module never pages its slim set in (2026-09-14, market
+    // listings): the list page that used to trigger this renders the archived
+    // notice, and this guard keeps any other caller from pulling ~318k rows.
+    if (isRetiredModel(model.name)) return;
     const existing = get().summaryLoadState[modelId];
     // A load that COMPLETED WITH ROWS but whose slice is now empty means
     // something replaced the whole `records` map after we landed them. That

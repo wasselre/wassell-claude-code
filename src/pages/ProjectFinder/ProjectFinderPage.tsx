@@ -1,3 +1,4 @@
+import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, User, X, Bookmark, XCircle, TimerOff, RefreshCw, CheckSquare, Save, Send } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -80,6 +81,11 @@ const SOURCE_LABELS: Record<FinderSource, { ar: string; en: string }> = {
   all_projects: { ar: 'كل المشاريع', en: 'All Projects' },
   market_listings: { ar: 'إعلانات السوق', en: 'Market listings' },
 };
+/** The sources a rep can tick. Market listings drop out while the module is
+ *  archived (2026-09-14) — the server strips them too, this just hides the box. */
+const SELECTABLE_SOURCES = (Object.keys(SOURCE_LABELS) as FinderSource[]).filter(
+  (s) => !(MARKET_LISTINGS_ARCHIVED && s === 'market_listings'),
+);
 
 const PAGE = 24;
 const noop = () => {};
@@ -816,7 +822,7 @@ export default function ProjectFinderPage() {
                 <div>
                   <label className="mb-1.5 block text-xs font-bold text-charcoal/70">{L('المصادر', 'Sources')}</label>
                   <div className="space-y-1.5">
-                    {(Object.keys(SOURCE_LABELS) as FinderSource[]).map((s) => (
+                    {SELECTABLE_SOURCES.map((s) => (
                       <label key={s} className="flex items-center gap-2 text-sm text-charcoal/80">
                         <input
                           type="checkbox"
@@ -1016,7 +1022,7 @@ export default function ProjectFinderPage() {
             )}
 
             {/* Market-source honesty notice (we never silently drop listings). */}
-            {!loading && !error && resp?.metadata.market?.status === 'too_many' && (
+            {!MARKET_LISTINGS_ARCHIVED && !loading && !error && resp?.metadata.market?.status === 'too_many' && (
               <div className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
                 <AlertTriangle size={13} className="shrink-0" />
                 <span>{L('إعلانات السوق غير معروضة: عددها كبير في هذا الحي — أضف معايير أدق.', 'Market listings hidden: too many ads in this district — add finer criteria.')}</span>

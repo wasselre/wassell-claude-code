@@ -49,7 +49,7 @@ export default function PageAccessMatrix({ value, onChange, profileIsAdmin }: Pr
 
   return (
     <div className="grid gap-1.5 grid-cols-1 sm:grid-cols-2">
-      {CUSTOM_PAGES.map((pg) => {
+      {CUSTOM_PAGES.filter((pg) => !pg.archived).map((pg) => {
         const Icon = pg.icon;
         const defaultAll = pg.default_access === 'all';
         const checked = effective(pg.id, defaultAll);

@@ -1,3 +1,4 @@
+import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { useNavigate } from 'react-router-dom';
 import { ListChecks, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { normalizePhoneDigits } from '@/lib/haberchat/normalize';
@@ -146,7 +147,9 @@ export default function OverviewTab({ view, ctx, isAr, returnTo, onOpenTimeline,
         <Row label={isAr ? 'الاتجاه' : 'Direction'}>{view.preferredDirection.length ? view.preferredDirection.join('، ') : <Dash />}</Row>
         <Row label={isAr ? 'الحي' : 'District'}>{view.preferredDistrict ?? <Dash />}</Row>
         <Row label={isAr ? 'مشاريع مفضلة' : 'Preferred projects'}>{view.preferredProjects.length || <Dash />}</Row>
-        <Row label={isAr ? 'إعلانات مفضلة' : 'Preferred listings'}>{view.preferredMarketListings.length || <Dash />}</Row>
+        {!MARKET_LISTINGS_ARCHIVED && (
+          <Row label={isAr ? 'إعلانات مفضلة' : 'Preferred listings'}>{view.preferredMarketListings.length || <Dash />}</Row>
+        )}
       </Card>
 
       {/* Recent related records */}

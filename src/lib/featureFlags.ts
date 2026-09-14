@@ -60,7 +60,33 @@ export const ARCHIVED_MODULE_MODELS = [
   // button. See supabase/migrations/2026-08-10_contacts_section.sql.
   'targeted_projects',
   'tasks',
+  // Market listings archived 2026-09-14 (user request: "retire the market
+  // listing part of the app entirely — just archived for now"). The scraped
+  // Aqar/Bayut/Dubizzle/PropertyFinder dataset (~318k rows in the frozen
+  // `market_listings` table) stays in the DB untouched; every scraper app on
+  // Fly was already suspended and no listing had been written since
+  // 2026-08-30. What this entry hides — via `MARKET_LISTINGS_ARCHIVED` below —
+  // is every surface built ON that dataset: the model's nav row + list/record
+  // pages, the Market Automation ingest cockpit (/market-automation), the
+  // Market Intelligence analytics (/market-intelligence — every tab uses the
+  // listings as its denominator, so it is meaningless without them), the
+  // "market listings" source in the Project Finder + follow-up suggestions,
+  // the market-listing tab / send / contact-advertiser actions on client
+  // options, the "preferred listing" client filter, and the listing-message
+  // job rehydration. Existing client options that point at a listing keep
+  // rendering from their saved `facts` snapshot (history is not lost).
+  // The Fly worker lanes (clean-text / video-convert / listing-mirror / REGA)
+  // stay deployed and simply idle on empty queues. Restore = remove this line.
+  'market_listings',
 ] as const;
+
+/**
+ * True while the market-listings feature is archived (see the entry above).
+ * Gates the SHARED surfaces that `isRetiredModel` alone cannot reach (custom
+ * pages, Finder sources, client-option actions). Flip by editing the list —
+ * there is deliberately no second switch.
+ */
+export const MARKET_LISTINGS_ARCHIVED = (ARCHIVED_MODULE_MODELS as readonly string[]).includes('market_listings');
 
 /** True when `name` is a retired broad-assistant model AND the narrowing flag is on. */
 export function isRetiredAssistantModel(name: string | null | undefined): boolean {

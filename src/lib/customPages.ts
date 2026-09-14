@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
 import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText } from 'lucide-react';
+import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -58,6 +59,14 @@ export interface CustomPageDef {
    * access. Restore = delete the flag from the entry.
    */
   hidden_from_sidebar?: boolean;
+  /**
+   * The page belongs to an ARCHIVED module (2026-09-14, market listings).
+   * Stronger than `hidden_from_sidebar`: the nav row goes, the Settings →
+   * Profiles access toggle goes, and the route renders the archived-module
+   * notice instead of the page. Data + code stay; restore by clearing the
+   * flag (driven by `MARKET_LISTINGS_ARCHIVED` in featureFlags.ts).
+   */
+  archived?: boolean;
 }
 
 export const CUSTOM_PAGES: CustomPageDef[] = [
@@ -141,6 +150,10 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Market Intelligence',
     icon: LineChart,
     default_access: 'admin',
+    // Archived with the market-listings module (2026-09-14): every tab of this
+    // page uses the scraped listings as its denominator, so it has nothing to
+    // show without them.
+    archived: MARKET_LISTINGS_ARCHIVED,
   },
   {
     id: 'posts_content',
@@ -214,6 +227,9 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Market Automation',
     icon: DatabaseZap,
     default_access: 'all',
+    // Archived with the market-listings module (2026-09-14) — the cockpit
+    // governs an ingest pipeline that no longer runs.
+    archived: MARKET_LISTINGS_ARCHIVED,
   },
 ];
 
