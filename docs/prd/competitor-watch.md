@@ -84,11 +84,14 @@ that study the corpus (how competitors write posts, script reels, price offers).
   posts are skipped.
 - **A project added later catches up by itself.** Inserting an All Projects
   record, renaming one, or changing its developer (and linking a developer to
-  a tracked organization) enqueues an attribution-only re-score of every post
-  of the organizations linked to that project (`records_rescore_on_project_insert`
-  / `_update`, `mkt_organizations_rescore_on_developer_change` →
-  `mkt_rescore_project_organizations`). Unchanged posts are skipped in
-  milliseconds; only posts that now match reach the AI. Plain data writes that
+  a tracked organization) enqueues an attribution-only re-score of EVERY post
+  of EVERY company (`records_rescore_on_project_insert` / `_update`,
+  `mkt_organizations_rescore_on_developer_change` →
+  `mkt_rescore_project_organizations` → `mkt_enqueue_attribution_rerun(NULL)`,
+  2026-09-14) — not only the project's own developer, because a marketer's
+  earlier post about the new project (ريفا about أكنان 23) must be caught too.
+  Unchanged posts are skipped in milliseconds; only posts that now match reach
+  the AI. Plain data writes that
   do not touch the name or developer (unit rollups) never fire it — verified
   live: inserting a test project for أكدال enqueued exactly its 47 posts, a
   no-op update on ربوة الرمز enqueued nothing.
