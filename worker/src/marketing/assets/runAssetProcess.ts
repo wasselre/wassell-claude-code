@@ -114,7 +114,9 @@ export async function runAssetProcess(sb: SupabaseClient, assetId: string): Prom
           const audio = await extractAudio(tmp.path);
           const checksum = sha256Hex(audio);
           const up = await uploadBytes(audio, 'content/audio', checksum, 'm4a', 'audio/mp4');
-          const tx = await transcribeAudioUrl(up.storedUrl, durationMs);
+          const tx = await transcribeAudioUrl(up.storedUrl, durationMs, {
+            track: { area: 'marketing', callSite: 'worker/marketing/runAssetProcess', operation: 'transcribe' },
+          });
           transcript = (tx.text ?? '').trim();
           stats.transcript_chars = transcript.length;
           stats.cost_usd += tx.costUsd;

@@ -120,8 +120,13 @@ describe('transcribeAudioUrl request shape', () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-  async function call(opts?: Parameters<typeof transcribeAudioUrl>[2]) {
-    const p = transcribeAudioUrl('https://x/a.m4a', 30000, opts);
+  // `track` is required on every real call (it decides which feature the spend
+  // is attributed to); these tests are about the REQUEST SHAPE, so they pin a
+  // fixed ref and vary only the transport knobs.
+  const TRACK = { area: 'competitors', callSite: 'test', operation: 'transcribe' } as const;
+
+  async function call(opts?: Omit<Parameters<typeof transcribeAudioUrl>[2], 'track'>) {
+    const p = transcribeAudioUrl('https://x/a.m4a', 30000, { ...TRACK, ...(opts ?? {}) });
     await vi.advanceTimersByTimeAsync(3100);
     return p;
   }

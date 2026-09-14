@@ -223,7 +223,9 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
             const audio = await extractAudio(tmp.path);
             const checksum = ref.checksum ?? sha256Hex(audio);
             const audioUp = await uploadBytes(audio, 'content/audio', checksum, 'm4a', 'audio/mp4');
-            const tx = await transcribeAudioUrl(audioUp.storedUrl, durationMs);
+            const tx = await transcribeAudioUrl(audioUp.storedUrl, durationMs, {
+              track: { area: 'competitors', callSite: 'worker/marketing/runContentProcess', operation: 'transcribe' },
+            });
             await sb.rpc('mkt_transcript_upsert', { p_media: ref.mediaId, p_post: contentPostId, p_provider: tx.provider, p_model: tx.model, p_language: tx.language, p_text: tx.text, p_segments: tx.segments, p_duration_ms: durationMs, p_confidence: null, p_cost: tx.costUsd, p_status: 'done', p_failure: null, p_source_checksum: checksum, p_raw: tx.raw });
             transcriptText += ' ' + tx.text; stats.transcribed++; stats.cost_usd += tx.costUsd;
           } catch (e) {

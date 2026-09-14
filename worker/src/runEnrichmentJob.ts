@@ -278,7 +278,9 @@ export async function runEnrichmentJob(
         try {
           const audio = await extractAudio(tmp.path);
           const up = await uploadBytes(audio, 'content/audio', sha256Hex(audio), 'm4a', 'audio/mp4');
-          const tx = await transcribeAudioUrl(up.storedUrl, durationMs || null);
+          const tx = await transcribeAudioUrl(up.storedUrl, durationMs || null, {
+            track: { area: 'internal', callSite: 'worker/runEnrichmentJob', operation: 'transcribe' },
+          });
           transcript = (tx.text ?? '').trim().slice(0, 6000);
         } catch (e) {
           console.log(`[enrich] job=${job.id} transcribe failed: ${e instanceof Error ? e.message : String(e)}`);

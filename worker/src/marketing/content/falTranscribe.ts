@@ -40,6 +40,13 @@ export interface TranscriptResult {
 
 export interface TranscribeOptions {
   /**
+   * Which feature is spending. REQUIRED, because this function is shared by
+   * three lanes with three different owners — competitor content, our own
+   * marketing assets, and Files enrichment — and a hardcoded area filed two
+   * of them under the wrong one.
+   */
+  track: AiCallRef;
+  /**
    * `'ar'` / `'en'` force that language; `null` sends an explicit null = fal
    * auto-detect; `undefined` (default) OMITS the key = fal's own default,
    * which is "en" (see header). Keep undefined only for the legacy path.
@@ -98,7 +105,7 @@ export function detectLanguage(text: string, inferred?: string[]): string | null
  * Empty-text chunks are dropped. Returns whether the input was out of order so
  * the caller can decide to rebuild `text` from the sorted chunks.
  */
-import { recordAiUsage } from '../../lib/aiUsage.js';
+import { recordAiUsage, type AiCallRef } from '../../lib/aiUsage.js';
 export function chunksToSegments(chunks: FalChunk[] | undefined): { segments: TranscriptSegment[]; reordered: boolean } {
   let prevEnd = 0;
   const raw: TranscriptSegment[] = [];
@@ -193,7 +200,7 @@ export function normalizeFalResponse(
 export async function transcribeAudioUrl(
   audioUrl: string,
   durationMs: number | null,
-  options: TranscribeOptions = {},
+  options: TranscribeOptions,
 ): Promise<TranscriptResult> {
   // fal bills wizper per audio minute and returns no billing data, so the
   // duration IS the billable quantity. Recorded as units so the price book
@@ -204,9 +211,7 @@ export async function transcribeAudioUrl(
   try {
     const res = await transcribeAudioUrlInner(audioUrl, durationMs, options);
     await recordAiUsage({
-      area: 'competitors',
-      callSite: 'worker/marketing/falTranscribe',
-      operation: 'transcribe',
+      ...options.track,
       provider: 'fal',
       model: res.model || model,
       status: 'ok',
@@ -219,9 +224,7 @@ export async function transcribeAudioUrl(
     return res;
   } catch (err) {
     await recordAiUsage({
-      area: 'competitors',
-      callSite: 'worker/marketing/falTranscribe',
-      operation: 'transcribe',
+      ...options.track,
       provider: 'fal',
       model,
       status: 'error',
@@ -234,7 +237,11 @@ export async function transcribeAudioUrl(
   }
 }
 
-async function transcribeAudioUrlInner(audioUrl: string, durationMs: number | null, options: TranscribeOptions = {}): Promise<TranscriptResult> {
+async function transcribeAudioUrlInner(
+  audioUrl: string,
+  durationMs: number | null,
+  options: Omit<TranscribeOptions, 'track'> = {},
+): Promise<TranscriptResult> {
   const env = falEnv();
   const chunkLevel = options.chunkLevel ?? 'segment';
   const model = (options.model ?? env.model).replace(/^\//, '');
