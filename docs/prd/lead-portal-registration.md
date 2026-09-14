@@ -1,6 +1,6 @@
 # Lead-portal registration
 
-**Last updated:** 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **first real portal — Riva** (`riva.sa/broker`, email + password sign-in, no OTP) configured as a `lead_portals` record linked to the marketer «ريفا»; field specs gained `hidden`, `map`, `default`; targets gained `exact`; filter `ksa_short`; `screenshot.full`.)
+**Last updated:** 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **two real portals configured**. **Riva** (`riva.sa/broker`, email + password, no OTP) linked to marketer «ريفا». **Al Ramz** (`brokerportal.alramzre.com`, phone + 6-box SMS OTP) linked to developer «الرمز» — the OTP handshake verified end-to-end through the real engine (rep's code relayed via the job row). Field specs gained `hidden`, `map`, `default`; targets gained `exact`; filters `ksa_short`; steps `fill_otp` (segmented OTP) and `screenshot.full`.)
 
 ## What it is
 
@@ -44,6 +44,14 @@ the app, not a deploy. The recipe language is documented in
   line lists them); a hidden required field with no value blocks Start with
   "missing on the client record". The sign-in phone (`login_phone`) is shown
   only for portals that sign in by phone.
+- **Al Ramz (2026-09-14).** Sign-in by phone + a 6-box SMS OTP, so it exercises
+  the full pause/resume handshake: the rep enters the code the portal texts to
+  the stored sign-in phone. The rep sees 3 fields: project (Al Ramz's name,
+  only 4 are open to brokers — ستون الندى / تل الربوة 1 / ربوة الرمز / ستون الملقا),
+  unit type (from the project), notes. Sent silently: name, phone. The projects
+  field is a multi-select custom dropdown (closed with Escape after picking).
+  Verified end-to-end (login → OTP relayed via the job row → form filled)
+  through the real worker code; the submit itself is untested (option C).
 - **Riva (the first portal, 2026-09-14).** Sign-in by email + password from the
   record; no OTP. The rep sees 4 fields: project (Riva's name, mapped from ours,
   e.g. «إلوفي» → «إلوﭬي»), property type (from the project's unit types),

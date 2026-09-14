@@ -76,7 +76,8 @@ an unescaped dot is parsed as a class and the step fails with a bare
 |---|---|---|
 | `goto` | `url`, `wait?` (`load`/`domcontentloaded`/`networkidle`) | Navigate. |
 | `fill` | target, `value`, `clear?` | Set an input's value. |
-| `type` | target, `value`, `delay_ms?` | Type key by key (for inputs that ignore `fill`, e.g. OTP boxes, masked phones). |
+| `type` | target, `value`, `delay_ms?` | Type key by key (for inputs that ignore `fill`, e.g. masked phones). |
+| `fill_otp` | target (matches the N boxes), `value` | Segmented OTP field: each box gets one character of `value`. If the selector matches a single input, the whole code is typed into it (auto-advance widgets). |
 | `click` | target, `optional?` | Click. `optional: true` = skip silently if not found (cookie banners, "later" buttons). |
 | `select` | target, `value` or `option_label` | Choose a `<select>` option. |
 | `check` | target, `checked?` | Tick a checkbox/radio. |

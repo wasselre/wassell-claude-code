@@ -53,6 +53,10 @@ export type RecipeStep =
   | { do: 'goto'; url: string; wait?: 'load' | 'domcontentloaded' | 'networkidle'; timeout_ms?: number }
   | ({ do: 'fill'; value: string; clear?: boolean; timeout_ms?: number } & Target)
   | ({ do: 'type'; value: string; delay_ms?: number; clear?: boolean; timeout_ms?: number } & Target)
+  // Segmented input (a 6-box OTP field): `selector` matches the N boxes, each
+  // gets one character of `value`. Handles the common one-input-per-digit
+  // widget that a single `fill`/`type` can't populate.
+  | ({ do: 'fill_otp'; value: string; timeout_ms?: number } & Target)
   | ({ do: 'click'; optional?: boolean; timeout_ms?: number; force?: boolean } & Target)
   | ({ do: 'select'; value?: string; option_label?: string; timeout_ms?: number } & Target)
   | ({ do: 'check'; checked?: boolean; timeout_ms?: number } & Target)
@@ -194,7 +198,7 @@ export function renderTemplate(input: string, scope: TemplateScope): string {
 // ── Recipe parsing ──────────────────────────────────────────────────────────
 
 const KNOWN_STEPS = new Set([
-  'goto', 'fill', 'type', 'click', 'select', 'check', 'press', 'wait', 'wait_for', 'wait_for_url',
+  'goto', 'fill', 'type', 'fill_otp', 'click', 'select', 'check', 'press', 'wait', 'wait_for', 'wait_for_url',
   'request_input', 'screenshot', 'assert', 'if_visible', 'phase', 'fail', 'set',
 ]);
 
@@ -329,6 +333,24 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
       await loc.click({ timeout: tmo(step) });
       if (step.clear) await loc.fill('');
       await loc.pressSequentially(value, { delay: step.delay_ms ?? 60 });
+      return;
+    }
+    case 'fill_otp': {
+      const value = r(step.value).replace(/\s+/g, '');
+      const boxes = locate(page, step, scope);
+      await boxes.first().waitFor({ state: 'visible', timeout: tmo(step) });
+      const count = await boxes.count();
+      rt.log(`fill_otp ${describeTarget(step)} → ${count} boxes`);
+      if (count <= 1) {
+        // Single input that happens to accept the whole code — type it in.
+        await boxes.first().click({ timeout: tmo(step) });
+        await boxes.first().fill('');
+        await boxes.first().pressSequentially(value, { delay: 60 });
+        return;
+      }
+      for (let i = 0; i < Math.min(count, value.length); i++) {
+        await boxes.nth(i).fill(value[i]!, { timeout: tmo(step) });
+      }
       return;
     }
     case 'click': {
