@@ -161,8 +161,13 @@ describe('AI usage coverage', () => {
   });
 
   it('the worker copy of the recorder is in sync with the api original', () => {
-    const api = FILES.find((f) => f.path === 'api/_lib/aiUsage.ts')?.src ?? '';
-    const worker = FILES.find((f) => f.path === 'worker/src/lib/aiUsage.ts')?.src ?? '';
+    // Line endings are normalised out: git's core.autocrlf rewrites checked-out
+    // files on Windows, so the same two files are LF in CI and CRLF on a laptop.
+    // Comparing raw bytes failed after a rebase over a difference that does not
+    // exist in the repository.
+    const lf = (t: string) => t.replace(/\r\n/g, '\n');
+    const api = lf(FILES.find((f) => f.path === 'api/_lib/aiUsage.ts')?.src ?? '');
+    const worker = lf(FILES.find((f) => f.path === 'worker/src/lib/aiUsage.ts')?.src ?? '');
     expect(api.length).toBeGreaterThan(0);
     // The copy is the api file plus a generated banner; strip the banner and the
     // two must be byte-identical. Regenerate with:

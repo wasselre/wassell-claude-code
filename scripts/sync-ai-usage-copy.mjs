@@ -27,13 +27,22 @@ const BANNER = ` * ⚠ THIS FILE IS GENERATED FROM \`api/_lib/aiUsage.ts\` by
  *
 `;
 
+/**
+ * Line endings are NOT part of the comparison. Git's core.autocrlf rewrites
+ * checked-out files on Windows, so the same two files can be LF in CI and CRLF
+ * on a laptop — comparing raw bytes made this script (and its guard test) fail
+ * after every rebase over a difference that does not exist in the repo.
+ */
+const lf = (s) => s.replace(/\r\n/g, '\n');
+
 const src = readFileSync(SRC, 'utf8');
 const anchor = ' * aiUsage — the single recorder for every AI call the app makes.\n *\n';
-if (!src.includes(anchor)) {
+const srcLf = lf(src);
+if (!srcLf.includes(anchor)) {
   console.error('sync-ai-usage-copy: header anchor not found in api/_lib/aiUsage.ts');
   process.exit(1);
 }
-const out = src.replace(anchor, anchor + BANNER, 1);
+const out = srcLf.replace(anchor, anchor + BANNER);
 
 if (process.argv.includes('--check')) {
   let current = '';
@@ -43,7 +52,7 @@ if (process.argv.includes('--check')) {
     console.error('sync-ai-usage-copy: worker copy is missing — run `node scripts/sync-ai-usage-copy.mjs`');
     process.exit(1);
   }
-  if (current !== out) {
+  if (lf(current) !== out) {
     console.error('sync-ai-usage-copy: worker/src/lib/aiUsage.ts is OUT OF DATE — run `node scripts/sync-ai-usage-copy.mjs`');
     process.exit(1);
   }
