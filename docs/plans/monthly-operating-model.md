@@ -169,8 +169,8 @@ From that one confirmation the system does all of the following without asking:
 - Opens the first task of each item on its production start date, assigned by capacity, with its due date.
 - Moves each item through the same five-step path it uses today.
 - Builds the Meta campaign and ad sets on the standing template when the month is confirmed, and builds each ad when its creative is approved.
-- **Activates** each week's ads on the batch date and retires the outgoing ones, applying the ranking's default decision unless the ranking is uncertain.
-- Hands each approved organic post to bundle.social at its batch time.
+- **Activates** the five new ads on the batch date, waits for Meta to confirm they are live, then pauses every running ad except the best-ranked one. Nothing is ever deleted; every ad stays in Meta with its history. Six ads are live from the second week on, and the ranking decides which one survives each week. Applied by default; only an uncertain ranking becomes a decision for you.
+- Hands each approved organic creative to bundle.social at its batch time as two releases: a feed post carrying the caption and hashtags, and a story of the picture alone, at the same slot. A month of 54 posts is 108 organic releases.
 - Pulls Meta and Instagram numbers and shows them on the month screen.
 - Sends the November reminder on the computed date.
 
@@ -189,6 +189,20 @@ One list, «يحتاج قرارك», on the same screen. It is empty when everyt
 Nothing else reaches you. Approvals reach the manager role as they do today, but as batches, not items (section 9).
 
 ---
+
+### 3.4 The material rule, settled on 2026-09-14
+
+How a release gets its files and its caption without anyone choosing. Agreed in discussion; recorded here so it is a rule, not a memory.
+
+1. **What a release needs is decided by its destination.** A feed post takes the square design; a story takes the vertical; the Meta feed ad set takes the square and the story ad set the vertical. A creative's requirements are the union of its destinations, which the month sets on day one.
+2. **Every creative produces both files.** Square and vertical, always, organic or paid, because organic posts go out as a feed post and a story. One designer checklist, no variation.
+3. **The files come from the two named design slots** the designer already fills and the Meta worker already reads. There is no file picker in the normal path.
+4. **The caption comes from the writing task**, confirmed by the writer and approved in the writing review, with the shared hashtags appended at publish. A story carries no caption, only the picture.
+5. **Resolution happens at publish time and is checked against the approval.** The design does not exist when the month is created, so the release reads the slots on the day. It must post what was approved: if a slot's file no longer matches the hash the final approval recorded, the release becomes an exception instead of posting an unapproved file.
+6. **Readiness is checked when the designer submits.** A submission with an empty required slot is refused, with the person who can fix it. The platform rulebook runs again at publish; with the first check in place it should almost never fail.
+7. **What went out is recorded.** After a successful post the release writes the file ids and the caption it actually sent onto the publication row, which becomes the record for reporting.
+
+Choices made: square is the feed shape; carousels stay outside the standing month as an advanced case; a story posts the same day at the same slot with no caption.
 
 ## 4. Before, during, and after each month
 
@@ -252,7 +266,7 @@ The Meta integration core, the creative ranking, the workflow engine, the conten
 |---|---|
 | The scheduling engine | A month compiler: the same calendar, backward scheduling, ledger and commit, but fed a standing template instead of a wizard, run once a month, with no search and no alternatives. Capacity conflicts become exceptions with a proposed smallest fix, never a red line of text above a live commit button. |
 | The refresh cycle | Automatic by default. The decision task appears only when the ranking is uncertain, and it has a screen. Round zero is applied like any other round. |
-| Ad activation | Part of the batch, not a human act. Created paused, activated on the batch date by the same lane that retires the outgoing ones. |
+| Ad activation | Part of the batch, not a human act. Created paused, activated on the batch date by the same lane that pauses all but the best-ranked running ad. |
 | Capacity | One number per person per day, the throughput you already think in. Enforced at confirmation, one screen, read by the placer and the compiler alike. "Days per task" leaves the engine for posts; a video counts as more than one slot, set once. |
 | Tasks | One table. The five system kinds stop wearing the manual-task table's clothes. |
 | Roles | Three: manager, writer, designer. Approvals go to the manager; a second approver is a capacity setting, not a role. |
@@ -309,11 +323,13 @@ Rollback at every phase is a rail edit, because nothing is deleted until phase 4
 
 These are business decisions, not implementation choices. Each changes what the compiler produces.
 
+**Already settled in discussion on 2026-09-14:** capacity is writer 10 a day, designer 4 a day as a floor, manager uncapped; square is the feed shape; carousels stay outside the month; readiness is checked at the designer's submit; every creative produces both files; ads are paused, never replaced, with the best-ranked one kept running and five new published each week; the story posts the same day at the same slot, picture only.
+
 1. **The three capacity numbers.** Writer 10 a day, designer 4 a day as a floor, manager uncapped. Confirmed in this discussion; the system holds them as settings and shows the daily average against them.
 2. **The second montage account** is yours, not a designer's. It should lose the montage role so capacity is never double-counted.
 3. **Paid budget per project per month.** One number, standing. Today budget is typed in three places that disagree.
 4. **Ads live on the batch date, or paused until you look?** Automatic activation is what makes the week run without you. It is also money spent by a machine. I recommend automatic, with a spend cap per project as the safety.
-5. **Automatic refresh decisions.** The ranking is sound. Letting it apply by default means creatives are retired by a machine. I recommend yes, with the uncertain case routed to you.
+5. **Automatic refresh decisions.** The ranking is sound. Letting it apply by default means ads are paused by a machine. I recommend yes, with the uncertain case routed to you.
 6. **The Saturday general row.** Three non-project posts a week is 12 to 15 topics a month. Who supplies them? A topic bank in settings that rotates, or a monthly choice alongside the three projects. Without a source, Saturday becomes the row that is always late.
 7. **A project that sells out mid-month.** Proposed rule: its remaining organic slots are re-planned to the other two projects, its paid campaign is paused, and its unfinished creatives are dropped. Confirm or change.
 8. **The CEO signature threshold** on a standing monthly budget. Once at confirmation, or never, because the number is a rule?
@@ -326,12 +342,12 @@ These are business decisions, not implementation choices. Each changes what the 
 Some of these change the arithmetic in section 0.
 
 - **Approve rows, not posts.** The three posts on a project day are one batch. Let the manager approve the batch as one unit, with the three previews side by side. That cuts final approvals from 54 to 18 a month for organic, and matches how the batch is meant to be judged.
-- **Derive paid creatives from the organic row.** Each week, the project's three organic posts already exist as approved square and vertical designs. Use them as three of the five paid creatives, produce two fresh. At the placeholder effort, paid design load drops from 120 to 48 days a month; at the measured pace it is a smaller saving but still the largest single lever, and it also halves the number of fresh designs the one designer must invent each week.
+- **Derive paid creatives from the organic row.** Every organic creative now carries both the square and the vertical, so it is already ad-ready. Use the project's three row posts as three of that week's five paid creatives and produce two fresh. Fresh designs a month fall from 114 to 78, about 3 a day against the designer's floor of 4. The single change with the largest effect, and it costs nothing now that both files are standard.
 - **Suggest the three projects.** From units available, days since last featured, and last month's cost per lead. The screen pre-fills; you confirm or swap one. Most months the choice is a glance.
 - **A topic bank for Saturday.** Twenty evergreen topics in settings, rotated, so the general row never needs a monthly decision.
 - **Same three projects next month by default.** Rollover is the common case. The reminder says "keep these three?" with a yes.
 - **Every item passes through you twice.** You have chosen not to cap approvals, and nine a day fits. It is still the one dependency the month cannot route around: a day you are away is a day nothing advances. A second approver for writing reviews, leaving you finals only, is the option if that ever matters. A capacity setting, not a role.
-- **Retire the ad-set pair from the interface.** Feed and story ad sets are a Meta constraint, not a decision. The month template holds them; nobody names them.
+- **Hide the ad-set pair from the interface.** Feed and story ad sets are a Meta constraint, not a decision. The month template holds them; nobody names them.
 
 ---
 
@@ -416,6 +432,9 @@ What actually has to exist for this to be reliable, and how much of it does.
 | Meta campaign and ad-set creation from a template | exists as a manual push; needs the template feed |
 | Ad build on approval | exists |
 | **Ad activation on the batch date** | missing; one lane step |
+| Material resolved at publish from the approved slots, checked against the approval hash | missing; one rule |
+| Instagram feed post through bundle.social | built; never exercised on a real post from this app |
+| Instagram story through bundle.social | built; never exercised |
 | Weekly ranking | exists |
 | **Refresh decision applied automatically; uncertain case as an exception** | missing; one setting plus one rule |
 | **Month template as data** | missing; one settings row, about ten fields |
