@@ -39,6 +39,7 @@ import {
   type ImageGenStartResult,
 } from '../imageGen.js';
 import { creativeProviderError, isImageRoleKey, resolveCreativeRoles, type CreativeRoleConfig, type ImageRoleKey, type SettingsClient } from './roles.js';
+import type { AiCallRef } from '../lib/aiUsage.js';
 
 // ---------------------------------------------------------------------------
 // Public interface (contracts §5 / brief A-AI §2)
@@ -104,7 +105,10 @@ export interface ImageProvider {
 export interface ImageTransport {
   chat(opts: { prompt: string; imageUrls: string[]; aspectRatio: ChatAspectRatio; numVariations: number }): Promise<ImageGenStartResult>;
   textRemoval(opts: { imageUrl: string }): Promise<ImageGenStartResult>;
-  poll(start: ImageGenStartResult, opts?: { intervalMs?: number; timeoutMs?: number }): Promise<ImageGenPollResult>;
+  poll(
+    start: ImageGenStartResult,
+    opts: { intervalMs?: number; timeoutMs?: number; track: AiCallRef },
+  ): Promise<ImageGenPollResult>;
 }
 
 const defaultTransport: ImageTransport = {
@@ -112,6 +116,7 @@ const defaultTransport: ImageTransport = {
     imageGenChat({ prompt: opts.prompt, imageUrls: opts.imageUrls, aspectRatio: opts.aspectRatio, numVariations: opts.numVariations }),
   textRemoval: (opts) => imageGenTextRemoval({ imageUrl: opts.imageUrl }),
   poll: (start, opts) => pollImageGen(start, opts),
+
 };
 
 export interface ImageProviderDeps {
@@ -190,7 +195,14 @@ export function createImageProvider(cfg: CreativeRoleConfig, deps: ImageProvider
   async function run(start: ImageGenStartResult | Promise<ImageGenStartResult>, what: string): Promise<ImageResult> {
     const t0 = now();
     const resolvedStart = await start;
-    const poll = await transport.poll(resolvedStart, { intervalMs: deps.pollIntervalMs, timeoutMs: deps.pollTimeoutMs });
+    const poll = await transport.poll(resolvedStart, {
+      intervalMs: deps.pollIntervalMs,
+      timeoutMs: deps.pollTimeoutMs,
+      // The creative lanes also keep their own per-job ledger on
+      // mos_creative_jobs.roles; this row is the same spend in the central
+      // table so one query covers every provider in the app.
+      track: { area: 'marketing', callSite: 'worker/creative/imageProvider', operation: what },
+    });
     if (poll.status !== 'completed') {
       throw creativeProviderError('fal', `${what} ${poll.status} (model=${model}): ${poll.rawError ?? 'no error detail'}`);
     }

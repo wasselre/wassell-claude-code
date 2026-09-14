@@ -190,6 +190,9 @@ export async function runCleanTextJob({ supabase, env, job }: RunArgs): Promise<
     const result = await pollImageGen(start, {
       intervalMs: POLL_INTERVAL_MS,
       timeoutMs: POLL_TIMEOUT_MS,
+      track: { area: 'sales', callSite: 'worker/runCleanTextJob', operation: 'watermark-removal' },
+      entityKind: 'listing_photo',
+      entityId: job.id,
     });
     if (result.status !== 'completed' || !result.imageUrls || result.imageUrls.length === 0) {
       const detail = result.rawError ? `: ${result.rawError}` : '';

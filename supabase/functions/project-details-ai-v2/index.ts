@@ -25,6 +25,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk@0.35.0";
+import { recordAiUsage, anthropicTokens, openAiCompatTokens } from "../_shared/aiUsage.ts";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 8000;
@@ -40,6 +41,7 @@ const DEEPSEEK_MAX_TOKENS = 4096;
 
 /** One DeepSeek chat call (OpenAI-compatible endpoint). Throws on any failure. */
 async function deepseekChat(apiKey: string, system: string, user: string): Promise<string> {
+  const started = Date.now();
   const res = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -57,11 +59,29 @@ async function deepseekChat(apiKey: string, system: string, user: string): Promi
   });
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
-    throw new Error(`deepseek ${res.status}: ${bodyText.slice(0, 200)}`);
+    const err = new Error(`deepseek ${res.status}: ${bodyText.slice(0, 200)}`);
+    await recordAiUsage({
+      area: "website", callSite: "edge/project-details-ai-v2", provider: "deepseek",
+      model: DEEPSEEK_MODEL, status: "error", error: err.message, latencyMs: Date.now() - started,
+    });
+    throw err;
   }
   const json = await res.json();
   const content = json?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim()) throw new Error("deepseek returned no content");
+  if (typeof content !== "string" || !content.trim()) {
+    const err = new Error("deepseek returned no content");
+    await recordAiUsage({
+      area: "website", callSite: "edge/project-details-ai-v2", provider: "deepseek",
+      model: DEEPSEEK_MODEL, status: "error", error: err.message, latencyMs: Date.now() - started,
+      ...openAiCompatTokens(json),
+    });
+    throw err;
+  }
+  await recordAiUsage({
+    area: "website", callSite: "edge/project-details-ai-v2", provider: "deepseek",
+    model: DEEPSEEK_MODEL, status: "ok", latencyMs: Date.now() - started,
+    ...openAiCompatTokens(json),
+  });
   return content.trim();
 }
 
@@ -290,11 +310,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // ── Fallback: Claude (original path, unchanged) ────────────────────
     if (!text) {
+      const claudeStarted = Date.now();
       const response = await client.messages.create({
         model: CLAUDE_MODEL,
         max_tokens: MAX_TOKENS,
         system,
         messages: [{ role: "user", content: user }],
+      });
+      // Reached only when DeepSeek failed above, so this row is always the
+      // fallback leg — counting them shows how often the cheap path is missing.
+      await recordAiUsage({
+        area: "website",
+        callSite: "edge/project-details-ai-v2",
+        provider: "anthropic",
+        model: CLAUDE_MODEL,
+        status: "ok",
+        isFallback: true,
+        fallbackFrom: "deepseek",
+        latencyMs: Date.now() - claudeStarted,
+        ...anthropicTokens(response),
       });
       // deno-lint-ignore no-explicit-any
       const content = response.content as any[];

@@ -10,6 +10,7 @@
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { RoleStamp } from './types.js';
+import { recordAiUsage } from '../../lib/aiUsage.js';
 
 export type LedgerKind = 'cv_process' | 'frame_describe' | 'shot_analyze' | 'embed' | 'ocr' | 'describe_on_demand';
 
@@ -29,6 +30,28 @@ export async function addCost(sb: SupabaseClient, kind: LedgerKind, videoId: str
     p_cost: typeof stamp.cost_usd === 'number' ? stamp.cost_usd : 0,
   });
   if (error) throw new Error(`mkt_cv_cost_add failed: ${error.message}`);
+
+  // Central ledger (ai_usage). ONLY cv_process is recorded here: every other
+  // kind reaches the provider through callRole()/embed(), which already write
+  // their own row — recording them again would double-count. cv_process is the
+  // Modal /process call, which nothing else sees, and it is the single largest
+  // line in the whole AI bill ($53.27 of $87.50 as of 2026-09-14).
+  if (kind === 'cv_process') {
+    await recordAiUsage({
+      area: 'competitors',
+      callSite: 'worker/cv/process',
+      operation: kind,
+      provider: 'modal',
+      model: stamp.model || 'modal-gpu',
+      status: 'ok',
+      latencyMs: stamp.latency_ms,
+      entityKind: 'mkt_cv_video',
+      entityId: videoId,
+      // Modal reports its own cost in the /process manifest, so this is a
+      // measured figure rather than something the price book derives.
+      ...(typeof stamp.cost_usd === 'number' ? { costUsd: stamp.cost_usd } : {}),
+    });
+  }
 }
 
 export class BudgetExceededError extends Error {

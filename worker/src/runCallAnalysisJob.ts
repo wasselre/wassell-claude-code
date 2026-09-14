@@ -36,6 +36,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
+import { recordAiUsage, openAiCompatTokens } from './lib/aiUsage.js';
 
 // ── job contract ─────────────────────────────────────────────────────────────
 
@@ -278,6 +279,7 @@ async function askDeepSeek(
   if (!apiKey) throw new Error('DEEPSEEK_API_KEY is not set');
   const base = env.DEEPSEEK_BASE_URL.replace(/\/$/, '');
   const model = env.DEEPSEEK_MODEL;
+  const started = Date.now();
 
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
@@ -295,9 +297,22 @@ async function askDeepSeek(
     }),
   });
   if (!res.ok) {
-    throw new Error(`deepseek ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const err = new Error(`deepseek ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    await recordAiUsage({
+      area: 'sales', callSite: 'worker/runCallAnalysisJob', provider: 'deepseek', model,
+      status: 'error', error: err.message, latencyMs: Date.now() - started,
+    });
+    throw err;
   }
-  const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const body = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number };
+  };
+  await recordAiUsage({
+    area: 'sales', callSite: 'worker/runCallAnalysisJob', operation: 'outcome',
+    provider: 'deepseek', model, status: 'ok', latencyMs: Date.now() - started,
+    ...openAiCompatTokens(body),
+  });
   const content = body.choices?.[0]?.message?.content ?? '';
   const parsed = parseJsonObject(content);
 

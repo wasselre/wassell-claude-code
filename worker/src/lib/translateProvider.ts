@@ -17,6 +17,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { recordAiUsage, openAiCompatTokens, trackedAnthropic } from './aiUsage.js';
 import { createHash } from 'node:crypto';
 
 export type TargetLang = 'ar' | 'en';
@@ -87,6 +88,22 @@ interface ProviderOpts {
 }
 
 async function deepseekCall(key: string, payload: unknown[]): Promise<Map<number, string>> {
+  const started = Date.now();
+  // Highest-volume model call in the app. One row per BATCH, which is what a
+  // provider request actually is; items_in says how many values it carried.
+  const bill = (status: 'ok' | 'error', body: unknown, error?: unknown) =>
+    recordAiUsage({
+      area: 'translation',
+      callSite: 'worker/translateProvider',
+      operation: 'batch',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      status,
+      error: error ? (error instanceof Error ? error.message : String(error)) : null,
+      latencyMs: Date.now() - started,
+      meta: { items_in: payload.length },
+      ...(body ? openAiCompatTokens(body) : {}),
+    });
   const res = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
@@ -102,20 +119,41 @@ async function deepseekCall(key: string, payload: unknown[]): Promise<Map<number
     }),
     signal: AbortSignal.timeout(60_000),
   });
-  if (!res.ok) throw new Error(`deepseek HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) {
+    const err = new Error(`deepseek HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    await bill('error', null, err);
+    throw err;
+  }
   const body = (await res.json()) as {
     choices?: Array<{ finish_reason?: string; message?: { content?: string } }>;
   };
   if (body.choices?.[0]?.finish_reason === 'length') {
-    throw new Error('deepseek reply truncated (finish_reason=length)');
+    // A truncated reply still consumed every token it generated — bill it.
+    const err = new Error('deepseek reply truncated (finish_reason=length)');
+    await bill('error', body, err);
+    throw err;
   }
   const content = body.choices?.[0]?.message?.content;
-  if (!content) throw new Error('deepseek returned an empty completion');
+  if (!content) {
+    const err = new Error('deepseek returned an empty completion');
+    await bill('error', body, err);
+    throw err;
+  }
+  await bill('ok', body);
   return parseResults(content);
 }
 
 async function haikuCall(key: string, payload: unknown[]): Promise<Map<number, string>> {
-  const client = new Anthropic({ apiKey: key });
+  // Every row this produces means DeepSeek failed. A rising count is the
+  // signal that the cheap path has stopped carrying the traffic.
+  const client = trackedAnthropic(new Anthropic({ apiKey: key }), {
+    area: 'translation',
+    callSite: 'worker/translateProvider',
+    operation: 'batch',
+    isFallback: true,
+    fallbackFrom: 'deepseek',
+    meta: { items_in: payload.length },
+  });
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 8000,

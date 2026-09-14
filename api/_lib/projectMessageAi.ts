@@ -19,6 +19,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from './aiUsage.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveLocalizedName, type LocalizedName } from '../../src/lib/geo/localizedName.js';
 
@@ -304,13 +305,20 @@ export async function generateProjectMessage(
   if (provider === 'kimi') {
     const kimiKey = process.env.KIMI_API_KEY;
     if (!kimiKey) return { ok: false, status: 500, error: 'KIMI_API_KEY is not configured' };
-    client = new Anthropic({ apiKey: kimiKey, baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic' });
     model = process.env.KIMI_MODEL || 'kimi-k3';
+    client = trackedAnthropic(
+      new Anthropic({ apiKey: kimiKey, baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic' }),
+      { area: 'sales', callSite: 'api/_lib/projectMessageAi', provider: 'moonshot', modelOverride: model,
+        operation: isFactCheck ? 'fact-check' : 'write' },
+    );
   } else {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return { ok: false, status: 500, error: 'ANTHROPIC_API_KEY is not configured' };
-    client = new Anthropic({ apiKey });
     model = process.env.PROJECT_MESSAGE_AI_ANTHROPIC_MODEL || 'claude-opus-4-7';
+    client = trackedAnthropic(new Anthropic({ apiKey }), {
+      area: 'sales', callSite: 'api/_lib/projectMessageAi', modelOverride: model,
+      operation: isFactCheck ? 'fact-check' : 'write',
+    });
   }
 
   let response;

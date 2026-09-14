@@ -358,7 +358,9 @@ export async function callCreativeRole<T>(
       const explicit: RoleConfig = { provider: cfg.provider, model: cfg.model };
       if (cfg.version !== undefined) explicit.version = cfg.version;
       if (cfg.params) explicit.params = { ...cfg.params };
-      const res: CallResult<T> = await callRole<T>(explicit, req, ctx);
+      // trackAs: callRole receives an EXPLICIT config with no key, so the
+      // creative role name has to be handed over for the ledger.
+      const res: CallResult<T> = await callRole<T>(explicit, req, { ...ctx, trackAs: key });
       return res;
     }
   }

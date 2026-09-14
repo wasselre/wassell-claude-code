@@ -104,6 +104,7 @@ export async function contentCaptionGenerate(ctx: PlanCtx): Promise<Response> {
     let out = '';
     try {
       out = await llmText({
+        track: { area: 'marketing', callSite: 'api/_lib/marketing/planning/content', operation: 'caption' },
         system: attempt === 0 ? CAPTION_SYSTEM
           : `${CAPTION_SYSTEM}\nتنبيه: المحاولة السابقة احتوت رقمًا غير وارد في الحقائق. لا تذكر أي رقم غير موجود حرفيًا في الحقائق.`,
         user: prompt,

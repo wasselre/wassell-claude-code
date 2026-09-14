@@ -25,6 +25,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from './_lib/aiUsage.js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import { deepseekEnabled, deepseekJson, logDeepseekFallback } from './_lib/deepseek.js';
 import { makeServiceClient } from './_lib/serviceClient.js';
@@ -170,6 +171,7 @@ export default async function handler(req: Request): Promise<Response> {
       if (deepseekEnabled()) {
         try {
           const out = await deepseekJson<{ results: BatchResultItem[] }>({
+            track: { area: 'translation', callSite: 'api/value-translate' },
             system: SYSTEM_PROMPT,
             user: userMessage,
             shape: '{"results":[{"i": number, "t": string}]}',
@@ -189,7 +191,7 @@ export default async function handler(req: Request): Promise<Response> {
       if (!results) {
         const apiKey = process.env.ANTHROPIC_API_KEY;
         if (!apiKey) return jsonError(502, 'translation providers are not configured');
-        const client = new Anthropic({ apiKey });
+        const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'translation', callSite: 'api/value-translate', isFallback: true, fallbackFrom: 'deepseek' });
         let response;
         try {
           response = await client.messages.create({

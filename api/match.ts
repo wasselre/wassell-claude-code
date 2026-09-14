@@ -23,6 +23,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { recordAiUsage, anthropicTokens } from './_lib/aiUsage.js';
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError } from './_lib/auth.js';
 import {
@@ -124,6 +125,21 @@ export default async function handler(req: Request): Promise<Response> {
             }
 
             const finalMessage = await turn.finalMessage();
+
+            // One model call per loop iteration, recorded individually: the
+            // iteration count is exactly what makes an agent turn expensive, and a
+            // single per-turn row would hide it.
+            await recordAiUsage({
+              area: 'sales',
+              callSite: 'api/match',
+              operation: `iteration-${iteration + 1}`,
+              provider: 'anthropic',
+              model: MATCH_MODEL,
+              userId: user.userId,
+              latencyMs: Date.now() - turnStartedAt,
+              meta: { stop_reason: finalMessage.stop_reason ?? null },
+              ...anthropicTokens(finalMessage),
+            });
 
             console.log('[match] turn stop_reason', finalMessage.stop_reason, 'iter', iteration);
             if (finalMessage.stop_reason === 'tool_use') {

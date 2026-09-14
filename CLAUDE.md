@@ -594,6 +594,72 @@ The Marketing workspace (`/m`) permission model has TWO axes, both editable in *
 5. **Hand-assigned tasks are a SEPARATE table from the workflow queue** (added 2026-08-10). `workflow_role_tasks` stays workflow-only: bound to a content item, one open row per item, owned by a role, closing it advances the pinned path. Manual tasks live in `mos_manual_tasks` (+ `mos_task_series` for repeat rules, materialized by the idempotent `mos_task_series_materialize()` on every task read — pg_cron is not enabled here). Don't "unify" them: the one-open-per-subject unique index, the five-role CHECK and the advance-on-close RPC all assume the workflow shape. Assigning to others is gated by the `assign_task` capability; assigning to yourself is always allowed; a BEFORE-UPDATE trigger (`mos_tg_manual_task_guard`) stops an assignee editing their way out of a task they can only close.
 5. Marketing-Intelligence still uses its OWN hardcoded `wassell_mkt_can` CASE + `mkt_role_grants` (NOT yet folded into `role_capabilities` — that's pending Phase 5). Sales permissions are a SEPARATE engine (`profiles.model_permissions` — see `docs/prd/access-control.md`); do not conflate.
 
+## Every AI call is metered (added 2026-09-14)
+
+An audit on 2026-09-14 found only **9 of ~44 AI call sites** recorded a cost,
+all of them in Marketing. The whole Sales side, every translation call and both
+Opus agents spent with no telemetry at all — the AI bill could be read as a line
+on a vendor invoice but never attributed to a feature. Every call site is now
+wired to ONE ledger.
+
+**Two tables** (`supabase/migrations/2026-09-14_ai_usage_ledger.sql`):
+- **`ai_usage`** — append-only, one row per model call, from `api/`, `worker/`
+  AND `supabase/functions/`. Carries area, call_site, provider, model, tokens
+  (input / output / cache read / cache write), `units` + `unit_kind` for
+  non-token billing (fal images, Modal GPU seconds, audio minutes), status,
+  `is_fallback` + `fallback_from`, latency, and entity refs.
+- **`ai_price_book`** — what a model costs. **DATA, not code**; edit with
+  `select ai_price_set(provider, model, input_per_m, output_per_m, …)`, which
+  retroactively re-costs every affected row via `ai_usage_recost()`.
+
+The split is the point: **tokens are always captured, even for a provider whose
+rate we do not know.** Price is applied by the `ai_usage_cost_fill` trigger from
+the price book, so an unpriced provider still produces a complete token record
+that becomes costed the moment someone enters one rate. Read
+`v_ai_usage_daily` for spend and `v_ai_usage_unpriced` for the operator worklist.
+
+**Recorder:** `api/_lib/aiUsage.ts`. `worker/src/lib/aiUsage.ts` is GENERATED
+from it by `node scripts/sync-ai-usage-copy.mjs` (`--check` in CI);
+`supabase/functions/_shared/aiUsage.ts` is a hand-maintained Deno port. All three
+POST to PostgREST with plain `fetch` — deliberately not the Supabase SDK, so one
+implementation runs on Vercel Edge, Node and Deno alike.
+
+**Hard rules — never violate:**
+
+1. **Never construct an Anthropic client outside `trackedAnthropic(...)`.**
+   One line wraps the client and every `messages.create` through it is metered,
+   including future calls added to the same file. Streaming call sites are the
+   only exception (a stream has no usage until `finalMessage()`), and they
+   record explicitly — see `api/builder-agent.ts`.
+2. **`track: AiCallRef` is REQUIRED, not optional**, on `deepseekChat` /
+   `deepseekJson` / `llmText` / `llmJson` and on `pollImageGen`'s opts. That is
+   what makes an unwired caller a COMPILE ERROR instead of a silent metering
+   gap. If the compiler is asking you for `track`, that is the feature working.
+3. **`cost_usd = NULL` means UNKNOWN and must never be written as a known 0.**
+   `cost_known` is the discriminator. Only pass `costUsd` when the caller
+   genuinely measured it (the role lanes, Modal's own manifest, the runner's
+   real zero). Everything else leaves pricing to the price book.
+4. **Never add a price you cannot cite.** Anthropic rates come from
+   `worker/src/ai/pricing.ts`; fal wizper from `USD_PER_AUDIO_MINUTE` in
+   `falTranscribe.ts`. DeepSeek / Moonshot / Modal / fal-image are seeded NULL
+   on purpose — the operator fills them from each vendor's dashboard.
+5. **Record failures too.** A call that 500s still burned input tokens, and a
+   run of `status='error'` rows on the fallback leg is how you see the cheap
+   path quietly failing. Every wrapper records the error and re-throws it
+   unchanged.
+6. **Don't double-count.** A call that reaches the provider through
+   `callRole()` / `embed()` is already recorded there; `addCost()` in the CV
+   lane therefore records ONLY `cv_process` (the Modal call nothing else sees).
+7. **`api/_lib/__tests__/aiUsageCoverage.test.ts` is the guard** that keeps this
+   true. It scans the repo for unwrapped clients and direct DeepSeek calls. An
+   allowlist entry needs a reason AND a `proof` string that must still appear in
+   the file, so an exemption cannot decay into a hole. Fix the call site, not
+   the allowlist.
+
+**Where the money actually goes** (measured 2026-09-14, $87.50 all-time before
+this ledger existed): Modal GPU $53.27 (competitor video), Anthropic $25.37,
+fal $8.85. Detail in `docs/prd/ai-usage-tracking.md`.
+
 ## Offline / Local Fallback
 - All data is mirrored to localStorage
 - If Supabase is not configured, the app works fully offline

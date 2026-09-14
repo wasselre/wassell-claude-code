@@ -30,6 +30,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from '../aiUsage.js';
 import { llmText, llmRoutingEnabled, logLlmFallback } from '../textLlm.js';
 import { estimateExtractionTokens, type LlmBudget } from './llmBudget.js';
 import type {
@@ -628,7 +629,7 @@ function conversationSource(conversation: Conversation): Evidence['source'] {
 async function claudeExtract(userText: string): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured');
-  const client = new Anthropic({ apiKey });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'sales', callSite: 'api/_lib/geoPreference/extractor', isFallback: true, fallbackFrom: 'deepseek' });
   const resp = await client.messages.create({
     model: CLAUDE_FALLBACK_MODEL,
     max_tokens: 4000,
@@ -679,6 +680,7 @@ export async function extract(
     const release = budget ? await budget.begin(estTokens) : null;
     try {
       const raw = await llmText({
+        track: { area: 'sales', callSite: 'api/_lib/geoPreference/extractor', operation: 'extract' },
         system: EXTRACT_SYSTEM_PROMPT,
         user: userText,
         maxTokens: 4000,

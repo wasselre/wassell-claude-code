@@ -27,6 +27,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from '../_lib/aiUsage.js';
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { enqueueAiReply } from '../_lib/aiSend.js';
 import { sendProjectViaAiFlow } from '../_lib/aiSendProject.js';
@@ -191,7 +192,7 @@ const KIMI_TOOL = {
 async function kimiClassify(message: string): Promise<Decision> {
   const kimiKey = process.env.KIMI_API_KEY;
   if (!kimiKey) return { action: 'handoff', reason: 'kimi_unconfigured', severity: 'action', holding: HOLDING };
-  const client = new Anthropic({ apiKey: kimiKey, baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic' });
+  const client = trackedAnthropic(new Anthropic({ apiKey: kimiKey, baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic' }), { area: 'sales', callSite: 'api/whatsapp/basic-reply', provider: 'moonshot', modelOverride: process.env.KIMI_MODEL || 'kimi-k3' });
   const model = process.env.KIMI_MODEL || 'kimi-k3';
   try {
     const resp = await client.messages.create({

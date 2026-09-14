@@ -32,6 +32,8 @@
  *                    `fal-ai/nano-banana/edit` for the v1 model.
  */
 
+import { recordAiUsage, type AiCallRef } from './aiUsage.js';
+
 const STUB_KEY = 'stub';
 
 const STUB_DELAY_MS = 2000;
@@ -44,6 +46,9 @@ export interface ImageGenStartResult {
   requestId: string;
   statusUrl: string;
   responseUrl: string;
+  /** fal model this request was submitted to — carried so pollImageGen can
+   *  bill the right row without the caller repeating it. */
+  modelId: string;
 }
 
 export interface ImageGenPollResult {
@@ -391,7 +396,7 @@ async function startChatGeneration(
       `Image-gen chat response missing request_id/status_url/response_url: ${JSON.stringify(json).slice(0, 200)}`,
     );
   }
-  return { requestId, statusUrl, responseUrl };
+  return { requestId, statusUrl, responseUrl, modelId: env.modelId };
 }
 
 /**
@@ -449,7 +454,7 @@ async function startNanoBanana(
       `Image-gen ${opts.phase} response missing request_id/status_url/response_url: ${JSON.stringify(json).slice(0, 200)}`,
     );
   }
-  return { requestId, statusUrl, responseUrl };
+  return { requestId, statusUrl, responseUrl, modelId: env.modelId };
 }
 
 /**
@@ -505,7 +510,7 @@ async function startGeneration(
       `Image-gen ${opts.phase} response missing request_id/status_url/response_url: ${JSON.stringify(json).slice(0, 200)}`,
     );
   }
-  return { requestId, statusUrl, responseUrl };
+  return { requestId, statusUrl, responseUrl, modelId: env.modelId };
 }
 
 /**
@@ -680,13 +685,21 @@ async function startTextRemoval(
       `Image-gen clean-text response missing request_id/status_url/response_url: ${JSON.stringify(json).slice(0, 200)}`,
     );
   }
-  return { requestId, statusUrl, responseUrl };
+  return { requestId, statusUrl, responseUrl, modelId: env.modelId };
 }
 
 interface PollOpts {
   intervalMs?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /**
+   * Which feature is spending. REQUIRED: fal bills per generated image, and
+   * this is the one place every image path passes through, so making it
+   * mandatory is what stops a new caller from spending untracked.
+   */
+  track: AiCallRef;
+  entityKind?: string | null;
+  entityId?: string | null;
 }
 
 /**
@@ -702,10 +715,29 @@ interface PollOpts {
  */
 export async function pollImageGen(
   start: ImageGenStartResult,
-  opts: PollOpts = {},
+  opts: PollOpts,
 ): Promise<ImageGenPollResult> {
   const intervalMs = opts.intervalMs ?? 3000;
   const timeoutMs = opts.timeoutMs ?? 180_000;
+  const started = Date.now();
+
+  /** fal bills per generated image, so `units` is the image count — 0 for a
+   *  failure, which still gets a row so a run of failures is visible. */
+  const bill = async (images: number, status: 'ok' | 'error', error?: string) => {
+    await recordAiUsage({
+      ...opts.track,
+      provider: 'fal',
+      model: start.modelId,
+      status,
+      error: error ?? null,
+      units: images,
+      unitKind: 'image',
+      latencyMs: Date.now() - started,
+      entityKind: opts.entityKind ?? null,
+      entityId: opts.entityId ?? null,
+      meta: { request_id: start.requestId },
+    });
+  };
 
   if (start.statusUrl.startsWith('stub://')) {
     await new Promise((r) => setTimeout(r, STUB_DELAY_MS));
@@ -718,10 +750,9 @@ export async function pollImageGen(
       chat: STUB_FINAL_URL,
       'clean-text': STUB_CLEANED_URL,
     };
-    return {
-      status: 'completed',
-      imageUrls: [stubByPhase[phase] ?? STUB_CLEANED_URL],
-    };
+    const stubUrls = [stubByPhase[phase] ?? STUB_CLEANED_URL];
+    await bill(stubUrls.length, 'ok');
+    return { status: 'completed', imageUrls: stubUrls };
   }
 
   const env = readEnv();
@@ -762,18 +793,24 @@ export async function pollImageGen(
       const urls = (resultJson.images ?? [])
         .map((i) => i?.url)
         .filter((u): u is string => typeof u === 'string');
+      await bill(urls.length, 'ok');
       return { status: 'completed', imageUrls: urls };
     }
     if (status === 'FAILED' || status === 'ERROR') {
       const lastLog = json.logs?.[json.logs.length - 1]?.message;
-      return { status: 'failed', rawError: json.error ?? json.detail ?? lastLog ?? 'unknown error' };
+      const failErr = json.error ?? json.detail ?? lastLog ?? 'unknown error';
+      await bill(0, 'error', failErr);
+      return { status: 'failed', rawError: failErr };
     }
     if (status === 'NSFW' || status === 'CONTENT_POLICY_VIOLATION') {
-      return { status: 'nsfw', rawError: json.error ?? json.detail ?? 'flagged content' };
+      const nsfwErr = json.error ?? json.detail ?? 'flagged content';
+      await bill(0, 'error', nsfwErr);
+      return { status: 'nsfw', rawError: nsfwErr };
     }
     // IN_QUEUE | IN_PROGRESS → keep waiting
     await new Promise((r) => setTimeout(r, intervalMs));
   }
+  await bill(0, 'error', 'poll timed out');
   throw new Error('Image-gen poll timed out');
 }
 
@@ -783,5 +820,6 @@ function stubStart(phase: 'cleanup' | 'editing' | 'design' | 'icon' | 'chat' | '
     requestId: id,
     statusUrl: `stub://${phase}`,
     responseUrl: `stub://${phase}`,
+    modelId: 'stub',
   };
 }

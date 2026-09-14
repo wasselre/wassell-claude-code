@@ -29,6 +29,7 @@ import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import { recordSaveWithRetry } from './_lib/recordSaveRetry.js';
 import { cleanAndAnalyzeReel, MIN_TRANSCRIPT_CHARS } from './_lib/reelAnalyst.mjs';
+import { trackedAnthropic } from './_lib/aiUsage.js';
 
 export const config = { runtime: 'edge' };
 
@@ -81,7 +82,14 @@ export default async function handler(req: Request): Promise<Response> {
     // 2. Clean + analyze. Engine throws loudly on failure → 502 (no silent skip).
     let result;
     try {
-      result = await cleanAndAnalyzeReel(apiKey, content);
+      result = await cleanAndAnalyzeReel(apiKey, content, (c) =>
+        trackedAnthropic(c as object, {
+          area: 'competitors',
+          callSite: 'api/analyze-reel',
+          entityKind: 'record',
+          entityId: recordId,
+        }),
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return jsonError(502, `Clean & analyze failed: ${msg}`);

@@ -15,6 +15,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from './_lib/aiUsage.js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import { llmRoutingEnabled, llmJson, logLlmFallback } from './_lib/textLlm.js';
 
@@ -66,6 +67,7 @@ export default async function handler(req: Request): Promise<Response> {
     if (llmRoutingEnabled()) {
       try {
         const out = await llmJson<{ name_en: string }>({
+          track: { area: 'translation', callSite: 'api/transliterate-name' },
           system: SYSTEM_PROMPT.replace(' Always call the `transliterate` tool.', ''),
           user: name,
           shape: '{"name_en": string}',
@@ -82,7 +84,7 @@ export default async function handler(req: Request): Promise<Response> {
     // ── Fallback: Claude Haiku force-tool (original path, unchanged) ───
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
-    const client = new Anthropic({ apiKey });
+    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'translation', callSite: 'api/transliterate-name', isFallback: true, fallbackFrom: 'deepseek' });
     let response;
     try {
       response = await client.messages.create({

@@ -31,6 +31,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CallRequest, CallUsage } from '../ai/index.js';
 import { creativeProviderError, type CreativeCallResult } from './roles.js';
+import { recordAiUsage } from '../lib/aiUsage.js';
 
 export type RunnerJobKind = 'mkt_visual_design_slide' | 'mkt_visual_design_post';
 
@@ -171,6 +172,21 @@ export async function callViaRunner<T>(
   });
   const outcome = await awaitRunnerJob(sb, jobId, opts);
   const usage: CallUsage = { in: 0, out: 0 };
+  // Recorded at a KNOWN zero, not an unknown: the runner spends the paid Claude
+  // subscription, so the API charge really is nothing. The row exists so the
+  // work is still visible as volume — "how much did the runner absorb" is a
+  // question the ledger should answer, and a missing row cannot answer it.
+  await recordAiUsage({
+    area: 'marketing',
+    callSite: `runner:${kind}`,
+    operation: kind,
+    provider: 'runner',
+    model: `claude-runner:${kind}`,
+    status: 'ok',
+    costUsd: 0,
+    latencyMs: Math.max(0, Math.round(now() - started)),
+    meta: { job_id: jobId, items: items.length },
+  });
   return {
     output: outcome.result as T,
     usage,

@@ -16,6 +16,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from './aiUsage.js';
 import type { MatchRequirements } from './matchAgent.js';
 import type { FinderMatch, FinderResult, FinderGroupKey } from './projectFinder.js';
 import { FINDER_GROUP_KEYS } from './projectFinder.js';
@@ -94,7 +95,7 @@ export function coerceParsedRequirements(raw: unknown): MatchRequirements {
 export async function parseRequirements(text: string, apiKey: string | undefined): Promise<MatchRequirements> {
   if (!apiKey || !text.trim()) return {};
   try {
-    const client = new Anthropic({ apiKey });
+    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'sales', callSite: 'api/_lib/projectFinderAI', operation: 'parse' });
     const resp = await client.messages.create({
       model: FINDER_AI_MODEL,
       max_tokens: 600,
@@ -171,7 +172,7 @@ export async function explainMatches(
   if (!apiKey || all.length === 0) return {};
   const allowed = new Set(all.map((m) => m.project_id));
   try {
-    const client = new Anthropic({ apiKey });
+    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'sales', callSite: 'api/_lib/projectFinderAI', operation: 'explain' });
     const resp = await client.messages.create({
       model: FINDER_AI_MODEL,
       max_tokens: 1500,

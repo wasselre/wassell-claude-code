@@ -31,8 +31,15 @@ export interface ReelAnalysis {
 }
 
 /** Throws when the key is missing or the transcript is shorter than
- *  MIN_TRANSCRIPT_CHARS — the endpoint maps both to a 502/400. */
+ *  MIN_TRANSCRIPT_CHARS — the endpoint maps both to a 502/400.
+ *
+ *  `wrapClient` receives the freshly constructed Anthropic client and returns
+ *  the client to actually use. The endpoint passes `trackedAnthropic` through
+ *  it so the call lands in `ai_usage`; this module is plain .mjs and cannot
+ *  import the TypeScript recorder itself. Omitting it logs a warning and
+ *  leaves the call unmetered. */
 export declare function cleanAndAnalyzeReel(
   apiKey: string,
   rawTranscript: string,
+  wrapClient?: (client: unknown) => unknown,
 ): Promise<ReelAnalysis>;

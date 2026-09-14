@@ -182,14 +182,27 @@ const subsetOf = (v, allowed) =>
  * @throws if the input is too short, the API errors on both models, or the
  *         model returns no usable cleaned transcript.
  */
-export async function cleanAndAnalyzeReel(apiKey, rawTranscript) {
+/**
+ * @param {string} apiKey
+ * @param {string} rawTranscript
+ * @param {(client: unknown) => unknown} [wrapClient] Usage recorder injected by the
+ *   caller. This module is plain .mjs and cannot import the TypeScript
+ *   `trackedAnthropic`, so api/analyze-reel.ts passes it in. Defaults to
+ *   identity, which means an unwired caller silently loses metering — hence
+ *   the console.warn below.
+ */
+export async function cleanAndAnalyzeReel(apiKey, rawTranscript, wrapClient) {
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured');
   const raw = typeof rawTranscript === 'string' ? rawTranscript.trim() : '';
   if (raw.length < MIN_TRANSCRIPT_CHARS) {
     throw new Error(`Transcript too short to analyze (${raw.length} chars < ${MIN_TRANSCRIPT_CHARS})`);
   }
 
-  const client = new Anthropic({ apiKey });
+  if (!wrapClient) {
+    console.warn('[reelAnalyst] called without a usage wrapper — this call will NOT appear in ai_usage');
+  }
+  const wrap = wrapClient ?? ((c) => c);
+  const client = wrap(new Anthropic({ apiKey }));
   const call = (model) =>
     client.messages.create({
       model,

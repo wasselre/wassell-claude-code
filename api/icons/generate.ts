@@ -202,7 +202,11 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     const start = referenceUrl
       ? await imageGenIconEdit({ prompt: fullPrompt, imageUrls: [referenceUrl] })
       : await imageGenIcon({ prompt: fullPrompt });
-    const result = await pollImageGen(start, { intervalMs: 1500, timeoutMs: 55_000 });
+    const result = await pollImageGen(start, {
+      intervalMs: 1500,
+      timeoutMs: 55_000,
+      track: { area: 'marketing', callSite: 'api/icons/generate' },
+    });
     if (result.status !== 'completed' || !result.imageUrls?.[0]) {
       const detail = result.rawError ? `: ${result.rawError}` : '';
       return jsonError(502, `icon generation ${result.status}${detail}`);

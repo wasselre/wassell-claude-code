@@ -21,6 +21,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from '../_lib/aiUsage.js';
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import { getServiceClient } from '../_lib/files.js';
@@ -292,6 +293,7 @@ ${facts.description ?? '(no description provided)'}`;
     if (llmRoutingEnabled()) {
       try {
         const out = await llmJson<{ body_ar: string; body_en: string }>({
+          track: { area: 'sales', callSite: 'api/templates/listing-message' },
           system: SYSTEM_PROMPT.replace(
             ' Write the message by calling `write_listing_message`.',
             '',
@@ -323,7 +325,7 @@ ${facts.description ?? '(no description provided)'}`;
     // ── Fallback: Claude force-tool (original path, unchanged) ─────────
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
-    const client = new Anthropic({ apiKey });
+    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'sales', callSite: 'api/templates/listing-message', isFallback: true, fallbackFrom: 'deepseek' });
     let response;
     try {
       response = await client.messages.create({

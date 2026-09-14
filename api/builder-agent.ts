@@ -15,6 +15,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { recordAiUsage, anthropicTokens } from './_lib/aiUsage.js';
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError } from './_lib/auth.js';
 import {
@@ -39,7 +40,7 @@ const MAX_TOOL_ITERATIONS = 12;
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
 
-  return withAuth(req, async () => {
+  return withAuth(req, async (user) => {
     let body: AgentRequestBody;
     try {
       body = (await req.json()) as AgentRequestBody;
@@ -84,6 +85,7 @@ export default async function handler(req: Request): Promise<Response> {
           const conversation: Anthropic.MessageParam[] = [...body.messages];
 
           for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+            const turnStarted = Date.now();
             const turn = client.messages.stream({
               model: BUILDER_AGENT_MODEL,
               max_tokens: BUILDER_AGENT_MAX_TOKENS,
@@ -108,6 +110,21 @@ export default async function handler(req: Request): Promise<Response> {
             }
 
             const finalMessage = await turn.finalMessage();
+
+            // One model call per loop iteration, recorded individually: the
+            // iteration count is exactly what makes an agent turn expensive, and a
+            // single per-turn row would hide it.
+            await recordAiUsage({
+              area: 'internal',
+              callSite: 'api/builder-agent',
+              operation: `iteration-${iteration + 1}`,
+              provider: 'anthropic',
+              model: BUILDER_AGENT_MODEL,
+              userId: user.userId,
+              latencyMs: Date.now() - turnStarted,
+              meta: { stop_reason: finalMessage.stop_reason ?? null },
+              ...anthropicTokens(finalMessage),
+            });
 
             if (finalMessage.stop_reason === 'tool_use') {
               const toolUses = finalMessage.content.filter(

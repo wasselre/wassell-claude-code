@@ -20,6 +20,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { sumCosts, round6 } from './pricing.js';
 import { createAnthropicProvider } from './providers/anthropic.js';
 import { createModalEmbedProvider } from './providers/modalEmbed.js';
+import { recordAiUsage, type AiArea } from '../lib/aiUsage.js';
 import {
   PROVIDER_KINDS,
   ROLE_KEYS,
@@ -212,6 +213,14 @@ export interface AiContext {
   roles?: Partial<Record<RoleKey, RoleConfig>>;
   /** Provider overrides (tests). */
   providers?: Partial<ProviderRegistry>;
+  /**
+   * Name this call under a different role in `ai_usage`. The creative lanes
+   * pass their own role key here because they reach callRole with an EXPLICIT
+   * RoleConfig, which carries no key of its own.
+   */
+  trackAs?: string;
+  /** Override the business area inferred from the role key. */
+  trackArea?: AiArea;
 }
 
 const defaultsWarned = new Set<RoleKey>();
@@ -242,6 +251,37 @@ function embedderFor(kind: ProviderKind, ctx: AiContext): EmbeddingProvider {
 }
 
 // ---------------------------------------------------------------------------
+// Central usage ledger (ai_usage)
+//
+// These lanes ALREADY keep a per-job ledger on their own rows via
+// recordRoleUse(); this is the same spend written to the ONE table that every
+// other provider in the app also writes to, so a cost report is a single
+// query instead of a union over six job tables.
+// ---------------------------------------------------------------------------
+
+const AREA_BY_ROLE: Readonly<Record<RoleKey, AiArea>> = Object.freeze({
+  script_writer: 'marketing',
+  script_reviewer: 'marketing',
+  claim_classifier: 'marketing',
+  reference_explainer: 'marketing',
+  // Frame/shot reads are competitor video intelligence, not our own marketing.
+  frame_describer: 'competitors',
+  shot_analyzer: 'competitors',
+  embed_text: 'competitors',
+  embed_image: 'competitors',
+});
+
+function trackArea(key: RoleKey | null, ctx: AiContext): AiArea {
+  if (ctx.trackArea) return ctx.trackArea;
+  return key ? AREA_BY_ROLE[key] : 'marketing';
+}
+
+/** Stable per-role call_site so a cost report shows one line per role. */
+function trackSite(key: RoleKey | null, cfg: RoleConfig, ctx: AiContext): string {
+  return `role:${ctx.trackAs ?? key ?? cfg.model}`;
+}
+
+// ---------------------------------------------------------------------------
 // callRole / embed / embedQuery
 // ---------------------------------------------------------------------------
 
@@ -255,9 +295,35 @@ export async function callRole<T>(role: RoleKey | RoleConfig, req: CallRequest, 
   const { key, cfg } = await resolveOne(role, ctx);
   if (cfg.provider === 'modal') throw providerError('modal', `role '${key ?? cfg.model}' is an embedding role — use embed()`);
   const provider = llmFor(cfg.provider, ctx);
+  const started = Date.now();
   try {
-    return await provider.call<T>(cfg, req);
+    const res = await provider.call<T>(cfg, req);
+    await recordAiUsage({
+      area: trackArea(key, ctx),
+      callSite: trackSite(key, cfg, ctx),
+      provider: cfg.provider === 'anthropic' ? 'anthropic' : 'deepseek',
+      model: res.model ?? cfg.model,
+      status: 'ok',
+      inputTokens: res.usage?.in ?? 0,
+      outputTokens: res.usage?.out ?? 0,
+      latencyMs: res.latency_ms ?? Date.now() - started,
+      // The provider already priced this call from the same tier table the
+      // price book is seeded from; pass it through rather than re-deriving it.
+      ...(res.cost_usd === null || res.cost_usd === undefined
+        ? {}
+        : { costUsd: res.cost_usd }),
+    });
+    return res;
   } catch (err) {
+    await recordAiUsage({
+      area: trackArea(key, ctx),
+      callSite: trackSite(key, cfg, ctx),
+      provider: cfg.provider === 'anthropic' ? 'anthropic' : 'deepseek',
+      model: cfg.model,
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+      latencyMs: Date.now() - started,
+    });
     throw ensurePrefixed(cfg.provider, err, `callRole(${key ?? cfg.model})`);
   }
 }
@@ -267,9 +333,29 @@ export async function embed(role: RoleKey | RoleConfig, input: EmbedInput, ctx: 
   const { key, cfg } = await resolveOne(role, ctx);
   if (cfg.provider !== 'modal') throw providerError(cfg.provider, `role '${key ?? cfg.model}' is not an embedding role (provider=${cfg.provider})`);
   const provider = embedderFor(cfg.provider, ctx);
+  const started = Date.now();
   try {
-    return await provider.embed(cfg, input);
+    const res = await provider.embed(cfg, input);
+    await recordAiUsage({
+      area: trackArea(key, ctx),
+      callSite: trackSite(key, cfg, ctx),
+      provider: 'modal',
+      model: cfg.model,
+      status: 'ok',
+      latencyMs: res.latency_ms ?? Date.now() - started,
+      meta: { vectors: res.vectors?.length ?? 0, dim: res.dim ?? null },
+    });
+    return res;
   } catch (err) {
+    await recordAiUsage({
+      area: trackArea(key, ctx),
+      callSite: trackSite(key, cfg, ctx),
+      provider: 'modal',
+      model: cfg.model,
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+      latencyMs: Date.now() - started,
+    });
     throw ensurePrefixed(cfg.provider, err, `embed(${key ?? cfg.model})`);
   }
 }

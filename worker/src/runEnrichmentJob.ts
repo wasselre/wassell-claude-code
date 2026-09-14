@@ -19,6 +19,7 @@
  * enrichment is worker-only.
  */
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from './lib/aiUsage.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
 import { callRole } from './ai/roles.js';
@@ -408,7 +409,11 @@ export async function runEnrichmentJob(
     out = call.output ?? {};
     v2 = { model: call.model, cost_usd: call.cost_usd };
   } else {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = trackedAnthropic(new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }), {
+      area: 'marketing',
+      callSite: 'worker/runEnrichmentJob',
+      operation: 'enrich',
+    });
     const msg = await client.messages.create({
       model: ENRICH_MODEL,
       max_tokens: 800,

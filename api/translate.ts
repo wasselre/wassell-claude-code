@@ -27,6 +27,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from './_lib/aiUsage.js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import { deepseekEnabled, deepseekJson, logDeepseekFallback } from './_lib/deepseek.js';
 
@@ -154,6 +155,7 @@ export default async function handler(req: Request): Promise<Response> {
     if (deepseekEnabled()) {
       try {
         const out = await deepseekJson<ToolInput>({
+          track: { area: 'translation', callSite: 'api/translate' },
           system: SYSTEM_PROMPT.replace('Always call the `translate_label` tool — never reply in prose.', ''),
           user: userMessage,
           shape: '{"label_ar": string, "label_en": string, "name": string}',
@@ -172,7 +174,7 @@ export default async function handler(req: Request): Promise<Response> {
     // ── Fallback: Claude Haiku force-tool (original path, unchanged) ───
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
-    const client = new Anthropic({ apiKey });
+    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'translation', callSite: 'api/translate', isFallback: true, fallbackFrom: 'deepseek' });
 
     let response;
     try {

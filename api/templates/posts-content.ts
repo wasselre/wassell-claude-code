@@ -32,6 +32,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from '../_lib/aiUsage.js';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import { getServiceClient } from '../_lib/files.js';
@@ -468,6 +469,7 @@ async function callModel(args: {
         'used_fact_ids',
       ];
       const q = await llmJson<Partial<ModelOut>>({
+        track: { area: 'marketing', callSite: 'api/templates/posts-content' },
         system,
         user,
         shape: '{"headline_ar": string, "prose_ar": string, "headline_en": string, "prose_en": string, "used_fact_ids": string[]}',
@@ -486,7 +488,7 @@ async function callModel(args: {
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured');
-  const client = new Anthropic({ apiKey });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'marketing', callSite: 'api/templates/posts-content', isFallback: true, fallbackFrom: 'deepseek' });
   const response = await client.messages.create({
     model: 'claude-opus-4-7',
     max_tokens: 2_000,

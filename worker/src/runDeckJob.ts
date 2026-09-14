@@ -27,6 +27,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from './lib/aiUsage.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
 import { pdfToImages } from './pdfToImages.js';
@@ -283,7 +284,12 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
   // wrap all the heavy work without sprawling indent.
 
   async function runGeneration(): Promise<void> {
-  const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  // Dormant lane (no job since 2026-06-10) — wired anyway so that if deck
+  // generation is turned back on it is metered from the first run.
+  const anthropic = trackedAnthropic(new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }), {
+    area: 'marketing',
+    callSite: 'worker/runDeckJob',
+  });
 
   // ── Upload attachments to Anthropic Files API ───────────────────────
   // We capture the raw bytes for PDFs so we can render them to per-page

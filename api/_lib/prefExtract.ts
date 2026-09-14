@@ -18,6 +18,8 @@
  * fails loudly rather than silently storing nothing.
  */
 
+import { recordAiUsage, openAiCompatTokens } from './aiUsage.js';
+
 /** The fields the extractor fills, with their allowed values (clients model). */
 export const PREF_FIELDS = {
   preferred_unit_type: { kind: 'set', options: ['استوديو', 'تاون هاوس', 'دبلكس', 'دور', 'شقة', 'فيلا', 'ملحق'] },
@@ -171,6 +173,7 @@ export async function callDeepSeek(input: {
 }): Promise<string> {
   const base = (input.baseUrl ?? 'https://api.deepseek.com').replace(/\/$/, '');
   const attempt = async (maxTokens: number): Promise<{ content: string; finish: string | null }> => {
+    const started = Date.now();
     const res = await fetch(`${base}/v1/chat/completions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
@@ -186,10 +189,28 @@ export async function callDeepSeek(input: {
           : {}),
       }),
     });
-    if (!res.ok) throw new Error(`deepseek ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) {
+      const err = new Error(`deepseek ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      await recordAiUsage({
+        area: 'sales', callSite: 'api/_lib/prefExtract', operation: 'extract',
+        provider: 'deepseek', model: input.model, status: 'error',
+        error: err.message, latencyMs: Date.now() - started,
+      });
+      throw err;
+    }
     const j = (await res.json()) as {
       choices?: { message?: { content?: string }; finish_reason?: string }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number };
     };
+    // One row per ATTEMPT: the retry-at-a-larger-budget path below makes a
+    // second real call, and a per-call ledger has to show both.
+    await recordAiUsage({
+      area: 'sales', callSite: 'api/_lib/prefExtract', operation: 'extract',
+      provider: 'deepseek', model: input.model, status: 'ok',
+      latencyMs: Date.now() - started,
+      meta: { max_tokens: maxTokens, fast: Boolean(input.fast) },
+      ...openAiCompatTokens(j),
+    });
     const choice = j.choices?.[0];
     return { content: choice?.message?.content ?? '', finish: choice?.finish_reason ?? null };
   };

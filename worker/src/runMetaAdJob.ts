@@ -54,6 +54,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
 import { loadMetaConfig, MetaApiError, MetaMarketingClient, type MetaSiblingAd } from './marketing/metaMarketingApi.js';
+import { recordAiUsage, openAiCompatTokens } from './lib/aiUsage.js';
 
 export interface MetaAdJob {
   id: string;
@@ -324,6 +325,7 @@ async function deepseekCaption(env: WorkerEnv, userContent: string, extraRule?: 
   const base = env.DEEPSEEK_BASE_URL.replace(/\/$/, '');
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 60_000);
+  const started = Date.now();
   try {
     const res = await fetch(`${base}/v1/chat/completions`, {
       method: 'POST',
@@ -339,8 +341,25 @@ async function deepseekCaption(env: WorkerEnv, userContent: string, extraRule?: 
       }),
       signal: ctrl.signal,
     });
-    if (!res.ok) throw new Error(`deepseek ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    const body = (await res.json()) as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }> };
+    if (!res.ok) {
+      const err = new Error(`deepseek ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      await recordAiUsage({
+        area: 'marketing', callSite: 'worker/runMetaAdJob', operation: 'caption',
+        provider: 'deepseek', model: 'deepseek-chat', status: 'error',
+        error: err.message, latencyMs: Date.now() - started,
+      });
+      throw err;
+    }
+    const body = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number };
+    };
+    await recordAiUsage({
+      area: 'marketing', callSite: 'worker/runMetaAdJob', operation: 'caption',
+      provider: 'deepseek', model: 'deepseek-chat', status: 'ok',
+      latencyMs: Date.now() - started,
+      ...openAiCompatTokens(body),
+    });
     const text = body.choices?.[0]?.message?.content?.trim() ?? '';
     if (!text) throw new Error('deepseek returned an empty caption');
     if (body.choices?.[0]?.finish_reason === 'length') throw new Error('deepseek caption was cut off (finish_reason=length)');

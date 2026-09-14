@@ -10,6 +10,7 @@
 // (title cards, price overlays) well; sonnet is the cost/quality sweet spot.
 // ============================================================================
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from '../../lib/aiUsage.js';
 
 const MODEL = process.env.MKT_VISION_MODEL ?? 'claude-sonnet-4-6';
 const MAX_IMAGES = 8;
@@ -140,7 +141,11 @@ export async function extractVisualText(images: Array<{ buffer: Buffer; mime: st
   if (!apiKey || apiKey === 'stub') {
     return { results: images.slice(0, MAX_IMAGES).map((_, i) => ({ index: i, fields: { ...EMPTY, visible_text: 'وصل ريفييرا' } })), costUsd: 0 };
   }
-  const client = new Anthropic({ apiKey });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), {
+    area: 'competitors',
+    callSite: 'worker/marketing/vision',
+    operation: 'ocr',
+  });
   const use = images.slice(0, MAX_IMAGES);
   const content: Anthropic.ContentBlockParam[] = [];
   use.forEach((im, i) => {

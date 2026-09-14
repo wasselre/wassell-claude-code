@@ -21,6 +21,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from './_lib/aiUsage.js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import { llmRoutingEnabled, llmText, logLlmFallback } from './_lib/textLlm.js';
 
@@ -98,6 +99,7 @@ export default async function handler(req: Request): Promise<Response> {
     if (llmRoutingEnabled()) {
       try {
         const out = await llmText({
+          track: { area: 'internal', callSite: 'api/doc-assist' },
           system: SYSTEM_PROMPT,
           user: parts.join('\n\n'),
           maxTokens: Math.min(8_000, Math.max(2_000, Math.ceil(text.length / 2) + 1_000)),
@@ -112,7 +114,7 @@ export default async function handler(req: Request): Promise<Response> {
     // ── Fallback: Claude (original path, unchanged) ────────────────────
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
-    const client = new Anthropic({ apiKey });
+    const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'internal', callSite: 'api/doc-assist', isFallback: true, fallbackFrom: 'deepseek' });
     try {
       const response = await client.messages.create({
         model: MODEL,

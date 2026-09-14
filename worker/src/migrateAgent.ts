@@ -30,6 +30,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from './lib/aiUsage.js';
 
 export const EXTRACT_MODEL = 'claude-opus-4-7';
 export const EXTRACT_FALLBACK_MODEL = 'claude-sonnet-4-6';
@@ -524,7 +525,10 @@ export async function runExtract(
     ...fileBlocks,
   ];
 
-  const client = new Anthropic({ apiKey });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), {
+    area: 'internal',
+    callSite: 'worker/migrateAgent',
+  });
   const langNote =
     language === 'ar'
       ? '\n\nIMPORTANT: Write your "notes" and "summary" in Arabic (العربية). Never translate or alter the extracted cell DATA itself.'
@@ -785,7 +789,10 @@ export async function runDiscover(
     ...fileBlocks,
   ];
 
-  const client = new Anthropic({ apiKey });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), {
+    area: 'internal',
+    callSite: 'worker/migrateAgent',
+  });
   const langNote =
     language === 'ar'
       ? '\n\nIMPORTANT: Write your "notes" and any source "note" in Arabic (العربية). Keep unit identifiers verbatim.'
@@ -991,7 +998,10 @@ export async function runFuseBatch(
     },
   ];
 
-  const client = new Anthropic({ apiKey });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), {
+    area: 'internal',
+    callSite: 'worker/migrateAgent',
+  });
   const langNote =
     language === 'ar'
       ? '\n\nIMPORTANT: Write "notes" and conflict "note" text in Arabic. Keep cell DATA verbatim.'
@@ -1183,7 +1193,10 @@ export async function runSuggestMappings(
     .join('\n');
   const userMsg = `TARGET FIELDS (name | English / Arabic | type):\n${fieldList}\n\nSOURCE COLUMNS (index "header" → sample values):\n${cols}`;
 
-  const client = new Anthropic({ apiKey });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), {
+    area: 'internal',
+    callSite: 'worker/migrateAgent',
+  });
   const response = await client.messages.create({
     model: MAP_MODEL,
     // One mapping object per column, each with a reason → output grows with the
@@ -1314,7 +1327,10 @@ export async function runStandardize(
   const raw = input.rawValues.map((v, i) => `${i + 1}. "${v}"`).join('\n');
   const userMsg = `FIELD: "${input.fieldLabel}" (type=${input.fieldType})\n\nALLOWED VALUES:\n${allowed || '(none yet — every value would be new)'}\n\nDISTINCT RAW VALUES:\n${raw}`;
 
-  const client = new Anthropic({ apiKey });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), {
+    area: 'internal',
+    callSite: 'worker/migrateAgent',
+  });
   const response = await client.messages.create({
     model: STANDARDIZE_MODEL,
     max_tokens: 4000,
@@ -1459,7 +1475,10 @@ export async function runDiscuss(
     return { role: m.role, content: m.content };
   });
 
-  const client = new Anthropic({ apiKey });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), {
+    area: 'internal',
+    callSite: 'worker/migrateAgent',
+  });
   // Vision model when files are attached (reading the brochure); else Sonnet.
   const model = fileBlocks.length > 0 ? EXTRACT_MODEL : MAP_MODEL;
   const call = (m: string) =>
@@ -1654,7 +1673,10 @@ export async function runPlan(
     return { role: m.role, content: m.content };
   });
 
-  const client = new Anthropic({ apiKey });
+  const client = trackedAnthropic(new Anthropic({ apiKey }), {
+    area: 'internal',
+    callSite: 'worker/migrateAgent',
+  });
   // Vision model when files are attached (reading the brochure); else Sonnet.
   const model = fileBlocks.length > 0 ? EXTRACT_MODEL : MAP_MODEL;
   const call = (m: string) =>

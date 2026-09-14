@@ -98,6 +98,7 @@ export function detectLanguage(text: string, inferred?: string[]): string | null
  * Empty-text chunks are dropped. Returns whether the input was out of order so
  * the caller can decide to rebuild `text` from the sorted chunks.
  */
+import { recordAiUsage } from '../../lib/aiUsage.js';
 export function chunksToSegments(chunks: FalChunk[] | undefined): { segments: TranscriptSegment[]; reordered: boolean } {
   let prevEnd = 0;
   const raw: TranscriptSegment[] = [];
@@ -189,7 +190,51 @@ export function normalizeFalResponse(
  * With no `options` the request is byte-identical to v1 (task transcribe,
  * chunk_level segment, version 3, NO language key ⇒ fal default "en").
  */
-export async function transcribeAudioUrl(audioUrl: string, durationMs: number | null, options: TranscribeOptions = {}): Promise<TranscriptResult> {
+export async function transcribeAudioUrl(
+  audioUrl: string,
+  durationMs: number | null,
+  options: TranscribeOptions = {},
+): Promise<TranscriptResult> {
+  // fal bills wizper per audio minute and returns no billing data, so the
+  // duration IS the billable quantity. Recorded as units so the price book
+  // can reprice history if the list rate changes.
+  const started = Date.now();
+  const minutes = typeof durationMs === 'number' && durationMs > 0 ? durationMs / 60000 : 0;
+  const model = (options.model ?? falEnv().model).replace(/^\//, '');
+  try {
+    const res = await transcribeAudioUrlInner(audioUrl, durationMs, options);
+    await recordAiUsage({
+      area: 'competitors',
+      callSite: 'worker/marketing/falTranscribe',
+      operation: 'transcribe',
+      provider: 'fal',
+      model: res.model || model,
+      status: 'ok',
+      units: minutes,
+      unitKind: 'minute',
+      latencyMs: Date.now() - started,
+      meta: { language: res.language, segments: res.segments.length },
+      ...(typeof res.costUsd === 'number' ? { costUsd: res.costUsd } : {}),
+    });
+    return res;
+  } catch (err) {
+    await recordAiUsage({
+      area: 'competitors',
+      callSite: 'worker/marketing/falTranscribe',
+      operation: 'transcribe',
+      provider: 'fal',
+      model,
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+      units: 0,
+      unitKind: 'minute',
+      latencyMs: Date.now() - started,
+    });
+    throw err;
+  }
+}
+
+async function transcribeAudioUrlInner(audioUrl: string, durationMs: number | null, options: TranscribeOptions = {}): Promise<TranscriptResult> {
   const env = falEnv();
   const chunkLevel = options.chunkLevel ?? 'segment';
   const model = (options.model ?? env.model).replace(/^\//, '');
