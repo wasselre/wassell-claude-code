@@ -13,6 +13,7 @@ import {
   normalizeContentHref,
   normalizeTab,
   previewTargetOfTask,
+  DONE_SECTION,
   sectionForStep,
   stepKeyOfRow,
   tabForSection,
@@ -235,6 +236,40 @@ describe('tasks', () => {
       .toBe('/m/content/c8?tab=placements&step=publish_check');
     expect(previewTargetOfTask({ kind: 'ad_failed', entity_kind: 'content', entity_id: 'c8', status: 'open' }))
       .toEqual({ contentId: 'c8', section: 'publish_check' });
+  });
+
+  it('a publication task opens its own screen, one per destination', () => {
+    // One release, one destination, one screen. It must NOT land on the content
+    // record: the publisher needs the finished material, the destination and
+    // the platform rules, not the brief that produced it.
+    expect(taskHref({
+      kind: 'publish', entity_kind: 'publication', entity_id: 'pub-1', status: 'open',
+      content_id: 'c9',
+    })).toBe('/m/releases/pub-1');
+
+    // Two destinations for the SAME creative are two different screens — the
+    // defect this split exists to fix was both sharing one task.
+    expect(taskHref({
+      kind: 'publish', entity_kind: 'publication', entity_id: 'pub-2', status: 'open',
+      content_id: 'c9',
+    })).toBe('/m/releases/pub-2');
+  });
+
+  it('a publication task asks you to publish, and previews the FINISHED material', () => {
+    const task = {
+      kind: 'publish', entity_kind: 'publication', entity_id: 'pub-1',
+      content_id: 'c9', status: 'open',
+    } as const;
+    expect(actionOfTask(task)).toBe('publish');
+    // The creative is already approved by the time a release exists, so the
+    // preview shows what is going out rather than a production step.
+    expect(previewTargetOfTask(task)).toEqual({ contentId: 'c9', section: DONE_SECTION });
+  });
+
+  it('a closed publication task reads as view, like every other closed task', () => {
+    expect(actionOfTask({
+      kind: 'publish', entity_kind: 'publication', entity_id: 'pub-1', status: 'done',
+    })).toBe('view');
   });
 
   it('never dead-ends: a task pointing at nothing goes to my work', () => {

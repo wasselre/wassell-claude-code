@@ -2022,9 +2022,20 @@ export interface MosManualTask {
   /** 'manual' = a person's coordination task (closed with «تم»);
    *  'caption_review' = a SYSTEM task opened by the Meta-ad worker when an AI
    *  caption is parked for approval — closed by approving the caption, never
-   *  by «تم». `ref_id` = the mos_execution_ads row the caption lives on. */
-  kind?: 'manual' | 'caption_review';
+   *  by «تم». `ref_id` = the mos_execution_ads row the caption lives on.
+   *  'refresh_decision' / 'plan_conflict' / 'ad_failed' are the campaign-planning
+   *  system kinds, and 'publish' is the PUBLICATION task (2026-09-14): one
+   *  finished creative, one destination, one date — `ref_id` = the release. */
+  kind?: 'manual' | 'caption_review' | 'refresh_decision' | 'plan_conflict' | 'ad_failed' | 'publish';
   ref_id?: string | null;
+  /** What this task is ABOUT — 'content' | 'campaign' | 'execution' |
+   *  'refresh_cycle' | 'publication'. Drives `taskHref`, so a publication task
+   *  opens its release screen instead of the content record. */
+  entity_kind?: string | null;
+  entity_id?: string | null;
+  /** The action the PRODUCER stamped ('publish', 'review', …), when it knows
+   *  more than the kind alone can say. */
+  action?: string | null;
 }
 
 /** How a repeating task repeats. Weekday numbers are 0 = Sunday … 6 = Saturday. */
@@ -3418,6 +3429,85 @@ export const fetchWorkloadCalendar = (
   today: string; calendar: MosWorkCalendar;
   people: MosPersonCapacity[]; ledger: MosLedgerRow[];
 }> => call('workload_calendar', { from, to });
+
+/* ── the publication task — one release to one destination ─────────────────
+ * Deliberately three sections and no more: the finished material, where it is
+ * going, and what that destination demands. The brief, the references and the
+ * approval history belong to the CONTENT task, which is a different job.
+ * ------------------------------------------------------------------------ */
+
+export interface MosReleaseAsset {
+  id: string;
+  url: string | null;
+  file_id: string | null;
+  kind: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  duration_seconds: number | null;
+  aspect_ratio: string | null;
+}
+
+export interface MosRelease {
+  id: string;
+  kind: 'organic' | 'ad';
+  status: string;
+  /** True when the destination can publish by itself — then nobody is asked. */
+  automatable: boolean;
+  open_task_id: string | null;
+  content: {
+    id: string;
+    ref: string | null;
+    title: string | null;
+    caption: string | null;
+    assets: MosReleaseAsset[];
+  };
+  destination: {
+    platform: string;
+    account_id: string | null;
+    account_handle: string | null;
+    account_connected: boolean | null;
+    account_can_publish: boolean | null;
+    due_at: string | null;
+    timezone: string | null;
+    published_at: string | null;
+    external_url: string | null;
+    bundle_status: string | null;
+    bundle_error: string | null;
+  };
+  requirements: {
+    ok: boolean;
+    caption_max: number | null;
+    caption_length: number;
+    issues: Array<{ level: 'block' | 'warn'; ar: string; en: string }>;
+  };
+}
+
+/** One release, with everything its task screen shows. */
+export const fetchRelease = (releaseId: string): Promise<{ release: MosRelease }> =>
+  call('release_get', { release_id: releaseId });
+
+/** Releases of one content record, one campaign, or the ones needing a person. */
+export const fetchReleases = (
+  opts: { content_id?: string; campaign_id?: string; mine?: boolean },
+): Promise<{ releases: Array<Record<string, unknown>> }> => call('release_list', opts);
+
+/**
+ * Record a release a PERSON published by hand.
+ *
+ * Refused when the destination could have published itself — that must go
+ * through the real publish so the platform owns the post and its metrics,
+ * rather than a pasted link nothing can reconcile.
+ */
+export const markReleasePublished = (
+  releaseId: string, externalUrl?: string | null,
+): Promise<{ release_id: string; status: string; external_url: string | null }> =>
+  call('release_mark_published', { release_id: releaseId, external_url: externalUrl ?? null });
+
+/** Put a release in the queue now, instead of waiting for the sweep. */
+export const openReleaseTask = (
+  releaseId: string, reason?: string, detail?: string,
+): Promise<{ task_id: string | null }> =>
+  call('release_open_task', { release_id: releaseId, reason: reason ?? 'manual', detail: detail ?? null });
 
 export interface MosAdReadiness {
   ok: boolean;

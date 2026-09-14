@@ -282,6 +282,8 @@ export type TaskAction =
   | 'refresh_decision'
   | 'plan_conflict'
   | 'ad_failed'
+  /** Put ONE finished creative on ONE destination — the publication task. */
+  | 'publish'
   | 'complete'
   | 'view';
 
@@ -292,6 +294,7 @@ export const TASK_ACTION_LABELS: Record<TaskAction, { ar: string; en: string }> 
   refresh_decision: { ar: 'قرار التجديد',      en: 'Refresh decision' },
   plan_conflict:    { ar: 'تعارض في الخطة',    en: 'Plan conflict' },
   ad_failed:        { ar: 'إعلان متعثّر',      en: 'Ad failed' },
+  publish:          { ar: 'نشر',                en: 'Publish' },
   complete:         { ar: 'تم',                en: 'Done' },
   view:             { ar: 'عرض',               en: 'View' },
 };
@@ -326,7 +329,7 @@ export interface RouteTask {
 
 const KNOWN_ACTIONS: ReadonlySet<string> = new Set<TaskAction>([
   'work', 'review', 'caption_review', 'refresh_decision', 'plan_conflict',
-  'ad_failed', 'complete', 'view',
+  'ad_failed', 'publish', 'complete', 'view',
 ]);
 
 const taskIsClosed = (task: RouteTask): boolean =>
@@ -360,6 +363,7 @@ export function actionOfTask(
   if (kind === 'refresh_decision') return 'refresh_decision';
   if (kind === 'plan_conflict') return 'plan_conflict';
   if (kind === 'ad_failed') return 'ad_failed';
+  if (kind === 'publish') return 'publish';
   // A plain hand-assigned task has no step and is closed with «تم».
   if (kind === 'manual') return 'complete';
 
@@ -394,6 +398,9 @@ export function previewTargetOfTask(
   const kind = (task.kind ?? '').trim();
   if (kind === 'caption_review') return { contentId, section: 'caption' };
   if (kind === 'ad_failed') return { contentId, section: 'publish_check' };
+  // A publication task is about material that is already finished, so its
+  // preview shows what is going out, not the step that produced it.
+  if (kind === 'publish') return { contentId, section: DONE_SECTION };
   const stepKey = stepKeyOfTask(task, steps);
   return { contentId, section: sectionForStep(steps, stepKey) };
 }
@@ -434,6 +441,11 @@ export function taskHref(
         : '/m/campaigns';
     case 'refresh_cycle':
       return `/m/my-work?task=${entityId}`;
+    // ONE release to ONE destination. It opens on its own screen rather than
+    // the content record: the publisher needs the finished material, the
+    // destination and the platform's rules, and nothing else.
+    case 'publication':
+      return `/m/releases/${entityId}`;
     default:
       return '/m/my-work';
   }

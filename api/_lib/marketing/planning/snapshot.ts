@@ -37,6 +37,11 @@ export interface PlanningSettings {
   autoApplyDefaultDecision: boolean;
   minActiveCreatives: number;
   adsCreatedPaused: boolean;
+  /** Release settings — see `src/lib/marketingOS/scheduling/releases.ts`. */
+  releaseAutoPublish: boolean;
+  releaseEffortDays: number;
+  releaseOwnerRole: string;
+  releaseManualPlatforms: string[];
 }
 
 export const PLANNING_DEFAULTS: PlanningSettings = {
@@ -51,6 +56,10 @@ export const PLANNING_DEFAULTS: PlanningSettings = {
   autoApplyDefaultDecision: false,
   minActiveCreatives: 5,
   adsCreatedPaused: true,
+  releaseAutoPublish: true,
+  releaseEffortDays: 0.25,
+  releaseOwnerRole: 'mos_writer',
+  releaseManualPlatforms: [],
 };
 
 function num(v: unknown, fallback: number): number {
@@ -83,6 +92,12 @@ export async function loadPlanningSettings(sb: SupabaseClient): Promise<Planning
     autoApplyDefaultDecision: bool(v.auto_apply_default_decision, false),
     minActiveCreatives: num(v.min_active_creatives, 5),
     adsCreatedPaused: bool(v.ads_created_paused, true),
+    releaseAutoPublish: bool(v.release_auto_publish, true),
+    releaseEffortDays: num(v.release_effort_days, 0.25),
+    releaseOwnerRole: typeof v.release_owner_role === 'string' ? v.release_owner_role : 'mos_writer',
+    releaseManualPlatforms: Array.isArray(v.release_manual_platforms)
+      ? v.release_manual_platforms.filter((x): x is string => typeof x === 'string')
+      : [],
   };
 }
 
@@ -229,12 +244,22 @@ interface BucketRow { content_type_id: string; bucket: string }
 export async function loadRuleSet(
   sb: SupabaseClient, settings: PlanningSettings,
 ): Promise<RuleSet> {
-  const [wfRes, typeRes, effortRes, bucketRes, execRes] = await Promise.all([
+  const [wfRes, typeRes, effortRes, bucketRes, execRes, autoRes, acctRes] = await Promise.all([
     sb.from('workflows').select('id, metadata').eq('kind', 'role_path'),
     sb.from('mos_content_types').select('id, key, workflow_id').is('archived_at', null),
     sb.from('mos_step_effort').select('workflow_key, step_key, bucket, working_days'),
     sb.from('mos_load_buckets').select('content_type_id, bucket'),
     sb.from('mos_campaign_executions').select('platform, publishing_rules').not('publishing_rules', 'is', null),
+    // Which destinations can publish by themselves RIGHT NOW. Read from the
+    // database, never guessed from the platform name: "instagram" says nothing
+    // about whether this tenant's Instagram is connected. If this call fails the
+    // map stays empty, and an empty map means every release needs a person —
+    // the safe direction, because the opposite would promise a publish that
+    // nothing can perform.
+    sb.rpc('mos_platform_automatable_map'),
+    sb.from('mos_platform_accounts')
+      .select('platform, id, can_publish, is_connected')
+      .is('archived_at', null),
   ]);
   for (const [label, res] of [
     ['workflows', wfRes], ['mos_content_types', typeRes],
@@ -304,11 +329,43 @@ export async function loadRuleSet(
     }
   }
 
+  const automatable: Record<string, boolean> = {};
+  const raw = autoRes.data as Record<string, unknown> | null;
+  if (raw && typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw)) automatable[k] = v === true;
+  }
+  // The operator's manual list wins over connectivity: a platform kept manual on
+  // purpose must not quietly start auto-posting because someone connected it.
+  for (const p of settings.releaseManualPlatforms) automatable[p] = false;
+
+  const accountByPlatform: Record<string, string | null> = {};
+  for (const a of (acctRes.data as Array<{ platform: string; id: string; can_publish: boolean | null }> | null) ?? []) {
+    if (accountByPlatform[a.platform] === undefined || a.can_publish === true) {
+      accountByPlatform[a.platform] = a.id;
+    }
+  }
+
   return {
     workflows,
     contentTypeWorkflow,
     contentTypeBucket,
     platformOverrides,
+    publishing: {
+      automatable,
+      manualByPolicy: settings.releaseManualPlatforms,
+      releaseEffortDays: settings.releaseEffortDays,
+      organicOwnerRole: roleKeyToPathRole(settings.releaseOwnerRole),
+      adOwnerRole: 'marketing_manager',
+      accountByPlatform,
+    },
     searchBudget: settings.searchBudget,
   };
+}
+
+/** `mos_writer` → `writer`. Unknown keys fall back to the writer, who owned the
+ *  old `scheduling` step, so a typo cannot silently orphan every release. */
+function roleKeyToPathRole(key: string): PathRole {
+  const bare = key.replace(/^mos_/, '');
+  const known: PathRole[] = ['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage'];
+  return known.includes(bare as PathRole) ? (bare as PathRole) : 'writer';
 }

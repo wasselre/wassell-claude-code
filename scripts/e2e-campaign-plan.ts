@@ -12,7 +12,8 @@
  * removed at the end unless --keep.
  */
 import { readFileSync, existsSync } from 'node:fs';
-import { planCampaign, type PlanInput, type PlanResult, type WorkloadSnapshot, type LoadBucket, type PathRole, type PersonCapacity, type LedgerRow } from '../src/lib/marketingOS/scheduling/index.js';
+import { planCampaign, DEFAULT_RULES, type RuleSet, type PlanInput, type PlanResult, type WorkloadSnapshot, type LoadBucket, type PathRole, type PersonCapacity, type LedgerRow } from '../src/lib/marketingOS/scheduling/index.js';
+import { DEFAULT_PUBLISHING } from '../src/lib/marketingOS/scheduling/releases.js';
 import { DEFAULT_CALENDAR } from '../src/lib/marketingOS/scheduling/calendar.js';
 
 for (const f of ['.env.local', '.env']) {
@@ -217,12 +218,26 @@ async function main(): Promise<void> {
   const snapshot = await loadSnapshot();
   console.log(`  ledger ${snapshot.ledger.length} rows · ${snapshot.people.length} people · hash ${snapshot.hash.slice(0, 12)}…`);
 
-  const plan = planCampaign(input, snapshot);
+  // The LIVE automatable map, exactly as api/_lib/.../snapshot.ts feeds it.
+  // Calling planCampaign without it would make every destination look manual
+  // (an unknown platform is deliberately never assumed automatable), which is
+  // what this script did until 2026-09-14 and why it reported six releases
+  // needing an owner on a platform that publishes itself.
+  const automatable = await rpc<Record<string, boolean>>('mos_platform_automatable_map', {});
+  const rules: RuleSet = {
+    ...DEFAULT_RULES,
+    publishing: { ...DEFAULT_PUBLISHING, automatable: automatable ?? {} },
+  };
+  console.log(`  automatable: ${JSON.stringify(automatable)}`);
+
+  const plan = planCampaign(input, snapshot, rules);
   console.log(`  planned: feasible=${plan.feasible} proof=${plan.infeasibleProof} items=${plan.items.length} batches=${plan.batches.length} reservations=${plan.reservations.length}`);
   if (plan.totals.creatives) {
     const c = plan.totals.creatives;
     console.log(`  creatives: ${c.total} (${c.initial} launch + ${c.replacements} replacements + ${c.fifths} fifths) over ${c.cycles} refreshes`);
   }
+  const rel = plan.totals.releases;
+  console.log(`  releases: ${rel.total} (${rel.automatic} automatic · ${rel.manual} need a person)`);
   for (const c of plan.conflicts) console.log(`  conflict [${c.kind}] ${c.messageEn}`);
   if (!plan.feasible) {
     console.log(`  alternatives: earliest=${plan.alternatives.earliestFeasibleStart} maxItems=${plan.alternatives.maxItemsInRange}`);

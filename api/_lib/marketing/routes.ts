@@ -136,6 +136,10 @@ export function manualTaskUrl(task: {
       return campaignUrl(id);
     case 'refresh_cycle':
       return `/m/my-work?task=${id}`;
+    // Server twin of the client resolver's `publication` case — one release,
+    // its own screen.
+    case 'publication':
+      return `/m/releases/${id}`;
     default:
       return myWorkUrl();
   }

@@ -20,8 +20,21 @@ export type PathRole = 'ceo' | 'marketing_manager' | 'ops_supervisor' | 'writer'
  * it instead of a production bucket, so a manager's four reviews a day do not
  * eat the designer-shaped budget and, more importantly, so the planner can see
  * when the single marketing manager is the bottleneck.
+ *
+ * `publishing` is the RELEASE budget. Putting a finished creative out is not
+ * production and must not be charged to a production bucket: until 2026-09-14
+ * the `scheduling` step drew on the writer's `post` slots, so imaginary
+ * publishing work displaced real design work. See `releases.ts`.
  */
-export type LoadBucket = 'post' | 'video' | 'approvals';
+export type LoadBucket = 'post' | 'video' | 'approvals' | 'publishing';
+
+/**
+ * The buckets a CONTENT TYPE can live in. Deliberately a named alias rather
+ * than `Exclude<LoadBucket, 'approvals'>`: that exclusion silently grew to
+ * include `publishing` the moment the fourth bucket was added, which would have
+ * let a content type claim the release budget as its production budget.
+ */
+export type ProductionBucket = 'post' | 'video';
 
 export interface PersonCapacity {
   userId: string;
@@ -89,12 +102,12 @@ export interface StepSpec {
 /** The production path for one content type, in order. */
 export interface WorkflowSpec {
   workflowKey: string;
-  bucket: Exclude<LoadBucket, 'approvals'>;
+  bucket: ProductionBucket;
   steps: StepSpec[];
 }
 
 /** The capacity bucket a step consumes: approvals are their own budget. */
-export function bucketOfStep(step: StepSpec, contentBucket: Exclude<LoadBucket, 'approvals'>): LoadBucket {
+export function bucketOfStep(step: StepSpec, contentBucket: ProductionBucket): LoadBucket {
   return step.isApproval ? 'approvals' : contentBucket;
 }
 
@@ -115,7 +128,7 @@ export interface PlatformRules {
   /** Must every project inside one grid row be distinct? */
   distinctProjectsPerGridRow: boolean;
   /** Which content buckets this platform accepts. */
-  buckets: Array<Exclude<LoadBucket, 'approvals'>>;
+  buckets: ProductionBucket[];
   /** Default publishing times, `HH:MM` in the calendar's zone, one per daily slot. */
   defaultTimes: string[];
   /** Does a video/reel occupy a grid cell? (Instagram: yes. Stories never reach here.) */
@@ -236,7 +249,7 @@ export interface PlannedItem {
   key: string;
   title: string;
   contentTypeKey: string;
-  bucket: Exclude<LoadBucket, 'approvals'>;
+  bucket: ProductionBucket;
   projectId: string;
   projectName?: string;
   workflowKey: string;
@@ -253,6 +266,66 @@ export interface PlannedItem {
 }
 
 export type CreativeSlotKind = 'initial' | 'replacement' | 'fifth';
+
+/**
+ * ONE release of a finished creative to ONE destination on ONE date.
+ *
+ * A release is deliberately NOT a step of the creative's workflow. Making a
+ * design and putting it out are different jobs, done by different people, and a
+ * creative can be released many times: two platforms, two dates, or the same
+ * post run again next quarter. Until 2026-09-14 the workflow ended in a single
+ * `scheduling` + `publish_check` pair, so N destinations shared one task with
+ * one owner and one completion, and closing it declared the whole creative
+ * published.
+ *
+ * `needsPerson` is the load-bearing field. Most releases go out by themselves:
+ * where a connected account can publish, the system schedules the post and
+ * nobody is asked to do anything. A task is raised only when a human is
+ * genuinely required. Without that rule this split would just manufacture more
+ * of the orphaned publish-check tasks it exists to remove.
+ */
+export interface PlannedRelease {
+  /** Stable synthetic key — `<itemKey>@<platform>#<day>`; survives revise/commit. */
+  key: string;
+  itemKey: string;
+  /** `organic` = a post on a social account. `ad` = one ad inside an ad set. */
+  kind: ReleaseKind;
+  platform: string;
+  executionKey: string;
+  /** Civil publishing day. */
+  day: string;
+  /** ISO instant, from the civil day + the platform's slot time. */
+  plannedAt: string;
+  /** The account it lands on, when the plan already knows one. */
+  accountId: string | null;
+  /** Whether a PERSON has to act for this release to happen. */
+  needsPerson: boolean;
+  /** Why a person is needed. `null` exactly when `needsPerson` is false. */
+  reason: ReleaseReason | null;
+  /** Chosen owner, when one is eligible and free. `null` opens the task unassigned. */
+  assigneeUserId: string | null;
+  /** Effort charged to the `publishing` bucket. Always 0 when automatic. */
+  workingDays: number;
+}
+
+export type ReleaseKind = 'organic' | 'ad';
+
+/**
+ * Why a release needs a person.
+ *
+ * These are the reasons the PLAN can know: whether the destination can publish
+ * by itself. Reasons discovered later at run time — the platform preflight
+ * blocked it, the platform rejected it, the ad failed — are not plan-time
+ * facts and must never be guessed here; the release sweep opens a task for
+ * those when they actually happen.
+ */
+export type ReleaseReason =
+  /** No connected account on this platform that is allowed to publish. */
+  | 'account_not_connected'
+  /** The platform has no publishing integration at all (x, website). */
+  | 'platform_not_automatable'
+  /** Automation is switched off for this platform by the operator. */
+  | 'manual_by_policy';
 
 export interface PlanBatch {
   key: string;
@@ -327,6 +400,8 @@ export interface PlanTotals {
   slotDaysByBucket: Record<string, number>;
   perProject: Array<{ projectId: string; projectName?: string; items: number }>;
   perPlatform: Array<{ platform: string; placements: number }>;
+  /** Releases, split by who does them. `automatic + manual === total`. */
+  releases: { total: number; automatic: number; manual: number };
   /** Paid: the creative forecast. */
   creatives?: { initial: number; replacements: number; fifths: number; total: number; cycles: number };
 }
@@ -347,6 +422,8 @@ export interface PlanResult {
   searchStats: { expansions: number; backtracks: number; budget: number };
   items: PlannedItem[];
   batches: PlanBatch[];
+  /** One per destination per date. See `PlannedRelease`. */
+  releases: PlannedRelease[];
   reservations: PlannedReservation[];
   cycles: PlannedCycle[];
   load: LoadCell[];

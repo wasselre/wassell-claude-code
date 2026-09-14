@@ -29,6 +29,7 @@ import {
   type PlatformRules, type LoadBucket,
 } from './types';
 import { CONTENT_TYPE_BUCKET, CONTENT_TYPE_WORKFLOW, DEFAULT_WORKFLOWS } from './defaults';
+import { DEFAULT_PUBLISHING, buildReleases, releaseTotals, type PublishingRules } from './releases';
 
 export interface RuleSet {
   workflows: Record<string, WorkflowSpec>;
@@ -36,6 +37,8 @@ export interface RuleSet {
   contentTypeBucket: Record<string, 'post' | 'video'>;
   /** Per-platform distribution overrides, keyed by platform. */
   platformOverrides?: Record<string, Partial<PlatformRules>>;
+  /** Who can publish by itself, and what a manual release costs. */
+  publishing?: PublishingRules;
   searchBudget?: number;
 }
 
@@ -43,6 +46,7 @@ export const DEFAULT_RULES: RuleSet = {
   workflows: DEFAULT_WORKFLOWS,
   contentTypeWorkflow: CONTENT_TYPE_WORKFLOW,
   contentTypeBucket: CONTENT_TYPE_BUCKET,
+  publishing: DEFAULT_PUBLISHING,
 };
 
 interface BuildItem {
@@ -271,7 +275,16 @@ export function planCampaign(
   }
   plannedItems.sort((a, b) => a.priority - b.priority || (a.key < b.key ? -1 : 1));
 
-  const load = buildLoadCells(book, snapshot, sched.touched);
+  // Releases are planned AFTER production, from the placements, and booked
+  // against their own `publishing` bucket. They are never allowed to make a
+  // campaign infeasible: the creative is finished either way, and a post that
+  // goes out late is a late post, not an impossible plan.
+  const rel = buildReleases(
+    plannedItems, input.kind, rules.publishing ?? DEFAULT_PUBLISHING, book, cal,
+  );
+  conflicts.push(...rel.conflicts);
+
+  const load = buildLoadCells(book, snapshot, [...sched.touched, ...rel.touched]);
   const feasible = sched.ok && conflicts.every((c) => c.kind !== 'not_enough_slots' && c.kind !== 'platform_rule');
 
   const starts = plannedItems.map((i) => i.productionStart).filter(Boolean).sort();
@@ -284,11 +297,12 @@ export function planCampaign(
     searchStats: sched.stats,
     items: plannedItems,
     batches,
+    releases: rel.releases,
     reservations,
     cycles: cycles.map(({ slotKinds, ...c }) => ({ ...c, produced: slotKinds.length })),
     load,
     conflicts,
-    totals: totalsOf(live, placements, batches, cycles, input),
+    totals: { ...totalsOf(live, placements, batches, cycles, input), releases: releaseTotals(rel.releases) },
     alternatives: { earliestFeasibleStart: null, earliestFeasibleEnd: null, maxItemsInRange: null },
     productionWindow: { start: starts[0] ?? null, end: ends[ends.length - 1] ?? null },
     snapshotHash: snapshot.hash,
@@ -465,6 +479,9 @@ function totalsOf(
     slotDaysByBucket: slotDays,
     perProject: Array.from(perProject.values()),
     perPlatform: Array.from(perPlatform.entries()).map(([platform, n]) => ({ platform, placements: n })),
+    // Overwritten by the caller once releases exist; zeroed here so an early
+    // return still carries the field rather than an undefined the UI must guard.
+    releases: { total: 0, automatic: 0, manual: 0 },
     creatives: input.kind === 'paid' ? creativeTotals(cycles) : undefined,
   };
 }
@@ -475,11 +492,12 @@ function empty(snapshot: WorkloadSnapshot, conflicts: PlanConflict[]): PlanResul
     infeasibleProof: null,
     searchIncomplete: false,
     searchStats: { expansions: 0, backtracks: 0, budget: 0 },
-    items: [], batches: [], reservations: [], cycles: [], load: [],
+    items: [], batches: [], releases: [], reservations: [], cycles: [], load: [],
     conflicts,
     totals: {
       items: 0, posts: 0, videos: 0, placements: 0, batches: 0,
       slotDaysByBucket: {}, perProject: [], perPlatform: [],
+      releases: { total: 0, automatic: 0, manual: 0 },
     },
     alternatives: { earliestFeasibleStart: null, earliestFeasibleEnd: null, maxItemsInRange: null },
     productionWindow: { start: null, end: null },

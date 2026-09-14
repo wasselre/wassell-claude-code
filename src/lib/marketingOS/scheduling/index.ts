@@ -16,3 +16,6 @@ export {
   type DistItem, type PlatformPlan,
 } from './distribute';
 export { planCampaign, DEFAULT_RULES, type RuleSet } from './plan';
+export {
+  buildReleases, releaseTotals, releaseReason, DEFAULT_PUBLISHING, type PublishingRules,
+} from './releases';

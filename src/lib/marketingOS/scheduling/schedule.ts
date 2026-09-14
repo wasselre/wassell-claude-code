@@ -139,16 +139,15 @@ export function scheduleProduction(
 
   const itemByKey = new Map(ordered.map((o) => [o.key, o] as const));
   const reqs: StageReq[] = [];
-  const perItem = new Map<string, { requiredReadyAt: string; prod: StepSpec[]; after: StepSpec[]; deadlines: string[] }>();
+  const perItem = new Map<string, { requiredReadyAt: string; prod: StepSpec[]; deadlines: string[] }>();
 
   for (const it of ordered) {
     const prod = productionSteps(it.workflow);
-    const after = it.workflow.steps.filter((s) => s.afterReady);
     let ready = it.needDay;
     for (let i = 0; i < Math.max(0, it.publishBufferDays); i += 1) ready = addWorkingDays(ready, -1, cal);
     if (it.publishBufferDays <= 0) ready = prevWorkingDay(it.needDay, cal);
     const deadlines = computeDeadlines(prod, ready, cal);
-    perItem.set(it.key, { requiredReadyAt: ready, prod, after, deadlines });
+    perItem.set(it.key, { requiredReadyAt: ready, prod, deadlines });
 
     // ---- sound bound #1: time. Even with infinite people, does the chain fit?
     const est = earliestEnds(prod, today, cal);
@@ -327,59 +326,20 @@ export function scheduleProduction(
     };
   }
 
-  // ---------------------------------------------- after-ready admin stages
+  // ------------------------------------------------------ assemble the items
+  //
+  // Production only. The old `scheduling` / `publish_check` tail used to be
+  // placed forward from the ready date here, which charged publishing work to a
+  // PRODUCTION bucket and gave N destinations a single owner. Releases are now
+  // their own job — see `releases.ts`. Steps flagged `afterReady` are still
+  // filtered out of `prod` above, because content pinned to an older workflow
+  // version still carries them and they are not production effort.
   for (const it of ordered) {
     const info = perItem.get(it.key);
     if (!info) continue;
     const stages: PlannedStage[] = info.prod
       .map((s) => chosen.get(`${it.key}|${s.key}`))
       .filter((s): s is PlannedStage => Boolean(s));
-    const lastStage = stages[stages.length - 1];
-    let cursor = lastStage ? addWorkingDays(lastStage.end, 1, cal) : nextWorkingDay(today, cal);
-    for (const s of info.after) {
-      const w = effortWeights(s.workingDays);
-      const bucket = bucketOfStep(s, it.workflow.bucket);
-      const people = book.eligible(s.roleKey, bucket);
-      let placedStart: string | null = null;
-      let placedUser: string | null = null;
-      let day = cursor;
-      for (let guard = 0; guard < 60 && !placedStart; guard += 1) {
-        const win = workingWindowEndingAt(addWorkingDays(day, w.length - 1, cal), w.length, cal);
-        const cand = people
-          .filter((p) => book.fits(p.userId, win, bucket, w))
-          .sort((a, b) => (a.userId < b.userId ? -1 : 1))[0];
-        const winStart = win[0];
-        const winEnd = win[win.length - 1];
-        if (cand && winStart && winEnd) {
-          win.forEach((d, i) => book.add(cand.userId, d, bucket, w[i] ?? 1));
-          placedStart = winStart;
-          placedUser = cand.userId;
-          cursor = addWorkingDays(winEnd, 1, cal);
-          stages.push({
-            stepKey: s.key, roleKey: s.roleKey, bucket,
-            assigneeUserId: cand.userId, start: winStart, end: winEnd,
-            deadline: it.needDay, workingDays: s.workingDays,
-          });
-        } else {
-          day = addWorkingDays(day, 1, cal);
-        }
-      }
-      if (!placedStart) {
-        // Administrative confirmations never make a campaign infeasible; they
-        // are recorded unassigned so the queue still shows the work.
-        stages.push({
-          stepKey: s.key, roleKey: s.roleKey, bucket,
-          assigneeUserId: null, start: cursor, end: cursor,
-          deadline: it.needDay, workingDays: s.workingDays,
-        });
-        conflicts.push({
-          kind: 'no_capacity', itemKey: it.key, stepKey: s.key, day: cursor,
-          messageAr: `«${s.labelAr}» بلا مسؤول متاح — ستظهر المهمة بلا تعيين.`,
-          messageEn: `"${s.labelEn}" has no available owner — the task will open unassigned.`,
-        });
-      }
-      void placedUser;
-    }
     result.set(it.key, {
       key: it.key,
       requiredReadyAt: info.requiredReadyAt,

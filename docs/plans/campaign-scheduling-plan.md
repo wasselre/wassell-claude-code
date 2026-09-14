@@ -48,7 +48,7 @@ Sources: live wassell-prod schema + rows (queried 2026-09-13), `docs/prd/marketi
 | `mos_ad_sets` / `mos_execution_ads` | Ad set / ad. Ad row = `content_id` + `creative jsonb` (+ `auto_ad` state) + `platform_ad_id` + feed/story `pair_id` | Ad metrics **lifetime only**. No daily per-ad series. |
 | `mos_content` | The creative. `campaign_id` is **provenance only** since 2026-08-28 (no FK), `project_ids`, `organic_platforms text[]`, `data jsonb`, `approval_asset_id`, `target_publish_at` | No status column (derived from the open task). **No caption in `data` on any live row.** |
 | `mos_publications` | Organic placement: `(content_id, platform, account_id)` unique, `scheduled_at`, `caption`, `asset_ids`, bundle ids, `campaign_id` (nullable) | 10 rows, all `draft`, **none with `scheduled_at`**. No project, batch, grid or priority columns. |
-| `workflows` kind=`role_path` + `workflow_versions` | Steps as JSONB, pinned per content | `post_std`: writing → writing_review (MM) → design (montage) → design_writer_review (writer) → design_review (MM, `auto_meta_ad`) → scheduling (writer) → publish_check (ops). `video_std`: 11 steps. |
+| `workflows` kind=`role_path` + `workflow_versions` | Steps as JSONB, pinned per content | `post_std` v7: writing → writing_review (MM) → design (montage) → design_writer_review (writer) → design_review (MM, `auto_meta_ad`). `video_std` v6: 9 steps, ending at `review`. **Both paths END at the manager final approval (2026-09-14).** `scheduling` and `publish_check` were removed: publishing is a RELEASE, one job per destination per date, not a tail on production. Content pinned to an older version keeps its old chain. |
 | `workflow_role_tasks` | Execution ledger. One open row per content. `step_key`, `role_key`, `assignee_user_id`, `opened_at`, `due_at`, `round`, `result` | No route/section/action. No reservation state. |
 | `mos_manual_tasks` (+`mos_task_series`) | Hand-assigned work; `kind ∈ manual, caption_review` | Consumes **no** capacity. |
 | `mos_role_load`, `mos_role_sla`, `mos_load_buckets`, `mos_posting_targets`, `mos_perf_settings`, `mos_leaves` | Capacity/cadence config | Cap per role × bucket (post/video): writer 10/4, montage 4/4, others 0. SLA all 24h (one working day, Friday off, hard-coded). `production_days_per_week=6`. |
@@ -134,7 +134,7 @@ Deterministic: same input + snapshot + `now` → byte-identical output (stable s
 
 ### 4.3 The work ledger — one definition of capacity
 
-**Unit:** a slot-day. Every stage of every item has an `effort` in working days (`mos_step_effort (workflow_key, step_key, bucket, working_days)`). **Seed values are explicit estimates to be confirmed by the manager, not derived from the steps' `due_days`** (those are deadline allowances, not effort): **PROPOSED** post path — writing 1, writing_review 1, design 2, design_writer_review 1, design_review 1, scheduling 0.5, publish_check 0.5; video — idea 1, idea_review 1, script 2, script_review 1, assets 2, editing 3, first_version 1, writer_review 1, review 1. After the first campaign, re-seed from the measured medians in `mos_plan_accuracy_v` (§19). Effort e occupies e consecutive working days at one slot per day for its assignee. Capacity per person per day per bucket = `mos_user_capacity.daily_slots` (fallback `mos_role_load.daily_new_tasks`); manager approvals use the `approvals` bucket (**PROPOSED** 20/day).
+**Unit:** a slot-day. Every stage of every item has an `effort` in working days (`mos_step_effort (workflow_key, step_key, bucket, working_days)`). **Seed values are explicit estimates to be confirmed by the manager, not derived from the steps' `due_days`** (those are deadline allowances, not effort): **PROPOSED** post path — writing 1, writing_review 1, design 2, design_writer_review 1, design_review 1; video — idea 1, idea_review 1, script 2, script_review 1, assets 2, editing 3, first_version 1, writer_review 1, review 1. After the first campaign, re-seed from the measured medians in `mos_plan_accuracy_v` (§19). Effort e occupies e consecutive working days at one slot per day for its assignee. Capacity per person per day per bucket = `mos_user_capacity.daily_slots` (fallback `mos_role_load.daily_new_tasks`); manager approvals use the `approvals` bucket (**PROPOSED** 20/day).
 
 **Ledger rows** (`mos_work_ledger_v`: `user_id, day, bucket, item_kind, item_id, weight`) are generated from exactly three sources, and every unit of remaining work appears **once**:
 
@@ -171,6 +171,22 @@ Determinism + step 2c means "preview and commit use the same engine" is not a pr
 
 ---
 
+### 4.7 Releases — publishing is its own job (added 2026-09-14)
+
+Making a creative and putting it out are different work, done by different people, at different times, and one creative can be released many times. Three defects were MEASURED on the live system before the split:
+
+* a creative cross-posted to two platforms produced two publications but ONE `scheduling` task and ONE `publish_check`, so the second destination had no owner, no date and no completion;
+* a two-week ten-creative Meta campaign booked TWENTY publishing tasks that can never be performed, because an ad path closes at final approval and the ad is built by the worker — and `scheduling` drew on the writer’s PRODUCTION budget, so phantom publishing work displaced real design work;
+* production held three `publish_check` tasks open since 2026-09-12, all unassigned, because nobody holds `mos_ops_supervisor`.
+
+**The model.** One release = one finished creative, one destination, one date. Organic releases are `mos_publications` rows; paid releases are `mos_execution_ads` rows. The engine emits them in `PlanResult.releases` (`src/lib/marketingOS/scheduling/releases.ts`), charged to their own `publishing` capacity bucket so release work never competes with design work.
+
+**The rule that makes this an improvement.** A release becomes a TASK only when a person is actually needed. Where a connected account can publish by itself, `api/cron/release-sweep` hands the post to the platform and asks nobody. A task is raised only when the account cannot publish, the platform has no integration, the operator keeps it manual, or an automatic handoff FAILED. Splitting publishing out without this rule would simply manufacture more orphans.
+
+**The publication task carries three things and nothing else:** the final ready content, where it is going, and what that platform demands. No brief, no references, no revision history, no approval controls — those belong to the content task.
+
+**What the plan can know.** Only whether a destination can publish by itself. Reasons discovered at run time (preflight blocked, platform rejected, ad failed) are never guessed at plan time; the sweep raises those when they happen.
+
 ## 5. Backward planning from publishing dates
 
 ### 5.1 Deadlines per content (production plan)
@@ -181,7 +197,7 @@ deadline[final review]        = required_ready_at
 deadline[step i]              = deadline[step i+1] − effort[step i+1] working days
 production_start              = deadline[first step] − effort[first step]
 ```
-`post_std` chain (backward): design_review (final manager approval) ← design_writer_review ← design ← writing_review ← writing. `scheduling`/`publish_check` are scheduled forward from `required_ready_at` and are skipped for paid-only items.
+`post_std` chain (backward): design_review (final manager approval) ← design_writer_review ← design ← writing_review ← writing. The chain ENDS there. Putting the creative out is a separate job — see §4.7.
 
 ### 5.2 Placement algorithm (how "publishing batches drive production" is guaranteed)
 Items are ordered by **(need_at ascending, batch sequence, grid position)** — batch 1's items first. For each item, each stage is placed **backward list-scheduling**: the latest window of `effort` consecutive working days ending on or before its deadline where the assigned person has a free slot each day, starting from the deadline and moving earlier. Because batch-1 items are placed first, they take the slots nearest their deadlines; later batches are placed after and, when those days are full, are moved earlier into their slack. An item is placed earlier only by the search moving its window backward; it is never moved *later* than its deadline. If a stage cannot be placed on or after today → the item is infeasible → the plan reports it and computes the earliest feasible range (§6.3).

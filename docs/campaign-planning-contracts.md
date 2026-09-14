@@ -183,6 +183,36 @@ preflight refuses.
 
 ---
 
+## 4b. Release contract — the publication task (added 2026-09-14)
+
+Two task types, not one:
+
+| Task | Subject | Covers | Ends |
+|---|---|---|---|
+| Content | `mos_content` | making the creative | the manager’s final approval |
+| Publication | one `mos_publications` row | putting it on ONE destination on ONE date | that destination going live |
+
+The engine models a paid release too (`PlannedRelease.kind = 'ad'`), but an ad is **never** a publication TASK: the worker builds it after the caption is approved and polls the platform until it confirms the ad is live, so there is no human publish step to invent. `mos_release_v` is therefore organic-only, and `release_list` on a paid campaign correctly returns nothing. A failing ad already has its own task kind (`ad_failed`).
+
+A publication task shows **three sections and nothing else**: the final ready content, where it is going, and what that platform demands. The brief, the references, the revision history and the approval controls belong to the content task.
+
+**Actions** (`api/_lib/marketing/planning/releaseActions.ts`):
+
+```
+release_get             { release_id }                     -> { release: { content, destination, requirements } }
+release_list            { content_id? campaign_id? mine? } -> { releases: [...] }
+release_mark_published  { release_id, external_url? }      -> records a HAND-published release
+release_open_task       { release_id, reason?, detail? }   -> queue it now
+```
+
+**Database** (`2026-09-14_05_release_tasks.sql`): `mos_release_v` answers all three sections in one read; `mos_platform_automatable(platform)` says whether a destination can publish by itself; `mos_release_due()` lists what has come due; `mos_release_sweep()` raises a task ONLY where a person is needed; `mos_release_open_task/close_task` manage it. A publication reaching `published` closes its own task through a trigger.
+
+**Requirements** reuse `preflightPublishSet` from `src/lib/marketingOS/platformRules.ts` — the SAME rulebook the publish gate uses, so a task can never claim a post is fine that the publish path would refuse.
+
+**Capacity:** releases are charged to the `publishing` bucket, never to `post`/`video`. An automatic release costs nobody a slot-day.
+
+**Route:** a publication task opens `/m/releases/:id` — both `taskHref` and its server twin in `api/_lib/marketing/routes.ts` resolve `entity_kind = 'publication'` there.
+
 ## 5. Routing contract (frontend)
 
 `src/pages/Marketing/lib/contentRoute.ts`:
@@ -190,7 +220,7 @@ preflight refuses.
 ```ts
 export type ContentSection =
   | 'writing' | 'writing_review' | 'design_upload' | 'design_review_writer'
-  | 'final_review' | 'caption' | 'schedule' | 'publish_check' | 'materials_final'
+  | 'final_review' | 'caption' | 'schedule' | 'publish_check' | 'materials_final'   // 'schedule'/'publish_check' remain for content pinned to a PRE-2026-09-14 workflow version
   | 'overview';
 
 export function sectionForStep(steps: StepDef[], stepKey: string): ContentSection;
