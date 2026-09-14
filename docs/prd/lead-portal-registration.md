@@ -1,6 +1,6 @@
 # Lead-portal registration
 
-**Last updated:** 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language)
+**Last updated:** 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **first real portal — Riva** (`riva.sa/broker`, email + password sign-in, no OTP) configured as a `lead_portals` record linked to the marketer «ريفا»; field specs gained `hidden`, `map`, `default`; targets gained `exact`; filter `ksa_short`; `screenshot.full`.)
 
 ## What it is
 
@@ -38,8 +38,22 @@ the app, not a deploy. The recipe language is documented in
   error, so the admin knows what to fix.
 - **Customer fields** come from the portal's `required_fields` JSON (defaults:
   name + phone). Values prefill from `client.<slug>` / `project.<slug>` /
-  `user.name|email|phone` / `literal:`; the rep can edit them; required ones
-  block Start. The sign-in phone (`login_phone`) is shown and overridable per run.
+  `user.name|email|phone` / `literal:` (multiselects → first value, ranges →
+  "min - max"), then `map` translates them into the portal's wording and
+  `default` fills gaps. `hidden` fields are sent without being shown (a grey
+  line lists them); a hidden required field with no value blocks Start with
+  "missing on the client record". The sign-in phone (`login_phone`) is shown
+  only for portals that sign in by phone.
+- **Riva (the first portal, 2026-09-14).** Sign-in by email + password from the
+  record; no OTP. The rep sees 4 fields: project (Riva's name, mapped from ours,
+  e.g. «إلوفي» → «إلوﭬي»), property type (from the project's unit types),
+  purchase method (default financing), notes. Sent silently: name, phone (as
+  `5XXXXXXXX` under the +966 selector), purpose (from `purchase_objective`,
+  default residence), subsidy = «مدعوم». Budget, city, bank name and unit are
+  left empty. Success check: the form disappears after «إرسال العميل» (a
+  validation error keeps it visible → the run fails with the screenshot).
+  Riva's form is Livewire — selectors target `wire:model` attributes with
+  escaped `:` and `.`.
 - **Duplicate guard.** The modal lists the client's earlier runs and warns when
   the same portal already has a `done` run for this client. The database also
   collapses a double-click into one job (one active job per client + portal).
@@ -124,8 +138,10 @@ the app, not a deploy. The recipe language is documented in
 
 - Worker needs `BROWSERBASE_API_KEY` + `BROWSERBASE_PROJECT_ID` (already set for
   the REGA lane) — the portal lane shares the gate.
-- Portal recipes are written per portal as they come in; none ship with this
-  change. The model placeholders show the shape.
+- Riva is configured and dry-run verified through the real engine up to the
+  submit click; the submit itself has NOT been exercised (operator chose to let
+  the first real registration be the proof). Saudi mobiles only for now (the
+  +966 selector is left at its default).
 - Password-based portals store the password on the portal record (visible to
   anyone with access to the model). If a portal needs a secret that must not be
   in a record, move it to a worker env var and reference it from a code adapter.

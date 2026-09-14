@@ -398,7 +398,7 @@ export default function RegisterLeadPortalModal({
                       </div>
                     )}
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {portal.fields.map((f) => {
+                      {portal.fields.filter((f) => !f.hidden).map((f) => {
                         const label = isAr ? f.label_ar : f.label_en;
                         const value = lead[f.key] ?? '';
                         const set = (v: string) => setLead((cur) => ({ ...cur, [f.key]: v }));
@@ -430,13 +430,23 @@ export default function RegisterLeadPortalModal({
                           </div>
                         );
                       })}
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-charcoal/70">
-                          {isAr ? 'رقم الدخول للبوابة (يصله رمز التحقق)' : 'Portal sign-in phone (receives the code)'}
-                        </label>
-                        <input value={loginPhone} onChange={(e) => setLoginPhone(e.target.value)} dir="ltr" className="input w-full text-sm" placeholder="+9665XXXXXXXX" />
-                      </div>
+                      {/* Only portals that sign in by phone + OTP have a sign-in phone to confirm. */}
+                      {portal.login_phone && (
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-charcoal/70">
+                            {isAr ? 'رقم الدخول للبوابة (يصله رمز التحقق)' : 'Portal sign-in phone (receives the code)'}
+                          </label>
+                          <input value={loginPhone} onChange={(e) => setLoginPhone(e.target.value)} dir="ltr" className="input w-full text-sm" placeholder="+9665XXXXXXXX" />
+                        </div>
+                      )}
                     </div>
+                    {portal.fields.some((f) => f.hidden) && (
+                      <p className="mt-2 text-[11px] text-charcoal/50">
+                        {isAr
+                          ? `يُرسل تلقائياً من بطاقة العميل: ${portal.fields.filter((f) => f.hidden && (lead[f.key] ?? '').trim()).map((f) => f.label_ar).join('، ')}`
+                          : `Sent automatically from the client record: ${portal.fields.filter((f) => f.hidden && (lead[f.key] ?? '').trim()).map((f) => f.label_en).join(', ')}`}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -469,7 +479,9 @@ export default function RegisterLeadPortalModal({
                 </div>
                 {portal && missing.length > 0 && (
                   <p className="mt-2 text-end text-[11px] text-terracotta">
-                    {isAr ? 'أكمل الحقول المطلوبة: ' : 'Fill the required fields: '}
+                    {missing.some((f) => f.hidden)
+                      ? (isAr ? 'ناقص في بطاقة العميل (أكمله هناك أولاً): ' : 'Missing on the client record (fill it there first): ')
+                      : (isAr ? 'أكمل الحقول المطلوبة: ' : 'Fill the required fields: ')}
                     {missing.map((f) => (isAr ? f.label_ar : f.label_en)).join('، ')}
                   </p>
                 )}

@@ -190,9 +190,9 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
     const ctx = browser.contexts()[0]!;
     const page = ctx.pages()[0] ?? (await ctx.newPage());
 
-    const screenshot = async (label: string): Promise<void> => {
+    const screenshot = async (label: string, full = false): Promise<void> => {
       try {
-        const buf = await page.screenshot({ type: 'jpeg', quality: 60, fullPage: false });
+        const buf = await page.screenshot({ type: 'jpeg', quality: 60, fullPage: full });
         const safe = label.replace(/[^a-zA-Z0-9؀-ۿ_-]+/g, '-').slice(0, 40) || 'shot';
         const path = `${job.id}/${String(++shotIndex).padStart(2, '0')}-${safe}.jpg`;
         const { error } = await supabase.storage.from(BUCKET).upload(path, buf, { contentType: 'image/jpeg', upsert: true });

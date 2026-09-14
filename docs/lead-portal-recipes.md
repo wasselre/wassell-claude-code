@@ -38,6 +38,15 @@ then available to the recipe as `{{lead.<key>}}`.
 
 - `source` prefills the value: `client.<field slug>`, `project.<field slug>`,
   `user.name` / `user.email` / `user.phone` (the rep), or `literal:<text>`.
+  A multiselect / multi-lookup source gives its FIRST value; a range
+  (`budget`) gives `"800,000 - 1,000,000"`.
+- `map` translates the resolved value (exact match) into the portal's wording —
+  `{"apartment": "شقة", "villa": "فيلا"}`, or a CRM project name → the portal's
+  spelling. `default` is used when nothing resolves. For a `select`, a value
+  that matches no option (by value or label) is dropped, then `default` applies.
+- `hidden: true` keeps a field out of the modal — it is sent with its prefilled /
+  `default` value. A hidden required field that resolves to nothing still blocks
+  the run and the modal names it ("missing on the client record").
 - `type`: `text` (default), `phone`, `email`, `number`, `select` (needs `options`), `textarea`.
 - If the field is empty, the two defaults above (`name` + `phone`) are used.
 - `lead.project_name` is always available even if not declared.
@@ -48,13 +57,20 @@ A JSON array of steps, run in order in a real browser (Browserbase, Saudi IP).
 Every string may contain templates: `{{lead.name}}`, `{{portal.login_phone|local}}`,
 `{{input.otp}}`, `{{client.<slug>}}`, `{{project.<slug>}}`, `{{vars.x}}`.
 
-**Filters** (chain with `|`): `local` (→ `05XXXXXXXX`), `intl` (→ `9665XXXXXXXX`),
+**Filters** (chain with `|`): `local` (→ `05XXXXXXXX`), `ksa_short` (→ `5XXXXXXXX`,
+for portals with a separate +966 selector), `intl` (→ `9665XXXXXXXX`),
 `e164` (→ `+9665XXXXXXXX`), `digits`, `no_plus`, `upper`, `lower`, `trim`,
 `first_word`, `rest_words`, `default:<text>`.
 
 **Targets** — every step that touches an element takes ONE of: `selector` (CSS /
 `xpath=` / Playwright), `text` (visible text, substring), `label` (form label),
-`placeholder`, or `role` + `name`. Add `nth` to pick the N-th match (0-based).
+`placeholder`, or `role` + `name`. Add `nth` to pick the N-th match (0-based) and
+`exact: true` to match the whole text (so «يمام 1» cannot hit «يمام 15»).
+Livewire/Alpine forms often have no `name`/`id`; target the binding attribute
+with an escaped colon: `"selector": "input[wire\\:model='name']"`. Escape dots
+in the attribute name too (`wire:model.live` → `select[wire\\:model\\.live='x']`);
+an unescaped dot is parsed as a class and the step fails with a bare
+`DOMException`.
 
 | Step | Fields | What it does |
 |---|---|---|
@@ -69,7 +85,7 @@ Every string may contain templates: `{{lead.name}}`, `{{portal.login_phone|local
 | `wait_for` | target, `state?`, `timeout_ms?` | Wait until visible (or `hidden` / `attached`). |
 | `wait_for_url` | `pattern` (glob, or `re:` regex) | Wait for navigation. |
 | `request_input` | `key`, `prompt_ar`, `prompt_en`, `kind?` (`otp`/`text`), `length?`, `timeout_s?` | **Pause and ask the rep.** The modal shows the prompt + an input; the answer lands in `{{input.<key>}}`. Default wait 300 s. |
-| `screenshot` | `label?` | Save a screenshot to the run's evidence. |
+| `screenshot` | `label?`, `full?` | Save a screenshot to the run's evidence (`full: true` = the whole page, not just the viewport). |
 | `assert` | target, `error_ar?`, `error_en?`, `timeout_ms?` | Fail the run with that message unless the element appears (use it to prove success). |
 | `if_visible` | target, `timeout_ms?`, `then?: [...]`, `else?: [...]` | Branch (e.g. "already registered" dialog). |
 | `phase` | `ar`, `en` | Progress label shown to the rep. |

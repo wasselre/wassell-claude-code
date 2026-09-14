@@ -26,6 +26,8 @@ export interface PortalFieldSpec {
   source?: string;
   options?: { value: string; label_ar: string; label_en: string }[];
   placeholder?: string;
+  /** Prefilled server-side and not shown in the modal. */
+  hidden?: boolean;
 }
 
 export interface PortalOption {

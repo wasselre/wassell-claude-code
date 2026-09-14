@@ -55,6 +55,17 @@ export interface PortalFieldSpec {
   source?: string;
   options?: { value: string; label_ar: string; label_en: string }[];
   placeholder?: string;
+  /** Translate the resolved source value (exact match) into what the portal
+   *  wants — e.g. our unit-type slug → the portal's Arabic option, or a CRM
+   *  project name → the portal's spelling of it. Applied before the options
+   *  check. */
+  map?: Record<string, string>;
+  /** Prefill fallback when the source resolves to nothing. */
+  default?: string;
+  /** Not shown in the modal — sent with its prefilled/default value. A hidden
+   *  REQUIRED field that resolves to nothing still blocks the run (the modal
+   *  names it so the rep can fix the client record). */
+  hidden?: boolean;
 }
 
 export interface PortalOption {
@@ -128,9 +139,53 @@ function parseFields(raw: unknown): { fields: PortalFieldSpec[]; error: string |
             .map((x) => ({ value: str(x.value), label_ar: str(x.label_ar) || str(x.value), label_en: str(x.label_en) || str(x.value) }))
         : undefined,
       placeholder: str(o.placeholder) || undefined,
+      map:
+        o.map && typeof o.map === 'object' && !Array.isArray(o.map)
+          ? Object.fromEntries(Object.entries(o.map as Record<string, unknown>).map(([k, v]) => [k, str(v)]))
+          : undefined,
+      default: str(o.default) || undefined,
+      hidden: o.hidden === true,
     });
   }
   return { fields: fields.length ? fields : DEFAULT_FIELDS, error: null };
+}
+
+/** A record value → the string a form wants. Arrays (multiselect / multi
+ *  lookup) → their first string; {min,max} ranges → "min - max" with thousands
+ *  separators (the shape portals ask budgets in); scalars → as-is. */
+function valueToText(v: unknown): string {
+  if (v == null) return '';
+  if (Array.isArray(v)) {
+    const first = v.find((x) => typeof x === 'string' && x.trim()) ?? v[0];
+    return typeof first === 'string' ? first : str(first);
+  }
+  if (typeof v === 'object') {
+    const o = v as { min?: unknown; max?: unknown };
+    if ('min' in o || 'max' in o) {
+      const fmt = (n: unknown) => (typeof n === 'number' ? n.toLocaleString('en-US') : str(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','));
+      const lo = o.min != null && o.min !== '' ? fmt(o.min) : '';
+      const hi = o.max != null && o.max !== '' ? fmt(o.max) : '';
+      return lo && hi ? `${lo} - ${hi}` : lo || hi;
+    }
+    return '';
+  }
+  return str(v);
+}
+
+/** Prefill one field: source → map → (select) option match → default. */
+function prefillField(
+  f: PortalFieldSpec,
+  ctx: { client: Record<string, unknown>; project: Record<string, unknown>; user: { email: string; name: string; phone: string } },
+): string {
+  let v = resolveSource(f.source, ctx);
+  if (v && f.map && f.map[v] != null) v = f.map[v]!;
+  if (f.type === 'select' && f.options?.length) {
+    if (v && !f.options.some((o) => o.value === v)) {
+      const byLabel = f.options.find((o) => o.label_ar === v || o.label_en === v);
+      v = byLabel ? byLabel.value : '';
+    }
+  }
+  return v || f.default || '';
 }
 
 /** Light recipe check (the worker does the deep one): non-empty JSON array of
@@ -164,8 +219,8 @@ function resolveSource(
   if (source.startsWith('literal:')) return source.slice('literal:'.length);
   const [root, ...rest] = source.split('.');
   const path = rest.join('.');
-  if (root === 'client') return str(ctx.client[path]);
-  if (root === 'project') return str(ctx.project[path]);
+  if (root === 'client') return valueToText(ctx.client[path]);
+  if (root === 'project') return valueToText(ctx.project[path]);
   if (root === 'user') return path === 'email' ? ctx.user.email : path === 'name' ? ctx.user.name : path === 'phone' ? ctx.user.phone : '';
   return '';
 }
@@ -230,7 +285,7 @@ async function resolvePortals(
     const recipe = checkRecipe(d.recipe);
     const prefill: Record<string, string> = {};
     for (const f of fields) {
-      const v = resolveSource(f.source, { client: client.data ?? {}, project: pdata, user });
+      const v = prefillField(f, { client: client.data ?? {}, project: pdata, user });
       if (v) prefill[f.key] = v;
     }
     out.push({

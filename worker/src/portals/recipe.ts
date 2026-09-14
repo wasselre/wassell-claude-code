@@ -16,7 +16,8 @@
  *             `portal.<login_url|login_phone|login_email|login_password|name>`,
  *             `client.<field>` / `project.<field>` (raw record data),
  *             `input.<key>` (answers to request_input steps), `vars.<key>` (set).
- *   filters — local (E.164 → 05XXXXXXXX), digits, no_plus, e164, intl (966…),
+ *   filters — local (E.164 → 05XXXXXXXX), ksa_short (→ 5XXXXXXXX, for portals
+ *             with a separate +966 selector), digits, no_plus, e164, intl (966…),
  *             upper, lower, trim, first_word, rest_words, default:<text>.
  *
  * Documented for operators in docs/lead-portal-recipes.md — keep both in sync.
@@ -42,6 +43,10 @@ export interface Target {
   name?: string;
   /** Pick the Nth match (0-based) when several match. Default 0. */
   nth?: number;
+  /** Match text / label / placeholder / role name EXACTLY (whole string,
+   *  case-sensitive) instead of as a substring. Use it when names overlap
+   *  ("يمام 1" would otherwise match "يمام 15"). */
+  exact?: boolean;
 }
 
 export type RecipeStep =
@@ -67,7 +72,7 @@ export type RecipeStep =
       /** How long to wait for the rep. Default 300 s. */
       timeout_s?: number;
     }
-  | { do: 'screenshot'; label?: string }
+  | { do: 'screenshot'; label?: string; full?: boolean }
   | ({ do: 'assert'; timeout_ms?: number; error_ar?: string; error_en?: string } & Target)
   | ({ do: 'if_visible'; timeout_ms?: number; then?: RecipeStep[]; else?: RecipeStep[] } & Target)
   | { do: 'phase'; ar: string; en: string }
@@ -120,11 +125,20 @@ function ksaE164(v: string): string {
   return d ? `+${d}` : '';
 }
 
+/** 5XXXXXXXX — the 9-digit form portals with a separate +966 country-code
+ *  selector expect. */
+function ksaShort(v: string): string {
+  const local = ksaLocal(v);
+  return /^05\d{8}$/.test(local) ? local.slice(1) : local;
+}
+
 function applyFilter(value: string, filter: string): string {
   const [name, arg] = filter.split(':', 2) as [string, string | undefined];
   switch (name.trim()) {
     case 'local':
       return ksaLocal(value);
+    case 'ksa_short':
+      return ksaShort(value);
     case 'digits':
       return digitsOf(value);
     case 'no_plus':
@@ -241,8 +255,9 @@ export interface RecipeRuntime {
   log: (msg: string) => void;
   /** Show a bilingual progress label to the rep. */
   phase: (ar: string, en: string) => Promise<void>;
-  /** Capture the current page for the run's evidence trail. */
-  screenshot: (label: string) => Promise<void>;
+  /** Capture the current page for the run's evidence trail (`full` = whole
+   *  scrollable page, not just the viewport). */
+  screenshot: (label: string, full?: boolean) => Promise<void>;
   /** Pause: ask the rep a question (an OTP) and wait for the answer. */
   requestInput: (step: Extract<RecipeStep, { do: 'request_input' }>) => Promise<string>;
   /** Throws RecipeCancelledError if the rep cancelled meanwhile. */
@@ -257,13 +272,14 @@ function describeTarget(t: Target): string {
 
 function locate(page: Page, t: Target, scope: TemplateScope): Locator {
   const r = (s: string) => renderTemplate(s, scope);
+  const exact = t.exact === true;
   let loc: Locator;
   if (t.selector) loc = page.locator(r(t.selector));
-  else if (t.text) loc = page.getByText(r(t.text), { exact: false });
-  else if (t.label) loc = page.getByLabel(r(t.label), { exact: false });
-  else if (t.placeholder) loc = page.getByPlaceholder(r(t.placeholder), { exact: false });
+  else if (t.text) loc = page.getByText(r(t.text), { exact });
+  else if (t.label) loc = page.getByLabel(r(t.label), { exact });
+  else if (t.placeholder) loc = page.getByPlaceholder(r(t.placeholder), { exact });
   else if (t.role) {
-    loc = page.getByRole(t.role as Parameters<Page['getByRole']>[0], t.name ? { name: r(t.name), exact: false } : undefined);
+    loc = page.getByRole(t.role as Parameters<Page['getByRole']>[0], t.name ? { name: r(t.name), exact } : undefined);
   } else {
     throw new RecipeError('خطوة بلا هدف (selector/text/label/placeholder/role)', 'Step has no target');
   }
@@ -376,7 +392,7 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
       return;
     }
     case 'screenshot': {
-      await rt.screenshot(step.label ?? `step-${index + 1}`);
+      await rt.screenshot(step.label ?? `step-${index + 1}`, step.full === true);
       return;
     }
     case 'assert': {
