@@ -43,7 +43,12 @@ VALUES ('planning', jsonb_build_object(
           'release_effort_days',    0.25,
           'release_owner_role',     'mos_writer',
           'release_manual_platforms', '[]'::jsonb,
-          'release_sweep_horizon_minutes', 15))
+          'release_sweep_horizon_minutes', 15,
+          -- A release more than this far past its moment is NOT auto-posted.
+          -- Publishing is outward-facing and irreversible: a row dated last
+          -- month must not suddenly appear on the real account because a sweep
+          -- noticed it. Past this window it becomes a task and a person decides.
+          'release_stale_hours', 24))
 ON CONFLICT (key) DO UPDATE
   -- merge UNDER the stored value so an operator's existing edits win
   SET value = EXCLUDED.value || public.mos_settings.value;

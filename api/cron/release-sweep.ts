@@ -38,6 +38,18 @@ export const config = { runtime: 'edge' };
  *  instead of hammering bundle.social (and blowing the edge time budget). */
 const MAX_PER_TICK = 10;
 
+/**
+ * A release this far past its moment is NOT posted automatically.
+ *
+ * Publishing is outward-facing and irreversible. A row dated last month —
+ * imported, restored, or left behind by a campaign nobody finished — must not
+ * suddenly appear on the company's real Instagram because a sweep noticed it.
+ * Past this window the release becomes a task instead, and a person decides
+ * whether it is still worth posting. Overridable via
+ * `mos_settings.planning.release_stale_hours`.
+ */
+const DEFAULT_STALE_HOURS = 24;
+
 interface DueRow {
   release_id: string;
   content_id: string;
@@ -94,12 +106,38 @@ export default async function handler(req: Request): Promise<Response> {
     return json(out, 200);
   }
 
-  const rows = ((due.data as DueRow[] | null) ?? [])
+  // How stale is too stale, from settings.
+  const settings = await sb.from('mos_settings').select('value').eq('key', 'planning').maybeSingle();
+  const rawHours = (settings.data as { value?: Record<string, unknown> } | null)?.value?.release_stale_hours;
+  const staleHours = Number.isFinite(Number(rawHours)) && Number(rawHours) > 0
+    ? Number(rawHours) : DEFAULT_STALE_HOURS;
+  const staleBefore = Date.now() - staleHours * 3600_000;
+
+  const candidates = ((due.data as DueRow[] | null) ?? [])
     .filter((r) => r.automatable === true)
     // Something already went wrong on this one and a person has been asked;
     // do not race them.
-    .filter((r) => r.open_task_id === null)
+    .filter((r) => r.open_task_id === null);
+
+  const stale = candidates.filter(
+    (r) => r.due_at !== null && Date.parse(r.due_at) < staleBefore,
+  );
+  const rows = candidates
+    .filter((r) => !stale.includes(r))
     .slice(0, MAX_PER_TICK);
+
+  // Too old to post on its own — hand it to a person with the reason, rather
+  // than publishing something whose moment passed or leaving it silent.
+  for (const r of stale) {
+    const opened = await sb.rpc('mos_release_open_task', {
+      p_publication_id: r.release_id,
+      p_reason: 'manual',
+      p_detail: `تجاوز موعده بأكثر من ${staleHours} ساعة — لم يُنشر آليًا. قرّر: انشره الآن أو ألغِه.`,
+    });
+    if (opened.error) {
+      console.error('[release-sweep] could not open the stale task', r.release_id, opened.error.message);
+    }
+  }
 
   let published = 0;
   const failures: Array<{ release_id: string; platform: string; error: string }> = [];
@@ -142,6 +180,8 @@ export default async function handler(req: Request): Promise<Response> {
     handed_off: published,
     failed: failures.length,
     failures,
+    too_stale_to_post: stale.length,
+    stale_hours: staleHours,
     capped: rows.length === MAX_PER_TICK,
   };
   out.ms = Date.now() - startedAt;
