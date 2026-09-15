@@ -79,6 +79,33 @@ function mimeFor(ext: string, mime: string | null, kind: string): string {
   return ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
 }
 
+/**
+ * A UNIT PLAN, recognised from the words the OCR already read off the image.
+ *
+ * Competitors post floor plans inside ordinary carousels, so classifying every
+ * post image as a designed creative filed «رقم الوحدة 01 · المساحة الإجمالية
+ * 115.85 م · الدور الأرضي» — a plain floor plan — under «تصميم» (found by the
+ * operator 2026-09-15, 31 of 421 images).
+ *
+ * The discriminator is a FLOOR LABEL or a UNIT/VILLA NUMBER, not room names: a
+ * spec creative happily lists «غرفة خادمة · غرفة سائق · مطبخ» as selling points
+ * while being a poster, whereas «الدور الأرضي» / «رقم الفيلا 04» only appear on
+ * the drawing itself. «رقم الغيلا» is in the list because that is how the OCR
+ * renders «رقم الفيلا» on several real plans — matching what the reader
+ * actually produces beats matching correct spelling.
+ */
+const PLAN_MARKERS = [
+  'الدور الأرضي', 'الدور الارضي', 'الدور الأول', 'الدور الاول', 'الدور الثاني', 'الدور الثانى',
+  'GROUND FLOOR', 'FIRST FLOOR', 'SECOND FLOOR',
+  'رقم الوحدة', 'رقم الفيلا', 'رقم الغيلا', 'رقم الشقة', 'رقم النموذج',
+  'مخطط',
+];
+export function looksLikeUnitPlan(ocrText: string | null | undefined): boolean {
+  if (!ocrText) return false;
+  const upper = ocrText.toUpperCase();
+  return PLAN_MARKERS.some((m) => (m === m.toUpperCase() ? upper.includes(m) : ocrText.includes(m)));
+}
+
 /** Storage object keys must be ASCII-safe; the display name lives in files.title. */
 function safeName(s: string): string {
   return s.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
@@ -135,6 +162,18 @@ export async function runSocialFileJob({ supabase, job }: { supabase: SupabaseCl
   const folderId = await ensureOrgFolder(supabase, cfg, orgName);
 
   const pending = ((mediaRows ?? []) as MediaRow[]).filter((m) => !m.file_id && m.stored_path);
+
+  // What the OCR read off each image, so a floor plan posted inside a carousel
+  // is filed as one instead of as a designed creative.
+  const ocrByMedia = new Map<string, string>();
+  if (pending.some((m) => m.media_kind === 'image')) {
+    const { data: visual, error: vErr } = await supabase
+      .from('mkt_visual_text').select('content_media_id, text').eq('content_post_id', postId);
+    if (vErr) console.error(`[social-file] visual text unavailable for ${postId}: ${vErr.message}`);
+    for (const v of (visual ?? []) as Array<{ content_media_id: string; text: string | null }>) {
+      if (v.content_media_id && v.text) ocrByMedia.set(v.content_media_id, v.text);
+    }
+  }
   if (pending.length === 0) return { post_id: postId, registered: 0, already: (mediaRows ?? []).length };
 
   const dateTag = post.published_at ? String(post.published_at).slice(0, 10) : '';
@@ -153,6 +192,7 @@ export async function runSocialFileJob({ supabase, job }: { supabase: SupabaseCl
         fileId = await copyAndRegister(supabase, cfg, folderId, m, {
           orgName, projectName, dateTag, index: pending.length > 1 ? m.carousel_index + 1 : 0,
           description, isOwnDeveloper, sendable, projectId,
+          isUnitPlan: m.media_kind === 'image' && looksLikeUnitPlan(ocrByMedia.get(m.id)),
         });
         registered++;
       }
@@ -200,7 +240,7 @@ async function ensureOrgFolder(supabase: SupabaseClient, cfg: Settings, orgName:
 
 async function copyAndRegister(
   supabase: SupabaseClient, cfg: Settings, folderId: string | null, m: MediaRow,
-  ctx: { orgName: string; projectName: string; dateTag: string; index: number; description: string; isOwnDeveloper: boolean; sendable: boolean; projectId: string },
+  ctx: { orgName: string; projectName: string; dateTag: string; index: number; description: string; isOwnDeveloper: boolean; sendable: boolean; projectId: string; isUnitPlan: boolean },
 ): Promise<string> {
   const fileId = randomUUID();
   const ext = extOf(m.stored_path!, m.mime_type, m.media_kind);
@@ -238,7 +278,7 @@ async function copyAndRegister(
     // visual-intelligence read can fill it later; an empty field is honest.
     asset_nature: null,
     production_state: 'published',
-    primary_category: m.media_kind === 'video' ? 'ready_video' : 'design',
+    primary_category: m.media_kind === 'video' ? 'ready_video' : ctx.isUnitPlan ? 'unit_plan' : 'design',
     description: ctx.description,
     ai_description: ctx.description,
     checksum_sha256: m.checksum_sha256,
