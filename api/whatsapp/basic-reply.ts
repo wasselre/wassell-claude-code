@@ -328,11 +328,6 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     const flow = await sendProjectViaAiFlow(supa, {
       chatWid, projectName: d.projectName, deviceId: body.device_id, jobId: 'basic',
       onlyOurProjects: true, allowAi: false, force: softBypass, lang,
-      // Set the expectation so a follow-up like «بكم التاون هاوس؟» isn't met with
-      // silence: the bot hands specifics to a human, and this line says so.
-      closingNote: lang === 'en'
-        ? 'For exact prices and any details, our consultant will follow up with you shortly 🌟'
-        : 'لأي تفاصيل أو الأسعار النهائية بيتواصل معك مستشارنا قريب 🌟',
     });
     if (flow.blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: flow.reason });
     if (flow.queued) {
