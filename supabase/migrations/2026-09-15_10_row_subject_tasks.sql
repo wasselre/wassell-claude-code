@@ -601,6 +601,20 @@ BEGIN
                             'shells_created', v_shells, 'cycles_started', v_cycles);
 END $function$;
 
+-- ───────────────────────────────────────────────────────────────────────────
+-- Supabase grants anon EXECUTE on every NEW function in `public`, and
+-- `REVOKE … FROM PUBLIC` does not touch it. Every pre-existing mos_* function
+-- has anon revoked; these must match, or a definer helper leaks.
+-- ───────────────────────────────────────────────────────────────────────────
+REVOKE ALL ON FUNCTION public.mos_row_bucket(uuid)                 FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.mos_subject_bucket(text, uuid)       FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.mos_subject_workflow_key(text, uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.mos_subject_version_id(text, uuid)   FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.mos_row_bucket(uuid)                 TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.mos_subject_bucket(text, uuid)       TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.mos_subject_workflow_key(text, uuid) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.mos_subject_version_id(text, uuid)   TO authenticated, service_role;
+
 -- ────────────────────────────────────────────────────────────────────────────
 -- Repo rule: no function in `public` may raise SQLSTATE 40001 / 40P01.
 -- ────────────────────────────────────────────────────────────────────────────

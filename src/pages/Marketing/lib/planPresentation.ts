@@ -200,8 +200,9 @@ export const PROJECT_COLORS = [
   '#B8734F', '#4A6FA5', '#5C8A5C', '#8E4E3A', '#7A5C9E', '#C09B5F', '#4A7C7E', '#A2555C',
 ] as const;
 
-export function projectColorMap(items: PlannedItem[]): Map<string, number> {
-  const m = new Map<string, number>();
+/** Keyed by `string | null`: a general-row post belongs to NO project (A8b). */
+export function projectColorMap(items: PlannedItem[]): Map<string | null, number> {
+  const m = new Map<string | null, number>();
   for (const it of items) {
     if (!m.has(it.projectId)) m.set(it.projectId, m.size % PROJECT_COLORS.length);
   }
@@ -283,7 +284,7 @@ export function showsPublishingBatches(kind: MosPlanRequestInput['kind']): boole
 export function buildPlanGrid(
   items: PlannedItem[],
   platform: string,
-  opts?: { columns?: number; newestFirst?: boolean; colors?: Map<string, number> },
+  opts?: { columns?: number; newestFirst?: boolean; colors?: Map<string | null, number> },
 ): PlanGridModel {
   const columns = Math.max(1, opts?.columns ?? 3);
   const colors = opts?.colors ?? projectColorMap(items);
@@ -307,7 +308,9 @@ export function buildPlanGrid(
     return {
       itemKey: f.item.key,
       title: f.item.title,
-      projectId: f.item.projectId,
+      // This grid is the campaign wizard's preview, where every item has a
+      // project. A general row (no project) is labelled by its title instead.
+      projectId: f.item.projectId ?? '',
       projectName: f.item.projectName ?? '',
       contentTypeKey: f.item.contentTypeKey,
       day: f.day,
@@ -546,6 +549,7 @@ const CONFLICT_HEADLINES: Record<ConflictKind, BiText> = {
   platform_rule: bi('قاعدة المنصة تمنع هذا الترتيب', 'A platform rule blocks this arrangement'),
   search_incomplete: bi('توقّف البحث عند حدّه', 'The search stopped at its budget'),
   range_in_past: bi('المدى المطلوب في الماضي', 'The requested range is in the past'),
+  publish_time: bi('وقت نشر الصف غير صالح', 'The row’s publishing time is unusable'),
 };
 
 export interface ConflictLine {

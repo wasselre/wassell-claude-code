@@ -8,9 +8,9 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  DEFAULT_CALENDAR, DEFAULTS, DEFAULT_WORKFLOWS,
+  DEFAULT_CALENDAR, DEFAULTS, DEFAULT_WORKFLOWS, DEFAULT_ROW_PUBLISHING,
   type LedgerRow, type LoadBucket, type PathRole, type PersonCapacity,
-  type PlatformRules, type StepSpec, type WorkCalendar, type WorkflowSpec,
+  type PlatformRules, type RowPublishing, type StepSpec, type WorkCalendar, type WorkflowSpec,
   type WorkloadSnapshot,
 } from '../../../../src/lib/marketingOS/scheduling/index.js';
 import type { RuleSet } from '../../../../src/lib/marketingOS/scheduling/plan.js';
@@ -229,6 +229,45 @@ export async function loadWorkloadSnapshot(
 /* rules                                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The month template's publishing moment, as the engine's `RowPublishing`.
+ *
+ * Exported and pure so the round-trip is testable without a Supabase client.
+ * `publish_time` is a Postgres `time`, so it arrives as `18:00:00` or
+ * `18:00:00+03` and must be trimmed to `HH:MM`; the engine validates the result
+ * and raises a `publish_time` conflict rather than substituting a default
+ * silently (see `checkRowPublishing`).
+ *
+ * WHY THIS EXISTS AT ALL: `loadRuleSet` built `publishing` with six keys and
+ * `rowPublishing` was not one of them, so `planCampaign` fell back to
+ * `DEFAULT_ROW_PUBLISHING` — 18:00 / 5 minutes. `compileMonth` set it from the
+ * template, so the PREVIEW showed the operator's time; `campaignPlanCommit`
+ * re-planned through `loadRuleSet`, so the COMMIT wrote 18:00. Measured with
+ * `publish_time = 19:30`, `intra_row_gap_minutes = 10`: preview 19:30/19:40/19:50,
+ * commit 18:00/18:05/18:10, and the plan signature declared them identical
+ * because it keyed on `(day, slotIndex)` and never on the moment. No 409, no
+ * diff, no toast — the operator approves one time and the database stores
+ * another.
+ */
+export function rowPublishingFromTemplateRow(
+  row: Record<string, unknown> | null | undefined,
+): RowPublishing {
+  if (!row) return DEFAULT_ROW_PUBLISHING;
+  const raw = String(row.publish_time ?? '').trim();
+  const m = /^(\d{1,2}):(\d{2})/.exec(raw);
+  const gap = Number(row.intra_row_gap_minutes);
+  return {
+    publishTime: m
+      ? `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`
+      // NOT silently defaulted: a non-empty value that does not parse is passed
+      // through verbatim so `checkRowPublishing` reports it as bad operator
+      // data. Only a genuinely absent column falls back.
+      : (raw || DEFAULT_ROW_PUBLISHING.publishTime),
+    intraRowGapMinutes: Number.isFinite(gap) && gap >= 0
+      ? Math.floor(gap) : DEFAULT_ROW_PUBLISHING.intraRowGapMinutes,
+  };
+}
+
 interface EffortRow { workflow_key: string; step_key: string; bucket: string; working_days: number }
 interface ContentTypeRow { key: string; workflow_id: string | null }
 interface WorkflowRow { id: string; metadata: unknown }
@@ -244,7 +283,7 @@ interface BucketRow { content_type_id: string; bucket: string }
 export async function loadRuleSet(
   sb: SupabaseClient, settings: PlanningSettings,
 ): Promise<RuleSet> {
-  const [wfRes, typeRes, effortRes, bucketRes, execRes, autoRes, acctRes] = await Promise.all([
+  const [wfRes, typeRes, effortRes, bucketRes, execRes, autoRes, acctRes, tmplRes] = await Promise.all([
     sb.from('workflows').select('id, metadata').eq('kind', 'role_path'),
     sb.from('mos_content_types').select('id, key, workflow_id').is('archived_at', null),
     sb.from('mos_step_effort').select('workflow_key, step_key, bucket, working_days'),
@@ -260,6 +299,11 @@ export async function loadRuleSet(
     sb.from('mos_platform_accounts')
       .select('platform, id, can_publish, is_connected')
       .is('archived_at', null),
+    // The month template's publishing moment. The COMMIT re-plans through this
+    // function, so a row's publish time must be readable here or the commit
+    // silently reverts the whole month to the engine default — see
+    // `rowPublishingFromTemplateRow`.
+    sb.from('mos_month_template').select('publish_time, intra_row_gap_minutes').maybeSingle(),
   ]);
   for (const [label, res] of [
     ['workflows', wfRes], ['mos_content_types', typeRes],
@@ -338,6 +382,17 @@ export async function loadRuleSet(
   // purpose must not quietly start auto-posting because someone connected it.
   for (const p of settings.releaseManualPlatforms) automatable[p] = false;
 
+  // A missing template row is a legitimate state (the month model is not
+  // switched on yet) and falls back to the engine default. A FAILED read is
+  // not: it would revert every committed row to 18:00 with no signal, so it is
+  // surfaced rather than swallowed — the same posture `loadWorkCalendar` takes.
+  if (tmplRes.error) {
+    console.error('[planning] mos_month_template read failed', tmplRes.error.code, tmplRes.error.message);
+  }
+  const rowPublishing = rowPublishingFromTemplateRow(
+    (tmplRes.data as Record<string, unknown> | null) ?? null,
+  );
+
   const accountByPlatform: Record<string, string | null> = {};
   for (const a of (acctRes.data as Array<{ platform: string; id: string; can_publish: boolean | null }> | null) ?? []) {
     if (accountByPlatform[a.platform] === undefined || a.can_publish === true) {
@@ -357,6 +412,7 @@ export async function loadRuleSet(
       organicOwnerRole: roleKeyToPathRole(settings.releaseOwnerRole),
       adOwnerRole: 'marketing_manager',
       accountByPlatform,
+      rowPublishing,
     },
     searchBudget: settings.searchBudget,
   };

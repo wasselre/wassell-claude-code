@@ -3,6 +3,12 @@
  *
  * Three idempotent sweeps, driven by `worker/src/marketing/refreshLane.ts`:
  *
+ *   0. `activateDueSlots`  — a creative slot whose `activate_on` has arrived
+ *      and which belongs to NO cycle (the campaign's first batch) is put live
+ *      on Meta and STAMPED with `activated_at`, which is what makes §3.6's
+ *      "judged on its own first seven days" possible at all. Capped by
+ *      `planning.max_active_creatives` so a batch can never grow the live
+ *      slate past its ceiling.
  *   1. `sweepDecisionsDue`  — a cycle whose `decision_due_on` has arrived gets
  *      its slate RANKED (§7.6, `marketing/creativeRanking.ts`), the DEFAULT
  *      decision written onto `mos_refresh_cycles.decision`, its status moved to
@@ -41,9 +47,10 @@ import {
   type MetaInsightRow,
 } from './marketing/metaMarketingApi.js';
 import {
-  rankCreatives, RANKING_DEFAULTS,
+  deriveMinSpendSar, rankCreatives, RANKING_DEFAULTS,
   type Bilingual, type CreativeRow, type MetricTotals, type RankingResult, type RankingSettings,
 } from './marketing/creativeRanking.js';
+import { leadsInWindow, ourLeadsForAds, type OurLead } from './marketing/ourLeads.js';
 
 export interface RefreshDeps {
   supabase: SupabaseClient;
@@ -93,6 +100,17 @@ export interface PlanningSettings {
   refreshLoopEnabled: boolean;
   autoApplyDefaultDecision: boolean;
   minActiveCreatives: number;
+  /**
+   * The ceiling on live creatives per execution — E1b, the anti-ratchet.
+   *
+   * `minActiveCreatives` stops a swap dipping the ad set below a floor. It has
+   * no opposite, and without one the slate can only GROW: when nothing clears
+   * the data gates the ranking replaces nothing (correctly — an unjudgeable
+   * creative is not a loser), but the week's five new ones activate anyway, so
+   * the live slate gains five with nothing retired, every week, silently.
+   * Activation is capped against this and the shortfall is an exception.
+   */
+  maxActiveCreatives: number;
   adsCreatedPaused: boolean;
 }
 
@@ -100,6 +118,8 @@ export const PLANNING_FALLBACK: PlanningSettings = {
   refreshLoopEnabled: true,
   autoApplyDefaultDecision: false,
   minActiveCreatives: 5,
+  // Five new a week plus the at-most-two the margin guard can keep.
+  maxActiveCreatives: 7,
   adsCreatedPaused: true,
 };
 
@@ -113,31 +133,94 @@ export async function loadPlanningSettings(sb: SupabaseClient): Promise<Planning
   const v = ((data as { value?: Record<string, unknown> } | null)?.value ?? {}) as Record<string, unknown>;
   const bool = (x: unknown, d: boolean): boolean => (typeof x === 'boolean' ? x : d);
   const min = Number(v.min_active_creatives);
+  const max = Number(v.max_active_creatives);
+  const minActiveCreatives = Number.isFinite(min) && min >= 0 ? min : PLANNING_FALLBACK.minActiveCreatives;
+  const maxActiveCreatives = Number.isFinite(max) && max > 0 ? max : PLANNING_FALLBACK.maxActiveCreatives;
+  if (maxActiveCreatives < minActiveCreatives) {
+    // A ceiling under the floor is a settings error, not a rule: it would make
+    // every swap both illegal and mandatory. Say so and use the floor.
+    console.error(`[refresh] planning.max_active_creatives (${maxActiveCreatives}) is below min_active_creatives (${minActiveCreatives}) — using the floor as the ceiling`);
+  }
   return {
     refreshLoopEnabled: bool(v.refresh_loop_enabled, true),
     autoApplyDefaultDecision: bool(v.auto_apply_default_decision, false),
-    minActiveCreatives: Number.isFinite(min) && min >= 0 ? min : PLANNING_FALLBACK.minActiveCreatives,
+    minActiveCreatives,
+    maxActiveCreatives: Math.max(maxActiveCreatives, minActiveCreatives),
     adsCreatedPaused: bool(v.ads_created_paused, true),
   };
 }
 
-/** `mos_settings.ranking` (contract §6) with the PROPOSED defaults. */
+const pickNum = (x: unknown, d: number): number => {
+  const n = Number(x);
+  return Number.isFinite(n) && n >= 0 ? n : d;
+};
+
+/**
+ * The weekly-rule numbers, in the order the month model settled them (E1c).
+ *
+ *   1. **`mos_month_template`** (A8) — the standing month as data, and the
+ *      authority for the four numbers §3.6 names. Its `min_spend_sar` is
+ *      NULLABLE on purpose: NULL means "derive from the budget", which is the
+ *      normal state. An operator who types a number gets that number.
+ *   2. **`mos_settings.ranking`** — the two fatigue numbers, which have no
+ *      template column, and the whole set when there is no template row.
+ *   3. `RANKING_DEFAULTS`.
+ *
+ * Why the derivation exists: the 150 SAR gate was calibrated against a
+ * campaign spending ~691 SAR a week. The standing month buys ~467 SAR a week
+ * per project, so carrying 150 over unchanged makes the same rule materially
+ * stricter — and a gate nothing clears is the ratchet E1b is there to stop.
+ * See `deriveMinSpendSar`.
+ */
 export async function loadRankingSettings(sb: SupabaseClient): Promise<RankingSettings> {
-  const { data, error } = await sb.from('mos_settings').select('value').eq('key', 'ranking').maybeSingle();
-  if (error) {
-    console.error('[refresh] mos_settings.ranking read failed', error.code, error.message, '— using defaults');
-    return RANKING_DEFAULTS;
+  const [setRes, tmplRes] = await Promise.all([
+    sb.from('mos_settings').select('value').eq('key', 'ranking').maybeSingle(),
+    sb.from('mos_month_template')
+      .select('min_spend_sar, min_impressions, min_leader_leads, leader_margin_pct, budget_per_project, campaign_length_days')
+      .maybeSingle(),
+  ]);
+
+  if (setRes.error) {
+    console.error('[refresh] mos_settings.ranking read failed', setRes.error.code, setRes.error.message, '— using defaults');
   }
-  const v = ((data as { value?: Record<string, unknown> } | null)?.value ?? {}) as Record<string, unknown>;
-  const pick = (x: unknown, d: number): number => {
-    const n = Number(x);
-    return Number.isFinite(n) && n >= 0 ? n : d;
+  const v = ((setRes.data as { value?: Record<string, unknown> } | null)?.value ?? {}) as Record<string, unknown>;
+  const fromSettings: RankingSettings = {
+    minSpendSar: pickNum(v.min_spend_sar, RANKING_DEFAULTS.minSpendSar),
+    minImpressions: pickNum(v.min_impressions, RANKING_DEFAULTS.minImpressions),
+    fatigueFrequency: pickNum(v.fatigue_frequency, RANKING_DEFAULTS.fatigueFrequency),
+    fatigueCtrDropPct: pickNum(v.fatigue_ctr_drop_pct, RANKING_DEFAULTS.fatigueCtrDropPct),
+    minLeaderLeads: pickNum(v.min_leader_leads, RANKING_DEFAULTS.minLeaderLeads),
+    leaderMarginPct: pickNum(v.leader_margin_pct, RANKING_DEFAULTS.leaderMarginPct),
   };
+
+  if (tmplRes.error) {
+    // A missing TABLE means the month-model migration is not here yet, which
+    // is a legitimate state (the settings above still work). Any other error is
+    // a real read failure and must be visible.
+    if (!isMissingObject(tmplRes.error)) {
+      console.error('[refresh] mos_month_template read failed', tmplRes.error.code, tmplRes.error.message, '— using mos_settings.ranking');
+    }
+    return fromSettings;
+  }
+  const t = tmplRes.data as {
+    min_spend_sar: number | string | null; min_impressions: number | null;
+    min_leader_leads: number | null; leader_margin_pct: number | string | null;
+    budget_per_project: number | string | null; campaign_length_days: number | null;
+  } | null;
+  if (!t) return fromSettings;
+
+  const storedGate = t.min_spend_sar == null ? null : Number(t.min_spend_sar);
+  const minSpendSar = storedGate != null && Number.isFinite(storedGate) && storedGate > 0
+    ? storedGate
+    : deriveMinSpendSar(Number(t.budget_per_project ?? 0), Number(t.campaign_length_days ?? 30));
+
   return {
-    minSpendSar: pick(v.min_spend_sar, RANKING_DEFAULTS.minSpendSar),
-    minImpressions: pick(v.min_impressions, RANKING_DEFAULTS.minImpressions),
-    fatigueFrequency: pick(v.fatigue_frequency, RANKING_DEFAULTS.fatigueFrequency),
-    fatigueCtrDropPct: pick(v.fatigue_ctr_drop_pct, RANKING_DEFAULTS.fatigueCtrDropPct),
+    minSpendSar,
+    minImpressions: pickNum(t.min_impressions, fromSettings.minImpressions),
+    fatigueFrequency: fromSettings.fatigueFrequency,
+    fatigueCtrDropPct: fromSettings.fatigueCtrDropPct,
+    minLeaderLeads: pickNum(t.min_leader_leads, fromSettings.minLeaderLeads),
+    leaderMarginPct: pickNum(t.leader_margin_pct, fromSettings.leaderMarginPct),
   };
 }
 
@@ -308,6 +391,25 @@ function totalsOf(rows: DailyMetricRow[]): MetricTotals {
   return { spend, impressions, clicks, leads, reach, frequency };
 }
 
+/**
+ * The CREATIVE key — E2.
+ *
+ * One creative is two ads on Meta: the feed ad and its story shadow in a second
+ * ad set. `pair_id` names that pair: the feed row is SELF-paired (`pair_id =
+ * id`) and the story row carries the feed row's id, so `pair_id ?? id` is the
+ * creative for both — and for pre-2026-09-07 ads, which have no `pair_id` at
+ * all, it is simply the row's own id.
+ *
+ * Until 2026-09-15 the decision filtered `placement_variant !== 'story'` out of
+ * the slate AND read metrics over that filtered id list, so **story spend and
+ * story leads were invisible to the weekly decision**: a creative whose story
+ * did the work looked like it had spent nothing. §3.4's "the feed and story ads
+ * of one creative summed" is this function.
+ */
+export function creativeKeyOf(a: { id: string; pair_id: string | null }): string {
+  return a.pair_id ?? a.id;
+}
+
 /** The [since, until] window a cycle is judged on, plus the one before it. */
 export function windowsFor(cycle: RefreshCycleRow, previousRefreshOn: string | null, executionStart: string | null): {
   current: { since: string; until: string };
@@ -321,6 +423,40 @@ export function windowsFor(cycle: RefreshCycleRow, previousRefreshOn: string | n
     current: { since, until },
     previous: { since: addDays(since, -span), until: addDays(since, -1) },
   };
+}
+
+/** §3.6's judging window: an ad's OWN first seven days from activation. */
+export const AUDITION_DAYS = 7;
+
+/**
+ * The window one creative is judged on — E4.
+ *
+ * §3.6 is explicit: "Each ad is judged on its own first seven days from
+ * activation, never on a calendar week." The live data is why — the ads Meta
+ * favoured were scaled by day three or four and the ones it declined were
+ * declined by day three and never recovered, so a calendar week that catches
+ * one ad on day two and another on day nine compares two different questions.
+ *
+ * Clipped at `until` (the decision date), so an ad activated three days ago is
+ * judged on three days — which keeps it under the spend gate, which makes it
+ * unranked, which is exactly right: neither winner nor loser yet.
+ *
+ * Falls back to the cycle window when an ad carries no activation stamp at all.
+ * After the D2 cutover every ad the rule can ever see is one the activation
+ * step stamped, so this fallback is for pre-cutover rows and nothing else.
+ */
+export function auditionWindow(
+  activatedAt: string | null, cycleWindow: { since: string; until: string },
+): { since: string; until: string } {
+  const day = activatedAt ? activatedAt.slice(0, 10) : null;
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return cycleWindow;
+  const since = day;
+  const natural = addDays(since, AUDITION_DAYS - 1);
+  const until = natural <= cycleWindow.until ? natural : cycleWindow.until;
+  // An activation stamped after the decision date is a data error, not a
+  // window: fall back rather than invent a backwards range.
+  if (until < since) return cycleWindow;
+  return { since, until };
 }
 
 /**
@@ -353,8 +489,11 @@ export async function decideCycle(
     return null;
   }
   const allAds = (adsRes.data ?? []) as AdRow[];
-  // The slate = the PRIMARY rows on Meta (a 'story' shadow is the same creative
-  // in a second ad set and is swapped with its primary, never ranked on its own).
+  // The slate = the PRIMARY rows on Meta. A 'story' shadow is the SAME creative
+  // in a second ad set: it is swapped with its primary and never ranked on its
+  // own — but its spend and its leads belong to that creative and are summed in
+  // below on the creative key (E2). Ranking the primary while ignoring the
+  // story's numbers is what made story performance invisible until 2026-09-15.
   const onMeta = allAds.filter((a) => a.platform_ad_id && a.placement_variant !== 'story');
   const running = onMeta.filter((a) => a.status === 'running');
   const slate = running.length > 0 ? running : onMeta;
@@ -365,30 +504,96 @@ export async function decideCycle(
     log(`cycle ${cycle.id}: the child campaign has no creative on Meta — nothing to rank`);
   }
 
-  const w = windowsFor(cycle, previousRefreshOn, exec?.starts_on ?? null);
-  const ids = slate.map((a) => a.id);
+  // Every ad row behind each slate member: the primary plus its story shadow.
+  // Built over ALL ads (not the running filter) so a story whose own status row
+  // lags still contributes its numbers.
+  const membersByKey = new Map<string, AdRow[]>();
+  for (const a of allAds) {
+    const k = creativeKeyOf(a);
+    const list = membersByKey.get(k);
+    if (list) list.push(a); else membersByKey.set(k, [a]);
+  }
+  const membersOf = (a: AdRow): AdRow[] => membersByKey.get(creativeKeyOf(a)) ?? [a];
+
+  const cycleWindow = windowsFor(cycle, previousRefreshOn, exec?.starts_on ?? null);
+  const w = cycleWindow;
+
+  // Each creative is judged on ITS OWN first seven days; the read has to span
+  // the union of those windows plus the fatigue look-back.
+  const auditions = new Map<string, { since: string; until: string }>();
+  for (const a of slate) {
+    const activatedAt = membersOf(a)
+      .map((m) => m.activated_at)
+      .filter((x): x is string => !!x)
+      .sort()[0] ?? a.activated_at ?? null;
+    auditions.set(a.id, auditionWindow(activatedAt, cycleWindow.current));
+  }
+  // Fatigue reads the days just gone, not the (possibly long past) audition —
+  // see CreativeRow.fatigue. Same length as the audition so the CTR comparison
+  // is like for like.
+  const fatigueNow = { since: addDays(cycleWindow.current.until, -(AUDITION_DAYS - 1)), until: cycleWindow.current.until };
+  const fatiguePrev = { since: addDays(fatigueNow.since, -AUDITION_DAYS), until: addDays(fatigueNow.since, -1) };
+
+  const readFrom = [
+    cycleWindow.previous.since, fatiguePrev.since,
+    ...[...auditions.values()].map((x) => x.since),
+  ].sort()[0] ?? cycleWindow.previous.since;
+  const readTo = cycleWindow.current.until;
+
+  const metricIds = [...new Set(slate.flatMap((a) => membersOf(a).map((m) => m.id)))];
   let metrics: DailyMetricRow[] = [];
-  if (ids.length > 0) {
+  if (metricIds.length > 0) {
     const mRes = await sb.from('mos_ad_metrics_daily')
       .select('ad_row_id, day, spend, impressions, clicks, leads, reach, frequency')
-      .in('ad_row_id', ids).gte('day', w.previous.since).lte('day', w.current.until);
+      .in('ad_row_id', metricIds).gte('day', readFrom).lte('day', readTo);
     if (mRes.error) {
       console.error('[refresh] mos_ad_metrics_daily read failed:', mRes.error.code, mRes.error.message);
       return null;
     }
     metrics = (mRes.data ?? []) as DailyMetricRow[];
   }
-  const inWindow = (r: DailyMetricRow, from: string, to: string): boolean => r.day >= from && r.day <= to;
 
-  const rows: CreativeRow[] = slate.map((a) => ({
-    adRowId: a.id,
-    contentId: a.content_id,
-    label: a.label,
-    slotId: a.slot_id,
-    createdAt: a.activated_at ?? a.created_at,
-    current: totalsOf(metrics.filter((m) => m.ad_row_id === a.id && inWindow(m, w.current.since, w.current.until))),
-    previous: totalsOf(metrics.filter((m) => m.ad_row_id === a.id && inWindow(m, w.previous.since, w.previous.until))),
-  }));
+  // OUR leads (E3) — WhatsApp conversations whose opening message carried the
+  // ad. Meta's own `actions` lead count stays in the daily rows for display;
+  // the DECISION runs on ours, per §3.6. A read failure is surfaced and the
+  // cycle is left alone: deciding on a silent zero would price every creative
+  // at infinity and pause the whole slate.
+  let ourLeads: OurLead[] = [];
+  if (metricIds.length > 0) {
+    const res = await ourLeadsForAds(sb, metricIds, { since: readFrom, until: readTo });
+    if (res.error) {
+      console.error(`[refresh] cycle ${cycle.id}: OUR leads read failed — ${res.error}`);
+      return null;
+    }
+    ourLeads = res.leads;
+  }
+
+  const inWindow = (r: DailyMetricRow, from: string, to: string): boolean => r.day >= from && r.day <= to;
+  const sumFor = (ids: string[], from: string, to: string): MetricTotals => {
+    const totals = totalsOf(metrics.filter((m) => ids.includes(m.ad_row_id) && inWindow(m, from, to)));
+    // Meta's lead count is REPLACED by ours, de-duplicated across the pair.
+    return { ...totals, leads: leadsInWindow(ourLeads.filter((l) => ids.includes(l.adRowId)), from, to) };
+  };
+
+  const rows: CreativeRow[] = slate.map((a) => {
+    const members = membersOf(a);
+    const ids = members.map((m) => m.id);
+    const audition = auditions.get(a.id) ?? cycleWindow.current;
+    const priorSince = addDays(audition.since, -AUDITION_DAYS);
+    return {
+      adRowId: a.id,
+      contentId: a.content_id,
+      label: a.label,
+      slotId: a.slot_id,
+      createdAt: a.activated_at ?? a.created_at,
+      current: sumFor(ids, audition.since, audition.until),
+      previous: sumFor(ids, priorSince, addDays(audition.since, -1)),
+      fatigue: {
+        current: sumFor(ids, fatigueNow.since, fatigueNow.until),
+        previous: sumFor(ids, fatiguePrev.since, fatiguePrev.until),
+      },
+    };
+  });
 
   const ranking = rankCreatives(rows, w.current, settings);
 
@@ -397,14 +602,28 @@ export async function decideCycle(
     computed_at: new Date().toISOString(),
     source: 'default',
     window: ranking.window,
+    // Each creative's own judging window, so a reader can see WHY one looks
+    // unjudgeable (three days of data, not seven).
+    audition_windows: Object.fromEntries(auditions),
+    fatigue_window: fatigueNow,
     settings: ranking.settings,
+    axis: ranking.axis,
     ranked: ranking.ranked,
     unranked: ranking.unranked,
     default_keep: ranking.defaultKeep,
+    default_keeps: ranking.defaultKeeps,
     default_replace: ranking.defaultReplace,
+    flagged: ranking.flagged,
+    // The exceptions list (C7) reads this key, not a log line:
+    //   decision->'exception'->>'code' = 'ranking_empty'
+    // means the week produced no decision at all while five new creatives are
+    // about to activate against a slate nothing retired.
+    exception: ranking.exception,
     // `keep` / `replace` are what APPLY reads; until a human decides they are
     // the defaults, so an auto-apply and a human confirm take the same path.
-    keep: ranking.defaultKeep ? [ranking.defaultKeep] : [],
+    // NOTE it is `defaultKeeps` (plural): the margin guard can keep TWO, and
+    // writing only the first would pause the one it just decided to keep.
+    keep: ranking.defaultKeeps,
     replace: ranking.defaultReplace,
     reasons: ranking.reasons,
     summary: ranking.summary,
@@ -432,16 +651,22 @@ export async function decideCycle(
     entityId: cycle.id,
     title: `قرار تحديث التصاميم — الجولة ${cycle.round} (${cycle.refresh_on ?? 'بلا تاريخ'})`,
     details: [
+      ranking.exception ? `⚠ ${ranking.exception.code}` : null,
       ranking.summary.ar,
       ranking.summary.en,
       `البدائل الجاهزة: ${readyCount}/${slots.length}. / Ready replacements: ${readyCount} of ${slots.length}.`,
-    ].join('\n'),
+    ].filter((x): x is string => !!x).join('\n'),
     assigneeUserId: manager,
     dueAt,
     campaignId: exec?.campaign_id ?? null,
   }, log);
 
-  log(`cycle ${cycle.id} round ${cycle.round}: ranked ${ranking.ranked.length}, unranked ${ranking.unranked.length}, default keep=${ranking.defaultKeep ?? 'none'} replace=${ranking.defaultReplace.length} → deciding`);
+  log(`cycle ${cycle.id} round ${cycle.round}: axis=${ranking.axis}, ranked ${ranking.ranked.length}, unranked ${ranking.unranked.length}, keep=${ranking.defaultKeeps.length ? ranking.defaultKeeps.join(',') : 'none'} replace=${ranking.defaultReplace.length}${ranking.flagged.length ? ` flagged=${ranking.flagged.join(',')}` : ''} → deciding`);
+  if (ranking.exception) {
+    // Loud on purpose. With auto-apply on and no decision screen, an empty
+    // ranking is the one outcome nobody would otherwise notice.
+    console.error(`[refresh] cycle ${cycle.id}: EXCEPTION ${ranking.exception.code} — ${ranking.exception.message.en}`);
+  }
   return ranking;
 }
 
@@ -564,6 +789,69 @@ function metaIdsOf(row: AdRow, all: AdRow[]): string[] {
 }
 
 /**
+ * Ask Meta to activate a set of ad rows, then WAIT until it says they are
+ * actually live.
+ *
+ * The wait is the point. Every caller pauses something afterwards — the weekly
+ * swap pauses the outgoing creatives, the cutover pauses the legacy ones — and
+ * a replacement that never reached ACTIVE must never cause its counterpart to
+ * be paused, or the ad set dips to nothing while Meta is still thinking.
+ *
+ * A row's story shadow rides with it (`metaIdsOf`): one creative, two Meta ads,
+ * one decision.
+ *
+ * Errors are collected and returned, never thrown: one refused creative out of
+ * five is four activations, not a dead sweep.
+ */
+async function activateOnMeta(
+  meta: MetaMarketingClient, rows: AdRow[], allAds: AdRow[],
+  log: RefreshDeps['log'], label: string,
+): Promise<{ active: AdRow[]; errors: string[] }> {
+  const errors: string[] = [];
+  const attempted: AdRow[] = [];
+  for (const row of rows) {
+    const ids = metaIdsOf(row, allAds);
+    try {
+      for (const metaId of ids) await meta.setStatus(metaId, 'ACTIVE');
+      attempted.push(row);
+      log(`${label}: activation requested for ad row ${row.id} (${ids.join(', ')})`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[refresh] activation failed for ad row ${row.id}:`, msg);
+      errors.push(`${row.label ?? row.id}: ${msg}`);
+    }
+  }
+
+  const active: AdRow[] = [];
+  if (attempted.length > 0) {
+    const deadline = Date.now() + ACTIVE_DEADLINE_MS;
+    const pending = new Map(attempted.map((a) => [a.id, a]));
+    for (;;) {
+      for (const [id, row] of [...pending]) {
+        try {
+          const v = await meta.getAdIssues(row.platform_ad_id as string);
+          if (v.issues.length > 0) {
+            errors.push(`${row.label ?? id}: ${v.issues.join('; ')}`);
+            pending.delete(id);
+            console.error(`[refresh] ${id} was flagged by Meta after activation: ${v.issues.join('; ')}`);
+            continue;
+          }
+          if (v.status === 'ACTIVE') { active.push(row); pending.delete(id); }
+        } catch (e) {
+          console.error(`[refresh] effective_status poll failed for ${id}:`, e instanceof Error ? e.message : e);
+        }
+      }
+      if (pending.size === 0 || Date.now() >= deadline) break;
+      await new Promise((r) => setTimeout(r, ACTIVE_POLL_MS));
+    }
+    for (const [id, row] of pending) {
+      errors.push(`${row.label ?? id}: لم يصل إلى ACTIVE خلال ٥ دقائق / did not reach ACTIVE within 5 minutes`);
+    }
+  }
+  return { active, errors };
+}
+
+/**
  * Apply ONE cycle. The order is the contract:
  *   1. activate every ready replacement (and its story shadow);
  *   2. poll `effective_status` until ACTIVE — up to 5 minutes;
@@ -598,53 +886,28 @@ export async function applyCycle(
     return 'skipped';
   }
 
-  // ── 1. activate ────────────────────────────────────────────────────────
-  const attempted: AdRow[] = [];
-  const activationErrors: string[] = [];
-  for (const row of plan.activate) {
-    const ids = metaIdsOf(row, allAds);
-    try {
-      for (const metaId of ids) await meta.setStatus(metaId, 'ACTIVE');
-      attempted.push(row);
-      log(`cycle ${cycle.id}: activation requested for ad row ${row.id} (${ids.join(', ')})`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[refresh] activation failed for ad row ${row.id}:`, msg);
-      activationErrors.push(`${row.label ?? row.id}: ${msg}`);
-    }
+  // ── 0. the ceiling (E1b) ───────────────────────────────────────────────
+  // How many primary creatives are live BEFORE this swap, and how many the
+  // decision intends to retire. A swap that retires as many as it adds needs no
+  // cap; one that retires NOTHING — which is what an empty ranking produces —
+  // would otherwise grow the live slate by five, every week, in silence.
+  const runningBefore = allAds.filter((a) => a.placement_variant !== 'story' && a.status === 'running').length;
+  const intendedPauses = Math.min(plan.outgoing.length, plan.activate.length);
+  const capRoom = Math.max(0, planning.maxActiveCreatives - (runningBefore - intendedPauses));
+  const deferred = plan.activate.slice(capRoom);
+  const toActivate = plan.activate.slice(0, capRoom);
+  if (deferred.length > 0) {
+    log(`cycle ${cycle.id}: max_active_creatives=${planning.maxActiveCreatives} defers ${deferred.length} activation(s) (${runningBefore} live, ${intendedPauses} to retire)`);
   }
 
-  // ── 2. verify ACTIVE before anything is paused ─────────────────────────
-  const active: AdRow[] = [];
-  if (attempted.length > 0) {
-    const deadline = Date.now() + ACTIVE_DEADLINE_MS;
-    const pending = new Map(attempted.map((a) => [a.id, a]));
-    for (;;) {
-      for (const [id, row] of [...pending]) {
-        try {
-          const v = await meta.getAdIssues(row.platform_ad_id as string);
-          if (v.issues.length > 0) {
-            activationErrors.push(`${row.label ?? id}: ${v.issues.join('; ')}`);
-            pending.delete(id);
-            console.error(`[refresh] replacement ${id} was flagged by Meta after activation: ${v.issues.join('; ')}`);
-            continue;
-          }
-          if (v.status === 'ACTIVE') { active.push(row); pending.delete(id); }
-        } catch (e) {
-          console.error(`[refresh] effective_status poll failed for ${id}:`, e instanceof Error ? e.message : e);
-        }
-      }
-      if (pending.size === 0 || Date.now() >= deadline) break;
-      await new Promise((r) => setTimeout(r, ACTIVE_POLL_MS));
-    }
-    for (const [id, row] of pending) {
-      activationErrors.push(`${row.label ?? id}: لم يصل إلى ACTIVE خلال ٥ دقائق / did not reach ACTIVE within 5 minutes`);
-    }
-  }
+  // ── 1 + 2. activate, then verify ACTIVE before anything is paused ──────
+  const { active, errors: activationErrors } = await activateOnMeta(
+    meta, toActivate, allAds, log, `cycle ${cycle.id}`,
+  );
 
   // ── 3. pause outgoing — never below the minimum active count ───────────
-  const runningNow = allAds.filter((a) => a.placement_variant !== 'story' && a.status === 'running').length;
-  const activeAfter = runningNow + active.filter((a) => a.status !== 'running').length;
+  // `runningBefore` is the same count step 0 took, from the same snapshot.
+  const activeAfter = runningBefore + active.filter((a) => a.status !== 'running').length;
   const headroom = Math.max(0, activeAfter - planning.minActiveCreatives);
   const pauseCount = Math.min(active.length, plan.outgoing.length, headroom);
   // Best-ranked outgoing stay running: pause from the end of the ranked list.
@@ -723,12 +986,23 @@ export async function applyCycle(
 
   // ── 5. cycle outcome ───────────────────────────────────────────────────
   const missing = Math.max(0, plan.required - active.length);
-  const outcome: 'applied' | 'partial' = missing === 0 && activationErrors.length === 0 ? 'applied' : 'partial';
+  const outcome: 'applied' | 'partial' = missing === 0 && activationErrors.length === 0 && deferred.length === 0
+    ? 'applied' : 'partial';
   const decision = {
     ...((cycle.decision ?? {}) as Record<string, unknown>),
     applied: active.map((a) => a.id),
     paused: paused.map((a) => a.id),
     activation_errors: activationErrors,
+    // The exceptions list (C7) reads this key:
+    //   (decision->'slate_cap'->>'deferred')::int > 0
+    // means the ad set is at its ceiling and creatives that were ready did not
+    // go live. They keep their `ready` slots and the next cycle can take them.
+    slate_cap: {
+      max: planning.maxActiveCreatives,
+      running_before: runningBefore,
+      deferred: deferred.length,
+      deferred_ad_row_ids: deferred.map((a) => a.id),
+    },
     applied_at: now(),
   };
   const upd = await sb.from('mos_refresh_cycles')
@@ -738,23 +1012,31 @@ export async function applyCycle(
   if (outcome === 'partial') {
     const manager = await resolveMarketingManager(sb);
     const readyDates = await nextReadyDates(sb, cycle);
+    const capNote: Bilingual = deferred.length > 0
+      ? {
+        ar: ` سقف الإعلانات النشطة (${planning.maxActiveCreatives}) أجّل ${deferred.length} تصميمًا جاهزًا — لم يُستبعد أي تصميم هذا الأسبوع.`,
+        en: ` The active-creative ceiling (${planning.maxActiveCreatives}) deferred ${deferred.length} ready creative(s) — nothing was retired this week.`,
+      }
+      : { ar: '', en: '' };
     const detail: Bilingual = {
-      ar: `تأخر ${missing} من بدائل التحديث. المفعّل: ${active.length} من ${plan.required}. ${readyDates.ar}${activationErrors.length ? ` أخطاء: ${activationErrors.join(' | ')}` : ''}`,
-      en: `${missing} refresh replacement(s) are late. Activated ${active.length} of ${plan.required}. ${readyDates.en}${activationErrors.length ? ` Errors: ${activationErrors.join(' | ')}` : ''}`,
+      ar: `تأخر ${missing} من بدائل التحديث. المفعّل: ${active.length} من ${plan.required}. ${readyDates.ar}${capNote.ar}${activationErrors.length ? ` أخطاء: ${activationErrors.join(' | ')}` : ''}`,
+      en: `${missing} refresh replacement(s) are late. Activated ${active.length} of ${plan.required}. ${readyDates.en}${capNote.en}${activationErrors.length ? ` Errors: ${activationErrors.join(' | ')}` : ''}`,
     };
     await upsertEntityTask(sb, {
       kind: 'plan_conflict',
-      action: 'review_partial_refresh',
+      action: deferred.length > 0 ? 'review_slate_cap' : 'review_partial_refresh',
       entityKind: 'refresh_cycle',
       entityId: cycle.id,
-      title: `تأخر ${missing} من بدائل التحديث — الجولة ${cycle.round}`,
+      title: deferred.length > 0
+        ? `سقف الإعلانات النشطة أجّل ${deferred.length} تصميمًا — الجولة ${cycle.round}`
+        : `تأخر ${missing} من بدائل التحديث — الجولة ${cycle.round}`,
       details: `${detail.ar}\n${detail.en}`,
       assigneeUserId: manager,
       dueAt: cycle.refresh_on ? `${cycle.refresh_on}T06:00:00.000Z` : null,
     }, log);
   }
 
-  log(`cycle ${cycle.id}: ${outcome} — activated ${active.length}, paused ${paused.length}, missing ${missing}`);
+  log(`cycle ${cycle.id}: ${outcome} — activated ${active.length}, paused ${paused.length}, missing ${missing}, deferred ${deferred.length}`);
   return outcome;
 }
 
@@ -787,6 +1069,30 @@ async function nextReadyDates(sb: SupabaseClient, cycle: RefreshCycleRow): Promi
   };
 }
 
+/**
+ * Executions the D2 cutover pause took down and nobody put back.
+ *
+ * Read from `mos_cutover_pause_manifest`, which is the only record of what the
+ * cutover touched. A missing table means the cutover migration is not in this
+ * database — an empty set, not an error, because the guard is only meaningful
+ * where the cutover exists.
+ */
+async function cutoverBlockedExecutions(sb: SupabaseClient, executionIds: string[]): Promise<Set<string>> {
+  const ids = [...new Set(executionIds.filter(Boolean))];
+  if (ids.length === 0) return new Set();
+  const res = await sb.from('mos_cutover_pause_manifest')
+    .select('execution_id').in('execution_id', ids).is('restored_at', null);
+  if (res.error) {
+    if (isMissingObject(res.error)) return new Set();
+    // Not fatal, but not silent either: we fall through to applying, which is
+    // the pre-cutover behaviour, and say why the guard could not run.
+    console.error('[refresh] cutover manifest read failed — the re-activation guard is not running:', res.error.code, res.error.message);
+    return new Set();
+  }
+  return new Set(((res.data ?? []) as Array<{ execution_id: string | null }>)
+    .map((r) => r.execution_id).filter((x): x is string => !!x));
+}
+
 export async function applyDueCycles(deps: RefreshDeps, meta: MetaMarketingClient, planning: PlanningSettings): Promise<number> {
   const { supabase: sb, log } = deps;
   const today = riyadhToday();
@@ -804,9 +1110,25 @@ export async function applyDueCycles(deps: RefreshDeps, meta: MetaMarketingClien
     console.error('[refresh] apply-cycle read failed:', res.error.code, res.error.message);
     return 0;
   }
-  const cycles = ((res.data ?? []) as RefreshCycleRow[]).filter((c) => (
+  const dueCycles = ((res.data ?? []) as RefreshCycleRow[]).filter((c) => (
     c.status !== 'deciding' || (c.refresh_on != null && c.refresh_on <= today)
   ));
+
+  // The E5 gate. Automatic application is the one mechanism that can UNDO the
+  // D2 cutover: a cycle left open on a legacy execution would be applied on the
+  // next tick, and applying it ACTIVATES ads — the very ads the cutover paused.
+  // The cutover script closes those cycles itself, so this should never fire;
+  // it fires when something went wrong, and it must be loud rather than clever.
+  const cycles: RefreshCycleRow[] = [];
+  const blocked = await cutoverBlockedExecutions(sb, dueCycles.map((c) => c.execution_id));
+  for (const c of dueCycles) {
+    if (blocked.has(c.execution_id)) {
+      console.error(`[refresh] cycle ${c.id}: REFUSING to apply — execution ${c.execution_id} was paused by the cutover and its manifest is not restored. Applying would re-activate ads the cutover stopped. Close this cycle, or restore that run.`);
+      continue;
+    }
+    cycles.push(c);
+  }
+
   let applied = 0;
   for (const c of cycles) {
     if (c.status === 'deciding') {
@@ -816,6 +1138,144 @@ export async function applyDueCycles(deps: RefreshDeps, meta: MetaMarketingClien
     if (outcome !== 'skipped') applied += 1;
   }
   return applied;
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* 2b. Batch-date activation (E1)                                             */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Put the batch's creatives live on their own date, and STAMP `activated_at`.
+ *
+ * Ads are built paused (`planning.ads_created_paused`), so something has to
+ * turn them on. For a REFRESH cycle that something is `applyCycle`, which
+ * activates the cycle's ready replacements and pauses the outgoing in one
+ * ordered swap. For the FIRST batch of a campaign there was no such step at
+ * all: `mosMetaSetStatus` — the only thing in the codebase that can set a Meta
+ * status — had zero callers, so an initial slate would sit paused forever.
+ *
+ * This sweep is that missing step, and only that: it claims slots with no
+ * cycle (`cycle_id IS NULL`), which is precisely the set `applyCycle` never
+ * looks at. The split is deliberate and must stay — two sweeps activating the
+ * same slot would each read the other's ad as "already live" and the ceiling
+ * below would be computed twice against a moving number.
+ *
+ * `activated_at` is the whole reason the seven-day rule can be fair (§3.6):
+ * every ad the weekly decision will ever judge is one this function stamped.
+ * The only other candidate source, `min(mos_ad_metrics_daily.day)`, is the
+ * SYNC start and runs up to ten days late.
+ *
+ * The ceiling (E1b) applies here too, per execution: activating a batch is
+ * exactly the moment the live slate can grow, so a batch that would push an ad
+ * set past `max_active_creatives` activates what fits, leaves the rest `ready`
+ * for a later tick, and says so on a task.
+ */
+export async function activateDueSlots(
+  deps: RefreshDeps, meta: MetaMarketingClient, planning: PlanningSettings,
+): Promise<number> {
+  const { supabase: sb, log } = deps;
+  const today = riyadhToday();
+  const now = (): string => new Date().toISOString();
+
+  const slotsRes = await sb.from('mos_creative_slots').select(SLOT_FIELDS)
+    .eq('status', 'ready').is('cycle_id', null)
+    .not('ad_row_id', 'is', null).not('activate_on', 'is', null)
+    .lte('activate_on', today)
+    .order('execution_id', { ascending: true })
+    .order('slot_index', { ascending: true });
+  if (slotsRes.error) {
+    if (isMissingObject(slotsRes.error)) throw new MissingPlanningSchemaError(`mos_creative_slots: ${slotsRes.error.message}`);
+    console.error('[refresh] due-slot read failed:', slotsRes.error.code, slotsRes.error.message);
+    return 0;
+  }
+  const due = (slotsRes.data ?? []) as SlotRow[];
+  if (due.length === 0) return 0;
+
+  const byExecution = new Map<string, SlotRow[]>();
+  for (const slot of due) {
+    const list = byExecution.get(slot.execution_id);
+    if (list) list.push(slot); else byExecution.set(slot.execution_id, [slot]);
+  }
+
+  let activatedTotal = 0;
+  for (const [executionId, slots] of byExecution) {
+    const adsRes = await sb.from('mos_execution_ads').select(AD_FIELDS)
+      .eq('execution_id', executionId).is('archived_at', null);
+    if (adsRes.error) {
+      console.error(`[refresh] execution ${executionId} ads read failed:`, adsRes.error.message);
+      continue;
+    }
+    const allAds = (adsRes.data ?? []) as AdRow[];
+    const byId = new Map(allAds.map((a) => [a.id, a]));
+
+    // Only PRIMARY rows are activated by name; each one carries its story
+    // shadow along (metaIdsOf), so a story is never activated on its own.
+    const candidates = slots
+      .map((slot) => ({ slot, row: slot.ad_row_id ? byId.get(slot.ad_row_id) ?? null : null }))
+      .filter((x): x is { slot: SlotRow; row: AdRow } => !!x.row
+        && !!x.row.platform_ad_id
+        && x.row.placement_variant !== 'story'
+        && x.row.status !== 'running');
+    if (candidates.length === 0) continue;
+
+    const runningBefore = allAds.filter((a) => a.placement_variant !== 'story' && a.status === 'running').length;
+    const room = Math.max(0, planning.maxActiveCreatives - runningBefore);
+    const take = candidates.slice(0, room);
+    const held = candidates.slice(room);
+
+    if (take.length > 0) {
+      const { active, errors } = await activateOnMeta(
+        meta, take.map((c) => c.row), allAds, log, `execution ${executionId}`,
+      );
+      const slotOf = new Map(take.map((c) => [c.row.id, c.slot]));
+      for (const row of active) {
+        const upd = await sb.from('mos_execution_ads')
+          .update({ status: 'running', activated_at: row.activated_at ?? now(), updated_at: now() })
+          .eq('id', row.id);
+        if (upd.error) {
+          // The ad IS live on Meta and our row says otherwise. Never quiet:
+          // every later decision reads this status and this stamp.
+          console.error(`[refresh] ad row ${row.id} is ACTIVE on Meta but the status write failed:`, upd.error.message);
+          continue;
+        }
+        activatedTotal += 1;
+        const slot = slotOf.get(row.id);
+        if (slot) {
+          const s = await sb.from('mos_creative_slots')
+            .update({ status: 'active', activated_at: now(), updated_at: now() }).eq('id', slot.id);
+          if (s.error) console.error(`[refresh] slot ${slot.id} activate write failed:`, s.error.message);
+        }
+      }
+      if (errors.length > 0) {
+        console.error(`[refresh] execution ${executionId}: ${errors.length} activation error(s) — ${errors.join(' | ')}`);
+      }
+      log(`execution ${executionId}: activated ${active.length}/${take.length} batch creative(s) for ${today}`);
+    }
+
+    if (held.length > 0) {
+      const execRes = await sb.from('mos_campaign_executions')
+        .select('campaign_id').eq('id', executionId).maybeSingle();
+      if (execRes.error) console.error('[refresh] execution read failed:', execRes.error.message);
+      const manager = await resolveMarketingManager(sb);
+      const detail: Bilingual = {
+        ar: `سقف الإعلانات النشطة (${planning.maxActiveCreatives}) منع تفعيل ${held.length} تصميمًا جاهزًا؛ النشط قبل الدفعة ${runningBefore}. تبقى جاهزة وتُفعَّل حين يتراجع العدد.`,
+        en: `The active-creative ceiling (${planning.maxActiveCreatives}) held back ${held.length} ready creative(s); ${runningBefore} were already live. They stay ready and go live when the count falls.`,
+      };
+      await upsertEntityTask(sb, {
+        kind: 'plan_conflict',
+        action: 'review_slate_cap',
+        entityKind: 'campaign_execution',
+        entityId: executionId,
+        title: `سقف الإعلانات النشطة أجّل ${held.length} تصميمًا`,
+        details: `${detail.ar}\n${detail.en}`,
+        assigneeUserId: manager,
+        dueAt: `${today}T06:00:00.000Z`,
+        campaignId: (execRes.data as { campaign_id?: string | null } | null)?.campaign_id ?? null,
+      }, log);
+      console.error(`[refresh] execution ${executionId}: max_active_creatives held back ${held.length} ready creative(s)`);
+    }
+  }
+  return activatedTotal;
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -921,6 +1381,8 @@ export async function syncDailyAdMetrics(deps: RefreshDeps, meta: MetaMarketingC
 /* ────────────────────────────────────────────────────────────────────────── */
 
 export interface RefreshTickResult {
+  /** Batch creatives put live on their own date (E1). */
+  activated: number;
   decided: number;
   applied: number;
   metrics: MetricsSyncOutcome | null;
@@ -940,7 +1402,7 @@ export interface RefreshTickResult {
 export async function runRefreshCycleTick(deps: RefreshDeps): Promise<RefreshTickResult> {
   const planning = await loadPlanningSettings(deps.supabase);
   if (!planning.refreshLoopEnabled) {
-    return { decided: 0, applied: 0, metrics: { skipped: true, reason: 'planning.refresh_loop_enabled is off' }, missing: [] };
+    return { activated: 0, decided: 0, applied: 0, metrics: { skipped: true, reason: 'planning.refresh_loop_enabled is off' }, missing: [] };
   }
   const cfg = loadMetaConfig();
   const meta = cfg ? new MetaMarketingClient(cfg) : null;
@@ -960,13 +1422,17 @@ export async function runRefreshCycleTick(deps: RefreshDeps): Promise<RefreshTic
     }
   };
 
+  // Activation runs FIRST: §3.6 is "activate the five new, THEN judge the
+  // running set", and the judging reads `activated_at`, which activation is
+  // what stamps.
+  const activated = meta ? await guarded('activate', () => activateDueSlots(deps, meta, planning), 0) : 0;
   const decided = await guarded('decisions', () => sweepDecisionsDue(deps), 0);
   const applied = meta ? await guarded('apply', () => applyDueCycles(deps, meta, planning), 0) : 0;
   const metrics = meta ? await guarded('metrics', () => syncDailyAdMetrics(deps, meta), null as MetricsSyncOutcome | null) : null;
 
-  const attempted = 1 + (meta ? 2 : 0);
+  const attempted = 1 + (meta ? 3 : 0);
   if (missing.length >= attempted) {
     throw new MissingPlanningSchemaError(missing.join(' | '));
   }
-  return { decided, applied, metrics, missing };
+  return { activated, decided, applied, metrics, missing };
 }

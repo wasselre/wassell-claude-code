@@ -64,21 +64,44 @@ function fail(where: string, e: { code?: string; message: string; details?: stri
   return jsonError(500, e?.message ?? `${where} failed`);
 }
 
-/** A canonical fingerprint of everything a human approved: who, when, where. */
+/**
+ * A canonical fingerprint of everything a human approved: who, when, where.
+ *
+ * `plannedAt` is part of "when" and its absence was a hole you could drive a
+ * month through. The signature keyed on `(day, slotIndex)` only, so a re-plan
+ * that moved every post from 19:30 to 18:00 — which is exactly what a commit
+ * did while `loadRuleSet` carried no `rowPublishing` — produced a byte-identical
+ * signature. The gate that exists to catch a moved plan could not see the one
+ * thing that had moved: no 409, no diff, no toast, and the database stored a
+ * time nobody approved.
+ *
+ * Anything a human reads off the preview belongs here. A moment is read off the
+ * preview.
+ */
 export function planSignature(plan: PlanResult): string {
   const stages = plan.items.flatMap((i) =>
     i.stages.map((s) => `${i.key}|${s.stepKey}|${s.assigneeUserId ?? '-'}|${s.start}|${s.end}`));
   const places = plan.items.flatMap((i) =>
-    i.placements.map((p) => `${i.key}@${p.platform}|${p.day}|${p.slotIndex}`));
+    i.placements.map((p) => `${i.key}@${p.platform}|${p.day}|${p.slotIndex}|${p.plannedAt}`));
   return [...stages, ...places].sort().join('\n');
 }
 
-/** Human-readable difference between two plans, for the 409 body. */
+/**
+ * Human-readable difference between two plans, for the 409 body.
+ *
+ * It must index everything `planSignature` indexes, or a commit can be refused
+ * with «تحرّك 0 بندًا» — a conflict that names nothing, which is the same
+ * silence in a louder wrapper. Publishing moments are in the signature, so they
+ * are here too.
+ */
 function diffPlans(before: PlanResult, after: PlanResult): Array<{ item: string; was: string; now: string }> {
   const idx = (p: PlanResult): Map<string, string> => {
     const m = new Map<string, string>();
     for (const i of p.items) {
       for (const s of i.stages) m.set(`${i.key}|${s.stepKey}`, `${s.assigneeUserId ?? '-'} ${s.start}→${s.end}`);
+      for (const pl of i.placements) {
+        m.set(`${i.key}@${pl.platform}`, `${pl.day} #${pl.slotIndex} ${pl.plannedAt}`);
+      }
     }
     return m;
   };
@@ -97,7 +120,13 @@ function diffPlans(before: PlanResult, after: PlanResult): Array<{ item: string;
 /* input parsing                                                       */
 /* ------------------------------------------------------------------ */
 
-function parsePlanInput(raw: Record<string, unknown>, publishBufferDays: number): PlanInput | string {
+/**
+ * Exported so the month actions can re-parse a stored plan input the same way
+ * the commit does, and so the round-trip (camelCase in the row → snake_case →
+ * back) can be tested. Anything this function drops is silently absent from the
+ * commit's re-plan.
+ */
+export function parsePlanInput(raw: Record<string, unknown>, publishBufferDays: number): PlanInput | string {
   const kind = raw.kind === 'paid' ? 'paid' : 'organic';
   const rangeStart = str(raw.range_start);
   const rangeEnd = str(raw.range_end);
@@ -113,6 +142,25 @@ function parsePlanInput(raw: Record<string, unknown>, publishBufferDays: number)
     };
   }).filter((p) => p.projectId) : [];
   if (!projects.length) return 'at least one project is required';
+
+  // The month model's ROWS. They must survive the round-trip through
+  // `mos_campaign_plans.input`: the commit re-plans from this parse, and a
+  // dropped `rows` would silently turn a month of rows back into loose items
+  // and fail the signature check forever.
+  const rows = Array.isArray(raw.rows) ? (raw.rows as unknown[]).map((x) => {
+    const r = asRecord(x);
+    return {
+      rowKey: String(r.row_key ?? ''),
+      // `null` is MEANINGFUL here — the general row belongs to no project (A8b).
+      projectId: str(r.project_id),
+      projectName: str(r.project_name) ?? undefined,
+      day: String(r.day ?? ''),
+      platform: String(r.platform ?? ''),
+      posts: Math.max(0, Math.floor(Number(r.posts ?? 0) || 0)),
+      contentTypeKey: str(r.content_type_key) ?? undefined,
+      labelAr: str(r.label_ar) ?? undefined,
+    };
+  }).filter((r) => r.rowKey && r.day && r.platform && r.posts > 0) : [];
 
   const platforms = Array.isArray(raw.platforms)
     ? raw.platforms.map((p) => String(p)).filter(Boolean) : [];
@@ -158,6 +206,7 @@ function parsePlanInput(raw: Record<string, unknown>, publishBufferDays: number)
     campaignRef: str(raw.campaign_ref) ?? undefined,
     kind,
     projects,
+    rows: kind === 'organic' && rows.length ? rows : undefined,
     platforms,
     rangeStart,
     rangeEnd,
@@ -181,8 +230,14 @@ function parsePlanInput(raw: Record<string, unknown>, publishBufferDays: number)
   };
 }
 
-/** Everything the SQL commit needs to create rows, in snake_case. */
-function materialisePayload(input: PlanInput, plan: PlanResult): Record<string, unknown> {
+/**
+ * Everything the SQL commit needs to create rows, in snake_case.
+ *
+ * Exported for the same reason `parsePlanInput` is: what this function drops is
+ * silently absent from the database forever, so it is asserted by tests rather
+ * than trusted.
+ */
+export function materialisePayload(input: PlanInput, plan: PlanResult): Record<string, unknown> {
   return {
     campaign_id: input.campaignId,
     kind: input.kind,
@@ -202,11 +257,31 @@ function materialisePayload(input: PlanInput, plan: PlanResult): Record<string, 
         key: `exec:${p}`, platform: p, execution_id: null,
         publishing_rules: input.frequency.find((f) => f.platform === p) ?? null,
       }))),
+    // `mos_content_rows` — the row as a real subject (A1). The members below
+    // point back at it by `row_key`. Empty on the wizard's loose-item path.
+    rows: plan.rows.map((r) => ({
+      row_key: r.rowKey,
+      kind: r.kind,
+      project_id: r.projectId,
+      platform: r.platform,
+      execution_key: r.executionKey,
+      batch_day: r.batchDay,
+      batch_key: r.batchKey,
+      item_keys: r.itemKeys,
+      required_ready_at: r.requiredReadyAt,
+      production_start: r.productionStart,
+      slots_per_stage: r.slotsPerStage,
+      stage_deadlines: Object.fromEntries(r.stages.map((s) => [s.stepKey, s.deadline])),
+      stage_assignees: Object.fromEntries(r.stages.map((s) => [s.stepKey, s.assigneeUserId])),
+    })),
     items: plan.items.map((i) => ({
       key: i.key,
       title: i.title,
       content_type_key: i.contentTypeKey,
+      // NULL for a general-row member: it belongs to no project (A8b).
       project_id: i.projectId,
+      row_key: i.rowKey ?? null,
+      row_order: i.rowOrder ?? null,
       workflow_key: i.workflowKey,
       need_at: i.needAt,
       required_ready_at: i.requiredReadyAt,
@@ -224,6 +299,49 @@ function materialisePayload(input: PlanInput, plan: PlanResult): Record<string, 
         slot_index: i.slot.slotIndex, kind: i.slot.kind,
       } : null,
     })),
+    // `mos_publications`, one row per RELEASE — not one per placement.
+    //
+    // Every organic post in a row publishes TWICE: the square design as a FEED
+    // post carrying the caption, and the vertical design as a STORY carrying
+    // none (§3.4 rule 4). The engine has computed that pair since B3 and the
+    // totals count 96 for an October month, but this payload had no `releases`
+    // key at all, so the commit built publications from `items[].placements[]`
+    // — one per placement — and the month would have reached the database as 48
+    // feed publications and ZERO stories, with nothing anywhere reporting the
+    // loss. The columns to hold them exist (A9: `placement_variant`, `pair_id`)
+    // and the idempotency key has room for the pair since
+    // `uq_mos_publications_destination`.
+    //
+    // SEAM, deliberately: emitting them is Group B's job and it is done here.
+    // CONSUMING them — inserting one publication per entry with its variant,
+    // its pair and its caption — is B4's `mos_campaign_plan_commit`, which
+    // still builds from `placements`. Until B4 lands this key is carried and
+    // ignored, which is a visible, typed no-op rather than a silent drop: the
+    // data is in the payload, in the plan row, and in the tests.
+    releases: plan.releases.map((r) => ({
+      key: r.key,
+      item_key: r.itemKey,
+      kind: r.kind,
+      platform: r.platform,
+      execution_key: r.executionKey,
+      day: r.day,
+      planned_at: r.plannedAt,
+      account_id: r.accountId,
+      needs_person: r.needsPerson,
+      reason: r.reason,
+      assignee_user_id: r.assigneeUserId,
+      working_days: r.workingDays,
+      // The A9 discriminator. `null` for an ad and for the wizard's legacy
+      // one-release-per-placement path.
+      placement_variant: r.placementVariant,
+      // The feed release's `pairId` is its OWN key and the story carries the
+      // feed's — the same convention `mos_ad_sets` uses, so the weekly ranking
+      // can sum a creative's feed and story on one key (E2).
+      pair_id: r.pairId,
+      // A story is the picture alone. The publish path must not fall back to
+      // the approved caption for it.
+      carries_caption: r.carriesCaption,
+    })),
     batches: plan.batches.map((b) => ({
       key: b.key, execution_key: b.executionKey, platform: b.platform,
       day: b.day, sequence: b.sequence, item_keys: b.itemKeys,
@@ -237,11 +355,23 @@ function materialisePayload(input: PlanInput, plan: PlanResult): Record<string, 
   };
 }
 
-function reservationsPayload(plan: PlanResult): unknown[] {
+export function reservationsPayload(plan: PlanResult): unknown[] {
   return plan.reservations.map((r) => ({
-    item_key: r.itemKey, step_key: r.stepKey, role_key: r.roleKey, bucket: r.bucket,
+    // `item_key` is the SUBJECT's key: a content key, or the row key when
+    // `row_key` is set. `mos_plan_consume_reservation` matches on row_key for a
+    // row task (C1) — without it the task opens with no assignee and no window.
+    item_key: r.itemKey, row_key: r.rowKey,
+    step_key: r.stepKey, role_key: r.roleKey, bucket: r.bucket,
     assignee_user_id: r.assigneeUserId, planned_start: r.plannedStart,
     planned_end: r.plannedEnd, weight: r.weight,
+    // HOW the weight spreads, stated rather than inferred. SQL's re-check runs
+    // `mos_spread_effort` on everything today, which reads a row's "three slots
+    // on Monday" as "one slot on Mon, Tue and Wed" — a spurious WS409 on two
+    // days the planner never touched and a missed overbook on the one it did.
+    // `mos_spread_effort_same_day` exists (A4) and has no callers; branching on
+    // this field is its wiring, and that is B4 + C3.
+    spread: r.spread,
+    weights: r.weights,
   }));
 }
 
@@ -349,7 +479,8 @@ export async function campaignPlanRevise(ctx: PlanCtx): Promise<Response> {
 }
 
 /** The stored input is already camelCase (it is a PlanInput); re-key for the parser. */
-function toSnake(input: Record<string, unknown>): Record<string, unknown> {
+/** The stored camelCase `mos_campaign_plans.input` → the snake_case `parsePlanInput` reads. */
+export function toSnake(input: Record<string, unknown>): Record<string, unknown> {
   return {
     campaign_id: input.campaignId,
     campaign_ref: input.campaignRef,
@@ -357,6 +488,14 @@ function toSnake(input: Record<string, unknown>): Record<string, unknown> {
     projects: Array.isArray(input.projects) ? (input.projects as unknown[]).map((p) => {
       const r = asRecord(p);
       return { project_id: r.projectId, project_name: r.projectName, posts: r.posts, videos: r.videos };
+    }) : [],
+    rows: Array.isArray(input.rows) ? (input.rows as unknown[]).map((x) => {
+      const r = asRecord(x);
+      return {
+        row_key: r.rowKey, project_id: r.projectId ?? null, project_name: r.projectName,
+        day: r.day, platform: r.platform, posts: r.posts,
+        content_type_key: r.contentTypeKey, label_ar: r.labelAr,
+      };
     }) : [],
     platforms: input.platforms,
     range_start: input.rangeStart,

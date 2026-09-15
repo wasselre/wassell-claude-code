@@ -45,6 +45,27 @@ export interface PreflightResult {
   captionMax: number;
 }
 
+/** Everything the rulebook cannot read off the files themselves. */
+export interface PreflightOptions {
+  /**
+   * Block when the caption is empty (added 2026-09-15, material rule D3/D4).
+   *
+   * Until now this module checked caption LENGTH and Instagram hashtag COUNT
+   * and nothing else, so **a feed post with no caption published silently with
+   * no text.** The settled rule is NOT "an empty caption always blocks" — that
+   * would block all ten existing draft publications at once, in three surfaces.
+   * It is "block when the APPROVED WRITING has no caption", and only the
+   * caller knows whether the text it is passing came from there.
+   *
+   * So the caller decides: `publishRelease.ts` passes `true` for a managed feed
+   * post (caption resolved from the approved writing) and `false` for a story
+   * (which carries no caption by design — see the Instagram story spec below)
+   * and for every legacy publication. Default `false` = today's behaviour, so
+   * the SPA checklist and `releaseActions.requirements` are unchanged.
+   */
+  captionRequired?: boolean;
+}
+
 /** Caption ceilings per platform (bundle "Text & Character Limits" table).
  *  Instagram is 2,000 (not the folkloric 2,200); Snapchat is a brutal 160. */
 export const CAPTION_MAX: Record<string, number> = {
@@ -79,8 +100,9 @@ export function preflightPublish(
   platform: string,
   asset: PublishAssetMeta | null,
   caption: string | null | undefined,
+  opts?: PreflightOptions,
 ): PreflightResult {
-  return preflightPublishSet(platform, asset ? [asset] : [], caption);
+  return preflightPublishSet(platform, asset ? [asset] : [], caption, opts);
 }
 
 /**
@@ -99,6 +121,7 @@ export function preflightPublishSet(
   platform: string,
   assets: PublishAssetMeta[],
   caption: string | null | undefined,
+  opts?: PreflightOptions,
 ): PreflightResult {
   const captionMax = CAPTION_MAX[platform] ?? 0;
   if (!['instagram', 'tiktok', 'snapchat'].includes(platform)) {
@@ -112,6 +135,17 @@ export function preflightPublishSet(
 
   /* ── caption ─────────────────────────────────────────────────────── */
   const text = caption ?? '';
+  // The post has words to say, and they are missing. Checked FIRST because a
+  // caption-less feed post is the one failure the platform will happily accept
+  // — bundle posts it, Instagram shows a picture with no text, and nothing
+  // anywhere reports a problem. Opt-in (see PreflightOptions.captionRequired):
+  // a story passes with no caption, and every legacy publication is unchanged.
+  if (opts?.captionRequired === true && text.trim() === '') {
+    block(
+      'لا يوجد كابشن معتمد لهذا المنشور — اكتب النص واعتمده قبل النشر.',
+      'This post has no approved caption — write and approve the text before publishing.',
+    );
+  }
   if (captionMax > 0 && text.length > captionMax) {
     block(
       `الكابشن أطول من حد المنصة (${text.length} من ${captionMax} حرفًا) — قصّره.`,

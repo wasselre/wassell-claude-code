@@ -147,6 +147,51 @@ export interface ProjectRequirement {
   videos: number;
 }
 
+/**
+ * ONE ROW of organic posts — the month model's unit of work.
+ *
+ * A row is a whole posting day: three posts written in one sitting, approved
+ * together, and published as one batch. It is **one task to work, one to
+ * approve, and three slots on ONE day** in the capacity ledger — never three
+ * items scheduled independently (see `effortWeightsSameDay`).
+ *
+ * The row carries its own `day`, taken from `mos_month_template.posting_weekdays`.
+ * That is the whole point: the month model's project-separation rule is
+ * satisfied **by construction** (Sun أ · Tue ب · Thu ج · Sat general), so
+ * `distribute()` — a backtracking search — is not run at all.
+ *
+ * Read that rule carefully, because it is NOT the one `PlatformRules` enforces.
+ * `allowConsecutiveSameProject` is per POST: no two posts published back to
+ * back may share a project. A row is three posts of the SAME project five
+ * minutes apart, so the row model breaks that rule deliberately and cannot be
+ * run through `distribute()` at all. What the month guarantees instead is per
+ * DAY: **one project owns a whole posting day, and no two consecutive posting
+ * days share a project.** Do not "fix" the row back into `distribute()` on the
+ * strength of the per-post wording.
+ *
+ * `projectId` is NULLABLE: the Saturday row is the GENERAL row and belongs to no
+ * project (A8b). It is a quarter of the organic month — 4 rows and 12 posts of
+ * every 16 and 48 — so "no project" is a first-class state, never an empty
+ * string standing in for one.
+ */
+export interface RowRequirement {
+  /** Stable synthetic key — becomes `mos_content_rows.row_key`. */
+  rowKey: string;
+  /** `null` = the general row. */
+  projectId: string | null;
+  projectName?: string;
+  /** The civil publishing day. From the template; NEVER searched for. */
+  day: string;
+  /** The one destination this row publishes to. */
+  platform: string;
+  /** Members in the row (`mos_month_template.posts_per_row`, 3). */
+  posts: number;
+  /** Content type of every member. Default `post`. */
+  contentTypeKey?: string;
+  /** Arabic label used to title members when there is no project. */
+  labelAr?: string;
+}
+
 export interface PlatformFrequency {
   platform: string;
   /** Publishing slots per allowed day. */
@@ -200,6 +245,13 @@ export interface PlanInput {
   campaignRef?: string;
   kind: 'organic' | 'paid';
   projects: ProjectRequirement[];
+  /**
+   * The month model's ROW-AWARE organic path (B2). When present — and only
+   * then — `projects[].posts` / `[].videos` are ignored, every item is built
+   * from a row, and the publishing day comes from the row instead of from
+   * `distribute()`. Absent = the wizard's original loose-item path, unchanged.
+   */
+  rows?: RowRequirement[];
   /** One child campaign (execution) per platform. */
   platforms: string[];
   rangeStart: string;
@@ -228,7 +280,29 @@ export interface PlannedStage {
   end: string;
   /** The latest end the backward pass allowed. `end <= deadline` always holds. */
   deadline: string;
+  /**
+   * The step's EFFORT ESTIMATE (`mos_step_effort.working_days`) — what the work
+   * is thought to take, copied straight off `StepSpec`.
+   *
+   * It is **not** the window this stage occupies and must never be used to
+   * derive one. A ROW's stage spans ONE day whatever its step estimate says, so
+   * a `design` stage on a row reports `2` while `start === end`. Read
+   * `slotWeights` for what was actually booked.
+   */
   workingDays: number;
+  /**
+   * What this stage ACTUALLY reserved: one entry per working day of
+   * `[start, end]`, in order, each the slots charged on that day.
+   *
+   *   classic post, 2-day design → `[1, 1]` over two days
+   *   a 3-post ROW's design      → `[3]`    on one day
+   *
+   * `slotWeights.length` is the span really booked and `sum(slotWeights)` is
+   * the reservation weight. Every reservation is built from this, so the
+   * planner's load table, `PlannedReservation.weight` and the SQL re-check can
+   * no longer disagree about a stage by re-deriving it three different ways.
+   */
+  slotWeights: number[];
 }
 
 export interface PlannedPlacement {
@@ -250,9 +324,21 @@ export interface PlannedItem {
   title: string;
   contentTypeKey: string;
   bucket: ProductionBucket;
-  projectId: string;
+  /** `null` only for a member of the GENERAL row, which has no project (A8b). */
+  projectId: string | null;
   projectName?: string;
   workflowKey: string;
+  /**
+   * The row this post belongs to (`mos_content_rows.row_key`), when the plan
+   * took the row-aware path. `undefined` for a loose wizard item.
+   */
+  rowKey?: string;
+  /**
+   * The WRITER's order inside the row, 0-based (`mos_content.row_order`).
+   * Publish order is its REVERSE: Instagram shows newest first, so the post
+   * placed first is published last and ends up read first.
+   */
+  rowOrder?: number;
   /** Earliest moment the creative is needed = min over its placements. */
   needAt: string;
   requiredReadyAt: string;
@@ -306,7 +392,31 @@ export interface PlannedRelease {
   assigneeUserId: string | null;
   /** Effort charged to the `publishing` bucket. Always 0 when automatic. */
   workingDays: number;
+  /**
+   * Which placement of the destination this release is
+   * (`mos_publications.placement_variant`). `null` for an ad and for the legacy
+   * one-release-per-placement path.
+   *
+   * Every organic post publishes TWICE: the square design as a FEED post
+   * carrying the caption, and the vertical design as a STORY carrying no
+   * caption at all — same moment, same account.
+   */
+  placementVariant: PlacementVariant | null;
+  /**
+   * The creative both halves of a pair share (`mos_publications.pair_id`).
+   *
+   * Convention copied from the paid side (`mos_ad_sets`) so the weekly ranking
+   * can sum a creative's feed and story on one key: **the feed release's
+   * `pairId` is its own key** and the story carries the feed's. `null` when the
+   * release is not part of a pair.
+   */
+  pairId: string | null;
+  /** Does this release carry the approved caption? A story never does. */
+  carriesCaption: boolean;
 }
+
+/** Feed (square, caption) vs story (vertical, no caption). Mirrors `mos_publications.placement_variant`. */
+export type PlacementVariant = 'feed' | 'story';
 
 export type ReleaseKind = 'organic' | 'ad';
 
@@ -338,7 +448,15 @@ export interface PlanBatch {
 }
 
 export interface PlannedReservation {
+  /** The SUBJECT's key: an item key, or the row key when `rowKey` is set. */
   itemKey: string;
+  /**
+   * Set when the subject is a ROW (`mos_content_rows.row_key`), null for a
+   * single item. `mos_plan_consume_reservation` matches on this (C1) — a row
+   * task whose reservation cannot be found opens with no assignee and no
+   * window, silently.
+   */
+  rowKey: string | null;
   stepKey: string;
   roleKey: PathRole;
   bucket: LoadBucket;
@@ -346,6 +464,60 @@ export interface PlannedReservation {
   plannedStart: string;
   plannedEnd: string;
   weight: number;
+  /**
+   * HOW `weight` spreads across `[plannedStart, plannedEnd]` — stated, never
+   * inferred.
+   *
+   *   `per_day`  — one slot on each working day of the window
+   *                (`mos_spread_effort`, JS `effortWeights`).
+   *   `same_day` — the whole weight on `plannedStart`, which always equals
+   *                `plannedEnd` (`mos_spread_effort_same_day`,
+   *                JS `effortWeightsSameDay`).
+   *
+   * The preview computes the load in JS and `mos_campaign_plan_commit`'s
+   * conflict test recomputes it in SQL. With only `(start, end, weight)` on the
+   * wire, SQL has to GUESS which spread was meant — and it guesses `per_day`
+   * for everything today, so a row booked as three slots on Monday is
+   * re-checked as one slot on Mon/Tue/Wed: a spurious WS409 on two days the
+   * planner never touched, and a missed overbook on the day it did. Naming the
+   * mode removes the guess. (Consuming it is B4 — see `reservationsPayload`.)
+   */
+  spread: 'per_day' | 'same_day';
+  /** The per-day weights, in order — `slotWeights` of the stage this came from. */
+  weights: number[];
+}
+
+/** `mos_content_rows.kind`. A paid batch is NOT a row of three — see the plan §2. */
+export type ContentRowKind = 'organic_row' | 'general_row';
+
+/**
+ * A scheduled ROW — the subject that carries the task, the reservation and the
+ * pinned workflow version (`mos_content_rows`).
+ *
+ * Its members are `PlannedItem`s carrying the same `rowKey`. The row owns ONE
+ * production chain: each stage is ONE day charging `slotsPerStage` slots, so
+ * "three posts written in one sitting" is three slots on one day and not one
+ * slot on each of three days.
+ */
+export interface PlannedRow {
+  rowKey: string;
+  kind: ContentRowKind;
+  /** `null` for the general row (A8b). */
+  projectId: string | null;
+  projectName?: string;
+  platform: string;
+  executionKey: string;
+  /** The publishing day, from the template. */
+  batchDay: string;
+  batchKey: string;
+  /** Members in the WRITER's order (`row_order` 0…n−1). Publish order is its reverse. */
+  itemKeys: string[];
+  /** The row's one production chain — shared by every member. */
+  stages: PlannedStage[];
+  requiredReadyAt: string;
+  productionStart: string;
+  /** Slots ONE stage of this row charges, all on a single day (= member count). */
+  slotsPerStage: number;
 }
 
 export interface PlannedCycle {
@@ -379,7 +551,17 @@ export type ConflictKind =
   | 'not_enough_slots'
   | 'platform_rule'
   | 'search_incomplete'
-  | 'range_in_past';
+  | 'range_in_past'
+  /**
+   * The row's publishing moment is unusable operator data
+   * (`mos_month_template.publish_time` / `intra_row_gap_minutes`): either it is
+   * not a real `HH:MM`, or the row no longer fits before midnight and its
+   * members would collide on 23:59 in the wrong order. Both used to be
+   * swallowed inside `rowSlotTime`; both now REFUSE the plan, because a month
+   * that publishes two posts at the same second is worse than a month the
+   * operator has to fix one number in.
+   */
+  | 'publish_time';
 
 export interface PlanConflict {
   kind: ConflictKind;
@@ -398,10 +580,16 @@ export interface PlanTotals {
   placements: number;
   batches: number;
   slotDaysByBucket: Record<string, number>;
-  perProject: Array<{ projectId: string; projectName?: string; items: number }>;
+  /** `projectId` is `null` for the general row's posts — they belong to no project. */
+  perProject: Array<{ projectId: string | null; projectName?: string; items: number }>;
   perPlatform: Array<{ platform: string; placements: number }>;
-  /** Releases, split by who does them. `automatic + manual === total`. */
-  releases: { total: number; automatic: number; manual: number };
+  /**
+   * Releases, split by who does them (`automatic + manual === total`) and by
+   * placement (`feed + story <= total`; an ad is neither).
+   */
+  releases: { total: number; automatic: number; manual: number; feed: number; story: number };
+  /** Rows, when the plan took the row-aware path. */
+  rows?: { total: number; general: number; posts: number };
   /** Paid: the creative forecast. */
   creatives?: { initial: number; replacements: number; fifths: number; total: number; cycles: number };
 }
@@ -421,8 +609,10 @@ export interface PlanResult {
   searchIncomplete: boolean;
   searchStats: { expansions: number; backtracks: number; budget: number };
   items: PlannedItem[];
+  /** The rows the items belong to. Empty on the loose-item (wizard) path. */
+  rows: PlannedRow[];
   batches: PlanBatch[];
-  /** One per destination per date. See `PlannedRelease`. */
+  /** One per destination per date — TWO per organic post in a row (feed + story). */
   releases: PlannedRelease[];
   reservations: PlannedReservation[];
   cycles: PlannedCycle[];

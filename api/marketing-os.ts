@@ -855,9 +855,18 @@ function computeSurfaces(held: string[], accessRows: unknown[]): Record<SurfaceK
  * synthesized with id = key below) — one stable identifier across versions.
  */
 function mapRoleTask(t: Record<string, unknown>): Record<string, unknown> {
+  // A ROW task's subject is a `mos_content_rows` id, not a content item. Handing
+  // that id back as `content_id` would give the SPA an id that resolves to
+  // nothing, so the row is named in its own fields instead. `subject_table` and
+  // `subject_id` are always present; older readers that only know `content_id`
+  // simply do not see row tasks, which is the safe direction.
+  const isRow = t.subject_table === 'mos_content_rows';
   return {
     id: t.id,
-    content_id: t.subject_id,
+    content_id: isRow ? null : t.subject_id,
+    subject_table: (t.subject_table as string | undefined) ?? 'mos_content',
+    subject_id: t.subject_id,
+    row_id: isRow ? t.subject_id : null,
     step_id: t.step_key ?? null,
     role: t.role_key,
     assignee_user_id: t.assignee_user_id ?? null,
@@ -1136,6 +1145,140 @@ async function listManualTasks(
   return { rows: rows.data ?? [] };
 }
 
+/* ------------------------------------------------------------------ */
+/* C8 — ONE definition of "mine": the person-keyed queue               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * There used to be FOUR definitions of "my work" in this file, and they
+ * disagreed:
+ *   · `work_list` filtered `mos_content_v.owner_role` (a ROLE) while its own
+ *     manual-task half filtered `assignee_user_id` (a PERSON);
+ *   · `perf_me` filtered tasks by person and omitted manual tasks entirely;
+ *   · `perf_desk` pulled every open task and grouped in the browser.
+ * All three now go through the helpers below, and the LOAD half of all three
+ * reads `mos_work_ledger_v` — the only union of workflow tasks + reservations
+ * + manual tasks in the system.
+ *
+ * "Mine" is a PERSON, with one deliberate widening: a task nobody holds yet is
+ * still reachable by the role that owns it. That is not a second definition,
+ * it is the same queue including unclaimed work — and it is load-bearing,
+ * because `mos_role_load.daily_new_tasks` is 0 for `ceo` and `ops_supervisor`,
+ * so those roles' tasks open with NO assignee. (`mos_perf_place_open_task` now
+ * logs exactly which of those reasons applied, instead of swallowing it.)
+ */
+interface QueueSelector {
+  /** The app-users id whose queue this is. Null under an admin role preview. */
+  userId: string | null;
+  /** Roles whose unassigned work also counts as mine. */
+  roles: readonly string[];
+  /** The whole team's board, not one person's. */
+  team: boolean;
+}
+
+/** Every column the queue screens read off an open task. */
+const QUEUE_TASK_COLUMNS = [
+  'id', 'subject_table', 'subject_id', 'workflow_version_id', 'step_key', 'role_key',
+  'assignee_user_id', 'status', 'result', 'note', 'revision_targets', 'round',
+  'opened_at', 'due_at', 'closed_at', 'closed_by_user_id', 'bucket',
+  'blocked', 'blocked_reason', 'late_flag',
+  'scheduled_start', 'scheduled_end', 'effort_days', 'progress_days', 'reservation_id',
+].join(', ');
+
+/** The row facts the queue needs to render a row card (kind, batch day, members). */
+interface RowSummary {
+  row_id: string;
+  kind: string;
+  batch_day: string | null;
+  row_key: string | null;
+  campaign_id: string | null;
+  project_id: string | null;
+  plan_id: string | null;
+  workflow_version_id: string | null;
+  member_count: number;
+  member_ids: string[];
+}
+
+/**
+ * Open workflow tasks for one person (or the whole team), across BOTH subject
+ * kinds. Filtering on `subject_table = 'mos_content'` — which every queue read
+ * used to do — makes row work invisible: the row IS the task now.
+ */
+async function readOpenQueueTasks(
+  sb: SupabaseClient,
+  sel: QueueSelector,
+): Promise<{ tasks: Array<Record<string, unknown>> } | { fail: Response }> {
+  let q = sb.from('workflow_role_tasks')
+    .select(QUEUE_TASK_COLUMNS)
+    .eq('status', 'open')
+    .in('subject_table', ['mos_content', 'mos_content_rows']);
+
+  if (!sel.team) {
+    const roles = sel.roles.filter((r) => (MOS_ROLE_KEYS as readonly string[]).includes(r));
+    const clauses: string[] = [];
+    if (sel.userId) clauses.push(`assignee_user_id.eq.${sel.userId}`);
+    if (roles.length > 0) {
+      clauses.push(`and(assignee_user_id.is.null,role_key.in.(${roles.join(',')}))`);
+    }
+    // No person AND no queue-bearing role → an empty queue, never everyone's.
+    if (clauses.length === 0) return { tasks: [] };
+    q = q.or(clauses.join(','));
+  }
+
+  const res = await q.order('due_at', { ascending: true, nullsFirst: false }).limit(500);
+  const f = dbFail(res.error);
+  if (f) return { fail: f };
+  return { tasks: (res.data ?? []) as unknown as Array<Record<string, unknown>> };
+}
+
+/**
+ * The rows behind a set of row tasks. Read through the definer RPC rather than
+ * `mos_content_rows` directly: that table carries RLS with ZERO policies today,
+ * so a browser SELECT on it returns an empty set with NO error — a row card
+ * would silently vanish from the queue.
+ */
+async function readRowSummaries(
+  sb: SupabaseClient,
+  rowIds: string[],
+): Promise<{ rows: RowSummary[] } | { fail: Response }> {
+  if (rowIds.length === 0) return { rows: [] };
+  const res = await sb.rpc('mos_row_summary', { p_row_ids: rowIds });
+  const f = dbFail(res.error);
+  if (f) return { fail: f };
+  return { rows: (res.data ?? []) as unknown as RowSummary[] };
+}
+
+/** One person-day-bucket of booked load, straight from the ledger view. */
+interface LedgerRow {
+  user_id: string;
+  day: string;
+  bucket: string;
+  weight: number;
+  source: string;
+  ref_id: string;
+}
+
+/**
+ * The booked load. `mos_work_ledger_v` already charges a ROW's whole weight on
+ * a single production day (three posts, three slots, one day) and spreads
+ * everything else across working days, so no caller needs to know the rule.
+ */
+async function readWorkLedger(
+  sb: SupabaseClient,
+  opts: { userIds?: string[] | null; days?: number },
+): Promise<{ ledger: LedgerRow[] } | { fail: Response }> {
+  const horizon = new Date(Date.now() + 3 * 3600 * 1000);
+  horizon.setUTCDate(horizon.getUTCDate() + Math.max(1, Math.min(opts.days ?? 21, 120)));
+  let q = sb.from('mos_work_ledger_v')
+    .select('user_id, day, bucket, weight, source, ref_id')
+    .lte('day', horizon.toISOString().slice(0, 10));
+  if (opts.userIds && opts.userIds.length > 0) q = q.in('user_id', opts.userIds);
+  const res = await q.limit(5000);
+  const f = dbFail(res.error);
+  if (f) return { fail: f };
+  return { ledger: (res.data ?? []) as unknown as LedgerRow[] };
+}
+
 /**
  * The pinned path each listed subject is following: its open task's step key +
  * the pinned workflow version's steps. Screens 02 («القادم إليك») and 35 (the
@@ -1155,7 +1298,9 @@ async function loadPinnedStepMeta(
 
   const taskRes = await sb.from('workflow_role_tasks')
     .select('subject_id, step_key, workflow_version_id')
-    .eq('subject_table', 'mos_content')
+    // BOTH subject kinds: a row pins its own workflow version, and the ids are
+    // uuids, so a caller that only passes content ids is unaffected.
+    .in('subject_table', ['mos_content', 'mos_content_rows'])
     .in('subject_id', subjectIds)
     .eq('status', 'open');
   if (taskRes.error) {
@@ -4927,40 +5072,61 @@ export default async function handler(req: Request): Promise<Response> {
           }
         }
 
-        let q = sb.from('mos_content_v')
-          .select(CONTENT_LIST_COLUMNS)
-          .is('archived_at', null)
-          .not('status_key', 'in', '("draft","done")');
-        // 'mine' filters to the role the open task sits with. An administrator
-        // has no queue of their own, so they see the team board instead of an
-        // empty screen that would read as "nothing to do".
-        if (scope === 'mine' && myRole !== 'administrator') q = q.eq('owner_role', myRole);
+        // C8 — ONE definition of "mine", and it is a PERSON. The queue starts
+        // from the OPEN TASKS that are mine (or unclaimed in a role I hold),
+        // across BOTH subject kinds, and the content list is derived from them.
+        // It used to start from `mos_content_v.owner_role`, a role filter that
+        // disagreed with the manual-task half of this very handler — and which
+        // cannot see a row task at all, because a row is not a content item.
+        // An administrator has no queue of their own, so they keep seeing the
+        // team board rather than an empty screen that reads as "nothing to do".
+        const meUserId = await resolveAppUserId(sb, user.userId);
+        const teamBoard = scope === 'team' || (scope === 'mine' && myRole === 'administrator');
+        const queue = await readOpenQueueTasks(sb, {
+          // Under an admin's role preview the queue is that ROLE's, not the
+          // admin's own — display only, exactly as bootstrap treats the header.
+          userId: eff.previewRole ? null : meUserId,
+          roles: [myRole],
+          team: teamBoard,
+        });
+        if ('fail' in queue) return queue.fail;
 
-        const rows = await q.order('current_task_due_at', { ascending: true, nullsFirst: false })
-          .limit(cap(body.limit, 300, 500));
-        const f = dbFail(rows.error);
-        if (f) return f;
+        // A row task's subject is the ROW; its three posts are the members.
+        const rowIds = Array.from(new Set(queue.tasks
+          .filter((t) => t.subject_table === 'mos_content_rows')
+          .map((t) => String(t.subject_id))));
+        const rowSummaries = await readRowSummaries(sb, rowIds);
+        if ('fail' in rowSummaries) return rowSummaries.fail;
+        const membersByRow = new Map(rowSummaries.rows.map((r) => [r.row_id, r.member_ids ?? []]));
 
-        // The item's own open task carries the step key we need to name the action.
-        const ids = (rows.data ?? []).map((r) => (r as unknown as Row).id);
-        let tasks: unknown[] = [];
+        const ids = Array.from(new Set([
+          ...queue.tasks.filter((t) => t.subject_table === 'mos_content').map((t) => String(t.subject_id)),
+          ...rowIds.flatMap((rid) => membersByRow.get(rid) ?? []),
+        ]));
+
+        let contentRows: Array<Record<string, unknown>> = [];
         if (ids.length > 0) {
-          const t = await sb.from('workflow_role_tasks').select('*')
-            .eq('subject_table', 'mos_content')
-            .in('subject_id', ids)
-            .eq('status', 'open');
-          const tf = dbFail(t.error);
-          if (tf) return tf;
-          tasks = (t.data ?? []).map((row) => mapRoleTask(row as Record<string, unknown>));
+          const rows = await sb.from('mos_content_v')
+            .select(CONTENT_LIST_COLUMNS)
+            .in('id', ids)
+            .is('archived_at', null)
+            .order('current_task_due_at', { ascending: true, nullsFirst: false })
+            .limit(cap(body.limit, 300, 500));
+          const f = dbFail(rows.error);
+          if (f) return f;
+          contentRows = (rows.data ?? []) as unknown as Array<Record<string, unknown>>;
         }
+
+        let tasks: unknown[] = queue.tasks.map((row) => mapRoleTask(row));
 
         // Pinned-version steps for the listed tasks — one read drives both the
         // approval split on screen 35 (is_approval / approval_kind per task)
-        // and screen 02's «القادم إليك» band below.
-        const stepMeta = await loadPinnedStepMeta(sb, ids);
+        // and screen 02's «القادم إليك» band below. Keyed on SUBJECT id, so a
+        // row task resolves against the version pinned on the ROW.
+        const stepMeta = await loadPinnedStepMeta(sb, Array.from(new Set([...ids, ...rowIds])));
         if ('fail' in stepMeta) return stepMeta.fail;
         tasks = (tasks as Array<Record<string, unknown>>).map((t) => {
-          const meta = stepMeta.bySubject.get(t.content_id as string);
+          const meta = stepMeta.bySubject.get(t.subject_id as string);
           const step = meta?.steps.find((s) => s.key === t.step_id);
           return {
             ...t,
@@ -5019,17 +5185,31 @@ export default async function handler(req: Request): Promise<Response> {
         // repeating task exists as a real row before we read (see
         // mos_task_series_materialize: pg_cron is not enabled on this project).
         const manual = await listManualTasks(sb, {
-          scope: scope === 'team' ? 'team' : 'mine',
-          meUserId: await resolveAppUserId(sb, user.userId),
+          scope: teamBoard ? 'team' : 'mine',
+          meUserId: meUserId,
         });
         if ('fail' in manual) return manual.fail;
 
+        // The booked load behind this queue, from the one union view. A row is
+        // already charged as three slots on ONE day in there.
+        const ledger = await readWorkLedger(sb, {
+          userIds: teamBoard || !meUserId ? null : [meUserId],
+          days: 21,
+        });
+        if ('fail' in ledger) return ledger.fail;
+
         return jsonOk({
           role: myRole,
-          content: await withContentPreviews(sb, (rows.data ?? []) as unknown as Array<Record<string, unknown>>),
+          content: await withContentPreviews(sb, contentRows),
           tasks,
           upcoming,
           manual_tasks: manual.rows,
+          // Added 2026-09-15 (C8). Purely additive — every key above keeps its
+          // meaning, so no existing reader changes.
+          rows: rowSummaries.rows,
+          ledger: ledger.ledger,
+          scope: teamBoard ? 'team' : 'mine',
+          me_user_id: meUserId,
         });
       }
 
@@ -8861,9 +9041,14 @@ export default async function handler(req: Request): Promise<Response> {
           sb.from('mos_perf_kpi_goals').select('*').eq('month_key', month),
           sb.from('mos_perf_kpi_results').select('*'),
           sb.from('mos_perf_kpi_recipients').select('*'),
+          // C8: the SAME queue «مهامي» shows, not a second definition of it.
+          // The old read filtered `subject_table = 'mos_content'` implicitly by
+          // never naming it and omitted manual tasks entirely, so a person's
+          // profile disagreed with their own queue screen.
           sb.from('workflow_role_tasks')
-            .select('id, subject_id, step_key, role_key, bucket, opened_at, due_at, late_flag, blocked')
+            .select('id, subject_table, subject_id, step_key, role_key, bucket, opened_at, due_at, late_flag, blocked')
             .eq('status', 'open').eq('assignee_user_id', appUserId)
+            .in('subject_table', ['mos_content', 'mos_content_rows'])
             .order('due_at', { ascending: true }),
           sb.from('mos_perf_settings').select('*').maybeSingle(),
           sb.rpc('wassell_mos_roles'),
@@ -8890,6 +9075,14 @@ export default async function handler(req: Request): Promise<Response> {
               || (r.subject_kind === 'role' && roleIds.has(r.subject_id)))))
           .map((g) => ({ ...g, result: resultById.get(g.id) ?? null }));
 
+        // C8: hand-assigned work and the booked load, from the same two places
+        // «مهامي» reads them. `ledger` here is the XP ledger (it predates the
+        // work ledger and keeps its name); the load is `work_ledger`.
+        const myManual = await listManualTasks(sb, { scope: 'mine', meUserId: appUserId });
+        if ('fail' in myManual) return myManual.fail;
+        const myLoad = await readWorkLedger(sb, { userIds: [appUserId], days: 21 });
+        if ('fail' in myLoad) return myLoad.fail;
+
         return jsonOk({
           xp_total: xpTotal,
           ledger: ledgerRes.data ?? [],
@@ -8902,6 +9095,9 @@ export default async function handler(req: Request): Promise<Response> {
           open_tasks: myTasksRes.data ?? [],
           settings: settingsRes.data ?? null,
           month,
+          // Added 2026-09-15 (C8). Additive: every key above is unchanged.
+          manual_tasks: myManual.rows,
+          work_ledger: myLoad.ledger,
         });
       }
 
@@ -8919,12 +9115,12 @@ export default async function handler(req: Request): Promise<Response> {
           sb.from('mos_reward_claims').select('*').eq('status', 'requested'),
           sb.from('mos_leaves').select('*').eq('status', 'requested'),
           sb.from('workflow_role_tasks')
-            .select('id, subject_id, step_key, role_key, bucket, assignee_user_id, due_at, blocked, blocked_reason, late_flag')
+            .select('id, subject_table, subject_id, step_key, role_key, bucket, assignee_user_id, due_at, blocked, blocked_reason, late_flag')
             .eq('status', 'open').or('blocked.eq.true,late_flag.eq.true'),
           sb.from('mos_role_load').select('role_id, bucket, daily_new_tasks'),
           sb.from('roles').select('id, key, label_ar, label_en').eq('domain', 'marketing'),
           sb.from('workflow_role_tasks')
-            .select('role_key, bucket, assignee_user_id, opened_at, status')
+            .select('role_key, subject_table, bucket, assignee_user_id, opened_at, status')
             .eq('status', 'open'),
           sb.from('mos_posting_targets').select('*').eq('active', true),
           sb.from('mos_perf_kpi_goals').select('*').eq('month_key', month),
@@ -8966,6 +9162,20 @@ export default async function handler(req: Request): Promise<Response> {
           }));
 
         const resultById2 = new Map(((resultsRes.data ?? []) as Array<{ goal_id: string }>).map((r) => [r.goal_id, r]));
+
+        // C8: the desk's load heatmap now reads the SAME union view the queue
+        // does, instead of re-deriving load in the browser from open tasks
+        // alone — which counted neither reservations nor manual tasks, and
+        // charged a row across three days instead of one.
+        const deskLoad = await readWorkLedger(sb, {
+          userIds: people.map((p) => p.user_id),
+          days: 21,
+        });
+        if ('fail' in deskLoad) return deskLoad.fail;
+        const capRes = await sb.from('mos_user_capacity').select('user_id, bucket, daily_slots');
+        const capFail = dbFail(capRes.error);
+        if (capFail) return capFail;
+
         return jsonOk({
           month,
           people,
@@ -8984,6 +9194,9 @@ export default async function handler(req: Request): Promise<Response> {
           })),
           production_days_per_week: (deskSettingsRes.data as { production_days_per_week?: number } | null)
             ?.production_days_per_week ?? 6,
+          // Added 2026-09-15 (C8). Additive: every key above is unchanged.
+          work_ledger: deskLoad.ledger,
+          user_capacity: capRes.data ?? [],
         });
       }
 

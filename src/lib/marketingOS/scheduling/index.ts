@@ -8,7 +8,7 @@ export * from './calendar';
 export * from './types';
 export * from './defaults';
 export * from './platforms';
-export { effortWeights, CapacityBook } from './ledger';
+export { effortWeights, effortWeightsSameDay, CapacityBook } from './ledger';
 export { forecastCycles, creativeTotals, type CycleForecast } from './refresh';
 export { computeDeadlines, scheduleProduction } from './schedule';
 export {
@@ -17,5 +17,7 @@ export {
 } from './distribute';
 export { planCampaign, DEFAULT_RULES, type RuleSet } from './plan';
 export {
-  buildReleases, releaseTotals, releaseReason, DEFAULT_PUBLISHING, type PublishingRules,
+  buildReleases, releaseTotals, releaseReason, rowSlotTime, rowReleaseInstant, checkRowPublishing,
+  DEFAULT_PUBLISHING, DEFAULT_ROW_PUBLISHING,
+  type PublishingRules, type RowPublishing, type RowPublishingCheck,
 } from './releases';

@@ -422,7 +422,15 @@ async function writeCaption(
 /* ────────────────────────────────────────────────────────────────────────── */
 
 async function resolveSlots(sb: SupabaseClient, content: ContentRow): Promise<SlotMedia[]> {
-  const links = await sb.from('mos_asset_links').select('asset_id, role').eq('content_id', content.id);
+  // `superseded_at IS NULL` = the CURRENT version of each slot. This reader was
+  // the only slot reader missing it (`content_ad_readiness` and
+  // `mos_content_design_hash` both have it), which was harmless only because
+  // every one of the 38 links live is still at version 1. On the first
+  // re-upload the old row stays behind with `superseded_at` set, `.find()`
+  // would return whichever row Postgres handed back first, and Meta would get
+  // the SUPERSEDED design with no error anywhere.
+  const links = await sb.from('mos_asset_links').select('asset_id, role')
+    .eq('content_id', content.id).is('superseded_at', null);
   if (links.error) throw new Error(`asset links: ${links.error.message}`);
   const rows = (links.data ?? []) as Array<{ asset_id: string; role: string }>;
   const byRole = (r: string): string | null => rows.find((x) => x.role === r)?.asset_id ?? null;

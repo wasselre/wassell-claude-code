@@ -28,8 +28,11 @@
  * PURE.
  */
 import type { WorkCalendar } from './calendar';
-import { addWorkingDays, daysBetween, isWorkingDay, nextWorkingDay, prevWorkingDay, workingWindowEndingAt } from './calendar';
-import { CapacityBook, effortWeights } from './ledger';
+import {
+  addWorkingDays, daysBetween, isWorkingDay, nextWorkingDay, prevWorkingDay,
+  workingDaysIn, workingWindowEndingAt,
+} from './calendar';
+import { CapacityBook, effortWeights, effortWeightsSameDay } from './ledger';
 import type {
   LoadBucket, PathRole, PlanConflict, PlannedStage, StepSpec, WorkflowSpec,
 } from './types';
@@ -44,6 +47,20 @@ export interface ScheduleItem {
   /** Working days between the final approval and the need day. */
   publishBufferDays: number;
   lockedAssignees?: Record<string, string>;
+  /**
+   * SAME-DAY mode — the subject is a ROW of N posts worked in one sitting.
+   *
+   * Every stage then occupies exactly ONE day and charges `sameDaySlots` slots
+   * on it (`effortWeightsSameDay`), instead of one slot on each of
+   * `step.workingDays` days. The step's day-estimate is deliberately ignored:
+   * the month model counts throughput as one number per person per day (the
+   * proposal's §0 — the second knob, "days per task", is what silently halved
+   * the designer and produced a false "does not fit"), and A5 removed the
+   * per-step effort rows for posts for exactly that reason.
+   *
+   * `undefined` = the classic path, untouched.
+   */
+  sameDaySlots?: number;
 }
 
 export interface ScheduledItem {
@@ -85,13 +102,29 @@ function productionSteps(wf: WorkflowSpec): StepSpec[] {
 const labelAr = (s: StepSpec): string => s.labelAr || s.key;
 
 /**
+ * The per-day weights ONE stage of `item` consumes.
+ *
+ * Classic: `effortWeights(step.workingDays)` — N days, one slot each.
+ * Row (`sameDaySlots`): one day carrying every member's slot.
+ */
+function stageWeights(step: StepSpec, sameDaySlots?: number): number[] {
+  return sameDaySlots && sameDaySlots > 0
+    ? effortWeightsSameDay(sameDaySlots)
+    : effortWeights(step.workingDays);
+}
+
+/**
  * Backward deadlines: the last production step ends on the required-ready day,
- * and every earlier step must END `effort(next)` working days before that.
+ * and every earlier step must END `span(next)` working days before that.
+ *
+ * `spanOf` overrides how long a step occupies; a ROW passes `() => 1`, because
+ * each of its stages is one sitting on one day.
  */
 export function computeDeadlines(
   steps: StepSpec[],
   requiredReadyAt: string,
   cal: WorkCalendar,
+  spanOf: (step: StepSpec) => number = (step) => effortWeights(step.workingDays).length,
 ): string[] {
   const out: string[] = new Array<string>(steps.length).fill(requiredReadyAt);
   if (!steps.length) return out;
@@ -99,19 +132,21 @@ export function computeDeadlines(
   for (let i = steps.length - 2; i >= 0; i -= 1) {
     const next = steps[i + 1];
     const later = out[i + 1] ?? requiredReadyAt;
-    const nextSpan = effortWeights(next ? next.workingDays : 1).length;
+    const nextSpan = next ? spanOf(next) : 1;
     out[i] = addWorkingDays(later, -nextSpan, cal);
   }
   return out;
 }
 
 /** Earliest possible end for each step given `today` and infinite people. */
-function earliestEnds(steps: StepSpec[], today: string, cal: WorkCalendar): string[] {
+function earliestEnds(
+  steps: StepSpec[], today: string, cal: WorkCalendar, spanOf: (step: StepSpec) => number,
+): string[] {
   const out: string[] = new Array<string>(steps.length).fill(today);
   let cursor = nextWorkingDay(today, cal);
   for (let i = 0; i < steps.length; i += 1) {
     const step = steps[i];
-    const span = effortWeights(step ? step.workingDays : 1).length;
+    const span = step ? spanOf(step) : 1;
     const end = addWorkingDays(cursor, span - 1, cal);
     out[i] = end;
     cursor = addWorkingDays(end, 1, cal);
@@ -143,14 +178,15 @@ export function scheduleProduction(
 
   for (const it of ordered) {
     const prod = productionSteps(it.workflow);
+    const spanOf = (step: StepSpec): number => stageWeights(step, it.sameDaySlots).length;
     let ready = it.needDay;
     for (let i = 0; i < Math.max(0, it.publishBufferDays); i += 1) ready = addWorkingDays(ready, -1, cal);
     if (it.publishBufferDays <= 0) ready = prevWorkingDay(it.needDay, cal);
-    const deadlines = computeDeadlines(prod, ready, cal);
+    const deadlines = computeDeadlines(prod, ready, cal, spanOf);
     perItem.set(it.key, { requiredReadyAt: ready, prod, deadlines });
 
     // ---- sound bound #1: time. Even with infinite people, does the chain fit?
-    const est = earliestEnds(prod, today, cal);
+    const est = earliestEnds(prod, today, cal, spanOf);
     for (let i = 0; i < prod.length; i += 1) {
       const step = prod[i];
       const earliest = est[i];
@@ -177,7 +213,7 @@ export function scheduleProduction(
       const step = prod[i];
       const due = deadlines[i];
       if (!step || !due) continue;
-      const w = effortWeights(step.workingDays);
+      const w = stageWeights(step, it.sameDaySlots);
       reqs.push({
         itemKey: it.key,
         priority: it.priority,
@@ -285,7 +321,13 @@ export function scheduleProduction(
           start: winStart,
           end: winEnd,
           deadline: r.deadline,
+          // The step's ESTIMATE, kept for display and for the effort screens.
           workingDays: r.step.workingDays,
+          // What was actually reserved, day by day. For a ROW this is `[3]` on
+          // one day while `workingDays` still reads the step's `2` — recording
+          // only the estimate left every reader to re-derive the booking from a
+          // number that does not describe it.
+          slotWeights: r.weights.slice(0, win.length),
         });
         if (dfs(idx + 1)) return true;
         backtracks += 1;
@@ -351,8 +393,13 @@ export function scheduleProduction(
   for (const st of result.values()) {
     for (const s of st.stages) {
       if (!s.assigneeUserId) continue;
-      const win = workingWindowEndingAt(s.end, effortWeights(s.workingDays).length, cal);
-      for (const d of win) touched.push({ userId: s.assigneeUserId, day: d, bucket: s.bucket });
+      // The window ACTUALLY booked, read off the stage itself. Recomputing it
+      // from `effortWeights(s.workingDays)` was right only while every stage
+      // spanned its own effort; a row's stage spans ONE day whatever its step
+      // estimate says, and the load table would have missed its cells.
+      for (const d of workingDaysIn(s.start, s.end, cal)) {
+        touched.push({ userId: s.assigneeUserId, day: d, bucket: s.bucket });
+      }
     }
   }
 
