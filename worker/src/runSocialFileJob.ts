@@ -80,6 +80,34 @@ function mimeFor(ext: string, mime: string | null, kind: string): string {
 }
 
 /**
+ * MIRROR of snapAspectRatio() in src/lib/files/mediaProbe.ts — the browser
+ * probe fills this for an upload, but an intake file never passes through a
+ * browser, so 711 of them had no ratio and fell out of the Library's
+ * aspect-ratio filter. Same table, same 4% tolerance: change both together.
+ */
+const COMMON_RATIOS: Array<[number, number]> = [
+  [1, 1], [16, 9], [9, 16], [4, 3], [3, 4], [3, 2], [2, 3],
+  [21, 9], [4, 5], [5, 4], [2, 1], [1, 2], [16, 10], [10, 16],
+];
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a); let y = Math.abs(b);
+  while (y) { [x, y] = [y, x % y]; }
+  return x || 1;
+}
+export function snapAspectRatio(w: number | null, h: number | null): string | null {
+  if (!w || !h || w <= 0 || h <= 0) return null;
+  const r = w / h;
+  let best = COMMON_RATIOS[0]!; let bestDiff = Infinity;
+  for (const c of COMMON_RATIOS) {
+    const diff = Math.abs(r - c[0] / c[1]);
+    if (diff < bestDiff) { bestDiff = diff; best = c; }
+  }
+  if (bestDiff / (best[0] / best[1]) <= 0.04) return `${best[0]}:${best[1]}`;
+  const g = gcd(Math.round(w), Math.round(h));
+  return `${Math.round(w / g)}:${Math.round(h / g)}`;
+}
+
+/**
  * A UNIT PLAN, recognised from the words the OCR already read off the image.
  *
  * Competitors post floor plans inside ordinary carousels, so classifying every
@@ -166,12 +194,17 @@ export async function runSocialFileJob({ supabase, job }: { supabase: SupabaseCl
   // What the OCR read off each image, so a floor plan posted inside a carousel
   // is filed as one instead of as a designed creative.
   const ocrByMedia = new Map<string, string>();
-  if (pending.some((m) => m.media_kind === 'image')) {
+  if (pending.length > 0) {
     const { data: visual, error: vErr } = await supabase
       .from('mkt_visual_text').select('content_media_id, text').eq('content_post_id', postId);
     if (vErr) console.error(`[social-file] visual text unavailable for ${postId}: ${vErr.message}`);
+    // A video has several sampled frames; join them so the file carries
+    // everything the reader saw on screen.
     for (const v of (visual ?? []) as Array<{ content_media_id: string; text: string | null }>) {
-      if (v.content_media_id && v.text) ocrByMedia.set(v.content_media_id, v.text);
+      if (!v.content_media_id || !v.text?.trim()) continue;
+      const prev = ocrByMedia.get(v.content_media_id);
+      ocrByMedia.set(v.content_media_id, prev ? `${prev}
+${v.text.trim()}` : v.text.trim());
     }
   }
   if (pending.length === 0) return { post_id: postId, registered: 0, already: (mediaRows ?? []).length };
@@ -193,6 +226,7 @@ export async function runSocialFileJob({ supabase, job }: { supabase: SupabaseCl
           orgName, projectName, dateTag, index: pending.length > 1 ? m.carousel_index + 1 : 0,
           description, isOwnDeveloper, sendable, projectId,
           isUnitPlan: m.media_kind === 'image' && looksLikeUnitPlan(ocrByMedia.get(m.id)),
+          ocrText: ocrByMedia.get(m.id) ?? null,
         });
         registered++;
       }
@@ -240,7 +274,7 @@ async function ensureOrgFolder(supabase: SupabaseClient, cfg: Settings, orgName:
 
 async function copyAndRegister(
   supabase: SupabaseClient, cfg: Settings, folderId: string | null, m: MediaRow,
-  ctx: { orgName: string; projectName: string; dateTag: string; index: number; description: string; isOwnDeveloper: boolean; sendable: boolean; projectId: string; isUnitPlan: boolean },
+  ctx: { orgName: string; projectName: string; dateTag: string; index: number; description: string; isOwnDeveloper: boolean; sendable: boolean; projectId: string; isUnitPlan: boolean; ocrText: string | null },
 ): Promise<string> {
   const fileId = randomUUID();
   const ext = extOf(m.stored_path!, m.mime_type, m.media_kind);
@@ -284,6 +318,13 @@ async function copyAndRegister(
     checksum_sha256: m.checksum_sha256,
     width_px: m.width,
     height_px: m.height,
+    aspect_ratio: snapAspectRatio(m.width, m.height),
+    // The words printed on the creative — a price, a phone number, an offer —
+    // are the most searchable thing about it, and the pipeline already read
+    // them. Leaving this empty made 711 files unfindable by their own content.
+    ocr_text: ctx.ocrText,
+    has_text: ctx.ocrText != null ? ctx.ocrText.trim().length > 0 : null,
+    document_type: ctx.isUnitPlan ? 'floor_plan' : undefined,
     duration_seconds: m.duration_ms != null ? Math.round(m.duration_ms / 100) / 10 : null,
     tags: ['social_intake', ctx.isOwnDeveloper ? 'developer_content' : 'competitor_content'],
   };
