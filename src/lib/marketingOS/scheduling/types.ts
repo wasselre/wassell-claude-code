@@ -480,7 +480,8 @@ export interface PlannedReservation {
    * for everything today, so a row booked as three slots on Monday is
    * re-checked as one slot on Mon/Tue/Wed: a spurious WS409 on two days the
    * planner never touched, and a missed overbook on the day it did. Naming the
-   * mode removes the guess. (Consuming it is B4 — see `reservationsPayload`.)
+   * mode removes the guess. Consumed since B4: the commit's capacity re-check
+   * calls `mos_spread_effort_mode(start, weight, spread = 'same_day')`.
    */
   spread: 'per_day' | 'same_day';
   /** The per-day weights, in order — `slotWeights` of the stage this came from. */

@@ -41,7 +41,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { jsonOk, jsonError } from '../../auth.js';
 import {
-  planCampaign, DEFAULT_RULES, DEFAULT_PUBLISHING,
+  DEFAULT_RULES,
   type PlanInput, type PlanResult, type RuleSet,
 } from '../../../../src/lib/marketingOS/scheduling/index.js';
 import { terminalLostStages } from '../../../../src/lib/salesProcess/qualifiedStages.js';
@@ -338,28 +338,21 @@ async function compile(
   return { compiled, rules: base };
 }
 
-/**
- * The rules a plan is RE-planned with at commit time.
+/*
+ * THE COMMIT-TIME RE-PLAN IS A SECOND `compile()`, NOT A PER-PLAN `planCampaign`.
  *
- * `compileMonth` sets `rowPublishing` from the template and `searchBudget: 0`;
- * `loadRuleSet` does neither. Re-planning a month plan through the plain rule
- * set would move every publishing moment back to the 18:00 default and let the
- * distribution search wander — the exact divergence `rowPublishingFromTemplateRow`
- * was written for, one level up.
+ * `monthConfirm` used to re-plan each of the four plans on its own, with a rule
+ * set (`monthRules`) hand-built to reproduce what `compileMonth` already does —
+ * `rowPublishing` from the template, `searchBudget: 0`. Two derivations of one
+ * recipe, and the month's four plans are NOT independent: `compileMonth`
+ * compiles them in sequence against a growing ledger so each sees the load the
+ * previous ones proposed. Re-planning them one at a time only accumulated
+ * because each commit had already landed in the database before the next
+ * re-plan read it — which is exactly the four-transaction shape D8 removes.
+ *
+ * So the re-plan is now one more `compile()` and the signatures are compared
+ * pairwise. Same engine, same rules, same accumulation, no second recipe.
  */
-function monthRules(base: RuleSet, template: MonthTemplate): RuleSet {
-  return {
-    ...base,
-    publishing: {
-      ...(base.publishing ?? DEFAULT_PUBLISHING),
-      rowPublishing: {
-        publishTime: template.publishTime,
-        intraRowGapMinutes: template.intraRowGapMinutes,
-      },
-    },
-    searchBudget: 0,
-  };
-}
 
 /* ------------------------------------------------------------------ */
 /* month_get                                                           */
@@ -556,7 +549,7 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
 
   const res = await compile(ctx, month, template, projects);
   if ('error' in res) return res.error;
-  const { compiled, rules } = res;
+  const { compiled } = res;
 
   if (!compiled.summary.feasible) {
     return jsonError(409, JSON.stringify({
@@ -572,12 +565,41 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
   const lastWeekEnd = compiled.geometry.weeks[compiled.geometry.weeks.length - 1]?.end
     ?? compiled.geometry.lastPostingDay;
 
-  const committed: CommitOutcome[] = [];
-  const warnings: string[] = [];
+  // ── The re-plan, once, for all four (see the note above `month_get`) ──
+  // Refuse if anything the operator saw has moved. This is the same guarantee
+  // the per-plan re-plan gave, taken against one snapshot because the commit is
+  // now one transaction.
+  const again = await compile(ctx, month, template, projects);
+  if ('error' in again) return again.error;
+  const replanned = again.compiled;
+  const moved = replanned.plans.length !== compiled.plans.length
+    || replanned.plans.some((p, i) => planSignature(p) !== planSignature(compiled.plans[i] as PlanResult));
+  if (moved || !replanned.summary.feasible) {
+    return jsonError(409, JSON.stringify({
+      error: 'plan_changed',
+      error_ar: 'تغيّر الحمل أثناء المراجعة. أعد حساب الشهر قبل الاعتماد.',
+      error_en: 'The workload changed while you were reviewing. Re-compile the month before confirming.',
+      committed: 0,
+    }));
+  }
 
-  for (let i = 0; i < compiled.inputs.length; i += 1) {
-    const input = compiled.inputs[i] as PlanInput;
-    const plan = compiled.plans[i] as PlanResult;
+  // All four plans come off ONE snapshot, so they carry ONE hash — and the RPC
+  // takes that gate once, before it writes anything. Re-checking it per plan
+  // inside the transaction would refuse every month on the second plan: the
+  // hash covers `mos_work_ledger_v`, which the first plan's reservations move.
+  const hashes = Array.from(new Set(replanned.plans.map((p) => (p as PlanResult).snapshotHash)));
+  if (hashes.length !== 1) {
+    return fail('month snapshot hash', {
+      message: `the four plans disagree on the snapshot hash (${hashes.length} distinct)`,
+    });
+  }
+
+  const committed: CommitOutcome[] = [];
+  const batch: Array<Record<string, unknown>> = [];
+
+  for (let i = 0; i < replanned.inputs.length; i += 1) {
+    const input = replanned.inputs[i] as PlanInput;
+    const plan = replanned.plans[i] as PlanResult;
     const isPaid = input.kind === 'paid';
     const projectId = isPaid ? (input.projects[0]?.projectId ?? null) : null;
     const ref = isPaid && projectId ? paidRef(month, projectId) : organicRef(month);
@@ -594,7 +616,7 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
       actor,
     });
     if (camp.error) {
-      return fail('ensureCampaign', { message: `${camp.error} — committed so far: ${committed.length}` });
+      return fail('ensureCampaign', { message: `${camp.error} — nothing committed` });
     }
 
     const boundInput: PlanInput = { ...input, campaignId: camp.id };
@@ -620,100 +642,92 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
     }).select('id').single();
     if (planIns.error) {
       return fail('mos_campaign_plans insert', {
-        message: `${planIns.error.message} — committed so far: ${committed.length}`,
+        message: `${planIns.error.message} — nothing committed`,
       });
     }
     const planId = (planIns.data as { id: string }).id;
 
-    // Re-plan exactly as `campaignPlanCommit` does — the same engine, the same
-    // live ledger — and refuse if anything the operator saw has moved. The month
-    // rules are re-applied here (publish time + no search); see `monthRules`.
     const parsed = parsePlanInput(toSnake(boundInput as unknown as Record<string, unknown>),
       settings.publishBufferDays);
     if (typeof parsed === 'string') return jsonError(400, parsed);
-    let snapshot;
-    try {
-      snapshot = await loadWorkloadSnapshot(ctx.sb, settings);
-    } catch (e) {
-      return fail('snapshot', { message: e instanceof Error ? e.message : String(e) });
-    }
-    const fresh = planCampaign(parsed, snapshot, monthRules(rules, template), { withAlternatives: false });
-    if (planSignature(fresh) !== planSignature(plan)) {
-      return jsonError(409, JSON.stringify({
-        error: 'plan_changed',
-        error_ar: 'تغيّر الحمل أثناء المراجعة. أعد حساب الشهر قبل الاعتماد.',
-        error_en: 'The workload changed while you were reviewing. Re-compile the month before confirming.',
-        committed: committed.length,
-        campaign_ref: ref,
-      }));
-    }
 
-    const rpc = await svc.rpc('mos_campaign_plan_commit', {
-      p_plan_id: planId,
-      p_reservations: reservationsPayload(fresh),
-      p_expected_hash: fresh.snapshotHash,
-      p_materialise: materialisePayload(parsed, fresh),
-      p_actor: actor,
+    batch.push({
+      plan_id: planId,
+      reservations: reservationsPayload(plan),
+      materialise: materialisePayload(parsed, plan),
     });
-    if (rpc.error) {
-      const msg = rpc.error.message ?? '';
-      // Classify by MESSAGE first, code second (repo rule) — and NEVER treat
-      // 40001 as retryable here; the commit RPC raises WS409.
-      if (/plan_changed|capacity_conflict/.test(msg) || rpc.error.code === 'WS409') {
-        return jsonError(409, JSON.stringify({
-          error: /capacity_conflict/.test(msg) ? 'capacity_conflict' : 'plan_changed',
-          error_ar: /capacity_conflict/.test(msg)
-            ? 'الشهر لم يعد يتّسع للطاقة المتاحة. أعد الحساب.'
-            : 'تغيّر الحمل أثناء الاعتماد. أعد الحساب.',
-          error_en: /capacity_conflict/.test(msg)
-            ? 'The month no longer fits the available capacity. Re-compile.'
-            : 'The workload changed during the confirmation. Re-compile.',
-          detail: msg,
-          committed: committed.length,
-          campaign_ref: ref,
-        }));
-      }
-      return fail('mos_campaign_plan_commit', {
-        ...rpc.error, message: `${msg} — committed so far: ${committed.length}`,
-      });
-    }
-
-    const created = asRecord(rpc.data);
     committed.push({
       campaign_ref: ref,
       campaign_id: camp.id,
       plan_id: planId,
       kind: isPaid ? 'paid' : 'organic',
-      created,
-      already: created.already === true,
+      created: null,
+      already: false,
     });
   }
 
-  // ── The B4 seam, reported rather than hidden ──────────────────────────
+  // ── D8: FOUR PLANS, ONE TRANSACTION ───────────────────────────────────
   //
-  // `mos_campaign_plan_commit` materialises items, publications, batches, slots
-  // and cycles. It does NOT yet write `mos_content_rows` or the feed/story
-  // release pair — that is B4's line item, and the payload carries both keys
-  // waiting for it (`materialisePayload`'s own comment says so). Until B4 lands,
-  // a confirmed month has its content and its reservations but no ROW subjects,
-  // so no row task can open. That is a visible warning here, never a silent
-  // half-month: the page shows it in red and the operator knows what they have.
-  const rowsExpected = compiled.plans.reduce((a, p) => a + p.rows.length, 0);
-  const rowCount = await svc.from('mos_content_rows')
-    .select('id', { count: 'exact', head: true })
-    .in('plan_id', committed.map((c) => c.plan_id));
-  if (rowCount.error) {
-    warnings.push(`mos_content_rows count failed: ${rowCount.error.message}`);
-  } else if (rowsExpected > 0 && (rowCount.count ?? 0) < rowsExpected) {
-    warnings.push(`rows_not_materialised:${rowCount.count ?? 0}/${rowsExpected}`);
+  // One call, one advisory ledger lock, all four or none. Four sequential
+  // commits could leave a month half-reserved — two campaigns with content,
+  // rows, publications and booked capacity, two without, and nothing to roll
+  // back to. `committed` is therefore no longer a partial count on failure: it
+  // is 0 or 4.
+  const rpc = await svc.rpc('mos_campaign_plan_commit_month', {
+    p_plans: batch,
+    p_expected_hash: hashes[0],
+    p_actor: actor,
+  });
+  if (rpc.error) {
+    const msg = rpc.error.message ?? '';
+    // Classify by MESSAGE first, code second (repo rule) — and NEVER treat
+    // 40001 as retryable here; the commit RPC raises WS409.
+    if (/plan_changed|capacity_conflict/.test(msg) || rpc.error.code === 'WS409') {
+      return jsonError(409, JSON.stringify({
+        error: /capacity_conflict/.test(msg) ? 'capacity_conflict' : 'plan_changed',
+        error_ar: /capacity_conflict/.test(msg)
+          ? 'الشهر لم يعد يتّسع للطاقة المتاحة. أعد الحساب.'
+          : 'تغيّر الحمل أثناء الاعتماد. أعد الحساب.',
+        error_en: /capacity_conflict/.test(msg)
+          ? 'The month no longer fits the available capacity. Re-compile.'
+          : 'The workload changed during the confirmation. Re-compile.',
+        detail: msg,
+        committed: 0,
+      }));
+    }
+    return fail('mos_campaign_plan_commit_month', {
+      ...rpc.error, message: `${msg} — nothing committed`,
+    });
   }
 
+  // Attach each plan's own report. The RPC returns them keyed by plan id, in
+  // the order it committed them, which is the order they were sent.
+  const byPlan = new Map<string, Record<string, unknown>>();
+  for (const entry of (asRecord(rpc.data).committed as unknown[] ?? [])) {
+    const rec = asRecord(entry);
+    const id = str(rec.plan_id);
+    if (id) byPlan.set(id, asRecord(rec.result));
+  }
+  for (const c of committed) {
+    const created = byPlan.get(c.plan_id) ?? null;
+    c.created = created;
+    c.already = created?.already === true;
+  }
+
+  // NOTE — there is no `rows_not_materialised` check any more, and its absence
+  // is the point. It existed because the commit ignored `rows[]`: a month could
+  // land with its content and its reservations but no ROW subjects, so no row
+  // task could ever open, and the only honest thing to do was say so in red.
+  // The rows are now written by the same transaction as the content, the
+  // publications and the reservations — a month with content but no rows is no
+  // longer a state the database can be in, and a post-hoc count of a committed
+  // transaction could only ever report something impossible.
   return jsonOk({
     ok: true,
     month,
     committed,
-    summary: compiled.summary,
-    warnings,
+    summary: replanned.summary,
+    warnings: [] as string[],
   });
 }
 

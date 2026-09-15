@@ -3861,7 +3861,10 @@ export interface MosMonthConfirmResult {
     created: Record<string, unknown> | null;
   }>;
   summary: MosMonthSummary;
-  /** e.g. `rows_not_materialised:0/16` — surfaced on the page, never swallowed. */
+  /**
+   * Surfaced on the page, never swallowed. Empty since B4: the four plans
+   * commit in one transaction, so there is no half-built month to warn about.
+   */
   warnings: string[];
 }
 

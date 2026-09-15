@@ -21,8 +21,11 @@
  *    (`month_compile`, which writes nothing). The report tense reads what the
  *    month ACTUALLY holds — its publications — rather than re-compiling the
  *    template, which would answer a different question and drift.
- *  • **Hide a half-built month.** `month_confirm` returns warnings; they are
- *    rendered in red exactly as they arrive.
+ *  • **A half-built month is no longer possible.** `month_confirm` commits all
+ *    four plans in ONE transaction (D8), so a month either landed whole or not
+ *    at all — there is no `rows_not_materialised` state to explain any more.
+ *    `warnings` survives as the channel for anything a future confirm needs to
+ *    say, and whatever arrives is rendered in red exactly as it arrives.
  *
  * Mockups: `s-month.html` (both tenses) and `s-exceptions.html`, with edit E1
  * (the organic/paid switch and paid notes) folded into the weeks card.
@@ -90,17 +93,6 @@ function monthRefusal(err: unknown, isAr: boolean): string {
     }
   }
   return typeof raw === 'string' && raw ? raw : String(err);
-}
-
-/** «rows_not_materialised:0/16» → a sentence a person can act on. */
-function warningText(w: string, isAr: boolean): string {
-  const [code, detail] = w.split(':');
-  if (code === 'rows_not_materialised') {
-    return isAr
-      ? `الشهر اعتُمد ومحتواه أُنشئ، لكن صفوفه لم تُنشأ كوحدات عمل (${detail ?? ''}) — فلن تُفتح مهام الصفوف حتى يصل جزء الصفوف من الاعتماد. راجع قبل أن يبدأ الإنتاج.`
-      : `The month committed and its content exists, but its ROWS were not created as work subjects (${detail ?? ''}) — so no row task can open until the commit's row half lands. Check before production starts.`;
-  }
-  return w;
 }
 
 /* ------------------------------------------------------------------ */
@@ -399,7 +391,7 @@ export default function MonthPage() {
 
         {warnings.length > 0 && (
           <div className="notice bad" role="alert" style={{ marginBlockEnd: 14 }}>
-            {warnings.map((w) => <div key={w}>{warningText(w, isAr)}</div>)}
+            {warnings.map((w) => <div key={w}>{w}</div>)}
           </div>
         )}
 
@@ -698,7 +690,7 @@ export default function MonthPage() {
 
       {warnings.length > 0 && (
         <div className="notice bad" role="alert" style={{ marginBlockEnd: 14 }}>
-          {warnings.map((w) => <div key={w}>{warningText(w, isAr)}</div>)}
+          {warnings.map((w) => <div key={w}>{w}</div>)}
         </div>
       )}
 

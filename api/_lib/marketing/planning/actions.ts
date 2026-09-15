@@ -258,7 +258,9 @@ export function materialisePayload(input: PlanInput, plan: PlanResult): Record<s
         publishing_rules: input.frequency.find((f) => f.platform === p) ?? null,
       }))),
     // `mos_content_rows` — the row as a real subject (A1). The members below
-    // point back at it by `row_key`. Empty on the wizard's loose-item path.
+    // point back at it by `row_key`, and since B4 the commit materialises one
+    // row per entry and links each member through `mos_content.row_id` +
+    // `.row_order`. Empty on the wizard's loose-item path.
     rows: plan.rows.map((r) => ({
       row_key: r.rowKey,
       kind: r.kind,
@@ -312,12 +314,18 @@ export function materialisePayload(input: PlanInput, plan: PlanResult): Record<s
     // and the idempotency key has room for the pair since
     // `uq_mos_publications_destination`.
     //
-    // SEAM, deliberately: emitting them is Group B's job and it is done here.
-    // CONSUMING them — inserting one publication per entry with its variant,
-    // its pair and its caption — is B4's `mos_campaign_plan_commit`, which
-    // still builds from `placements`. Until B4 lands this key is carried and
-    // ignored, which is a visible, typed no-op rather than a silent drop: the
-    // data is in the payload, in the plan row, and in the tests.
+    // CONSUMED SINCE B4 (2026-09-15). `mos_campaign_plan_commit` inserts one
+    // publication per entry here, carrying `placement_variant` and `pair_id`,
+    // and falls back to `placements[]` only for a payload that has no
+    // `releases` key at all. The pair's `pair_id` column is the FEED
+    // publication's own id — the text key below is what binds the two halves
+    // together inside the commit, not what is stored.
+    //
+    // The idempotency key `uq_mos_publications_destination` includes
+    // `COALESCE(placement_variant,'')` for exactly this reason, and the RPC's
+    // ON CONFLICT target matches it column for column. If you ever change one,
+    // change the other in the SAME migration — a 3-column inference against a
+    // 4-column expression index raises 42P10 on every organic commit.
     releases: plan.releases.map((r) => ({
       key: r.key,
       item_key: r.itemKey,
@@ -368,8 +376,11 @@ export function reservationsPayload(plan: PlanResult): unknown[] {
     // `mos_spread_effort` on everything today, which reads a row's "three slots
     // on Monday" as "one slot on Mon, Tue and Wed" — a spurious WS409 on two
     // days the planner never touched and a missed overbook on the one it did.
-    // `mos_spread_effort_same_day` exists (A4) and has no callers; branching on
-    // this field is its wiring, and that is B4 + C3.
+    // `mos_spread_effort_same_day` is wired in via `mos_spread_effort_mode`:
+    // C3 keys the LEDGER's reservation arms on `row_id IS NOT NULL`, and B4
+    // keys the commit's capacity RE-CHECK on this stated `spread`. The two
+    // agree because the planner sets `spread: 'same_day'` exactly when it sets
+    // `rowKey` — keep it that way.
     spread: r.spread,
     weights: r.weights,
   }));
