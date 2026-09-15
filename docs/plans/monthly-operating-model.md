@@ -496,7 +496,7 @@ What actually has to exist for this to be reliable, and how much of it does.
 | Enforced capacity, one throughput number per person per day | half; two tables must become one, and the per-step effort knob goes |
 | One task table | half; the six kinds already exist, the split is cosmetic |
 
-Roughly: thirteen things missing, most of them small, the foundation largely present. Nothing here is a rewrite. The work is mostly removal, which is the point.
+Roughly: fourteen things missing, most of them small, the foundation largely present. Nothing here is a rewrite. The work is mostly removal, which is the point.
 
 ---
 
