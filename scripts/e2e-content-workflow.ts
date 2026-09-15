@@ -156,7 +156,6 @@ async function main(): Promise<void> {
     data: {
       headlines: ['عنوان تجريبي'], design_brief: 'بريف', caption,
       caption_confirmed_text: caption, caption_confirmed_at: new Date().toISOString(),
-      caption_confirmed_by_writer_at: new Date().toISOString(),
     },
   });
   const before = await ledgerTotal();

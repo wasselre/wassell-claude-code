@@ -30,11 +30,17 @@ of the process it was created under. New rules ship as a *new version*; anything
 walking its old path until it finishes. That is why a single cutover is possible at all, and it is
 data, not code — nothing needs building to get it.
 
-**The most alarming thing we found is unrelated to this plan and is costing money now.** The writer
-confirms a caption, the manager approves it, and then the ad builder looks for that confirmation
-under a key that nothing in the entire codebase ever writes. It concludes the writer never confirmed,
-generates its own caption with AI, and sends *that* to Meta. You approve one text; Meta spends the
-budget on another; nothing errors. This is fixed first, on its own, before anything else in this plan.
+**The most alarming thing we found is unrelated to this plan, and it is armed rather than firing.**
+The writer confirms a caption, the manager approves it, and then the ad builder looks for that
+confirmation under a key that nothing in the entire codebase ever writes. It concludes the writer
+never confirmed, generates its own caption with AI, and sends *that* to Meta. You would approve one
+text and Meta would spend the budget on another, with no error anywhere.
+
+It has not happened yet, and the reason is luck rather than design: the caption field only shipped on
+2026-09-14, and **0 of the 24 content records carry a caption at all** (verified 2026-09-15:
+`with_caption = 0`, `with_confirm = 0`). The writer path has therefore never been reachable — every
+ad so far took the legacy AI route openly. It would have fired on the first caption a writer ever
+confirmed, which under this plan is week one. Fixed first, on its own, before anything else.
 
 ---
 
@@ -65,21 +71,31 @@ pinned to.
 
 ---
 
-## 2. Decisions needed before a line is written
+## 2. Decisions — all settled
 
-The proposal says nothing is open. The survey found eight things that genuinely are. Six have a clear
-recommendation; two are yours alone.
+The proposal said nothing was open; the survey found eight things that were. All eight are now
+decided — four by the operator on 2026-09-15, four taken as engineering calls. **Nothing below is
+open.**
 
-| # | Decision | Recommendation |
+| # | Decision | Settled as |
 |---|---|---|
-| **D1** | **Do the new material gates (two design slots, a confirmed caption) apply to the 24 pre-cutover content records?** 9 of the 17 ad-bearing rows have no slots at all (8 carry only a legacy `final` link: P-132/133/134/136/141/142/143/144; P-148 has square only). The missing verticals **do not exist as files** — only سارة can produce them. And **0 of 24 rows carry a caption**. | **No — gates apply only to content pinned after the cutover.** The pinned-version mechanism makes this free. Backfill `final` → `final_square` only where the file measures square, and leave the nine verticals as ordinary production work if those ads are ever rebuilt. "Apply to everything" means nine re-uploads and 24 captions written before the first month can publish. |
-| **D2** | **What happens to the four live executions carrying 5,559.74 SAR?** `mos_creative_slots` has 0 rows; `slot_id`, `activated_at`, `retired_at` are NULL on all 42 ad rows. Two of them (2,652 SAR and 1,424 SAR) have **zero** ads linked to any content, so the material rule cannot reach them at all. | **Leave them running outside the new lane until they end naturally, and exclude them explicitly** (a `legacy_unmanaged` flag on the execution), rather than silently skipping. Adopting them into slots means inventing an activation date for ads whose real one is unknown. |
-| **D3** | **Does an empty caption hard-block publishing?** Adding it to `preflightPublishSet` blocks all 10 existing draft publications at once and surfaces in three places. | **Resolve the caption from the approved writing and block only when *that* is missing.** This is the §3.4 reading, but it requires the resolver to ship in the same change — sequenced below. |
-| **D4** | **Which key is the writer's caption confirmation?** The UI writes `caption_confirmed_at`; SQL compares `caption_confirmed_text`; the ad builder gates on `caption_confirmed_by_writer_at`, which **nothing writes**. | **`caption_confirmed_text` is the comparison and `caption_confirmed_at` is the timestamp. Fix the worker to read those two.** `caption_confirmed_by_writer_at` is deleted from the codebase. See §3, item S1 — this is the live money bug. |
-| **D5** | **Define "qualified" for cost per qualified lead.** This choice *is* the monthly project-selection measure. With 14 qualified out of 231 attributed clients, moving one stage changes which project gets picked. `client_stage` also carries «خاسر» on 5 clients — a value not in the model's option list — so it must be an explicit allowlist, never an ordinal range. | Allowlist: **الاتصال لحجز موعد · موعد زيارة · زيارة · متابعة بعد الزيارة · عرض سعر · حجز · تمويل · الإفراغ**. Excluded: جديد · غير مؤهل · يريد إيجار · خاسر. **Yours to confirm — it decides which projects you run.** |
-| **D6** | **Define "days since last featured."** There is no source: nothing has ever published and only 24 content records exist. | `greatest(last day with spend in mos_ad_metrics_daily, last mos_content.created_at)` per project, labelled as such on the screen. Revisit after one real month. |
-| **D7** | **E1: does a project-column note reach that project's paid creatives, or only its organic rows?** | **Both**, with the paid-batch note able to override. The per-batch pencil E1 adds is the escape hatch that makes the wider scope safe. |
-| **D8** | **The month confirms four plans at once (one organic + three paid) but `mos_campaign_plan_commit` takes a single `plan_id` inside one advisory-lock transaction.** | **One compiler call committing all four inside one transaction.** Four sequential commits can leave a month half-reserved with no clean undo, and the advisory lock already serialises the ledger. |
+| **D1** | Do the new material gates (two design slots, a confirmed caption) apply to the 24 pre-cutover content records? 9 of the 17 ad-bearing rows have no slots (8 carry only a legacy `final` link: P-132/133/134/136/141/142/143/144; P-148 is square-only), the missing verticals **do not exist as files**, and **0 of 24 rows carry a caption**. | **New work only.** Gates apply to content pinned after the cutover. The 24 existing records finish on their old rulebook and are never re-published through the new path. No re-uploads, no back-written captions, no migration. *Operator, 2026-09-15.* |
+| **D2** | What happens to the four live executions carrying 5,559.74 SAR? No `slot_id` or `activated_at` on any of their 42 ad rows; two of them (2,652 and 1,424 SAR) have **zero** ads linked to any content. | **Pause all of them at the cutover.** Nine running ads stop; the new month starts from zero paid spend. This is not the cheapest option but it is the only one with no invented data in it — see §3.1 for what it costs and the timing constraint it creates. *Operator, 2026-09-15, against the recommendation to let them end naturally.* |
+| **D3** | Does an empty caption hard-block publishing? Adding it to `preflightPublishSet` blocks all 10 existing draft publications at once, in three surfaces. | **No.** Resolve the caption from the approved writing and block only when *that* is missing. Requires the resolver in the same change (D1, Group D). *Engineering call.* |
+| **D4** | Which key is the writer's caption confirmation? The UI writes `caption_confirmed_at`; SQL compares `caption_confirmed_text`; the ad builder gates on `caption_confirmed_by_writer_at`, which **nothing writes**. | **`caption_confirmed_text` is the comparison, `caption_confirmed_at` the timestamp.** `caption_confirmed_by_writer_at` is deleted repo-wide. This is the live money bug — item S1. *Engineering call; there is only one correct answer.* |
+| **D5** | Define "qualified" for cost per qualified lead. `client_stage` carries «خاسر» on 5 clients — a value **not in the model's option list** — so this must be an explicit list, never an ordinal range. | **Qualified = every stage except «غير مؤهل» and «خاسر».** Implemented as an explicit exclusion list of exactly those two values, so an unknown or newly added stage counts as qualified by default rather than silently dropping out. *Operator, 2026-09-15.* See the note below — this includes «جديد». |
+| **D6** | Define "days since last featured." No source exists: nothing has ever published and only 24 content records exist. | `greatest(last day with spend in mos_ad_metrics_daily, last mos_content.created_at)` per project, **labelled as such on the screen**. Revisit after one real month. *Engineering call.* |
+| **D7** | Does a project-column note reach that project's paid creatives, or only its organic rows? | **Separate. Paid notes are their own channel.** The E1 switch gives the grid two panes and **each pane carries its own project-column notes and its own cell notes**. The month note sits above both. *Operator, 2026-09-15, against the recommendation to share one column note.* |
+| **D8** | The month confirms four plans at once but `mos_campaign_plan_commit` takes a single `plan_id` inside one advisory-lock transaction. | **One compiler call committing all four in one transaction.** Four sequential commits can leave a month half-reserved with no clean undo. *Engineering call.* |
+
+**One consequence of D5 worth stating plainly.** Excluding only «غير مؤهل» and «خاسر» means «جديد» — a
+lead that has arrived and has not yet been spoken to — counts as qualified. That is defensible (it
+keeps the denominator usable: the narrow eight-stage list gives 14 qualified out of 231 attributed
+clients, i.e. per-project denominators of 13, 1 and 0), but it makes **cost per qualified lead and
+cost per lead nearly the same number**, and the proposal deliberately separated them: cost per lead
+drives the weekly ad rule, cost per qualified lead picks next month's projects. If they converge, the
+monthly project choice is effectively made on raw lead volume. Building it as D5 says; adding «جديد»
+to the exclusion list later is a one-value change in one place. Flagged, not re-asked.
 
 ---
 
@@ -92,7 +108,7 @@ part of the month model; they are the ground it stands on.
 
 | | What | Where | Why first |
 |---|---|---|---|
-| **S1** | **The caption key mismatch.** The worker gates on `caption_confirmed_by_writer_at` — written by nothing in `src/`, `api/` or `supabase/` (only the fixture at `scripts/e2e-content-workflow.ts:159`). It therefore always concludes the writer did not confirm and writes its own DeepSeek caption to Meta. | `worker/src/runMetaAdJob.ts:750` → read `caption_confirmed_text` + `caption_confirmed_at`; delete the third key repo-wide | **A live correctness bug with money attached.** You approve text A, Meta runs text B, nothing errors. Fix and verify before any caption gate is built on top of it. |
+| **S1** | **The caption key mismatch.** The worker gated on `caption_confirmed_by_writer_at` — written by nothing in `src/`, `api/` or `supabase/` (only the fixture at `scripts/e2e-content-workflow.ts:159`). It therefore always concluded the writer did not confirm and wrote its own DeepSeek caption to Meta. **Armed but never fired:** 0 of 24 content records carry a caption, so the writer path has never been reachable. | `worker/src/runMetaAdJob.ts` → compare `caption_confirmed_text` to `caption` **raw and untrimmed** (matching `2026-09-14_01:895` and `WritingFields.tsx:405`); timestamp is `caption_confirmed_at`; third key deleted from all code | Week one of this plan is the first time a writer confirms a caption, which is exactly when it would have fired. **✅ DONE 2026-09-15** — also now refuses a caption edited after confirmation, which the old gate could not detect. |
 | **S2** | **`activated_at` backfill.** NULL on all 30 ad rows, including every `status='running'` one. The only fallback, `min(mos_ad_metrics_daily.day)`, is the **sync** start: mena52-V3 was created 2026-08-16 and produced its first lead 2026-08-15, but its metrics begin 2026-08-25 — a **10-day error**. | NEW migration: backfill `activated_at` from Meta's own `created_time` / effective-status history where available; NULL where it is not, and exclude those rows from the rule | §3.6's "first seven days from activation" has no anchor without it. Shipping the seven-day rule against a 10-day-wrong window pauses or keeps real spend **on the wrong evidence.** Must land and be verified as its own deploy. |
 | **S3** | **`account_id` NULL at commit.** `mos_campaign_plan_commit` inserts publications with `account_id` NULL (`2026-09-14_02:488-498`); `publishRelease.ts:64` refuses unless `pub.account_connected === true`; but `mos_release_due`'s `automatable` is a **platform**-level check. | `mos_campaign_plan_commit` — resolve and write the default publishing account per platform at insert | Without it **every release of the first compiled month becomes a `publish_failed` task the moment the sweep ticks.** This is why §12 says the Instagram path is "built; never exercised". |
 
@@ -109,9 +125,47 @@ three pass.**
 | Content records | 24; 23 `done`, **1 mid-`design`** | Keep their pinned version (`ea460e57…` ×22, `bf04288d…` ×2). The one in-flight item walks its old chain to completion. No migration touches them. |
 | Draft publications | 10, all `status='draft'`, `scheduled_at` **and** `planned_at` NULL | `mos_release_due` filters on `due_at IS NOT NULL`, so the sweep is **structurally blind** to them. A single cutover cannot make a stale row appear on Instagram. **No quarantine step needed.** |
 | Approvals | `mos_content_approvals` = **0 rows** | The hash mechanism exists but has no data. Any publish check written as "no matching approval → refuse" would block **100%** of publishing on day one. The check must be "an approval exists **and** the hash differs → refuse"; absent approval falls through to the legacy path. The 23 `done` records must not be re-published through the new release path expecting a hash. |
-| Campaigns with ads | **Three, not two**, plus a fourth with spend: C-042 ربوة الرمز (17 ads, 0 running) · C-041 تل الربوة (13, 4 running) · C-037 أكنان ٢٥ (6, 4 running, campaign `paused`) · `meta-sync:act_1926066658353506` (1 running, 1,424.47 SAR, `project_id` NULL) | Per **D2**: flagged `legacy_unmanaged`, excluded from the new lane, left to end naturally. The proposal's "two live campaigns" is wrong — correct it. |
+| Campaigns with ads | **Three, not two**, plus a fourth with spend: C-042 ربوة الرمز (17 ads, 0 running) · C-041 تل الربوة (13, 4 running) · C-037 أكنان ٢٥ (6, 4 running, campaign `paused`) · `meta-sync:act_1926066658353506` (1 running, 1,424.47 SAR, `project_id` NULL) | Per **D2**: **all nine running ads paused at the cutover**, via the same `mosMetaSetStatus` path the new activation lane uses. Nothing is deleted; every ad keeps its Meta history. See §3.1. The proposal's "two live campaigns" is wrong — correct it. |
 | Open tasks | 322 workflow tasks; approval tasks open with `assignee_user_id` **NULL** | `mos_perf_place_open_task` assigns only when `mos_role_load.daily_new_tasks > 0`, which is **0** for `marketing_manager`. Fixed in §4 group C; existing NULL-assignee tasks are backfilled to the single holder of each role. |
 | Capacity rows | Writer 10/day and designer 4/day already in **both** `mos_role_load` and `mos_user_capacity`; **manager capped at approvals=20** | §5.3's "merge the two capacity screens" is a **data** change, not code. The manager cap is one row to change to uncapped. |
+
+### 3.1 The paid pause (D2), and the timing constraint it creates
+
+Pausing everything is the clean-slate option. It costs three things and buys two, and it puts one
+hard constraint on when this ships.
+
+**What it costs**
+
+1. **Nine running ads stop**, including the four on C-041 تل الربوة and the four on C-037 أكنان ٢٥,
+   plus the `meta-sync` ad that alone accounts for 1,424.47 SAR and 107,704 impressions.
+2. **The lead flow from them ends the same day.** Those ads are the source of the click-to-WhatsApp
+   conversations the attribution chain has been recording — 241 chats since 2026-08-15. Paid lead
+   volume goes to zero until the first new batch activates.
+3. **Meta's learning resets.** Every new ad set enters the learning phase from scratch, which the
+   proposal already accepts as a known cost of adding ads weekly — but here it happens on all three
+   projects at once rather than rolling.
+
+**What it buys**
+
+1. **No invented data anywhere.** The alternative required either guessing an `activated_at` for ads
+   whose real one is unknown, or carrying a `legacy_unmanaged` exclusion flag through the ranking
+   lane, the month page and the exceptions query forever. Both are gone.
+2. **The build gets smaller.** Group E drops the exclusion flag, the ranking feeder drops its
+   "ignore unmanaged executions" branch, and the month report drops the mixed-provenance case where
+   some spend is governed by the new rule and some is not. The two executions that no ad links to any
+   content — 2,652 SAR and 1,424 SAR — stop being a permanent special case.
+
+**The constraint: cut over at a month boundary.**
+Because paid presence drops to zero the moment the old ads pause, the gap between the pause and the
+first new batch activating must be days, not weeks. The compiler dates the first paid batch on the
+month's first posting Sunday, and production lead time is ten working days before that. So the
+sequence is: confirm the month **before** the cutover deploy, deploy, pause, and let the already-compiled
+first batch activate on its own date. Shipping mid-month means paying for a dead fortnight.
+
+**Build consequence:** `mosMetaSetStatus` — which has zero callers today — is needed for **both** the
+cutover pause and the weekly rule's activate-and-pause. Build it once, in Group E, and call it from a
+one-off cutover script as well as from the lane. The pause is scripted and logged per ad, not done by
+hand in Ads Manager.
 
 ---
 
@@ -129,7 +183,7 @@ Ordered by dependency only. No phases. Sizes: xs ≤ ½ day · s ≈ 1 day · m 
 | A4 | `mos_spread_effort` (SQL) **and** `effortWeights()` (`src/lib/marketingOS/scheduling/ledger.ts`) | Both turn N into `[1,1,…]` across N working **days**. A row given weight 3 reserves one slot on each of three days — **the opposite of what a row means.** Add a same-day spread mode. **Change both together**: the commit's conflict test uses SQL, the preview uses JS, and its own comment records that exact divergence having already caused a bogus WS409. | m | **high** |
 | A5 | `mos_step_effort` seed rows | `post_std/design/post = 2` against a designer capacity of 4/day is a **real 2/day** — the double-count the proposal rejects. Delete per-step effort for posts; a video stays >1 slot. | xs | low |
 | A6 | `mos_user_capacity` | Manager `approvals` 20 → uncapped. Confirm writer 10 / designer 4 agree across both tables and retire `mos_role_load` as an input. | xs | low |
-| A7 | NEW `public.mos_month_notes` (`id, month, project_id nullable, batch_date nullable, kind 'month'\|'project'\|'row'\|'paid_batch', body, author_user_id, created_at, updated_at`) | Notes **cannot** live on `mos_campaign_plans.input` — `campaignPlanRevise` rewrites it wholesale and `parsePlanInput` drops unknown keys. `mos_comments` has only `content_id`/`campaign_id`. Key on the **template coordinate** `(month, project_id, date)`, which the Sun أ / Tue ب / Thu ج rule fixes before any planning runs — **not** on the plan item key `${projectId}:post:${n}`, which carries no day and follows the item if distribution moves it. Covers E1's paid-batch cell. | s | low |
+| A7 | NEW `public.mos_month_notes` (`id, month, lane 'organic'\|'paid'\|null, project_id nullable, batch_date nullable, kind 'month'\|'project'\|'row'\|'paid_batch', body, author_user_id, created_at, updated_at`) | Notes **cannot** live on `mos_campaign_plans.input` — `campaignPlanRevise` rewrites it wholesale and `parsePlanInput` drops unknown keys. `mos_comments` has only `content_id`/`campaign_id`. Key on the **template coordinate** `(month, lane, project_id, date)`, which the Sun أ / Tue ب / Thu ج rule fixes before any planning runs — **not** on the plan item key `${projectId}:post:${n}`, which carries no day and follows the item if distribution moves it. **Per D7 the `lane` column is load-bearing**: a project-column note belongs to one lane only, so the organic pane and the paid pane each carry their own; `lane IS NULL` is the month note, which reaches both. | s | low |
 | A8 | NEW `public.mos_month_template` (one row: posting weekdays, posts per row, creatives per project per week, campaign length, budget per project, Meta template ref, lead-time days, safety-margin days, publish time, intra-row gap minutes, the four weekly-rule numbers) | The standing month as data. Replaces what 16 settings screens express. | s | low |
 | A9 | `mos_publications` — add `placement_variant ('feed'\|'story')` + `pair_id` | **No feed-vs-story discriminator exists** on the organic side; §3.4's "every post is two releases" has no representation. The paid side already has this exact vocabulary on `mos_ad_sets`. Also: `grid_row`/`grid_col` are Instagram profile-grid coordinates, **not** publish order — do not reuse them. | s | med |
 | A10 | `mos_content_types` — the `video` type's `field_schema` | `['idea','hook','scenes','duration','aspect_ratio']` — **no caption.** `mos_content_writing_hash`, `mos_tg_content_locked_guard` and the `required_fields` check all iterate `field_schema`, so a video's caption is invisible to all three. Add it before "every item carries a caption" can be true. | xs | low |
@@ -173,7 +227,7 @@ Ordered by dependency only. No phases. Sizes: xs ≤ ½ day · s ≈ 1 day · m 
 
 | # | Where | What | Size | Risk |
 |---|---|---|---|---|
-| E1 | NEW lane step in `worker/src/marketing/refreshLane.ts` (110 lines today) | **Ad activation on the batch date.** `mosMetaSetStatus` exists with zero callers. Activate the five new, stamp `activated_at`, then judge the running set. | m | med |
+| E1 | NEW lane step in `worker/src/marketing/refreshLane.ts` (110 lines today) + NEW `scripts/cutover-pause-legacy-ads.mjs` | **Ad activation on the batch date.** `mosMetaSetStatus` exists with zero callers; build it once and use it for **both** the lane's activate-and-pause **and** the D2 cutover pause of the nine running legacy ads. The script pauses per ad, logs each one, and is re-runnable. Activate the five new, stamp `activated_at`, then judge the running set. | m | med |
 | E2 | `worker/src/runRefreshCycleJob.ts:358` | Filters `placement_variant !== 'story'` out of the slate **and** reads metrics with `.in('ad_row_id', ids)` over that filtered set — so **story spend and story leads are invisible to the weekly decision today.** §3.4's "feed and story of one creative summed" is a real behaviour change. Sum on the creative key `COALESCE(pair_id, id)` — a feed row's `pair_id` equals its own id and the story row carries the feed row's, which also handles pre-2026-09-07 ads where `pair_id` is NULL. | m | **high** |
 | E3 | NEW `api/_lib/marketing/ourLeads.ts` + the ranking feeder | Our WhatsApp leads per ad per window, from `chat_messages.meta.ad`. **Group on `resolved.ad_id`** (the internal `mos_execution_ads` UUID) and derive the project through execution→campaign — `resolved.content_id` is present on only **73 of 278** attributed messages, so grouping on it silently drops 74%. Note `meta.ad.ad_id` is the **platform** id; there is no top-level `source_id` (0/278), so the doc's shorthand does not match the live JSON. | m | med |
 | E4 | `worker/src/marketing/creativeRanking.ts` | `RANKING_DEFAULTS` already carries `minSpendSar: 150` / `minImpressions: 2000`. The **pure core survives**; feed it our leads via `MetricTotals.leads` and a per-ad window `[activated_at, activated_at+6d]`. Add the two guards (≥5 leads, ≥20% margin → else **keep both**), the cost-per-click fallback, and fatigue **keep-and-flag** on the only scaled ad. Extend the existing unit tests. | m | med |
@@ -186,6 +240,7 @@ Ordered by dependency only. No phases. Sizes: xs ≤ ½ day · s ≈ 1 day · m 
 |---|---|---|---|---|
 | F1 | NEW `src/pages/Marketing/MonthPage.tsx` + actions `month_get` / `month_compile` / `month_confirm` / `month_report` | One page, two tenses. Plan: three project slots with the **D6** suggestion, volume summary, capacity verdict, weeks grid. Report: the same page with live numbers. **E1 (screens):** the weeks card carries a `العضوي`/`المدفوع` switch; the paid pane shows three cells per week (one per project) each with its own note pencil. | xl | med |
 | F2 | NEW `mos_month_metrics` RPC | Reads `mos_ad_metrics_daily` (113 rows, 2026-08-25→2026-09-15, **read by no `api/` action today**) and our leads. **Do not reuse `mos_paid_analytics`:** `mos_execution_daily` has **0 rows** so it always takes its `daily_days = 0` fallback and returns **lifetime** `mos_campaign_executions.spend/leads` with `scoped:false`; and every `starts_on` is NULL so its current-vs-previous comparison **compares a number with itself**. Render an explicit **unattributed** row — 26% of measured spend (1,424.47 SAR, 107,704 impressions) belongs to a campaign with `project_id` NULL. Never render cost per qualified lead without its lead count beside it (denominators are 13/1/0). | l | med |
+| F2b | `src/pages/Marketing/` — the resolved-brief panel | Per **D7** the brief resolves down **one lane only**: an organic row task reads `month → organic project column → row cell`; a paid creative task reads `month → paid project column → paid batch cell`. Each line labelled by where it came from; empty levels hidden. A paid task must never show an organic column note, or the separation D7 asks for leaks straight back. | s | low |
 | F3 | Row task UI — writer (`WritingFields.tsx`) | **E3.** Three posts side by side, one submit. The headline list has **no reorder** today (only `setHeadline`/`removeHeadline`/append; the numeric badge is display-only) — build the third verb. **The caption is NOT AI-prefilled today**: `contentCaptionGenerate` returns `{caption, source}` and **persists nothing**; the writer must press «توليد بالذكاء» and the box opens empty. Prefill on task open, mark it unconfirmed, require confirm before send. `caption_source` is written to data but rendered only from transient local state that is null on page load — render it from data. **`hashtags` has no editor in the writing task** (only `HashtagsEditor` in `PlacementsTab`), yet `publishRelease.ts:88-102` appends them at publish and **0/24 rows carry any** — give it a home here. | l | med |
 | F4 | Row task UI — designer | Three pairs of slots, six files, one submit, readiness refused at submit (**A11**). Read-only panel shows the **lines** and the design brief — not the caption — with the confirmed caption as context. | m | low |
 | F5 | One approval component, mounted inline (**E2**) | `ContentPreviewModal` renders through `kit.Modal` (**an overlay, not inline**), is keyed to one `contentId`, and calls `fetchAssets()` with **no filter** — the whole asset library per open, filtered client-side. Three of those per expanded row is **three full library reads**. Refactor to a component that mounts both standalone and inline, with a scoped asset fetch. `s-rowapprove` becomes the permalink, not a destination. | l | med |
@@ -275,7 +330,20 @@ up to ten days late.
 was created under. New rules apply to new work only. Nothing in flight is disturbed, and we do not
 have to migrate 24 records or ask سارة to re-make nine designs before we can start.
 
-**What we need from you before anyone writes code:** eight decisions in §2, of which two are genuinely
-yours — which client stages count as a "qualified" lead (it decides which projects you run each
-month), and whether the four campaigns currently spending 5,559 riyals get adopted into the new rules
-or left to finish on their own.
+**What was decided on 2026-09-15, and what it means in practice:**
+
+- **Old work is left alone.** The 24 existing items finish the way they started. Nobody re-makes nine
+  missing designs and nobody back-writes 24 captions before the first month can run.
+- **All the running ads get paused on the day we switch.** Nine ads stop, and paid leads go to zero
+  until the first new batch goes live. That is clean, but it means **we must switch at a month
+  boundary** — confirm the month first, then deploy, so the new ads activate days later and not
+  weeks. Switching mid-month means paying for a dead fortnight.
+- **A "qualified" lead is anyone not marked غير مؤهل or خاسر.** Worth knowing: this counts a brand-new
+  lead nobody has spoken to yet, so cost per qualified lead ends up close to plain cost per lead —
+  and those two numbers were meant to do different jobs, one weekly and one monthly. It is one value
+  to change later if you want them to differ.
+- **Notes for ads are their own thing, separate from notes for posts.** The month grid gets two
+  views, and each keeps its own notes. A note you write on a project's posts never reaches that
+  project's ads, and the writer of an ad never sees an instruction meant for a post.
+
+**Everything is now settled. There is nothing left to answer before the work starts.**

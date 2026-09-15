@@ -25,8 +25,8 @@
  * Campaign planning (2026-09-13) changed three things:
  *
  *   1. **The caption phase is skipped when the writer already produced one.**
- *      A content row with `data.caption`, `data.caption_confirmed_by_writer_at`
- *      and a `mos_content_approvals` row on its final approval step carries an
+ *      A content row with `data.caption`, a `data.caption_confirmed_text` that
+ *      still equals it, and a `mos_content_approvals` row on its final approval step carries an
  *      APPROVED canonical caption — the manager approved it at writing review.
  *      That caption is copied onto the ad row and the job continues straight to
  *      phase 'create': no DeepSeek, no `caption_review` task, no
@@ -753,23 +753,46 @@ async function markSlotReady(sb: SupabaseClient, slotId: string, adRowId: string
  *
  * Three conditions, all required:
  *   1. `mos_content.data.caption` is non-empty;
- *   2. `data.caption_confirmed_by_writer_at` is set (the writer's «راجعت
- *      الكابشن» confirmation; a caption edit CLEARS it — that invalidation is
- *      the SQL side's job, `content_revise`);
+ *   2. `data.caption_confirmed_text` equals it EXACTLY (the writer's «راجعت
+ *      الكابشن» confirmation stores the text they confirmed, so a caption
+ *      edited afterwards no longer matches — the comparison IS the
+ *      invalidation, and it needs no cleanup pass to be correct);
  *   3. a `mos_content_approvals` row exists for the content's FINAL approval
  *      step (the step flagged `auto_meta_ad` on its pinned workflow version).
  *
  * Anything missing → null, and the legacy two-phase AI flow runs unchanged.
+ *
+ * **2026-09-15 — this gate was reading `data.caption_confirmed_by_writer_at`,
+ * a key NOTHING in `src/`, `api/` or `supabase/` has ever written (only the e2e
+ * fixture did).** It therefore concluded on every single job that the writer
+ * had not confirmed, and sent Meta a DeepSeek caption instead of the approved
+ * one — the manager approved text A and the budget ran on text B, with no error
+ * anywhere. The condition now matches the SQL layer's own rule, which is
+ * `data->>'caption_confirmed_text' = data->>'caption'`, exact and untrimmed
+ * (`2026-09-14_01:895`, `2026-09-14_03:230`) and the UI's
+ * (`WritingFields.tsx:405`). All three now agree. Do not reintroduce a fourth
+ * spelling: if this ever needs a timestamp it is `caption_confirmed_at`.
  */
 async function loadApprovedWriterCaption(
   sb: SupabaseClient, contentId: string, content: ContentRow, log: Deps['log'],
-): Promise<{ caption: string; hashtags: string | null; confirmedAt: string; stepKey: string; approvedAt: string | null } | null> {
+): Promise<{ caption: string; hashtags: string | null; confirmedAt: string | null; stepKey: string; approvedAt: string | null } | null> {
   const d = content.data ?? {};
-  const caption = str(d.caption);
-  const confirmedAt = str(d.caption_confirmed_by_writer_at);
-  if (!caption) return null;
-  if (!confirmedAt) {
+  // RAW, untrimmed on purpose. `str()` trims, and the SQL layer's rule is an
+  // exact match on the stored values (`2026-09-14_01:895`), as is the writing
+  // UI's (`WritingFields.tsx:405`). Trimming here would accept a caption the
+  // database considers unconfirmed — the same trim-parity divergence that broke
+  // `record_twin_fill` on 2026-08-05. The text sent to Meta is the raw approved
+  // string too, so the caption hash the approval bound still matches.
+  const caption = typeof d.caption === 'string' ? d.caption : '';
+  const confirmedText = typeof d.caption_confirmed_text === 'string' ? d.caption_confirmed_text : '';
+  const confirmedAt = str(d.caption_confirmed_at);
+  if (!caption.trim()) return null;
+  if (!confirmedText) {
     log('content carries a caption but no writer confirmation — legacy AI caption phase');
+    return null;
+  }
+  if (confirmedText !== caption) {
+    log('the caption changed after the writer confirmed it — legacy AI caption phase');
     return null;
   }
 
@@ -1079,7 +1102,7 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
         caption_source: 'writer',
         caption_approved_step: approved.stepKey,
         caption_approved_at: approved.approvedAt,
-        caption_confirmed_by_writer_at: approved.confirmedAt,
+        caption_confirmed_at: approved.confirmedAt,
         error: null,
       });
       effectivePhase = 'create';
