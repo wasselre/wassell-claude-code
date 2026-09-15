@@ -9,7 +9,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { extractMedia } from './mediaExtract.js';
 import { downloadAndStore, fetchBytes, uploadBytes } from './contentStore.js';
-import { toTempFile, cleanup, probeDurationMs, hasAudioStream, extractAudio, sampleFrames } from './ffmpegMedia.js';
+import { toTempFile, cleanup, probeDurationMs, probeDimensions, hasAudioStream, extractAudio, sampleFrames } from './ffmpegMedia.js';
 import { downloadYouTube, YtDownloadError } from './ytdlp.js';
 import { transcribeAudioUrl } from './falTranscribe.js';
 import { readFile } from 'node:fs/promises';
@@ -132,8 +132,13 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
         try {
           const bytes = await readFile(yt.path);
           const checksum = sha256Hex(bytes);
+          // yt-dlp reports a duration but no geometry. Probing here is free —
+          // the file is already on disk — and skipping it is what left 68
+          // YouTube videos with no dimensions, and so no aspect ratio once the
+          // Files bridge registered them.
+          const ytDims = await probeDimensions(yt.path);
           const stored = await uploadBytes(bytes, 'content/video', checksum, yt.ext === 'mp4' ? 'mp4' : yt.ext, 'video/mp4');
-          const up = (await sb.rpc('mkt_content_media_upsert', { p_post: contentPostId, p_carousel_index: 0, p_kind: 'video', p_original_url: `https://www.youtube.com/watch?v=${post.external_id}`, p_bucket: stored.bucket, p_path: stored.path, p_url: stored.storedUrl, p_mime: 'video/mp4', p_bytes: stored.bytes, p_width: null, p_height: null, p_duration_ms: yt.durationMs, p_checksum: checksum, p_phash: null, p_status: 'stored', p_failure: null })).data as Array<{ id: string }> | null;
+          const up = (await sb.rpc('mkt_content_media_upsert', { p_post: contentPostId, p_carousel_index: 0, p_kind: 'video', p_original_url: `https://www.youtube.com/watch?v=${post.external_id}`, p_bucket: stored.bucket, p_path: stored.path, p_url: stored.storedUrl, p_mime: 'video/mp4', p_bytes: stored.bytes, p_width: ytDims?.width ?? null, p_height: ytDims?.height ?? null, p_duration_ms: yt.durationMs, p_checksum: checksum, p_phash: null, p_status: 'stored', p_failure: null })).data as Array<{ id: string }> | null;
           const mediaId = up?.[0]?.id;
           if (mediaId) { storedRefs.push({ mediaId, kind: 'video', carouselIndex: 0, bytes, storedUrl: stored.storedUrl, durationMs: yt.durationMs ?? undefined, checksum }); stats.media_stored++; }
         } finally { await cleanup(yt.dir); }

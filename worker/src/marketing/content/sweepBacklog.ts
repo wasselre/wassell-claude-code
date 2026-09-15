@@ -38,8 +38,9 @@
 // someone remembered, and nobody did — 1,732 posts waited with zero jobs queued.
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { repairMediaDimensions } from '../../repairMediaDimensions.js';
 
-export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
 
 /** Stage 5 ceilings. A cv_process job is a multi-minute GPU run on Modal, so
  *  the re-enqueue is deliberately small per tick; anything it does not reach
@@ -191,7 +192,7 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
-  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, skipped_queue_full: false, skipped_not_leader: false };
+  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, skipped_queue_full: false, skipped_not_leader: false };
 
   if (!(await acquireSweepLease(sb, workerId))) { stats.skipped_not_leader = true; return stats; }
 
@@ -464,6 +465,20 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
     else stats.social_file = Number(data ?? 0);
   } catch (e) {
     console.error(`[sweep] social_file_backfill threw: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // ── stage 7: geometry repair (2026-09-15) ───────────────────────────────
+  // yt-dlp gives no width/height, so YouTube videos land without dimensions
+  // and therefore without an aspect ratio in the Library. One ffprobe each,
+  // from OUR bucket — the originals cannot be re-fetched (YouTube blocks
+  // datacenter IPs). Small batch per tick; idempotent, so it goes quiet once
+  // everything is filled.
+  try {
+    const r = await repairMediaDimensions(sb, { limit: 25 });
+    stats.dims_repaired = r.fixed;
+    if (r.errors.length > 0) console.error(`[sweep] dimension repair: ${r.errors.length} failed, first: ${r.errors[0]}`);
+  } catch (e) {
+    console.error(`[sweep] dimension repair threw: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   return stats;

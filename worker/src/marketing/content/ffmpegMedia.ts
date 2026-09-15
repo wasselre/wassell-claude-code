@@ -75,6 +75,24 @@ export async function probeDurationMs(videoPath: string): Promise<number | null>
 }
 
 /**
+ * Pixel dimensions of a video's first video stream, or null if unprobeable.
+ *
+ * yt-dlp reports a duration but no geometry, so every YouTube video the
+ * pipeline stored had width/height NULL — 68 of them, which then had no aspect
+ * ratio and fell out of the Library's ratio filter. The bytes are already in
+ * our bucket, so the answer is one ffprobe away; nothing needs re-downloading
+ * from YouTube (which blocks datacenter IPs anyway).
+ */
+export async function probeDimensions(videoPath: string): Promise<{ width: number; height: number } | null> {
+  try {
+    const out = await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', videoPath], 30_000);
+    const [w, h] = out.trim().split('x').map((n) => Number.parseInt(n, 10));
+    return Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? { width: w, height: h } : null;
+  } catch { return null; }
+}
+
+/**
  * Does this file carry an audio stream at all?
  *
  * A silent video is COMMON in real-estate marketing — 14 of 74 collected
