@@ -10,7 +10,6 @@
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { RoleStamp } from './types.js';
-import { recordAiUsage } from '../../lib/aiUsage.js';
 
 export type LedgerKind = 'cv_process' | 'frame_describe' | 'shot_analyze' | 'embed' | 'ocr' | 'describe_on_demand';
 
@@ -31,27 +30,17 @@ export async function addCost(sb: SupabaseClient, kind: LedgerKind, videoId: str
   });
   if (error) throw new Error(`mkt_cv_cost_add failed: ${error.message}`);
 
-  // Central ledger (ai_usage). ONLY cv_process is recorded here: every other
-  // kind reaches the provider through callRole()/embed(), which already write
-  // their own row — recording them again would double-count. cv_process is the
-  // Modal /process call, which nothing else sees, and it is the single largest
-  // line in the whole AI bill ($53.27 of $87.50 as of 2026-09-14).
-  if (kind === 'cv_process') {
-    await recordAiUsage({
-      area: 'competitors',
-      callSite: 'worker/cv/process',
-      operation: kind,
-      provider: 'modal',
-      model: stamp.model || 'modal-gpu',
-      status: 'ok',
-      latencyMs: stamp.latency_ms,
-      entityKind: 'mkt_cv_video',
-      entityId: videoId,
-      // Modal reports its own cost in the /process manifest, so this is a
-      // measured figure rather than something the price book derives.
-      ...(typeof stamp.cost_usd === 'number' ? { costUsd: stamp.cost_usd } : {}),
-    });
-  }
+  // NOTE: Modal spend is NOT mirrored here, and must not be.
+  //
+  // This helper is only ever called for the three Claude kinds (shot_analyze,
+  // frame_describe, describe_on_demand), which callRole() has already recorded
+  // in ai_usage. The MODAL cost never passes through here at all: it is written
+  // inside Postgres by mkt_cv_finalize_video -> mkt_cv_cost_add, which is where
+  // the ai_usage mirror lives (migration 2026-09-15_modal_spend_into_ai_usage).
+  //
+  // An earlier version of this file DID try to mirror cv_process from here. It
+  // was dead code — addCost('cv_process', ...) has no caller — and it made the
+  // largest line in the AI bill look covered when it was not.
 }
 
 export class BudgetExceededError extends Error {
