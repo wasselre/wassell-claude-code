@@ -1,0 +1,19 @@
+-- RE-READ MODE for file enrichment.
+--
+-- Every field in file_enrichment_complete applied only when the file's value
+-- IS NULL ("fill the blanks"). Right for a first read, but it meant a prompt
+-- fix could never reach files already classified: re-reading would call the
+-- model, get a better answer, and silently discard it. Found while trying to
+-- re-read 1,180 renders mislabelled «تصميم» after the 2026-09-15 prompt fix.
+--
+-- A job whose reason starts with 'reread' may now OVERWRITE a value, but ONLY
+-- where the existing value was the AI's own suggestion. A value a human
+-- approved or modified is never touched, and neither is one with no provenance
+-- row (written by another path — e.g. the social intake bridge — and not the
+-- AI's to revise). title stays fill-only; tags and subjects stay additive.
+--
+-- The live definition is the authority; this file is the repo copy applied as
+-- migration `file_enrichment_reread_mode_2026_09_15`. See
+-- supabase/migrations/2026-08-31_04_autolink_and_rein_primary_types.sql for the
+-- version it replaces.
+SELECT 'applied via MCP as file_enrichment_reread_mode_2026_09_15' AS note;
