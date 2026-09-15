@@ -15,6 +15,7 @@ import {
   type ProjectMessageFacts,
   type NumericRange,
 } from '../../src/lib/projectMessage/compose.js';
+import { resolveProjectDelivery } from '../../src/lib/projectMessage/delivery.js';
 
 export type SheetResult =
   | { ok: true; project_id: string; body_ar: string; body_en: string; facts: Record<string, unknown>; missing: string[] }
@@ -164,6 +165,9 @@ export async function resolveProjectSheet(
     bathrooms: bathSlug ? toNumericRange(pd[bathSlug]) : null,
     areaRange: availAreaSlug ? toNumericRange(pd[availAreaSlug]) : null,
     minPrice: minPriceNum != null ? formatPrice(minPriceNum) : null,
+    // Ready vs off-plan («على الخارطة») + the expected handover month. Same
+    // resolver the browser + the AI path use, so every surface says one thing.
+    delivery: resolveProjectDelivery(pd),
     brochureLink: null,
     locationLink: null,
     websiteUnitsLink: `https://wassel.re/project?id=${encodeURIComponent(projectId as string)}#units`,

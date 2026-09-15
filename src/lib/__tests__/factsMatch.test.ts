@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { savedMessageMatchesCurrentFacts } from '../projectMessage/factsMatch';
 import type { ProjectMessageFacts } from '../projectMessage/compose';
+import { resolveProjectDelivery } from '../projectMessage/delivery';
 
 // Facts for الماجدية 163, mirroring the live record used in the 7-minute
 // incident (available price 559,000; area 90.07–180.22; beds 1–3; baths 2–3).
@@ -16,6 +17,7 @@ function majdiyaFacts(overrides: Partial<ProjectMessageFacts> = {}): ProjectMess
     bathrooms: { min: 2, max: 3 },
     areaRange: { min: 90.07, max: 180.22 },
     minPrice: { ar: '559,000 ر.س', en: 'SAR 559,000' },
+    delivery: resolveProjectDelivery({ project_status: 'available', construction_status: 'ready' }),
     brochureLink: null,
     locationLink: null,
     websiteUnitsLink: 'https://wassel.re/project?id=ap#units',
@@ -100,5 +102,77 @@ describe('savedMessageMatchesCurrentFacts', () => {
 
   it('returns false when nothing is saved', () => {
     expect(savedMessageMatchesCurrentFacts(majdiyaFacts(), '', '')).toBe(false);
+  });
+
+  // ── OFF-PLAN DISCLOSURE ──────────────────────────────────────────────
+  // A saved message written before the disclosure rule existed (or while the
+  // project was still marked ready) must NOT be sent verbatim: skipping the
+  // fact-check is what would put an undisclosed off-plan project in front of a
+  // customer. Every case below keeps the numbers current, so ONLY the delivery
+  // rule decides the outcome.
+  const offPlan = (handover?: string) =>
+    majdiyaFacts({
+      delivery: resolveProjectDelivery({
+        project_status: 'available_on_map',
+        construction_status: 'تحت-التطوير',
+        ...(handover ? { handover_date: handover } : {}),
+      }),
+    });
+
+  it('does NOT skip an off-plan project whose saved message never says so', () => {
+    expect(savedMessageMatchesCurrentFacts(offPlan(), SENT_AR, SENT_EN)).toBe(false);
+  });
+
+  it('skips an off-plan project whose saved message already discloses it', () => {
+    const ar = `${SENT_AR}
+
+الحالة: على الخارطة`;
+    const en = `${SENT_EN}
+
+Status: Off-plan`;
+    expect(savedMessageMatchesCurrentFacts(offPlan(), ar, en)).toBe(true);
+  });
+
+  it('does NOT skip when the disclosure is there but the handover year is missing', () => {
+    const ar = `${SENT_AR}
+
+الحالة: على الخارطة`;
+    const en = `${SENT_EN}
+
+Status: Off-plan`;
+    expect(savedMessageMatchesCurrentFacts(offPlan('2028-08-01'), ar, en)).toBe(false);
+  });
+
+  it('skips when the disclosure carries the right handover year, in either digit script', () => {
+    const ar = `${SENT_AR}
+
+الحالة: على الخارطة — التسليم المتوقع أغسطس ٢٠٢٨`;
+    const en = `${SENT_EN}
+
+Status: Off-plan — expected handover August 2028`;
+    expect(savedMessageMatchesCurrentFacts(offPlan('2028-08-01'), ar, en)).toBe(true);
+  });
+
+  it('does NOT skip when the saved copy quotes the WRONG handover year', () => {
+    const ar = `${SENT_AR}
+
+الحالة: على الخارطة — التسليم المتوقع أغسطس 2027`;
+    const en = `${SENT_EN}
+
+Status: Off-plan — expected handover August 2027`;
+    expect(savedMessageMatchesCurrentFacts(offPlan('2028-08-01'), ar, en)).toBe(false);
+  });
+
+  it('checks only the language that is actually saved (one-language templates)', () => {
+    const ar = `${SENT_AR}
+
+الحالة: على الخارطة`;
+    expect(savedMessageMatchesCurrentFacts(offPlan(), ar, '')).toBe(true);
+  });
+
+  it('requires nothing extra for a ready or unknown-status project', () => {
+    expect(savedMessageMatchesCurrentFacts(majdiyaFacts(), SENT_AR, SENT_EN)).toBe(true);
+    const unknown = majdiyaFacts({ delivery: resolveProjectDelivery({ project_status: 'sold_out' }) });
+    expect(savedMessageMatchesCurrentFacts(unknown, SENT_AR, SENT_EN)).toBe(true);
   });
 });

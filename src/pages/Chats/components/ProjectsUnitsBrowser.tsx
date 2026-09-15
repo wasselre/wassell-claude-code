@@ -23,6 +23,7 @@ import DualRangeSlider from '@/components/ui/DualRangeSlider';
 import BaseMapView, { type MapPin as MapPinData } from '@/components/map/BaseMapView';
 import { buildColoredPinIcon } from '@/lib/locationUtils';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
+import PaymentPlansTabPane from '@/pages/Records/components/PaymentPlansTabPane';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import BulkProjectSendFlow, { type BulkRecipientInput } from '@/pages/Chats/components/BulkProjectSendFlow';
 import { recordToPickedClient, resolveClientSlugs } from '@/pages/Chats/components/ClientPicker';
@@ -844,6 +845,13 @@ function ProjectDetail({
     [v.raw.data],
   );
 
+  // Does this project have a payment-plan menu? (The stored rollup of its
+  // units' plan cards — same gate as the project page's Payment Plans tab.)
+  const hasPaymentPlans = useMemo(() => {
+    const menu = (v.raw.data as Record<string, unknown> | undefined)?.payment_plan_schedule;
+    return Array.isArray(menu) && menu.length > 0;
+  }, [v.raw.data]);
+
   return (
     <div className="space-y-3">
       <div className="overflow-hidden rounded-2xl border border-sand/50 bg-white">
@@ -925,6 +933,17 @@ function ProjectDetail({
           </div>
         </div>
       </div>
+
+      {/* Payment plans — same component as the project page's tab, so the rep
+          can send the project's plans (as a PDF or as a text message) without
+          leaving the conversation. Shown only when the project actually has a
+          plan menu, which is the Postgres rollup of its units' plan cards — the
+          same gate ProjectDetailPage uses. */}
+      {hasPaymentPlans && (
+        <div>
+          <PaymentPlansTabPane projectId={v.id} chatPdf={chatPdf} />
+        </div>
+      )}
 
       {/* The project's real inventory — same component as the project page:
           filters, sort, unit drawer, and compare. Its table scrolls

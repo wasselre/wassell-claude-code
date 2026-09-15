@@ -86,9 +86,14 @@ ABSOLUTE RULES — never violate:
 2. WRITE ATTRACTIVE MARKETING COPY — but INVENT NO SPECIFIC FACT. You have freedom: a warm promotional intro, lifestyle appeal, the desirability of the area, tasteful adjectives and emojis. You may NOT state any specific price, number, size, count, distance, developer, completion date, landmark, or any place name beyond the city/district you are given, unless it appears in the supplied data. General appeal is welcome; specific unverified claims are forbidden.
 3. PRICES: quote ONLY the "available" price/area ranges from the AUTHORITATIVE FACTS block (they cover units a customer can actually buy). NEVER quote a price that is not in that block. If no available price is given, omit price entirely (a sold-out project shows no price rather than a stale one). Currency is the Saudi Riyal — «ر.س» in Arabic, "SAR" in English.
 4. GEOGRAPHY IS AUTHORITATIVE — NEVER INVENT IT. The facts carry district_ar/district_en and city_ar/city_en. Copy the _ar values VERBATIM into body_ar and the _en values VERBATIM into body_en — do not transliterate, translate, abbreviate, or "correct" them. If a value is null, omit that place; never guess it and never substitute the other language's value.
-5. SHAPE: open with the project name, then a short warm marketing intro (a line or two about the project's general appeal), then the concrete facts each on its own short line (city, district, unit types, bedrooms, area in m², bathrooms, "prices start from"), and end with the link. Keep the whole message WhatsApp-length — scannable — with a few tasteful emojis.
-6. Give body_en a clean English form of the project name (e.g. «صفا 52» → "Safa 52"); never leave the Arabic project name sitting in the English body.
-7. END after the link. NO closing call-to-action, NO "للتواصل والاستفسار", NO contact line, NO agency name/sign-off (never «وصل العقارية» / «Wassel»). Nothing after the link. NEVER write prose outside the tool; ALWAYS call write_project_message.`;
+5. DELIVERY STATUS IS MANDATORY AND MUST NOT BE SOFTENED. The facts carry delivery_status plus the ready-made delivery_phrase_ar / delivery_phrase_en.
+   • delivery_status = "off_plan" → you MUST state plainly that the project is sold off-plan: «على الخارطة» in body_ar, "off-plan" in body_en. When handover_label_ar / handover_label_en are given, state that handover month too (the year must appear as digits). When they are null, say it is off-plan and say NOTHING about timing — never guess, estimate, or imply a handover date. The simplest correct move is to use delivery_phrase_ar / delivery_phrase_en as written.
+   • delivery_status = "ready" → you may say it is ready («جاهز» / "Ready").
+   • delivery_status = "unknown" → say NOTHING about readiness or handover at all.
+   Off-plan vs ready decides whether a buyer can move in, get a mortgage, or meet a deadline. Hiding it, burying it, or dressing it up as "coming soon" misleads the customer and is forbidden.
+6. SHAPE: open with the project name, then a short warm marketing intro (a line or two about the project's general appeal), then the concrete facts each on its own short line (city, district, delivery status, unit types, bedrooms, area in m², bathrooms, "prices start from"), and end with the link. Keep the whole message WhatsApp-length — scannable — with a few tasteful emojis.
+7. Give body_en a clean English form of the project name (e.g. «صفا 52» → "Safa 52"); never leave the Arabic project name sitting in the English body.
+8. END after the link. NO closing call-to-action, NO "للتواصل والاستفسار", NO contact line, NO agency name/sign-off (never «وصل العقارية» / «Wassel»). Nothing after the link. NEVER write prose outside the tool; ALWAYS call write_project_message.`;
 
 export const TOOL_SCHEMA = {
   name: 'write_project_message',
@@ -199,6 +204,47 @@ async function main() {
     for (const g of geo ?? []) geoById.set(g.id, g);
   }
 
+  // Ready vs off-plan + handover month. HARNESS-ONLY MIRROR of
+  // src/lib/projectMessage/delivery.ts (this is a plain .mjs — it cannot import
+  // the TS module). delivery.ts is the source of truth; if the status sets
+  // there change, this mirror only affects eval fidelity, never production.
+  const OFF_PLAN_CONSTRUCTION = new Set(['excavation', 'foundations', 'structure', 'finishing', 'facade_installation', 'تحت-التطوير']);
+  const OFF_PLAN_PROJECT_STATUS = new Set(['under_construction', 'available_on_map', 'upcoming', 'قريبا']);
+  const LEGACY_READY_PROJECT_STATUS = new Set(['منجز', 'تم الانتهاء']);
+  const MONTHS_AR = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+  const MONTHS_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  function deliveryFacts(d) {
+    const cs = typeof d.construction_status === 'string' ? d.construction_status.trim() : '';
+    const ps = typeof d.project_status === 'string' ? d.project_status.trim() : '';
+    const hd = typeof d.handover_date === 'string' && d.handover_date.trim() ? d.handover_date.trim() : null;
+    let kind = 'unknown';
+    if (cs === 'ready') kind = 'ready';
+    else if (OFF_PLAN_CONSTRUCTION.has(cs)) kind = 'off_plan';
+    else if (LEGACY_READY_PROJECT_STATUS.has(ps)) kind = 'ready';
+    else if (OFF_PLAN_PROJECT_STATUS.has(ps)) kind = 'off_plan';
+    const m = hd ? /^(\d{4})-(\d{2})/.exec(hd) : null;
+    const idx = m ? Number(m[2]) - 1 : -1;
+    const labAr = m && idx >= 0 && idx < 12 ? `${MONTHS_AR[idx]} ${m[1]}` : null;
+    const labEn = m && idx >= 0 && idx < 12 ? `${MONTHS_EN[idx]} ${m[1]}` : null;
+    let phAr = null;
+    let phEn = null;
+    if (kind === 'off_plan') {
+      phAr = labAr ? `على الخارطة — التسليم المتوقع ${labAr}` : 'على الخارطة';
+      phEn = labEn ? `Off-plan — expected handover ${labEn}` : 'Off-plan';
+    } else if (kind === 'ready') {
+      phAr = 'جاهز';
+      phEn = 'Ready';
+    }
+    return {
+      delivery_status: kind,
+      delivery_phrase_ar: phAr,
+      delivery_phrase_en: phEn,
+      handover_date: hd,
+      handover_label_ar: labAr,
+      handover_label_en: labEn,
+    };
+  }
+
   function buildFacts(rec) {
     const d = rec.data ?? {};
     const loc = d.location && typeof d.location === 'object' && !Array.isArray(d.location) ? d.location : {};
@@ -228,6 +274,7 @@ async function main() {
       available_area_range_m2: areaRange && typeof areaRange === 'object' ? areaRange : null,
       available_price_range: priceRange && typeof priceRange === 'object' ? priceRange : null,
       prices_start_from: minPrice,
+      ...deliveryFacts(d),
       website_link: `https://wassel.re/project?id=${encodeURIComponent(rec.id)}#units`,
     };
   }

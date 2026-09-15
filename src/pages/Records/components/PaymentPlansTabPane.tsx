@@ -1,6 +1,18 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { Download, FileText, Loader2, Send } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import type { AppRecord, AppModel, ModelField } from '@/types';
+import Button from '@/components/ui/Button';
+import type { AppRecord, AppModel } from '@/types';
+import { getEntityFieldText } from '@/lib/recordTranslation/store';
+import { resolveProjectView, modelByName } from '@/lib/projects/projectView';
+import { unitsForProject } from '@/lib/projects/unitView';
+import { resolveProjectDelivery } from '@/lib/projectMessage/delivery';
+import {
+  resolveProjectPaymentPlans, resolveUnitPaymentPlans, composePaymentPlansMessage,
+  entryDownPayment, hasAedPricing, formatPlanPriceRange, planRowTitle, paymentPlansPdfFilename,
+} from '@/lib/projects/paymentPlans';
+import { downloadPdf, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
+import SendPaymentPlansModal from '@/pages/Chats/components/SendPaymentPlansModal';
 
 /**
  * "Payment Plans" tab. Two modes, chosen by the host record's model:
@@ -15,224 +27,129 @@ import type { AppRecord, AppModel, ModelField } from '@/types';
  *    so the same structure sold at several prices (different offers) reads as
  *    one row with its price(s), not eleven flat rows.
  *
- * Prices live per-unit (the source of truth is the `payment_plans` table field
- * on each unit); the project view never stores them, it aggregates live from
- * the units already in the store — same pattern as UnitsTabPane. (The
- * project's STORED menu — `payment_plan_schedule` + summary + headline %s —
- * is a Postgres rollup of the same cards, see
+ * The grouping itself lives in the pure `@/lib/projects/paymentPlans` — shared
+ * with the branded PDF and the WhatsApp text message, so the three can never
+ * disagree. Prices live per-unit (the source of truth is the `payment_plans`
+ * table field on each unit); the project view aggregates live from the units
+ * already in the store — same pattern as UnitsTabPane. (The project's STORED
+ * menu — `payment_plan_schedule` + summary + headline %s — is a Postgres rollup
+ * of the same cards, see
  * supabase/migrations/2026-09-07_project_payment_plans_rollup.sql; it gates
  * whether this tab shows at all.)
  *
- * A card with no price of its own (Saudi projects: the plan is a %-split, the
- * price is the unit's `total_price`) falls back to the unit's total price as
- * SAR. A card may also carry a free-text `schedule` — the milestone-by-
- * milestone breakdown ("20% عند التعاقد · 10% عند إنجاز 20% …") — shown under
- * the structure label.
- */
-
-interface PlanRow {
-  plan?: string;
-  down?: number;
-  before_handover?: number;
-  on_handover?: number;
-  after_handover?: number;
-  price?: number;
-  price_sar?: number;
-  schedule?: string;
-}
-
-const scheduleOf = (p: PlanRow): string => (typeof p.schedule === 'string' ? p.schedule.trim() : '');
-
-/**
- * The developer's own plan NAME, when it is a real name ("نموذج 2", "Flexi
- * Plan") rather than a bare sequence number ("01", "3") — Binghatti cards are
- * numbered, Saudi developers name their models. A real name becomes the row
- * title with the %-split as its subtitle.
- */
-const planNameOf = (p: PlanRow): string => {
-  const s = typeof p.plan === 'string' ? p.plan.trim() : '';
-  return s && !/^\d+$/.test(s) ? s : '';
-};
-
-/** The unit's own total price (SAR) — the price of a plan card that has none. */
-function unitTotalPrice(rec: AppRecord | undefined): number {
-  return num((rec?.data as Record<string, unknown> | undefined)?.total_price);
-}
-
-const num = (v: unknown): number => {
-  const n = typeof v === 'number' ? v : Number(v);
-  return Number.isFinite(n) ? n : 0;
-};
-
-const structKey = (p: PlanRow) =>
-  `${num(p.down)}/${num(p.before_handover)}/${num(p.on_handover)}/${num(p.after_handover)}`;
-
-function structLabel(p: PlanRow, isAr: boolean): string {
-  const parts: string[] = [];
-  if (num(p.down) > 0) parts.push(`${num(p.down)}% ${isAr ? 'مقدم' : 'down'}`);
-  if (num(p.before_handover) > 0)
-    parts.push(`${num(p.before_handover)}% ${isAr ? 'أثناء الإنشاء' : 'during construction'}`);
-  if (num(p.on_handover) > 0) parts.push(`${num(p.on_handover)}% ${isAr ? 'عند التسليم' : 'on handover'}`);
-  if (num(p.after_handover) > 0)
-    parts.push(`${num(p.after_handover)}% ${isAr ? 'بعد التسليم' : 'post-handover'}`);
-  return parts.join(' / ') || (isAr ? '—' : '—');
-}
-
-const fmtMoney = (v: number, isAr: boolean, ccy: string) =>
-  v > 0 ? `${v.toLocaleString(isAr ? 'ar-AE' : 'en-US')} ${ccy}` : '—';
-
-function planRowsOf(rec: AppRecord | undefined): PlanRow[] {
-  const raw = (rec?.data as Record<string, unknown> | undefined)?.payment_plans;
-  return Array.isArray(raw) ? (raw as PlanRow[]) : [];
-}
-
-/**
- * Two entry shapes:
- *  • `{ projectId }` — force the PROJECT OVERVIEW for that project id (used by
- *    ProjectDetailPage, which passes the resolved master id `view.id` so it
- *    works for both all_projects and our_projects records).
- *  • `{ record, model }` — generic record form: project overview when the model
- *    is all_projects, otherwise the unit detail for that record.
+ * SEND / DOWNLOAD (2026-09-15). In project mode the header carries "Download
+ * PDF" always and "Send to client" whenever a client conversation is in context
+ * (`chatPdf`) — the rep picks PDF or plain text in the dialog. An off-plan
+ * project's «على الخارطة» + handover month rides on both, because a payment
+ * plan is a conversation about timing.
  */
 export default function PaymentPlansTabPane({
   record,
   model,
   projectId,
+  chatPdf,
 }: {
   record?: AppRecord;
   model?: AppModel;
   projectId?: string;
+  /** Conversation to offer "Send to client" into. Absent → download only. */
+  chatPdf?: ChatPdfContext | null;
 }) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
+  const addToast = useAppStore((s) => s.addToast);
 
   // Project-overview target id: explicit prop wins; else the record itself if
   // it's an all_projects master. Null => unit-detail mode.
   const projModeId = projectId ?? (model?.name === 'all_projects' ? record?.id ?? null : null);
   const isProject = projModeId != null;
 
-  // For project mode: resolve the units belonging to this project (same lookup
-  // scan as UnitsTabPane, so a Builder rename of `project_id` doesn't break it).
-  const unitsForProject = useMemo<AppRecord[]>(() => {
-    if (!projModeId) return [];
-    const unitsModel = models.find((m) => m.name === 'units');
-    const allProjectsModel = models.find((m) => m.name === 'all_projects');
-    if (!unitsModel || !allProjectsModel) return [];
-    const lookups: ModelField[] = unitsModel.schema.sections
-      .flatMap((s) => s.fields)
-      .filter((f) => f.type === 'lookup' && f.lookup_model_id === allProjectsModel.id);
-    if (lookups.length === 0) return [];
-    return (records[unitsModel.id] ?? []).filter((r) =>
-      lookups.some((f) => {
-        const v = (r.data as Record<string, unknown>)[f.name];
-        return Array.isArray(v) ? v.includes(projModeId) : v === projModeId;
-      }),
-    );
+  // For project mode: the units belonging to this project (the shared lookup
+  // scan, so a Builder rename of `project_id` doesn't break it).
+  const unitsOfProject = useMemo<AppRecord[]>(
+    () => (projModeId ? unitsForProject({ models, records }, projModeId) : []),
+    [projModeId, models, records],
+  );
+
+  /** The all_projects master — for the PDF's branded header + delivery status. */
+  const projectRecord = useMemo<AppRecord | null>(() => {
+    if (!projModeId) return null;
+    const ap = modelByName(models, 'all_projects');
+    if (!ap) return null;
+    return (records[ap.id] ?? []).find((r) => r.id === projModeId) ?? null;
   }, [projModeId, models, records]);
 
-  // ---- PROJECT OVERVIEW: group by structure across all units ----
-  const projectPlans = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        sample: PlanRow;
-        name: string;
-        schedule: string;
-        units: Set<string>;
-        minAed: number;
-        maxAed: number;
-        minSar: number;
-        maxSar: number;
-      }
-    >();
-    for (const u of unitsForProject) {
-      for (const p of planRowsOf(u)) {
-        const key = structKey(p);
-        const price = num(p.price);
-        // No plan-specific price → the unit's own total price (SAR).
-        const priceSar = num(p.price_sar) || (price > 0 ? 0 : unitTotalPrice(u));
-        const g = map.get(key) ?? {
-          sample: p,
-          name: '',
-          schedule: '',
-          units: new Set<string>(),
-          minAed: Infinity,
-          maxAed: 0,
-          minSar: Infinity,
-          maxSar: 0,
-        };
-        if (!g.schedule) g.schedule = scheduleOf(p);
-        if (!g.name) g.name = planNameOf(p);
-        g.units.add(u.id);
-        if (price > 0) {
-          g.minAed = Math.min(g.minAed, price);
-          g.maxAed = Math.max(g.maxAed, price);
-        }
-        if (priceSar > 0) {
-          g.minSar = Math.min(g.minSar, priceSar);
-          g.maxSar = Math.max(g.maxSar, priceSar);
-        }
-        map.set(key, g);
-      }
-    }
-    return [...map.values()]
-      .map((g) => ({
-        name: g.name,
-        label: structLabel(g.sample, isAr),
-        schedule: g.schedule,
-        down: num(g.sample.down),
-        during: num(g.sample.before_handover),
-        onHandover: num(g.sample.on_handover),
-        postHandover: num(g.sample.after_handover),
-        unitCount: g.units.size,
-        minAed: g.minAed === Infinity ? 0 : g.minAed,
-        maxAed: g.maxAed,
-        minSar: g.minSar === Infinity ? 0 : g.minSar,
-        maxSar: g.maxSar,
-      }))
-      .sort((a, b) => a.down - b.down || a.during - b.during || a.onHandover - b.onHandover);
-  }, [unitsForProject, isAr]);
+  /** Rows in a chosen language — the UI uses the app language, the PDF/message
+   *  use whichever the rep picked in the dialog. */
+  const rowsFor = useCallback(
+    (wantAr: boolean) =>
+      isProject ? resolveProjectPaymentPlans(unitsOfProject, wantAr) : resolveUnitPaymentPlans(record, wantAr),
+    [isProject, unitsOfProject, record],
+  );
 
-  // ---- UNIT DETAIL: group this unit's cards by structure ----
-  const unitPlans = useMemo(() => {
-    const map = new Map<
-      string,
-      { sample: PlanRow; name: string; schedule: string; prices: { aed: number; sar: number }[] }
-    >();
-    const fallbackSar = unitTotalPrice(record);
-    for (const p of planRowsOf(record)) {
-      const key = structKey(p);
-      const g = map.get(key) ?? { sample: p, name: '', schedule: '', prices: [] };
-      if (!g.schedule) g.schedule = scheduleOf(p);
-      if (!g.name) g.name = planNameOf(p);
-      const aed = num(p.price);
-      g.prices.push({ aed, sar: num(p.price_sar) || (aed > 0 ? 0 : fallbackSar) });
-      map.set(key, g);
-    }
-    return [...map.values()]
-      .map((g) => {
-        const aeds = g.prices.map((x) => x.aed).filter((x) => x > 0);
-        const sars = g.prices.map((x) => x.sar).filter((x) => x > 0);
-        return {
-          name: g.name,
-          label: structLabel(g.sample, isAr),
-          schedule: g.schedule,
-          down: num(g.sample.down),
-          during: num(g.sample.before_handover),
-          onHandover: num(g.sample.on_handover),
-          postHandover: num(g.sample.after_handover),
-          offers: g.prices.length,
-          minAed: aeds.length ? Math.min(...aeds) : 0,
-          maxAed: aeds.length ? Math.max(...aeds) : 0,
-          minSar: sars.length ? Math.min(...sars) : 0,
-          maxSar: sars.length ? Math.max(...sars) : 0,
-        };
-      })
-      .sort((a, b) => a.down - b.down || a.during - b.during || a.onHandover - b.onHandover);
-  }, [record, isAr]);
+  const rows = useMemo(() => rowsFor(isAr), [rowsFor, isAr]);
 
-  const rows = isProject ? projectPlans : unitPlans;
+  const delivery = useMemo(
+    () => (projectRecord ? resolveProjectDelivery((projectRecord.data ?? {}) as Record<string, unknown>) : null),
+    [projectRecord],
+  );
+
+  const projectViewFor = useCallback(
+    (wantAr: boolean) =>
+      projectRecord
+        ? resolveProjectView({ models, records }, projectRecord, { isAr: wantAr, translate: getEntityFieldText })
+        : null,
+    [projectRecord, models, records],
+  );
+
+  const projectName = projectViewFor(isAr)?.name ?? '';
+
+  const [sendOpen, setSendOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  const buildPdfFor = useCallback(
+    async (wantAr: boolean): Promise<Blob> => {
+      const view = projectViewFor(wantAr);
+      if (!view) throw new Error(isAr ? 'تعذّر تحديد المشروع' : 'Could not resolve the project');
+      // jsPDF + html2canvas (~600 KB) load ONLY when a document is actually
+      // built. A static import here would pull them into the record-form and
+      // in-chat chunks for every rep who merely opens a record.
+      const { buildPaymentPlansPdf } = await import('@/lib/projects/unitsPdf');
+      return buildPaymentPlansPdf({
+        project: view,
+        rows: rowsFor(wantAr),
+        isAr: wantAr,
+        deliveryPhrase: wantAr ? delivery?.phrase?.ar ?? null : delivery?.phrase?.en ?? null,
+      });
+    },
+    [projectViewFor, rowsFor, delivery, isAr],
+  );
+
+  const messageFor = useCallback(
+    (wantAr: boolean) =>
+      composePaymentPlansMessage({
+        projectName: projectViewFor(wantAr)?.name ?? null,
+        rows: rowsFor(wantAr),
+        isAr: wantAr,
+        deliveryPhrase: wantAr ? delivery?.phrase?.ar ?? null : delivery?.phrase?.en ?? null,
+      }),
+    [projectViewFor, rowsFor, delivery],
+  );
+
+  const handleDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const view = projectViewFor(isAr);
+      if (!view) throw new Error(isAr ? 'تعذّر تحديد المشروع' : 'Could not resolve the project');
+      downloadPdf(await buildPdfFor(isAr), paymentPlansPdfFilename(view));
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), 'error');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (rows.length === 0) {
     return (
@@ -244,16 +161,12 @@ export default function PaymentPlansTabPane({
     );
   }
 
-  const entryDown = Math.min(...rows.map((r) => r.down));
+  const entryDown = entryDownPayment(rows);
   // AED column only when at least one card is priced in AED (Dubai projects);
   // Saudi projects are SAR-only and the extra "—" column is noise.
-  const hasAed = rows.some((r) => r.maxAed > 0);
-
-  const priceCell = (min: number, max: number, ccy: string) => {
-    if (min <= 0 && max <= 0) return '—';
-    if (min === max) return fmtMoney(min, isAr, ccy);
-    return `${fmtMoney(min, isAr, ccy)} — ${fmtMoney(max, isAr, ccy)}`;
-  };
+  const hasAed = hasAedPricing(rows);
+  // Share actions need the master record (branded header) — project mode only.
+  const canShare = isProject && projectRecord != null;
 
   return (
     <div className="space-y-4">
@@ -265,18 +178,45 @@ export default function PaymentPlansTabPane({
           <p className="text-xs text-charcoal/50">
             {isProject
               ? isAr
-                ? `${rows.length} خطة متاحة · أقل دفعة مقدمة ${entryDown}% · محسوبة من ${unitsForProject.length} وحدة`
-                : `${rows.length} plans available · entry down payment ${entryDown}% · rolled up from ${unitsForProject.length} units`
+                ? `${rows.length} خطة متاحة · أقل دفعة مقدمة ${entryDown}% · محسوبة من ${unitsOfProject.length} وحدة`
+                : `${rows.length} plans available · entry down payment ${entryDown}% · rolled up from ${unitsOfProject.length} units`
               : isAr
                 ? `${rows.length} خطة لهذه الوحدة · أقل دفعة مقدمة ${entryDown}%`
                 : `${rows.length} plans on this unit · entry down payment ${entryDown}%`}
           </p>
+          {/* Off-plan disclosure — a payment plan is a timing conversation, so
+              the status sits next to it here too, not only on the sent copy. */}
+          {delivery?.phrase && (
+            <p className="text-xs text-charcoal/60 mt-1">
+              <span className="text-charcoal/45">{isAr ? 'الحالة: ' : 'Status: '}</span>
+              <span className="font-semibold">{isAr ? delivery.phrase.ar : delivery.phrase.en}</span>
+            </p>
+          )}
         </div>
-        <span className="text-[11px] text-charcoal/40">
-          {hasAed
-            ? isAr ? 'الأسعار بالدرهم الإماراتي والريال السعودي' : 'Prices in AED & SAR'
-            : isAr ? 'الأسعار بالريال السعودي' : 'Prices in SAR'}
-        </span>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {canShare && (
+            <>
+              {chatPdf && (
+                <Button variant="primary" className="text-sm !py-1.5" onClick={() => setSendOpen(true)}>
+                  <Send size={14} className="inline -mt-0.5 me-1" />
+                  {isAr ? 'إرسال للعميل' : 'Send to client'}
+                </Button>
+              )}
+              <Button variant="secondary" className="text-sm !py-1.5" disabled={downloading} onClick={() => void handleDownload()}>
+                {downloading
+                  ? <Loader2 size={14} className="inline -mt-0.5 me-1 animate-spin" />
+                  : chatPdf ? <Download size={14} className="inline -mt-0.5 me-1" /> : <FileText size={14} className="inline -mt-0.5 me-1" />}
+                {isAr ? 'تنزيل PDF' : 'Download PDF'}
+              </Button>
+            </>
+          )}
+          <span className="text-[11px] text-charcoal/40">
+            {hasAed
+              ? isAr ? 'الأسعار بالدرهم الإماراتي والريال السعودي' : 'Prices in AED & SAR'
+              : isAr ? 'الأسعار بالريال السعودي' : 'Prices in SAR'}
+          </span>
+        </div>
       </div>
 
       <div className="card overflow-x-auto p-0">
@@ -303,43 +243,38 @@ export default function PaymentPlansTabPane({
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => {
-              const isCash = r.down === 100 && r.during === 0 && r.onHandover === 0;
-              return (
-                <tr key={i} className="border-b border-sand/25 last:border-0 hover:bg-cream/20">
-                  <td className="px-4 py-2.5 font-medium text-charcoal">
-                    {isCash ? (isAr ? 'دفعة كاملة (كاش)' : 'Full payment (cash)') : r.name || r.label}
-                    {!isCash && r.name && (
-                      <div className="mt-0.5 text-xs font-normal text-charcoal/70">{r.label}</div>
-                    )}
-                    {r.schedule && (
-                      <div className="mt-0.5 text-[11px] font-normal leading-relaxed text-charcoal/55">
-                        {r.schedule}
-                      </div>
-                    )}
-                  </td>
-                  <td className="text-center px-2 py-2.5 tabular-nums">{r.down ? `${r.down}%` : '—'}</td>
-                  <td className="text-center px-2 py-2.5 tabular-nums text-charcoal/70">
-                    {r.during ? `${r.during}%` : '—'}
-                  </td>
-                  <td className="text-center px-2 py-2.5 tabular-nums text-charcoal/70">
-                    {r.onHandover ? `${r.onHandover}%` : '—'}
-                    {r.postHandover ? ` (+${r.postHandover}% ${isAr ? 'بعد' : 'post'})` : ''}
-                  </td>
-                  <td className="text-center px-2 py-2.5 tabular-nums text-charcoal/60">
-                    {'unitCount' in r ? r.unitCount : r.offers}
-                  </td>
-                  {hasAed && (
-                    <td className="text-end px-4 py-2.5 tabular-nums text-charcoal whitespace-nowrap">
-                      {priceCell(r.minAed, r.maxAed, isAr ? 'د.إ' : 'AED')}
-                    </td>
+            {rows.map((r) => (
+              <tr key={r.key} className="border-b border-sand/25 last:border-0 hover:bg-cream/20">
+                <td className="px-4 py-2.5 font-medium text-charcoal">
+                  {planRowTitle(r, isAr)}
+                  {!r.isCash && r.name && (
+                    <div className="mt-0.5 text-xs font-normal text-charcoal/70">{r.label}</div>
                   )}
-                  <td className="text-end px-4 py-2.5 tabular-nums text-charcoal/70 whitespace-nowrap">
-                    {priceCell(r.minSar, r.maxSar, isAr ? 'ر.س' : 'SAR')}
+                  {r.schedule && (
+                    <div className="mt-0.5 text-[11px] font-normal leading-relaxed text-charcoal/55">
+                      {r.schedule}
+                    </div>
+                  )}
+                </td>
+                <td className="text-center px-2 py-2.5 tabular-nums">{r.down ? `${r.down}%` : '—'}</td>
+                <td className="text-center px-2 py-2.5 tabular-nums text-charcoal/70">
+                  {r.during ? `${r.during}%` : '—'}
+                </td>
+                <td className="text-center px-2 py-2.5 tabular-nums text-charcoal/70">
+                  {r.onHandover ? `${r.onHandover}%` : '—'}
+                  {r.postHandover ? ` (+${r.postHandover}% ${isAr ? 'بعد' : 'post'})` : ''}
+                </td>
+                <td className="text-center px-2 py-2.5 tabular-nums text-charcoal/60">{r.count}</td>
+                {hasAed && (
+                  <td className="text-end px-4 py-2.5 tabular-nums text-charcoal whitespace-nowrap">
+                    {formatPlanPriceRange(r.minAed, r.maxAed, isAr ? 'د.إ' : 'AED')}
                   </td>
-                </tr>
-              );
-            })}
+                )}
+                <td className="text-end px-4 py-2.5 tabular-nums text-charcoal/70 whitespace-nowrap">
+                  {formatPlanPriceRange(r.minSar, r.maxSar, isAr ? 'ر.س' : 'SAR')}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -353,6 +288,30 @@ export default function PaymentPlansTabPane({
             ? 'كل صف هيكل سداد لهذه الوحدة. قد يُعرض الهيكل نفسه بعدة أسعار (عروض مختلفة) — يظهر كنطاق سعري.'
             : 'Each row is a payment structure for this unit. The same structure can be offered at several prices (different offers) — shown as a price range.'}
       </p>
+
+      {/* Send the plans as a PDF or as a text message. Mounted only while open
+          so its cached PDF blob resets per open (same as SendUnitsPdfModal). */}
+      {sendOpen && canShare && (
+        <SendPaymentPlansModal
+          open
+          onClose={() => setSendOpen(false)}
+          chatWid={chatPdf?.chatWid ?? null}
+          clientName={chatPdf?.clientName}
+          clientPhone={chatPdf?.clientPhone}
+          projectName={projectName}
+          planCount={rows.length}
+          buildPdfFor={buildPdfFor}
+          filenameFor={(a) => {
+            const v = projectViewFor(a);
+            return v ? paymentPlansPdfFilename(v) : 'wassel-payment-plans.pdf';
+          }}
+          messageFor={messageFor}
+          captionFor={(a) => {
+            const n = projectViewFor(a)?.name ?? '';
+            return a ? `خطط السداد — ${n}`.trim() : `Payment plans — ${n}`.trim();
+          }}
+        />
+      )}
     </div>
   );
 }

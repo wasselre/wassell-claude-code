@@ -26,6 +26,7 @@ import { resolveLocalizedName } from './geo/localizedName';
 // crash Vercel's Node-ESM runtime. Re-exported here so existing importers of
 // '@/lib/projectMessageFacts' keep working unchanged.
 import type { Bilingual, NumericRange, ProjectMessageFacts } from './projectMessage/compose.js';
+import { resolveProjectDelivery } from './projectMessage/delivery.js';
 export { composeProjectMessage } from './projectMessage/compose.js';
 export type { Bilingual, NumericRange, ProjectMessageFacts };
 
@@ -241,6 +242,10 @@ export function resolveProjectFacts(
     (minPriceSlug ? asFiniteNumber(ap[minPriceSlug]) : null);
   const minPrice = minPriceNum != null ? formatPrice(minPriceNum) : null;
 
+  // Ready vs off-plan + the handover month. Read from the MASTER's raw data
+  // (construction_status / project_status / handover_date all live there).
+  const delivery = resolveProjectDelivery(ap);
+
   const brochureLink = brochureSlug ? asString(ap[brochureSlug]) : null;
   const locationLink = resolveLocationLink(locationSlug ? asString(ap[locationSlug]) : null);
   const websiteUnitsLink = websiteUnitsLinkFor(allProjectId);
@@ -291,6 +296,7 @@ export function resolveProjectFacts(
     bathrooms: bathrooms ?? null,
     areaRange,
     minPrice,
+    delivery,
     brochureLink,
     locationLink,
     websiteUnitsLink,

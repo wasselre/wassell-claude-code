@@ -1,7 +1,8 @@
 /**
- * Client-side branded PDF builders for a project's UNITS — a filterable units
- * TABLE and a single-unit ONE-PAGER — returned as a `Blob` so the caller can
- * either download them or upload+send them over WhatsApp from a chat.
+ * Client-side branded PDF builders for a project — a filterable units TABLE, a
+ * single-unit ONE-PAGER, and the project's PAYMENT PLANS — each returned as a
+ * `Blob` so the caller can either download it or upload+send it over WhatsApp
+ * from a chat.
  *
  * Why client-side (jsPDF + html2canvas) and not the server `document_jobs`
  * engine: that engine stamps scalar `{{tokens}}` into one record's template and
@@ -20,6 +21,9 @@ import { signViewUrls } from '@/lib/files/client';
 import { isFileIdValue } from '@/pages/Records/components/useFileRowMap';
 import type { ProjectView } from '@/lib/projects/projectView';
 import type { UnitView } from '@/lib/projects/unitView';
+import {
+  entryDownPayment, formatPlanPriceRange, hasAedPricing, planRowTitle, type PaymentPlanRow,
+} from '@/lib/projects/paymentPlans';
 
 const BRAND = {
   chocolate: '#4A2C2A',
@@ -334,6 +338,114 @@ export async function buildUnitPdf({
             </div>`
           : ''
       }
+    </div>
+  </div>`;
+
+  return rasterizeToPdf(html, 'portrait');
+}
+
+// ─── Payment plans ──────────────────────────────────────────────────────────
+
+/**
+ * Branded A4 portrait PDF of a project's PAYMENT PLANS — one block per payment
+ * structure with its %-split, the developer's milestone schedule, how many units
+ * offer it, and the price range.
+ *
+ * Rows come from the shared pure resolver (`./paymentPlans.ts`), so this says
+ * exactly what the Payment Plans tab and the WhatsApp text message say.
+ * `deliveryPhrase` is the ready/off-plan line — an off-plan project must state
+ * «على الخارطة» and its handover month on a document about payment timing.
+ */
+// The filename helper lives in ./paymentPlans.ts (a light module the send
+// dialog can import without pulling jsPDF + html2canvas in); re-exported here so
+// it stays discoverable next to the builder.
+export { paymentPlansPdfFilename } from '@/lib/projects/paymentPlans';
+
+export async function buildPaymentPlansPdf({
+  project,
+  rows,
+  isAr,
+  deliveryPhrase,
+}: {
+  project: ProjectView;
+  rows: PaymentPlanRow[];
+  isAr: boolean;
+  deliveryPhrase?: string | null;
+}): Promise<Blob> {
+  const sar = isAr ? 'ر.س' : 'SAR';
+  const aed = isAr ? 'د.إ' : 'AED';
+  const showAed = hasAedPricing(rows);
+  const entryDown = entryDownPayment(rows);
+
+  const blocks = rows
+    .map((r, i) => {
+      const title = planRowTitle(r, isAr);
+      const pct = (label: string, v: number) =>
+        v > 0
+          ? `<span style="display:inline-block;margin:0 0 4px 0;padding:3px 9px;border-radius:6px;background:${BRAND.cream};border:1px solid ${BRAND.sand}77;font-size:11.5px">
+               <b style="color:${BRAND.chocolate}">${v}%</b> <span style="color:${BRAND.charcoal}99">${esc(label)}</span>
+             </span>`
+          : '';
+      const prices = [
+        showAed && r.maxAed > 0
+          ? `<div><span style="color:${BRAND.charcoal}88">${isAr ? 'السعر' : 'Price'}:</span> <b style="color:${BRAND.chocolate}">${esc(formatPlanPriceRange(r.minAed, r.maxAed, aed))}</b></div>`
+          : '',
+        r.maxSar > 0
+          ? `<div><span style="color:${BRAND.charcoal}88">${isAr ? (showAed ? 'بالريال' : 'السعر') : showAed ? 'In SAR' : 'Price'}:</span> <b style="color:${BRAND.copper}">${esc(formatPlanPriceRange(r.minSar, r.maxSar, sar))}</b></div>`
+          : '',
+      ].join('');
+      return `
+      <div style="border:1px solid ${BRAND.sand}66;border-radius:10px;padding:12px 14px;margin-bottom:10px;background:${i % 2 ? '#fff' : `${BRAND.cream}33`}">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px">
+          <div style="font-size:15px;font-weight:700;color:${BRAND.chocolate}">${i + 1}. ${esc(title)}</div>
+          <div style="font-size:11px;color:${BRAND.charcoal}88">${
+            r.countKind === 'units'
+              ? isAr ? `${r.count} وحدة` : `${r.count} unit${r.count === 1 ? '' : 's'}`
+              : isAr ? `${r.count} عرض` : `${r.count} offer${r.count === 1 ? '' : 's'}`
+          }</div>
+        </div>
+        ${r.isCash ? '' : `<div style="margin-bottom:4px">
+          ${pct(isAr ? 'مقدم' : 'down', r.down)}
+          ${pct(isAr ? 'أثناء الإنشاء' : 'during construction', r.during)}
+          ${pct(isAr ? 'عند التسليم' : 'on handover', r.onHandover)}
+          ${pct(isAr ? 'بعد التسليم' : 'post-handover', r.postHandover)}
+        </div>`}
+        ${r.schedule ? `<div style="font-size:11.5px;line-height:1.7;color:${BRAND.charcoal}bb;margin:4px 0 6px">${esc(r.schedule)}</div>` : ''}
+        <div style="font-size:12.5px">${prices}</div>
+      </div>`;
+    })
+    .join('');
+
+  const subtitle = isAr
+    ? `خطط السداد · ${rows.length} خطة · ${today(true)}`
+    : `Payment plans · ${rows.length} plan${rows.length === 1 ? '' : 's'} · ${today(false)}`;
+
+  const html = `
+  <div dir="${isAr ? 'rtl' : 'ltr'}" style="width:794px;box-sizing:border-box;background:#fff;font-family:Amiri,serif;color:${BRAND.charcoal}">
+    ${headerHtml(project, isAr, subtitle)}
+    <div style="padding:24px 32px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-bottom:2px solid ${BRAND.copper};padding-bottom:8px;margin-bottom:14px">
+        <div style="font-size:20px;font-weight:700;color:${BRAND.chocolate}">${isAr ? 'خطط السداد' : 'Payment plans'}</div>
+        <div style="text-align:${isAr ? 'left' : 'right'};font-size:12px;color:${BRAND.charcoal}99">
+          ${entryDown > 0 ? (isAr ? `تبدأ من ${entryDown}% دفعة مقدمة` : `From ${entryDown}% down payment`) : ''}
+        </div>
+      </div>
+      ${
+        deliveryPhrase
+          ? `<div style="margin-bottom:12px;font-size:13px">
+               <span style="color:${BRAND.charcoal}88">${isAr ? 'الحالة' : 'Status'}:</span>
+               <b style="color:${BRAND.chocolate}">${esc(deliveryPhrase)}</b>
+             </div>`
+          : ''
+      }
+      ${blocks || `<div style="padding:16px;text-align:center;color:#999">${isAr ? 'لا توجد خطط سداد' : 'No payment plans'}</div>`}
+      <div style="margin-top:10px;font-size:10.5px;color:${BRAND.charcoal}88;line-height:1.7">
+        ${
+          isAr
+            ? `كل خطة هي هيكل سداد متاح في المشروع (نسبة المقدم / أثناء الإنشاء / عند التسليم). السعر نطاق محسوب من الوحدات المتاحة بهذه الخطة — يختلف السعر حسب الوحدة.${showAed ? ' الأسعار بالدرهم الإماراتي والريال السعودي.' : ''}`
+            : `Each plan is a payment structure offered in this project (down / during construction / on handover %). The price is a range across the units available on that plan — price varies by unit.${showAed ? ' Prices in AED & SAR.' : ''}`
+        }
+      </div>
     </div>
   </div>`;
 

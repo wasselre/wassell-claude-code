@@ -3,11 +3,15 @@
 // (api/templates/project-message.ts) without dragging in the browser-shaped
 // resolveProjectFacts and its transitive chain (locationUtils → mirrorResolver
 // → …), which use extensionless relative imports that Vercel's Node-ESM runtime
-// rejects (ERR_MODULE_NOT_FOUND). This module imports NOTHING — keep it that way.
+// rejects (ERR_MODULE_NOT_FOUND). This module imports NOTHING but the TYPE of
+// ProjectDelivery from ./delivery.js — which is itself import-free for the same
+// reason — so the Node-ESM constraint holds. Keep both that way.
 //
 // projectMessageFacts.ts re-exports these so existing browser importers of
 // `composeProjectMessage` / the types from '@/lib/projectMessageFacts' keep
 // working unchanged.
+
+import type { ProjectDelivery } from './delivery.js';
 
 export interface Bilingual {
   ar: string;
@@ -49,6 +53,15 @@ export interface ProjectMessageFacts {
    * (`available_price_range`). Null when no units are available → line omitted.
    */
   minPrice: Bilingual | null;
+  /**
+   * Ready vs off-plan («على الخارطة») + the expected handover month. Resolved by
+   * `resolveProjectDelivery` from the project's construction/sales status and
+   * `handover_date`. An off-plan project MUST disclose it to the customer — see
+   * the rule in `./delivery.ts` — so the composer always writes this line when
+   * the status is known. `kind:'unknown'` (phrase null) writes nothing rather
+   * than claiming a readiness we cannot prove.
+   */
+  delivery: ProjectDelivery | null;
   brochureLink: string | null;
   locationLink: string | null;
   /** Public-website link to the project's unit details, labeled "الرابط / Link". */
@@ -78,6 +91,10 @@ function areaRangeText(r: NumericRange): string {
  *
  * Per the user's exact spec (2026-06-08): price label is "الأسعار تبدأ من" /
  * "Prices start from"; nothing extra is ever added to the body.
+ *
+ * 2026-09-15: a "الحالة / Status" line was added after the district — an
+ * off-plan project must always say «على الخارطة» plus its expected handover
+ * month, and say it with no date when the date is unknown.
  */
 export function composeProjectMessage(
   facts: ProjectMessageFacts,
@@ -87,6 +104,13 @@ export function composeProjectMessage(
   const en: string[] = [];
   if (facts.city) { ar.push(`المدينة: ${facts.city.ar}`); en.push(`City: ${facts.city.en}`); }
   if (facts.district) { ar.push(`الحي: ${facts.district.ar}`); en.push(`District: ${facts.district.en}`); }
+  // Ready vs off-plan, with the handover month when we have one. Never omitted
+  // for an off-plan project (it is a first-order buying factor), never invented
+  // for a project whose status we cannot prove.
+  if (facts.delivery?.phrase) {
+    ar.push(`الحالة: ${facts.delivery.phrase.ar}`);
+    en.push(`Status: ${facts.delivery.phrase.en}`);
+  }
   if (facts.unitTypes.length > 0) {
     ar.push(`أنواع الوحدات: ${facts.unitTypes.map((u) => u.ar).join('، ')}`);
     en.push(`Unit Types: ${facts.unitTypes.map((u) => u.en).join(', ')}`);

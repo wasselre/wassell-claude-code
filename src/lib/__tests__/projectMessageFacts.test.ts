@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveProjectFacts, composeProjectMessage, type ProjectMessageFacts } from '../projectMessageFacts';
+import { resolveProjectDelivery } from '../projectMessage/delivery';
 import type { AppModel, AppRecord, ModelField, ModelSection, ModelOption } from '@/types';
 
 function field(partial: Partial<ModelField> & { name: string }): ModelField {
@@ -297,6 +298,33 @@ describe('resolveProjectFacts', () => {
   });
 });
 
+describe('resolveProjectFacts — delivery status', () => {
+  it('reads ready/off-plan + handover off the all_projects MASTER record', () => {
+    const base = {
+      project_name: 'مينا 52',
+      location: { region: 'r-riyadh', city: 'c-riyadh', district: 'd-narjis' },
+    };
+    const factsFor = (extra: Record<string, unknown>) => {
+      const records: Record<string, AppRecord[]> = {
+        ...geoRecords,
+        [AP_ID]: [rec('ap1', AP_ID, { ...base, ...extra })],
+        [OP_ID]: [rec('op1', OP_ID, { project: 'ap1' })],
+        [UN_ID]: [],
+      };
+      return resolveProjectFacts(records[OP_ID]![0]!, models, records);
+    };
+
+    const offPlan = factsFor({ project_status: 'available_on_map', construction_status: 'تحت-التطوير', handover_date: '2028-08-01' });
+    expect(offPlan.delivery?.kind).toBe('off_plan');
+    expect(offPlan.delivery?.phrase?.ar).toBe('على الخارطة — التسليم المتوقع أغسطس 2028');
+
+    expect(factsFor({ construction_status: 'ready' }).delivery?.kind).toBe('ready');
+    // Nothing stored → unknown, and unknown writes no claim.
+    expect(factsFor({}).delivery?.kind).toBe('unknown');
+    expect(factsFor({}).delivery?.phrase).toBeNull();
+  });
+});
+
 describe('composeProjectMessage', () => {
   const base: ProjectMessageFacts = {
     ourProjectId: 'o', allProjectId: 'a', name: 'مينا 52',
@@ -306,6 +334,7 @@ describe('composeProjectMessage', () => {
     bedrooms: { min: 2, max: 3 }, bathrooms: { min: 2, max: 3 },
     areaRange: { min: 114.28, max: 186.07 },
     minPrice: { ar: '1,200,000 ر.س', en: 'SAR 1,200,000' },
+    delivery: null,                                       // status unknown → no Status line
     brochureLink: null,                                   // no longer rendered
     locationLink: 'https://maps.app.goo.gl/x',            // no longer rendered (location dropped)
     websiteUnitsLink: 'https://wassel.re/project?id=a#units',
@@ -347,6 +376,47 @@ describe('composeProjectMessage', () => {
     const { body_ar } = composeProjectMessage(f);
     expect(body_ar).toContain('غرف النوم: 3');
     expect(body_ar).not.toContain('غرف النوم: 3 - 3');
+  });
+
+  // ── DELIVERY STATUS ────────────────────────────────────────────────
+  it('writes NO status line when readiness is unknown', () => {
+    const { body_ar, body_en } = composeProjectMessage(base);
+    expect(body_ar).not.toContain('الحالة:');
+    expect(body_en).not.toContain('Status:');
+  });
+
+  it('states off-plan + the handover month, right after the district', () => {
+    const f: ProjectMessageFacts = {
+      ...base,
+      delivery: resolveProjectDelivery({
+        project_status: 'available_on_map',
+        construction_status: 'تحت-التطوير',
+        handover_date: '2028-08-01',
+      }),
+    };
+    const { body_ar, body_en } = composeProjectMessage(f);
+    expect(body_ar).toContain('الحالة: على الخارطة — التسليم المتوقع أغسطس 2028');
+    expect(body_en).toContain('Status: Off-plan — expected handover August 2028');
+    expect(body_ar.indexOf('الحالة')).toBeGreaterThan(body_ar.indexOf('الحي'));
+    expect(body_ar.indexOf('الحالة')).toBeLessThan(body_ar.indexOf('أنواع الوحدات'));
+  });
+
+  it('states off-plan with NO date when the handover date is unknown', () => {
+    const f: ProjectMessageFacts = {
+      ...base,
+      delivery: resolveProjectDelivery({ project_status: 'available_on_map', construction_status: 'تحت-التطوير' }),
+    };
+    const { body_ar, body_en } = composeProjectMessage(f);
+    expect(body_ar).toContain('الحالة: على الخارطة');
+    expect(body_ar).not.toContain('التسليم المتوقع');
+    expect(body_en).toContain('Status: Off-plan');
+    expect(body_en).not.toContain('handover');
+  });
+
+  it('says Ready for a finished project', () => {
+    const f: ProjectMessageFacts = { ...base, delivery: resolveProjectDelivery({ construction_status: 'ready' }) };
+    expect(composeProjectMessage(f).body_ar).toContain('الحالة: جاهز');
+    expect(composeProjectMessage(f).body_en).toContain('Status: Ready');
   });
 
   it('uses the translated English name for the English body title (Arabic body keeps the Arabic name)', () => {

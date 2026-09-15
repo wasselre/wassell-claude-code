@@ -4,6 +4,7 @@ import { X, Loader2, Sparkles, MessageCircle, RefreshCw, FileText, ArrowRight, A
 import { useAppStore } from '@/stores/appStore';
 import { resolveProjectFacts } from '@/lib/projectMessageFacts';
 import { savedMessageMatchesCurrentFacts } from '@/lib/projectMessage/factsMatch';
+import { ensureOffPlanDisclosed } from '@/lib/projectMessage/delivery';
 import { generateProjectMessageAi, factCheckProjectMessage } from '@/lib/projectMessage/client';
 import { findProjectTemplate } from '@/lib/matching/sendToClient';
 import Button from '@/components/ui/Button';
@@ -148,14 +149,47 @@ export default function ProjectMessageComposeStep({
     return record;
   }
 
+  /**
+   * The project's current facts — the source for the fact-check skip test AND
+   * for the off-plan disclosure floor below.
+   */
+  function currentProjectFacts() {
+    return resolveProjectFacts(
+      { id: 'wa-synthetic', data: { project: projectId } } as unknown as AppRecord,
+      models,
+      records,
+    );
+  }
+
+  /**
+   * OFF-PLAN FLOOR. A project sold «على الخارطة» must say so to the customer.
+   * The AI generator's own guard already rejects a body that hides it, but a
+   * SAVED template written before that rule (or typed by hand, so it never runs
+   * a fact-check) would reach the rep untouched — so the line is appended here,
+   * deterministically, before the preview. The rep sees it and can edit it.
+   */
+  function withDelivery(ar: string, en: string): { ar: string; en: string } {
+    const delivery = currentProjectFacts().delivery;
+    return {
+      ar: ensureOffPlanDisclosed(ar, 'ar', delivery),
+      en: ensureOffPlanDisclosed(en, 'en', delivery),
+    };
+  }
+
+  /** Put a resolved bilingual pair into the preview, in the send language. */
+  function showInPreview(rawAr: string, rawEn: string) {
+    const { ar, en } = withDelivery(rawAr, rawEn);
+    setBodyAr(ar);
+    setBodyEn(en);
+    setChatBody((sendAr ? ar : en) || ar || en);
+    setPhase('preview');
+  }
+
   // ── TEXT choices ────────────────────────────────────────────────────
   function useSaved() {
     if (savedFactCheck) { void runFactCheck(); return; }
     setPreviewMode('factcheck');
-    setBodyAr(savedAr);
-    setBodyEn(savedEn);
-    setChatBody((sendAr ? savedAr : savedEn) || savedAr || savedEn);
-    setPhase('preview');
+    showInPreview(savedAr, savedEn);
   }
 
   async function runFactCheck() {
@@ -164,37 +198,23 @@ export default function ProjectMessageComposeStep({
     setWarn(null);
     setPreviewMode('factcheck');
 
-    const currentFacts = resolveProjectFacts(
-      { id: 'wa-synthetic', data: { project: projectId } } as unknown as AppRecord,
-      models,
-      records,
-    );
-    if (savedMessageMatchesCurrentFacts(currentFacts, savedAr, savedEn)) {
-      setBodyAr(savedAr);
-      setBodyEn(savedEn);
-      setChatBody((sendAr ? savedAr : savedEn) || savedAr || savedEn);
+    if (savedMessageMatchesCurrentFacts(currentProjectFacts(), savedAr, savedEn)) {
       setGeneratedBy(null);
-      setPhase('preview');
+      showInPreview(savedAr, savedEn);
       return;
     }
 
     try {
       const { body_ar, body_en, generated_by } = await factCheckProjectMessage(projectId, savedAr, savedEn);
-      const ar = body_ar || savedAr;
-      const en = body_en || savedEn;
-      setBodyAr(ar);
-      setBodyEn(en);
-      setChatBody((sendAr ? ar : en) || ar || en);
       setGeneratedBy(generated_by ?? null);
-      setPhase('preview');
+      showInPreview(body_ar || savedAr, body_en || savedEn);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setBodyAr(savedAr);
-      setBodyEn(savedEn);
-      setChatBody((sendAr ? savedAr : savedEn) || savedAr || savedEn);
       setGeneratedBy(null);
       setWarn(L(`تعذّر تحديث الأرقام تلقائيًا (${msg}). راجعها قبل الإرسال.`, `Couldn't auto-refresh the numbers (${msg}). Review them before sending.`));
-      setPhase('preview');
+      // Falls back to the saved copy — but the off-plan line is still applied,
+      // so a failed fact-check can never drop the disclosure.
+      showInPreview(savedAr, savedEn);
     }
   }
 
@@ -205,11 +225,10 @@ export default function ProjectMessageComposeStep({
     setPreviewMode('generate');
     try {
       const { body_ar, body_en, generated_by } = await generateProjectMessageAi(projectId);
-      setBodyAr(body_ar);
-      setBodyEn(body_en);
-      setChatBody((sendAr ? body_ar : body_en) || body_ar || body_en);
       setGeneratedBy(generated_by ?? null);
-      setPhase('preview');
+      // The endpoint's guard already rejects an undisclosed off-plan body; the
+      // floor here is belt-and-braces and a no-op on a compliant message.
+      showInPreview(body_ar, body_en);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg.trim() || L('تعذّر توليد الرسالة — حاول مجددًا', 'Could not generate the message — try again'));

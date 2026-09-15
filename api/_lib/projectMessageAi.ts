@@ -22,6 +22,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { trackedAnthropic } from './aiUsage.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveLocalizedName, type LocalizedName } from '../../src/lib/geo/localizedName.js';
+import {
+  resolveProjectDelivery,
+  bodyDisclosesOffPlan,
+  handoverYear,
+  type ProjectDelivery,
+} from '../../src/lib/projectMessage/delivery.js';
 
 export interface GenerateInput {
   projectId: string;
@@ -74,9 +80,14 @@ ABSOLUTE RULES — never violate:
 2. WRITE ATTRACTIVE MARKETING COPY — but INVENT NO SPECIFIC FACT. You have freedom: a warm promotional intro, lifestyle appeal, the desirability of the area, tasteful adjectives and emojis. You may NOT state any specific price, number, size, count, distance, developer, completion date, landmark, or any place name beyond the city/district you are given, unless it appears in the supplied data. General appeal is welcome; specific unverified claims are forbidden.
 3. PRICES: quote ONLY the "available" price/area ranges from the AUTHORITATIVE FACTS block (they cover units a customer can actually buy). NEVER quote a price that is not in that block. If no available price is given, omit price entirely (a sold-out project shows no price rather than a stale one). Currency is the Saudi Riyal — «ر.س» in Arabic, "SAR" in English.
 4. GEOGRAPHY IS AUTHORITATIVE — NEVER INVENT IT. The facts carry district_ar/district_en and city_ar/city_en. Copy the _ar values VERBATIM into body_ar and the _en values VERBATIM into body_en — do not transliterate, translate, abbreviate, or "correct" them. If a value is null, omit that place; never guess it and never substitute the other language's value.
-5. SHAPE: open with the project name, then a short warm marketing intro (a line or two about the project's general appeal), then the concrete facts each on its own short line (city, district, unit types, bedrooms, area in m², bathrooms, "prices start from"), and end with the link. Keep the whole message WhatsApp-length — scannable — with a few tasteful emojis.
-6. Give body_en a clean English form of the project name (e.g. «صفا 52» → "Safa 52"); never leave the Arabic project name sitting in the English body.
-7. END after the link. NO closing call-to-action, NO "للتواصل والاستفسار", NO contact line, NO agency name/sign-off (never «وصل العقارية» / «Wassel»). Nothing after the link. NEVER write prose outside the tool; ALWAYS call write_project_message.`;
+5. DELIVERY STATUS IS MANDATORY AND MUST NOT BE SOFTENED. The facts carry delivery_status plus the ready-made delivery_phrase_ar / delivery_phrase_en.
+   • delivery_status = "off_plan" → you MUST state plainly that the project is sold off-plan: «على الخارطة» in body_ar, "off-plan" in body_en. When handover_label_ar / handover_label_en are given, state that handover month too (the year must appear as digits). When they are null, say it is off-plan and say NOTHING about timing — never guess, estimate, or imply a handover date. The simplest correct move is to use delivery_phrase_ar / delivery_phrase_en as written.
+   • delivery_status = "ready" → you may say it is ready («جاهز» / "Ready").
+   • delivery_status = "unknown" → say NOTHING about readiness or handover at all.
+   Off-plan vs ready decides whether a buyer can move in, get a mortgage, or meet a deadline. Hiding it, burying it, or dressing it up as "coming soon" misleads the customer and is forbidden.
+6. SHAPE: open with the project name, then a short warm marketing intro (a line or two about the project's general appeal), then the concrete facts each on its own short line (city, district, delivery status, unit types, bedrooms, area in m², bathrooms, "prices start from"), and end with the link. Keep the whole message WhatsApp-length — scannable — with a few tasteful emojis.
+7. Give body_en a clean English form of the project name (e.g. «صفا 52» → "Safa 52"); never leave the Arabic project name sitting in the English body.
+8. END after the link. NO closing call-to-action, NO "للتواصل والاستفسار", NO contact line, NO agency name/sign-off (never «وصل العقارية» / «Wassel»). Nothing after the link. NEVER write prose outside the tool; ALWAYS call write_project_message.`;
 
 const TOOL_SCHEMA = {
   name: 'write_project_message',
@@ -109,7 +120,8 @@ ABSOLUTE RULES — never violate:
 3. If a number in the message already matches the facts, leave it EXACTLY as written (same formatting). Only touch a figure that actually disagrees.
 4. PRICE: quote only the available price from the facts. If the facts carry no available price but the message states one, remove just that figure while keeping the sentence readable — do not invent a replacement.
 5. GEOGRAPHY: the facts carry district_ar/district_en and city_ar/city_en. If a place name in the message disagrees with the facts, correct it to the facts value (Arabic form in body_ar, English form in body_en); otherwise leave it. Never invent a place name or swap languages.
-6. Do NOT add, remove, or reorder any non-numeric text. Do NOT add a closing line, CTA, or sign-off. NEVER write prose outside the tool; ALWAYS call write_project_message.`;
+6. DELIVERY STATUS is the ONE thing you may ADD, and you MUST add it when it is missing. When delivery_status = "off_plan", the message has to say plainly that the project is off-plan — «على الخارطة» in body_ar, "off-plan" in body_en — plus the handover month from handover_label_ar / handover_label_en when those are given (the year must appear as digits), and nothing about timing when they are null. If the message already says this, only correct the month/year if it disagrees with the facts. Add it as ONE short line near the other facts (delivery_phrase_ar / delivery_phrase_en are ready to paste); change nothing else. When delivery_status = "ready" or "unknown", add nothing, and delete any handover date the facts no longer support.
+7. Apart from rule 6, do NOT add, remove, or reorder any non-numeric text. Do NOT add a closing line, CTA, or sign-off. NEVER write prose outside the tool; ALWAYS call write_project_message.`;
 
 function buildFactCheckContent(existingAr: string, existingEn: string, facts: Record<string, unknown>): string {
   return `EXISTING MESSAGE — update ONLY its numbers to match the facts; keep every other character identical:
@@ -144,20 +156,23 @@ function formatPrice(n: number): { ar: string; en: string } {
 
 /**
  * Protected-fact gate. Rejects a rewrite that dropped/altered an authoritative
- * place name (same posture as listing-message's assertGeographyIntact) OR that
+ * place name (same posture as listing-message's assertGeographyIntact), that
  * introduced a large number (≥6 digits) not present in the record — a proxy for
- * an invented price. Rejection throws → the caller keeps the saved template.
+ * an invented price — OR that failed to disclose off-plan status. Rejection
+ * throws → the caller keeps the saved template / falls back to the
+ * deterministic sheet, which always carries the disclosure.
  */
 function assertFactsIntact(args: {
   bodyAr: string;
   bodyEn: string;
   districtGeo: LocalizedName | null;
   cityGeo: LocalizedName | null;
+  delivery: ProjectDelivery;
   recordData: Record<string, unknown>;
   facts: Record<string, unknown>;
   provider: string;
 }): void {
-  const { bodyAr, bodyEn, districtGeo, cityGeo, recordData, facts, provider } = args;
+  const { bodyAr, bodyEn, districtGeo, cityGeo, delivery, recordData, facts, provider } = args;
   const violations: string[] = [];
 
   const checkAr = (geo: LocalizedName | null, level: string) => {
@@ -189,6 +204,30 @@ function assertFactsIntact(args: {
     const stripped = toWestern(body).replace(/[,٬]/g, '');
     for (const m of stripped.match(/\d{6,}/g) ?? []) {
       if (!allowedNums.has(m)) { violations.push(`body_${lang} contains a number not in the record data: ${m}`); break; }
+    }
+  }
+
+  // OFF-PLAN DISCLOSURE — a project sold «على الخارطة» must say so, in both
+  // languages, and must carry its handover YEAR when one is known. The year is
+  // checked (not the month name) so a model that wrote "Aug 2028" / «أغسطس ٢٠٢٨»
+  // still passes, while one that dropped the date does not. A missing
+  // disclosure is a rejection, not a warning: sending a customer an off-plan
+  // project dressed as ready is the exact harm this guard exists for.
+  if (delivery.kind === 'off_plan') {
+    if (bodyAr && !bodyDisclosesOffPlan(bodyAr, 'ar')) {
+      violations.push('body_ar does not disclose that the project is off-plan («على الخارطة»)');
+    }
+    if (bodyEn && !bodyDisclosesOffPlan(bodyEn, 'en')) {
+      violations.push('body_en does not disclose that the project is off-plan ("off-plan")');
+    }
+    const year = handoverYear(delivery.handoverDate);
+    if (year) {
+      if (bodyAr && !toWestern(bodyAr).includes(year)) {
+        violations.push(`body_ar is missing the handover year ${year}`);
+      }
+      if (bodyEn && !toWestern(bodyEn).includes(year)) {
+        violations.push(`body_en is missing the handover year ${year}`);
+      }
     }
   }
 
@@ -268,6 +307,10 @@ export async function generateProjectMessage(
       : { ar: String(v), en: String(v) };
   });
 
+  // Ready vs off-plan + the expected handover month (same resolver as the
+  // deterministic sheet + the Finder badge). Off-plan MUST reach the customer.
+  const delivery = resolveProjectDelivery(pd);
+
   const facts = {
     name: asString(pd.project_name),
     city_ar: cityGeo?.ar ?? null,
@@ -280,6 +323,13 @@ export async function generateProjectMessage(
     available_area_range_m2: availAreaSlug ? asRange(pd[availAreaSlug]) : null,
     available_price_range: priceRange,
     prices_start_from: minPriceNum != null ? formatPrice(minPriceNum) : null,
+    // Delivery — flat like the geography keys so the prompt can name each one.
+    delivery_status: delivery.kind,
+    delivery_phrase_ar: delivery.phrase?.ar ?? null,
+    delivery_phrase_en: delivery.phrase?.en ?? null,
+    handover_date: delivery.handoverDate,
+    handover_label_ar: delivery.handoverLabel?.ar ?? null,
+    handover_label_en: delivery.handoverLabel?.en ?? null,
     website_link: `https://wassel.re/project?id=${encodeURIComponent(projectId)}#units`,
   };
 
@@ -349,7 +399,7 @@ export async function generateProjectMessage(
   if (!bodyAr && !bodyEn) return { ok: false, status: 502, error: `${provider} returned an empty message` };
 
   try {
-    assertFactsIntact({ bodyAr: bodyAr ?? '', bodyEn: bodyEn ?? '', districtGeo, cityGeo, recordData: pd, facts, provider });
+    assertFactsIntact({ bodyAr: bodyAr ?? '', bodyEn: bodyEn ?? '', districtGeo, cityGeo, delivery, recordData: pd, facts, provider });
   } catch (err) {
     return { ok: false, status: 502, error: err instanceof Error ? err.message : String(err) };
   }

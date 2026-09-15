@@ -2,8 +2,9 @@
 // numbers? If so, the send flow can skip the (slow, ~1–2 min) AI fact-check
 // round-trip entirely and send the saved text as-is.
 //
-// Pure + import-free (types only) so it is unit-testable and could be reused
-// server-side. Keep it that way — no browser/store imports.
+// Pure, with no browser/store imports so it is unit-testable and is in fact
+// reused server-side (api/_lib/aiSendProject.ts). Its one value import,
+// ./delivery.js, is itself import-free — keep both that way.
 //
 // SAFETY POSTURE — the two error directions are NOT symmetric:
 //   • false-SKIP  (say "matches" when a number actually drifted) → we send a
@@ -16,6 +17,7 @@
 // must not keep quoting a price the fact-check would have removed).
 
 import type { NumericRange, ProjectMessageFacts } from './compose.js';
+import { bodyDisclosesOffPlan, handoverYear } from './delivery.js';
 
 // ── digit / separator normalization ────────────────────────────────────────
 // Fold Arabic-Indic + Extended Arabic-Indic digits to Western, normalize the
@@ -124,8 +126,9 @@ const hasPriceMention = (body: string): boolean => /ر\.?\s?س|SAR/i.test(body);
 
 /**
  * True when the saved bodies already reflect the project's current NUMBERS
- * (available starting price, area range, bedroom range, bathroom range) — so the
- * AI fact-check call can be skipped and the saved text sent unchanged.
+ * (available starting price, area range, bedroom range, bathroom range) AND
+ * already disclose off-plan delivery when the project is off-plan — so the AI
+ * fact-check call can be skipped and the saved text sent unchanged.
  *
  * Returns false (→ run the fact-check) whenever a number cannot be proven
  * current, including the sold-out case (facts carry no price but a body still
@@ -150,6 +153,22 @@ export function savedMessageMatchesCurrentFacts(
     // Project has no available price now, but a saved body still quotes one.
     // Skipping would send a price the fact-check would have stripped. Don't.
     return false;
+  }
+
+  // DELIVERY — an off-plan project MUST disclose it («على الخارطة» / "off-plan")
+  // and must carry its handover YEAR when one is known. A saved message written
+  // before that rule existed, or written while the project was still marked
+  // ready, would otherwise be sent verbatim with the disclosure missing — the
+  // exact harm the rule exists to prevent. Not matching sends it through the
+  // fact-check, which adds the line (see FACTCHECK_SYSTEM_PROMPT rule 6).
+  if (facts.delivery?.kind === 'off_plan') {
+    const year = handoverYear(facts.delivery.handoverDate);
+    const langOf = (i: number): 'ar' | 'en' => (i === 0 ? 'ar' : 'en');
+    for (const [i, body] of [savedAr, savedEn].entries()) {
+      if (!body || !body.trim()) continue; // a one-language template: nothing to check on the empty side
+      if (!bodyDisclosesOffPlan(body, langOf(i))) return false;
+      if (year && !normalizeBody(body).includes(year)) return false;
+    }
   }
 
   // AREA (decimal-or-rounded m²), BEDROOMS, BATHROOMS — each present ranges must
