@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { GoogleMap, Polygon, Polyline, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, MarkerF, Polygon, Polyline, useJsApiLoader } from '@react-google-maps/api';
 import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE } from '@/lib/locationUtils';
+import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, buildPillIcon } from '@/lib/locationUtils';
 import { geojsonToPaths, geojsonToLinePaths } from '@/lib/geo/geojsonPaths';
 import type { LocationItemDTO } from '../lib/shared';
 
@@ -14,6 +14,10 @@ import type { LocationItemDTO } from '../lib/shared';
  * (zones, radii, road sides) go through the real compiler
  * (`wassell_preview_geo_items`). Include = copper, exclude = red. Nothing here
  * is editable and nothing is written.
+ *
+ * Basemap labels stay ON (WASSEL_MAP_STYLE, not the picker's label-suppressed
+ * GEO_MAP_STYLE): a grader reads this like a normal map, with Google's district
+ * and road names, and each drawn shape additionally carries its own name pill.
  */
 
 const COPPER = '#B8734F';
@@ -44,6 +48,7 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
   const drawnItems = useMemo(() => items.filter((i) => i.kind === 'drawn_area' && Array.isArray(i.coordinates) && i.coordinates.length >= 4), [items]);
   const polarityOfDistrict = useMemo(() => new Map(districtItems.map((i) => [i.district_id!, i.polarity])), [districtItems]);
   const polarityOfItem = useMemo(() => new Map(items.map((i) => [i.id, i.polarity])), [items]);
+  const labelOfItem = useMemo(() => new Map(items.map((i) => [i.id, (i.district_label || i.element_label || i.label || '').trim()])), [items]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -84,14 +89,30 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
       if (!p.geojson) continue;
       const pol = polarityOfItem.get(p.item_id) ?? p.polarity ?? 'include';
       const paths = geojsonToPaths(p.geojson);
-      if (paths.length) out.push({ key: `e:${p.item_id}`, paths, polarity: pol, label: '' });
+      if (paths.length) out.push({ key: `e:${p.item_id}`, paths, polarity: pol, label: labelOfItem.get(p.item_id) ?? '' });
     }
     for (const d of drawnItems) {
       const ring = (d.coordinates ?? []).map(([lng, lat]) => ({ lat, lng }));
       if (ring.length >= 4) out.push({ key: `a:${d.id}`, paths: [ring], polarity: d.polarity, label: d.label ?? '' });
     }
     return out;
-  }, [shapes, previews, drawnItems, polarityOfDistrict, polarityOfItem, isAr]);
+  }, [shapes, previews, drawnItems, polarityOfDistrict, polarityOfItem, labelOfItem, isAr]);
+
+  // One name pill per drawn polygon, at the centre of its outer ring. Few shapes
+  // per conversation, so no declutter pass is needed here.
+  const labels = useMemo(() => {
+    if (!isLoaded) return [] as Array<{ key: string; position: google.maps.LatLngLiteral; icon: google.maps.Icon | undefined }>;
+    const out: Array<{ key: string; position: google.maps.LatLngLiteral; icon: google.maps.Icon | undefined }> = [];
+    for (const pg of polygons) {
+      const ring = pg.paths[0];
+      if (!pg.label || !ring || ring.length === 0) continue;
+      const b = new google.maps.LatLngBounds();
+      for (const pt of ring) b.extend(pt);
+      const c = b.getCenter();
+      out.push({ key: `l:${pg.key}`, position: { lat: c.lat(), lng: c.lng() }, icon: buildPillIcon(pg.label, pg.polarity === 'exclude' ? RED : CHOCOLATE) as google.maps.Icon | undefined });
+    }
+    return out;
+  }, [polygons, isLoaded]);
 
   const lines = useMemo(() => {
     const out: Array<{ key: string; path: google.maps.LatLngLiteral[] }> = [];
@@ -128,7 +149,7 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
           center={DEFAULT_MAP_CENTER}
           zoom={11}
           onLoad={setMap}
-          options={{ styles: GEO_MAP_STYLE, disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy', clickableIcons: false }}
+          options={{ styles: WASSEL_MAP_STYLE, disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy', clickableIcons: false }}
         >
           {polygons.map((pg) => (
             <Polygon
@@ -146,6 +167,9 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
           ))}
           {lines.map((l) => (
             <Polyline key={l.key} path={l.path} options={{ strokeColor: CHOCOLATE, strokeOpacity: 0.9, strokeWeight: 3, clickable: false }} />
+          ))}
+          {labels.map((l) => (
+            <MarkerF key={l.key} position={l.position} icon={l.icon} clickable={false} zIndex={20} />
           ))}
         </GoogleMap>
       ) : (
