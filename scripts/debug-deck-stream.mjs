@@ -2,6 +2,7 @@
 // Goal: figure out why outputFileId is null on the production endpoint.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { trackedAnthropic, loadScriptEnv } from "./lib/aiUsage.mjs";
 
 const SKILL_ID = "skill_01WfZySZ4829ynH3zaLB9nao";
 const BETAS = ["skills-2025-10-02", "code-execution-2025-08-25", "files-api-2025-04-14"];
@@ -82,7 +83,10 @@ const BRIEF = process.env.DEBUG_USER_BRIEF ? LONG_BRIEF : SHORT_BRIEF;
 console.log(`Using ${process.env.DEBUG_USER_BRIEF ? 'LONG' : 'SHORT'} brief`);
 
 async function main() {
-  const client = new Anthropic();
+  loadScriptEnv();
+  // Streaming: the row is written when finalMessage() resolves, which this
+  // script awaits — a stream carries no usage before that.
+  const client = trackedAnthropic(new Anthropic(), { area: "internal", callSite: "scripts/debug-deck-stream", operation: "deck-replay" });
 
   const t0 = Date.now();
   const turn = client.beta.messages.stream({

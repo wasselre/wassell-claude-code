@@ -135,14 +135,46 @@ function normalizeBalance(r: Record<string, unknown>): AiAccountBalance {
   };
 }
 
+/**
+ * Our computed remaining beside the provider's REAL balance.
+ *
+ * This is the only figure on the page that can catch spend the ledger never
+ * saw. `ai_usage` reports the call sites somebody wired; starting from the
+ * vendor's own balance catches the ones nobody did — which on 2026-09-15 was
+ * an operator-run calibration batch worth 20x the app's whole daily spend.
+ *
+ * ALWAYS read `verdict` before `drift_usd`: most rows cannot support a
+ * comparison at all, and a bare number would be read as though they could.
+ */
+export interface AiBalanceCheck {
+  provider: string;
+  label: string;
+  ours_remaining_usd: number;
+  provider_balance_usd: number | null;
+  drift_usd: number | null;
+  probe_checked_at: string | null;
+  probe_source: string | null;
+  probe_status: string | null;
+  probe_error: string | null;
+  verdict:
+    | 'match'
+    | 'UNMETERED_SPEND'
+    | 'credit_added'
+    | 'ours_is_upper_bound'
+    | 'no_probe'
+    | 'not_tracked'
+    | 'stale_probe';
+}
+
 export interface AiUsageData {
   balances: AiAccountBalance[];
   runway: Record<string, AiAccountRunway>;
   spend: AiSpendRow[];
   unpriced: AiUnpricedModel[];
+  checks: AiBalanceCheck[];
 }
 
-const EMPTY: AiUsageData = { balances: [], runway: {}, spend: [], unpriced: [] };
+const EMPTY: AiUsageData = { balances: [], runway: {}, spend: [], unpriced: [], checks: [] };
 
 /**
  * Load everything the AI Usage page shows, in one pass.
@@ -169,15 +201,16 @@ export function useAiUsage(days = 30) {
         return;
       }
       const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-      const [balancesRes, runwayRes, spendRes, unpricedRes] = await Promise.all([
+      const [balancesRes, runwayRes, spendRes, unpricedRes, checksRes] = await Promise.all([
         supabase.from('v_ai_account_balances').select('*').order('provider'),
         supabase.from('v_ai_account_runway').select('*'),
         supabase.from('v_ai_usage_daily').select('*').gte('day', since).order('day', { ascending: false }),
         supabase.from('v_ai_usage_unpriced').select('*'),
+        supabase.from('v_ai_balance_reconciliation').select('*').order('provider'),
       ]);
 
       const firstError =
-        balancesRes.error ?? runwayRes.error ?? spendRes.error ?? unpricedRes.error;
+        balancesRes.error ?? runwayRes.error ?? spendRes.error ?? unpricedRes.error ?? checksRes.error;
       if (firstError) throw new Error(firstError.message);
 
       const runway: Record<string, AiAccountRunway> = {};
@@ -220,6 +253,18 @@ export function useAiUsage(days = 30) {
           unit_kind: (r.unit_kind as string | null) ?? null,
           first_seen: String(r.first_seen),
           last_seen: String(r.last_seen),
+        })),
+        checks: ((checksRes.data ?? []) as Record<string, unknown>[]).map((r) => ({
+          provider: String(r.provider),
+          label: String(r.label ?? r.provider),
+          ours_remaining_usd: num(r.ours_remaining_usd),
+          provider_balance_usd: numOrNull(r.provider_balance_usd),
+          drift_usd: numOrNull(r.drift_usd),
+          probe_checked_at: (r.probe_checked_at as string | null) ?? null,
+          probe_source: (r.probe_source as string | null) ?? null,
+          probe_status: (r.probe_status as string | null) ?? null,
+          probe_error: (r.probe_error as string | null) ?? null,
+          verdict: String(r.verdict) as AiBalanceCheck['verdict'],
         })),
       });
     } catch (e) {

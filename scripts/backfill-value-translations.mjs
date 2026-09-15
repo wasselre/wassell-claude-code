@@ -20,6 +20,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { recordAiUsage, openAiCompatTokens, openAiCompatModel } from './lib/aiUsage.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -117,6 +118,25 @@ async function fetchCandidates(limit) {
 
 async function deepseekBatch(items) {
   const payload = items.map((it, i) => ({ i, kind: it.kind, src: it.source_text }));
+  // This backfill walks the whole record corpus in batches, so it is one of the
+  // larger single spends anyone triggers by hand. One row per BATCH, which is
+  // what a provider request actually is; items_in says how many values it
+  // carried. Failures are recorded too — a run of them is what a broken
+  // backfill looks like from the cost side.
+  const started = Date.now();
+  const bill = (status, body, error) =>
+    recordAiUsage({
+      area: 'translation',
+      callSite: 'scripts/backfill-value-translations',
+      operation: 'batch',
+      provider: 'deepseek',
+      model: openAiCompatModel(body, 'deepseek-chat'),
+      status,
+      error: error ? (error instanceof Error ? error.message : String(error)) : null,
+      latencyMs: Date.now() - started,
+      meta: { items_in: payload.length },
+      ...(body ? openAiCompatTokens(body) : {}),
+    });
   const res = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: {
@@ -136,9 +156,14 @@ async function deepseekBatch(items) {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`deepseek HTTP ${res.status}: ${text.slice(0, 300)}`);
+    const err = new Error(`deepseek HTTP ${res.status}: ${text.slice(0, 300)}`);
+    await bill('error', null, err);
+    throw err;
   }
   const body = await res.json();
+  // Recorded BEFORE the shape checks below: those tokens were spent whether or
+  // not we could use the reply.
+  await bill('ok', body);
   const finish = body.choices?.[0]?.finish_reason;
   if (finish === 'length') throw new Error('deepseek reply truncated (finish_reason=length) — batch too large');
   const content = body.choices?.[0]?.message?.content;

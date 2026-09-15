@@ -4,9 +4,11 @@
 // are both unreliable / unavailable).
 
 import Anthropic from "@anthropic-ai/sdk";
+import { trackedAnthropic, loadScriptEnv } from "./lib/aiUsage.mjs";
 
 async function main() {
-  const c = new Anthropic();
+  loadScriptEnv();
+  const c = trackedAnthropic(new Anthropic(), { area: "internal", callSite: "scripts/test-stdout-size", operation: "probe" });
   const turn = c.beta.messages.stream({
     model: "claude-sonnet-4-6",
     max_tokens: 2000,

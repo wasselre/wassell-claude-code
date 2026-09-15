@@ -806,6 +806,45 @@ Compare in `v_ai_cost_reconciliation`.
     caveat). If that tier is ever used, its spend will show as a permanent gap
     on the vendor side of the reconciliation.
 
+**The ledger cannot audit itself (added 2026-09-15).** `ai_usage` reports the
+call sites somebody wired, so it can never answer "is anything spending that
+we are NOT counting". On 2026-09-15 the Anthropic console had lost $0.45 while
+the ledger accounted for $0.02 of it; the difference was an operator-run
+calibration batch (`api/_lib/geoPreference/__tests__/runCalibration.e2e.test.ts`,
+26 clients x 2 channels) executed from a laptop through the same key. Nothing
+was broken — the meter simply cannot see work nobody routed through it.
+
+The fix is to start from the VENDOR's number instead of ours:
+`ai_provider_balance_probes` + `v_ai_balance_reconciliation`
+(`supabase/migrations/2026-09-15_ai_provider_balance_probes.sql`), filled hourly
+by `/api/cron/ai-balance-probe` and shown at the TOP of Settings -> AI Usage.
+
+18. **Use the vendor's balance API; scrape only where none exists.** Verified
+    2026-09-15: DeepSeek `GET api.deepseek.com/user/balance` (Bearer),
+    Moonshot `GET api.moonshot.ai/v1/users/me/balance` (Bearer, USD), fal
+    `GET api.fal.ai/v1/account/billing?expand=credits` (**`Authorization: Key`**,
+    not Bearer). Anthropic and Modal publish NO balance endpoint — those are the
+    only legitimate Browserbase cases. A scraper needs a stored dashboard
+    password and breaks on a redesign; do not reach for one where an endpoint
+    exists. Adapters live in `api/_lib/aiBalance.ts`.
+19. **Never convert a foreign-currency balance without a cited rate.** DeepSeek
+    can report CNY; the adapter records `status='error'` naming the currency
+    rather than inventing an FX rate. Same rule as rule 4 — a number you cannot
+    cite is worse than no number, because the page treats it as fact.
+20. **`unsupported` is not `0` and not an error.** A provider we cannot check
+    must say so on the page. A blank or a zero reads as agreement with our own
+    figure, which is the exact failure the comparison exists to prevent. Always
+    read `verdict` before `drift_usd`.
+21. **The guard now scans `scripts/` and `__tests__` too** (both were blind
+    spots until 2026-09-15). `.mjs` tooling records through
+    `scripts/lib/aiUsage.mjs`, a fourth copy of the recorder that also wraps
+    `beta.messages.create` and `beta.messages.stream` (recorded when
+    `finalMessage()` resolves). Script rows carry `meta.run_kind='operator_script'`
+    so hand-run batches are separable from product traffic. **Know its limit:**
+    the guard catches a file that CONSTRUCTS a client or calls a provider URL.
+    It cannot catch a test that drives an already-metered function in a loop —
+    which is exactly what the calibration run does. That class is caught only by
+    the balance comparison.
 **Where the money actually goes** (measured 2026-09-14, $87.50 all-time before
 this ledger existed): Modal GPU $53.27 (competitor video), Anthropic $25.37,
 fal $8.85. Detail in `docs/prd/ai-usage-tracking.md`.

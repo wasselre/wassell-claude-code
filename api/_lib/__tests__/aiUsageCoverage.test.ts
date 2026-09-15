@@ -18,7 +18,18 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 const ROOT = join(__dirname, '..', '..', '..');
-const SCAN_DIRS = ['api', join('worker', 'src'), join('supabase', 'functions')];
+// `scripts` was outside this scan until 2026-09-15, and `__tests__` was skipped
+// outright. Both were real holes: an operator-run eval or backfill in scripts/
+// spends the same money as production, and an e2e test that builds its own
+// client spends it from a laptop. Measured that day, hand-run work was the
+// LARGER share of the Anthropic bill.
+//
+// Know the limit of this guard, though: it catches a file that CONSTRUCTS a
+// client or calls a provider URL. It cannot catch a test that drives an
+// already-metered function in a loop — which is exactly what
+// runCalibration.e2e.test.ts does. That class of spend is caught by comparing
+// our balance against the vendor's (v_ai_balance_reconciliation), not here.
+const SCAN_DIRS = ['api', join('worker', 'src'), join('supabase', 'functions'), 'scripts'];
 const CODE_EXT = /\.(ts|mts|mjs)$/;
 const NL = '\n';
 
@@ -30,7 +41,7 @@ function walk(dir: string, out: string[] = []): string[] {
     return out;
   }
   for (const name of entries) {
-    if (name === 'node_modules' || name === 'dist' || name === '__tests__') continue;
+    if (name === 'node_modules' || name === 'dist') continue;
     const full = join(dir, name);
     if (statSync(full).isDirectory()) walk(full, out);
     else if (CODE_EXT.test(name) && !name.endsWith('.d.ts') && !name.endsWith('.d.mts')) out.push(full);
@@ -48,6 +59,10 @@ const RECORDER_FILES = new Set([
   'api/_lib/aiUsage.ts',
   'worker/src/lib/aiUsage.ts',
   'supabase/functions/_shared/aiUsage.ts',
+  // Fourth copy: plain ESM, because .mjs tooling cannot import the TS one.
+  'scripts/lib/aiUsage.mjs',
+  // This guard quotes the patterns it hunts for, so it matches itself.
+  'api/_lib/__tests__/aiUsageCoverage.test.ts',
 ]);
 
 /**
@@ -80,6 +95,24 @@ const UNWRAPPED_CLIENT_ALLOWLIST: Record<string, { reason: string; proof: string
     reason: 'the role provider — its caller callRole() records every result centrally',
     proof: 'LlmProvider',
   },
+  // ── scripts/ ────────────────────────────────────────────────────────────
+  // These construct a client for the FILES / SKILLS APIs, which are storage
+  // and cost no tokens. Metering them would add rows that are always zero and
+  // teach the reader to ignore the ledger. Each proof is the storage call
+  // itself: swap it for a model call and the exemption stops matching.
+  'scripts/list-anthropic-files.mjs': {
+    reason: 'lists uploaded files via the Files API; makes no model call',
+    proof: 'beta.files.list',
+  },
+  'scripts/upload-wassel-skill.mjs': {
+    reason: 'uploads a Skill via the Skills API; makes no model call',
+    proof: 'beta.skills.create',
+  },
+  'scripts/upload-wassel-review-skill.mjs': {
+    reason: 'uploads a Skill version via the Skills API; makes no model call',
+    proof: 'beta.skills.create',
+  },
+
   'supabase/functions/_shared/anthropic.ts': {
     reason: 'client factory only; the edge function that uses it records explicitly',
     proof: 'export',
@@ -94,7 +127,8 @@ describe('AI usage coverage', () => {
   it('finds the files it is supposed to be scanning', () => {
     // Guards against the walk silently matching nothing — a green test that
     // checked zero files would be worse than no test.
-    expect(FILES.length).toBeGreaterThan(100);
+    expect(FILES.length).toBeGreaterThan(400);
+    expect(FILES.some((f) => f.path === 'scripts/lib/aiUsage.mjs')).toBe(true);
     expect(FILES.some((f) => f.path === 'api/_lib/aiUsage.ts')).toBe(true);
   });
 
@@ -161,6 +195,10 @@ describe('AI usage coverage', () => {
     'worker/src/env.ts': {
       reason: 'names the auth header in a comment while declaring the env var; makes no call',
       proof: 'MODAL_CV_TOKEN',
+    },
+    'worker/src/ai/__tests__/modalEmbed.test.ts': {
+      reason: 'asserts the NOT-CONFIGURED path: it deletes MODAL_CV_URL and expects the throw, so it never reaches Modal',
+      proof: 'delete process.env.MODAL_CV_URL',
     },
   };
 

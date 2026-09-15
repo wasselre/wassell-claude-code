@@ -37,16 +37,40 @@ if (!MODAL_URL || !MODAL_TOKEN) { console.error('missing MODAL_CV_URL / MODAL_CV
 const args = process.argv.slice(2);
 const LIMIT = (() => { const i = args.indexOf('--limit'); return i >= 0 ? parseInt(args[i + 1], 10) : Infinity; })();
 const FORCE = args.includes('--force');
+import { recordAiUsage } from './lib/aiUsage.mjs';
+
 const MODEL = 'bge-m3', VERSION = 1, BATCH = 48;
 const sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } });
 
 async function embedText(texts) {
+  // One row per BATCH — that is what a Modal request actually is. `units` is
+  // the text count, matching the unit_kind the CV lane already uses for
+  // embeddings, so a backfill and the product's own embeds add up on one scale.
+  const started = Date.now();
+  const bill = (status, error) =>
+    recordAiUsage({
+      area: 'competitors',
+      callSite: 'scripts/backfill-post-embeddings',
+      operation: 'embed_text',
+      provider: 'modal',
+      model: 'modal-cv-embed-text',
+      status,
+      error: error ?? null,
+      units: texts.length,
+      unitKind: 'query',
+      latencyMs: Date.now() - started,
+    });
   const r = await fetch(`${MODAL_URL}/embed_text`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-wassel-token': MODAL_TOKEN },
     body: JSON.stringify({ texts }),
   });
-  if (!r.ok) throw new Error(`embed_text ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  if (!r.ok) {
+    const msg = `embed_text ${r.status}: ${(await r.text()).slice(0, 200)}`;
+    await bill('error', msg);
+    throw new Error(msg);
+  }
+  await bill('ok', null);
   const j = await r.json();
   if (!Array.isArray(j.vectors) || j.vectors.length !== texts.length) throw new Error('embed_text shape mismatch');
   return j.vectors;

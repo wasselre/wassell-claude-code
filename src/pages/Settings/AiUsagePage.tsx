@@ -12,7 +12,7 @@ import {
   useAiUsage, setModelPrice, usd, usdPrecise, formatTokens,
   summarizeAccounts, summarizeSpend,
   areaLabel, PROVIDER_LABELS,
-  type AiAccountBalance, type AiUnpricedModel,
+  type AiAccountBalance, type AiUnpricedModel, type AiBalanceCheck,
 } from '@/lib/aiUsage/client';
 
 /**
@@ -32,7 +32,7 @@ import {
 export default function AiUsagePage() {
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
-  const { balances, runway, spend, unpriced, loading, error, reload } = useAiUsage(30);
+  const { balances, runway, spend, unpriced, checks, loading, error, reload } = useAiUsage(30);
   const [creditFor, setCreditFor] = useState<AiAccountBalance | null>(null);
 
   const totals = useMemo(() => summarizeAccounts(balances), [balances]);
@@ -124,6 +124,12 @@ export default function AiUsagePage() {
           tone={spend30.unpricedCalls ? 'warn' : 'good'}
         />
       </section>
+
+      {/* ── Is anything unmetered? ───────────────────── */}
+      {/* Placed above everything else on purpose: every other number on this
+          page is computed from OUR ledger, so they all agree with each other
+          by construction. This is the only row that can disagree. */}
+      <BalanceCheckPanel checks={checks} isAr={isAr} />
 
       {/* ── Unpriced models ──────────────────────────────────────── */}
       {unpriced.length > 0 && (
@@ -255,6 +261,131 @@ export default function AiUsagePage() {
 }
 
 // ---------------------------------------------------------------------------
+
+type Tone = 'bad' | 'warn' | 'good' | 'mute';
+
+const TONE_CLASS: Record<Tone, string> = {
+  bad: 'bg-red-50 text-red-700 border-red-200',
+  warn: 'bg-amber-50 text-amber-700 border-amber-200',
+  good: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  mute: 'bg-charcoal/5 text-charcoal/50 border-sand/40',
+};
+
+/**
+ * Our figure beside the provider's real balance.
+ *
+ * WHY THIS IS THE MOST IMPORTANT PANEL HERE. Every other number on this page
+ * comes out of `ai_usage`, so it can only ever report the call sites somebody
+ * remembered to meter. On 2026-09-15 an operator-run calibration batch spent
+ * about 20x the app's entire daily Anthropic bill from a laptop, through the
+ * same key, and not one row of it reached the ledger. No amount of internal
+ * arithmetic can see that. Starting from the vendor's own balance can.
+ *
+ * Each verdict is written out rather than reduced to a green tick, because
+ * "we checked and it matches" and "we have never been able to check" are
+ * completely different facts and a blank would blur them.
+ */
+function BalanceCheckPanel({ checks, isAr }: { checks: AiBalanceCheck[]; isAr: boolean }) {
+  if (checks.length === 0) return null;
+
+  const alarms = checks.filter((c) => c.verdict === 'UNMETERED_SPEND');
+  const matched = checks.filter((c) => c.verdict === 'match');
+
+  const COPY: Record<AiBalanceCheck['verdict'], { ar: string; en: string; tone: Tone }> = {
+    UNMETERED_SPEND: { ar: 'إنفاق غير محتسب', en: 'Unmetered spend', tone: 'bad' },
+    match: { ar: 'مطابق', en: 'Matches', tone: 'good' },
+    credit_added: { ar: 'رصيد مُضاف لم يُسجّل', en: 'Top-up not recorded', tone: 'warn' },
+    ours_is_upper_bound: { ar: 'رقمنا حدّ أعلى', en: 'Ours is an upper bound', tone: 'warn' },
+    stale_probe: { ar: 'القراءة قديمة', en: 'Reading is stale', tone: 'warn' },
+    no_probe: { ar: 'لم يتم الفحص', en: 'Not checked yet', tone: 'mute' },
+    not_tracked: { ar: 'غير متتبّع', en: 'Not tracked', tone: 'mute' },
+  };
+
+  return (
+    <section
+      className={`mb-8 rounded-xl border p-4 ${
+        alarms.length > 0 ? 'border-red-200 bg-red-50/60' : 'border-sand/50 bg-white'
+      }`}
+    >
+      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-bold text-charcoal">
+          {isAr ? 'مطابقة الرصيد مع المزوّد' : 'Balance check against the provider'}
+        </h2>
+        <span className="text-xs text-charcoal/45">
+          {isAr
+            ? `${matched.length} من ${checks.length} مطابق`
+            : `${matched.length} of ${checks.length} reconciled`}
+        </span>
+      </div>
+      <p className="mb-3 text-xs leading-relaxed text-charcoal/55">
+        {isAr
+          ? 'كل رقم آخر في هذه الصفحة محسوب من سجلّنا، فلا يمكنه رؤية إنفاق لم يُسجّل أصلاً. هذه المقارنة تبدأ من رصيد المزوّد نفسه، وهي الوحيدة القادرة على كشف ذلك.'
+          : 'Every other number here is computed from our own ledger, so none of them can see spend that was never recorded. This row starts from the provider’s own balance, which is the only thing that can.'}
+      </p>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead>
+            <tr className="border-b border-sand/40 text-xs text-charcoal/45">
+              <th className="py-1.5 text-start font-medium">{isAr ? 'المزوّد' : 'Provider'}</th>
+              <th className="py-1.5 text-end font-medium">{isAr ? 'حسب سجلّنا' : 'Our figure'}</th>
+              <th className="py-1.5 text-end font-medium">{isAr ? 'لدى المزوّد' : 'Provider says'}</th>
+              <th className="py-1.5 text-end font-medium">{isAr ? 'الفرق' : 'Difference'}</th>
+              <th className="py-1.5 text-end font-medium">{isAr ? 'الحالة' : 'Status'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {checks.map((c) => {
+              const copy = COPY[c.verdict];
+              const label = PROVIDER_LABELS[c.provider];
+              return (
+                <tr key={c.provider} className="border-b border-sand/20 last:border-0">
+                  <td className="py-2 font-medium text-charcoal">
+                    {label ? (isAr ? label.ar : label.en) : c.provider}
+                  </td>
+                  <td className="py-2 text-end tabular-nums text-charcoal/70">{usdPrecise(c.ours_remaining_usd)}</td>
+                  <td className="py-2 text-end tabular-nums text-charcoal/70">
+                    {c.provider_balance_usd === null ? '—' : usdPrecise(c.provider_balance_usd)}
+                  </td>
+                  <td
+                    className={`py-2 text-end tabular-nums ${
+                      c.verdict === 'UNMETERED_SPEND' ? 'font-bold text-red-700' : 'text-charcoal/70'
+                    }`}
+                  >
+                    {c.drift_usd === null ? '—' : usdPrecise(c.drift_usd)}
+                  </td>
+                  <td className="py-2 text-end">
+                    <span className={`inline-block rounded-md border px-2 py-0.5 text-xs ${TONE_CLASS[copy.tone]}`}>
+                      {isAr ? copy.ar : copy.en}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {alarms.length > 0 && (
+        <p className="mt-3 rounded-lg bg-red-100/70 px-3 py-2 text-xs leading-relaxed text-red-800">
+          {isAr
+            ? 'خرج مال من الحساب دون المرور على السجلّ. الأسباب المعتادة: تشغيل يدوي لسكربت أو اختبار حيّ من جهاز، أو موضع استدعاء جديد غير موصول.'
+            : 'Money left the account without passing through the ledger. Usual causes: a script or live e2e test run by hand from a laptop, or a new call site nobody wired.'}
+        </p>
+      )}
+
+      {/* A provider we cannot check at all is stated plainly rather than left
+          as a dash somebody reads as agreement. */}
+      {checks.some((c) => c.probe_status === 'unsupported') && (
+        <p className="mt-2 text-xs leading-relaxed text-charcoal/45">
+          {isAr
+            ? 'بعض المزوّدين لا يوفّرون واجهة لقراءة الرصيد، فلا يمكن فحصهم تلقائياً بعد.'
+            : 'Some providers publish no balance endpoint, so they cannot be checked automatically yet.'}
+        </p>
+      )}
+    </section>
+  );
+}
 
 function Stat({
   label, value, hint, tone = 'default',

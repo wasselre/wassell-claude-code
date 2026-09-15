@@ -23,6 +23,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackedAnthropic } from './lib/aiUsage.mjs';
 import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
@@ -280,8 +281,13 @@ async function main() {
   }
 
   // ── LLM callers (both Anthropic-compatible; force-tool) ──
-  const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-  const kimi = new Anthropic({ apiKey: KIMI_API_KEY, baseURL: KIMI_BASE_URL });
+  // An eval sweep is one of the most expensive things anyone runs by hand —
+  // every prompt x every provider. Both clients are metered, and the Kimi one
+  // is billed to moonshot rather than anthropic despite the shared SDK.
+  const anthropic = trackedAnthropic(new Anthropic({ apiKey: ANTHROPIC_API_KEY }),
+    { area: 'internal', callSite: 'scripts/eval-project-message-ai', operation: 'eval', modelOverride: ANTHROPIC_MODEL });
+  const kimi = trackedAnthropic(new Anthropic({ apiKey: KIMI_API_KEY, baseURL: KIMI_BASE_URL }),
+    { area: 'internal', callSite: 'scripts/eval-project-message-ai', operation: 'eval', provider: 'moonshot', modelOverride: KIMI_MODEL });
 
   async function callProvider(kind, userContent) {
     const client = kind === 'kimi' ? kimi : anthropic;

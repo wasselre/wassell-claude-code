@@ -32,6 +32,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { parseArgs, ROOT, todayStamp, serviceClient, pageAll } from './_lib/env.mjs';
+import { recordAiUsage } from '../lib/aiUsage.mjs';
 
 const args = parseArgs();
 const GOLDEN = join(ROOT, String(args.golden || 'docs/eval/cv-golden-30.json'));
@@ -165,8 +166,29 @@ async function evalIngest(golden) {
 // ── search eval ─────────────────────────────────────────────────────────────
 async function embedQuery(text) {
   const url = process.env.MODAL_CV_URL, token = process.env.MODAL_CV_TOKEN;
+  // An eval sweep embeds every query in the file; metered the same way the
+  // product's own embed_query is, so an eval run is visible beside real traffic.
+  const started = Date.now();
+  const bill = (status, error) =>
+    recordAiUsage({
+      area: 'competitors',
+      callSite: 'scripts/eval/cv-eval',
+      operation: 'embed_query',
+      provider: 'modal',
+      model: 'modal-cv-embed-query',
+      status,
+      error: error ?? null,
+      units: 1,
+      unitKind: 'query',
+      latencyMs: Date.now() - started,
+    });
   const res = await fetch(`${url.replace(/\/$/, '')}/embed_query`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-wassel-token': token }, body: JSON.stringify({ text }) });
-  if (!res.ok) throw new Error(`embed_query HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) {
+    const msg = `embed_query HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
+    await bill('error', msg);
+    throw new Error(msg);
+  }
+  await bill('ok', null);
   const j = await res.json();
   if (!Array.isArray(j.image_vec) || !Array.isArray(j.text_vec)) throw new Error('embed_query returned no vectors');
   return j;

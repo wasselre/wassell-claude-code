@@ -6,6 +6,7 @@
 // Run: node scripts/time-anthropic-deck.mjs
 
 import Anthropic from "@anthropic-ai/sdk";
+import { trackedAnthropic, loadScriptEnv } from "./lib/aiUsage.mjs";
 
 const SKILL_ID = "skill_01WfZySZ4829ynH3zaLB9nao";
 const BETAS = [
@@ -26,7 +27,10 @@ async function main() {
     console.error("ANTHROPIC_API_KEY not set");
     process.exit(1);
   }
-  const client = new Anthropic();
+  loadScriptEnv();
+  // Uses client.beta.messages.* — covered because the wrapper proxies the
+  // beta namespace too; beta.files passes through unmetered (no tokens).
+  const client = trackedAnthropic(new Anthropic(), { area: "internal", callSite: "scripts/time-anthropic-deck", operation: "deck-timing" });
 
   for (const model of ["claude-sonnet-4-6"]) {
     console.log(`\n=== ${model} ===`);

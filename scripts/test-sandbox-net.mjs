@@ -3,9 +3,12 @@
 // curl-upload the .pptx directly, bypassing Anthropic's flaky Files API.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { trackedAnthropic, loadScriptEnv } from "./lib/aiUsage.mjs";
 
 async function main() {
-  const c = new Anthropic();
+  loadScriptEnv();
+  // Metered like any other spend: a probe script still burns real tokens.
+  const c = trackedAnthropic(new Anthropic(), { area: "internal", callSite: "scripts/test-sandbox-net", operation: "probe" });
   const turn = c.beta.messages.stream({
     model: "claude-sonnet-4-6",
     max_tokens: 1500,
