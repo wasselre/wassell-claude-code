@@ -426,7 +426,16 @@ export function planCampaign(
     // Reservations in row mode belong to the ROW, written once below. Writing
     // one per member would book the same day three times over.
     if (rowMode) continue;
-    for (const s of st?.stages ?? []) reservations.push(reservationOf(it.key, null, s));
+    // A paid item names the refresh cycle it belongs to. The commit turns this
+    // composite key into `mos_task_reservations.cycle_id`, which is the ONLY
+    // thing `mos_plan_start_due` can bind a deferred reservation by — see
+    // `PlannedReservation.cycleKey`. Emitted for EVERY slot item, round 0
+    // included: which of them is deferred is the commit's rule
+    // (`cycle_round > 0`), and duplicating that rule here is how the two come
+    // apart. A round-0 reservation is bound to its content at commit, and the
+    // sweep's `content_id IS NULL` clause skips it anyway.
+    const cycleKey = it.slot ? `${it.slot.executionKey}#${it.slot.cycleRound}` : null;
+    for (const s of st?.stages ?? []) reservations.push(reservationOf(it.key, null, s, cycleKey));
   }
   plannedItems.sort((a, b) => a.priority - b.priority || (a.key < b.key ? -1 : 1));
 
@@ -458,7 +467,9 @@ export function planCampaign(
       // then actually BOOKED — rather than recomputing the spread here. The two
       // used to be independent derivations of the same number, and independent
       // derivations are how a preview and a commit come to disagree.
-      for (const s of st?.stages ?? []) reservations.push(reservationOf(row.rowKey, row.rowKey, s));
+      for (const s of st?.stages ?? []) {
+        reservations.push(reservationOf(row.rowKey, row.rowKey, s, null));
+      }
     }
     plannedRows.sort((a, b) => (a.batchDay < b.batchDay ? -1
       : a.batchDay > b.batchDay ? 1 : a.rowKey < b.rowKey ? -1 : 1));
@@ -610,11 +621,13 @@ function withItemCap(input: PlanInput, n: number): PlanInput {
  */
 function reservationOf(
   subjectKey: string, rowKey: string | null, s: PlannedStage,
+  cycleKey: string | null,
 ): PlannedReservation {
   const weights = s.slotWeights.length ? s.slotWeights : [0];
   return {
     itemKey: subjectKey,
     rowKey,
+    cycleKey,
     stepKey: s.stepKey,
     roleKey: s.roleKey,
     bucket: s.bucket,

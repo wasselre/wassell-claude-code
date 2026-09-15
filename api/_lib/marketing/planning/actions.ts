@@ -369,6 +369,23 @@ export function reservationsPayload(plan: PlanResult): unknown[] {
     // `row_key` is set. `mos_plan_consume_reservation` matches on row_key for a
     // row task (C1) — without it the task opens with no assignee and no window.
     item_key: r.itemKey, row_key: r.rowKey,
+    // The refresh cycle the subject belongs to, as `execution_key#round` — the
+    // key `mos_campaign_plan_commit` builds `v_cycle_map` with, which it
+    // resolves into `mos_task_reservations.cycle_id`. A composite key and not a
+    // uuid because `mos_refresh_cycles` rows are created by that same commit.
+    //
+    // NOT COSMETIC. A paid item for a LATER refresh round gets no content shell
+    // at commit — `mos_plan_start_due` creates it lazily at
+    // `production_start_on` and then binds the reservation with
+    // `content_id IS NULL AND row_id IS NULL AND cycle_id = <cycle>
+    //  AND content_key = <slot.content_key>`.
+    // Without this key `cycle_id` stays NULL, `cycle_id = <cycle>` is NULL,
+    // and the bind matches nothing — so 75 of every paid plan's 100
+    // reservations booked a designer's capacity forever, un-consumable and
+    // re-dated onto today by every `mos_plan_repair` sweep. Measured on
+    // production 2026-09-15: `res_cycle_id_NOT_NULL = 0`,
+    // `sweep_bind_would_match = 0`.
+    cycle_key: r.cycleKey,
     step_key: r.stepKey, role_key: r.roleKey, bucket: r.bucket,
     assignee_user_id: r.assigneeUserId, planned_start: r.plannedStart,
     planned_end: r.plannedEnd, weight: r.weight,

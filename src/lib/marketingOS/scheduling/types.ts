@@ -457,6 +457,32 @@ export interface PlannedReservation {
    * window, silently.
    */
   rowKey: string | null;
+  /**
+   * The refresh cycle this reservation's subject belongs to, as
+   * `` `${executionKey}#${round}` `` — the SAME composite key
+   * `mos_campaign_plan_commit` builds `v_cycle_map` with. NULL for every
+   * organic reservation and for every row.
+   *
+   * A COMPOSITE KEY, NOT A UUID, AND THAT IS NOT A SHORTCUT.
+   * `mos_refresh_cycles` rows do not exist when the plan is made — the commit
+   * creates them in the same transaction that writes these reservations, so
+   * there is no id for the planner to carry. The commit resolves this key
+   * against `v_cycle_map` and writes the real
+   * `mos_task_reservations.cycle_id`.
+   *
+   * WHY IT HAS TO BE CARRIED AT ALL. A paid item whose creative slot belongs
+   * to a LATER refresh round gets no content shell at commit time — the shell
+   * is created lazily by `mos_plan_start_due` at `production_start_on` — so
+   * its reservation lands with `content_id IS NULL AND row_id IS NULL`. The
+   * sweep binds it with
+   * `WHERE content_id IS NULL AND row_id IS NULL AND cycle_id = <cycle>
+   *    AND content_key = <slot.content_key>`.
+   * Until 2026-09-15 nothing ever populated `cycle_id`, so the bind matched
+   * NOTHING and every deferred reservation — 75 of each paid plan's 100 —
+   * charged its assignee's capacity forever while `mos_plan_repair` re-dated
+   * it onto today, every day. Do not drop this field.
+   */
+  cycleKey: string | null;
   stepKey: string;
   roleKey: PathRole;
   bucket: LoadBucket;

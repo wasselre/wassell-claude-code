@@ -278,7 +278,13 @@ The API layer is written and calls these EXACTLY. SQL must match.
 ```
 mos_campaign_plan_commit(
   p_plan_id      uuid,
-  p_reservations jsonb,   -- [{item_key, step_key, role_key, bucket, assignee_user_id, planned_start, planned_end, weight}]
+  p_reservations jsonb,   -- [{item_key, row_key, cycle_key, step_key, role_key, bucket, assignee_user_id, planned_start, planned_end, weight, spread, weights}]
+                          -- `cycle_key` = `execution_key#round`, resolved against the
+                          -- cycles just materialised and written to
+                          -- mos_task_reservations.cycle_id. MANDATORY on a paid
+                          -- reservation whose content is deferred (see rule 4 below);
+                          -- the RPC refuses a subject-less, cycle-less reservation with
+                          -- MOS:UNBINDABLE_RESERVATION (2026-09-15_23).
   p_expected_hash text,
   p_materialise  jsonb,   -- see below
   p_actor        uuid
@@ -339,6 +345,22 @@ Materialisation rules the RPC must implement:
    `planned_at`, `execution_id`, `batch_id`, grid position;
    `mos_creative_slots` + `mos_refresh_cycles` for paid.
 4. `mos_task_reservations` from `p_reservations`, resolving `item_key` →
-   `content_id` where the content row now exists (else leave `content_key` only).
+   `content_id` where the content row now exists, `row_key` → `row_id` for a row
+   subject, and `cycle_key` (`execution_key#round`) → `cycle_id`.
+
+   A DEFERRED PAID RESERVATION HAS NO SUBJECT, AND `cycle_id` IS ITS ONLY ROPE
+   HOME. Its content shell does not exist yet — `mos_plan_start_due` creates it
+   at `production_start_on` and then binds the reservation with
+   `content_id IS NULL AND row_id IS NULL AND cycle_id = <cycle> AND content_key
+   = <slot.content_key>`. Between 2026-09-15_22 and 2026-09-15_23 nothing
+   populated `cycle_id`, so that bind matched nothing: 75 of every paid plan's
+   100 reservations charged their assignee's capacity forever (the ledger's
+   reservation arms do not require a subject) while `mos_plan_repair` re-dated
+   them onto today, every day, and a campaign-scoped repair skipped them because
+   its filter joins on `content_id`. The planner now states `cycle_key` and the
+   commit resolves it; a reservation that still ends up with no content, no row
+   and no cycle is refused by name (`MOS:UNBINDABLE_RESERVATION <item_key>`)
+   rather than written. A JSON `null` `item_key` is refused the same way —
+   `v_item_map ? NULL` is NULL, so the old guard never fired on it.
 5. Set `mos_campaigns.plan_id`, `requirements`, `starts_on`/`ends_on`, and the
    plan row to `status='approved'`, `approved_at=now()`, `approved_by_user_id=p_actor`.

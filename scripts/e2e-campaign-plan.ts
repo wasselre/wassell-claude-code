@@ -272,6 +272,14 @@ async function main(): Promise<void> {
     item_key: r.itemKey, step_key: r.stepKey, role_key: r.roleKey, bucket: r.bucket,
     assignee_user_id: r.assigneeUserId, planned_start: r.plannedStart,
     planned_end: r.plannedEnd, weight: r.weight,
+    // `execution_key#round`, resolved into mos_task_reservations.cycle_id by
+    // the commit. A deferred paid reservation (a later refresh round, whose
+    // content shell the sweep creates at production_start_on) has NO subject,
+    // and cycle_id is the only thing mos_plan_start_due can find it by. Sending
+    // it is not optional: the commit refuses a subject-less, cycle-less
+    // reservation with MOS:UNBINDABLE_RESERVATION rather than let it book
+    // capacity nothing will ever consume.
+    cycle_key: r.cycleKey,
   }));
   const created = await rpc<Record<string, unknown>>('mos_campaign_plan_commit', {
     p_plan_id: planRow.id, p_reservations: reservations,
@@ -291,7 +299,7 @@ async function main(): Promise<void> {
     get('mos_content', `select=id,ref,title,target_publish_at&campaign_id=eq.${campaign.id}`),
     get('mos_content_plan', `select=content_id,required_ready_at,production_start,priority,status&campaign_id=eq.${campaign.id}`),
     get('mos_publish_batches', `select=day,sequence,status&campaign_id=eq.${campaign.id}&order=sequence`),
-    get('mos_task_reservations', `select=step_key,assignee_user_id,planned_start,planned_end,status&plan_id=eq.${planRow.id}`),
+    get('mos_task_reservations', `select=step_key,assignee_user_id,planned_start,planned_end,status,content_id,row_id,cycle_id,content_key&plan_id=eq.${planRow.id}`),
     get('mos_refresh_cycles', `select=round,refresh_on,ready_by,production_start_on,produced:round&execution_id=in.(${
       (await get<{ id: string }>('mos_campaign_executions', `select=id&campaign_id=eq.${campaign.id}`)).map((e) => e.id).join(',') || '00000000-0000-0000-0000-000000000000'})`),
     get('mos_creative_slots', 'select=id&limit=1'),
@@ -314,6 +322,44 @@ async function main(): Promise<void> {
   if (res.length !== plan.reservations.length) problems.push(`reservations ${res.length} != planned ${plan.reservations.length}`);
   if (!PAID && batches.length !== plan.batches.length) problems.push(`batches ${batches.length} != planned ${plan.batches.length}`);
   if (tasks.length !== 0) problems.push(`${tasks.length} task(s) opened at commit — the sweep should do that`);
+
+  /* -- every reservation must be reachable by SOMETHING ---------------- */
+  //
+  // A paid plan deliberately books work for refresh rounds whose content does
+  // not exist yet, so those reservations land with no content_id and no
+  // row_id. The ONLY thing that can find them again is
+  // `mos_plan_start_due`'s bind:
+  //
+  //     content_id IS NULL AND row_id IS NULL
+  //       AND cycle_id = <the cycle> AND content_key = <slot.content_key>
+  //
+  // Until 2026-09-15_23 nothing ever wrote cycle_id, so that bind matched zero
+  // rows and every deferred reservation booked a designer's capacity forever
+  // while `mos_plan_repair` re-dated it onto today, every day — silently. This
+  // check is here so that can never come back unnoticed.
+  {
+    const resRows = res as unknown as Array<{ content_id: string | null; row_id: string | null;
+      cycle_id: string | null; content_key: string | null }>;
+    const orphans = resRows.filter((r) => !r.content_id && !r.row_id);
+    const bindable = orphans.filter((r) => r.cycle_id && r.content_key);
+    console.log(`    subject-less reservations: ${orphans.length}  (bindable by cycle+key: ${bindable.length})`);
+    if (orphans.length !== bindable.length) {
+      problems.push(`${orphans.length - bindable.length} reservation(s) have no subject AND no cycle — nothing can ever consume them`);
+    }
+    if (PAID && orphans.length > 0) {
+      // The bind's other half: the slot the sweep will create the shell from
+      // must carry the SAME content_key, on the SAME cycle.
+      const slotRows = await get<{ cycle_id: string | null; content_key: string | null }>(
+        'mos_creative_slots', `select=cycle_id,content_key&plan_id=eq.${planRow.id}`);
+      const slotSet = new Set(slotRows.filter((s) => s.cycle_id && s.content_key)
+        .map((s) => `${s.cycle_id}|${s.content_key}`));
+      const matched = bindable.filter((r) => slotSet.has(`${r.cycle_id}|${r.content_key}`)).length;
+      console.log(`    sweep bind would match: ${matched}/${orphans.length}`);
+      if (matched !== orphans.length) {
+        problems.push(`mos_plan_start_due would bind only ${matched} of ${orphans.length} deferred reservations`);
+      }
+    }
+  }
 
   /* -- the reservations must now be IN the ledger --------------------- */
   const after = await get<{ ref_id: string; weight: number }>('mos_work_ledger_v', 'select=ref_id,weight&source=eq.reservation&limit=5000');
