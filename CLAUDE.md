@@ -623,6 +623,46 @@ The Marketing workspace (`/m`) permission model has TWO axes, both editable in *
 5. **Hand-assigned tasks are a SEPARATE table from the workflow queue** (added 2026-08-10). `workflow_role_tasks` stays workflow-only: bound to a content item, one open row per item, owned by a role, closing it advances the pinned path. Manual tasks live in `mos_manual_tasks` (+ `mos_task_series` for repeat rules, materialized by the idempotent `mos_task_series_materialize()` on every task read — pg_cron is not enabled here). Don't "unify" them: the one-open-per-subject unique index, the five-role CHECK and the advance-on-close RPC all assume the workflow shape. Assigning to others is gated by the `assign_task` capability; assigning to yourself is always allowed; a BEFORE-UPDATE trigger (`mos_tg_manual_task_guard`) stops an assignee editing their way out of a task they can only close.
 5. Marketing-Intelligence still uses its OWN hardcoded `wassell_mkt_can` CASE + `mkt_role_grants` (NOT yet folded into `role_capabilities` — that's pending Phase 5). Sales permissions are a SEPARATE engine (`profiles.model_permissions` — see `docs/prd/access-control.md`); do not conflate.
 
+## Competitor tracking and video analysis are TWO systems (added 2026-09-15)
+
+They are constantly confused because both live under `mkt_*` and both touch
+competitor content. They are separate systems with a ONE-WAY dependency, and the
+rule for telling them apart is what question each answers:
+
+- **Competitor Content Tracking** — *"what are they publishing, and about what?"*
+  Queue `mkt_collection_jobs`, lane `marketingPollLoop`, switch
+  `MARKETING_COLLECTION_ENABLED`. Tables: `mkt_content_posts`,
+  `mkt_content_media`, `mkt_content_enrichment`, `mkt_visual_text` (OCR of the
+  creative as a whole), `mkt_transcripts`. Runs on EVERYTHING collected.
+- **Visual Intelligence (CV)** — *"what does this footage look like, shot by shot?"*
+  Queue `mkt_cv_jobs`, lanes `cvProcessPollLoop` + `cvAnalyzePollLoop`, gated by
+  THREE independent switches: `CV_LANES_ENABLED` (env), `MODAL_CV_URL` present
+  (env), and `cv.enabled` in `mkt_settings` (DB). Tables: `mkt_cv_videos`,
+  `mkt_cv_shots`, `mkt_cv_frames`. Opt-in PER VIDEO.
+
+**Hard rules — never violate:**
+
+1. **The dependency runs one way only.** Collection enqueues into CV
+   (`mkt_cv_enqueue_video` from `runContentProcess` / `sweepBacklog`); CV never
+   writes back into collection. Tracking works completely with CV off — which is
+   the live state since 2026-09-03 and the proof: 236 posts collected in the
+   last 30 days while `cv.enabled = false`.
+2. **CV is NOT a competitor-tracking subsystem.** 556 of its 888 videos (63%)
+   are OUR OWN assets, enqueued via `mkt_cv_enqueue_wassel_asset` /
+   `_wassel_backlog`. It is a shared visual-search service that both competitor
+   tracking and our own asset library feed. Never describe it as "part of
+   competitor tracking", and never gate it on a competitor-only condition.
+3. **CV touches a small minority of the library** — 332 of 5,890 collected media
+   (5.6%). Sizing, budgeting or reasoning about cost as if CV covered the whole
+   competitor library is wrong by ~18×.
+4. **Turning CV off degrades search, it does not break it.** `mkt_cv_search`
+   fuses four NULL-guarded channels; without vectors it drops to the lexical
+   channel over `search_tsv` (summary + ocr_text + transcript_text). See
+   "Every AI call is metered" for the cost anatomy.
+5. **Each system has its own kill switch and they are not linked.** Turning off
+   collection does not stop CV, and turning off CV does not stop collection. If
+   you want both off, flip both.
+
 ## Every AI call is metered (added 2026-09-14)
 
 An audit on 2026-09-14 found only **9 of ~44 AI call sites** recorded a cost,
