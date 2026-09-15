@@ -212,16 +212,25 @@ ALTER TABLE public.mos_publications ADD COLUMN IF NOT EXISTS pair_id uuid;
 CREATE INDEX IF NOT EXISTS ix_mos_publications_pair
   ON public.mos_publications (pair_id) WHERE pair_id IS NOT NULL;
 
--- The pair needs room in the idempotency key. UNIQUE (content_id, platform,
--- account_id) never actually fired while account_id was NULL (Postgres treats
--- NULLs as distinct); once 2026-09-15_01 resolved the account on every insert,
--- a post's FEED and STORY releases — same content, same platform, same account —
--- would have collided and the second been swallowed by ON CONFLICT DO NOTHING.
--- The month would publish feeds and no stories, with no error anywhere.
-ALTER TABLE public.mos_publications
-  DROP CONSTRAINT IF EXISTS mos_publications_content_id_platform_account_id_key;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_mos_publications_destination
-  ON public.mos_publications (content_id, platform, account_id, COALESCE(placement_variant, ''));
+-- NOTE — the idempotency key is NOT widened here, deliberately.
+--
+-- A post's FEED and STORY releases share content_id, platform and account_id, so
+-- under the existing UNIQUE (content_id, platform, account_id) the second is
+-- silently swallowed by the commit's ON CONFLICT DO NOTHING — feeds publish,
+-- stories do not, and nothing errors. That key never actually fired while
+-- account_id was NULL (Postgres treats NULLs as distinct); 2026-09-15_01 made it
+-- real by resolving the account on every insert.
+--
+-- An earlier revision of this file replaced it with a 4-column expression index
+-- on COALESCE(placement_variant,''). That BROKE production: mos_campaign_plan_commit
+-- says ON CONFLICT (content_id, platform, account_id) (2026-09-14_02:498), and a
+-- 3-column inference cannot match a 4-column expression index, so every organic
+-- commit — the existing wizard path included — raised 42P10. Reverted in
+-- 2026-09-15_03.
+--
+-- The widening and the RPC's ON CONFLICT target are ONE change and belong in the
+-- same migration. That is B4's line item; nothing inserts a pair until then.
+-- The constraint carries a COMMENT saying so.
 
 -- ── A10. the video type had no caption in its field_schema ────────────────
 -- mos_content_writing_hash, mos_tg_content_locked_guard and the required_fields
