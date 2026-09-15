@@ -125,62 +125,125 @@ async function resolveMessageText(
   return { text: sheetBodyAr, source: 'sheet' };
 }
 
+type MediaRef = { fileId?: string; url?: string; caption: string | null };
+type FileRow = SendableFile & { storage_bucket: string; storage_path: string };
+// `origin` / `usage_rights` / `acquisition_source` are REQUIRED, not extra:
+// buildPickerItems drops a file whose rights forbid sending — omitting them
+// silently re-admits internal-only competitor media (found 2026-09-15).
+const FILE_COLS =
+  'id, kind, title, original_name, document_type, primary_category, origin, usage_rights, acquisition_source, storage_bucket, storage_path';
+
+/** One CRM file → a scheduled-media ref: a re-signable `wt_` ref for a private
+ *  wassel-files object, else the file's public URL. null when it can't be sent. */
+function fileToRef(svc: SupabaseClient, f: FileRow): MediaRef | null {
+  if (!f.storage_bucket || !f.storage_path) return null;
+  try {
+    if (f.storage_bucket === WA_TEMP_BUCKET) return scheduledMediaItem(`wt_${f.storage_path}`, null);
+    const { data } = svc.storage.from(f.storage_bucket).getPublicUrl(f.storage_path);
+    if (!data?.publicUrl) return null;
+    return scheduledMediaItem(data.publicUrl, null);
+  } catch (err) {
+    console.error(`[aiSendProject] skipping un-sendable file ${f.id}:`, err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 /**
- * Pick the bulk default — ONE brochure + the top 3 photos, floor plans excluded —
- * from the project's linked files, and resolve each to a scheduled-media ref
- * (a re-signable `wt_` ref for a wassel-files object, else a public URL). Refs
- * are returned in send order: documents → photos. Best-effort: a file that can't
- * be turned into a sendable ref is skipped (partial media is success).
+ * The rep's SAVED media selection for this project — the newest chat_templates
+ * row's `project_image_file_ids` (the curated all_projects gallery) + `videos`,
+ * sent BY REFERENCE (file ids → re-signable refs), never copied into the template.
+ * Order = the rep's own image order, then videos. Rights + floor-plan exclusions
+ * still apply (via buildPickerItems' isSendable). Returns null when the project has
+ * no saved template selection → caller falls back to the auto bulk pick.
+ */
+async function resolveSavedSelectionRefs(svc: SupabaseClient, projectId: string): Promise<MediaRef[] | null> {
+  const { data: tplModel } = await svc.from('models').select('id').eq('name', 'chat_templates').maybeSingle();
+  if (!tplModel?.id) return null;
+  const { data: rows } = await svc
+    .from('records').select('data')
+    .eq('model_id', tplModel.id as string).eq('data->>project_id', projectId)
+    .order('created_at', { ascending: false }).limit(1); // newest template wins
+  const t = (rows?.[0]?.data ?? null) as Record<string, unknown> | null;
+  if (!t) return null;
+  const asStrArr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : [];
+  const imageIds = asStrArr(t.project_image_file_ids);
+  const videos = asStrArr(t.videos);
+  if (imageIds.length === 0 && videos.length === 0) return null;
+
+  const out: MediaRef[] = [];
+  if (imageIds.length) {
+    const { data: files } = await svc.from('files').select(FILE_COLS).in('id', imageIds);
+    const rowsById = new Map(((files ?? []) as FileRow[]).map((f) => [f.id, f]));
+    // buildPickerItems applies the rights + floor-plan filter; a ref it kept is sendable.
+    const sendable = new Set(
+      buildPickerItems(((files ?? []) as FileRow[]).filter((f) => !isUnitPlanFile(f)).map((file) => ({ file })), [])
+        .map((it) => it.ref),
+    );
+    for (const id of imageIds) {            // preserve the rep's chosen order
+      if (!sendable.has(id)) continue;
+      const f = rowsById.get(id);
+      const ref = f ? fileToRef(svc, f) : null;
+      if (ref) out.push(ref);
+    }
+  }
+  for (const v of videos) {
+    if (/^https?:\/\//i.test(v)) { out.push(scheduledMediaItem(v, null)); continue; }
+    const { data: vf } = await svc.from('files').select(FILE_COLS).eq('id', v).maybeSingle();
+    if (vf && !isUnitPlanFile(vf as FileRow)) {
+      const ref = fileToRef(svc, vf as FileRow);
+      if (ref) out.push(ref);
+    }
+  }
+  return out.length ? out : null;
+}
+
+/** Just the project's brochure (one document) from its linked files — prepended
+ *  ahead of the rep's saved images, which are photos only. [] when none. */
+async function resolveBrochureRef(svc: SupabaseClient, allProjectsModelId: string, projectId: string): Promise<MediaRef[]> {
+  const { data: links } = await svc
+    .from('file_links').select('file_id').eq('model_id', allProjectsModelId).eq('record_id', projectId);
+  const ids = [...new Set((links ?? []).map((l) => (l as { file_id: string }).file_id))];
+  if (ids.length === 0) return [];
+  const { data: files } = await svc.from('files').select(FILE_COLS).in('id', ids);
+  const rows = ((files ?? []) as FileRow[]).filter((f) => !isUnitPlanFile(f));
+  const items = buildPickerItems(rows.map((file) => ({ file })), []);
+  const selected = defaultBulkSelection(items);
+  const brochureIds = items.filter((it) => it.group === 'document' && selected.has(it.ref)).map((it) => it.ref);
+  const byId = new Map(rows.map((f) => [f.id, f]));
+  return brochureIds.flatMap((id) => { const f = byId.get(id); const ref = f ? fileToRef(svc, f) : null; return ref ? [ref] : []; });
+}
+
+/**
+ * The AUTO bulk default — ONE brochure + the top 3 photos, floor plans excluded —
+ * from the project's linked files, in send order documents → photos. Used only as
+ * the FALLBACK when the project's template has no saved image selection.
  */
 async function resolveMediaRefs(
   svc: SupabaseClient,
   allProjectsModelId: string,
   projectId: string,
-): Promise<Array<{ fileId?: string; url?: string; caption: string | null }>> {
+): Promise<MediaRef[]> {
   const { data: links, error: linkErr } = await svc
     .from('file_links').select('file_id').eq('model_id', allProjectsModelId).eq('record_id', projectId);
   if (linkErr) { console.error('[aiSendProject] file_links lookup failed:', linkErr.message); return []; }
   const ids = [...new Set((links ?? []).map((l) => (l as { file_id: string }).file_id))];
   if (ids.length === 0) return [];
 
-  const { data: files, error: fileErr } = await svc
-    // `origin` / `usage_rights` / `acquisition_source` are REQUIRED, not extra:
-    // buildPickerItems drops a file whose rights forbid sending and never
-    // pre-checks social-intake photos — but `isSendable` reads an ABSENT
-    // usage_rights as "no restriction", so omitting the column here silently
-    // re-admitted internal-only competitor media into the bot's send (found
-    // 2026-09-15, right after the Competitor Watch → Files bridge went live).
-    .from('files').select('id, kind, title, original_name, document_type, primary_category, origin, usage_rights, acquisition_source, storage_bucket, storage_path')
-    .in('id', ids);
+  const { data: files, error: fileErr } = await svc.from('files').select(FILE_COLS).in('id', ids);
   if (fileErr) { console.error('[aiSendProject] files lookup failed:', fileErr.message); return []; }
 
-  type FileRow = SendableFile & { storage_bucket: string; storage_path: string };
   const rows = ((files ?? []) as FileRow[]).filter((f) => !isUnitPlanFile(f));
-  // Reuse the SAME pure grouping/selection/ordering the rep's bulk picker uses.
   const items = buildPickerItems(rows.map((file) => ({ file })), []);
   const selected = defaultBulkSelection(items);
   const orderedIds = orderSelectedRefsBulk(items, selected); // documents → photos → videos
 
   const byId = new Map(rows.map((f) => [f.id, f]));
-  const out: Array<{ fileId?: string; url?: string; caption: string | null }> = [];
+  const out: MediaRef[] = [];
   for (const id of orderedIds) {
     const f = byId.get(id);
-    if (!f?.storage_bucket || !f?.storage_path) continue;
-    try {
-      let ref: string;
-      if (f.storage_bucket === WA_TEMP_BUCKET) {
-        // Private CRM file — hand the worker a re-signable ref (signed URLs expire
-        // long before a staggered scheduled delivery).
-        ref = `wt_${f.storage_path}`;
-      } else {
-        const { data } = svc.storage.from(f.storage_bucket).getPublicUrl(f.storage_path);
-        if (!data?.publicUrl) continue;
-        ref = data.publicUrl;
-      }
-      out.push(scheduledMediaItem(ref, null));
-    } catch (err) {
-      console.error(`[aiSendProject] skipping un-sendable file ${id}:`, err instanceof Error ? err.message : String(err));
-    }
+    const ref = f ? fileToRef(svc, f) : null;
+    if (ref) out.push(ref);
   }
   return out;
 }
@@ -266,7 +329,10 @@ export async function sendProjectViaAiFlow(
   let mediaQueued = 0;
   let mediaFailed = 0;
   if (allProjectsModelId) {
-    const mediaItems = await resolveMediaRefs(svc, allProjectsModelId, projectId);
+    const saved = await resolveSavedSelectionRefs(svc, projectId);
+    const mediaItems = saved
+      ? [...(await resolveBrochureRef(svc, allProjectsModelId, projectId)), ...saved]
+      : await resolveMediaRefs(svc, allProjectsModelId, projectId);
     const base = Date.now();
     for (const [i, media] of mediaItems.entries()) {
       const deliverAt = new Date(base + (i + 1) * SPACING_MS).toISOString();
