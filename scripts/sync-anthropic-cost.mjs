@@ -131,14 +131,17 @@ async function fetchAllPages() {
         // The scope was right; the linked ACCOUNT had no Admin API access.
         throw new Error(
           `HTTP 403 from cost_report — the key authenticated, then was refused.\n` +
-          `  This is an ACCOUNT-PERMISSION problem, not a bad key: an Organization-scoped\n` +
-          `  key grants only what the linked account may do, and reading org cost data\n` +
-          `  needs Admin or Owner on the organization.\n` +
-          `  Fix it either way:\n` +
-          `    - have an org Owner grant this account Admin, or\n` +
-          `    - create a dedicated Admin key (sk-ant-admin01-...) at\n` +
-          `      Console -> Settings -> Admin keys — a DIFFERENT screen from the\n` +
-          `      Create API key dialog, and only an Owner sees it.\n  ${body.slice(0, 300)}`,
+          `  MOST LIKELY: this is an INDIVIDUAL account. Anthropic disables the Admin\n` +
+          `  API for those entirely — "The Admin API is unavailable for individual\n` +
+          `  accounts" — and no key or role gets past it. Confirm in Console ->\n` +
+          `  Settings -> Organization: an org named "... Individual Org", and no\n` +
+          `  "Admin keys" entry in the sidebar. Fix: Convert to team organization.\n` +
+          `  OTHERWISE it is the account's ROLE: an Organization-scoped key grants only\n` +
+          `  what the linked account may do, so an org Owner must grant it Admin, or\n` +
+          `  issue a dedicated Admin key (sk-ant-admin01-...) from the Admin keys screen.\n` +
+          `  To tell a key problem from an account problem, send a bare POST /v1/messages:\n` +
+          `  400 demanding anthropic-workspace-id => the key IS org-scoped (account is the\n` +
+          `  blocker); 401 => the credential itself is bad.\n  ${body.slice(0, 300)}`,
         );
       }
       throw new Error(`cost_report HTTP ${res.status}: ${body.slice(0, 400)}`);

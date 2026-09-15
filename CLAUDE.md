@@ -766,9 +766,27 @@ other number: what the vendor says. `scripts/sync-anthropic-cost.mjs` pulls it
 from Anthropic's Usage & Cost Admin API; other providers are entered by hand.
 Compare in `v_ai_cost_reconciliation`.
 
-13. **`ANTHROPIC_ADMIN_KEY` is a DIFFERENT credential** (`sk-ant-admin01-…`,
-    Console → Settings → Admin keys). A normal `ANTHROPIC_API_KEY` — and any
+13. **The Admin API is unavailable for INDIVIDUAL accounts — no key can get
+    past that.** Verified in the console 2026-09-15: the org is named
+    "Rayyan's Individual Org", the settings sidebar has no **Admin keys** entry
+    at all, and a correctly Organization-scoped key returned 403
+    `permission_error` on every admin endpoint including `/organizations/me`.
+    Anthropic's doc states it plainly: *"The Admin API is unavailable for
+    individual accounts."* Being **Admin of an individual org is not enough** —
+    the gate is the ACCOUNT TYPE, not the role and not the key. The fix is
+    Console → Settings → Organization → **Convert to team organization**;
+    the Admin keys screen appears only after that. So until someone converts,
+    `scripts/sync-anthropic-cost.mjs` cannot run and the vendor side of the
+    reconciliation stays empty — that is a known, deliberate gap, not a bug to
+    re-debug.
+    Once it IS available: `ANTHROPIC_ADMIN_KEY` is a DIFFERENT credential
+    (`sk-ant-admin01-…`). A normal `ANTHROPIC_API_KEY` — and any
     workspace-scoped key — is rejected by `/v1/organizations/cost_report`.
+    **Diagnostic that separates the causes in one call:** send a bare
+    `POST /v1/messages` with the key. A **400** demanding an
+    `anthropic-workspace-id` header PROVES the key is org-scoped (only an org
+    key answers that way), so the problem is the account, not the key; a **401**
+    means the credential itself is bad.
 14. **Anthropic reports `amount` in CENTS as a decimal string.** `"123.45"` is
     $1.2345. `scripts/lib/anthropicCostReport.mjs` divides by 100 exactly once
     and `ai_vendor_cost.amount_usd` is always dollars; `raw` keeps the vendor
