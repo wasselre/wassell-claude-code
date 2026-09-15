@@ -120,6 +120,11 @@ district candidates use lexical variants + article-insensitive keys; a target-le
 `exception` keeps members' own polarity. `needs_confirm` reasons still surface
 only in the compile result — not persisted on the proposal.
 
+**Districts + a road side → `district_side_clip`** (2026-09-15, second pass): the
+clipped shape is computed at proposal time via `wassell_districts_side_of_road`
+and stored on the recipe (`clip_geojson`, `clip_parts`); a failure there THROWS
+(the job fails and retries) rather than storing a proposal with a missing shape.
+
 **Calls are speaker-labelled from Hatif's diarized words (2026-09-13, second pass).**
 `gatherClientConversations` reads `call_logs.transcription.words[]` for each call
 (same id as the phone_calls record) and `hatifDialogue.ts` turns them into

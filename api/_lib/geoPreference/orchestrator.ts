@@ -22,7 +22,7 @@
  * structural guarantee, not just a convention (see orchestrator.test.ts).
  */
 
-import { resolveAnchor, type ResolutionContext } from './resolver.js';
+import { resolveAnchor, parseDirection, type ResolutionContext } from './resolver.js';
 import { compile } from './compiler.js';
 import { classify, type SatUniverse } from './satisfiability.js';
 import { decide, type GateConfig } from './gate.js';
@@ -213,6 +213,36 @@ export async function runReviewFirst(
 
 /** Operations whose geometry is a union of admin polygons (mergeable into one district_union). */
 const ADMIN_UNION_OPS = new Set<string>(['district_polygon', 'district_union', 'zone_union', 'pin_containing_district']);
+/** Admin ops that are DISTRICT lists (clippable to a road side). zone_union is a
+ *  city zone and pin_containing_district a single district — both clippable too. */
+const CLIPPABLE_OPS = new Set<string>(['district_polygon', 'district_union', 'zone_union', 'pin_containing_district']);
+
+const CARDINALS = new Set(['north', 'south', 'east', 'west']);
+type Cardinal = 'north' | 'south' | 'east' | 'west';
+
+/** The cardinal side a directional_band recipe asks for, from its direction anchor(s). */
+function sideOf(recipe: GeometryRecipe): Cardinal | null {
+  if (recipe.side && CARDINALS.has(recipe.side)) return recipe.side as Cardinal;
+  for (const a of recipe.source_anchors ?? []) {
+    const z = parseDirection(a.normalized_token || a.span || '').zone;
+    if (z && CARDINALS.has(z)) return z as Cardinal;
+  }
+  return null;
+}
+
+/** Turn a district-list recipe into "those districts, clipped to `side` of `road`". */
+function clipRecipe(admin: GeometryRecipe, road: string, side: Cardinal, bandAnchors: GeometryRecipe['source_anchors']): GeometryRecipe {
+  const districtIds = admin.resolved_element_ids.filter((id) => id !== road);
+  return {
+    ...admin,
+    operation: 'district_side_clip',
+    resolved_element_ids: [...districtIds, road],
+    side,
+    source_anchors: [...admin.source_anchors, ...bandAnchors.filter((b) => !admin.source_anchors.some((a) => a.span === b.span))],
+    clip_geojson: undefined,
+    clip_parts: undefined,
+  };
+}
 
 export interface MergedPreference {
   preference: GeoPreference;
@@ -268,10 +298,11 @@ export function mergeResolutionsIntoPreference(
           // Several element geometries → keep the first (corridor/band already carries its roads).
           ref.recipe = { ...recipes[bandIdx[0]!]!, source_anchors: ev.anchors };
         } else {
-          // MIXED — «العليا (غرب الملك فهد)»: a district AND a side of a road. That
-          // is an intersection, so the mention becomes TWO clauses of the group
-          // (AND): this ref keeps the band, and an extra include clause carries
-          // the district(s). Never merge a district id into a band's road list.
+          // MIXED — «العليا (غرب الملك فهد)»: a district AND a side of a road =
+          // the part of the district on that side. When the non-admin recipe is
+          // a road side, the mention becomes ONE district_side_clip (a custom
+          // shape computed at proposal time). Any other mix (district + radius…)
+          // becomes two clauses of the group (AND).
           const band = recipes[bandIdx[0]!]!;
           const adminIds = Array.from(new Set(adminIdx.flatMap((i) => recipes[i]!.resolved_element_ids)));
           const adminRecipe: GeometryRecipe = {
@@ -280,19 +311,83 @@ export function mergeResolutionsIntoPreference(
             source_anchors: adminIdx.map((i) => ev.anchors[i]!),
             resolved_element_ids: adminIds,
           };
-          ref.recipe = { ...band, source_anchors: bandIdx.map((i) => ev.anchors[i]!) };
-          if (clause.op === 'include') {
-            added.push({ op: 'include', anyOf: [{ geometry_id: `${ref.geometry_id}:admin`, recipe: adminRecipe }] });
+          const side = band.operation === 'directional_band' ? sideOf(band) : null;
+          const road = band.resolved_element_ids[0];
+          if (side && road) {
+            ref.recipe = clipRecipe(adminRecipe, road, side, bandIdx.map((i) => ev.anchors[i]!));
+          } else {
+            ref.recipe = { ...band, source_anchors: bandIdx.map((i) => ev.anchors[i]!) };
+            if (clause.op === 'include') {
+              added.push({ op: 'include', anyOf: [{ geometry_id: `${ref.geometry_id}:admin`, recipe: adminRecipe }] });
+            }
+            // An EXCLUDE of «district ∧ radius» cannot be split into two excludes
+            // (that over-excludes the whole district); the element rule alone is kept.
           }
-          // An EXCLUDE of «district ∧ band» cannot be split into two excludes
-          // (that over-excludes the whole district); the band alone is kept.
         }
         resolved += 1;
       }
     }
     if (added.length) group.clauses.push(...added);
   }
+  distributeRoadSide(out);
   return { preference: out, resolved_evidence: resolved, unresolved_evidence: unresolved };
+}
+
+/**
+ * A preference that says "these districts" and "west of King Fahd Road" means
+ * the parts of those districts on that side — NOT the districts plus a 5 km band
+ * along the whole road as a separate alternative (operator, 2026-09-15: "not
+ * the entire length of the road"). The compiler puts every independent mention
+ * in its OWN group (OR), so the standalone band lands in a different group
+ * from the districts; the qualifier therefore applies across the whole
+ * expression: when it holds ≥1 include district-list ref and include road-side
+ * band(s) all on ONE road+side, every clippable include ref (in any group)
+ * becomes a district_side_clip on that road/side, the standalone band refs are
+ * removed, and groups left empty are dropped. Exclude clauses are untouched.
+ * Two different roads/sides are ambiguous by design → nothing is changed.
+ */
+function distributeRoadSide(pref: GeoPreference): void {
+  const bands: Array<{ gi: number; ci: number; ri: number; road: string; side: Cardinal; anchors: GeometryRecipe['source_anchors'] }> = [];
+  let clippable = 0;
+  pref.groups.forEach((g, gi) => g.clauses.forEach((c, ci) => {
+    if (c.op !== 'include') return;
+    c.anyOf.forEach((r, ri) => {
+      const rec = r.recipe;
+      if (!rec || rec.geo_data_version === 'stub') return;
+      if (rec.operation === 'directional_band' && rec.resolved_element_ids.length === 1) {
+        const side = sideOf(rec);
+        if (side) bands.push({ gi, ci, ri, road: rec.resolved_element_ids[0]!, side, anchors: rec.source_anchors });
+      } else if (CLIPPABLE_OPS.has(rec.operation)) {
+        clippable += 1;
+      }
+    });
+  }));
+  if (bands.length === 0 || clippable === 0) return;
+  const first = bands[0]!;
+  if (!bands.every((b) => b.road === first.road && b.side === first.side)) return;
+
+  for (const g of pref.groups) {
+    for (const c of g.clauses) {
+      if (c.op !== 'include') continue;
+      for (const r of c.anyOf) {
+        const rec = r.recipe;
+        if (!rec || rec.geo_data_version === 'stub' || !CLIPPABLE_OPS.has(rec.operation)) continue;
+        r.recipe = clipRecipe(rec, first.road, first.side, first.anchors);
+      }
+    }
+  }
+  // Remove the standalone band refs; drop clauses and groups left empty; renumber.
+  const bandKeys = new Set(bands.map((b) => `${b.gi}:${b.ci}:${b.ri}`));
+  pref.groups = pref.groups
+    .map((g, gi) => ({
+      ...g,
+      clauses: g.clauses
+        .map((c, ci) => ({ ...c, anyOf: c.anyOf.filter((_, ri) => !bandKeys.has(`${gi}:${ci}:${ri}`)) }))
+        .filter((c) => c.anyOf.length > 0),
+    }))
+    .filter((g) => g.clauses.length > 0);
+  pref.groups.forEach((g, i) => { g.priority = i + 1; });
+  if (pref.groups.length && !pref.groups.some((g) => g.role === 'primary')) pref.groups[0]!.role = 'primary';
 }
 
 // ────────────────────────────────────────────────────────────────────────────

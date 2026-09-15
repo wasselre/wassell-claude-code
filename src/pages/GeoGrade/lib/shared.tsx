@@ -26,12 +26,17 @@ export interface Placement {
   element_ids: string[];
   resolved: boolean;
   label: string;
+  /** district_side_clip: which side of the road (last element id) is kept. */
+  side?: string | null;
+  clip_parts?: Array<{ name: string; kept: boolean; crossed: boolean; kept_km2: number | null; total_km2: number | null }> | null;
 }
 
 export interface LocationItemDTO {
   id: string; kind: 'district' | 'element_rule' | 'drawn_area'; polarity: 'include' | 'exclude';
   district_id?: string; district_label?: string; element_label?: string; label?: string;
-  conditions?: unknown[]; coordinates?: unknown;
+  conditions?: unknown[];
+  /** drawn_area: CLOSED ring in GeoJSON order [lng, lat]. */
+  coordinates?: [number, number][];
 }
 
 export interface ConversationView {

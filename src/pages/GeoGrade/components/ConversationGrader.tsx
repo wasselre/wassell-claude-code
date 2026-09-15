@@ -135,6 +135,17 @@ export default function ConversationGrader({ batchId }: Props) {
     });
     if (!p.resolved) return { text: isAr ? `لم يُحدَّد حي حقيقي لـ «${names.join('، ')}» — يحتاج تأكيدًا` : `no real district picked for “${names.join(', ')}” — needs confirmation`, tone: 'warn' };
     const verb = p.polarity === 'exclude' ? (isAr ? 'استبعد' : 'excluded') : (isAr ? 'حدّد' : 'selected');
+    if (p.operation === 'district_side_clip' && p.side) {
+      const SIDE_AR: Record<string, string> = { north: 'شمال', south: 'جنوب', east: 'شرق', west: 'غرب' };
+      const roadId = p.element_ids[p.element_ids.length - 1]!;
+      const road = districts[roadId];
+      const roadName = road ? (isAr ? road.name_ar : (road.name_en || road.name_ar)) : roadId;
+      const parts = (p.clip_parts ?? []).map((c) => c.kept
+        ? `${c.name}${c.crossed && c.kept_km2 != null && c.total_km2 != null ? (isAr ? ` (${c.kept_km2} من ${c.total_km2} كم²)` : ` (${c.kept_km2} of ${c.total_km2} km²)`) : ''}`
+        : `${c.name} ${isAr ? '(كله على الجهة الأخرى — أُسقط)' : '(entirely on the other side — dropped)'}`);
+      const sideTxt = isAr ? `${SIDE_AR[p.side] ?? p.side} ${roadName}` : `${p.side} of ${roadName}`;
+      return { text: `${verb}: ${parts.length ? parts.join(isAr ? '، ' : ', ') : names.join(', ')} — ${sideTxt}`, tone: 'ok' };
+    }
     return { text: `${verb}: ${names.join(isAr ? '، ' : ', ')}`, tone: 'ok' };
   };
 

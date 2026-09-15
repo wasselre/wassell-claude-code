@@ -48,11 +48,15 @@ import {
   parseLocationItems,
   newDistrictItem,
   newElementRuleItem,
+  newDrawnAreaItem,
   DIRECTION_DEFAULT_M,
   type LocationItem,
   type GeoPolarity,
   type DirectionRule,
 } from '../../src/lib/geo/locationItems.js';
+
+const SIDE_LABEL_AR: Record<string, string> = { north: 'شمال', south: 'جنوب', east: 'شرق', west: 'غرب' };
+const SIDE_RULE: Record<string, DirectionRule> = { north: 'north_of', south: 'south_of', east: 'east_of', west: 'west_of' };
 
 export const config = { runtime: 'edge' };
 
@@ -127,7 +131,7 @@ function roadIdsOf(ids: string[]): string[] {
 
 /** One resolved AnchorRef → zero or more location items at the given polarity. */
 function anchorRefToItems(
-  ref: { recipe?: { operation?: GeoOperation; source_anchors?: unknown; resolved_element_ids?: unknown; radius_or_band_m?: number | null } } | null | undefined,
+  ref: { recipe?: { operation?: GeoOperation; source_anchors?: unknown; resolved_element_ids?: unknown; radius_or_band_m?: number | null; side?: string; clip_geojson?: { type?: string; coordinates?: unknown } | null; clip_parts?: Array<{ name?: string; kept?: boolean }> | null } } | null | undefined,
   polarity: GeoPolarity,
 ): LocationItem[] {
   const recipe = ref?.recipe;
@@ -139,6 +143,35 @@ function anchorRefToItems(
   }[];
   const label = anchorLabel(anchors);
   if (ids.length === 0) return [];
+
+  if (op === 'district_side_clip') {
+    // The clipped shape (computed at proposal time) → one drawn shape per polygon.
+    // Without a shape (legacy row / RPC refused) fall back to the districts plus
+    // the side rule on the road, which is the same meaning as an AND.
+    const road = ids[ids.length - 1]!;
+    const districts = ids.slice(0, -1);
+    const side = typeof recipe.side === 'string' ? recipe.side : '';
+    const kept = (recipe.clip_parts ?? []).filter((p) => p.kept).map((p) => p.name).filter(Boolean);
+    const name = kept.length ? kept.join('، ') : label;
+    const sideLabel = SIDE_LABEL_AR[side] ? `${SIDE_LABEL_AR[side]} ${label && /الملك|طريق|شارع/.test(label) ? '' : ''}` : '';
+    const clip = recipe.clip_geojson;
+    if (clip && Array.isArray(clip.coordinates)) {
+      const polys = clip.type === 'Polygon' ? [clip.coordinates] : (clip.coordinates as unknown[]);
+      const out: LocationItem[] = [];
+      polys.forEach((poly, i) => {
+        const ring = Array.isArray(poly) ? (poly[0] as unknown) : null;
+        if (!Array.isArray(ring) || ring.length < 4) return;
+        const closed = ring.map((pt) => [Number((pt as number[])[0]), Number((pt as number[])[1])] as [number, number]);
+        if (closed[0]![0] !== closed[closed.length - 1]![0] || closed[0]![1] !== closed[closed.length - 1]![1]) closed.push([...closed[0]!] as [number, number]);
+        out.push(newDrawnAreaItem(closed, `${name}${sideLabel ? ` (${sideLabel.trim()} الطريق)` : ''}${polys.length > 1 ? ` ${i + 1}` : ''}`, polarity));
+      });
+      if (out.length) return out;
+    }
+    const rule = SIDE_RULE[side];
+    const fallback: LocationItem[] = districts.map((id) => newDistrictItem(id, label || id, polarity));
+    if (rule) fallback.push(newElementRuleItem(label || road, { rule, element_id: road, distance_m: DIRECTION_DEFAULT_M }, polarity));
+    return fallback;
+  }
 
   switch (op) {
     case 'district_polygon':

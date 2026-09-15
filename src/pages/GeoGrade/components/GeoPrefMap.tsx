@@ -39,7 +39,9 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
   const [map, setMap] = useState<google.maps.Map | null>(null);
 
   const districtItems = useMemo(() => items.filter((i) => i.kind === 'district' && i.district_id && isUuid(i.district_id)), [items]);
-  const elementItems = useMemo(() => items.filter((i) => i.kind !== 'district'), [items]);
+  const elementItems = useMemo(() => items.filter((i) => i.kind === 'element_rule'), [items]);
+  // Custom shapes (a district clipped to a road side) carry their own ring — drawn directly.
+  const drawnItems = useMemo(() => items.filter((i) => i.kind === 'drawn_area' && Array.isArray(i.coordinates) && i.coordinates.length >= 4), [items]);
   const polarityOfDistrict = useMemo(() => new Map(districtItems.map((i) => [i.district_id!, i.polarity])), [districtItems]);
   const polarityOfItem = useMemo(() => new Map(items.map((i) => [i.id, i.polarity])), [items]);
 
@@ -84,8 +86,12 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
       const paths = geojsonToPaths(p.geojson);
       if (paths.length) out.push({ key: `e:${p.item_id}`, paths, polarity: pol, label: '' });
     }
+    for (const d of drawnItems) {
+      const ring = (d.coordinates ?? []).map(([lng, lat]) => ({ lat, lng }));
+      if (ring.length >= 4) out.push({ key: `a:${d.id}`, paths: [ring], polarity: d.polarity, label: d.label ?? '' });
+    }
     return out;
-  }, [shapes, previews, polarityOfDistrict, polarityOfItem, isAr]);
+  }, [shapes, previews, drawnItems, polarityOfDistrict, polarityOfItem, isAr]);
 
   const lines = useMemo(() => {
     const out: Array<{ key: string; path: google.maps.LatLngLiteral[] }> = [];
@@ -109,6 +115,7 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
   if (!isMapsKeyConfigured()) {
     return <p className="rounded-xl border border-dashed border-sand/40 px-4 py-3 text-xs text-charcoal/50">{isAr ? 'مفتاح الخرائط غير مضبوط في هذه البيئة.' : 'Maps key is not configured in this environment.'}</p>;
   }
+  const nothingToLoad = districtItems.length === 0 && elementItems.length === 0;
   if (items.length === 0) {
     return <p className="rounded-xl border border-dashed border-sand/40 bg-cream/10 px-4 py-3 text-center text-xs text-charcoal/50">{isAr ? 'لم يضع الذكاء الاصطناعي شيئًا على الخريطة لهذه المحادثة.' : 'The AI placed nothing on the map for this conversation.'}</p>;
   }
@@ -146,7 +153,7 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
       )}
       {loading && <div className="absolute end-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[11px] text-charcoal/60"><Loader2 className="inline animate-spin" size={12} /> {isAr ? 'تحميل الحدود…' : 'loading shapes…'}</div>}
       {error && <div className="absolute inset-x-2 bottom-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{isAr ? `تعذّر تحميل الخريطة: ${error}` : `Map load failed: ${error}`}</div>}
-      {!loading && !error && polygons.length === 0 && lines.length === 0 && (
+      {!loading && !error && !nothingToLoad && polygons.length === 0 && lines.length === 0 && (
         <div className="absolute inset-x-2 bottom-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{isAr ? 'لا توجد حدود مرسومة لهذه العناصر (لم يُحدَّد حي حقيقي).' : 'No boundaries drawn for these items (no real district was selected).'}</div>
       )}
       <div className="absolute start-2 top-2 flex gap-2 rounded-full bg-white/90 px-2 py-1 text-[11px] text-charcoal/70">

@@ -17,12 +17,12 @@ interface LooseAnchorRef {
 }
 
 const OP_LABEL_AR: Record<string, string> = {
-  district_polygon: 'حي', district_union: 'أحياء', pin_containing_district: 'حي (من موقع)',
+  district_polygon: 'حي', district_union: 'أحياء', pin_containing_district: 'حي (من موقع)', district_side_clip: 'أحياء على جهة من طريق',
   zone_union: 'داخل منطقة', within_radius: 'ضمن نطاق', pin_point: 'حول نقطة',
   within_distance: 'ضمن مسافة', corridor: 'على محور', directional_band: 'جهة طريق',
 };
 const OP_LABEL_EN: Record<string, string> = {
-  district_polygon: 'District', district_union: 'Districts', pin_containing_district: 'District (from pin)',
+  district_polygon: 'District', district_union: 'Districts', pin_containing_district: 'District (from pin)', district_side_clip: 'Districts on one side of a road',
   zone_union: 'Inside zone', within_radius: 'Within radius', pin_point: 'Around pin',
   within_distance: 'Within distance', corridor: 'Along corridor', directional_band: 'Side of road',
 };

@@ -25,7 +25,7 @@ import type {
 } from './orchestrator.js';
 import type { GateConfig, WriteAction } from './gate.js';
 import type { SatUniverse } from './satisfiability.js';
-import type { Speaker, Evidence, EvidenceRelation, RelationMemberRef } from './ontology.js';
+import type { Speaker, Evidence, EvidenceRelation, RelationMemberRef, GeoPreference, GeometryRecipe } from './ontology.js';
 import type { BackfillDeps, BackfillJob } from './backfillRunner.js';
 
 const randomUuid = (): string => globalThis.crypto.randomUUID();
@@ -310,14 +310,55 @@ const INERT_UNIVERSE: SatUniverse = {
   inventoryIn: () => 0,
 };
 
+interface ClipPart { district_id: string; name: string; name_en: string; crossed: boolean; kept: boolean; kept_km2: number | null; total_km2: number | null; geojson: { type: string; coordinates: unknown } | null }
+
+/**
+ * Fill `clip_geojson` / `clip_parts` on every district_side_clip recipe of an
+ * expression by calling wassell_districts_side_of_road (PostGIS: split each
+ * district by the road, keep the pieces on the requested side). Mutates the
+ * given expression. A failure throws — a proposal must never be stored with a
+ * silently missing shape (the reviewer would see districts the customer did
+ * not ask for).
+ */
+export async function hydrateClipGeometry(supabase: SupabaseClient, expression: GeoPreference): Promise<number> {
+  let n = 0;
+  for (const g of expression.groups ?? []) {
+    for (const c of g.clauses ?? []) {
+      for (const ref of c.anyOf ?? []) {
+        const r: GeometryRecipe | undefined = ref.recipe;
+        if (!r || r.operation !== 'district_side_clip' || r.clip_geojson) continue;
+        const road = r.resolved_element_ids[r.resolved_element_ids.length - 1];
+        const districts = r.resolved_element_ids.slice(0, -1);
+        if (!road || !r.side || districts.length === 0) continue;
+        const { data, error } = await supabase.rpc('wassell_districts_side_of_road', { p_district_ids: districts, p_road_external_id: road, p_side: r.side });
+        if (error) throw new Error(`districts_side_of_road failed: ${error.message}`);
+        if (data == null) throw new Error(`districts_side_of_road refused road=${road} side=${r.side}`);
+        const parts = (Array.isArray(data) ? data : []) as ClipPart[];
+        const polys: unknown[] = [];
+        for (const p of parts) {
+          if (!p.kept || !p.geojson) continue;
+          if (p.geojson.type === 'MultiPolygon') polys.push(...(p.geojson.coordinates as unknown[]));
+          else if (p.geojson.type === 'Polygon') polys.push(p.geojson.coordinates);
+        }
+        r.clip_geojson = { type: 'MultiPolygon', coordinates: polys };
+        r.clip_parts = parts.map((p) => ({ district_id: p.district_id, name: p.name, crossed: p.crossed, kept: p.kept, kept_km2: p.kept_km2, total_km2: p.total_km2 }));
+        n += 1;
+      }
+    }
+  }
+  return n;
+}
+
 /**
  * Dedup-aware proposal store: before inserting, it checks for an already-open
  * (`status='pending'`) proposal for the same (client, checkpoint) and returns
- * that instead — so a re-run never creates a duplicate proposal.
+ * that instead — so a re-run never creates a duplicate proposal. Clip recipes
+ * get their shapes here (hydrateClipGeometry) before the row is written.
  */
 export function createSupabaseProposalStore(supabase: SupabaseClient): ProposalStore {
   return {
     async createProposal(input: ProposalInput): Promise<ProposalRecord> {
+      await hydrateClipGeometry(supabase, input.proposed_expression);
       let q = supabase
         .from('geo_pref_proposals')
         .select('id, client_id, checkpoint_id, proposed_action, proposed_expression, gate_signals, status')

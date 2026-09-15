@@ -26,7 +26,7 @@ import type { GeoPreference } from '../_lib/geoPreference/ontology.js';
 const isUuid = (v: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
 /** Per-mention placement from a compiled expression: `geo:<evidence id>` refs → recipe. */
-interface Placement { polarity: 'include' | 'exclude'; operation: string; element_ids: string[]; resolved: boolean; label: string }
+interface Placement { polarity: 'include' | 'exclude'; operation: string; element_ids: string[]; resolved: boolean; label: string; side?: string | null; clip_parts?: Array<{ name: string; kept: boolean; crossed: boolean; kept_km2: number | null; total_km2: number | null }> | null }
 function placementsByEvidence(expr: GeoPreference | null | undefined): Record<string, Placement> {
   const out: Record<string, Placement> = {};
   if (!expr || !Array.isArray(expr.groups)) return out;
@@ -43,6 +43,8 @@ function placementsByEvidence(expr: GeoPreference | null | undefined): Record<st
           element_ids: ids,
           resolved: r.geo_data_version !== 'stub' && ids.length > 0,
           label: (Array.isArray(r.source_anchors) ? r.source_anchors : []).map((a) => a.span).filter(Boolean).join(' / '),
+          side: r.side ?? null,
+          clip_parts: r.clip_parts ? r.clip_parts.map((p) => ({ name: p.name, kept: p.kept, crossed: p.crossed, kept_km2: p.kept_km2, total_km2: p.total_km2 })) : null,
         };
       }
     }
@@ -128,6 +130,7 @@ export default async function handler(req: Request): Promise<Response> {
         }
       }
       const districtIds = new Set<string>();
+      const elementIds = new Set<string>();
       const conversations = convIds.map((cid) => {
         const rows = (evs ?? []).filter((e) => e.conversation_id === cid);
         const first = rows[0]!;
@@ -138,7 +141,7 @@ export default async function handler(req: Request): Promise<Response> {
           const items = geoPreferenceToLocationItems(prop.expression).filter((li) => li.kind !== 'district' || isUuid(li.district_id));
           const by_evidence = placementsByEvidence(prop.expression);
           for (const li of items) if (li.kind === 'district') districtIds.add(li.district_id);
-          for (const pl of Object.values(by_evidence)) for (const id of pl.element_ids) if (isUuid(id)) districtIds.add(id);
+          for (const pl of Object.values(by_evidence)) for (const id of pl.element_ids) { if (isUuid(id)) districtIds.add(id); else elementIds.add(id); }
           proposal = { id: prop.id, action: prop.proposed_action, items, by_evidence };
         }
         return {
@@ -158,6 +161,12 @@ export default async function handler(req: Request): Promise<Response> {
         const { data: ds, error: dErr } = await sb.from('districts').select('id, name_ar, name_en, city_name_ar').in('id', [...districtIds]);
         if (dErr) return jsonError(500, `districts read failed: ${dErr.message}`);
         for (const d of ds ?? []) districts[d.id as string] = { name_ar: String(d.name_ar ?? ''), name_en: String(d.name_en ?? ''), city: String(d.city_name_ar ?? '') };
+      }
+      // Road / landmark names for element ids (non-uuid) so a placement reads «طريق الملك فهد», not «RUH-ROAD-0694».
+      if (elementIds.size) {
+        const { data: els, error: eErr } = await sb.from('geo_elements').select('external_id, name_ar, name_en').in('external_id', [...elementIds]);
+        if (eErr) return jsonError(500, `geo_elements read failed: ${eErr.message}`);
+        for (const e of els ?? []) districts[e.external_id as string] = { name_ar: String(e.name_ar ?? ''), name_en: String(e.name_en ?? ''), city: '' };
       }
 
       // The SOURCE the AI read — so a grader can verify — keyed by the REAL

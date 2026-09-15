@@ -163,13 +163,26 @@ export interface GeoPreference {
 // ────────────────────────────────────────────────────────────────────────────
 export type GeoOperation =
   | 'district_polygon' | 'zone_union' | 'within_radius' | 'within_distance'
-  | 'directional_band' | 'corridor' | 'pin_point' | 'district_union' | 'pin_containing_district';
+  | 'directional_band' | 'corridor' | 'pin_point' | 'district_union' | 'pin_containing_district'
+  /** Districts CLIPPED to one side of a road («العليا غرب الملك فهد»): the
+   *  parts of the named districts on that side, as a custom shape (2026-09-15). */
+  | 'district_side_clip';
+
+export type CardinalSide = 'north' | 'south' | 'east' | 'west';
 
 export interface GeometryRecipe {
   operation: GeoOperation;
   source_anchors: AnchorToken[];
   resolved_element_ids: string[];    // district_ids / road element_ids / landmark ids
   radius_or_band_m?: number;
+  /** district_side_clip: which side of the road (the last element id) is kept. */
+  side?: CardinalSide;
+  /** district_side_clip: the clipped shape, computed by wassell_districts_side_of_road
+   *  at proposal time. Stored NEXT TO the recipe (never instead of it), so the
+   *  shape can be recomputed from district ids + road + side. */
+  clip_geojson?: { type: 'MultiPolygon' | 'Polygon'; coordinates: unknown };
+  /** district_side_clip: per-district outcome, for the reviewer («المحمدية: 4.2 of 4.3 km² kept»). */
+  clip_parts?: Array<{ district_id: string; name: string; crossed: boolean; kept: boolean; kept_km2: number | null; total_km2: number | null }>;
   universe_source?: UniverseSource;  // v6 #8
   geo_data_version: string;
   resolver_version: string;

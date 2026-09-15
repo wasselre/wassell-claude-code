@@ -73,26 +73,63 @@ describe('mergeResolutionsIntoPreference', () => {
   });
 });
 
-describe('mixed mention: district + side of a road', () => {
-  it('«العليا (غرب الملك فهد)» → band ref + an extra include clause with the district (AND), never a district id inside the band', () => {
+const westBand = (span = 'غرب الملك فهد'): ResolutionResult => ({
+  status: 'resolved', geometry_id: 'geo:fp-band',
+  recipe: { operation: 'directional_band', source_anchors: [{ anchor_type: 'direction', span, normalized_token: span }], resolved_element_ids: ['RUH-ROAD-0694'], radius_or_band_m: 5000, universe_source: 'organizational_default', geo_data_version: 'roads@test', resolver_version: 'resolver@test', compiled_at: '2026-09-15T00:00:00Z' },
+});
+
+describe('district + side of a road = the district CLIPPED to that side (district_side_clip)', () => {
+  it('«العليا (غرب الملك فهد)» → ONE district_side_clip ref: [district…, road], side=west, no band left', () => {
     const e1 = ev('e1', [['العليا', 'district'], ['غرب الملك فهد', 'direction']]);
     const { preference } = compile([e1], []);
-    const band: ResolutionResult = {
-      status: 'resolved', geometry_id: 'geo:fp-band',
-      recipe: { operation: 'directional_band', source_anchors: [], resolved_element_ids: ['RUH-ROAD-0694'], radius_or_band_m: 1500, universe_source: 'organizational_default', geo_data_version: 'roads@test', resolver_version: 'resolver@test', compiled_at: '2026-09-15T00:00:00Z' },
-    };
-    const merged = mergeResolutionsIntoPreference(preference, [e1], [resolvedDistrict('d-olaya', 'العليا'), band]);
+    const merged = mergeResolutionsIntoPreference(preference, [e1], [resolvedDistrict('d-olaya', 'العليا'), westBand()]);
     const clauses = merged.preference.groups[0]!.clauses;
-    expect(clauses).toHaveLength(2);
-    const bandRef = clauses[0]!.anyOf[0]!;
-    expect(bandRef.recipe.operation).toBe('directional_band');
-    expect(bandRef.recipe.resolved_element_ids).toEqual(['RUH-ROAD-0694']);
-    expect(bandRef.recipe.source_anchors.map((a) => a.span)).toEqual(['غرب الملك فهد']);
-    const adminClause = clauses[1]!;
-    expect(adminClause.op).toBe('include');
-    expect(adminClause.anyOf[0]!.geometry_id).toBe('geo:e1:admin');
-    expect(adminClause.anyOf[0]!.recipe.resolved_element_ids).toEqual(['d-olaya']);
-    expect(merged.resolved_evidence).toBe(1);
+    expect(clauses).toHaveLength(1);
+    const ref = clauses[0]!.anyOf[0]!;
+    expect(ref.recipe.operation).toBe('district_side_clip');
+    expect(ref.recipe.resolved_element_ids).toEqual(['d-olaya', 'RUH-ROAD-0694']);
+    expect(ref.recipe.side).toBe('west');
+    expect(ref.recipe.source_anchors.map((a) => a.span)).toEqual(['العليا', 'غرب الملك فهد']);
+    expect(ref.recipe.clip_geojson).toBeUndefined(); // computed at proposal time, not here
+  });
+
+  it('a standalone «غرب الملك فهد» in a group of districts clips EVERY district and drops the whole-road band (فهد, 2026-09-15)', () => {
+    const d1 = ev('d1', [['المعذر الشمالي', 'district']]);
+    const d2 = ev('d2', [['المحمديه', 'district']]);
+    const w = ev('w', [['غرب الملك فهد', 'direction']]);
+    const anyOf: EvidenceRelation = { id: 'r1', relation: 'any_of', members: [{ type: 'evidence', id: 'd1' }, { type: 'evidence', id: 'd2' }], source_span: 'المعذر الشمالي او المحمديه', explicit_or_inferred: 'explicit' };
+    const { preference } = compile([d1, d2, w], [anyOf]);
+    const merged = mergeResolutionsIntoPreference(preference, [d1, d2, w], [resolvedDistrict('d-maathar', 'المعذر الشمالي'), resolvedDistrict('d-mohammadiyah', 'المحمدية'), westBand()]);
+    // The compiler put the standalone band in its OWN group (OR); distribution
+    // works across groups, so that group is now gone and every district is clipped.
+    const refs = merged.preference.groups.flatMap((g) => g.clauses.flatMap((c) => c.anyOf));
+    expect(merged.preference.groups).toHaveLength(1);
+    expect(refs.every((r) => r.recipe.operation === 'district_side_clip')).toBe(true);
+    expect(refs.map((r) => r.recipe.resolved_element_ids)).toEqual([['d-maathar', 'RUH-ROAD-0694'], ['d-mohammadiyah', 'RUH-ROAD-0694']]);
+    expect(refs.every((r) => r.recipe.side === 'west')).toBe(true);
+    expect(merged.preference.groups[0]!.role).toBe('primary');
+    expect(merged.preference.groups[0]!.priority).toBe(1);
+  });
+
+  it('an EXCLUDE band («مو شرق الملك فهد») is left alone — never distributed', () => {
+    const d1 = ev('d1', [['المعذر الشمالي', 'district']]);
+    const east = ev('east', [['شرق الملك فهد', 'direction']], 'negative');
+    const { preference } = compile([d1, east], []);
+    const eastBand: ResolutionResult = { ...westBand('شرق الملك فهد'), recipe: { ...westBand('شرق الملك فهد').recipe } };
+    const merged = mergeResolutionsIntoPreference(preference, [d1, east], [resolvedDistrict('d-maathar', 'المعذر الشمالي'), eastBand]);
+    const refs = merged.preference.groups.flatMap((g) => g.clauses.flatMap((c) => c.anyOf.map((r) => ({ op: c.op, o: r.recipe.operation }))));
+    expect(refs).toEqual([{ op: 'include', o: 'district_polygon' }, { op: 'exclude', o: 'directional_band' }]);
+  });
+
+  it('two different sides in one include group are ambiguous → left as districts + bands', () => {
+    const d1 = ev('d1', [['المعذر الشمالي', 'district']]);
+    const w = ev('w', [['غرب الملك فهد', 'direction']]);
+    const n = ev('n', [['شمال الملك سلمان', 'direction']]);
+    const { preference } = compile([d1, w, n], []);
+    const northBand: ResolutionResult = { ...westBand('شمال الملك سلمان'), recipe: { ...westBand('شمال الملك سلمان').recipe, resolved_element_ids: ['RUH-ROAD-0001'] } };
+    const merged = mergeResolutionsIntoPreference(preference, [d1, w, n], [resolvedDistrict('d-maathar', 'المعذر الشمالي'), westBand(), northBand]);
+    const ops = merged.preference.groups.flatMap((g) => g.clauses.flatMap((c) => c.anyOf.map((r) => r.recipe.operation))).sort();
+    expect(ops).toEqual(['directional_band', 'directional_band', 'district_polygon']);
   });
 });
 

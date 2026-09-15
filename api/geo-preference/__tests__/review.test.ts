@@ -206,3 +206,34 @@ describe('applyReview — guards', () => {
     expect(spy.applyCalls).toHaveLength(0);
   });
 });
+
+describe('geoPreferenceToLocationItems — district_side_clip (2026-09-15)', () => {
+  const ring: [number, number][] = [[46.60, 24.70], [46.62, 24.70], [46.62, 24.72], [46.60, 24.72], [46.60, 24.70]];
+  const base = {
+    schema_version: 'geo-pref/v7',
+    groups: [{ id: 'g1', role: 'primary' as const, strength: 'soft' as const, priority: 1, clauses: [{ op: 'include' as const, anyOf: [{ geometry_id: 'geo:e1', recipe: {
+      operation: 'district_side_clip' as const, source_anchors: [{ anchor_type: 'district' as const, span: 'العليا', normalized_token: 'العليا' }, { anchor_type: 'direction' as const, span: 'غرب الملك فهد', normalized_token: 'غرب الملك فهد' }],
+      resolved_element_ids: ['d-olaya', 'RUH-ROAD-0694'], side: 'west' as const, geo_data_version: 'x', resolver_version: 'x', compiled_at: '',
+      clip_parts: [{ district_id: 'd-olaya', name: 'حي العليا', crossed: true, kept: true, kept_km2: 3.89, total_km2: 10.84 }],
+    } }] }] }],
+  };
+  it('with a clipped shape → ONE drawn_area per polygon, closed ring in [lng,lat], labelled with the district + side', () => {
+    const pref = JSON.parse(JSON.stringify(base));
+    pref.groups[0].clauses[0].anyOf[0].recipe.clip_geojson = { type: 'MultiPolygon', coordinates: [[ring]] };
+    const items = geoPreferenceToLocationItems(pref);
+    expect(items).toHaveLength(1);
+    expect(items[0]!.kind).toBe('drawn_area');
+    const d = items[0] as Extract<LocationItem, { kind: 'drawn_area' }>;
+    expect(d.coordinates[0]).toEqual(d.coordinates[d.coordinates.length - 1]);
+    expect(d.coordinates).toHaveLength(5);
+    expect(d.label).toContain('حي العليا');
+    expect(d.label).toContain('غرب');
+    expect(d.polarity).toBe('include');
+  });
+  it('without a shape → the districts plus the side rule on the road (same meaning, AND)', () => {
+    const items = geoPreferenceToLocationItems(JSON.parse(JSON.stringify(base)));
+    expect(items.map((i) => i.kind)).toEqual(['district', 'element_rule']);
+    const rule = items[1] as Extract<LocationItem, { kind: 'element_rule' }>;
+    expect(rule.conditions[0]).toMatchObject({ rule: 'west_of', element_id: 'RUH-ROAD-0694' });
+  });
+});
