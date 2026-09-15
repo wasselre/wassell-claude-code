@@ -124,6 +124,17 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
       const c = b.getCenter();
       out.push({ key: `l:${pg.key}`, position: { lat: c.lat(), lng: c.lng() }, icon: buildPillIcon(pg.label, pg.polarity === 'exclude' ? RED : CHOCOLATE) as google.maps.Icon | undefined });
     }
+    // Nudge colliding pills apart (two districts split by the same road sit
+    // ~1 km from each other): any pill within ~0.012° lat / 0.02° lng of an
+    // earlier one is pushed south by one pill-height step per collision.
+    for (let i = 1; i < out.length; i += 1) {
+      let bumps = 0;
+      for (let j = 0; j < i; j += 1) {
+        const a = out[i]!.position, b = out[j]!.position;
+        if (Math.abs(a.lat - b.lat) < 0.012 && Math.abs(a.lng - b.lng) < 0.02) bumps += 1;
+      }
+      if (bumps) out[i]!.position = { lat: out[i]!.position.lat - 0.0065 * bumps, lng: out[i]!.position.lng };
+    }
     return out;
   }, [polygons, isLoaded]);
 
@@ -174,11 +185,13 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
               key={pg.key}
               paths={pg.paths}
               options={{
+                // Excludes are context: light, thin, and underneath the wanted shapes.
                 fillColor: pg.polarity === 'exclude' ? RED : COPPER,
-                fillOpacity: 0.28,
+                fillOpacity: pg.polarity === 'exclude' ? 0.1 : 0.32,
                 strokeColor: pg.polarity === 'exclude' ? RED : CHOCOLATE,
-                strokeOpacity: 0.9,
-                strokeWeight: 1.5,
+                strokeOpacity: pg.polarity === 'exclude' ? 0.5 : 0.95,
+                strokeWeight: pg.polarity === 'exclude' ? 1 : 2,
+                zIndex: pg.polarity === 'exclude' ? 1 : 5,
                 clickable: false,
               }}
             />
