@@ -28,6 +28,19 @@
  * `usePreview()` is how a page mounts this: ONE modal per page, any row can
  * open it. Every list in the workspace uses it, so «معاينة» means the same
  * thing everywhere.
+ *
+ * IT ALSO MOUNTS INLINE (2026-09-15, E2). Pass `variant="inline"` and the same
+ * component renders INSIDE the page — a queue card expanding in place — instead
+ * of over it. Not a reduced copy: the same body, the same footer, the same
+ * actions and the same rejection dialog, in a different box. That is the whole
+ * requirement, because the inline approval that existed before this was a
+ * second, weaker implementation that silently dropped the revision targets when
+ * you rejected from it, and §5.1 deletes exactly that.
+ *
+ * The material read is SCOPED (`asset_list` with `content_ids`). It used to
+ * call `fetchAssets()` with no filter and keep the handful of links that
+ * matched — the whole library, per open. Three of those inside one expanded row
+ * was three full library reads for six files.
  */
 import {
   useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode,
@@ -119,10 +132,16 @@ export interface ContentPreviewProps {
   initialSection?: ContentSection | null;
   /** Where «فتح الصفحة كاملة» goes. Default: react-router `navigate`. */
   onNavigate?: (href: string) => void;
+  /**
+   * `modal` (default) opens over the page; `inline` renders in place, for a
+   * queue card that expands. Same body, same footer, same actions — only the
+   * box differs.
+   */
+  variant?: 'modal' | 'inline';
 }
 
 export default function ContentPreview({
-  contentId, isAr, onClose, onChanged, initialSection, onNavigate,
+  contentId, isAr, onClose, onChanged, initialSection, onNavigate, variant = 'modal',
 }: ContentPreviewProps) {
   const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
@@ -207,13 +226,14 @@ export default function ContentPreview({
   useEffect(() => {
     if (!item) return undefined;
     let alive = true;
-    fetchAssets()
+    // SCOPED to this item — the server resolves the links first and returns
+    // only the assets behind them. See the header note: the unfiltered call
+    // this replaced read the whole library on every open.
+    fetchAssets({ content_ids: [contentId] })
       .then((res) => {
         if (!alive) return;
-        const mine = res.links.filter((l) => l.content_id === contentId);
-        const ids = new Set(mine.map((l) => l.asset_id));
-        setLinks(mine);
-        setAssets(res.assets.filter((a) => ids.has(a.id)));
+        setLinks(res.links);
+        setAssets(res.assets);
       })
       .catch((e: unknown) => {
         console.error('[marketing] preview materials unavailable', e);
@@ -828,21 +848,55 @@ export default function ContentPreview({
     </>
   );
 
+  const title = item
+    ? `${item.ref ?? ''} · ${item.title}`.replace(/^ · /, '')
+    : (isAr ? 'معاينة' : 'Preview');
+  const sub = item
+    ? `${isAr ? 'المرحلة' : 'Stage'}: ${stepLabel}${ownerLabel ? ` · ${isAr ? 'لدى' : 'with'} ${ownerLabel}` : ''}`
+    : undefined;
+
+  const inner = (
+    <>
+      {error && <div style={{ marginBottom: 12 }}><LoadError message={error} onRetry={() => void load()} isAr={isAr} /></div>}
+      {loading && !item && <Skeleton rows={6} />}
+      {body()}
+    </>
+  );
+
   return (
     <>
-      <Modal
-        wide
-        title={item ? `${item.ref ?? ''} · ${item.title}`.replace(/^ · /, '') : (isAr ? 'معاينة' : 'Preview')}
-        sub={item
-          ? `${isAr ? 'المرحلة' : 'Stage'}: ${stepLabel}${ownerLabel ? ` · ${isAr ? 'لدى' : 'with'} ${ownerLabel}` : ''}`
-          : undefined}
-        onClose={close}
-        footer={item ? footer : undefined}
-      >
-        {error && <div style={{ marginBottom: 12 }}><LoadError message={error} onRetry={() => void load()} isAr={isAr} /></div>}
-        {loading && !item && <Skeleton rows={6} />}
-        {body()}
-      </Modal>
+      {variant === 'inline' ? (
+        /* Expanded IN PLACE: nothing overlays, nothing is portalled, and the
+           footer keeps its own actions — the same ones the modal shows. */
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="card-h">
+            <h4 style={{ minWidth: 0 }}>{title}</h4>
+            {sub && <span className="r">{sub}</span>}
+          </div>
+          <div className="card-b">{inner}</div>
+          {item && (
+            <div
+              className="card-b"
+              style={{
+                borderTop: '1px solid var(--line)',
+                display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
+              }}
+            >
+              {footer}
+            </div>
+          )}
+        </div>
+      ) : (
+        <Modal
+          wide
+          title={title}
+          sub={sub}
+          onClose={close}
+          footer={item ? footer : undefined}
+        >
+          {inner}
+        </Modal>
+      )}
 
       {rejectOpen && item && openTask && (
         <RequestChangesModal

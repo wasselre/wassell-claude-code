@@ -1,10 +1,18 @@
 /**
  * The phone tab bar + the «المزيد» sheet — design screens 46 and 48.
  *
- * Four tabs: اليوم · المحتوى · التصوير · المزيد. The first three go straight
- * to the surfaces a phone-first role lives in; the fourth opens a rounded-top
+ * Four tabs: الشهر · مهامي · المحتوى · المزيد. The first three go straight to
+ * the surfaces a phone-first role lives in; the fourth opens a rounded-top
  * sheet that reaches every REMAINING surface, grouped the way the desktop rail
  * groups them (s48: «كما في الشريط الجانبي للحاسوب»).
+ *
+ * RE-CUT 2026-09-15 to mirror the reduced rail. The rail is now six items —
+ * الشهر · مهامي · المحتوى · النشر · المكتبة · الإعدادات — with everything else
+ * behind «متقدّم», so this bar takes the first three and the sheet carries the
+ * other three at its top with «متقدّم» beneath. It also closes a gap that
+ * predates the month model: النشر, نبض المنصات, التحليلات, ملفي and مكتب الأداء
+ * were on the rail and appeared NOWHERE on a phone — the sheet claims to reach
+ * "every remaining surface" and did not.
  *
  * Everything is FILTERED by the workspace surface matrix — a hidden surface is
  * absent, never disabled (s48's note: «الرفض بعد اللمس إهانة صغيرة متكررة»).
@@ -81,6 +89,8 @@ const iconSettings = (
 const iconBell = (
   <svg {...base} className="muted"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20h4" /></svg>
 );
+const iconSend = <svg {...base}><path d="M21 3L10.5 13.5M21 3l-6.5 18-4-8-8-4L21 3z" /></svg>;
+const iconPulse = <svg {...base}><path d="M3 12h4l2.5-6 4 12 2.5-6h5" /></svg>;
 
 /* ------------------------------------------------------------------ */
 /* navigation model                                                   */
@@ -90,22 +100,23 @@ interface TabDef {
   to: string;
   ar: string;
   en: string;
-  surface: SurfaceKey;
+  /** 'always' mirrors the rail: not a matrix surface, shown whenever anything is. */
+  surface: SurfaceKey | 'always';
   icon: JSX.Element;
 }
 
 /** The three direct tabs. المزيد is rendered separately — it is always there. */
 const TABS: TabDef[] = [
-  { to: '/m/my-work', ar: 'اليوم', en: 'Today', surface: 'mywork', icon: iconToday },
+  { to: '/m/month', ar: 'الشهر', en: 'Month', surface: 'always', icon: iconCalendar },
+  { to: '/m/my-work', ar: 'مهامي', en: 'My work', surface: 'mywork', icon: iconToday },
   { to: '/m/content', ar: 'المحتوى', en: 'Content', surface: 'content', icon: iconContent },
-  { to: '/m/shoots', ar: 'التصوير', en: 'Shoots', surface: 'shoots', icon: iconShoot },
 ];
 
 interface SheetLink {
   to: string;
   ar: string;
   en: string;
-  surface: SurfaceKey | 'search';
+  surface: SurfaceKey | 'always';
   icon: JSX.Element;
 }
 
@@ -116,39 +127,36 @@ interface SheetGroup {
 }
 
 /**
- * Every surface the three tabs do NOT reach, grouped as s48 groups them.
- * Labels are the workspace NAV's own bilingual labels.
+ * Every surface the three tabs do NOT reach — the rail's other three primaries
+ * first, then «متقدّم» in the rail's own order. Labels are the workspace NAV's
+ * own bilingual labels.
  */
 const SHEET_GROUPS: SheetGroup[] = [
   {
-    ar: 'المتابعة', en: 'Follow-up',
+    ar: 'الأساسي', en: 'Everyday',
+    items: [
+      { to: '/m/publishing', ar: 'النشر', en: 'Publishing', surface: 'publishing', icon: iconSend },
+      { to: marketingLibraryHref(), ar: 'المكتبة', en: 'Library', surface: 'library', icon: iconLibrary },
+      { to: '/m/settings', ar: 'الإعدادات', en: 'Settings', surface: 'settings', icon: iconSettings },
+    ],
+  },
+  {
+    ar: 'متقدّم', en: 'Advanced',
     items: [
       { to: '/m', ar: 'نظرة عامة', en: 'Overview', surface: 'overview', icon: iconOverview },
-      { to: '/m/team', ar: 'متابعة الفريق', en: 'Team work', surface: 'team', icon: iconTeam },
-    ],
-  },
-  {
-    ar: 'الإنفاق', en: 'Spend',
-    items: [
-      { to: '/m/goals', ar: 'الأهداف', en: 'Goals', surface: 'goals', icon: iconGoals },
+      { to: '/m/analytics', ar: 'التحليلات', en: 'Analytics', surface: 'analytics', icon: iconNumbers },
       { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', surface: 'campaigns', icon: iconCampaigns },
+      { to: '/m/goals', ar: 'الأهداف', en: 'Goals', surface: 'goals', icon: iconGoals },
       { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', surface: 'numbers', icon: iconNumbers },
-    ],
-  },
-  {
-    ar: 'الإنتاج', en: 'Production',
-    items: [
-      { to: '/m/search', ar: 'البحث', en: 'Search', surface: 'search', icon: iconSearch },
+      { to: '/m/organic', ar: 'نبض المنصات', en: 'Platform pulse', surface: 'organic', icon: iconPulse },
       { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', surface: 'calendar', icon: iconCalendar },
-      { to: marketingLibraryHref(), ar: 'مكتبة المواد', en: 'Asset library', surface: 'library', icon: iconLibrary },
+      { to: '/m/search', ar: 'البحث', en: 'Search', surface: 'always', icon: iconSearch },
+      { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', surface: 'shoots', icon: iconShoot },
       { to: '/m/content-inventory', ar: 'جرد المحتوى', en: 'Content inventory', surface: 'content_inventory', icon: iconInventory },
       { to: '/m/content-readiness', ar: 'جاهزية المحتوى', en: 'Content readiness', surface: 'content_readiness', icon: iconInventory },
-    ],
-  },
-  {
-    ar: 'الإعداد', en: 'Setup',
-    items: [
-      { to: '/m/settings', ar: 'الإعدادات', en: 'Settings', surface: 'settings', icon: iconSettings },
+      { to: '/m/team', ar: 'متابعة الفريق', en: 'Team work', surface: 'team', icon: iconTeam },
+      { to: '/m/me', ar: 'ملفي', en: 'My profile', surface: 'myperf', icon: iconGoals },
+      { to: '/m/performance', ar: 'مكتب الأداء', en: 'Performance', surface: 'performance', icon: iconNumbers },
     ],
   },
 ];
@@ -178,9 +186,9 @@ export default function MobileTabBar() {
   // Hidden = absent, never disabled. Before bootstrap lands everything shows,
   // mirroring the rail's own navVisible — no flash-removal on boot.
   const anyVisible = Object.values(surfaces).some((l) => l !== 'hidden');
-  const visible = (s: SurfaceKey | 'search'): boolean => {
+  const visible = (s: SurfaceKey | 'always'): boolean => {
     if (!ready) return true;
-    if (s === 'search') return anyVisible;
+    if (s === 'always') return anyVisible;
     return surfaces[s] !== 'hidden';
   };
 

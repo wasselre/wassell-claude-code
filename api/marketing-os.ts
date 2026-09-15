@@ -78,6 +78,15 @@ import {
 import {
   contentCaptionGenerate, contentRevise, refreshCycleList, refreshCycleDecide,
 } from './_lib/marketing/planning/content.js';
+/* ── the month page (F1/F2) — one screen in two tenses ── */
+import {
+  monthGet, monthCompile, monthConfirm, monthReport, monthNoteSet,
+} from './_lib/marketing/planning/monthActions.js';
+/* ── the row as a readable, actionable subject (F4/F5) ── */
+import {
+  faceOfStep, parseRequirementsMissing, requirementsMissingText, sortMembers,
+  type RowFacts,
+} from './_lib/marketing/rowTasks.js';
 
 export const config = { runtime: 'edge' };
 
@@ -429,6 +438,18 @@ const CONTENT_LIST_COLUMNS = [
   'due_at', 'target_publish_at', 'updated_at',
 ].join(', ');
 
+/**
+ * A ROW member carries more than a list row: the pane renders its writing (the
+ * lines, the brief, the caption and whether the writer confirmed it) and its
+ * place in the reading order, so `data`, `row_id`, `row_order` and the two
+ * caption columns join the list set. Still a named set, not `*`.
+ */
+const ROW_MEMBER_COLUMNS = [
+  CONTENT_LIST_COLUMNS,
+  'data', 'row_id', 'row_order', 'caption', 'caption_confirmed',
+  'created_at', 'archived_at', 'approval_asset_id', 'current_step_key', 'open_task_id',
+].join(', ');
+
 /** Patchable content fields. Identity and provenance are excluded by omission.
  *  `purpose` is NO LONGER writable — it is DERIVED in mos_content_v from the
  *  placements that exist (paid ad rows / publications). `campaign_id` stays
@@ -438,6 +459,9 @@ const CONTENT_EDITABLE = [
   'title', 'project_id', 'project_ids', 'campaign_id', 'language',
   'goal', 'audience', 'angle', 'cta', 'organic_platforms',
   'target_publish_at', 'due_at', 'data',
+  // `row_order` is deliberately NOT here. The reading order is saved through
+  // `row_order_save`, which refuses the edit once the designs are keyed to it —
+  // a generic content patch would walk straight past that gate.
 ] as const;
 
 /** The five standardized ad-copy keys a paid placement carries in `creative`. */
@@ -2693,9 +2717,14 @@ export default async function handler(req: Request): Promise<Response> {
         if (!taskId) return jsonError(400, 'task_id is required');
         if (!dueAt) return jsonError(400, 'due_at is required');
         if (Number.isNaN(new Date(dueAt).getTime())) return jsonError(400, 'due_at must be a date');
+        // BOTH subject kinds (2026-09-15): the revision dialog sets the due date
+        // of the task it just opened, and for a row that task's subject is the
+        // row. Pinned to 'mos_content' this returned 404 and the rejection
+        // landed with its deadline silently unchanged.
         const upd = await sb.from('workflow_role_tasks')
           .update({ due_at: new Date(dueAt).toISOString() })
-          .eq('id', taskId).eq('subject_table', 'mos_content').eq('status', 'open')
+          .eq('id', taskId).in('subject_table', ['mos_content', 'mos_content_rows'])
+          .eq('status', 'open')
           .select('id').maybeSingle();
         const f = dbFail(upd.error);
         if (f) return f;
@@ -5214,6 +5243,409 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       /* -------------------------------------------------------- */
+      /* ONE ROW — three posts, one task to work, one to approve.  */
+      /*                                                          */
+      /* Everything the designer pane and the approval component   */
+      /* render, in one trip: the row's facts, its members with    */
+      /* their writing, the pinned steps, the material scoped to   */
+      /* those members, the approvals already bound, the           */
+      /* publications behind the preflight, and last week's row of */
+      /* the same project for the visual comparison.               */
+      /*                                                          */
+      /* `mos_content_rows` carries RLS with ZERO policies, so the */
+      /* row's own facts come through `mos_row_summary` (definer,  */
+      /* gated on `read`) — a direct SELECT would return an empty  */
+      /* set with no error, and the pane would silently show       */
+      /* nothing. Everything else is the caller's own RLS.         */
+      /* -------------------------------------------------------- */
+      case 'row_detail': {
+        const askedRow = str(body.row_id);
+        const askedTask = str(body.task_id);
+        if (!askedRow && !askedTask) return jsonError(400, 'row_id or task_id is required');
+
+        let rowId = askedRow;
+        if (!rowId && askedTask) {
+          const t = await sb.from('workflow_role_tasks')
+            .select('id, subject_table, subject_id')
+            .eq('id', askedTask).maybeSingle();
+          const tf = dbFail(t.error);
+          if (tf) return tf;
+          const row = t.data as { subject_table: string; subject_id: string } | null;
+          if (!row || row.subject_table !== 'mos_content_rows') {
+            return jsonError(404, 'that task is not a row task');
+          }
+          rowId = row.subject_id;
+        }
+        if (!rowId) return jsonError(404, 'row not found');
+
+        const summary = await readRowSummaries(sb, [rowId]);
+        if ('fail' in summary) return summary.fail;
+        const facts = summary.rows[0] as RowFacts | undefined;
+        if (!facts) return jsonError(404, 'row not found');
+
+        const memberIds = facts.member_ids ?? [];
+
+        const [membersRes, rowTaskRes, memberTaskRes, versionRes] = await Promise.all([
+          memberIds.length > 0
+            ? sb.from('mos_content_v').select(ROW_MEMBER_COLUMNS).in('id', memberIds)
+            : Promise.resolve({ data: [], error: null }),
+          sb.from('workflow_role_tasks').select(QUEUE_TASK_COLUMNS)
+            .eq('subject_table', 'mos_content_rows').eq('subject_id', rowId)
+            .order('opened_at', { ascending: false }).limit(20),
+          memberIds.length > 0
+            ? sb.from('workflow_role_tasks').select(QUEUE_TASK_COLUMNS)
+                .eq('subject_table', 'mos_content').in('subject_id', memberIds)
+                .order('opened_at', { ascending: false }).limit(60)
+            : Promise.resolve({ data: [], error: null }),
+          facts.workflow_version_id
+            ? sb.from('workflow_versions').select('definition')
+                .eq('id', facts.workflow_version_id).maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
+        ]);
+        const readFail = dbFail(membersRes.error) ?? dbFail(rowTaskRes.error)
+          ?? dbFail(memberTaskRes.error) ?? dbFail(versionRes.error);
+        if (readFail) return readFail;
+
+        const memberRows = (membersRes.data ?? []) as unknown as Array<
+          Record<string, unknown> & { id: string; row_order?: number | null; created_at?: string | null }
+        >;
+        const members = sortMembers(memberRows, memberIds);
+
+        // The SPA's step shape (id = key, 1-based position) — the same mapping
+        // `content_detail` hands back, so one step renderer serves both.
+        const steps = mapStepDefs(
+          '',
+          stepsOf((versionRes.data as { definition?: { metadata?: unknown } } | null)?.definition?.metadata ?? null),
+        );
+
+        const rowTasks = (rowTaskRes.data ?? []) as unknown as Array<Record<string, unknown>>;
+        const openRowTask = rowTasks.find((t) => t.status === 'open') ?? null;
+
+        /* Last week's row of the SAME project — the only design question at the
+           final approval is whether the two together still read as one account.
+           Resolved through `mos_content_v` (RLS-visible) rather than
+           `mos_content_rows` (no policies), by taking the most recent OTHER
+           row id among that project's posts. */
+        let previousMembers: Array<Record<string, unknown> & { id: string }> = [];
+        let previousRowId: string | null = null;
+        if (facts.project_id) {
+          const prev = await sb.from('mos_content_v')
+            .select(ROW_MEMBER_COLUMNS)
+            .eq('project_id', facts.project_id)
+            .not('row_id', 'is', null)
+            .neq('row_id', rowId)
+            .is('archived_at', null)
+            .order('target_publish_at', { ascending: false, nullsFirst: false })
+            .limit(24);
+          const pf = dbFail(prev.error);
+          if (pf) return pf;
+          const cands = (prev.data ?? []) as unknown as Array<
+            Record<string, unknown> & { id: string; row_id?: string | null; row_order?: number | null; created_at?: string | null }
+          >;
+          previousRowId = cands.find((c) => typeof c.row_id === 'string')?.row_id ?? null;
+          if (previousRowId) {
+            previousMembers = sortMembers(
+              cands.filter((c) => c.row_id === previousRowId),
+              [],
+            );
+          }
+        }
+
+        const allIds = [...memberIds, ...previousMembers.map((m) => m.id)];
+        const [linkRes, approvalRes, pubRes] = await Promise.all([
+          // `superseded_at IS NULL` matters: `workflow_advance_role_path`
+          // checks the slots with that filter, so a reader without it would
+          // show a slot as filled by a file the engine no longer counts — and
+          // the pane's readiness would disagree with the refusal.
+          allIds.length > 0
+            ? sb.from('mos_asset_links').select('asset_id, content_id, role')
+                .in('content_id', allIds).is('superseded_at', null).limit(400)
+            : Promise.resolve({ data: [], error: null }),
+          memberIds.length > 0
+            ? sb.from('mos_content_approvals')
+                .select('id, content_id, step_key, round, approved_by_user_id, approved_at, writing_hash, design_hash, caption_hash, package_hash')
+                .in('content_id', memberIds)
+                .order('approved_at', { ascending: false }).limit(60)
+            : Promise.resolve({ data: [], error: null }),
+          memberIds.length > 0
+            ? sb.from('mos_publication_v').select('*').in('content_id', memberIds).limit(60)
+            : Promise.resolve({ data: [], error: null }),
+        ]);
+        const linkFail = dbFail(linkRes.error) ?? dbFail(approvalRes.error) ?? dbFail(pubRes.error);
+        if (linkFail) return linkFail;
+
+        const links = (linkRes.data ?? []) as unknown as Array<{ asset_id: string; content_id: string; role: string }>;
+        const assetIds = Array.from(new Set(links.map((l) => l.asset_id)));
+        let assets: unknown[] = [];
+        if (assetIds.length > 0) {
+          const a = await sb.from('mos_assets').select('*').in('id', assetIds).limit(400);
+          const af = dbFail(a.error);
+          if (af) return af;
+          assets = a.data ?? [];
+        }
+
+        return jsonOk({
+          row: facts,
+          members,
+          steps,
+          task: openRowTask ? mapRoleTask(openRowTask) : null,
+          row_tasks: rowTasks.map((t) => mapRoleTask(t)),
+          member_tasks: ((memberTaskRes.data ?? []) as unknown as Array<Record<string, unknown>>)
+            .map((t) => mapRoleTask(t)),
+          assets,
+          links,
+          approvals: approvalRes.data ?? [],
+          publications: pubRes.data ?? [],
+          previous_row: previousRowId
+            ? { row_id: previousRowId, members: previousMembers }
+            : null,
+        });
+      }
+
+      /* -------------------------------------------------------- */
+      /* The writer's reading order — editable at the writing      */
+      /* review ONLY. By the final approval six designs are keyed  */
+      /* to it, so the final pane shows it read-only and this      */
+      /* action refuses to move it. Publish order is its REVERSE.  */
+      /* -------------------------------------------------------- */
+      case 'row_order_save': {
+        const rowId = str(body.row_id);
+        const ordered = Array.isArray(body.ordered_ids)
+          ? (body.ordered_ids as unknown[]).map((v) => str(v)).filter((v): v is string => v !== null)
+          : [];
+        if (!rowId) return jsonError(400, 'row_id is required');
+        if (ordered.length === 0) return jsonError(400, 'ordered_ids is required');
+
+        const summary = await readRowSummaries(sb, [rowId]);
+        if ('fail' in summary) return summary.fail;
+        const facts = summary.rows[0] as RowFacts | undefined;
+        if (!facts) return jsonError(404, 'row not found');
+
+        const known = new Set(facts.member_ids ?? []);
+        if (ordered.length !== known.size || !ordered.every((id) => known.has(id))
+            || new Set(ordered).size !== ordered.length) {
+          return jsonError(400, 'ordered_ids must name every post of the row exactly once');
+        }
+
+        // The gate. Reading it off the pinned step list rather than a hardcoded
+        // step key means a workflow rename cannot quietly reopen the order.
+        const task = await sb.from('workflow_role_tasks')
+          .select('step_key, workflow_version_id')
+          .eq('subject_table', 'mos_content_rows').eq('subject_id', rowId)
+          .eq('status', 'open').maybeSingle();
+        const tf = dbFail(task.error);
+        if (tf) return tf;
+        const open = task.data as { step_key: string | null; workflow_version_id: string | null } | null;
+        if (!open) return jsonError(409, 'this row has no open task');
+        const ver = await sb.from('workflow_versions').select('definition')
+          .eq('id', open.workflow_version_id ?? facts.workflow_version_id ?? '').maybeSingle();
+        const vf = dbFail(ver.error);
+        if (vf) return vf;
+        const face = faceOfStep(
+          stepsOf((ver.data as { definition?: { metadata?: unknown } } | null)?.definition?.metadata ?? null),
+          open.step_key,
+        );
+        if (face !== 'writing' && face !== 'writing_review') {
+          return new Response(JSON.stringify({
+            error: 'The order is fixed once the designs are keyed to it — it can only be changed at the writing review.',
+            error_ar: 'الترتيب يُثبَّت بعد ربط التصاميم به — لا يمكن تغييره إلا في مراجعة الكتابة.',
+          }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+        }
+
+        for (let i = 0; i < ordered.length; i += 1) {
+          const upd = await sb.from('mos_content')
+            .update({ row_order: i })
+            .eq('id', ordered[i] as string).eq('row_id', rowId);
+          const uf = dbFail(upd.error);
+          if (uf) return uf;
+        }
+        return jsonOk({ row_id: rowId, ordered_ids: ordered });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Advance a ROW. The twin of `task_complete`, kept separate  */
+      /* on purpose: the content path resolves an auto-Meta-ad     */
+      /* target and snapshots ONE item, and neither is true of a   */
+      /* row. What IS shared is the engine call, the version       */
+      /* snapshot, the approval-asset promote and the notification. */
+      /*                                                          */
+      /* A refusal is where this earns its keep: the engine names  */
+      /* the offending member («P-152 — final_vertical») and that  */
+      /* token is not in DB_MESSAGES, so the generic translator    */
+      /* would turn the one useful fact into «رفضت قاعدة البيانات   */
+      /* هذا التغيير». It is parsed back into structure here.      */
+      /* -------------------------------------------------------- */
+      case 'row_task_complete': {
+        const rowIdIn = str(body.row_id);
+        const taskIdIn = str(body.task_id);
+        const result = str(body.result) ?? '';
+        const note = str(body.note) ?? '';
+        const returnTo = str(body.return_to);
+        const targets = Array.isArray(body.targets)
+          ? (body.targets as unknown[]).filter((t): t is string => typeof t === 'string')
+          : [];
+        if (!rowIdIn && !taskIdIn) return jsonError(400, 'row_id or task_id is required');
+        if (!['submitted', 'approved', 'changes_requested'].includes(result)) {
+          return jsonError(400, 'result must be submitted, approved or changes_requested');
+        }
+        if (result === 'changes_requested' && !note) {
+          return new Response(JSON.stringify({
+            error: 'Requesting changes requires a note explaining what to change.',
+            error_ar: 'طلب التعديلات يستلزم ملاحظة توضّح المطلوب.',
+          }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+        }
+
+        let tq = sb.from('workflow_role_tasks')
+          .select('id, subject_id, round, step_key, workflow_version_id')
+          .eq('subject_table', 'mos_content_rows')
+          .eq('status', 'open');
+        tq = taskIdIn ? tq.eq('id', taskIdIn) : tq.eq('subject_id', rowIdIn ?? '');
+        const cur = await tq.maybeSingle();
+        const curFail = dbFail(cur.error);
+        if (curFail) return curFail;
+        if (!cur.data) return jsonError(404, 'no open task found for this row');
+        const openTask = cur.data as unknown as {
+          id: string; subject_id: string; round: number;
+          step_key: string | null; workflow_version_id: string | null;
+        };
+        const rowId = openTask.subject_id;
+
+        const summary = await readRowSummaries(sb, [rowId]);
+        if ('fail' in summary) return summary.fail;
+        const facts = summary.rows[0] as RowFacts | undefined;
+        const memberIds = facts?.member_ids ?? [];
+
+        // A submit freezes what was submitted — one snapshot PER MEMBER, so a
+        // send-back three rounds later still has the exact text it objected to.
+        if (result === 'submitted' && memberIds.length > 0) {
+          const [contentRes, scenesRes, appUserId] = await Promise.all([
+            sb.from('mos_content').select('id, data').in('id', memberIds),
+            sb.from('mos_scenes').select('*').in('content_id', memberIds)
+              .order('position', { ascending: true }),
+            resolveAppUserId(sb, user.userId),
+          ]);
+          const snapReadFail = dbFail(contentRes.error) ?? dbFail(scenesRes.error);
+          if (snapReadFail) return snapReadFail;
+          const scenesBy = new Map<string, unknown[]>();
+          for (const s of (scenesRes.data ?? []) as Array<{ content_id: string }>) {
+            const list = scenesBy.get(s.content_id) ?? [];
+            list.push(s);
+            scenesBy.set(s.content_id, list);
+          }
+          const snap = await sb.from('mos_content_versions').upsert(
+            ((contentRes.data ?? []) as Array<{ id: string; data: unknown }>).map((c) => ({
+              content_id: c.id,
+              round: openTask.round,
+              data: (c.data ?? {}) as Record<string, unknown>,
+              scenes: scenesBy.get(c.id) ?? [],
+              submitted_by_user_id: appUserId,
+            })),
+            { onConflict: 'content_id,round' },
+          );
+          const snapFail = dbFail(snap.error);
+          if (snapFail) return snapFail;
+        }
+
+        const adv = await sb.rpc('workflow_advance_role_path', {
+          p_subject_table: 'mos_content_rows',
+          p_subject_id: rowId,
+          p_result: result,
+          p_note: note,
+          p_targets: targets,
+          p_finish: false,
+          ...(returnTo ? { p_return_to: returnTo } : {}),
+        });
+        if (adv.error) {
+          const missing = parseRequirementsMissing(adv.error);
+          if (missing) {
+            const text = requirementsMissingText(missing);
+            console.error('[marketing-os] row refused — requirements missing',
+              rowId, adv.error.message, adv.error.details);
+            return new Response(JSON.stringify({
+              error: text.en, error_ar: text.ar,
+              code: 'requirements_missing', missing,
+            }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+          }
+          const advFail = dbFail(adv.error);
+          if (advFail) return advFail;
+        }
+        const payload = (adv.data ?? {}) as {
+          closed_task_id: string;
+          opened_task_id: string | null;
+          next_step_key: string | null;
+          round: number;
+          done: boolean;
+        };
+
+        // The reason lives on the versions it rejected — one per member, the
+        // round the engine has just left behind.
+        if (result === 'changes_requested' && payload.round - 1 >= 1 && memberIds.length > 0) {
+          const rn = await sb.from('mos_content_versions')
+            .update({ rejected_note: note })
+            .in('content_id', memberIds)
+            .eq('round', payload.round - 1);
+          const rnFail = dbFail(rn.error);
+          if (rnFail) return rnFail;
+        }
+
+        // The approval bridge, per member: the submitted material becomes an
+        // approved link. A no-op when nothing was marked (the by-destination
+        // resolver reads the two slots directly, this keeps legacy readers fed).
+        if (result === 'approved') {
+          for (const id of memberIds) {
+            const promo = await sb.rpc('mos_promote_approval_asset', { p_content_id: id });
+            const promoFail = dbFail(promo.error);
+            if (promoFail) return promoFail;
+          }
+        }
+
+        if (payload.opened_task_id) {
+          const nt = await sb.from('workflow_role_tasks')
+            .select('role_key, assignee_user_id, workflow_version_id, step_key')
+            .eq('id', payload.opened_task_id).maybeSingle();
+          if (nt.error) {
+            console.error('[marketing-os] row next-task read for notification failed',
+              nt.error.code, nt.error.message);
+          } else if (nt.data) {
+            const next = nt.data as {
+              role_key: string; assignee_user_id: string | null;
+              workflow_version_id: string | null; step_key: string | null;
+            };
+            const notifyCfg = await resolveStepNotify(sb, next.workflow_version_id, next.step_key);
+            if (notifyCfg.notify) {
+              const when = facts?.batch_day ?? '';
+              const url = `/m/my-work?row=${rowId}`;
+              await emitNotify(sb, result === 'changes_requested'
+                ? {
+                    event: 'changes_requested',
+                    roles: [next.role_key],
+                    users: next.assignee_user_id ? [next.assignee_user_id] : [],
+                    titleAr: 'أُعيد صفّ بتعديلات',
+                    titleEn: 'Changes requested on a row',
+                    bodyAr: `صف ${when} — ${note}`,
+                    bodyEn: `Row ${when}`,
+                    url,
+                    channels: notifyCfg.channels,
+                  }
+                : {
+                    event: 'task_assigned',
+                    roles: [next.role_key],
+                    users: next.assignee_user_id ? [next.assignee_user_id] : [],
+                    titleAr: 'فُتح لك صفّ',
+                    titleEn: 'A row was assigned to you',
+                    bodyAr: `صف ${when} — ثلاثة منشورات بانتظار خطوتك.`,
+                    bodyEn: `Row ${when} — three posts await your stage.`,
+                    url,
+                    channels: notifyCfg.channels,
+                  });
+            }
+          }
+        }
+
+        return jsonOk({ ...payload, row_id: rowId });
+      }
+
+      /* -------------------------------------------------------- */
       /* Manual tasks — hand-assigned work no workflow generates.   */
       /* A manager or the CEO gives a person something to do        */
       /* («اعرضي حملة مينا ٥٢»); anyone may give it to THEMSELVES.  */
@@ -7330,6 +7762,39 @@ export default async function handler(req: Request): Promise<Response> {
       /* Assets — the material library                             */
       /* -------------------------------------------------------- */
       case 'asset_list': {
+        // SCOPED read (2026-09-15, F5). `content_ids` answers "the material of
+        // THESE items" without pulling the library: the preview popup used to
+        // fetch every asset and every link on every open and filter in the
+        // browser, which is three full library reads for one expanded row.
+        // Absent = the library browser's own unfiltered read, unchanged.
+        const contentIds = Array.isArray(body.content_ids)
+          ? Array.from(new Set((body.content_ids as unknown[])
+              .map((v) => str(v)).filter((v): v is string => v !== null)))
+            .slice(0, 60)
+          : null;
+
+        if (contentIds && contentIds.length === 0) {
+          return jsonOk({ assets: [], links: [] });
+        }
+
+        if (contentIds) {
+          const links = await sb.from('mos_asset_links')
+            .select('asset_id, content_id, role')
+            .in('content_id', contentIds)
+            .limit(600);
+          const lf = dbFail(links.error);
+          if (lf) return lf;
+          const linkRows = (links.data ?? []) as unknown as Array<{ asset_id: string }>;
+          const assetIds = Array.from(new Set(linkRows.map((l) => l.asset_id)));
+          if (assetIds.length === 0) return jsonOk({ assets: [], links: links.data ?? [] });
+          // Archived assets are KEPT here: a link that points at one is a fact
+          // the screen must still be able to render (and name), not an absence.
+          const rows = await sb.from('mos_assets').select('*').in('id', assetIds).limit(600);
+          const rf = dbFail(rows.error);
+          if (rf) return rf;
+          return jsonOk({ assets: rows.data ?? [], links: links.data ?? [] });
+        }
+
         let q = sb.from('mos_assets').select('*').is('archived_at', null);
         const kind = str(body.kind);
         const projectId = str(body.project_id);
@@ -8204,60 +8669,14 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ ok: true, settings });
       }
 
-      /* -------------------------------------------------------- */
-      /* Execution templates — a reusable AD-CAMPAIGN setup        */
-      /* (platform + budget/objective/goal/dates settings + ad     */
-      /* sets + ads) that prefills a NEW execution draft. Stored   */
-      /* as ONE mos_settings row (`execution_templates` →          */
-      /* { items: [...] }) so it needs no schema migration. The    */
-      /* `setup` blob is opaque to the server (the client owns its */
-      /* shape); we only manage the list.                          */
-      /* -------------------------------------------------------- */
-      case 'execution_templates_list': {
-        const res = await sb.from('mos_settings').select('value').eq('key', 'execution_templates').maybeSingle();
-        const f = dbFail(res.error); if (f) return f;
-        const value = (res.data as { value?: { items?: unknown } } | null)?.value;
-        const items = value && typeof value === 'object' && Array.isArray((value as { items?: unknown }).items)
-          ? (value as { items: unknown[] }).items : [];
-        return jsonOk({ templates: items });
-      }
-
-      case 'execution_template_save': {
-        const tpl = (body.template ?? {}) as Record<string, unknown>;
-        const name = str(tpl.name);
-        if (!name) return jsonError(400, 'template name is required');
-        const cur = await sb.from('mos_settings').select('value').eq('key', 'execution_templates').maybeSingle();
-        const cf = dbFail(cur.error); if (cf) return cf;
-        const curVal = (cur.data as { value?: { items?: unknown[] } } | null)?.value;
-        const items: Array<Record<string, unknown>> = Array.isArray(curVal?.items)
-          ? [...(curVal!.items as Array<Record<string, unknown>>)] : [];
-        const id = str(tpl.id) || crypto.randomUUID();
-        const record = { ...tpl, id, name };
-        const idx = items.findIndex((t) => str(t.id) === id);
-        if (idx >= 0) items[idx] = record; else items.push(record);
-        const up = await sb.from('mos_settings').upsert(
-          { key: 'execution_templates', value: { items }, updated_by_user_id: await resolveAppUserId(sb, user.userId) },
-          { onConflict: 'key' },
-        );
-        const uf = dbFail(up.error); if (uf) return uf;
-        return jsonOk({ templates: items });
-      }
-
-      case 'execution_template_delete': {
-        const id = str(body.id);
-        if (!id) return jsonError(400, 'id is required');
-        const cur = await sb.from('mos_settings').select('value').eq('key', 'execution_templates').maybeSingle();
-        const cf = dbFail(cur.error); if (cf) return cf;
-        const curVal = (cur.data as { value?: { items?: unknown[] } } | null)?.value;
-        const items: Array<Record<string, unknown>> = Array.isArray(curVal?.items)
-          ? (curVal!.items as Array<Record<string, unknown>>).filter((t) => str(t.id) !== id) : [];
-        const up = await sb.from('mos_settings').upsert(
-          { key: 'execution_templates', value: { items }, updated_by_user_id: await resolveAppUserId(sb, user.userId) },
-          { onConflict: 'key' },
-        );
-        const uf = dbFail(up.error); if (uf) return uf;
-        return jsonOk({ templates: items });
-      }
+      /* The three execution-TEMPLATE actions (`execution_templates_list`,
+         `execution_template_save`, `execution_template_delete`) were deleted on
+         2026-09-15. Their only caller was `CampaignExecutionsBuilder`, which
+         was itself reachable from nothing — 845 lines of dead UI behind three
+         live endpoints. The standing ad setup is `mos_month_template` now, and
+         no one picks a template. The `mos_settings` row keyed
+         `execution_templates` is left where it is: deleting stored rows is not
+         what a code removal is for. */
 
       /* -------------------------------------------------------- */
       /* Save a whole role path — steps live in metadata, and the  */
@@ -9595,6 +10014,35 @@ export default async function handler(req: Request): Promise<Response> {
       case 'release_open_task': {
         const gate = await requireCap(sb, 'schedule'); if (gate) return gate;
         return releaseOpenTask(planCtx(sb, body, user.userId));
+      }
+
+      /* ---- the month page: one screen, two tenses (F1 + F2) ---- */
+      case 'month_get': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return monthGet(planCtx(sb, body, user.userId));
+      }
+      case 'month_compile': {
+        // A preview that writes nothing — the same capability the campaign
+        // preview takes, for the same reason: it reads everyone's workload.
+        const gate = await requireCap(sb, 'plan_campaign'); if (gate) return gate;
+        return monthCompile(planCtx(sb, body, user.userId));
+      }
+      case 'month_confirm': {
+        // «اعتماد الشهر» reserves the team's days and opens a month of work —
+        // the same gate the single-campaign commit takes.
+        const gate = await requireCap(sb, 'approve_plan'); if (gate) return gate;
+        return monthConfirm(planCtx(sb, body, user.userId));
+      }
+      case 'month_report': {
+        const gate = await requireCap(sb, 'read'); if (gate) return gate;
+        return monthReport(planCtx(sb, body, user.userId));
+      }
+      case 'month_note_set': {
+        // Instructions to the writer are part of planning the month, so they
+        // ride the planning capability rather than `write_content` — a writer
+        // must not be able to rewrite their own brief.
+        const gate = await requireCap(sb, 'plan_campaign'); if (gate) return gate;
+        return monthNoteSet(planCtx(sb, body, user.userId));
       }
 
       case 'campaign_plan_preview': {

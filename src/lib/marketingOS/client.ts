@@ -2216,25 +2216,13 @@ export const saveExecution = (campaignId: string, execution: Record<string, unkn
     'execution_save', { campaign_id: campaignId, execution },
   );
 
-/** A reusable AD-CAMPAIGN (execution) setup — platform + budget/objective/goal/
- *  dates settings + ad sets + ads — that prefills a NEW execution draft. `setup`
- *  is an opaque blob owned by the executions builder; stored server-side in ONE
- *  mos_settings row (no migration). */
-export interface ExecutionTemplate {
-  id: string;
-  name: string;
-  /** The execution-draft snapshot to seed. Shape owned by CampaignExecutionsBuilder. */
-  setup: Record<string, unknown>;
-}
-
-export const fetchExecutionTemplates = () =>
-  call<{ templates: ExecutionTemplate[] }>('execution_templates_list');
-
-export const saveExecutionTemplate = (template: Record<string, unknown>) =>
-  call<{ templates: ExecutionTemplate[] }>('execution_template_save', { template });
-
-export const deleteExecutionTemplate = (id: string) =>
-  call<{ templates: ExecutionTemplate[] }>('execution_template_delete', { id });
+/* The reusable execution-TEMPLATE feature (`ExecutionTemplate`,
+ * `fetchExecutionTemplates` / `saveExecutionTemplate` /
+ * `deleteExecutionTemplate`) was deleted on 2026-09-15 along with its only
+ * caller, `CampaignExecutionsBuilder`, which was itself reachable from nothing.
+ * Its three API actions went with it. The standing ad setup is now
+ * `mos_month_template`, which every campaign is built from without anyone
+ * saving or picking a template. */
 
 export const deleteExecution = (campaignId: string, id: string) =>
   call<{ executions: MosExecution[] }>('execution_delete', { campaign_id: campaignId, id });
@@ -3519,10 +3507,31 @@ export const fetchAdReadiness = (
 ): Promise<{ readiness: MosAdReadiness }> =>
   call('content_ad_readiness', { content_id: contentId, execution_id: executionId ?? null });
 
+/**
+ * The AI caption. Two callers, one action:
+ *   - the writer's «توليد بالذكاء» button — generate and hand back; the draft is
+ *     persisted by the writer's own Save, with the rest of the writing.
+ *   - `prefill: true`, on opening the writing task — generate ONLY when the box
+ *     is empty and PERSIST the draft (unconfirmed) so the caption is there
+ *     before anyone asks and `caption_source` survives a reload.
+ * `persisted: false` with a `persist_skipped` reason is a real outcome the UI
+ * must be able to say out loud, not a silent no-op.
+ */
 export const generateContentCaption = (
   contentId: string,
-): Promise<{ caption: string; source: 'ai' | 'fallback' }> =>
-  call('content_caption_generate', { content_id: contentId });
+  opts?: { prefill?: boolean },
+): Promise<{
+  caption: string;
+  source: 'ai' | 'fallback' | null;
+  persisted?: boolean;
+  skipped?: 'already_written';
+  persist_skipped?: 'already_written' | 'raced' | 'refused' | 'error';
+  persist_detail?: string | null;
+}> =>
+  call('content_caption_generate', {
+    content_id: contentId,
+    ...(opts?.prefill ? { prefill: true } : {}),
+  });
 
 export const reviseContent = (
   contentId: string, note: string, scope?: Array<'writing' | 'caption' | 'design'>,
@@ -3575,3 +3584,324 @@ export interface MosCapacityConfig {
 
 /** The LIVE capacity configuration — so the settings grid never shows only seeds. */
 export const fetchCapacityConfig = (): Promise<MosCapacityConfig> => call('capacity_config');
+
+/* ------------------------------------------------------------------ */
+/* the month — one page, two tenses (F1 + F2, 2026-09-15)             */
+/* ------------------------------------------------------------------ */
+
+/** The standing month, as data — one `mos_month_template` row. */
+export interface MosMonthTemplate {
+  id: string | null;
+  enabled: boolean;
+  postingWeekdays: number[];
+  postsPerRow: number;
+  projectsPerMonth: number;
+  creativesPerProjectWeek: number;
+  campaignLengthDays: number;
+  budgetPerProject: number;
+  leadTimeWorkingDays: number;
+  safetyMarginDays: number;
+  publishTime: string;
+  intraRowGapMinutes: number;
+  generalTopicBank: string[];
+  organicPlatform: string;
+  paidPlatform: string;
+  minSpendSar: number;
+  minImpressions: number;
+  minLeaderLeads: number;
+  leaderMarginPct: number;
+}
+
+export interface MosMonthGeometry {
+  month: string;
+  weeks: Array<{ index: number; start: string; end: string }>;
+  postingDays: string[];
+  firstPostingDay: string;
+  lastPostingDay: string;
+  paidBatchDays: string[];
+  productionStart: string;
+  nextMonthReminderOn: string;
+  campaignEndsOn: string;
+}
+
+/**
+ * One candidate project, with D6's three numbers.
+ *
+ * `last_featured_on` is `greatest(last day with spend, last content created)` —
+ * a STAND-IN, because nothing has ever published. The screen says so; it must
+ * not be presented as a publish date.
+ */
+export interface MosMonthRankingRow {
+  project_id: string;
+  project_name: string | null;
+  available_units: number;
+  unit_count: number;
+  price_from: number | null;
+  last_featured_on: string | null;
+  last_featured_source: 'spend' | 'content' | null;
+  days_since_featured: number | null;
+  last_run_month: string | null;
+  last_run_spend: number | null;
+  last_run_qualified: number | null;
+  last_run_clients: number | null;
+  cost_per_qualified_lead: number | null;
+  score: number;
+}
+
+export interface MosMonthNote {
+  id: string;
+  month: string;
+  lane: 'organic' | 'paid' | null;
+  project_id: string | null;
+  batch_date: string | null;
+  kind: 'month' | 'project' | 'row' | 'paid_batch';
+  body: string;
+  author_user_id: string | null;
+  updated_at: string;
+}
+
+/** One line of «يحتاج قرارك» — `mos_month_exceptions`, nine kinds. */
+export interface MosMonthException {
+  kind: string;
+  severity: 'blocker' | 'warning';
+  subject_kind: 'row' | 'content' | 'ad' | 'release' | 'project' | 'person' | 'cycle';
+  subject_id: string | null;
+  label_ar: string;
+  detail_ar: string | null;
+  occurred_on: string | null;
+  project_id: string | null;
+  campaign_id: string | null;
+  action_hint: string;
+}
+
+export interface MosMonthCampaign {
+  id: string;
+  ref: string | null;
+  name: string | null;
+  kind: string | null;
+  status: string | null;
+  project_id: string | null;
+  plan_id: string | null;
+  starts_on: string | null;
+  ends_on: string | null;
+  budget_total: number | null;
+}
+
+export interface MosMonthGet {
+  month: string;
+  today: string;
+  template: MosMonthTemplate;
+  geometry: MosMonthGeometry;
+  state: 'draft' | 'confirmed';
+  campaigns: MosMonthCampaign[];
+  organic_campaign_id: string | null;
+  selection: Array<{
+    project_id: string;
+    project_name: string | null;
+    ranking: MosMonthRankingRow | null;
+  }>;
+  ranking: MosMonthRankingRow[];
+  notes: MosMonthNote[];
+  exceptions: MosMonthException[];
+}
+
+export interface MosMonthGridDay {
+  day: string;
+  weekday: number;
+  rowKey: string;
+  kind: 'organic_row' | 'general_row';
+  projectId: string | null;
+  projectName: string | null;
+  slot: number | null;
+  slotLetter: string | null;
+  posts: number;
+}
+
+export interface MosMonthGridPaidCell {
+  batchDay: string;
+  projectId: string;
+  projectName: string | null;
+  slot: number;
+  slotLetter: string;
+  creatives: number;
+}
+
+export interface MosMonthGridWeek {
+  index: number;
+  start: string;
+  end: string;
+  days: MosMonthGridDay[];
+  paid: MosMonthGridPaidCell[];
+}
+
+/** Per-person capacity for the month — one line per (person, bucket). */
+export interface MosMonthCapacityLine {
+  userId: string;
+  bucket: 'post' | 'video' | 'approvals';
+  capacityPerDay: number;
+  totalSlots: number;
+  peakDay: string | null;
+  peakLoad: number;
+  averagePerWorkingDay: number;
+  over: boolean;
+}
+
+export interface MosMonthSummary {
+  month: string;
+  rows: number;
+  generalRows: number;
+  templateRows: number;
+  posts: number;
+  organicReleases: number;
+  feedReleases: number;
+  storyReleases: number;
+  paidCreatives: number;
+  items: number;
+  firstPostingDay: string;
+  lastPostingDay: string;
+  productionStart: string;
+  nextMonthReminderOn: string;
+  campaignEndsOn: string;
+  budgetTotal: number;
+  projectSlots: number;
+  projectsWithoutRows: string[];
+  selectionOk: boolean;
+  feasible: boolean;
+  capacityOk: boolean;
+  conflicts: MosPlanResult['conflicts'];
+  load: MosMonthCapacityLine[];
+}
+
+export interface MosMonthCompile {
+  month: string;
+  template: MosMonthTemplate;
+  geometry: MosMonthGeometry;
+  summary: MosMonthSummary;
+  weeks: MosMonthGridWeek[];
+  plans: Array<{
+    campaign_ref: string | null;
+    kind: 'organic' | 'paid';
+    feasible: boolean;
+    items: number;
+    rows: number;
+    releases: number;
+    conflicts: MosPlanResult['conflicts'];
+  }>;
+}
+
+export interface MosMonthReportProject {
+  project_id: string;
+  project_name: string | null;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  meta_leads: number;
+  our_leads: number;
+  cost_per_lead: number | null;
+  attributed_clients: number;
+  qualified_clients: number;
+  ungraded_clients: number;
+  ads_active: number;
+  ads_paused: number;
+  posts_published: number;
+  releases_published: number;
+  posts_planned: number;
+  creatives_planned: number;
+  budget: number;
+}
+
+export interface MosMonthReport {
+  month: string;
+  today: string;
+  window: { from: string; to: string };
+  state: 'draft' | 'confirmed';
+  template: MosMonthTemplate;
+  geometry: MosMonthGeometry;
+  campaigns: MosMonthCampaign[];
+  /** The month's projects in SLOT order — أ · ب · ج. */
+  project_order: string[];
+  projects: MosMonthReportProject[];
+  /** Every publication the month holds — the report grid is built from these. */
+  releases: Array<{
+    id: string;
+    content_id: string | null;
+    project_id: string | null;
+    platform: string | null;
+    status: string;
+    day: string | null;
+    placement_variant: 'feed' | 'story' | null;
+  }>;
+  totals: {
+    spend?: number; impressions?: number; clicks?: number; meta_leads?: number;
+    attributed_clients?: number; qualified_clients?: number; ungraded_clients?: number;
+    posts_published?: number; releases_published?: number;
+    ads_active?: number; ads_paused?: number;
+    our_leads: number; cost_per_lead: number | null;
+    posts_planned: number; creatives_planned: number; general_planned: number;
+    budget_total: number;
+  };
+  /** Spend + leads whose campaign names no project. Shown, never dropped. */
+  unattributed: {
+    spend?: number; impressions?: number; leads?: number; ads?: number; our_leads: number;
+  };
+  /** The same, before the window — the pre-cutover record, expected non-zero. */
+  unattributed_history: {
+    spend?: number; impressions?: number; first_day?: string | null; last_day?: string | null;
+  };
+  excluded_stages: string[];
+  exceptions: MosMonthException[];
+}
+
+export interface MosMonthConfirmResult {
+  ok: boolean;
+  month: string;
+  committed: Array<{
+    campaign_ref: string; campaign_id: string; plan_id: string;
+    kind: 'organic' | 'paid'; already: boolean;
+    created: Record<string, unknown> | null;
+  }>;
+  summary: MosMonthSummary;
+  /** e.g. `rows_not_materialised:0/16` — surfaced on the page, never swallowed. */
+  warnings: string[];
+}
+
+/** The month in either tense: the plan's inputs, the notes, the exceptions. */
+export const fetchMonth = (month?: string): Promise<MosMonthGet> =>
+  call('month_get', month ? { month } : {});
+
+/** Compile the whole month against the live workload. Writes NOTHING. */
+export const compileMonthPlan = (month: string, projectIds: string[]): Promise<MosMonthCompile> =>
+  call('month_compile', { month, project_ids: projectIds });
+
+/**
+ * «اعتماد الشهر». A 409 carries `{error, error_ar, error_en}` in
+ * `MosApiError.body` — `month_template_disabled`, `month_infeasible`,
+ * `plan_changed` or `capacity_conflict`. Show it; never retry blindly.
+ */
+export const confirmMonth = (month: string, projectIds: string[]): Promise<MosMonthConfirmResult> =>
+  call('month_confirm', { month, project_ids: projectIds });
+
+/** The same page with live numbers. */
+export const fetchMonthReport = (month?: string): Promise<MosMonthReport> =>
+  call('month_report', month ? { month } : {});
+
+/**
+ * Write or clear one note. An empty body CLEARS it — the same pencil.
+ * Per D7 `lane` is load-bearing: a project-column note reaches exactly one lane.
+ */
+export const setMonthNote = (payload: {
+  month: string;
+  kind: 'month' | 'project' | 'row' | 'paid_batch';
+  lane?: 'organic' | 'paid' | null;
+  project_id?: string | null;
+  batch_date?: string | null;
+  body: string;
+}): Promise<{ ok: boolean; note?: MosMonthNote; cleared?: boolean }> =>
+  call('month_note_set', {
+    month: payload.month,
+    kind: payload.kind,
+    lane: payload.lane ?? null,
+    project_id: payload.project_id ?? null,
+    batch_date: payload.batch_date ?? null,
+    body: payload.body,
+  });

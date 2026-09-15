@@ -6,11 +6,11 @@
  * up the platform campaign id, all its ad sets, and every ad under them in a
  * single form and saves the whole tree at once.
  *
- * Shape borrowed verbatim from CampaignContentBuilder: the component owns the
- * arrays, each row carries a local `key` from a useRef counter (the server
- * assigns real ids on save), and add / remove(key) / patch(key, over) helpers
- * mutate through onChange-style setState. Ad sets are child rows; each holds a
- * grandchild list of ads.
+ * Shape: the component owns the arrays, each row carries a local `key` from a
+ * useRef counter (the server assigns real ids on save), and add / remove(key) /
+ * patch(key, over) helpers mutate through onChange-style setState. Ad sets are
+ * child rows; each holds a grandchild list of ads. (This shape was copied from
+ * `CampaignContentBuilder`, deleted 2026-09-15 as dead code.)
  *
  * Full-replace save: the WHOLE tree is sent every time (rows absent from the
  * payload are soft-archived server-side), so on save we send everything and
@@ -19,6 +19,13 @@
  * The important field is each ad's Ad ID (`platform_ad_id`, the Meta Ad ID) —
  * that is what inbound WhatsApp attribution resolves against, so it is marked
  * clearly and its uniqueness is validated before save.
+ *
+ * CHANGED 2026-09-15: the ad-set NAME and ad NAME are no longer typed. Both are
+ * generated from the lineage (`adSetAutoName` / `adAutoName`), nothing reads
+ * either as a decision, and each was presented as a text box with a ↻ button
+ * whose only purpose was to undo what you had typed into it. They are now shown
+ * read-only, still auto-filled by the same seeding effect and still saved. The
+ * Ad ID is untouched: it is the one machine value we genuinely cannot generate.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
@@ -193,8 +200,10 @@ export default function CampaignTreeModal({
   ]);
   const removeAdSet = (key: string): void =>
     setAdSets((cur) => cur.filter((s) => s.key !== key));
-  const patchAdSet = (key: string, over: Partial<Omit<AdSetRow, 'key' | 'ads'>>): void =>
-    setAdSets((cur) => cur.map((s) => (s.key === key ? { ...s, ...over } : s)));
+  // `patchAdSet` went with the name box (2026-09-15): an ad set has no other
+  // editable scalar here — its Meta id is filled by the push, and its ads are
+  // patched through `patchAd`. The name-seeding effect below writes through
+  // `setAdSets` directly.
 
   const addAd = (setKey: string): void =>
     setAdSets((cur) => cur.map((s) => (s.key === setKey ? { ...s, ads: [...s.ads, blankAd()] } : s)));
@@ -468,26 +477,18 @@ export default function CampaignTreeModal({
                       gap: 8, alignItems: 'end',
                     }}
                   >
-                    <label style={{ display: 'grid', gap: 3 }}>
+                    <div style={{ display: 'grid', gap: 3, minWidth: 0 }}>
                       <span className="lbl">{isAr ? 'اسم الإعلان' : 'Ad name'}</span>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <input
-                          className="inp"
-                          style={{ flex: 1 }}
-                          value={a.label}
-                          onChange={(e) => patchLoose(a.key, { label: e.target.value })}
-                        />
-                        <button
-                          type="button"
-                          className="fbtn"
-                          style={{ padding: '0 10px' }}
-                          title={isAr ? 'توليد الاسم تلقائيًا' : 'Auto-generate the name'}
-                          onClick={() => patchLoose(a.key, { label: adSuggest('', a.contentId) })}
-                        >
-                          ↻
-                        </button>
-                      </div>
-                    </label>
+                      <span
+                        style={{
+                          fontSize: 12.5, color: 'var(--mute)', overflow: 'hidden',
+                          textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingBlock: 7,
+                        }}
+                        title={a.label}
+                      >
+                        {a.label || (isAr ? '(يُولَّد عند الحفظ)' : '(generated on save)')}
+                      </span>
+                    </div>
                     <label style={{ display: 'grid', gap: 3 }}>
                       <span className="lbl">{isAr ? 'معرّف الإعلان' : 'Ad ID'}</span>
                       <input
@@ -561,26 +562,18 @@ export default function CampaignTreeModal({
                 >
                   {/* The ad set's Meta id (platform_adset_id) is filled by the
                       push, not entered here — only the name is a planning input. */}
-                  <label style={{ display: 'grid', gap: 3 }}>
+                  <div style={{ display: 'grid', gap: 3, minWidth: 0 }}>
                     <span className="lbl">{isAr ? `اسم ${term.one_ar}` : `${term.one_en} name`}</span>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <input
-                        className="inp"
-                        style={{ flex: 1 }}
-                        value={s.name}
-                        onChange={(e) => patchAdSet(s.key, { name: e.target.value })}
-                      />
-                      <button
-                        type="button"
-                        className="fbtn"
-                        style={{ padding: '0 10px' }}
-                        title={isAr ? 'توليد الاسم تلقائيًا' : 'Auto-generate the name'}
-                        onClick={() => patchAdSet(s.key, { name: setSuggest() })}
-                      >
-                        ↻
-                      </button>
-                    </div>
-                  </label>
+                    <span
+                      style={{
+                        fontSize: 13, fontWeight: 700, overflow: 'hidden',
+                        textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}
+                      title={s.name}
+                    >
+                      {s.name || (isAr ? '(يُولَّد عند الحفظ)' : '(generated on save)')}
+                    </span>
+                  </div>
                   <button
                     type="button"
                     className="btn btn-d btn-sm"
@@ -614,26 +607,18 @@ export default function CampaignTreeModal({
                           gap: 8, alignItems: 'end',
                         }}
                       >
-                        <label style={{ display: 'grid', gap: 3 }}>
+                        <div style={{ display: 'grid', gap: 3, minWidth: 0 }}>
                           <span className="lbl">{isAr ? 'اسم الإعلان' : 'Ad name'}</span>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <input
-                              className="inp"
-                              style={{ flex: 1 }}
-                              value={a.label}
-                              onChange={(e) => patchAd(s.key, a.key, { label: e.target.value })}
-                            />
-                            <button
-                              type="button"
-                              className="fbtn"
-                              style={{ padding: '0 10px' }}
-                              title={isAr ? 'توليد الاسم تلقائيًا' : 'Auto-generate the name'}
-                              onClick={() => patchAd(s.key, a.key, { label: adSuggest(s.name, a.contentId) })}
-                            >
-                              ↻
-                            </button>
-                          </div>
-                        </label>
+                          <span
+                            style={{
+                              fontSize: 12.5, overflow: 'hidden',
+                              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}
+                            title={a.label}
+                          >
+                            {a.label || (isAr ? '(يُولَّد عند الحفظ)' : '(generated on save)')}
+                          </span>
+                        </div>
                         <button
                           type="button"
                           className="btn btn-d btn-sm"

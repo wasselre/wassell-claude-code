@@ -1,0 +1,264 @@
+/*
+ * The month page (F1) — the few shapes the shared kit does not already have.
+ *
+ * Everything else on this screen is `mos.css`: .card / .card-h / .card-b,
+ * .btn, .seg, .tag, .tbl, .stat, .notice. What lives here is only what the
+ * month screen invented: the three project slots, the weeks grid with its
+ * project pips, the note boxes and the exception rows.
+ *
+ * Scoped under `.mos-root` like the rest of the workspace, and written with
+ * logical properties only (margin-inline-*, border-inline-*) so the same rules
+ * serve Arabic RTL and English LTR off the <html dir> the app already sets.
+ */
+
+/* ── the three project slots ─────────────────────────────────────────── */
+.mos-root .mth-slots {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+.mos-root .mth-slot {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--paper);
+  border-top: 3px solid var(--copper);
+  min-width: 0;
+}
+.mos-root .mth-slot.s-a { border-top-color: var(--copper); }
+.mos-root .mth-slot.s-b { border-top-color: var(--go); }
+.mos-root .mth-slot.s-c { border-top-color: var(--gold); }
+.mos-root .mth-slot.s-empty { border-top-color: var(--line); background: var(--sand-2); }
+.mos-root .mth-slot .k {
+  position: absolute;
+  inset-block-start: 10px;
+  inset-inline-end: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--mute);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 6px;
+  background: var(--sand-2);
+}
+.mos-root .mth-slot .nm {
+  font-size: 15px;
+  font-weight: 700;
+  margin-block-end: 6px;
+  padding-inline-end: 34px;
+}
+.mos-root .mth-slot .mt {
+  font-size: 11.5px;
+  color: var(--mute);
+  line-height: 1.85;
+  margin-block-end: 10px;
+}
+.mos-root .mth-slot .mt b { color: var(--ink-2); }
+.mos-root .mth-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── computed dates ──────────────────────────────────────────────────── */
+.mos-root .mth-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 7px 14px;
+  font-size: 12.5px;
+  margin: 0;
+}
+.mos-root .mth-dl dt { color: var(--mute); font-size: 11.5px; }
+.mos-root .mth-dl dd { margin: 0; }
+
+/* ── capacity meters ─────────────────────────────────────────────────── */
+.mos-root .mth-meter {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-block-end: 9px;
+  font-size: 12px;
+}
+.mos-root .mth-meter .lb { flex: 0 0 150px; color: var(--ink-2); font-weight: 700; }
+.mos-root .mth-meter .tr {
+  flex: 1;
+  height: 7px;
+  border-radius: 4px;
+  background: var(--sand-2);
+  overflow: hidden;
+  min-width: 60px;
+}
+.mos-root .mth-meter .fl { display: block; height: 100%; background: var(--go); }
+.mos-root .mth-meter .fl.warn { background: var(--wait); }
+.mos-root .mth-meter .fl.bad { background: var(--late); }
+.mos-root .mth-meter .vl { flex: 0 0 auto; color: var(--mute); font-size: 11.5px; }
+
+/* ── the weeks grid ──────────────────────────────────────────────────── */
+.mos-root .mth-weeks { display: flex; flex-direction: column; gap: 10px; }
+.mos-root .mth-week {
+  display: grid;
+  grid-template-columns: 116px 1fr;
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: var(--paper);
+}
+.mos-root .mth-week .wk { font-size: 12px; font-weight: 700; }
+.mos-root .mth-week .wk small { display: block; color: var(--mute); font-weight: 400; font-size: 11px; }
+.mos-root .mth-days {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 9px;
+}
+.mos-root .mth-paid-cells {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 9px;
+}
+.mos-root .mth-day {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: var(--cream);
+  min-width: 0;
+}
+.mos-root .mth-day .dh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  margin-block-end: 7px;
+}
+.mos-root .mth-day .dh .nmx {
+  color: var(--mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mos-root .mth-pips { display: flex; gap: 5px; flex-wrap: wrap; }
+.mos-root .mth-pip {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #fff9f2;
+  background: var(--copper);
+}
+.mos-root .mth-pip.p-a { background: var(--copper); }
+.mos-root .mth-pip.p-b { background: var(--go); }
+.mos-root .mth-pip.p-c { background: var(--gold); color: var(--ink); }
+.mos-root .mth-pip.p-g { background: var(--calm); }
+.mos-root .mth-pip.done { box-shadow: 0 0 0 2px color-mix(in srgb, var(--go) 55%, transparent); }
+.mos-root .mth-pip.late { box-shadow: 0 0 0 2px color-mix(in srgb, var(--late) 65%, transparent); }
+.mos-root .mth-adpips { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.mos-root .mth-adpip {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--copper) 60%, transparent);
+}
+.mos-root .mth-adpip.off {
+  background: transparent;
+  border: 1px dashed var(--line);
+}
+.mos-root .mth-pencil {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--mute);
+  border-radius: 5px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  cursor: pointer;
+  margin-inline-start: auto;
+  flex: 0 0 20px;
+  padding: 0;
+}
+.mos-root .mth-pencil:hover:not(:disabled) { border-color: var(--copper); color: var(--copper); }
+.mos-root .mth-pencil.has { border-color: var(--copper); color: var(--copper); background: color-mix(in srgb, var(--copper) 10%, transparent); }
+.mos-root .mth-pencil:disabled { opacity: 0.4; cursor: default; }
+
+/* ── notes ───────────────────────────────────────────────────────────── */
+.mos-root .mth-note {
+  border: 1px solid var(--line-soft);
+  border-inline-start: 3px solid var(--gold);
+  border-radius: 8px;
+  padding: 9px 12px;
+  background: var(--cream);
+  font-size: 12.5px;
+  margin-block-start: 8px;
+}
+.mos-root .mth-note .src {
+  display: block;
+  font-size: 11px;
+  color: var(--mute);
+  font-weight: 700;
+  margin-block-end: 3px;
+}
+.mos-root .mth-notestrip {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-block-end: 12px;
+  font-size: 11.5px;
+  color: var(--mute);
+}
+.mos-root .mth-notestrip .one { display: flex; align-items: center; gap: 6px; }
+
+/* ── exceptions ──────────────────────────────────────────────────────── */
+.mos-root .mth-exc {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 13px 15px;
+  background: var(--paper);
+}
+.mos-root .mth-exc + .mth-exc { margin-block-start: 10px; }
+.mos-root .mth-exc .ic {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  background: var(--sand-2);
+  color: var(--ink-2);
+}
+.mos-root .mth-exc .ic.bad { background: color-mix(in srgb, var(--late) 14%, transparent); color: var(--late); }
+.mos-root .mth-exc .ic.warn { background: color-mix(in srgb, var(--wait) 16%, transparent); color: var(--wait); }
+.mos-root .mth-exc .ttl { font-weight: 700; font-size: 13px; }
+.mos-root .mth-exc .why { color: var(--ink-2); font-size: 12.5px; margin: 5px 0 0; }
+.mos-root .mth-exc .opts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-block-start: 10px;
+  padding-block-start: 10px;
+  border-block-start: 1px dashed var(--line);
+}
+.mos-root .mth-exc .opts .lead { font-size: 11px; font-weight: 700; color: var(--mute); }
+
+/* ── small print ─────────────────────────────────────────────────────── */
+.mos-root .mth-tiny { font-size: 11.5px; color: var(--mute); line-height: 1.8; }
+.mos-root .mth-sep { height: 1px; background: var(--line-soft); margin: 12px 0; }
+
+@media (max-width: 1000px) {
+  .mos-root .mth-slots { grid-template-columns: 1fr; }
+  .mos-root .mth-week { grid-template-columns: 1fr; }
+  .mos-root .mth-days { grid-template-columns: repeat(2, 1fr); }
+  .mos-root .mth-paid-cells { grid-template-columns: 1fr; }
+}

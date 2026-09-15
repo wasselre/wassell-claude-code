@@ -21,6 +21,18 @@
  * since the writer's design-review step carries `creates_revision:false` — so
  * "the copy is wrong" had nowhere to go and the manager had to approve and fix
  * it afterwards.
+ *
+ * THE MEMBER DIMENSION (2026-09-15, C6). A row is three posts reviewed and
+ * approved together, and a send-back is PER POST. Pass `members` and the dialog
+ * gains one question above the field chips — WHICH post needs changing — and
+ * the targets it writes carry the post with them: `post:<id>` for a whole post,
+ * `post:<id>:<field>` for one field of it. The other two posts are not touched:
+ * their `mos_content_approvals` rows stand and nothing new is stored, which is
+ * why there is no partial-approval state to invent.
+ *
+ * This stays the ONLY rejection surface. The inline reject dialog that once
+ * lived on the task card was deleted precisely because it dropped the revision
+ * targets; anything that wants to send work back mounts THIS, whole.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -77,11 +89,29 @@ function publishShift(fromIso: string, toIso: string, isAr: boolean): string {
 
 const DAY_MS = 86_400_000;
 
+/**
+ * One member of a multi-post subject (a row's three posts). Present = the
+ * dialog asks which post first; absent = the single-item behaviour it has
+ * always had.
+ */
+export interface RevisionMember {
+  id: string;
+  ref: string | null;
+  title: string;
+}
+
+/**
+ * What the dialog needs off the open task. `MosTask` satisfies it, and so does
+ * a ROW task (whose `content_id` is null) — which is the point.
+ */
+export type RevisionTask = Pick<MosTask, 'id' | 'round' | 'step_id' | 'due_at' | 'opened_at'>;
+
 export default function RequestChangesModal({
   item, openTask, steps, scenes, fields, isAr, onClose, onSubmitted,
+  members, initialMembers, subjectLabel, sendChanges,
 }: {
   item: MosContentRow;
-  openTask: MosTask;
+  openTask: RevisionTask;
   steps: MosStep[];
   scenes: MosScene[];
   /** The content type's visible writing fields — the field chips. */
@@ -89,9 +119,28 @@ export default function RequestChangesModal({
   isAr: boolean;
   onClose: () => void;
   onSubmitted: () => void;
+  /** A row's posts. Omit for a single content item. */
+  members?: RevisionMember[];
+  /** Posts the reviewer already marked on the pane behind this dialog. */
+  initialMembers?: string[];
+  /** Names the subject in the title when it is not one content item. */
+  subjectLabel?: string;
+  /**
+   * How the rejection is sent. Omitted = `task_complete` on the content item,
+   * which is what every single-item caller wants. A row passes its own, because
+   * a row advances through `row_task_complete` — same engine, different subject.
+   */
+  sendChanges?: (args: {
+    note: string; targets: string[]; returnTo: string | null;
+  }) => Promise<{ opened_task_id: string | null }>;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [targets, setTargets] = useState<string[]>([]);
+  // Which posts need changing. Single-item subjects have no member dimension,
+  // so the set stays empty and every target is written bare, exactly as before.
+  const [picked, setPicked] = useState<string[]>(
+    () => (initialMembers ?? []).filter((id) => (members ?? []).some((m) => m.id === id)),
+  );
   const [note, setNote] = useState('');
   // The revision's due date defaults to the task's own due date, else tomorrow.
   const [due, setDue] = useState<string>(
@@ -168,6 +217,30 @@ export default function RequestChangesModal({
   const labelOf = (target: string): string => chipDefs.find((c) => c.target === target)?.label ?? target;
   const targetLabels = targets.map(labelOf);
 
+  /* ── which post? (only when the subject has members) ── */
+  const hasMembers = Array.isArray(members) && members.length > 0;
+  const togglePost = (id: string): void => {
+    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  };
+  const postLabel = (id: string): string => {
+    const m = (members ?? []).find((x) => x.id === id);
+    if (!m) return id;
+    const idx = (members ?? []).findIndex((x) => x.id === id);
+    return m.ref ?? `${isAr ? 'المنشور' : 'Post'} ${num(idx + 1, isAr)}`;
+  };
+  const pickedLabels = picked.map(postLabel);
+
+  /**
+   * The targets as stored. With members, every chip is written per picked post
+   * so the revision task says «المنشور ٢ — النص» rather than «النص» on a row of
+   * three; a post picked with no chip is named whole.
+   */
+  const outgoingTargets = hasMembers
+    ? picked.flatMap((id) => (targets.length > 0
+      ? targets.map((t) => `post:${id}:${t}`)
+      : [`post:${id}`]))
+    : targets;
+
   /* ── the publish-date cost, shown before sending ── */
   const shiftDays = useMemo(() => {
     if (!due) return 0;
@@ -183,8 +256,14 @@ export default function RequestChangesModal({
   const submit = async (): Promise<void> => {
     setBusy(true);
     try {
-      const res = await completeTask(openTask.id, 'changes_requested', note.trim(), targets,
-        chosenReturn ? { returnTo: chosenReturn.key } : undefined);
+      const res = sendChanges
+        ? await sendChanges({
+            note: note.trim(),
+            targets: outgoingTargets,
+            returnTo: chosenReturn ? chosenReturn.key : null,
+          })
+        : await completeTask(openTask.id, 'changes_requested', note.trim(), outgoingTargets,
+          chosenReturn ? { returnTo: chosenReturn.key } : undefined);
       // The due date rides a second call: task_complete advances the path, then
       // task_update moves the NEW task's due date. A failure here must be
       // visible — the rejection already landed, so say exactly what didn't.
@@ -217,7 +296,10 @@ export default function RequestChangesModal({
     ? `هذه الجولة ${roundOrdinal(round, true)}. ثلاث جولات على سجل واحد تُظهر تنبيهًا لمدير التسويق — غالبًا الموجز هو المشكلة لا الكتابة.`
     : `This is ${roundOrdinal(round, false)}. Three rounds on one record raise an alert for the marketing manager — usually the brief is the problem, not the writing.`;
 
-  const title = isAr ? `طلب تعديلات · ${item.ref ?? ''}` : `Request changes · ${item.ref ?? ''}`;
+  const subjectName = subjectLabel ?? item.ref ?? '';
+  const title = isAr ? `طلب تعديلات · ${subjectName}` : `Request changes · ${subjectName}`;
+  /** The dialog cannot send until it knows WHICH post, when there are posts. */
+  const canSend = note.trim() !== '' && (!hasMembers || picked.length > 0);
   const sub = isAr
     ? `النسخة ${num(round, true)} من ${revisedLabel} — أرسلها ${returnRoleLabel}${sentAgo === 'اليوم' ? ' اليوم' : ` قبل ${sentAgo}`}`
     : `Version ${round} of ${revisedLabel} — sent by the ${returnRoleLabel} ${sentAgo === 'today' ? 'today' : `${sentAgo} ago`}`;
@@ -230,6 +312,42 @@ export default function RequestChangesModal({
       {round >= 3 && (
         <div className="s38-alert" role="alert">
           {roundSentence}
+        </div>
+      )}
+
+      {/* ── أي منشور؟ — the member dimension, rows only ── */}
+      {hasMembers && (
+        <div>
+          <div className="lbl" style={{ marginBottom: 7 }}>
+            {isAr ? 'أي منشور يحتاج تعديلًا؟' : 'Which post needs changing?'}{' '}
+            <span style={{ color: 'var(--late)' }}>{isAr ? '· إلزامي' : '· required'}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+            {(members ?? []).map((m, i) => {
+              const on = picked.includes(m.id);
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`fbtn${on ? ' on' : ''}`}
+                  onClick={() => togglePost(m.id)}
+                  aria-pressed={on}
+                >
+                  <b style={{ fontWeight: 700 }}>{num(i + 1, isAr)}</b>
+                  {' · '}
+                  <span className="ltr">{m.ref ?? ''}</span>
+                  {m.ref ? ' ' : ''}
+                  {m.title}
+                  {on && <span className="x">×</span>}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 6 }}>
+            {isAr
+              ? 'ما لم تختره يبقى كما هو — اعتماده لا يُلغى، ولا يُعاد كتابته. الصف نفسه يعود مرّة واحدة حاملًا ما اخترته.'
+              : 'Anything you do not pick is left exactly as it is — its approval stands and nobody rewrites it. The row returns once, carrying what you picked.'}
+          </div>
         </div>
       )}
 
@@ -382,6 +500,7 @@ export default function RequestChangesModal({
             {' — تُنشأ مهمة '}
             <b style={{ color: 'var(--ink)' }}>
               «تعديل {revisedLabel}
+              {pickedLabels.length > 0 ? ` — ${joinLabels(pickedLabels, true)}` : ''}
               {targetLabels.length > 0 ? ` — ${joinLabels(targetLabels, true)}` : ''}»
             </b>
             {' ل'}{returnRoleLabel}
@@ -396,6 +515,7 @@ export default function RequestChangesModal({
             {' — a task '}
             <b style={{ color: 'var(--ink)' }}>
               “Revise {revisedLabel}
+              {pickedLabels.length > 0 ? ` — ${joinLabels(pickedLabels, false)}` : ''}
               {targetLabels.length > 0 ? ` — ${joinLabels(targetLabels, false)}` : ''}”
             </b>
             {' '}opens for the {returnRoleLabel}
@@ -438,7 +558,7 @@ export default function RequestChangesModal({
               type="button"
               className="m2-btn p"
               style={{ flex: 1 }}
-              disabled={busy || note.trim() === ''}
+              disabled={busy || !canSend}
               onClick={() => void submit()}
             >
               {busy ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : isAr ? 'إرسال الطلب' : 'Send the request'}
@@ -464,7 +584,7 @@ export default function RequestChangesModal({
           <button
             type="button"
             className="btn btn-p"
-            disabled={busy || note.trim() === ''}
+            disabled={busy || !canSend}
             onClick={() => void submit()}
           >
             {busy ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : isAr ? 'إرسال الطلب' : 'Send the request'}

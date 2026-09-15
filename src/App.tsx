@@ -80,6 +80,7 @@ const CompetitorWatchPage = lazy(() => import('@/pages/CompetitorWatch/Competito
 // in each shell's header is how you move between the two.
 import MarketingWorkspace, { RequireMarketingWorkspace } from '@/pages/Marketing/MarketingWorkspace';
 const MarketingOverviewPage = lazy(() => import('@/pages/Marketing/OverviewPage'));
+const MarketingMonthPage = lazy(() => import('@/pages/Marketing/MonthPage'));
 const MarketingWorkPage = lazy(() => import('@/pages/Marketing/WorkPage'));
 const MarketingTeamPage = lazy(() => import('@/pages/Marketing/TeamPage'));
 const MarketingAssetDetailPage = lazy(() => import('@/pages/Marketing/AssetDetailPage'));
@@ -558,6 +559,8 @@ export default function App() {
           }
         >
           <Route path="/m" element={<MarketingOverviewPage />} />
+          {/* The month — one page in two tenses (?view=plan|report&month=YYYY-MM). */}
+          <Route path="/m/month" element={<MarketingMonthPage />} />
           <Route path="/m/my-work" element={<MarketingWorkPage />} />
           <Route path="/m/team" element={<MarketingTeamPage />} />
           <Route path="/m/search" element={<MarketingSearchPage />} />

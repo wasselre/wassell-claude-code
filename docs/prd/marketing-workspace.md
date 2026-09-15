@@ -1,6 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
+**Last updated:** 2026-09-15 (**The rail is six items, the task card stopped lying about approvals, and the next month announces itself.** The navigation was nineteen items in five groups; it is now **الشهر · مهامي · المحتوى · النشر · المكتبة · الإعدادات**, with everything else — نظرة عامة، التحليلات، الحملات، الأهداف، أرقام الأسبوع، نبض المنصات، التقويم، البحث، طلبات التصوير، جرد المحتوى، جاهزية المحتوى، متابعة الفريق، ملفي، مكتب الأداء — behind a collapsed «متقدّم» group that opens itself when you are standing in it. Nothing was deleted and every route still works: a normal month needs one planning screen, one queue, and the places work and material live; the rest are tools you reach for when something has gone off the rule. The phone bar was re-cut to match (الشهر · مهامي · المحتوى · المزيد), which also closed a gap older than this change — النشر, نبض المنصات, التحليلات, ملفي and مكتب الأداء were on the rail and appeared NOWHERE on a phone, in a sheet whose own docblock claimed to reach every remaining surface. **The current-task card said «الاعتماد مع وجود متطلب ناقص مسموح، لكنه يُسجَّل على الاعتماد نفسه».** The database has refused exactly that since 2026-09-14 (`workflow_advance_role_path` raises `MOS:REQUIREMENTS_MISSING`); `ApprovalSheet` was corrected then and `TaskCard` was not, so two surfaces described one rule and one of them was wrong. It now names the gap and says the approval is refused, not recorded — and it lists `required_files` as well as `required_fields`, which it never did, so a required `final_vertical` used to be invisible here and surfaced minutes later as a raw refusal. The files are NAMED but not ticked: a required file is checked against `mos_asset_links.role` and `content_detail` does not return the links, so a tick would be a guess — and that guess was already being made in the tasks tab (`filled('final_square')` against `data`, a key that has never existed), which printed a ✗ on every design that WAS attached. The tasks-tab approval button is disabled on a missing FIELD for the same reason it is named here. **The card’s own approve button and its own «طلب تعديلات» dialog are gone** (Group G): the dialog carried no revision targets and no validated return step — that is `RequestChangesModal` — and the button could not run the auto-ad flow, so an ad-bearing approval taken there failed with "use the button at the top of the page". One approval surface, one rejection dialog; the SUBMIT button for a non-approval step stays. **The next-month reminder now exists** and rides `api/cron/planning-sweep.ts` (*/10) rather than claiming an eleventh Vercel cron, which is over the plan’s limit of ten: when a month that still needs choosing reaches its own date — `safety_margin_days` before production starts, which is `lead_time_working_days` working days before its first organic row — one in-app notification goes to the manager and the CEO, once a day, and stops the moment the month is compiled (read off `mos_content_rows`, a fact about the work rather than a flag someone sets). It is silent while `mos_month_template.enabled = false`, which is where production stands today, and it skips a month that has already started publishing. That file’s header also claimed `mos_plan_repair()` raises a `plan_conflict` task for the manager; checked against the live function, it does not — the only writer of that task is the Fly refresh worker. **Group G removals:** the two dead builders (`CampaignContentBuilder` + `CampaignExecutionsBuilder`, 845 lines reachable from nothing) and the execution-TEMPLATE feature they hid — its three live API actions went with them; the inline «＋ حملة عضوية جديدة» text field, one input that created a live campaign record from a placement editor with no brief, projects, dates, budget or capacity reservation; the campaign «المسؤول» dropdown in both the wizard and the edit modal (`owner_role` is still written, just not asked); the auto-generated execution name, ad-set name and ad name, each of which was a text box with a ↻ button whose only job was to undo your typing — all three are now shown read-only. The Meta **Ad ID** stays an input and stays typed: it is the one machine value we cannot generate, and the cutover script’s `--restore` has not been exercised on a real ad yet (`mos_cutover_pause_manifest` is empty), which the build plan makes the precondition for removing it. `daily_save` is untouched — the أرقام الأسبوع screen moved under «متقدّم», it was not removed. — also 2026-09-15: **The writing surface is a LIST OF LINES plus a caption the writer confirms, and the row is written three-up and sent once.** A post was never a headline plus a caption: `headlines` is an ORDERED list of 3–6 lines that land ON the design — a hook, the facts, then the call to action — and `WritingFields` now says so («أسطر المنشور»), with the third verb it never had: **reorder**. It had only add / remove / edit, and the numeric badge was decoration. **The caption («النص») is AI-PREFILLED when the writing task opens**: `content_caption_generate` used to generate and persist NOTHING, so the box opened empty and the writer had to press «توليد بالذكاء» — the prefill the operating model assumes did not exist. Passing `prefill: true` now writes the draft onto `mos_content.data` over an EMPTY caption only, under a re-read + `updated_at` CAS with one retry, clearing `caption_confirmed_text`/`_at` in the same write so **a fresh AI draft is never pre-confirmed**. A failure to persist is returned (`persist_skipped`) and toasted, never swallowed. `caption_source` now renders from DATA — it used to render only from transient component state, so «مسودة من الذكاء» vanished on every reload. **`hashtags` gained an editor in the writing task** (it had one only in `PlacementsTab`, yet `publishRelease` appends them at publish and 0 of 24 rows carried any). The surface's order is now E3's: أسطر المنشور · النص · موجز التصميم · مرجع بصري · الهاشتاقات, in both the editable and the locked renders — the locked render is what the DESIGNER reads beside the slots. **New `RowWriter.tsx`** puts the row's three posts side by side on `row_detail`, with the reading order editable (↑/↓ → `row_order_save`, refused server-side once the designs are keyed to it), a four-line pre-send check («الثلاثة تحمل أسطرًا» · «تحمل نصًا» · «كل نص مؤكَّد» · «لا سطر أول متكرر»), ONE submit through `row_task_complete` that renders `MOS:REQUIREMENTS_MISSING` as a named list, and the first-read-publishes-last rule stated on screen. **New `MonthBriefPanel.tsx`** is the resolved brief: month → project column → cell, each line labelled by where it came from, empty levels hidden — and **per D7 it resolves down ONE LANE only**, so a paid creative never reads an organic project-column note and vice versa; only the month note (`lane IS NULL`) reaches both. The Saturday general row has no project column, so its chain is month → cell note → `mos_month_template.general_topic_bank`.)
 **Last updated:** 2026-09-15 (**The material rule: a release resolves its own files and caption at publish, and refuses to post anything the approval did not bind.** `publishRelease.ts` read `mos_publication_v`, whose caption is a bare `p.caption` with **no** `COALESCE` fallback and whose files are `asset_ids` — filled only by the Publish tab's file picker. It now runs `api/_lib/marketing/releaseMaterial.ts` first, and takes one of two paths chosen by the workflow version the content is PINNED to (`definition.metadata.material_rule = 'by_destination'`). **Managed:** the file is the design slot the DESTINATION names — `mos_publications.placement_variant` `feed` → `final_square`, `story` → `final_vertical`, read with `superseded_at IS NULL` — the caption is the approved writing (`mos_content.data.caption` + shared `hashtags`), and a **story carries no caption at all**. Nothing is picked by hand. Before a byte leaves, the resolved package is checked against what the final approval bound: `mos_content_design_hash` and `mos_caption_hash` are recomputed **by the database** (never re-implemented in JS — Postgres `btrim/1` strips spaces only where JS `.trim()` strips all whitespace, so a JS copy would refuse every caption ending in a newline) and compared to `mos_content_approvals.design_hash` / `.caption_hash`. An approval that **exists and no longer matches** refuses; an **absent** approval falls through and publishes, because `mos_content_approvals` has 0 rows live and "no approval → refuse" would have blocked 100% of publishing on day one. Every refusal opens ONE task through the existing `mos_release_open_task` (new reason codes `material_unresolved` and `approval_mismatch`; `preflight_blocked` reused) and returns 422 — never a silent skip, and never a second exception mechanism. **Legacy:** content pinned to a pre-cutover version keeps today's behaviour byte-for-byte — files off the row, caption off the row — which is where all 24 existing content records and all 10 draft publications land (verified live). This closes the manual-publish hole: `publishRelease` has two callers, the sweep and the endpoint a person presses, and only the sweep is protected by `mos_release_due`'s `due_at IS NOT NULL` filter. Also: `platformRules.ts` gained an opt-in `captionRequired` blocker — it previously checked caption LENGTH and Instagram hashtag COUNT only, so **a feed post with no caption published silently with no text**; the block keys on the approved writing being empty, is off by default, and a story passes. And after a successful post the publication row now records **what actually went out** — `asset_ids`, `asset_id`, `file_id` and the caption as sent, in the same UPDATE as the handoff so the compensating delete still covers it, and skipping the caption when the row is already `published` because `mos_tg_publication_caption_guard` forbids rewriting one. Key files: `api/_lib/marketing/releaseMaterial.ts` (new), `api/_lib/marketing/publishRelease.ts`, `src/lib/marketingOS/platformRules.ts`, `worker/src/runMetaAdJob.ts` (`resolveSlots` now filters `superseded_at IS NULL` — it was the only slot reader missing it, harmless while every link is at version 1 and silently wrong on the first re-upload).)
 **Last updated:** 2026-09-14 (**Making a creative and publishing it are TWO task types now.** The content task ends at the manager's final approval — the old `scheduling` and `publish_check` steps are gone from the path. Putting a creative out is a **publication task**: one finished creative, one destination, one date, on its own screen at `/m/releases/:releaseId`, so a creative cross-posted to three platforms has three of them instead of one shared step nobody could complete twice. The screen shows exactly three sections — the finished material (read-only), where it is going, and what that platform demands — and a release only becomes a TASK when a person is actually needed. See "The two task types" under Key behaviors.)
 **Last updated:** 2026-09-14 (**Campaign planning: nothing is created until a plan is approved.** Creating a campaign now runs a PREFLIGHT against the live workload instead of minting content rows on the spot. The wizard collects REQUIREMENTS (projects × posts/videos, platforms, date range, per-platform frequency; paid adds the weekly refresh policy), the engine distributes publishing first and schedules production BACKWARD from each publish date, and the preview shows the per-person per-day load, the conflicts and — when it does not fit — the earliest feasible range or the largest count that does. **The publishing half of that preview is ORGANIC ONLY**: organic adds the publishing batches and the Instagram grid, paid replaces them with the refresh forecast, because an ad has no feed and no posting day. Only «اعتماد الخطة» writes anything. See the Campaign planning behaviours below.)
@@ -205,6 +206,50 @@ This workspace answers the three questions the old process could not:
   copy remain as OVERRIDES seeded from the canonical text. The Meta worker skips
   its own AI-caption phase entirely when an approved writer caption exists,
   removing one manual approval per creative.
+
+- **A post is an ordered LIST OF LINES, and the caption is drafted before the
+  writer arrives (2026-09-15).** `headlines` was never a set of alternative
+  titles to pick from — it is the copy that lands ON the design, in order: a
+  hook line, three or four fact lines, then a call to action (3–6 lines,
+  average 4.9 across the 24 live items). The writing surface calls it «أسطر
+  المنشور» and carries the third verb it was missing: **reorder**, alongside add
+  and remove. Beneath it sits «النص», the canonical caption, which is now
+  **AI-prefilled when the task opens** rather than waiting for a button:
+  `content_caption_generate` with `prefill: true` writes the draft onto an
+  EMPTY `data.caption` (re-read plus an `updated_at` CAS, one retry, never over
+  text that already exists) and clears `caption_confirmed_text`/`_at` in the
+  same write, so the draft is visibly unconfirmed and the row cannot be sent
+  until the writer reads it. `caption_source` is read from the record, not from
+  component state, so «مسودة من الذكاء» survives a reload. A prefill that could
+  not be persisted says so (`persist_skipped`) rather than looking like one that
+  worked. The shared `hashtags` finally have an editor here — publish appends
+  them, and until now the only place to type them was the Placements tab.
+
+- **A row is written three-up and sent once (2026-09-15).** `RowWriter` opens
+  one `row_detail` and puts the row's three posts side by side, each on the same
+  writing surface. The writer fixes the reading order with ↑/↓ (saved through
+  `row_order_save`, which the server refuses once the designs are keyed to it,
+  so the final-approval pane's read-only order is enforced rather than drawn),
+  and sends ONCE: four checks first — all three carry lines, all three carry a
+  caption, every caption is writer-confirmed, and no two posts open with the
+  same first line — then `row_task_complete`. An empty third post blocks the
+  finished two, and the refusal names which post and what it lacks, on both
+  sides: the client check before the button, and the engine's own
+  `MOS:REQUIREMENTS_MISSING` rendered as a named list after it. The screen
+  states the reversal it would otherwise look like a bug: **the first-read post
+  publishes LAST**, because Instagram shows the newest first.
+
+- **A task's brief resolves live, down one lane only (2026-09-15).** Notes are
+  written on the month grid, never on the record — the records do not exist
+  until production starts — so `MonthBriefPanel` reads them at open and labels
+  each line by where it came from: «ملاحظة على الشهر» → «عمود المشروع — X» →
+  «ملاحظة الصف»/«ملاحظة الدفعة». Levels nobody wrote do not render. **Per D7 the
+  chain is lane-scoped**: an organic row reads the organic project column, a
+  paid creative reads the paid one, and neither ever sees the other's — only the
+  month note (`lane IS NULL`) reaches both. The Saturday general row has no
+  project at all, so its chain is month → its own cell note → the standing
+  `general_topic_bank`, which is the only thing standing between a blank
+  Saturday cell and a writer with no instruction.
 
 - **Approvals are binding, and edits after them need a revision (2026-09-14).**
   Every approval writes a `mos_content_approvals` row carrying the writing,
@@ -1006,6 +1051,130 @@ This workspace answers the three questions the old process could not:
   a user allowed to insert the ROW must be able to get a NUMBER without being
   granted write access to a shared counter table.
 
+### The row task — the designer's six slots and the ONE approval (2026-09-15)
+
+A **row** is three posts that move together: one task to work it, one task to
+approve it, three slots on ONE day. It is a real subject now
+(`mos_content_rows`), so a row has its own task, its own pinned workflow
+version, and its own place in «مهامي» — and its three posts never appear as
+three separate cards, because the row IS the task.
+
+**The queue card expands in place.** Clicking a card opens the work right there:
+the queue below moves down, nothing overlays, and collapsing returns you to the
+list. A ROW expands into `RowPane`; a POST expands into the same
+`ContentPreview` every other list opens, in its inline variant. There is no
+second, thinner approval anywhere — the inline approval that used to live on the
+task card was a degraded copy that silently dropped the revision targets when
+you rejected from it, and it is gone. `?row=<id>` (or `?task=<id>`) is the
+permalink: a notification lands in «مهامي» with that row already open, whether
+or not the row is in your own queue.
+
+**The designer's face** (`RowDesign`) is three pairs of slots — six files, one
+submit. Beside each pair sits what سارة is actually laying out: the ordered
+**lines** that land on the image and the one-sentence design brief, with the
+confirmed caption shown dimmed as context. Neither can be edited here; the
+caption comes from the writing task and the files from the two named slots, so
+nothing can drift between approval and publish. Every file is saved the moment
+it is uploaded — there is no draft to save.
+
+**Readiness is refused at the submit**, not at an approval gate and not at
+publish time. The engine already does it: `post_std` v8 declares
+`required_files: ['final_square','final_vertical']` and
+`workflow_advance_role_path` NAMES the offending member
+(`MOS:REQUIREMENTS_MISSING P-152 — final_vertical`). That token is not in
+`DB_MESSAGES`, so it used to reach the browser as «رفضت قاعدة البيانات هذا
+التغيير» — the one useful fact lost. `row_task_complete` now parses it back into
+structure and the pane lists post and slot by name. The pane ALSO predicts the
+same answer locally, read off the same pinned step's own `required_fields` /
+`required_files` — never a hardcoded list — so the button is honest before it is
+pressed. There is no partial send and no manual override: the row goes out whole
+or it waits.
+
+**The approval face** (`RowApproval`) is ONE component with two faces.
+*Writing review*: the three drafts side by side, each with its lines, its
+caption and whether the WRITER confirmed that exact text (`caption_source` shows
+which the AI drafted and the writer merely accepted); the reading order is
+editable here with ↑/↓. *Final approval*: the three squares and verticals
+together, last week's row of the same project dimmed above them (the only real
+question at that stage is whether the profile still reads as one account), the
+pre-publish check, and the order **read-only** — by then six designs are keyed
+to it. That is enforced, not just drawn: `row_order_save` refuses the write once
+the row is past the writing review.
+
+**Approval is per row; a send-back is per post.** The reviewer marks the posts
+that need changing and presses one button, which opens `RequestChangesModal` —
+the ONE rejection dialog — with those posts already selected. It gained a member
+dimension: targets are written as `post:<id>` and `post:<id>:<field>`, so the
+revision task says which post and which field. The posts that were not marked
+are not touched: their `mos_content_approvals` rows stand, nothing new is
+stored, and there is no partial-approval state to invent. The row returns once,
+carrying the list.
+
+**One row read, and a scoped one.** `row_detail` returns the row's facts, its
+members with their writing, the pinned steps, the material **scoped to those
+members**, the approvals, the publications behind the preflight and last week's
+row — in one trip. `asset_list` gained a `content_ids` filter for the same
+reason: `ContentPreview` used to call it with no filter and keep the handful of
+links that matched, which is the whole asset library on every open — three of
+those inside one expanded row.
+
+- **«الشهر» — one page in two tenses (2026-09-15).** `/m/month` is the planning
+  screen the rail now leads with, and it is the same page before and after the
+  month starts. **Before:** three project slots with a computed suggestion, a
+  volume summary, the computed dates, whether the team fits, the weeks grid you
+  write your notes on, and one button — «اعتماد الشهر». **After:** the same three
+  cards and the same grid with live numbers. `?view=plan|report&month=YYYY-MM`,
+  so a notification can deep-link either tense of any month.
+
+  - **The suggestion is three numbers, and one of them is labelled a stand-in.**
+    A project is ranked on available units, days since it was last featured, and
+    its cost per qualified lead the last month it ran. There is no publish
+    history yet — nothing has ever published — so "last featured" is
+    `greatest(last day with spend in mos_ad_metrics_daily, last mos_content.created_at)`
+    and the card says exactly that under the date. Sold-out projects are out of
+    the ranking; everything else is one click away in the picker, which shows the
+    same three numbers for all 91 candidates.
+  - **The weeks grid carries the writer's instructions, in two lanes.** A
+    «العضوي»/«المدفوع» switch flips the grid between the four posting days a week
+    (three posts each) and the four batch cells a week (one per project, five
+    creatives each). **Each lane carries its own cell notes AND its own
+    project-column notes**: a note on أكنان's organic column reaches its rows and
+    NOT its twenty ads. The month note sits above the switch and is the only one
+    that reaches both. The Saturday «عام» column has no column pencil on purpose
+    — a general row belongs to no project, so its cell note is the day's topic.
+    Notes live on the plan (`mos_month_notes`), not on records that do not exist
+    yet, and clearing the box deletes the note.
+  - **Confirming is gated on data, not on code.** `month_confirm` refuses while
+    `mos_month_template.enabled = false` — the template ships disabled, so the
+    page is a full read-only preview until an operator turns the model on. It
+    also refuses a month that does not schedule in full, and re-plans each of the
+    four plans against the live ledger before committing it, refusing with
+    `plan_changed` / `capacity_conflict` if anything the operator saw has moved.
+    October compiles to **16 rows · 48 posts · 96 organic releases (48 feed + 48
+    story) · 60 paid creatives · 108 items**, verified against the live workload.
+  - **The report's numbers, and whose they are.** Spend, impressions and clicks
+    are Meta's daily table as it stands (`mos_ad_metrics_daily` — read by no
+    `api/` action before this). A LEAD is **our** number: a WhatsApp conversation
+    whose opening message carried the ad, from `ourLeads.ts`, and cost per lead
+    divides by that, never by Meta's counter (both are shown, so a disagreement
+    is visible). **Cost per qualified lead is rendered as a COUNT** — «٤٨ مؤهل من
+    ٥١» beside cost per lead, never a second riyal figure: an ad lead onboards at
+    «جديد», which is qualified, so before anyone triages the two prices are the
+    same price under two labels. The qualified set is DERIVED from
+    `src/lib/salesProcess/` ("terminal, and not «مغلق ناجح»" → «غير مؤهل»,
+    «خاسر», «يريد إيجار») and passed to the RPC, which RAISES on an empty list
+    rather than counting everyone qualified.
+  - **Two fail-loud guards on the report.** Spend whose campaign names no project
+    gets its own red row (measured live: 1,411 SAR on the `meta-sync` ad) — after
+    the legacy pause no NEW spend can land there, so a row means something is
+    unlinked, not that a bucket exists. Pre-window unattributed spend is reported
+    separately as the pre-cutover record rather than quietly dropped.
+  - **«يحتاج قرارك» is `mos_month_exceptions`, unedited.** Nine kinds, blockers
+    first, one line each with the smallest decision that resolves it. Where a
+    destination exists today the line links to it; where it does not, the decision
+    is stated in words — a button that cannot act is worse than a sentence.
+
+
 ## User flows
 
 1. **Main happy path — an idea becomes a published post.**
@@ -1099,6 +1268,17 @@ This workspace answers the three questions the old process could not:
   `mos_ad_sets`, `mos_campaign_executions`, `mos_campaigns`, `mos_content`) and
   `unified_records` (project name) to resolve each touch live. No marketing data is
   stored on the client.
+- **The month (2026-09-15):** `mos_month_template` (the standing month as ONE
+  row, incl. `enabled` — the kill switch the confirm is gated on), `mos_month_notes`
+  (the writer's instructions, keyed on the template coordinate and **lane-aware**:
+  `lane IS NULL` is the month note, which reaches both), `mos_content_rows` (the
+  row as a work subject) — **all three are RLS-enabled with ZERO policies, so
+  they are service-client reads only; a browser read returns empty, not an
+  error**. Plus `mos_campaigns.ref` (`YYYY-MM:organic` / `YYYY-MM:paid:<project>`,
+  UNIQUE — how a month knows it is confirmed and in which slot order),
+  `mos_campaign_plans` (the four plans), and read-only: `mos_ad_metrics_daily`
+  (Meta's per-day spend), `client_attributions` + `records` (qualified clients),
+  `chat_messages.meta.ad.resolved` (our leads, via `ourLeads.ts`).
 - Shares NOTHING with the `mkt_*` tables — those belong to Marketing
   Intelligence, which watches competitors.
 
@@ -1106,12 +1286,18 @@ This workspace answers the three questions the old process could not:
 
 | File | What it does |
 |---|---|
+| `src/pages/Marketing/components/RowPane.tsx` | One row, loaded once (`row_detail`), shown as whichever face its open task is at. The door BOTH the expanded queue card and the permalink come through, so the approval component is never re-implemented for one of them |
+| `src/pages/Marketing/components/RowApproval.tsx` | **THE approval component for a row** — writing review (three drafts, order editable, per-post marking) and final approval (six files, last week's row dimmed above, preflight, order read-only). Rejection opens `RequestChangesModal`; it re-implements none of it |
+| `src/pages/Marketing/components/RowDesign.tsx` | The designer's face: three pairs of named slots, six files, one submit, readiness refused at the submit and named by post + slot. The lines and the brief are read-only beside each pair; the caption is context, not the design |
+| `src/pages/Marketing/components/RowParts.tsx` | The pieces both faces are drawn from — the slot frames, the lines list, the caption block with its confirmation state, the post shell that states the publish position, the refusal card and the readiness meter |
+| `src/lib/marketingOS/rowClient.ts` | The row's client: `row_detail` / `row_order_save` / `row_task_complete` / the row-aware `work_list`, plus `missingForStep` (the local twin of the engine's requirement check), `rowFaceOf` and `publishPosition` |
+| `api/_lib/marketing/rowTasks.ts` | The shaping half of the row endpoints — and `parseRequirementsMissing`, which recovers the engine's named refusal from a Postgres error so the designer is told which post and which slot |
 | `src/lib/marketingOS/scheduling/` | **The campaign scheduling engine** — pure, deterministic, shared by the SPA and `api/**`. `calendar.ts` (working days, Riyadh civil dates, holidays), `types.ts`, `defaults.ts` (workflow shapes + effort seeds), `platforms.ts` (per-platform DISTRIBUTION rules), `distribute.ts` (publishing slots + the grid), `refresh.ts` (paid cycle forecasting), `ledger.ts` (the capacity book), `schedule.ts` (backward placement + the two infeasibility proofs), `plan.ts` (`planCampaign`) |
 | `api/_lib/marketing/planning/snapshot.ts` | Turns SQL rows into the engine's `WorkloadSnapshot` + `RuleSet` — the ONLY translation point |
 | `api/_lib/marketing/planning/actions.ts` | `campaign_plan_preview` / `_revise` / `_commit` / `_get`, `campaign_rollup`, `workload_calendar`, `content_ad_readiness`, `capacity_config` (+ save) — including the re-plan-and-diff commit protocol |
-| `api/_lib/marketing/planning/content.ts` | `content_caption_generate` (fact-gated AI caption), `content_revise`, `refresh_cycle_list` / `_decide` |
+| `api/_lib/marketing/planning/content.ts` | `content_caption_generate` — the fact-gated AI caption, and its **prefill** mode: `prefill: true` writes the draft onto an EMPTY `data.caption` (re-read + `updated_at` CAS, one retry) with `caption_source` and the confirmation keys cleared, so the writing task opens with a caption that is visibly unconfirmed; plus `content_revise`, `refresh_cycle_list` / `_decide` |
 | `api/_lib/marketing/routes.ts` | The SERVER twin of the content route resolver — every notification builds its URL here, so a dead `?tab=` cannot recur |
-| `api/cron/planning-sweep.ts` | Every 10 min: opens the first task when `production_start` arrives, creates paid cycle shells, repairs stale reservations, flags batches at risk |
+| `api/cron/planning-sweep.ts` | Every 10 min: opens the first task when `production_start` arrives, creates paid cycle shells, repairs stale reservations, re-rates publishing batches — and raises **the next-month reminder** (one notification to the manager + CEO per day, from `safety_margin_days` before production starts until the month is compiled; silent while `mos_month_template.enabled = false`). It rides this cron because `vercel.json` already declares ten, which is the plan limit. `mos_plan_repair()` raises NO task — the only writer of `plan_conflict` is `worker/src/runRefreshCycleJob.ts` |
 | `src/pages/Marketing/components/PlanPreview.tsx` | The preview: verdict + alternatives, totals, production window, batches, grid, per-stage assignments, load table, refresh forecast |
 | `src/pages/Marketing/components/PlanGrid.tsx` | The 3-column Instagram grid preview; drag to reorder pins both sides and re-plans |
 | `src/pages/Marketing/components/PlanLoadTable.tsx` | Per person × bucket × day: existing + proposed / capacity, red when over |
@@ -1136,7 +1322,9 @@ This workspace answers the three questions the old process could not:
 | `scripts/e2e-concurrent-commit.ts` | Two approvals against one shared snapshot: exactly one may book the capacity |
 | `scripts/e2e-content-workflow.ts` | Requirement enforcement, ledger swap, approval locks, revision scope, overdue effort |
 | `scripts/gen-scheduling-examples.mjs` | Regenerates the plan document's worked examples FROM the engine |
-| `src/pages/Marketing/MarketingWorkspace.tsx` | The shell: rail, workspace switcher, workspace-wide context (role, content types, project names), access gate |
+| `src/pages/Marketing/MarketingWorkspace.tsx` | The shell: **the six-item rail** (الشهر · مهامي · المحتوى · النشر · المكتبة · الإعدادات) plus the collapsed «متقدّم» group holding the other fourteen, the workspace switcher, the workspace-wide context (role, content types, project names), and the access gate. A nav item’s `surface` is its `surface_access` row; `'always'` means "not a matrix surface — show whenever anything is visible" (الشهر and البحث) |
+| `src/pages/Marketing/components/MobileTabBar.tsx` | The phone bar and its «المزيد» sheet, cut to mirror the rail: الشهر · مهامي · المحتوى · المزيد, with النشر / المكتبة / الإعدادات at the top of the sheet and «متقدّم» beneath |
+| `src/pages/Marketing/components/TaskCard.tsx` | The current-task card and the «المهام والاعتمادات» tab. The checklist derives from the step’s own `required_fields` **and** `required_files`; an approval with a gap open says the database refuses it (`MOS:REQUIREMENTS_MISSING`) instead of promising to record it. Files are named, not ticked — the links are not in `content_detail`. The card carries no approve button and no rejection dialog — the page’s action bar and `RequestChangesModal` are the one of each |
 | `src/pages/Marketing/mos.css` | The design system, scoped under `.mos-root` so the Sales theme is untouched |
 | `src/pages/Marketing/OverviewPage.tsx` | Overview — manager state (s01: counters, stalled, week, paid ads) and CEO state (s34: funnel, returns, production, signature) branched on the active role. Both carry the shared `DateControl` (period + prev/next); the paid card reads the period-scoped `paid` object |
 | `src/pages/Marketing/AnalyticsPage.tsx` | التحليلات — paid-media deep-dive: volume tiles, CPM/CPC/CTR/CPL cards + funnel, daily trend charts, per-platform/-campaign breakdowns; driven by `DateControl` |
@@ -1150,6 +1338,9 @@ This workspace answers the three questions the old process could not:
 | `supabase/migrations/2026-08-10_01_mos_manual_tasks.sql` | `mos_manual_tasks` + `mos_task_series`, the `assign_task` capability seed (MM / CEO / ops), RLS (self-assign always allowed, others need the capability), the `mos_tg_manual_task_guard` column guard, and the idempotent `mos_task_series_materialize()` occurrence generator |
 | `supabase/migrations/2026-08-11_01_manual_task_assigned_notifications.sql` | The `manual_task_assigned` role × channel seed (in-app everywhere, WhatsApp for writer + editor, push off), with an in-migration assertion that the whole 5 × 3 grid landed so the settings matrix never renders a cell with no row behind it |
 | `src/pages/Marketing/ContentListPage.tsx` | The content library — table and board. The table carries the «الخطوة الحالية» deep-link button and the «معاينة» popup trigger (2026-09-08) |
+| `src/pages/Marketing/components/WritingFields.tsx` | The writing surface for ONE item, in E3's order: **أسطر المنشور** (the ordered lines that land on the design — add / remove / **reorder**) · **النص** (AI-prefilled on task open, marked a draft until confirmed, `caption_source` read from data) · **موجز التصميم** · **مرجع بصري** · **الهاشتاقات**. Video keeps الفكرة + التعليق الصوتي above them. Two renders: inputs when the stage is mine, the same cards as locked TEXT otherwise (what the designer reads). `embedded` drops its own save bar and reports drafts up, which is what the row writer mounts three of. Exports `postWritingState()` — the one definition of "has lines / has a caption / the writer confirmed THAT EXACT text" (compared RAW, matching `mos_caption_hash` and the Meta worker) |
+| `src/pages/Marketing/components/RowWriter.tsx` | The row's writing task: three posts side by side on `row_detail`, reading order editable (↑/↓ → `row_order_save`), the four-line pre-send check, ONE submit via `row_task_complete` with `MOS:REQUIREMENTS_MISSING` rendered as a named list, the first-read-publishes-last rule, and last week's row of the same project for reference |
+| `src/pages/Marketing/components/MonthBriefPanel.tsx` | The resolved brief (F2b) + `resolveMonthBrief()`, the pure rule behind it: month → project column → cell, labelled by source, empty levels hidden, **one lane only per D7** (a paid task never reads an organic column note); the Saturday general row falls back to `general_topic_bank` |
 | `src/pages/Marketing/components/ContentPreviewModal.tsx` | The in-place stage preview popup: writing fields / approval material / publishing plan by phase, with the current role's approve / request-changes / submit actions (2026-09-08) |
 | `src/pages/Marketing/lib/stagePhase.ts` | `phaseOfStep` (writing / design / publish from the workflow's step order), `tabForPhase`, `stageIsMine` (held-roles ownership rule) |
 | `src/pages/Marketing/ContentDetailPage.tsx` | The content workspace — six tabs as local state, stage rail, thread. Also hosts the «اكتب بوست» button + Creative tab for post/carousel (2026-09-02) |
@@ -1197,6 +1388,15 @@ This workspace answers the three questions the old process could not:
 | `src/components/Layout/Header.tsx` | The Sales-side half of the workspace switcher |
 | `supabase/migrations/2026-08-23_01_client_marketing_acquisition.sql` | Turns the dormant `client_attributions` ledger live: the `channel` column + channel-aware spend CHECK, `mos_capture_ad_acquisition` (webhook find-or-create + «ترويج» tag + ledger append) and `mos_client_acquisition` (live-resolved Sales read surface, gated on record-view not marketing role), the re-expanded `client_attributions_effective` view, and the 42-row first-touch backfill. Applied live |
 | `src/lib/acquisition/client.ts` + `src/pages/Records/components/ClientAcquisitionPanel.tsx` | The Sales-side «كيف وصلنا هذا العميل» panel on the client record form (calls `mos_client_acquisition`) — see [clients.md](clients.md) |
+| `src/pages/Marketing/MonthPage.tsx` | **«الشهر»** — `/m/month`, the one page in two tenses. Plan: slots + volume + dates + capacity + the weeks grid + «اعتماد الشهر». Report: the same cards with live numbers, built from the month's own publications rather than a second compile |
+| `src/pages/Marketing/components/MonthProjectSlots.tsx` | The three slot cards in both tenses (`MonthProjectSlots` / `MonthProjectResults`) and the ranking picker — D6's three numbers per candidate, with "last featured" labelled as the stand-in it is |
+| `src/pages/Marketing/components/MonthWeeksGrid.tsx` | The weeks card with the **organic/paid switch** (edit E1): day cells of three pips, paid cells of five creatives, a pencil on every cell AND on every project column **per lane** (D7), the month note above both, and the notes listed underneath by origin |
+| `src/pages/Marketing/components/MonthNumbers.tsx` | The report's numbers: four headline stats, the per-project table with the qualified COUNT beside cost per lead, the unattributed guard row, and the footer that says where each column came from |
+| `src/pages/Marketing/components/MonthExceptions.tsx` | «يحتاج قرارك» as its own component — one line per `mos_month_exceptions` row with the smallest decision that closes it, linking only where a destination exists today |
+| `src/pages/Marketing/components/MonthNoteModal.tsx` / `MonthDates.ts` | The note editor for one grid coordinate (empty body = delete), and the month screens' two formatting fixes: a year without a thousands separator, and per-lead riyals with their decimal |
+| `api/_lib/marketing/planning/monthActions.ts` | `month_get` / `month_compile` / `month_confirm` / `month_report` / `month_note_set`. Reads `mos_month_template`, `mos_month_notes` and `mos_content_rows` through the SERVICE client — all three are RLS-enabled with **zero policies**, so a browser read is silently EMPTY. Confirm is gated on `template.enabled`, creates the month's campaigns by `ref` (`YYYY-MM:organic` / `YYYY-MM:paid:<project>`, UNIQUE — the month's anchor and the record of slot ORDER), stores the four plans and commits them |
+| `supabase/migrations/2026-09-15_21_month_metrics.sql` | `mos_month_metrics(from, to, excluded_stages, month, project_ids, include_ranking)` — per-project spend/impressions/clicks from `mos_ad_metrics_daily`, attributed + qualified CLIENTS from `client_attributions`, published posts and releases, the unattributed guard (in-window + pre-cutover history) and the project ranking. **Not `mos_paid_analytics`**, which returns LIFETIME totals (`mos_execution_daily` has 0 rows) and compares a number with itself (every `starts_on` is NULL) |
+| `src/lib/salesProcess/qualifiedStages.ts` | The qualified-lead set, DERIVED from the sales-process config: "a stage no follow-up can be scheduled on, and not «مغلق ناجح»". Never an ordinal range (`stageOrderOf(c) >= 7` reads all three terminal-lost stages as complete funnels) and never a literal, so a fourth terminal stage changes this set by itself |
 
 ## Open questions / known limitations
 

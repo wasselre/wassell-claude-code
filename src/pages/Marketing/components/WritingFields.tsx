@@ -1,46 +1,48 @@
 /**
- * The writing surface — design screens 07 (video) and 08 (post), composed.
+ * The writing surface — one ITEM's copy, the object of the writing task.
  *
- * Not a flat list of textareas: the schema keys are grouped into the design's
- * instruments —
- *   idea + hook (+ core_message)        → the Idea card, hook and message side by side
- *   voiceover                           → the voice-over card with a read-speed chip,
- *                                         because a 38-second script must not become
- *                                         70 seconds silently
- *   headlines                           → the headlines that MAKE the post: the copy
- *                                         that lands on the design. Write as many as
- *                                         the piece needs; none is "approved" and none
- *                                         is discarded — every headline is part of the
- *                                         post, so there is no picker and no forced count.
- *   caption                             → HERE, beneath the writing (2026-09-14).
- *                                         The caption is part of the writing stage and
- *                                         is approved with it: the writing task cannot
- *                                         close without a caption the writer has
- *                                         explicitly confirmed. AI may draft it; a
- *                                         fresh draft is never pre-confirmed.
- *                                         This reverses the 2026-08-26 split, which
- *                                         left the manager approving writing with no
- *                                         caption in front of them (0 of 24 live rows
- *                                         carried one). Per-PLATFORM overrides and paid
- *                                         ad copy still live in PlacementCaptions and
- *                                         are seeded from the canonical caption here.
- *   design_brief (+ references)         → the structured design brief, so "what do I
- *                                         design" never drowns in a notes box. The
- *                                         references are PICKS from the Files library
- *                                         (one or many), each shown as a thumbnail
- *                                         card and previewable in place.
- * Anything else in the schema renders as a plain field. Unknown keys degrade
- * quietly rather than crashing the tab.
+ * E3 (2026-09-15) settled the order and the vocabulary. A post is not a
+ * headline plus a caption; it is a LIST OF LINES that land on the design, plus
+ * the caption that goes under it. Per item, in order:
+ *
+ *   1. أسطر المنشور   — `headlines`: the ordered 3–6 lines that land on the
+ *                        design. A hook line, then the fact lines, then the
+ *                        call to action. None is "approved" and none is
+ *                        discarded — there is no picker and no forced count.
+ *                        Add / remove / REORDER: order is the copy's shape, so
+ *                        moving a line is a first-class verb, not a delete and
+ *                        a retype.
+ *   2. النص           — `caption`: AI-PREFILLED on task open and visibly a
+ *                        draft until the writer confirms it. `caption_source`
+ *                        renders from DATA (it used to render from transient
+ *                        component state, which is null on every page load, so
+ *                        «مسودة من الذكاء» vanished the moment you reloaded).
+ *                        The writing cannot be sent while it is unconfirmed —
+ *                        `caption_confirmed_text` holds WHAT was confirmed, so
+ *                        a later edit invalidates it by itself.
+ *   3. موجز التصميم    — one sentence to the designer.
+ *   4. مرجع بصري      — picks from the Files library, as thumbnails.
+ *   5. الهاشتاقات     — shared, appended to every platform at publish. It had
+ *                        NO editor in the writing task (only PlacementsTab),
+ *                        yet publish appends it; this is its home.
+ *
+ * Video keeps its own two instruments above the five — الفكرة (idea + hook +
+ * core message) and نص التعليق الصوتي with its read-speed chip, because a
+ * 38-second script must not silently become 70. Anything else in the schema
+ * renders as a plain field; unknown keys degrade quietly rather than crashing.
  *
  * Two render modes (screen 36's rule): when the open stage sits with MY role
  * the cards are inputs; when it doesn't, the SAME cards render as locked TEXT —
  * the mockups' filled states — with the comment composer as the only live
  * surface on the page.
  *
+ * Embedded mode (`embedded`) is what the ROW writer mounts three of: no save
+ * bar of its own, every draft change reported upward, one submit for the row.
+ *
  * Values live in `mos_content.data` — free-form JSONB, so companion keys like
  * core_message need no migration.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { updateContent, generateContentCaption } from '@/lib/marketingOS/client';
 import FilePickerModal from '@/pages/Files/library/FilePickerModal';
@@ -85,7 +87,46 @@ const asString = (v: unknown): string => (typeof v === 'string' ? v : '');
 const asList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
-/** The muted order index that replaces the old approval radio on each headline row. */
+/* ════════════════════════════════════════════════════════════════════
+   The writing state of ONE item, read straight from `data`.
+
+   Exported because the ROW is what gets sent, not the post: the row writer's
+   pre-send check has to ask the same three questions of all three members, and
+   asking them twice in two places is how the two answers drift apart.
+   ════════════════════════════════════════════════════════════════════ */
+
+export interface PostWritingState {
+  /** At least one line that lands on the design. */
+  hasLines: boolean;
+  /** The lines themselves, trimmed of blanks — the first one is the hook. */
+  lines: string[];
+  /** The caption has text. */
+  hasCaption: boolean;
+  /**
+   * The writer confirmed THIS EXACT caption. Compared raw and untrimmed, the
+   * same way `mos_caption_hash` and the Meta worker compare it — a trim-parity
+   * mismatch between JS and SQL is exactly how the 2026-08-05 twin-fill bug
+   * shipped, and how the caption gate would silently pass the wrong text.
+   */
+  captionConfirmed: boolean;
+  /** Who drafted the caption, from DATA — survives a reload. */
+  captionSource: 'ai' | 'fallback' | null;
+}
+
+export function postWritingState(data: Record<string, unknown>): PostWritingState {
+  const lines = asList(data.headlines).map((l) => l.trim()).filter((l) => l !== '');
+  const caption = asString(data.caption);
+  const src = asString(data.caption_source);
+  return {
+    hasLines: lines.length > 0,
+    lines,
+    hasCaption: caption.length > 0,
+    captionConfirmed: caption.length > 0 && asString(data.caption_confirmed_text) === caption,
+    captionSource: src === 'ai' ? 'ai' : src === 'fallback' ? 'fallback' : null,
+  };
+}
+
+/** The muted order index that replaces the old approval radio on each line row. */
 const idxBadge = {
   flex: '0 0 auto', minWidth: 16, textAlign: 'center' as const,
   fontSize: 12, fontWeight: 700, color: 'var(--mute)',
@@ -94,16 +135,21 @@ const delBtn = {
   flex: '0 0 auto', border: 0, background: 'transparent', color: 'var(--mute)',
   cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 4px',
 };
+const moveBtn = {
+  flex: '0 0 auto', width: 20, height: 20, padding: 0, lineHeight: 1, fontSize: 11,
+  borderRadius: 5, border: '1px solid var(--line)', background: 'var(--paper)',
+  color: 'var(--mute)', cursor: 'pointer',
+};
 const rowCentered = { alignItems: 'center' as const };
 const bareInput = {
   border: '1px solid transparent', background: 'transparent', padding: '2px 4px', fontSize: 14,
 };
 
 /**
- * The dashed "add a headline" row. Local state, committed on blur/Enter —
- * appending on every keystroke would fragment typing into one-char headlines.
+ * The dashed "add a line" row. Local state, committed on blur/Enter —
+ * appending on every keystroke would fragment typing into one-char lines.
  */
-function NewHeadlineRow({
+function NewLineRow({
   index, isAr, onCommit,
 }: {
   index: number;
@@ -123,7 +169,7 @@ function NewHeadlineRow({
       <input
         className="inp"
         style={{ ...bareInput, flex: 1 }}
-        placeholder={isAr ? 'أضف عنوانًا…' : 'Add a headline…'}
+        placeholder={isAr ? 'أضف سطرًا…' : 'Add a line…'}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onBlur={commit}
@@ -297,8 +343,22 @@ function ReferenceFilesStrip({
     </>
   );
 }
+
+/** The one place that says «مسودة من الذكاء» / «مسودة تلقائية» — from DATA. */
+function CaptionSourceNote({ source, isAr }: { source: 'ai' | 'fallback' | null; isAr: boolean }) {
+  if (!source) return null;
+  return (
+    <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 4 }}>
+      {source === 'fallback'
+        ? (isAr ? 'مسودة تلقائية من أسطر المنشور — راجعها.' : 'Deterministic draft from the post lines — review it.')
+        : (isAr ? 'مسودة من الذكاء الاصطناعي — راجعها.' : 'AI draft — review it.')}
+    </div>
+  );
+}
+
 export default function WritingFields({
   contentId, schema, data, canEdit, isAr, onSaved,
+  embedded = false, onDraftChange, prefillCaption,
 }: {
   contentId: string;
   schema: string[];
@@ -306,6 +366,20 @@ export default function WritingFields({
   canEdit: boolean;
   isAr: boolean;
   onSaved: (data: Record<string, unknown>) => void;
+  /**
+   * Mounted inside the ROW writer: no save bar of its own, no «للقراءة فقط»
+   * note, and every draft change reported up so the row can save all three
+   * members under one submit.
+   */
+  embedded?: boolean;
+  onDraftChange?: (contentId: string, data: Record<string, unknown>, dirty: boolean) => void;
+  /**
+   * AI-prefill the caption when the box is empty and this stage is mine.
+   * Defaults to `canEdit` — opening the writing task IS the prefill moment.
+   * Pass `false` on surfaces that merely preview the writing (a popup over a
+   * list), so browsing never spends a model call.
+   */
+  prefillCaption?: boolean;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
@@ -331,6 +405,18 @@ export default function WritingFields({
     () => JSON.stringify(draft) !== JSON.stringify(data),
     [draft, data],
   );
+
+  /* The row writer holds the drafts; report every change up so ONE submit can
+     save all three members. Guarded on the serialized draft so an unchanged
+     render does not re-notify the parent into a loop. */
+  const lastEmitted = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onDraftChange) return;
+    const key = JSON.stringify(draft);
+    if (lastEmitted.current === key) return;
+    lastEmitted.current = key;
+    onDraftChange(contentId, draft, dirty);
+  }, [draft, dirty, contentId, onDraftChange]);
 
   /* ── design-brief reference files ──────────────────────────────────
      The array key `design_reference_file_ids`, falling back to the legacy
@@ -392,7 +478,7 @@ export default function WritingFields({
     }
   };
 
-  /* ── caption: written HERE, with the content, and approved with it ──
+  /* ── النص — the caption, written HERE and approved with the writing ──
      Reversal of the 2026-08-26 split, deliberately. The canonical caption is
      `data.caption`; `mos_publications.caption` and the ad rows' primary text
      become per-platform OVERRIDES seeded from it. The writer must confirm the
@@ -400,25 +486,27 @@ export default function WritingFields({
      later edit silently invalidates the confirmation (exact comparison, no
      trimming: a trim-parity mismatch between JS and SQL is exactly how the
      2026-08-05 twin-fill bug shipped). */
+  const state = useMemo(() => postWritingState(draft), [draft]);
   const captionText = str('caption');
-  const captionConfirmed = captionText.length > 0
-    && asString(draft.caption_confirmed_text) === captionText;
+  const captionConfirmed = state.captionConfirmed;
   const [captionBusy, setCaptionBusy] = useState(false);
-  const [captionSource, setCaptionSource] = useState<'ai' | 'fallback' | null>(null);
+
+  const applyCaption = (caption: string, source: 'ai' | 'fallback' | null): void => {
+    setDraft((d) => ({
+      ...d,
+      caption,
+      caption_source: source ?? '',
+      // A fresh draft is NOT confirmed — the writer still has to read it.
+      caption_confirmed_text: '',
+      caption_confirmed_at: '',
+    }));
+  };
 
   const generateCaption = async (): Promise<void> => {
     setCaptionBusy(true);
     try {
       const res = await generateContentCaption(contentId);
-      setCaptionSource(res.source);
-      setDraft((d) => ({
-        ...d,
-        caption: res.caption,
-        caption_source: res.source === 'fallback' ? 'fallback' : 'ai',
-        // A fresh draft is NOT confirmed — the writer still has to read it.
-        caption_confirmed_text: '',
-        caption_confirmed_at: '',
-      }));
+      applyCaption(res.caption, res.source);
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
@@ -426,26 +514,84 @@ export default function WritingFields({
     }
   };
 
-  /* ── headlines: the copy that makes the post. Unlimited, none "approved". ── */
-  const headlines = asList(draft.headlines ?? data.headlines);
-  const written = headlines.filter((h) => h.trim() !== '').length;
+  /* ── the prefill, on opening the task ──────────────────────────────
+     Once per item, and only over an EMPTY caption: the server refuses to
+     overwrite text and returns `skipped: 'already_written'`. A failure to
+     persist is surfaced (toast + console) rather than swallowed — a prefill
+     that silently did nothing is the exact shape of the bugs this repo keeps
+     paying for — but the draft still lands in the box either way. */
+  const wantPrefill = (prefillCaption ?? canEdit) && canEdit;
+  const prefillTried = useRef<string | null>(null);
+  useEffect(() => {
+    if (!wantPrefill) return;
+    if (prefillTried.current === contentId) return;
+    if (asString(data.caption).length > 0) return;
+    prefillTried.current = contentId;
+    let alive = true;
+    setCaptionBusy(true);
+    generateContentCaption(contentId, { prefill: true })
+      .then((res) => {
+        if (!alive) return;
+        applyCaption(res.caption, res.source);
+        if (res.persisted === false && res.persist_skipped && res.persist_skipped !== 'already_written') {
+          console.error('[marketing] caption prefill not persisted', res.persist_skipped, res.persist_detail);
+          addToast(
+            isAr
+              ? 'كُتبت مسودة النص لكنها لم تُحفظ — احفظ الكتابة لتثبيتها.'
+              : 'The caption draft was written but not saved — save the writing to keep it.',
+            'error',
+          );
+        }
+      })
+      .catch((e: unknown) => {
+        if (!alive) return;
+        console.error('[marketing] caption prefill failed', e);
+        addToast(
+          isAr
+            ? 'تعذّر توليد مسودة النص — اكتبه أو أعد المحاولة بزر التوليد.'
+            : 'Could not draft the caption — write it, or retry with the generate button.',
+          'error',
+        );
+      })
+      .finally(() => { if (alive) setCaptionBusy(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentId, wantPrefill]);
 
-  const setHeadline = (i: number, v: string): void => {
-    const next = [...headlines];
+  /* ── أسطر المنشور — the copy that lands on the design ───────────────
+     An ORDERED list: a hook line, the fact lines, the call to action. Add,
+     remove and MOVE — order is the copy's shape, so the third verb is not a
+     convenience. Unlimited, none "approved". */
+  const lines = asList(draft.headlines ?? data.headlines);
+  const written = lines.filter((h) => h.trim() !== '').length;
+
+  const setLine = (i: number, v: string): void => {
+    const next = [...lines];
     next[i] = v;
     set('headlines', next);
   };
-  const removeHeadline = (i: number): void => {
-    set('headlines', headlines.filter((_, idx) => idx !== i));
+  const removeLine = (i: number): void => {
+    set('headlines', lines.filter((_, idx) => idx !== i));
+  };
+  /** Move one line by `delta` places. A no-op at the ends, never a wrap. */
+  const moveLine = (i: number, delta: number): void => {
+    const to = i + delta;
+    if (to < 0 || to >= lines.length) return;
+    const next = [...lines];
+    const [moved] = next.splice(i, 1);
+    next.splice(to, 0, moved ?? '');
+    set('headlines', next);
   };
 
-  const headlineCountTag = (): string => {
-    if (written === 0) return isAr ? 'لا عناوين بعد' : 'none yet';
-    return isAr ? `${num(written, true)} عنوان` : `${written} headline${written === 1 ? '' : 's'}`;
+  const lineCountTag = (): string => {
+    if (written === 0) return isAr ? 'لا أسطر بعد' : 'none yet';
+    return isAr ? `${num(written, true)} سطر` : `${written} line${written === 1 ? '' : 's'}`;
   };
+
+  const hashtagList = str('hashtags').split(/\s+/).filter(Boolean);
 
   const nothingComposed = !has('idea') && !has('voiceover') && !has('headlines')
-    && !has('design_brief') && leftovers.length === 0;
+    && !has('design_brief') && !has('hashtags') && leftovers.length === 0;
 
   if (nothingComposed) {
     return (
@@ -455,7 +601,7 @@ export default function WritingFields({
     );
   }
 
-  const saveBar = canEdit ? (
+  const saveBar = embedded ? null : canEdit ? (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       {dirty && (
         <>
@@ -477,8 +623,11 @@ export default function WritingFields({
   );
 
   /* ════════════════════════════════════════════════════════════════════
-     LOCKED — screen 36's «الحقول مقفلة أثناء المراجعة». The same cards,
-     rendered as the mockups' filled states: text, not disabled inputs.
+     LOCKED — screen 36's «الحقول مقفلة أثناء المراجعة». The same cards, in
+     the same E3 order, rendered as the mockups' filled states: text, not
+     disabled inputs. This is also what the DESIGNER reads beside the slots —
+     the lines and the brief are what gets laid out; the confirmed caption is
+     context, not the thing being designed.
      ════════════════════════════════════════════════════════════════════ */
   if (!canEdit) {
     return (
@@ -532,24 +681,27 @@ export default function WritingFields({
           </div>
         )}
 
+        {/* 1 — أسطر المنشور */}
         {has('headlines') && (
           <div className="write">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
               <div className="doc-lbl" style={{ margin: 0 }}>
-                {isAr ? 'العناوين' : 'Headlines'}
+                {isAr ? 'أسطر المنشور' : 'Post lines'}
               </div>
               <span className="tag tag-t" style={{ marginInlineStart: 'auto' }}>
-                {headlineCountTag()}
+                {lineCountTag()}
               </span>
             </div>
             <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 12 }}>
-              {isAr ? 'العناوين التي تصنع المنشور — النص الذي يظهر على التصميم.' : 'The headlines that make the post — the copy shown on the design.'}
+              {isAr
+                ? 'النص الذي يظهر على التصميم، بترتيبه: خطاف، ثم الحقائق، ثم دعوة للتواصل.'
+                : 'The copy that lands on the design, in order: a hook, the facts, then the call to action.'}
             </div>
 
-            {headlines.length === 0 ? (
+            {lines.length === 0 ? (
               <p style={{ color: 'var(--mute)' }}>—</p>
             ) : (
-              headlines.map((h, i) => (
+              lines.map((h, i) => (
                 <div key={i} className="opt" style={rowCentered}>
                   <span style={idxBadge}>{num(i + 1, isAr)}</span>
                   <div className="tx" style={{ flex: 1, minWidth: 0 }}>{h || '—'}</div>
@@ -559,20 +711,24 @@ export default function WritingFields({
           </div>
         )}
 
-        {/* The canonical caption, as the reviewer sees it. Per-PLATFORM
-            overrides and paid ad copy stay in PlacementCaptions. */}
+        {/* 2 — النص (the canonical caption, as the reviewer sees it) */}
         <div className="write">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
             <div className="doc-lbl" style={{ margin: 0 }}>
-              {isAr ? 'الكابشن' : 'Caption'}
+              {isAr ? 'النص' : 'Caption'}
             </div>
             <span
-              className={`tag ${captionConfirmed ? 'tag-ok' : 'tag-w'}`}
-              style={{ marginInlineStart: 'auto' }}
+              className="tag"
+              style={{
+                marginInlineStart: 'auto',
+                color: captionConfirmed ? 'var(--go)' : 'var(--wait)',
+                borderColor: captionConfirmed ? 'var(--go)' : 'var(--wait)',
+                background: 'transparent', fontWeight: 700,
+              }}
             >
               {captionConfirmed
-                ? (isAr ? 'راجعه الكاتب' : 'Writer confirmed')
-                : (isAr ? 'لم يُراجَع بعد' : 'Not confirmed')}
+                ? (isAr ? 'أكّده الكاتب' : 'Writer confirmed')
+                : (isAr ? 'مسودة لم تُؤكَّد' : 'Unconfirmed draft')}
             </span>
           </div>
           {captionText
@@ -580,8 +736,10 @@ export default function WritingFields({
               <p key={i} style={{ lineHeight: 1.95, whiteSpace: 'pre-wrap' }}>{p}</p>
             ))
             : <p style={{ color: 'var(--mute)' }}>—</p>}
+          <CaptionSourceNote source={state.captionSource} isAr={isAr} />
         </div>
 
+        {/* 3 — موجز التصميم */}
         {has('design_brief') && (
           <div className="write">
             <div className="doc-lbl">
@@ -591,15 +749,34 @@ export default function WritingFields({
               <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
               <div className="v">{str('design_brief') || '—'}</div>
             </div>
-            <div className="fld">
-              <div className="k">{isAr ? 'مراجع' : 'References'}</div>
-              <ReferenceFilesStrip
-                fileIds={refFileIds}
-                fallbackTitles={legacyRefTitles}
-                canEdit={false}
-                isAr={isAr}
-                onChange={() => {}}
-              />
+          </div>
+        )}
+
+        {/* 4 — مرجع بصري */}
+        {has('design_brief') && (
+          <div className="write">
+            <div className="doc-lbl">{isAr ? 'مرجع بصري' : 'Visual reference'}</div>
+            <ReferenceFilesStrip
+              fileIds={refFileIds}
+              fallbackTitles={legacyRefTitles}
+              canEdit={false}
+              isAr={isAr}
+              onChange={() => {}}
+            />
+          </div>
+        )}
+
+        {/* 5 — الهاشتاقات */}
+        {has('hashtags') && (
+          <div className="write">
+            <div className="doc-lbl">
+              {isAr ? 'الهاشتاقات — تُضاف عند النشر' : 'Hashtags — appended at publish'}
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {hashtagList.map((t) => <span key={t} className="tag">{t}</span>)}
+              {hashtagList.length === 0 && (
+                <span style={{ color: 'var(--mute)', fontSize: 13 }}>—</span>
+              )}
             </div>
           </div>
         )}
@@ -702,89 +879,119 @@ export default function WritingFields({
         </div>
       )}
 
-      {/* ── العناوين — تصنع المنشور، بلا عدد مفروض وبلا اعتماد ───────── */}
+      {/* ── 1 · أسطر المنشور — تصنع المنشور، بلا عدد مفروض وبلا اعتماد ── */}
       {has('headlines') && (
         <div className="write">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
             <div className="doc-lbl" style={{ margin: 0 }}>
-              {isAr ? 'العناوين' : 'Headlines'}
+              {isAr ? 'أسطر المنشور' : 'Post lines'}
             </div>
             <span className="tag tag-t" style={{ marginInlineStart: 'auto' }}>
-              {headlineCountTag()}
+              {lineCountTag()}
             </span>
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 12 }}>
             {isAr
-              ? 'هذه العناوين هي نص المنشور الذي يظهر على التصميم — أضف ما يحتاجه العمل.'
-              : 'These headlines are the post copy shown on the design — add as many as the piece needs.'}
+              ? 'هذه الأسطر هي نص المنشور الذي يظهر على التصميم — خطاف، ثم الحقائق، ثم دعوة للتواصل. أضف ما يحتاجه العمل ورتّبها كما تُقرأ.'
+              : 'These lines are the post copy shown on the design — a hook, the facts, then the call to action. Add as many as the piece needs and order them as they read.'}
           </div>
 
-          {headlines.map((h, i) => (
+          {lines.map((h, i) => (
             <div key={i} className="opt" style={rowCentered}>
               <span style={idxBadge}>{num(i + 1, isAr)}</span>
               <input
                 className="inp"
                 style={{ ...bareInput, flex: 1 }}
                 value={h}
-                onChange={(e) => setHeadline(i, e.target.value)}
+                onChange={(e) => setLine(i, e.target.value)}
               />
               <button
                 type="button"
+                style={moveBtn}
+                disabled={i === 0}
+                onClick={() => moveLine(i, -1)}
+                aria-label={isAr ? 'رفع هذا السطر' : 'Move this line up'}
+                title={isAr ? 'رفع' : 'Move up'}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                style={moveBtn}
+                disabled={i === lines.length - 1}
+                onClick={() => moveLine(i, 1)}
+                aria-label={isAr ? 'خفض هذا السطر' : 'Move this line down'}
+                title={isAr ? 'خفض' : 'Move down'}
+              >
+                ↓
+              </button>
+              <button
+                type="button"
                 style={delBtn}
-                onClick={() => removeHeadline(i)}
-                aria-label={isAr ? 'حذف هذا العنوان' : 'Remove this headline'}
+                onClick={() => removeLine(i)}
+                aria-label={isAr ? 'حذف هذا السطر' : 'Remove this line'}
               >
                 ×
               </button>
             </div>
           ))}
 
-          <NewHeadlineRow
-            index={headlines.length + 1}
+          <NewLineRow
+            index={lines.length + 1}
             isAr={isAr}
-            onCommit={(v) => set('headlines', [...headlines, v])}
+            onCommit={(v) => set('headlines', [...lines, v])}
           />
         </div>
       )}
 
-      {/* ── الكابشن — جزء من الكتابة، لا من التوزيع (2026-09-14) ─────── */}
+      {/* ── 2 · النص — جزء من الكتابة، لا من التوزيع (2026-09-14) ─────── */}
       <div className="write">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
           <div className="doc-lbl" style={{ margin: 0 }}>
-            {isAr ? 'الكابشن' : 'Caption'}
+            {isAr ? 'النص' : 'Caption'}
           </div>
+          {captionText.length > 0 && (
+            <span
+              className="tag"
+              style={{
+                color: captionConfirmed ? 'var(--go)' : 'var(--wait)',
+                borderColor: captionConfirmed ? 'var(--go)' : 'var(--wait)',
+                background: 'transparent', fontWeight: 700,
+              }}
+            >
+              {captionConfirmed
+                ? (isAr ? 'مؤكَّد' : 'Confirmed')
+                : (isAr ? 'مسودة لم تُؤكَّد' : 'Unconfirmed draft')}
+            </span>
+          )}
           <button
             type="button"
-            className="btn btn-s"
+            className="btn btn-sm"
             style={{ marginInlineStart: 'auto' }}
             disabled={captionBusy}
             onClick={() => { void generateCaption(); }}
           >
             {captionBusy
               ? (isAr ? 'يكتب…' : 'Writing…')
-              : (isAr ? 'توليد بالذكاء' : 'Generate with AI')}
+              : captionText
+                ? (isAr ? 'إعادة التوليد بالذكاء' : 'Regenerate with AI')
+                : (isAr ? 'توليد بالذكاء' : 'Generate with AI')}
           </button>
         </div>
         <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 8 }}>
           {isAr
-            ? 'الكابشن يُكتب هنا مع المحتوى ويُعتمد معه. تُنسخ منه نصوص المنصات، ويمكن تعديل كل منصة على حدة لاحقًا.'
-            : 'The caption is written here with the content and approved with it. Each platform’s copy is seeded from it and can be tweaked per placement later.'}
+            ? 'النص يُكتب هنا مع المحتوى ويُعتمد معه، ويُولَّد بالذكاء تلقائيًا عند فتح المهمة. تُنسخ منه نصوص المنصات، ويمكن تعديل كل منصة على حدة لاحقًا.'
+            : 'The caption is written here with the content and approved with it; it is AI-drafted when the task opens. Each platform’s copy is seeded from it and can be tweaked per placement later.'}
         </div>
         <textarea
           className="inp"
           rows={6}
           style={{ fontSize: 13 }}
           value={str('caption')}
-          placeholder={isAr ? 'اكتب الكابشن، أو ولّده بالذكاء ثم راجعه.' : 'Write the caption, or generate it and review.'}
+          placeholder={isAr ? 'اكتب النص، أو ولّده بالذكاء ثم راجعه.' : 'Write the caption, or generate it and review.'}
           onChange={(e) => set('caption', e.target.value)}
         />
-        {captionSource && (
-          <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 4 }}>
-            {captionSource === 'fallback'
-              ? (isAr ? 'مسودة تلقائية من العناوين — راجعها.' : 'Deterministic draft from the headlines — review it.')
-              : (isAr ? 'مسودة من الذكاء الاصطناعي — راجعها.' : 'AI draft — review it.')}
-          </div>
-        )}
+        <CaptionSourceNote source={state.captionSource} isAr={isAr} />
         <label
           style={{
             display: 'flex', alignItems: 'center', gap: 8, marginTop: 10,
@@ -803,19 +1010,19 @@ export default function WritingFields({
             }))}
           />
           <span>
-            {isAr ? 'راجعت الكابشن واعتمدته' : 'I reviewed and approved this caption'}
+            {isAr ? 'أكّد النص — قرأته واعتمدته' : 'Confirm the caption — I read it and approve it'}
           </span>
         </label>
         {!captionConfirmed && (
-          <div style={{ fontSize: 11.5, color: 'var(--warn, #B8734F)', marginTop: 6 }}>
+          <div style={{ fontSize: 11.5, color: 'var(--late)', marginTop: 6 }}>
             {isAr
-              ? 'لا يمكن إرسال الكتابة للمراجعة قبل كتابة الكابشن وتأكيد مراجعته.'
-              : 'Writing cannot be sent for review until the caption is written and confirmed.'}
+              ? 'لا يمكن إرسال الكتابة قبل كتابة النص وتأكيده.'
+              : 'Writing cannot be sent until the caption is written and confirmed.'}
           </div>
         )}
       </div>
 
-      {/* ── موجز التصميم ───────────────────────────────────────────── */}
+      {/* ── 3 · موجز التصميم ───────────────────────────────────────── */}
       {/* Per-PLATFORM caption overrides + paid ad copy still live in
           PlacementCaptions (the content tab renders it next to this); they are
           seeded from the canonical caption above. */}
@@ -824,27 +1031,60 @@ export default function WritingFields({
           <div className="doc-lbl">
             {isAr ? 'موجز التصميم — للمونتير' : 'The design brief — for the editor'}
           </div>
-          <div className="fld">
-            <div className="k">{isAr ? 'الاتجاه البصري' : 'Visual direction'}</div>
-            <textarea
-              className="inp"
-              rows={3}
-              style={{ marginTop: 4, fontSize: 13 }}
-              value={str('design_brief')}
-              placeholder={isAr ? 'صور داخلية، ساعة ذهبية. بدون صور مخزون.' : 'Interior shots, golden hour. No stock photos.'}
-              onChange={(e) => set('design_brief', e.target.value)}
-            />
+          <textarea
+            className="inp"
+            rows={3}
+            style={{ fontSize: 13 }}
+            value={str('design_brief')}
+            placeholder={isAr ? 'صور داخلية، ساعة ذهبية. بدون صور مخزون.' : 'Interior shots, golden hour. No stock photos.'}
+            onChange={(e) => set('design_brief', e.target.value)}
+          />
+        </div>
+      )}
+
+      {/* ── 4 · مرجع بصري ──────────────────────────────────────────── */}
+      {has('design_brief') && (
+        <div className="write">
+          <div className="doc-lbl">{isAr ? 'مرجع بصري' : 'Visual reference'}</div>
+          <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 4 }}>
+            {isAr
+              ? 'ملفات من المكتبة يحتذي بها هذا التصميم — اختياري.'
+              : 'Files from the library this design should take after — optional.'}
           </div>
-          <div className="fld">
-            <div className="k">{isAr ? 'مراجع' : 'References'}</div>
-            <ReferenceFilesStrip
-              fileIds={refFileIds}
-              fallbackTitles={legacyRefTitles}
-              canEdit
-              isAr={isAr}
-              onChange={setRefFiles}
-            />
+          <ReferenceFilesStrip
+            fileIds={refFileIds}
+            fallbackTitles={legacyRefTitles}
+            canEdit
+            isAr={isAr}
+            onChange={setRefFiles}
+          />
+        </div>
+      )}
+
+      {/* ── 5 · الهاشتاقات ─────────────────────────────────────────── */}
+      {has('hashtags') && (
+        <div className="write">
+          <div className="doc-lbl">
+            {isAr ? 'الهاشتاقات — تُضاف لكل المنصات عند النشر' : 'Hashtags — added to every platform at publish'}
           </div>
+          <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 8 }}>
+            {isAr
+              ? 'وسوم مشتركة تُلحَق بنص الفيد وحده — الستوري بلا نص.'
+              : 'Shared tags appended to the feed caption only — the story carries no text.'}
+          </div>
+          <input
+            className="inp"
+            dir="rtl"
+            style={{ fontSize: 12.5 }}
+            value={str('hashtags')}
+            placeholder={isAr ? '#الوسوم مفصولة بمسافة' : '#hashtags separated by spaces'}
+            onChange={(e) => set('hashtags', e.target.value)}
+          />
+          {hashtagList.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+              {hashtagList.map((t) => <span key={t} className="tag">{t}</span>)}
+            </div>
+          )}
         </div>
       )}
 

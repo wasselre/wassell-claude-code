@@ -38,8 +38,8 @@ import {
 } from '@/lib/marketingOS/client';
 import { initial, num } from './lib/format';
 import {
-  IconCalendar, IconCampaigns, IconCheck, IconContent, IconGoals, IconInventory, IconLibrary,
-  IconMenu, IconMetrics, IconMyWork, IconOverview, IconPulse, IconSearch, IconSend,
+  IconCalendar, IconCampaigns, IconCheck, IconClock, IconContent, IconGoals, IconInventory,
+  IconLibrary, IconMenu, IconMetrics, IconMyWork, IconOverview, IconPulse, IconSearch, IconSend,
   IconSettings, IconShoot, IconTeam,
 } from './components/icons';
 import NotificationBell from './components/NotificationBell';
@@ -148,61 +148,70 @@ interface NavItem {
   end?: boolean;
   /**
    * The surface_access row that governs this item. 'hidden' removes the item
-   * from the rail entirely — no disabled button leading to a refusal. 'search'
-   * is not a matrix surface: it shows whenever ANY surface is visible.
+   * from the rail entirely — no disabled button leading to a refusal.
+   * 'always' is not a matrix surface: it shows whenever ANY surface is
+   * visible. Search has always worked that way; الشهر joins it because there
+   * is no `month` surface row and the server-side `month_*` actions carry
+   * their own capability gate (the same posture `analytics` and
+   * `content_inventory` already take — absent from the SURFACES list, so they
+   * default to visible).
    */
-  surface: SurfaceKey | 'search';
+  surface: SurfaceKey | 'always';
 }
 
 interface NavGroup {
   ar: string | null;
   en: string | null;
   items: NavItem[];
+  /**
+   * «متقدم» — collapsed by default. Reachable, not gone: everything the month
+   * model stopped needing in a normal month lives here, one click away, and
+   * the group opens itself when the current route is inside it.
+   */
+  advanced?: boolean;
 }
 
+/**
+ * The rail is SIX items: الشهر · مهامي · المحتوى · النشر · المكتبة · الإعدادات.
+ *
+ * It was nineteen. The month model's whole argument is that a normal month
+ * needs one planning screen, one queue, and the places work and material
+ * actually live; everything else is a tool you reach for when something has
+ * gone off the rule — a campaign to investigate, a calendar to look at, a
+ * settings screen to change once a quarter. Those did not stop existing, and
+ * none of them is deleted here: they are the «متقدم» group below, collapsed.
+ *
+ * `/m/month` is F1's screen and F1 owns its route; the rail points at it.
+ */
 const NAV: NavGroup[] = [
   {
     ar: null, en: null,
     items: [
+      { to: '/m/month', ar: 'الشهر', en: 'The month', Icon: IconCalendar, surface: 'always' },
+      { to: '/m/my-work', ar: 'مهامي', en: 'My work', Icon: IconMyWork, badge: 'mywork', surface: 'mywork' },
+      { to: '/m/content', ar: 'المحتوى', en: 'Content', Icon: IconContent, badge: 'content', surface: 'content' },
+      { to: '/m/publishing', ar: 'النشر', en: 'Publishing', Icon: IconSend, surface: 'publishing' },
+      { to: marketingLibraryHref(), ar: 'المكتبة', en: 'Library', Icon: IconLibrary, surface: 'library' },
+      { to: '/m/settings', ar: 'الإعدادات', en: 'Settings', Icon: IconSettings, surface: 'settings' },
+    ],
+  },
+  {
+    ar: 'متقدّم', en: 'Advanced', advanced: true,
+    items: [
       { to: '/m', ar: 'نظرة عامة', en: 'Overview', Icon: IconOverview, end: true, surface: 'overview' },
       { to: '/m/analytics', ar: 'التحليلات', en: 'Analytics', Icon: IconMetrics, surface: 'analytics' },
-      { to: '/m/my-work', ar: 'مهامي', en: 'My work', Icon: IconMyWork, badge: 'mywork', surface: 'mywork' },
+      { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns, badge: 'campaigns', surface: 'campaigns' },
+      { to: '/m/goals', ar: 'الأهداف', en: 'Goals', Icon: IconGoals, surface: 'goals' },
+      { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', Icon: IconMetrics, surface: 'numbers' },
+      { to: '/m/organic', ar: 'نبض المنصات', en: 'Platform pulse', Icon: IconPulse, surface: 'organic' },
+      { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', Icon: IconClock, surface: 'calendar' },
+      { to: '/m/search', ar: 'البحث', en: 'Search', Icon: IconSearch, surface: 'always' },
+      { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', Icon: IconShoot, surface: 'shoots' },
+      { to: '/m/content-inventory', ar: 'جرد المحتوى', en: 'Content inventory', Icon: IconInventory, surface: 'content_inventory' },
+      { to: '/m/content-readiness', ar: 'جاهزية المحتوى', en: 'Content readiness', Icon: IconCheck, surface: 'content_readiness' },
       { to: '/m/team', ar: 'متابعة الفريق', en: 'Team work', Icon: IconTeam, surface: 'team' },
       { to: '/m/me', ar: 'ملفي', en: 'My profile', Icon: IconGoals, surface: 'myperf' },
       { to: '/m/performance', ar: 'مكتب الأداء', en: 'Performance', Icon: IconMetrics, surface: 'performance' },
-    ],
-  },
-  {
-    ar: 'المدفوعة', en: 'Paid',
-    items: [
-      { to: '/m/goals', ar: 'الأهداف', en: 'Goals', Icon: IconGoals, surface: 'goals' },
-      { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns, badge: 'campaigns', surface: 'campaigns' },
-      { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', Icon: IconMetrics, surface: 'numbers' },
-    ],
-  },
-  {
-    ar: 'العضوية', en: 'Organic',
-    items: [
-      { to: '/m/organic', ar: 'نبض المنصات', en: 'Platform pulse', Icon: IconPulse, surface: 'organic' },
-      { to: '/m/publishing', ar: 'لوحة النشر', en: 'Publishing board', Icon: IconSend, surface: 'publishing' },
-    ],
-  },
-  {
-    ar: 'الإنتاج', en: 'Production',
-    items: [
-      { to: '/m/content', ar: 'المحتوى', en: 'Content', Icon: IconContent, badge: 'content', surface: 'content' },
-      { to: '/m/search', ar: 'البحث', en: 'Search', Icon: IconSearch, surface: 'search' },
-      { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', Icon: IconCalendar, surface: 'calendar' },
-      { to: marketingLibraryHref(), ar: 'مكتبة المواد', en: 'Asset library', Icon: IconLibrary, surface: 'library' },
-      { to: '/m/content-inventory', ar: 'جرد المحتوى', en: 'Content inventory', Icon: IconInventory, surface: 'content_inventory' },
-      { to: '/m/content-readiness', ar: 'جاهزية المحتوى', en: 'Content readiness', Icon: IconCheck, surface: 'content_readiness' },
-      { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', Icon: IconShoot, surface: 'shoots' },
-    ],
-  },
-  {
-    ar: 'الإعداد', en: 'Setup',
-    items: [
-      { to: '/m/settings', ar: 'الإعدادات', en: 'Settings', Icon: IconSettings, surface: 'settings' },
     ],
   },
 ];
@@ -304,6 +313,21 @@ export default function MarketingWorkspace() {
     mywork: null, content: null, campaigns: null,
   });
   const [railOpen, setRailOpen] = useState(false);
+
+  /**
+   * «متقدم» is collapsed — unless you are standing inside it, in which case a
+   * rail that hid the item you are looking at would be lying about where you
+   * are. Opening it is sticky for the session: the rail does not unmount on
+   * navigation, so someone spending an afternoon in الحملات opens the group
+   * once.
+   */
+  const onAdvancedRoute = useMemo(() => NAV.some(
+    (g) => g.advanced && g.items.some((i) => (i.end
+      ? location.pathname === i.to
+      : location.pathname === i.to || location.pathname.startsWith(`${i.to}/`))),
+  ), [location.pathname]);
+  const [advancedOpen, setAdvancedOpen] = useState(onAdvancedRoute);
+  useEffect(() => { if (onAdvancedRoute) setAdvancedOpen(true); }, [onAdvancedRoute]);
 
   const applyBadge = useCallback((key: BadgeKey, value: number | null) => {
     setBadges((b) => (b[key] === value ? b : { ...b, [key]: value }));
@@ -455,7 +479,7 @@ export default function MarketingWorkspace() {
   const anySurfaceVisible = Object.values(surfaces).some((l) => l !== 'hidden');
   const navVisible = (item: NavItem): boolean => {
     if (!ready) return true; // don't flash-remove items before bootstrap lands
-    if (item.surface === 'search') return anySurfaceVisible;
+    if (item.surface === 'always') return anySurfaceVisible;
     return surfaces[item.surface] !== 'hidden';
   };
 
@@ -489,10 +513,28 @@ export default function MarketingWorkspace() {
           {NAV.map((group, gi) => {
             const items = group.items.filter(navVisible);
             if (items.length === 0) return null;
+            const open = !group.advanced || advancedOpen;
             return (
               <div key={gi}>
-                {group.ar && <div className="nav-sec">{isAr ? group.ar : group.en}</div>}
-                {items.map((item) => (
+                {group.ar && (
+                  group.advanced ? (
+                    <button
+                      type="button"
+                      className={`nav-sec nav-sec-toggle${advancedOpen ? ' on' : ''}`}
+                      onClick={() => setAdvancedOpen((v) => !v)}
+                      aria-expanded={advancedOpen}
+                    >
+                      {/* One glyph, rotated by CSS — a literal ▸ would point
+                          the wrong way in RTL. */}
+                      <span className="chev" aria-hidden="true">▾</span>
+                      {isAr ? group.ar : group.en}
+                      <span className="ct">{num(items.length, isAr)}</span>
+                    </button>
+                  ) : (
+                    <div className="nav-sec">{isAr ? group.ar : group.en}</div>
+                  )
+                )}
+                {open && items.map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}

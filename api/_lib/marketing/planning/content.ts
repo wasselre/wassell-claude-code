@@ -8,6 +8,21 @@
  * on `mos_publications.caption` and `mos_execution_ads.creative.primary_text`
  * become overrides seeded from it. This is why the Meta worker no longer needs
  * its own AI caption phase for new content.
+ *
+ * PREFILL (F3, 2026-09-15): «every item carries a caption, AI-prefilled and
+ * visibly unconfirmed until the writer confirms it». Until now this action
+ * GENERATED a caption and persisted NOTHING — the writer had to press
+ * «توليد بالذكاء» and the box opened empty, so the prefill the operating model
+ * assumes did not exist. `prefill: true` now writes the draft onto
+ * `mos_content.data` (caption + `caption_source`, confirmation explicitly
+ * CLEARED) so that:
+ *   - opening the task shows a draft rather than an empty box,
+ *   - `caption_source` survives a reload (it used to render only from transient
+ *     component state, which is null on every page load),
+ *   - a fresh AI draft is never pre-confirmed — the row cannot be sent until
+ *     the writer confirms it.
+ * It NEVER overwrites a caption that already has text, and the write is a CAS
+ * on `updated_at` so a save landing between our read and our write wins.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { jsonOk, jsonError } from '../../auth.js';
@@ -47,9 +62,95 @@ function digitsIn(text: string): Set<string> {
   return out;
 }
 
+/** What `prefill` did with the generated draft, said out loud to the caller. */
+type PersistOutcome =
+  | { persisted: true }
+  | { persisted: false; reason: 'already_written' | 'raced' | 'refused' | 'error'; detail?: string };
+
+/**
+ * Write a freshly generated caption onto the content record — but ONLY over an
+ * empty one, and only if nothing else has touched the row since we read it.
+ *
+ * Two guards, both deliberate:
+ *   - `already_written` — a caption with text is the WRITER's, machine or not.
+ *     Prefill never argues with it; regeneration is an explicit button.
+ *   - the `updated_at` CAS — `mos_content` carries the `mos_tg_touch_updated_at`
+ *     BEFORE UPDATE trigger, so any concurrent save moves it and our write
+ *     misses rather than clobbering. A miss is reported, never swallowed.
+ *
+ * The confirmation keys are cleared in the same write: an AI draft the writer
+ * has not read must never arrive pre-confirmed (that is the whole point of
+ * `caption_confirmed_text`). Failure to persist is NOT fatal — the caller still
+ * gets the caption to put in the box — but it is returned and logged, because a
+ * silent "prefill did nothing" is the failure mode this repo keeps paying for.
+ *
+ * The CAS gets ONE retry on a miss, re-reading first. A single miss is the
+ * genuine race; two in a row is reported as `raced` rather than looped on, so a
+ * timestamp that never matches degrades to a loud, bounded "not saved" instead
+ * of hammering the row.
+ */
+const PREFILL_ATTEMPTS = 2;
+
+async function persistPrefilledCaption(
+  sb: SupabaseClient,
+  contentId: string,
+  caption: string,
+  source: 'ai' | 'fallback',
+): Promise<PersistOutcome> {
+  for (let attempt = 0; attempt < PREFILL_ATTEMPTS; attempt += 1) {
+    const cur = await sb.from('mos_content')
+      .select('data, updated_at').eq('id', contentId).maybeSingle();
+    if (cur.error) {
+      console.error('[planning] caption prefill read failed', cur.error.code, cur.error.message);
+      return { persisted: false, reason: 'error', detail: cur.error.message };
+    }
+    const row = cur.data as { data: unknown; updated_at: string } | null;
+    if (!row) return { persisted: false, reason: 'error', detail: 'content not found' };
+
+    const data = asRecord(row.data);
+    // Whoever wrote text first owns it — including the writer who typed while
+    // the model was still thinking.
+    if (str(data.caption)) return { persisted: false, reason: 'already_written' };
+
+    const next = {
+      ...data,
+      caption,
+      caption_source: source,
+      // A fresh draft is NOT confirmed — the writer still has to read it.
+      caption_confirmed_text: '',
+      caption_confirmed_at: '',
+    };
+
+    const upd = await sb.from('mos_content')
+      .update({ data: next })
+      .eq('id', contentId)
+      .eq('updated_at', row.updated_at)
+      .select('id');
+    if (upd.error) {
+      // The locked guard raises `insufficient_privilege` once an approval binds
+      // the package — a real refusal, not a bug, and the writer sees the draft
+      // in the box either way.
+      console.error('[planning] caption prefill write failed', upd.error.code, upd.error.message);
+      const refused = upd.error.code === '42501' || /MOS:LOCKED/.test(upd.error.message);
+      return {
+        persisted: false,
+        reason: refused ? 'refused' : 'error',
+        detail: upd.error.message,
+      };
+    }
+    if ((upd.data ?? []).length > 0) return { persisted: true };
+    console.error('[planning] caption prefill CAS missed', contentId, `attempt ${attempt + 1}`);
+  }
+  return { persisted: false, reason: 'raced' };
+}
+
 export async function contentCaptionGenerate(ctx: PlanCtx): Promise<Response> {
   const contentId = str(ctx.body.content_id);
   if (!contentId) return jsonError(400, 'content_id is required');
+  // Prefill-on-open: generate ONLY when the box is empty, and persist the draft.
+  // The explicit «توليد بالذكاء» button keeps the old behaviour — generate and
+  // hand back, the writer's own Save persists it with the rest of the draft.
+  const prefill = ctx.body.prefill === true;
 
   const { data: row, error } = await ctx.sb
     .from('mos_content_v')
@@ -57,6 +158,21 @@ export async function contentCaptionGenerate(ctx: PlanCtx): Promise<Response> {
     .eq('id', contentId).maybeSingle();
   if (error) return fail('mos_content_v read', error);
   if (!row) return jsonError(404, 'content not found');
+
+  // A caption that already has text is never regenerated by a prefill — it is
+  // the writer's, whoever drafted it first.
+  if (prefill) {
+    const existing = str(asRecord((row as { data?: unknown }).data).caption);
+    if (existing) {
+      const src = str(asRecord((row as { data?: unknown }).data).caption_source);
+      return jsonOk({
+        caption: existing,
+        source: src === 'fallback' ? 'fallback' : src === 'ai' ? 'ai' : null,
+        persisted: false,
+        skipped: 'already_written',
+      });
+    }
+  }
 
   const content = row as {
     title: string; data: Record<string, unknown>; project_ids: unknown;
@@ -135,7 +251,15 @@ export async function contentCaptionGenerate(ctx: PlanCtx): Promise<Response> {
     ].filter(Boolean).join('\n');
   }
 
-  return jsonOk({ caption, source });
+  if (!prefill) return jsonOk({ caption, source, persisted: false });
+
+  const outcome = await persistPrefilledCaption(ctx.sb, contentId, caption, source);
+  return jsonOk({
+    caption,
+    source,
+    persisted: outcome.persisted,
+    ...(outcome.persisted ? {} : { persist_skipped: outcome.reason, persist_detail: outcome.detail ?? null }),
+  });
 }
 
 /* ------------------------------------------------------------------ */

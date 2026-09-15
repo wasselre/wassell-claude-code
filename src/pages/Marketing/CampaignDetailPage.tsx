@@ -2578,20 +2578,20 @@ function ExecutionModal({
     }
     return '';
   });
-  // The execution's lineage name — auto «Paid ad campaign {platform} - {campaign}»,
-  // seeded for a NEW execution and editable; an existing one keeps its label.
-  const [label, setLabel] = useState(execution?.label ?? '');
-  const [labelEdited, setLabelEdited] = useState(Boolean(execution));
+  // The execution's lineage name — auto «Paid ad campaign {platform} - {campaign}».
+  //
+  // The text box and its ↻ "regenerate" button were deleted on 2026-09-15. The
+  // name is machine-owned: it is generated, it does not affect matching against
+  // Meta (Meta's own id does), and nothing downstream reads it as a decision —
+  // yet it was presented as a field to fill in, with a button whose only job was
+  // to undo the typing. A NEW execution takes the generated name; an EXISTING
+  // one keeps exactly the label it already has.
   const execNameSuggest = executionAutoName({
     platformLabel: (isAr ? PLATFORM_LABELS[platform]?.ar : PLATFORM_LABELS[platform]?.en) ?? platform,
     parentName: campaignName,
     isAr,
   });
-  useEffect(() => {
-    if (!labelEdited) setLabel(execNameSuggest);
-    // execNameSuggest folds in platform/campaignName/isAr; labelEdited gates it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [platform, campaignName, isAr, labelEdited]);
+  const label = execution?.label ?? execNameSuggest;
   const [status, setStatus] = useState<MosExecution['status']>(execution?.status ?? 'draft');
   const [purpose, setPurpose] = useState<string>(execution?.purpose ?? '');
   const [platformCampaignId, setPlatformCampaignId] = useState(execution?.platform_campaign_id ?? '');
@@ -2760,28 +2760,6 @@ function ExecutionModal({
             </Field>
           );
         })()}
-        <Field
-          label={isAr ? 'اسم الحملة الإعلانية' : 'Ad campaign name'}
-          hint={isAr ? 'يُولَّد تلقائيًا — لا يؤثّر على المطابقة مع ميتا' : 'auto-generated — does not affect Meta matching'}
-        >
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              className="inp"
-              style={{ flex: 1 }}
-              value={label}
-              onChange={(e) => { setLabel(e.target.value); setLabelEdited(true); }}
-            />
-            <button
-              type="button"
-              className="fbtn"
-              style={{ padding: '0 10px' }}
-              title={isAr ? 'توليد الاسم تلقائيًا' : 'Auto-generate the name'}
-              onClick={() => { setLabelEdited(false); setLabel(execNameSuggest); }}
-            >
-              ↻
-            </button>
-          </div>
-        </Field>
         <Field
           label={isAr ? 'الحالة' : 'Status'}
           hint={isMetaPlatform || platformCampaignId.trim()

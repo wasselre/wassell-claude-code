@@ -1,10 +1,17 @@
 /**
  * The organic-campaign picker for a placement (2026-08-28).
  *
- * An organic placement may belong to an organic campaign — existing, created
- * inline, or none. Self-contained: fetches the organic campaigns on mount and
- * creates a new one via `saveCampaign({ kind:'organic' })`. Used by the merged
- * Placements/Publishing editor.
+ * An organic placement may belong to an organic campaign — an existing one, or
+ * none. Self-contained: it fetches the organic campaigns on mount.
+ *
+ * CHANGED 2026-09-15 — **the inline "＋ new organic campaign" text field is
+ * gone.** It was one input that created a live campaign record straight from a
+ * placement editor: no brief, no projects, no dates, no budget, no plan, no
+ * capacity reservation, nothing the rest of the system expects a campaign to
+ * carry. Every rule the month model enforces was bypassed by typing a name
+ * here and pressing Create. A campaign is now made where campaigns are made —
+ * the month page, or the campaigns screen under «متقدّم» — and this control
+ * only ever points at one that already exists.
  *
  * `defaultCampaignId` pre-selects the creative's own organic campaign for a NEW
  * placement (its provenance — "where it was born"), so a post created inside an
@@ -14,8 +21,7 @@
  * The user can still change it to any other organic campaign or none.
  */
 import { useEffect, useRef, useState } from 'react';
-import { MosCampaign, fetchCampaigns, saveCampaign } from '@/lib/marketingOS/client';
-import { useAppStore } from '@/stores/appStore';
+import { MosCampaign, fetchCampaigns } from '@/lib/marketingOS/client';
 
 export default function OrganicCampaignSelect({
   value, isAr, onChange, defaultCampaignId,
@@ -26,11 +32,7 @@ export default function OrganicCampaignSelect({
   /** The creative's provenance campaign — pre-selected for a new placement. */
   defaultCampaignId?: string | null;
 }) {
-  const addToast = useAppStore((s) => s.addToast);
   const [campaigns, setCampaigns] = useState<MosCampaign[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
   // The default is a one-shot: apply it at most once, so once the user clears
   // the field back to "no campaign" it does not snap back to the default.
   const defaultAppliedRef = useRef(false);
@@ -57,48 +59,10 @@ export default function OrganicCampaignSelect({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const create = async (): Promise<void> => {
-    if (!name.trim()) return;
-    setBusy(true);
-    try {
-      const res = await saveCampaign({ name: name.trim(), kind: 'organic' });
-      setCampaigns((prev) => [res.item, ...prev]);
-      onChange(res.item.id);
-      setCreating(false);
-      setName('');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally { setBusy(false); }
-  };
-
-  if (creating) {
-    return (
-      <div style={{ display: 'flex', gap: 6 }}>
-        <input
-          className="inp"
-          style={{ fontSize: 12.5 }}
-          value={name}
-          placeholder={isAr ? 'اسم الحملة العضوية' : 'Organic campaign name'}
-          onChange={(e) => setName(e.target.value)}
-          autoFocus
-        />
-        <button type="button" className="btn btn-p btn-sm" onClick={() => void create()} disabled={busy}>
-          {busy ? '…' : (isAr ? 'إنشاء' : 'Create')}
-        </button>
-        <button type="button" className="btn btn-sm" onClick={() => setCreating(false)} disabled={busy}>×</button>
-      </div>
-    );
-  }
-
   return (
-    <select
-      className="inp"
-      value={value}
-      onChange={(e) => { if (e.target.value === '__new__') setCreating(true); else onChange(e.target.value); }}
-    >
+    <select className="inp" value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{isAr ? 'بدون حملة' : 'No campaign'}</option>
       {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-      <option value="__new__">{isAr ? '＋ حملة عضوية جديدة' : '＋ New organic campaign'}</option>
     </select>
   );
 }

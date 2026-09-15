@@ -16,22 +16,40 @@
  * as full-width thumb cards — the late card red and unmissable above the fold,
  * one full-width verb button per card, and a thumb-scrolled chip filter bar
  * instead of dropdowns. Desktop rendering is untouched.
+ *
+ * TWO KINDS OF CARD (2026-09-15). A ROW — three posts that move together, one
+ * task to work and one to approve — is a single card here, marked «صف · ٣
+ * منشورات»; its three posts never appear separately, because the row IS the
+ * task. A post still gets its own card when it carries its own task (a per-post
+ * revision sent back out of a row is exactly that).
+ *
+ * AND THE CARD EXPANDS IN PLACE. Clicking it opens the work right here — the
+ * queue below moves down, nothing overlays. A row expands into `RowPane`, which
+ * mounts the ONE approval component (or the designer's six slots) whole; a post
+ * expands into the same `ContentPreview` every other list opens, in its inline
+ * variant. There is no second, thinner approval anywhere: the inline approval
+ * that used to live on the task card was deleted precisely because it was one,
+ * and it dropped the revision targets when you rejected from it.
+ *
+ * `?row=<id>` / `?task=<id>` is the PERMALINK: a notification lands here with
+ * that row already open, whether or not it is in your own queue.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   MosContentRow,
   MosManualTask,
   MosRole,
-  MosTask,
   MosUpcoming,
   ROLE_LABELS,
   completeManualTask,
-  fetchWork,
   isOverdue,
   statusLabel,
 } from '@/lib/marketingOS/client';
+import {
+  MosRowFacts, MosSubjectTask, fetchWorkQueue,
+} from '@/lib/marketingOS/rowClient';
 import { useWorkspace } from './MarketingWorkspace';
 import {
   ContentThumb, Empty, KindCell, LoadError, PageHead, Pill, Skeleton, ThumbSigner,
@@ -39,7 +57,8 @@ import {
 import ProjectLink from './components/ProjectLink';
 import { IconSearch } from './components/icons';
 import NewTaskModal from './components/NewTaskModal';
-import { usePreview } from './components/ContentPreviewModal';
+import ContentPreview, { usePreview } from './components/ContentPreviewModal';
+import RowPane from './components/RowPane';
 import { dayName, daysAgo, daysFromNow, num, shortDate } from './lib/format';
 import {
   TASK_ACTION_LABELS, actionOfTask, contentHref, previewTargetOfTask, taskHref,
@@ -88,6 +107,28 @@ function lateBy(iso: string | null, isAr: boolean): string {
 }
 
 /**
+ * The verb for a ROW's stage. Same keyword rule as `actionLabel` below, on the
+ * row task's own step key — a row has no `status_key` of its own because its
+ * status IS the task.
+ */
+function rowActionLabel(stepKey: string | null, isAr: boolean): string {
+  const key = stepKey ?? '';
+  if (key.includes('design_review') || key.includes('final')) {
+    return isAr ? 'الاعتماد النهائي' : 'Final approval';
+  }
+  if (key.includes('review') || key.includes('approve')) {
+    return isAr ? 'مراجعة الكتابة' : 'Review the writing';
+  }
+  if (key.includes('design') || key.includes('edit') || key.includes('version')) {
+    return isAr ? 'ابدئي التصميم' : 'Start the design';
+  }
+  if (key.includes('writ') || key.includes('script') || key.includes('caption')) {
+    return isAr ? 'اكتبي الصف' : 'Write the row';
+  }
+  return isAr ? 'افتح الصف' : 'Open the row';
+}
+
+/**
  * The verb for a stage. An approval stage asks you to decide; a making stage
  * asks you to make. Anything unrecognised falls back to a plain open, which is
  * honest rather than wrong.
@@ -112,6 +153,282 @@ function actionLabel(row: MosContentRow, isAr: boolean): string {
 const manualOverdue = (t: MosManualTask): boolean =>
   Boolean(t.due_at) && new Date(t.due_at as string).getTime() < Date.now();
 
+/**
+ * One card in the queue. A ROW is a single card carrying its three posts; a
+ * POST gets its own card only when it holds its own task.
+ */
+type QueueItem =
+  | { kind: 'post'; id: string; row: MosContentRow }
+  | {
+      kind: 'row'; id: string; facts: MosRowFacts; task: MosSubjectTask;
+      members: MosContentRow[];
+    };
+
+/**
+ * A ROW in the queue: the card, and — when it is open — the work itself,
+ * expanded into a full-width row underneath it.
+ *
+ * The three posts are listed inside the card in READING order, with the one
+ * fact that is not obvious stated plainly: the first one publishes last.
+ */
+function RowCardRows({
+  facts, task, members, open, overdue, isMine, faded, tone, isAr, projectLabel,
+  onToggle, onChanged,
+}: {
+  facts: MosRowFacts;
+  task: MosSubjectTask;
+  members: MosContentRow[];
+  open: boolean;
+  overdue: boolean;
+  isMine: boolean;
+  faded?: boolean;
+  tone: 'late' | 'now' | 'idle';
+  isAr: boolean;
+  projectLabel: string;
+  onToggle: () => void;
+  onChanged: () => void;
+}) {
+  const day = facts.batch_day;
+  const general = facts.kind === 'general_row' || !facts.project_id;
+  return (
+    <Fragment>
+      <tr className="click" onClick={onToggle}>
+        <td style={{ width: 44 }}>
+          {members[0] ? <ContentThumb row={members[0]} size="sm" /> : null}
+        </td>
+        <td style={{ width: 30 }}>
+          <KindCell typeKey="post" />
+        </td>
+        <td>
+          <div className="ttl" style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="tag">
+              {isAr
+                ? `صف · ${num(facts.member_count, true)} منشورات`
+                : `Row · ${facts.member_count} posts`}
+            </span>
+            {isAr
+              ? `صف ${day ? shortDate(day, true) : 'بلا يوم'} — ${general ? 'عام' : projectLabel}`
+              : `Row of ${day ? shortDate(day, false) : 'no day'} — ${general ? 'general' : projectLabel}`}
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
+            {members.map((m, i) => (
+              <span key={m.id}>
+                {i > 0 ? ' · ' : ''}
+                {num(i + 1, isAr)} {m.title}
+              </span>
+            ))}
+            {task.round > 1 && (
+              <> · {isAr ? `الجولة ${num(task.round, true)}` : `round ${task.round}`}</>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 2 }}>
+            {isAr
+              ? 'الاعتماد للصف كله، والإعادة لمنشور واحد — والأول في الترتيب يُنشر أخيرًا.'
+              : 'Approval is for the whole row, a send-back is for one post — and the first in the order publishes last.'}
+          </div>
+        </td>
+        <td style={{ width: 190 }}>
+          {overdue ? (
+            <Pill tone="late">
+              {isAr
+                ? `استحقاق ${shortDate(task.due_at, true)} · متأخر ${daysAgo(task.due_at, true)}`
+                : `due ${shortDate(task.due_at, false)} · ${daysAgo(task.due_at, false)} late`}
+            </Pill>
+          ) : (
+            <Pill tone={tone === 'idle' ? 'wait' : 'now'}>
+              {task.due_at
+                ? isAr ? `الاستحقاق ${shortDate(task.due_at, true)}` : `due ${shortDate(task.due_at, false)}`
+                : isAr ? 'بلا موعد' : 'no due date'}
+            </Pill>
+          )}
+        </td>
+        <td style={{ width: 130, textAlign: 'end' }}>
+          <span className={`btn btn-sm${isMine && !faded ? ' btn-p' : ' btn-d'}`}>
+            {open
+              ? (isAr ? 'طيّ' : 'Collapse')
+              : isMine
+                ? rowActionLabel(task.step_id, isAr)
+                : (isAr ? 'عرض الصف' : 'View the row')}
+          </span>
+        </td>
+      </tr>
+      {open && (
+        <tr>
+          <td colSpan={5} style={{ padding: '4px 10px 14px' }}>
+            <RowPane rowId={facts.row_id} onChanged={onChanged} />
+          </td>
+        </tr>
+      )}
+    </Fragment>
+  );
+}
+
+/**
+ * What `QueueGroup` needs from the page. Passed as ONE object so the group can
+ * live at module level (see the note on `QueueGroup`) without a dozen props.
+ */
+interface GroupCtx {
+  isAr: boolean;
+  myRole: MosRole;
+  typeLabel: (key: string) => string;
+  projectName: (id: string | null | undefined) => string;
+  openRowId: string | null;
+  openPostId: string | null;
+  expandRow: (rowId: string | null) => void;
+  expandPost: (contentId: string | null) => void;
+  taskFor: (contentId: string) => MosSubjectTask | undefined;
+  itemLate: (it: QueueItem) => boolean;
+  itemMine: (it: QueueItem) => boolean;
+  reload: () => void;
+  navigate: (href: string) => void;
+}
+
+/**
+ * One group of the queue. A row and a post are different cards but the same
+ * table: both expand IN PLACE into a second full-width row underneath, which is
+ * what makes «مهامي» the place approvals happen rather than a list of links to
+ * somewhere else.
+ *
+ * Declared at MODULE level on purpose. It mounts `RowPane`, which fetches on
+ * mount; a component defined inside `WorkPage` would get a new identity on
+ * every render of the page, so React would unmount and remount the whole
+ * subtree — and the expanded row would re-fetch itself every time anyone typed
+ * a character into the search box.
+ */
+function QueueGroup({
+  label, tone, items: groupItems, faded, ctx,
+}: {
+  label: string;
+  tone: 'late' | 'now' | 'idle';
+  items: QueueItem[];
+  faded?: boolean;
+  ctx: GroupCtx;
+}) {
+  const {
+    isAr, myRole, typeLabel, projectName, openRowId, openPostId,
+    expandRow, expandPost, taskFor, itemLate, itemMine, reload, navigate,
+  } = ctx;
+  if (groupItems.length === 0) return null;
+  return (
+    <>
+      {label && (
+        <div
+          className="lbl"
+          style={{ marginBottom: 9, color: tone === 'late' ? 'var(--late)' : undefined }}
+        >
+          {label}
+        </div>
+      )}
+      <div
+        className="card"
+        style={{
+          marginBottom: 22,
+          opacity: faded ? 0.72 : 1,
+          borderColor: tone === 'late' ? 'color-mix(in srgb, var(--late) 38%, transparent)' : undefined,
+        }}
+      >
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <tbody>
+              {groupItems.map((it) => {
+                if (it.kind === 'row') {
+                  const { facts, task, members } = it;
+                  const open = openRowId === facts.row_id;
+                  return (
+                    <RowCardRows
+                      key={`row:${facts.row_id}`}
+                      facts={facts}
+                      task={task}
+                      members={members}
+                      open={open}
+                      overdue={itemLate(it)}
+                      isMine={itemMine(it)}
+                      faded={faded}
+                      tone={tone}
+                      isAr={isAr}
+                      projectLabel={projectName(facts.project_id)}
+                      onToggle={() => expandRow(open ? null : facts.row_id)}
+                      onChanged={reload}
+                    />
+                  );
+                }
+                const r = it.row;
+                const task = taskFor(r.id);
+                const isMine = r.owner_role === myRole;
+                const open = openPostId === r.id;
+                return (
+                  <Fragment key={`post:${r.id}`}>
+                    <tr className="click" onClick={() => expandPost(open ? null : r.id)}>
+                      <td style={{ width: 44 }}>
+                        <ContentThumb row={r} size="sm" />
+                      </td>
+                      <td style={{ width: 30 }}>
+                        <KindCell typeKey={r.content_type_key} />
+                      </td>
+                      <td>
+                        <div className="ttl">{statusLabel(r, isAr)} — {r.title}</div>
+                        <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
+                          <span className="ltr">{r.ref}</span> · {typeLabel(r.content_type_key)}
+                          {r.project_id && <> · <ProjectLink projectIds={[r.project_id]} variant="link" /></>}
+                          {task && task.round > 1 && (
+                            <> · {isAr ? `الجولة ${num(task.round, true)}` : `round ${task.round}`}</>
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ width: 190 }}>
+                        {isOverdue(r) ? (
+                          <Pill tone="late">
+                            {isAr
+                              ? `استحقاق ${shortDate(r.current_task_due_at ?? r.due_at, true)} · متأخر ${daysAgo(r.current_task_due_at ?? r.due_at, true)}`
+                              : `due ${shortDate(r.current_task_due_at ?? r.due_at, false)} · ${daysAgo(r.current_task_due_at ?? r.due_at, false)} late`}
+                          </Pill>
+                        ) : (
+                          <Pill tone={tone === 'idle' ? 'wait' : 'now'}>
+                            {r.current_task_due_at
+                              ? isAr
+                                ? `الاستحقاق ${shortDate(r.current_task_due_at, true)}`
+                                : `due ${shortDate(r.current_task_due_at, false)}`
+                              : isAr ? 'بلا موعد' : 'no due date'}
+                          </Pill>
+                        )}
+                      </td>
+                      <td style={{ width: 130, textAlign: 'end' }}>
+                        {isMine ? (
+                          <span className={`btn btn-sm${faded ? ' btn-d' : ' btn-p'}`}>
+                            {open ? (isAr ? 'طيّ' : 'Collapse') : actionLabel(r, isAr)}
+                          </span>
+                        ) : (
+                          <span className="btn btn-d btn-sm">
+                            {open ? (isAr ? 'طيّ' : 'Collapse') : isAr ? 'عرض' : 'View'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                    {open && (
+                      <tr>
+                        <td colSpan={5} style={{ padding: '4px 10px 14px' }}>
+                          <ContentPreview
+                            contentId={r.id}
+                            isAr={isAr}
+                            variant="inline"
+                            onClose={() => expandPost(null)}
+                            onChanged={reload}
+                            onNavigate={navigate}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function WorkPage() {
   const { isAr, typeLabel, projectName, setBadge, people, surfaces } = useWorkspace();
   const navigate = useNavigate();
@@ -123,7 +440,8 @@ export default function WorkPage() {
   const addToast = useAppStore((s) => s.addToast);
 
   const [rows, setRows] = useState<MosContentRow[]>([]);
-  const [tasks, setTasks] = useState<MosTask[]>([]);
+  const [tasks, setTasks] = useState<MosSubjectTask[]>([]);
+  const [rowFacts, setRowFacts] = useState<MosRowFacts[]>([]);
   const [manual, setManual] = useState<MosManualTask[]>([]);
   const [upcoming, setUpcoming] = useState<MosUpcoming[]>([]);
   const [myRole, setMyRole] = useState<MosRole>('viewer');
@@ -146,19 +464,47 @@ export default function WorkPage() {
 
   const preview = usePreview(() => { void load(); });
 
+  // The expanded card — one at a time, and mirrored into the URL so the thing
+  // you are looking at can be linked to. `?row=` is what a row notification
+  // carries; `?task=` is the task id, for a row you cannot name yet.
+  const [params, setParams] = useSearchParams();
+  const openRowId = params.get('row');
+  const openTaskId = params.get('task');
+  const [openPostId, setOpenPostId] = useState<string | null>(null);
+
+  const expandRow = (rowId: string | null): void => {
+    setOpenPostId(null);
+    const next = new URLSearchParams(params);
+    if (rowId) next.set('row', rowId); else next.delete('row');
+    next.delete('task');
+    setParams(next, { replace: true });
+  };
+  const expandPost = (contentId: string | null): void => {
+    const next = new URLSearchParams(params);
+    next.delete('row');
+    next.delete('task');
+    setParams(next, { replace: true });
+    setOpenPostId(contentId);
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWork('mine');
+      const res = await fetchWorkQueue('mine');
       setRows(res.content);
-      setTasks(res.tasks);
+      setTasks(res.tasks ?? []);
+      setRowFacts(res.rows ?? []);
       setManual(res.manual_tasks ?? []);
       setUpcoming(res.upcoming ?? []);
       setMyRole(res.role);
-      // The rail badge counts EVERYTHING open for me — a hand-assigned task is
-      // as real as a workflow one.
-      setBadge('mywork', res.content.length + (res.manual_tasks?.length ?? 0));
+      // The rail badge counts EVERYTHING open for me. A ROW is ONE item, not
+      // three: counting its members would tell the reader they have three times
+      // the work they actually have.
+      const rowTaskCount = (res.rows ?? []).length;
+      const postTaskCount = (res.tasks ?? [])
+        .filter((t) => t.subject_table !== 'mos_content_rows').length;
+      setBadge('mywork', rowTaskCount + postTaskCount + (res.manual_tasks?.length ?? 0));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -169,20 +515,105 @@ export default function WorkPage() {
   useEffect(() => { void load(); }, [load]);
 
   const term = q.trim().toLowerCase();
-  const filtered = useMemo(
-    () => (term
-      ? rows.filter((r) =>
-          r.title.toLowerCase().includes(term) || (r.ref ?? '').toLowerCase().includes(term))
-      : rows),
-    [rows, term],
+
+  /* ── the two kinds of card ───────────────────────────────────────────
+     A ROW is one card; its three posts are shown inside it, never beside it.
+     A POST gets its own card only when it carries its OWN task — which is
+     exactly what a per-post revision sent back out of a row is. */
+
+  const rowTasks = useMemo(
+    () => tasks.filter((t) => t.subject_table === 'mos_content_rows'),
+    [tasks],
+  );
+  const postTaskIds = useMemo(
+    () => new Set(tasks.filter((t) => t.subject_table !== 'mos_content_rows')
+      .map((t) => t.subject_id)),
+    [tasks],
   );
 
-  const late = filtered.filter((r) => isOverdue(r));
-  const mine = filtered.filter((r) => !isOverdue(r) && r.owner_role === myRole);
-  const others = filtered.filter((r) => !isOverdue(r) && r.owner_role !== myRole);
+  const items: QueueItem[] = useMemo(() => {
+    const factsBy = new Map(rowFacts.map((f) => [f.row_id, f]));
+    const rowItems: QueueItem[] = rowTasks.flatMap((t) => {
+      const facts = factsBy.get(t.subject_id);
+      if (!facts) return [];
+      const members = (facts.member_ids ?? [])
+        .map((id) => rows.find((r) => r.id === id))
+        .filter((r): r is MosContentRow => !!r);
+      return [{ kind: 'row', id: facts.row_id, facts, task: t, members }];
+    });
+    const postItems: QueueItem[] = rows
+      .filter((r) => postTaskIds.has(r.id))
+      .map((r) => ({ kind: 'post', id: r.id, row: r }));
+    return [...rowItems, ...postItems];
+  }, [rowFacts, rowTasks, rows, postTaskIds]);
 
-  const taskFor = (contentId: string): MosTask | undefined =>
-    tasks.find((t) => t.content_id === contentId);
+  const matches = (it: QueueItem): boolean => {
+    if (!term) return true;
+    if (it.kind === 'post') {
+      return it.row.title.toLowerCase().includes(term)
+        || (it.row.ref ?? '').toLowerCase().includes(term);
+    }
+    return it.members.some((m) => m.title.toLowerCase().includes(term)
+      || (m.ref ?? '').toLowerCase().includes(term))
+      || projectName(it.facts.project_id).toLowerCase().includes(term);
+  };
+
+  const itemLate = (it: QueueItem): boolean => (it.kind === 'post'
+    ? isOverdue(it.row)
+    : Boolean(it.task.due_at) && new Date(it.task.due_at as string).getTime() < Date.now());
+  const itemMine = (it: QueueItem): boolean => (it.kind === 'post'
+    ? it.row.owner_role === myRole
+    : it.task.role === myRole);
+
+  const filtered = useMemo(() => items.filter(matches), [items, term, myRole]);
+
+  /**
+   * The PERMALINK case: the page was OPENED on a row that is not in this queue
+   * — someone else's stage, or a row you were only sent to look at. It renders
+   * above the queue rather than 404-ing; the component is the same one either
+   * way.
+   *
+   * Pinned to the param the page arrived with, deliberately. Without that, a row
+   * you expanded from your own queue and then approved would vanish from the
+   * queue and immediately reappear here as a stray block — the opposite of
+   * «collapsing returns you to the queue with the card gone».
+   */
+  const [arrivedWithRow] = useState(() => params.get('row'));
+  const [arrivedWithTask] = useState(() => params.get('task'));
+  const linkedRowOutsideQueue = Boolean(
+    ((openRowId && openRowId === arrivedWithRow) || (!openRowId && openTaskId && openTaskId === arrivedWithTask))
+    && !items.some((it) => it.kind === 'row' && it.id === openRowId),
+  );
+
+  /* Rendered as an ELEMENT, not a nested component: a component declared
+     inside this function gets a new identity on every render, which would
+     unmount and remount `RowPane` — and re-fetch the row — on every keystroke
+     in the search box. */
+  const linkedRow = linkedRowOutsideQueue ? (
+    <>
+      <div className="lbl" style={{ marginBottom: 9 }}>
+        {isAr ? 'الصف المفتوح من الرابط' : 'The row this link opened'}
+      </div>
+      <div style={{ marginBottom: 22 }}>
+        <RowPane rowId={openRowId} taskId={openTaskId} onChanged={() => void load()} />
+        <button
+          type="button"
+          className="btn btn-d btn-sm"
+          style={{ marginTop: 10 }}
+          onClick={() => expandRow(null)}
+        >
+          {isAr ? 'إغلاق' : 'Close'}
+        </button>
+      </div>
+    </>
+  ) : null;
+
+  const late = filtered.filter((it) => itemLate(it));
+  const mine = filtered.filter((it) => !itemLate(it) && itemMine(it));
+  const others = filtered.filter((it) => !itemLate(it) && !itemMine(it));
+
+  const taskFor = (contentId: string): MosSubjectTask | undefined =>
+    tasks.find((t) => t.subject_table !== 'mos_content_rows' && t.subject_id === contentId);
 
   /** The loaded content row behind an id — the thumbnail source for a task. */
   const contentRow = (contentId: string): MosContentRow | undefined =>
@@ -396,11 +827,22 @@ export default function WorkPage() {
     return [...seen];
   }, [rows]);
 
+  // Posts only: a row's three members are represented by the ROW card below,
+  // never as three separate cards — the row IS the task.
   const mobileRows = useMemo(
     () => rows.filter((r) =>
-      (!chipProject || r.project_id === chipProject)
+      postTaskIds.has(r.id)
+      && (!chipProject || r.project_id === chipProject)
       && (!chipVideo || r.content_type_key === 'video')),
-    [rows, chipProject, chipVideo],
+    [rows, postTaskIds, chipProject, chipVideo],
+  );
+
+  /** The ROW cards on the phone — same objects, same expansion, one column. */
+  const mobileRowItems = useMemo(
+    () => items.filter((it): it is Extract<QueueItem, { kind: 'row' }> => it.kind === 'row')
+      .filter((it) => (!chipProject || it.facts.project_id === chipProject) && !chipVideo)
+      .filter((it) => !chipMine || itemMine(it)),
+    [items, chipProject, chipVideo, chipMine, myRole],
   );
 
   // The late card is never filtered away by «لي» — it cannot be missed.
@@ -435,95 +877,30 @@ export default function WorkPage() {
   const isScheduleStep = (r: MosContentRow): boolean =>
     r.status_key.includes('schedule') || r.status_key.includes('publish');
 
-  const Group = ({
-    label, tone, items, faded,
-  }: {
-    label: string;
-    tone: 'late' | 'now' | 'idle';
-    items: MosContentRow[];
-    faded?: boolean;
-  }) => {
-    if (items.length === 0) return null;
-    return (
-      <>
-        {label && (
-          <div
-            className="lbl"
-            style={{ marginBottom: 9, color: tone === 'late' ? 'var(--late)' : undefined }}
-          >
-            {label}
-          </div>
-        )}
-        <div
-          className="card"
-          style={{
-            marginBottom: 22,
-            opacity: faded ? 0.72 : 1,
-            borderColor: tone === 'late' ? 'color-mix(in srgb, var(--late) 38%, transparent)' : undefined,
-          }}
-        >
-          <div className="tbl-wrap">
-            <table className="tbl">
-              <tbody>
-                {items.map((r) => {
-                  const task = taskFor(r.id);
-                  const isMine = r.owner_role === myRole;
-                  return (
-                    <tr key={r.id} className="click" onClick={() => preview.open(r.id)}>
-                      <td style={{ width: 44 }}>
-                        <ContentThumb row={r} size="sm" />
-                      </td>
-                      <td style={{ width: 30 }}>
-                        <KindCell typeKey={r.content_type_key} />
-                      </td>
-                      <td>
-                        <div className="ttl">{statusLabel(r, isAr)} — {r.title}</div>
-                        <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
-                          <span className="ltr">{r.ref}</span> · {typeLabel(r.content_type_key)}
-                          {r.project_id && <> · <ProjectLink projectIds={[r.project_id]} variant="link" /></>}
-                          {task && task.round > 1 && (
-                            <> · {isAr ? `الجولة ${num(task.round, true)}` : `round ${task.round}`}</>
-                          )}
-                        </div>
-                      </td>
-                      <td style={{ width: 190 }}>
-                        {isOverdue(r) ? (
-                          <Pill tone="late">
-                            {isAr
-                              ? `استحقاق ${shortDate(r.current_task_due_at ?? r.due_at, true)} · متأخر ${daysAgo(r.current_task_due_at ?? r.due_at, true)}`
-                              : `due ${shortDate(r.current_task_due_at ?? r.due_at, false)} · ${daysAgo(r.current_task_due_at ?? r.due_at, false)} late`}
-                          </Pill>
-                        ) : (
-                          <Pill tone={tone === 'idle' ? 'wait' : 'now'}>
-                            {r.current_task_due_at
-                              ? isAr
-                                ? `الاستحقاق ${shortDate(r.current_task_due_at, true)}`
-                                : `due ${shortDate(r.current_task_due_at, false)}`
-                              : isAr ? 'بلا موعد' : 'no due date'}
-                          </Pill>
-                        )}
-                      </td>
-                      <td style={{ width: 130, textAlign: 'end' }}>
-                        {isMine ? (
-                          <span className={`btn btn-sm${faded ? ' btn-d' : ' btn-p'}`}>
-                            {actionLabel(r, isAr)}
-                          </span>
-                        ) : (
-                          <span className="btn btn-d btn-sm">{isAr ? 'عرض' : 'View'}</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </>
-    );
-  };
+  /**
+   * One group of the queue. A row and a post are different cards but the same
+   * table: both expand IN PLACE into a second full-width row underneath, which
+   * is what makes «مهامي» the place approvals happen rather than a list of
+   * links to somewhere else.
+   */
 
   const roleLabel = ROLE_LABELS[myRole] ? (isAr ? ROLE_LABELS[myRole].ar : ROLE_LABELS[myRole].en) : myRole;
+
+  const groupCtx: GroupCtx = {
+    isAr,
+    myRole,
+    typeLabel,
+    projectName,
+    openRowId,
+    openPostId,
+    expandRow,
+    expandPost,
+    taskFor,
+    itemLate,
+    itemMine,
+    reload: () => { void load(); },
+    navigate: (href) => navigate(href),
+  };
 
   // s28's phone header: «اليوم» + «الخميس ٣٠ يوليو · ٤ مفتوحة، ١ متأخرة».
   const todayIso = new Date().toISOString();
@@ -546,6 +923,8 @@ export default function WorkPage() {
         <div className="body">
           {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
           {loading && rows.length === 0 && <Skeleton rows={5} />}
+
+          {linkedRow}
 
           {rows.length > 0 && (
             <div className="m1-chips">
@@ -579,8 +958,8 @@ export default function WorkPage() {
             </div>
           )}
 
-          {!loading && !error && mobileRows.length === 0 && upcoming.length === 0
-            && manualSorted.length === 0 && (
+          {!loading && !error && mobileRows.length === 0 && mobileRowItems.length === 0
+            && upcoming.length === 0 && manualSorted.length === 0 && (
             <Empty
               title={isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'}
               body={isAr
@@ -588,6 +967,54 @@ export default function WorkPage() {
                 : 'When a stage reaches your role it appears here, ordered by what is due first.'}
             />
           )}
+
+          {/* الصفوف — بطاقة واحدة لثلاثة منشورات، تتوسّع في مكانها. */}
+          {mobileRowItems.length > 0 && (
+            <div className="m1-lbl">{isAr ? 'صفوف — ثلاثة منشورات معًا' : 'Rows — three posts together'}</div>
+          )}
+          {mobileRowItems.map((it) => {
+            const open = openRowId === it.facts.row_id;
+            const day = it.facts.batch_day;
+            const overdue = itemLate(it);
+            return (
+              <div key={it.facts.row_id} className={`m1-card${overdue ? ' late2' : ''}`}>
+                {overdue && <span className="m1-pill late">{lateBy(it.task.due_at, isAr)}</span>}
+                <div
+                  className="m1-t"
+                  style={{ marginTop: overdue ? 9 : 0 }}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => expandRow(open ? null : it.facts.row_id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') expandRow(open ? null : it.facts.row_id); }}
+                >
+                  {isAr
+                    ? `صف ${day ? shortDate(day, true) : 'بلا يوم'} — ${it.facts.project_id ? projectName(it.facts.project_id) : 'عام'}`
+                    : `Row of ${day ? shortDate(day, false) : 'no day'} — ${it.facts.project_id ? projectName(it.facts.project_id) : 'general'}`}
+                </div>
+                <div className="m1-m">
+                  {isAr
+                    ? `${num(it.facts.member_count, true)} منشورات — مهمة واحدة · الأول في الترتيب يُنشر أخيرًا`
+                    : `${it.facts.member_count} posts — one task · the first in the order publishes last`}
+                </div>
+                <button
+                  type="button"
+                  className="m1-btn p sm"
+                  onClick={() => expandRow(open ? null : it.facts.row_id)}
+                >
+                  {open
+                    ? (isAr ? 'طيّ' : 'Collapse')
+                    : itemMine(it)
+                      ? rowActionLabel(it.task.step_id, isAr)
+                      : (isAr ? 'عرض الصف' : 'View the row')}
+                </button>
+                {open && (
+                  <div style={{ marginTop: 12 }}>
+                    <RowPane rowId={it.facts.row_id} onChanged={() => void load()} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           {/* المتأخر بطاقة حمراء منفصلة فوق الطيّة، لا صفّ في قائمة (s28). */}
           {mLate.map((r) => {
@@ -810,6 +1237,8 @@ export default function WorkPage() {
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
         {loading && rows.length === 0 && <Skeleton rows={5} />}
 
+        {linkedRow}
+
         {!loading && filtered.length === 0 && upcoming.length === 0
           && manualSorted.length === 0 && !error && (
           <Empty
@@ -820,9 +1249,19 @@ export default function WorkPage() {
           />
         )}
 
-        <Group label={isAr ? 'متأخر · ابدئي بهذا' : 'Late · start here'} tone="late" items={late} />
+        <QueueGroup
+          label={isAr ? 'متأخر · ابدئي بهذا' : 'Late · start here'}
+          tone="late"
+          items={late}
+          ctx={groupCtx}
+        />
         <ManualBlock />
-        <Group label={isAr ? 'مطلوب منكِ اليوم' : 'Yours today'} tone="now" items={mine} />
+        <QueueGroup
+          label={isAr ? 'مطلوب منكِ اليوم' : 'Yours today'}
+          tone="now"
+          items={mine}
+          ctx={groupCtx}
+        />
 
         {/* «القادم إليك» — visible preparation, explicitly NOT tasks. */}
         {upcoming.length > 0 && (
@@ -865,11 +1304,12 @@ export default function WorkPage() {
           </>
         )}
 
-        <Group
+        <QueueGroup
           label={isAr ? 'بانتظار شخص آخر — لا إجراء منكِ' : 'Waiting on someone else — no action from you'}
           tone="idle"
           items={others}
           faded
+          ctx={groupCtx}
         />
       </div>
 

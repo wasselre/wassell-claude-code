@@ -1,11 +1,37 @@
 /**
- * The current task — design screen 06 (card) and screen 38 (request changes) —
- * plus `TasksApprovalsTab`, the FULL «المهام والاعتمادات» tab of screen 10.
+ * The current task — design screen 06 (card) — plus `TasksApprovalsTab`, the
+ * FULL «المهام والاعتمادات» tab of screen 10.
  *
- * One card, one action. The checklist is DERIVED from the step's own
- * `required_fields` plus the scene footage, so it can never drift from what the
- * workflow actually asks for. Approving with a gap open is allowed — and
- * recorded on the approval, which is the honest version of a soft gate.
+ * The checklist is DERIVED from the step's own `required_fields` **and**
+ * `required_files`, so it can never drift from what the workflow actually asks
+ * for.
+ *
+ * CHANGED 2026-09-15 (build plan F6 + Group G). Two corrections:
+ *
+ *   1. **The card said approving with a gap open was allowed** — «الاعتماد مع
+ *      وجود متطلب ناقص مسموح، لكنه يُسجَّل على الاعتماد نفسه». The DATABASE has
+ *      refused exactly that since 2026-09-14: `workflow_advance_role_path`
+ *      raises `MOS:REQUIREMENTS_MISSING` when a `required_fields` /
+ *      `required_files` entry is empty. `ApprovalSheet` was corrected then;
+ *      this card was not, so two surfaces described one rule and one of them
+ *      was lying. It now says what the database does, and (like the sheet)
+ *      shows the gap instead of offering an action that cannot succeed.
+ *      The card also listed `required_fields` ONLY — a required FILE was
+ *      invisible here and surfaced minutes later as a raw refusal. Both lists
+ *      are now named. Only the FIELDS carry a tick: a required file is checked
+ *      against `mos_asset_links.role`, which `content_detail` does not return,
+ *      so a tick here would be a guess — and the guess `TasksApprovalsTab` was
+ *      already making (`filled('final_square')` against `data`) was wrong on
+ *      every design that WAS attached.
+ *
+ *   2. **The card's own approval button and its own rejection dialog are
+ *      gone.** They were a degraded copy of the page's approval surface: the
+ *      dialog carried no revision targets and no validated return step (that
+ *      is `RequestChangesModal`), and the button could not run the auto-ad
+ *      flow, so an ad-bearing approval from here failed with "use the button
+ *      at the top of the page". One approval surface, one rejection dialog —
+ *      both live in the page's action bar. The SUBMIT button for a
+ *      non-approval step stays: it is not an approval and has no second copy.
  *
  * Screen 10's tab is the difference between a database and an operating
  * system: nobody assigns these rows — closing one generates the next. The
@@ -21,10 +47,22 @@ import {
 } from '@/lib/marketingOS/client';
 import { autoAdOutcomeText } from './AutoAdApproval';
 import { useWorkspace } from '../MarketingWorkspace';
-import { Check, ContentThumb, Modal, Pill } from './kit';
+import { Check, ContentThumb, Pill } from './kit';
 import { IconCheck, IconX } from './icons';
 import { daysAgo, initial, num, roleAvatarClass, shortDate } from '../lib/format';
 import { SECTION_LABELS, sectionForStep } from '../lib/contentRoute';
+
+/**
+ * «متطلب واحد ناقص» / «متطلبان ناقصان» / «٣ متطلبات ناقصة» — the count, with
+ * no promise attached to it. The same phrase `ApprovalSheet` prints, minus its
+ * «سيُسجَّل» tail, which described the soft gate the database removed.
+ */
+function gapsPhrase(n: number, isAr: boolean): string {
+  if (!isAr) return `${n} requirement${n === 1 ? '' : 's'} still missing`;
+  if (n === 1) return 'متطلب واحد ناقص';
+  if (n === 2) return 'متطلبان ناقصان';
+  return `${num(n, true)} متطلبات ناقصة`;
+}
 
 export default function TaskCard({
   item, task, step, steps = [], scenes, canAct, isAr, onDone,
@@ -43,13 +81,31 @@ export default function TaskCard({
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const [busy, setBusy] = useState(false);
-  const [rejecting, setRejecting] = useState(false);
-  const [note, setNote] = useState('');
 
   const data = (item as unknown as { data?: Record<string, unknown> }).data ?? {};
   const required = Array.isArray(step?.required_fields)
     ? (step?.required_fields as unknown[]).filter((f): f is string => typeof f === 'string')
     : [];
+  // The database checks BOTH lists, so both are NAMED here — the card used to
+  // print only the fields, and a missing `final_vertical` looked like nothing
+  // was missing at all.
+  //
+  // But a required FILE is checked against `mos_asset_links` (by `role`), not
+  // against `data`, and `content_detail` does not return the links — so this
+  // card genuinely cannot say whether a slot is filled. It lists the files as
+  // requirements WITHOUT a tick rather than printing a ✗ on a design that is
+  // actually attached. (`TasksApprovalsTab` below did exactly that, under a
+  // comment claiming files "live as URLs/entries in the item data"; they do
+  // not.) Only the FIELDS are counted as gaps, so nothing is blocked on a
+  // check this surface cannot make.
+  const requiredFiles = Array.isArray(step?.required_files)
+    ? (step?.required_files as unknown[]).filter((f): f is string => typeof f === 'string')
+    : [];
+  const filled = (key: string): boolean => {
+    const v = data[key];
+    return Array.isArray(v) ? v.length > 0 : typeof v === 'string' ? v.trim() !== '' : v != null;
+  };
+  const gaps = required.filter((f) => !filled(f)).length;
 
   const withFootage = scenes.filter((s) => s.footage_status === 'have').length;
   const overdue = task.due_at ? new Date(task.due_at).getTime() < Date.now() : false;
@@ -57,26 +113,19 @@ export default function TaskCard({
     ? isAr ? ROLE_LABELS[task.role].ar : ROLE_LABELS[task.role].en
     : task.role;
 
-  const run = async (result: 'submitted' | 'approved' | 'changes_requested', text?: string): Promise<void> => {
+  /**
+   * Submitting a NON-approval step. Approving is not done from here any more
+   * (see the file header) — the page's action bar owns it, so this never sees
+   * an auto-ad outcome and never needs the ad-set pick.
+   */
+  const submit = async (): Promise<void> => {
     setBusy(true);
     try {
-      const res = await completeTask(task.id, result, text);
-      addToast(
-        autoAdOutcomeText(res.auto_ad, isAr)
-          ?? (result === 'changes_requested'
-            ? isAr ? 'أُعيدت للخطوة السابقة مع الملاحظة.' : 'Sent back a stage with your note.'
-            : isAr ? 'تم — انتقلت إلى الخطوة التالية.' : 'Done — it moved to the next stage.'),
-        res.auto_ad?.status === 'skipped' ? 'info' : 'success',
-      );
-      setRejecting(false);
-      setNote('');
+      await completeTask(task.id, 'submitted');
+      addToast(isAr ? 'تم — انتقلت إلى الخطوة التالية.' : 'Done — it moved to the next stage.', 'success');
       onDone();
     } catch (e) {
-      // Several linked ad sets: the pick lives in the header's approval dialog.
-      addToast(adSetRequiredChoices(e)
-        ? (isAr ? 'هذا الاعتماد يُنشئ إعلانًا في ميتا — اختر المجموعة الإعلانية من زر «اعتماد» أعلى الصفحة.'
-                : 'This approval creates a Meta ad — pick the ad set from the “Approve” button at the top of the page.')
-        : e instanceof Error ? e.message : String(e), 'error');
+      addToast(e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setBusy(false);
     }
@@ -85,175 +134,143 @@ export default function TaskCard({
   const isApproval = step?.is_approval === true;
 
   return (
-    <>
-      <div className="task-card">
-        <div className="hd">
-          <ContentThumb row={item} size="sm" />
-          <Pill tone="now">{isAr ? 'المهمة الحالية' : 'Current task'}</Pill>
-          <h4 style={{ marginInlineStart: 2 }}>
-            {step ? (isAr ? step.label_ar : step.label_en) : (isAr ? 'مهمة مفتوحة' : 'Open task')}
-          </h4>
-          {/* The working AREA this step belongs to — the same vocabulary every
-              deep link and preview popup uses, so «مراجعة الكاتب» on this
-              card and «مراجعة الكاتب» in a task row mean one place. */}
-          {step && (
-            <span className="tag" style={{ marginInlineStart: 2 }}>
-              {(() => {
-                const s = sectionForStep(steps.length > 0 ? steps : [step], step.key);
-                return isAr ? SECTION_LABELS[s].ar : SECTION_LABELS[s].en;
-              })()}
-            </span>
-          )}
-          <span
-            style={{
-              marginInlineStart: 'auto',
-              fontSize: 11.5,
-              fontWeight: 700,
-              color: overdue ? 'var(--late)' : 'var(--mute)',
-            }}
-          >
-            {task.due_at
-              ? overdue
-                ? isAr
-                  ? `استحقاق ${shortDate(task.due_at, true)} · متأخر ${daysAgo(task.due_at, true)}`
-                  : `due ${shortDate(task.due_at, false)} · ${daysAgo(task.due_at, false)} late`
-                : isAr
-                  ? `الاستحقاق ${shortDate(task.due_at, true)}`
-                  : `due ${shortDate(task.due_at, false)}`
-              : isAr ? 'بلا موعد' : 'no due date'}
+    <div className="task-card">
+      <div className="hd">
+        <ContentThumb row={item} size="sm" />
+        <Pill tone="now">{isAr ? 'المهمة الحالية' : 'Current task'}</Pill>
+        <h4 style={{ marginInlineStart: 2 }}>
+          {step ? (isAr ? step.label_ar : step.label_en) : (isAr ? 'مهمة مفتوحة' : 'Open task')}
+        </h4>
+        {/* The working AREA this step belongs to — the same vocabulary every
+            deep link and preview popup uses, so «مراجعة الكاتب» on this
+            card and «مراجعة الكاتب» in a task row mean one place. */}
+        {step && (
+          <span className="tag" style={{ marginInlineStart: 2 }}>
+            {(() => {
+              const s = sectionForStep(steps.length > 0 ? steps : [step], step.key);
+              return isAr ? SECTION_LABELS[s].ar : SECTION_LABELS[s].en;
+            })()}
           </span>
-        </div>
-
-        <div style={{ fontSize: 12.5, color: 'var(--mute)', margin: '9px 0 12px' }}>
-          {isAr ? 'مُسندة إلى ' : 'Assigned to '}
-          <b style={{ color: 'var(--ink)' }}>{roleLabel}</b>
-          {task.round > 1 && (
-            <> · {isAr ? `الجولة ${num(task.round, true)}` : `round ${task.round}`}</>
-          )}
-          {' · '}
-          {isAr ? 'فُتحت ' : 'opened '}{shortDate(task.opened_at, isAr)}
-        </div>
-
-        {(required.length > 0 || scenes.length > 0) && (
-          <>
-            <div className="lbl" style={{ marginBottom: 5 }}>
-              {isApproval
-                ? isAr ? 'المطلوب قبل الاعتماد' : 'Expected before approval'
-                : isAr ? 'المطلوب لإنهاء الخطوة' : 'Expected to finish this stage'}
-            </div>
-            {required.map((f) => {
-              const v = data[f];
-              const filled = Array.isArray(v) ? v.length > 0 : typeof v === 'string' ? v.trim() !== '' : v != null;
-              return <Check key={f} ok={filled}>{fieldLabel(f, isAr)}</Check>;
-            })}
-            {scenes.length > 0 && (
-              <Check ok={withFootage === scenes.length}>
-                {isAr
-                  ? `المواد محددة — ${num(withFootage, true)} من ${num(scenes.length, true)} مشاهد لديها تصوير`
-                  : `Material identified — ${withFootage} of ${scenes.length} scenes have footage`}
-              </Check>
-            )}
-          </>
         )}
+        <span
+          style={{
+            marginInlineStart: 'auto',
+            fontSize: 11.5,
+            fontWeight: 700,
+            color: overdue ? 'var(--late)' : 'var(--mute)',
+          }}
+        >
+          {task.due_at
+            ? overdue
+              ? isAr
+                ? `استحقاق ${shortDate(task.due_at, true)} · متأخر ${daysAgo(task.due_at, true)}`
+                : `due ${shortDate(task.due_at, false)} · ${daysAgo(task.due_at, false)} late`
+              : isAr
+                ? `الاستحقاق ${shortDate(task.due_at, true)}`
+                : `due ${shortDate(task.due_at, false)}`
+            : isAr ? 'بلا موعد' : 'no due date'}
+        </span>
+      </div>
 
-        {canAct ? (
-          <div
-            style={{
-              marginTop: 13,
-              paddingTop: 12,
-              borderTop: '1px solid color-mix(in srgb, var(--copper) 25%, transparent)',
-              display: 'flex',
-              gap: 8,
-              alignItems: 'center',
-              flexWrap: 'wrap',
-            }}
-          >
-            {isApproval && (
-              <button type="button" className="btn btn-late" disabled={busy} onClick={() => setRejecting(true)}>
-                {isAr ? 'طلب تعديلات' : 'Request changes'}
-              </button>
-            )}
-            <button
-              type="button"
-              className="btn btn-go"
-              disabled={busy}
-              onClick={() => void run(isApproval ? 'approved' : 'submitted')}
-            >
+      <div style={{ fontSize: 12.5, color: 'var(--mute)', margin: '9px 0 12px' }}>
+        {isAr ? 'مُسندة إلى ' : 'Assigned to '}
+        <b style={{ color: 'var(--ink)' }}>{roleLabel}</b>
+        {task.round > 1 && (
+          <> · {isAr ? `الجولة ${num(task.round, true)}` : `round ${task.round}`}</>
+        )}
+        {' · '}
+        {isAr ? 'فُتحت ' : 'opened '}{shortDate(task.opened_at, isAr)}
+      </div>
+
+      {(required.length > 0 || requiredFiles.length > 0 || scenes.length > 0) && (
+        <>
+          <div className="lbl" style={{ marginBottom: 5 }}>
+            {isApproval
+              ? isAr ? 'المطلوب قبل الاعتماد' : 'Expected before approval'
+              : isAr ? 'المطلوب لإنهاء الخطوة' : 'Expected to finish this stage'}
+          </div>
+          {required.map((f) => (
+            <Check key={f} ok={filled(f)}>{fieldLabel(f, isAr)}</Check>
+          ))}
+          {requiredFiles.map((f) => (
+            <div key={`file-${f}`} style={{ fontSize: 12, color: 'var(--mute)', padding: '2px 0 2px 2px' }}>
+              {isAr
+                ? `· الملف «${fieldLabel(f, true)}» مطلوب — يتحقّق منه الخادم عند الإرسال`
+                : `· File “${fieldLabel(f, false)}” is required — the server checks it on submit`}
+            </div>
+          ))}
+          {scenes.length > 0 && (
+            <Check ok={withFootage === scenes.length}>
+              {isAr
+                ? `المواد محددة — ${num(withFootage, true)} من ${num(scenes.length, true)} مشاهد لديها تصوير`
+                : `Material identified — ${withFootage} of ${scenes.length} scenes have footage`}
+            </Check>
+          )}
+        </>
+      )}
+
+      {canAct ? (
+        <div
+          style={{
+            marginTop: 13,
+            paddingTop: 12,
+            borderTop: '1px solid color-mix(in srgb, var(--copper) 25%, transparent)',
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
+          {/* An approval is NOT taken here. The page's action bar carries the
+              one approval surface (and, on a phone, the fixed bottom bar and
+              its sheet); rejection goes through RequestChangesModal, the only
+              dialog that carries revision targets and a validated return
+              step. See the file header. */}
+          {!isApproval && (
+            <button type="button" className="btn btn-go" disabled={busy} onClick={() => void submit()}>
               <IconCheck />
               {busy
                 ? isAr ? 'جارٍ…' : 'Working…'
-                : isApproval
-                  ? isAr ? 'اعتماد' : 'Approve'
-                  : isAr ? 'إرسال للخطوة التالية' : 'Submit to next stage'}
+                : isAr ? 'إرسال للخطوة التالية' : 'Submit to next stage'}
             </button>
-            <span style={{ fontSize: 12, color: 'var(--mute)' }}>
-              {isApproval
+          )}
+          <span style={{ fontSize: 12, color: 'var(--mute)' }}>
+            {isApproval
+              ? gaps > 0
+                /* The database refuses this: workflow_advance_role_path raises
+                   MOS:REQUIREMENTS_MISSING. Say so, rather than offering an
+                   approval that cannot land. */
                 ? isAr
-                  ? 'الاعتماد مع وجود متطلب ناقص مسموح، لكنه يُسجَّل على الاعتماد نفسه.'
-                  : 'Approving with a gap open is allowed — it is recorded on the approval.'
+                  ? `لا يمكن الاعتماد قبل اكتمال المتطلبات — ${gapsPhrase(gaps, true)}. الاعتماد يُرفض في قاعدة البيانات، لا يُسجَّل كملاحظة.`
+                  : `This cannot be approved while a requirement is open — ${gapsPhrase(gaps, false)}. The database refuses the approval; it is not recorded as a note.`
+                : isAr
+                  ? 'المتطلبات مكتملة. الاعتماد وطلب التعديلات من شريط إجراءات الصفحة — سطح اعتماد واحد وحوار رفض واحد.'
+                  : 'The requirements are met. Approve or request changes from the page’s action bar — one approval surface, one rejection dialog.'
+              : gaps > 0
+                ? isAr
+                  ? `${gapsPhrase(gaps, true)} — الإرسال يُرفض حتى تكتمل.`
+                  : `${gapsPhrase(gaps, false)} — submitting is refused until they are complete.`
                 : isAr
                   ? 'الإرسال يفتح الخطوة التالية فورًا لدى صاحب الدور التالي.'
                   : 'Submitting opens the next stage for the next role immediately.'}
-            </span>
-          </div>
-        ) : (
-          <div
-            style={{
-              marginTop: 13,
-              paddingTop: 12,
-              borderTop: '1px solid color-mix(in srgb, var(--copper) 25%, transparent)',
-              fontSize: 12,
-              color: 'var(--mute)',
-            }}
-          >
-            {isAr
-              ? `هذه المرحلة لدى ${roleLabel} — لا إجراء مطلوب منك.`
-              : `This stage sits with the ${roleLabel} — no action from you.`}
-          </div>
-        )}
-      </div>
-
-      {rejecting && (
-        <Modal
-          title={isAr ? 'طلب تعديلات' : 'Request changes'}
-          sub={isAr
-            ? 'ترجع الخطوة واحدة إلى الوراء كجولة جديدة. الملاحظة إلزامية — الرفض بلا سبب يعيد الدورة عمياء.'
-            : 'This sends the work back one stage as a new round. The note is required — a rejection without a reason just restarts the loop blind.'}
-          onClose={() => setRejecting(false)}
-          footer={
-            <>
-              <button type="button" className="btn" onClick={() => setRejecting(false)} disabled={busy}>
-                {isAr ? 'إلغاء' : 'Cancel'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-p"
-                disabled={busy || note.trim() === ''}
-                onClick={() => void run('changes_requested', note.trim())}
-              >
-                {isAr ? 'إرجاع مع الملاحظة' : 'Send back with note'}
-              </button>
-            </>
-          }
+          </span>
+        </div>
+      ) : (
+        <div
+          style={{
+            marginTop: 13,
+            paddingTop: 12,
+            borderTop: '1px solid color-mix(in srgb, var(--copper) 25%, transparent)',
+            fontSize: 12,
+            color: 'var(--mute)',
+          }}
         >
-          <div>
-            <div className="lbl" style={{ marginBottom: 6 }}>
-              {isAr ? 'ما الذي يجب تغييره؟' : 'What needs to change?'}
-            </div>
-            <textarea
-              className="inp"
-              rows={5}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              autoFocus
-              placeholder={isAr
-                ? 'مثال: المشهدان ٣ و٤ يحتاجان إعادة كتابة — الافتتاحية طويلة.'
-                : 'e.g. Scenes 3 and 4 need a rewrite — the hook runs long.'}
-            />
-          </div>
-        </Modal>
+          {isAr
+            ? `هذه المرحلة لدى ${roleLabel} — لا إجراء مطلوب منك.`
+            : `This stage sits with the ${roleLabel} — no action from you.`}
+        </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -393,6 +410,12 @@ export function TasksApprovalsTab({
     return Array.isArray(v) ? v.length > 0 : typeof v === 'string' ? v.trim() !== '' : v != null;
   };
   const scenesSettled = scenes.length > 0 && !scenes.some((s) => s.footage_status === 'missing');
+  // Same rule as the card above and as ApprovalSheet: the database refuses an
+  // approval with an open requirement (MOS:REQUIREMENTS_MISSING), so the button
+  // says what is missing rather than posting a call that cannot land.
+  // FIELDS only — see the note in TaskCard above: a required file is not in
+  // `data`, so counting it here would disable the button on a complete record.
+  const approvalGaps = requiredFields.filter((f) => !filled(f)).length;
 
   const approve = async (): Promise<void> => {
     if (!openTask) return;
@@ -621,12 +644,16 @@ export function TasksApprovalsTab({
                 {requiredFields.map((f) => (
                   <Check key={f} ok={filled(f)}>{fieldLabel(f, isAr)}</Check>
                 ))}
-                {/* required_files are checked against data presence too — files
-                    live as URLs/entries in the item data, same rule as fields. */}
+                {/* A required FILE is checked against `mos_asset_links.role`, NOT
+                    against the item data — this rendered a ✗ on every attached
+                    design until 2026-09-15, because `data.final_square` has
+                    never existed. Named, not ticked; the server is the judge. */}
                 {requiredFiles.map((f) => (
-                  <Check key={`file-${f}`} ok={filled(f)}>
-                    {isAr ? `الملف «${fieldLabel(f, true)}» مرفوع` : `File “${fieldLabel(f, false)}” attached`}
-                  </Check>
+                  <div key={`file-${f}`} style={{ fontSize: 12, color: 'var(--mute)', padding: '2px 0 2px 2px' }}>
+                    {isAr
+                      ? `· الملف «${fieldLabel(f, true)}» مطلوب — يتحقّق منه الخادم عند الاعتماد`
+                      : `· File “${fieldLabel(f, false)}” is required — the server checks it on approval`}
+                  </div>
                 ))}
                 {scenes.length > 0 && (
                   <Check ok={scenesSettled}>
@@ -645,10 +672,15 @@ export function TasksApprovalsTab({
                     type="button"
                     className="btn btn-go"
                     style={{ flex: 1, justifyContent: 'center' }}
-                    disabled={busy}
+                    disabled={busy || approvalGaps > 0}
+                    title={approvalGaps > 0
+                      ? (isAr ? 'أكمل المتطلبات أولًا' : 'Complete the requirements first')
+                      : undefined}
                     onClick={() => void approve()}
                   >
-                    {busy ? (isAr ? 'جارٍ…' : 'Working…') : isAr ? 'اعتماد' : 'Approve'}
+                    {approvalGaps > 0
+                      ? isAr ? 'لا يمكن الاعتماد بعد' : 'Cannot approve yet'
+                      : busy ? (isAr ? 'جارٍ…' : 'Working…') : isAr ? 'اعتماد' : 'Approve'}
                   </button>
                   <button
                     type="button"
@@ -781,6 +813,11 @@ function fieldLabel(key: string, isAr: boolean): string {
     hashtags: { ar: 'الوسوم محددة', en: 'Hashtags set' },
     design_brief: { ar: 'موجز التصميم مكتوب', en: 'Design brief written' },
     slides: { ar: 'الشرائح محددة', en: 'Slides listed' },
+    // The two design slots the row path requires (workflow versions post_std v8
+    // / video_std v7, `required_files`). Every post is a square feed file AND a
+    // vertical story file.
+    final_square: { ar: 'المربّع', en: 'Square' },
+    final_vertical: { ar: 'العمودي', en: 'Vertical' },
   };
   const m = MAP[key];
   return m ? (isAr ? m.ar : m.en) : key;

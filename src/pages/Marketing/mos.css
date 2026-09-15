@@ -110,6 +110,43 @@
   padding: 14px 9px 6px;
   font-weight: 700;
 }
+/* «متقدّم» — the collapsed half of the rail (2026-09-15, the month model).
+   A BUTTON, not a label: the six daily items stay on the rail and everything
+   else sits behind one click, with a count so nobody has to guess whether
+   anything is hidden there. */
+.mos-root .nav-sec-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: start;
+  cursor: pointer;
+  opacity: 0.8;
+}
+.mos-root .nav-sec-toggle:hover,
+.mos-root .nav-sec-toggle.on {
+  opacity: 1;
+}
+.mos-root .nav-sec-toggle .chev {
+  font-size: 8px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+.mos-root .nav-sec-toggle:not(.on) .chev {
+  transform: rotate(-90deg);
+}
+[dir='rtl'] .mos-root .nav-sec-toggle:not(.on) .chev {
+  transform: rotate(90deg);
+}
+.mos-root .nav-sec-toggle .ct {
+  margin-inline-start: auto;
+  font-size: 10px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
 .mos-root .navi {
   display: flex;
   align-items: center;

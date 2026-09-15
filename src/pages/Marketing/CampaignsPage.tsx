@@ -13,7 +13,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   CAMPAIGN_STATUS_LABELS, MosCampaign, MosGoal,
-  PLATFORM_LABELS, ROLE_LABELS,
+  PLATFORM_LABELS,
   commitCampaignPlan, deleteCampaigns, fetchCampaigns, fetchGoals,
   previewCampaignPlan, reviseCampaignPlan, saveCampaign, successMeasureSuffix,
   type MosPlanEnvelope, type MosPlanRequestInput,
@@ -926,7 +926,10 @@ function NewCampaignWizard({
   const [goalsList, setGoalsList] = useState<MosGoal[]>([]);
   const [name, setName] = useState('');
   const [nameEdited, setNameEdited] = useState(false);
-  const [ownerRole, setOwnerRole] = useState<string>('marketing_manager');
+  // Written, never asked: the dropdown is gone (2026-09-15) and nothing reads
+  // this as an assignment, but the column stays populated rather than NULL so
+  // existing readers (the campaign header, the row tone in kit.tsx) keep working.
+  const ownerRole = 'marketing_manager';
   const [budget, setBudget] = useState('');
   const [measures, setMeasures] = useState<MeasureDraft[]>(() => measuresToDrafts(undefined));
 
@@ -1389,14 +1392,12 @@ function NewCampaignWizard({
               <GoalMultiSelect value={goalIds} onChange={setGoalIds} isAr={isAr} onLoaded={setGoalsList} />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: kind === 'paid' ? '1fr 1fr' : '1fr', gap: 13 }}>
-              <Field label={isAr ? 'المسؤول' : 'Responsible'}>
-                <select className="inp" value={ownerRole} onChange={(e) => setOwnerRole(e.target.value)}>
-                  {(['marketing_manager', 'ops_supervisor', 'writer', 'montage'] as const).map((r) => (
-                    <option key={r} value={r}>{isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}</option>
-                  ))}
-                </select>
-              </Field>
+            {/* «المسؤول» was a dropdown here until 2026-09-15. Nothing reads
+                `owner_role` on a campaign as an assignment — work is assigned
+                by the workflow's own role steps and the capacity ledger — so
+                it was a required choice that changed nothing. It is written as
+                `marketing_manager` and no longer asked. */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 13 }}>
               {kind === 'paid' && (
                 <Field label={isAr ? 'الميزانية الكلية' : 'Total budget'}>
                   <div className="inp inp-row" style={{ padding: 0 }}>
@@ -1559,7 +1560,7 @@ function EditCampaignForm({
   const [goalIds, setGoalIds] = useState<string[]>(campaign.goal_ids ?? []);
   const [projectIds, setProjectIds] = useState<string[]>(campaign.project_ids ?? []);
   const [name, setName] = useState(campaign.name ?? '');
-  const [ownerRole, setOwnerRole] = useState<string>(campaign.owner_role ?? 'marketing_manager');
+  const ownerRole = campaign.owner_role ?? 'marketing_manager';
   const [startsOn, setStartsOn] = useState(campaign.starts_on ?? '');
   const [endsOn, setEndsOn] = useState(campaign.ends_on ?? '');
   const [budget, setBudget] = useState(campaign.budget_total?.toString() ?? '');
@@ -1698,16 +1699,12 @@ function EditCampaignForm({
           <GoalMultiSelect value={goalIds} onChange={setGoalIds} isAr={isAr} />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+        {/* The «المسؤول» dropdown that sat beside this went on 2026-09-15 —
+            see the wizard above. The campaign keeps whatever `owner_role` it
+            already had; it is simply not asked again. */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 13 }}>
           <Field label={isAr ? 'المشروع' : 'Project'} hint={isAr ? 'اختياري · متعدد' : 'optional · multiple'}>
             <ProjectMultiSelect projects={projects} value={projectIds} onChange={setProjectIds} isAr={isAr} />
-          </Field>
-          <Field label={isAr ? 'المسؤول' : 'Responsible'}>
-            <select className="inp" value={ownerRole} onChange={(e) => setOwnerRole(e.target.value)}>
-              {(['marketing_manager', 'ops_supervisor', 'writer', 'montage'] as const).map((r) => (
-                <option key={r} value={r}>{isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}</option>
-              ))}
-            </select>
           </Field>
         </div>
 

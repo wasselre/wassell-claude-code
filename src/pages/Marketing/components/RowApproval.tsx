@@ -1,0 +1,578 @@
+/**
+ * «الصف — اعتماد» — THE approval component for a row. One implementation,
+ * mounted two ways.
+ *
+ * A row is one approval object with two faces: the WRITING review, then the
+ * FINAL approval. Both approve the whole row; a send-back names one post and
+ * leaves the other two exactly as they were.
+ *
+ * WHY THIS IS ONE COMPONENT AND NOT TWO. The proposal (§5.1) deletes an inline
+ * approval that already existed — a second, weaker copy of the real one that
+ * silently dropped the revision targets when you rejected from it. So the
+ * requirement here is not "add an approval control to the queue card"; it is
+ * that the card expands and renders THIS, whole. The only difference between
+ * the queue's copy and the permalink's copy is which element it is mounted in.
+ * Rejection is likewise not re-implemented: it opens `RequestChangesModal`, the
+ * one rejection dialog, with the posts the reviewer marked already selected.
+ *
+ * ORDER. Editable at the writing review and read-only at the final approval —
+ * by then six designs are keyed to it. That is not just drawn: `row_order_save`
+ * refuses the write once the row is past the writing review. The writer's
+ * FIRST-read post publishes LAST, because Instagram shows newest first.
+ *
+ * THE FINAL FACE also puts last week's row of the same project, dimmed, above
+ * the three squares. The only real design question at that stage is whether the
+ * profile still reads as one account, and a dimmed strip answers it in a second.
+ */
+import { useMemo, useState } from 'react';
+import { useAppStore } from '@/stores/appStore';
+import { MosFieldDef, MosPublication } from '@/lib/marketingOS/client';
+import {
+  MosRowDetail, MosRowMember,
+  captionStateOf, completeRowTask, missingForStep, missingRequirementsOf,
+  publishPosition, rowFaceOf, saveRowOrder,
+} from '@/lib/marketingOS/rowClient';
+import { useAssetUrls } from '../lib/assetUrls';
+import { dateTimeShort, num, shortDate } from '../lib/format';
+import { Pill } from './kit';
+import { IconCheck, IconLibrary } from './icons';
+import RequestChangesModal from './RequestChangesModal';
+import {
+  CaptionBlock, CheckLine, MissingCard, PostLines, PostShell,
+  SLOTS, SLOT_META, SlotFrame, slotsFilled, slotsOfMember,
+} from './RowParts';
+
+/**
+ * The words for the requirements an approval step can refuse on. The SERVER
+ * sends these with a real refusal (`api/_lib/marketing/rowTasks.ts`); this copy
+ * only labels the LOCAL prediction. Keep the two in step.
+ */
+const REQUIREMENT_LABELS: Record<string, { ar: string; en: string }> = {
+  final_square: { ar: 'الملف المربّع ١:١', en: 'the square 1:1 file' },
+  final_vertical: { ar: 'الملف العمودي ٩:١٦', en: 'the vertical 9:16 file' },
+  caption: { ar: 'النص', en: 'the caption' },
+  caption_confirmed: { ar: 'تأكيد النص من الكاتب', en: 'the writer’s caption confirmation' },
+  headlines: { ar: 'أسطر المنشور', en: 'the post lines' },
+  design_brief: { ar: 'موجز التصميم', en: 'the design brief' },
+};
+
+/**
+ * The writing fields a row send-back can name. Fixed rather than read off the
+ * content type because every member of an organic row is the same `post` type
+ * and the reviewer is naming what to REWRITE, not what the form happens to show.
+ */
+const ROW_FIELDS: MosFieldDef[] = [
+  { key: 'headlines', label_ar: 'أسطر المنشور', label_en: 'The post lines', kind: 'long', required: true },
+  { key: 'caption', label_ar: 'النص', label_en: 'The caption', kind: 'long', required: true },
+  { key: 'design_brief', label_ar: 'موجز التصميم', label_en: 'The design brief', kind: 'long', required: false },
+  { key: 'hashtags', label_ar: 'الهاشتاقات', label_en: 'Hashtags', kind: 'short', required: false },
+];
+
+export default function RowApproval({
+  detail, isAr, canAct, onChanged, brief,
+}: {
+  detail: MosRowDetail;
+  isAr: boolean;
+  canAct: boolean;
+  onChanged: () => void | Promise<void>;
+  brief?: React.ReactNode;
+}) {
+  const addToast = useAppStore((s) => s.addToast);
+  const [busy, setBusy] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [refused, setRefused] = useState<Array<{ member: string | null; label_ar: string; label_en: string }> | null>(null);
+  /** Posts the reviewer has marked as needing a change, before sending. */
+  const [marked, setMarked] = useState<string[]>([]);
+  /** A local reorder, applied optimistically while the save is in flight. */
+  const [order, setOrder] = useState<string[] | null>(null);
+
+  const face = rowFaceOf(detail.steps, detail.task?.step_id ?? null);
+  const finalFace = face === 'final_approval';
+
+  const members: MosRowMember[] = useMemo(() => {
+    if (!order) return detail.members;
+    const by = new Map(detail.members.map((m) => [m.id, m]));
+    const out = order.map((id) => by.get(id)).filter((m): m is MosRowMember => !!m);
+    // Anything the local order does not name still has to be visible.
+    for (const m of detail.members) if (!order.includes(m.id)) out.push(m);
+    return out;
+  }, [detail.members, order]);
+
+  const { urlFor, thumbFor } = useAssetUrls(detail.assets);
+  const { filled, total } = slotsFilled(detail);
+  const previousMembers = detail.previous_row?.members ?? [];
+
+  /**
+   * What the ENGINE would refuse THIS step for — read off the step's own
+   * requirements, so an approval step that declares none blocks nothing. The
+   * caption is confirmed at the WRITER's submit, not here; showing its state is
+   * useful, blocking on it would be a rule the server does not share.
+   */
+  const step = detail.steps.find((s) => s.key === (detail.task?.step_id ?? ''));
+  const predicted = missingForStep(detail, step);
+  const unconfirmed = members.filter((m) => !captionStateOf(m).confirmed);
+
+  /* ── the order, editable at the writing review only ───────────────── */
+
+  const move = async (index: number, delta: number): Promise<void> => {
+    const next = [...members.map((m) => m.id)];
+    const to = index + delta;
+    if (to < 0 || to >= next.length) return;
+    const a = next[index];
+    const b = next[to];
+    if (!a || !b) return;
+    next[index] = b;
+    next[to] = a;
+    setOrder(next);
+    try {
+      await saveRowOrder(detail.row.row_id, next);
+      await onChanged();
+    } catch (e) {
+      setOrder(null);
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
+  /* ── approve ──────────────────────────────────────────────────────── */
+
+  const approve = async (): Promise<void> => {
+    if (!detail.task) return;
+    setBusy(true);
+    setRefused(null);
+    try {
+      await completeRowTask({ taskId: detail.task.id, result: 'approved' });
+      addToast(
+        finalFace
+          ? isAr ? 'اعتُمد الصف — ستة إصدارات تُسلَّم آليًا في لحظة الدفعة.' : 'The row is approved — six releases go out automatically at the batch moment.'
+          : isAr ? 'اعتُمدت كتابة الصف — انتقل إلى التصميم.' : 'The row’s writing is approved — it moved to design.',
+        'success',
+      );
+      setMarked([]);
+      await onChanged();
+    } catch (e) {
+      const missing = missingRequirementsOf(e);
+      if (missing) {
+        setRefused(missing);
+        addToast(isAr ? 'رُفض الاعتماد — الصف ناقص.' : 'The approval was refused — the row is incomplete.', 'error');
+      } else {
+        addToast(e instanceof Error ? e.message : String(e), 'error');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * What is shown as blocking: the engine's refusal when it has spoken, else
+   * the local prediction of the same rule. Never both, never a third answer.
+   */
+  const shownMissing = refused ?? (predicted.length > 0
+    ? predicted.map(({ member, key }) => ({
+        member: member.ref ?? member.title,
+        label_ar: REQUIREMENT_LABELS[key]?.ar ?? key,
+        label_en: REQUIREMENT_LABELS[key]?.en ?? key,
+      }))
+    : null);
+
+  const toggleMark = (id: string): void => {
+    setMarked((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
+  };
+
+  /* ── the preflight, final face only ───────────────────────────────── */
+
+  const pubsOf = (contentId: string): MosPublication[] =>
+    detail.publications.filter((p) => p.content_id === contentId && p.status !== 'cancelled');
+  const membersWithoutDestination = members.filter((m) => pubsOf(m.id).length === 0);
+  const accounts = detail.publications
+    .filter((p) => p.status !== 'cancelled')
+    .map((p) => p.account_handle)
+    .filter((h): h is string => !!h);
+  const uniqueAccounts = Array.from(new Set(accounts));
+  const accountsConnected = detail.publications
+    .filter((p) => p.status !== 'cancelled')
+    .every((p) => p.account_connected !== false);
+  const batchMoments = detail.publications
+    .map((p) => p.scheduled_at)
+    .filter((v): v is string => !!v)
+    .sort();
+
+  /* ── heading facts ────────────────────────────────────────────────── */
+
+  const batchDay = detail.row.batch_day
+    ?? members.map((m) => m.target_publish_at).filter((v): v is string => !!v).sort()[0]
+    ?? null;
+
+  const firstMember = members[0];
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      {/* ── what this row is ───────────────────────────────────────── */}
+      <div className="card">
+        <div className="card-h">
+          <h4>
+            {isAr
+              ? `صف ${batchDay ? shortDate(batchDay, true) : 'بلا يوم'}`
+              : `Row of ${batchDay ? shortDate(batchDay, false) : 'no day'}`}
+          </h4>
+          <span className="r" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <Pill tone={finalFace ? 'now' : 'wait'}>
+              {step ? (isAr ? step.label_ar : step.label_en) : (isAr ? 'بلا مرحلة' : 'no stage')}
+            </Pill>
+            <Pill tone="idle">
+              {isAr
+                ? `${num(members.length, true)} منشورات — مهمة واحدة`
+                : `${members.length} posts — one task`}
+            </Pill>
+          </span>
+        </div>
+        <div className="card-b" style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'grid', gap: 4, gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))' }}>
+            <div style={{ fontSize: 12.5 }}>
+              <span style={{ color: 'var(--mute)' }}>{isAr ? 'المحتوى: ' : 'Content: '}</span>
+              <b>
+                {isAr
+                  ? `${num(members.length, true)} منشورات × إصداران = ${num(members.length * 2, true)} إصدارات في نفس اليوم`
+                  : `${members.length} posts × two releases = ${members.length * 2} releases on the same day`}
+              </b>
+            </div>
+            <div style={{ fontSize: 12.5 }}>
+              <span style={{ color: 'var(--mute)' }}>{isAr ? 'الملفات: ' : 'Files: '}</span>
+              <b>{isAr ? `${num(filled, true)} من ${num(total, true)}` : `${filled} of ${total}`}</b>
+            </div>
+            {uniqueAccounts.length > 0 && (
+              <div style={{ fontSize: 12.5 }}>
+                <span style={{ color: 'var(--mute)' }}>{isAr ? 'الحساب: ' : 'Account: '}</span>
+                <b className="ltr">{uniqueAccounts.join(' · ')}</b>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {brief}
+
+      {/* ── last week's row, dimmed, above the three (final face) ───── */}
+      {finalFace && previousMembers.length > 0 && (
+        <div className="card">
+          <div className="card-h">
+            <h4>{isAr ? 'صف الأسبوع الماضي — للمقارنة البصرية' : 'Last week’s row — for visual comparison'}</h4>
+            <span className="r">{isAr ? 'منشور، للنظر فقط' : 'published, look only'}</span>
+          </div>
+          <div className="card-b">
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', opacity: 0.45 }}>
+              {previousMembers.map((pm) => {
+                const square = slotsOfMember(detail, pm.id).find((s) => s.role === 'final_square');
+                return (
+                  <div
+                    key={pm.id}
+                    style={{
+                      width: 96, aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden',
+                      background: 'var(--line)', display: 'grid', placeItems: 'center',
+                    }}
+                  >
+                    {thumbFor(square?.asset ?? null)
+                      ? <img src={thumbFor(square?.asset ?? null) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      : <IconLibrary />}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 9 }}>
+              {isAr
+                ? 'السؤال الوحيد هنا: هل يبدو الصفّان معًا كحساب واحد، أم كحملتين مختلفتين؟'
+                : 'The only question here: do the two rows together still read as one account, or as two campaigns?'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── the three posts ────────────────────────────────────────── */}
+      <div
+        style={{
+          display: 'grid', gap: 12,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        }}
+      >
+        {members.map((m, i) => {
+          const { text: caption, confirmed } = captionStateOf(m);
+          const isMarked = marked.includes(m.id);
+          const slots = slotsOfMember(detail, m.id);
+          return (
+            <PostShell
+              key={m.id}
+              member={m}
+              index={i}
+              total={members.length}
+              isAr={isAr}
+              tone={isMarked || (!finalFace && !confirmed) ? 'gap' : 'ok'}
+              right={
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {!finalFace && canAct && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-d btn-sm"
+                        disabled={busy || i === 0}
+                        title={isAr ? 'أعلى' : 'Move up'}
+                        onClick={() => void move(i, -1)}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-d btn-sm"
+                        disabled={busy || i === members.length - 1}
+                        title={isAr ? 'أسفل' : 'Move down'}
+                        onClick={() => void move(i, 1)}
+                      >
+                        ↓
+                      </button>
+                    </>
+                  )}
+                  <Pill tone={isMarked ? 'late' : 'go'}>
+                    {isMarked
+                      ? (isAr ? 'يحتاج تعديلًا' : 'needs changes')
+                      : (isAr ? 'مقبول' : 'accepted')}
+                  </Pill>
+                </div>
+              }
+            >
+              {finalFace ? (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+                    {SLOTS.map((role) => {
+                      const slot = slots.find((s) => s.role === role);
+                      return (
+                        <div key={role} style={{ display: 'grid', gap: 5, justifyItems: 'center' }}>
+                          <SlotFrame
+                            role={role}
+                            asset={slot?.asset ?? null}
+                            url={urlFor(slot?.asset ?? null)}
+                            thumb={thumbFor(slot?.asset ?? null)}
+                            empty={isAr ? 'الخانة فارغة' : 'empty slot'}
+                          />
+                          <span style={{ fontSize: 11, color: 'var(--mute)', textAlign: 'center' }}>
+                            {isAr ? SLOT_META[role].ar : SLOT_META[role].en}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <CaptionBlock member={m} isAr={isAr} />
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 12 }}>
+                  <PostLines member={m} isAr={isAr} />
+                  <CaptionBlock
+                    member={m}
+                    isAr={isAr}
+                    label={isAr ? 'النص المنشور' : 'The published caption'}
+                  />
+                  {caption === '' && (
+                    <div style={{ fontSize: 11.5, color: 'var(--late)', lineHeight: 1.8 }}>
+                      {isAr
+                        ? 'لا يمكن اعتماد الصف بلا نص — كل عنصر يحمل نصًا، والكاتب هو من يؤكّده.'
+                        : 'The row cannot be approved with no caption — every item carries one, confirmed by the writer.'}
+                    </div>
+                  )}
+                </div>
+              )}
+              {canAct && (
+                <button
+                  type="button"
+                  className={`btn btn-sm${isMarked ? ' btn-p' : ''}`}
+                  disabled={busy}
+                  onClick={() => toggleMark(m.id)}
+                >
+                  {isMarked
+                    ? (isAr ? 'تراجع عن التعليم' : 'Unmark')
+                    : (isAr ? 'علّم هذا المنشور للإعادة' : 'Mark this post for changes')}
+                </button>
+              )}
+            </PostShell>
+          );
+        })}
+      </div>
+
+      {/* ── the order rule, stated once ────────────────────────────── */}
+      <div className="card">
+        <div className="card-b" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ flex: 1, minWidth: 240, fontSize: 12, color: 'var(--mute)', lineHeight: 1.9 }}>
+            {isAr
+              ? 'الترتيب أعلاه هو ترتيب القراءة على الحساب. إنستقرام يعرض الأحدث أولًا، لذلك المنشور الأول في الترتيب يُنشر أخيرًا داخل يوم الصف.'
+              : 'The order above is the reading order on the profile. Instagram shows the newest first, so the first post in the order publishes LAST inside the row’s day.'}
+          </div>
+          <span className="tag">
+            {isAr
+              ? `النشر: ${members.map((_, i) => num(publishPosition(i, members.length), true)).reverse().join(' ثم ')}`
+              : `Publish: ${members.map((_, i) => publishPosition(i, members.length)).reverse().join(' then ')}`}
+          </span>
+          <span className="tag">
+            {finalFace
+              ? (isAr ? 'التعديل في مراجعة الكتابة وحدها' : 'editable at the writing review only')
+              : (isAr ? 'هذه آخر فرصة لتعديل الترتيب' : 'last chance to change the order')}
+          </span>
+        </div>
+      </div>
+
+      {/* ── preflight — final face only ────────────────────────────── */}
+      {finalFace && (
+        <div className="card">
+          <div className="card-h">
+            <h4>{isAr ? 'فحص ما قبل النشر' : 'Pre-publish check'}</h4>
+            <span className="r">
+              <Pill tone={filled === total && accountsConnected && unconfirmed.length === 0 ? 'go' : 'late'}>
+                {isAr
+                  ? `${num([filled === total, accountsConnected, unconfirmed.length === 0].filter(Boolean).length, true)} من ٣`
+                  : `${[filled === total, accountsConnected, unconfirmed.length === 0].filter(Boolean).length} of 3`}
+              </Pill>
+            </span>
+          </div>
+          <div className="card-b" style={{ display: 'grid' }}>
+            <CheckLine
+              ok={filled === total}
+              label={isAr ? 'الملفات من خانتي التصميم' : 'Files come from the two design slots'}
+              value={isAr
+                ? `${num(filled, true)} ملفات — ${num(members.length, true)} مربّع و${num(members.length, true)} عمودي`
+                : `${filled} files — ${members.length} square, ${members.length} vertical`}
+            />
+            <CheckLine
+              ok={unconfirmed.length === 0}
+              label={isAr ? 'النص هو ما أكّده الكاتب' : 'The caption is what the writer confirmed'}
+              value={unconfirmed.length === 0
+                ? (isAr ? 'مؤكَّد' : 'confirmed')
+                : isAr ? `${num(unconfirmed.length, true)} بلا تأكيد` : `${unconfirmed.length} unconfirmed`}
+            />
+            <CheckLine
+              ok={accountsConnected && detail.publications.length > 0}
+              label={isAr ? 'الحساب موصول' : 'The account is connected'}
+              value={detail.publications.length === 0
+                ? (isAr ? 'لا وجهة بعد' : 'no destination yet')
+                : accountsConnected
+                  ? (isAr ? 'يستطيع النشر' : 'can publish')
+                  : (isAr ? 'غير موصول' : 'not connected')}
+            />
+          </div>
+          <div className="card-b" style={{ borderTop: '1px solid var(--line)' }}>
+            <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.9 }}>
+              {isAr
+                ? 'بصمة الاعتماد: تُحسب بصمة النص والملفات في لحظة الاعتماد وتُراجَع في لحظة النشر. لو تغيّر ملف أو نص بعدها يتحوّل المنشور إلى استثناء بدل أن يُنشر بشيء لم يُعتمد.'
+                : 'The approval fingerprint: text and files are fingerprinted at approval and re-checked at publish. A file or caption changed afterwards becomes an exception, never an unapproved post.'}
+            </div>
+            {batchMoments.length > 0 && (
+              <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 7 }}>
+                {isAr ? 'لحظة الدفعة: ' : 'Batch moment: '}
+                <b className="ltr">
+                  {batchMoments.map((b) => dateTimeShort(b, isAr)).join(' · ')}
+                </b>
+              </div>
+            )}
+            {membersWithoutDestination.length > 0 && (
+              <div style={{ fontSize: 11.5, color: 'var(--late)', marginTop: 7, lineHeight: 1.85 }}>
+                {isAr
+                  ? `${num(membersWithoutDestination.length, true)} من المنشورات بلا وجهة نشر — لن يخرج شيء لها في لحظة الدفعة.`
+                  : `${membersWithoutDestination.length} post(s) have no destination — nothing goes out for them at the batch moment.`}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── the engine's own refusal, or the same answer predicted ─── */}
+      {shownMissing && (
+        <MissingCard
+          missing={shownMissing}
+          isAr={isAr}
+          title={isAr ? 'لا يمكن اعتماد الصف — ما زال ناقصًا' : 'This row cannot be approved — it is still incomplete'}
+          why={isAr
+            ? 'الجاهزية تُرفض عند تسليم المصمِّمة، لا هنا — فإن ظهرت هنا فالنقص حدث بعد التسليم.'
+            : 'Readiness is refused at the designer’s submit, not here — seeing it here means something went missing after the hand-off.'}
+        />
+      )}
+
+      {/* ── the decision ───────────────────────────────────────────── */}
+      <div className="card">
+        <div className="card-b" style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ flex: 1, minWidth: 250, fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.9 }}>
+            {finalFace
+              ? isAr
+                ? `الاعتماد ينشئ ${num(members.length * 2, true)} إصدارات — ${num(members.length, true)} في الخلاصة (مربّع، مع النص والوسوم) و${num(members.length, true)} في الستوري (عمودي، صورة فقط) — تُسلَّم آليًا في لحظة الدفعة. لا تُنشأ مهمة جدولة أو نشر لأحد.`
+                : `Approving creates ${members.length * 2} releases — ${members.length} in the feed (square, with caption and tags) and ${members.length} stories (vertical, image only) — delivered automatically at the batch moment. No scheduling or publishing task is opened for anyone.`
+              : isAr
+                ? 'إعادة منشور واحد لا تُلغي اعتماد الآخرين: ما لم تعلّمه يبقى كما هو، والصف يعود مرّة واحدة حاملًا ما علّمته. الصف الناقص ينتظر، ولا يخرج أبدًا كمنشورين.'
+                : 'Sending one post back does not undo the others: anything you did not mark stays as it is, and the row returns once carrying what you marked. An incomplete row waits; it never goes out as two posts.'}
+          </div>
+          {canAct && detail.task ? (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={() => setRejectOpen(true)}
+              >
+                {marked.length > 0
+                  ? isAr
+                    ? `أعد ${num(marked.length, true)} ${marked.length === 1 ? 'منشورًا' : 'منشورات'} للكاتب`
+                    : `Send ${marked.length} post${marked.length === 1 ? '' : 's'} back`
+                  : isAr ? 'أعد منشورًا واحدًا' : 'Send one post back'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-go"
+                disabled={busy || marked.length > 0 || predicted.length > 0}
+                title={marked.length > 0
+                  ? (isAr ? 'أزل التعليم أولًا، أو أرسل الإعادة' : 'Unmark first, or send the changes')
+                  : predicted.length > 0
+                    ? (isAr ? 'الصف ناقص — انظر القائمة أعلاه' : 'The row is incomplete — see the list above')
+                    : undefined}
+                onClick={() => void approve()}
+              >
+                <IconCheck />
+                {busy
+                  ? (isAr ? 'جارٍ…' : 'Working…')
+                  : finalFace
+                    ? (isAr ? 'اعتماد الصف' : 'Approve the row')
+                    : (isAr ? 'اعتماد كتابة الصف' : 'Approve the row’s writing')}
+              </button>
+            </div>
+          ) : (
+            <span style={{ fontSize: 12, color: 'var(--mute)' }}>
+              {detail.task
+                ? (isAr ? 'هذه المرحلة ليست لك — عرض فقط.' : 'This stage is not yours — view only.')
+                : (isAr ? 'لا مهمة مفتوحة على هذا الصف.' : 'This row has no open task.')}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ── the ONE rejection dialog, carrying the member dimension ── */}
+      {rejectOpen && detail.task && firstMember && (
+        <RequestChangesModal
+          item={firstMember}
+          openTask={detail.task}
+          steps={detail.steps}
+          scenes={[]}
+          fields={ROW_FIELDS}
+          isAr={isAr}
+          members={members.map((m) => ({ id: m.id, ref: m.ref, title: m.title }))}
+          initialMembers={marked}
+          subjectLabel={isAr
+            ? `صف ${batchDay ? shortDate(batchDay, true) : ''}`
+            : `Row of ${batchDay ? shortDate(batchDay, false) : ''}`}
+          sendChanges={async ({ note, targets, returnTo }) => {
+            const res = await completeRowTask({
+              taskId: detail.task?.id, result: 'changes_requested', note, targets, returnTo,
+            });
+            return { opened_task_id: res.opened_task_id };
+          }}
+          onClose={() => setRejectOpen(false)}
+          onSubmitted={() => {
+            setRejectOpen(false);
+            setMarked([]);
+            void onChanged();
+          }}
+        />
+      )}
+    </div>
+  );
+}
