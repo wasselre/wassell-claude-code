@@ -292,8 +292,17 @@ export function mergeResolutionsIntoPreference(
           ref.recipe = { ...recipes[0]!, source_anchors: ev.anchors };
         } else if (bandIdx.length === 0) {
           // Several admin places in one mention («المهدية أو الجبيلة») → one union.
-          const ids = Array.from(new Set(recipes.flatMap((r) => r.resolved_element_ids)));
-          ref.recipe = { ...recipes[0]!, operation: 'district_union', source_anchors: ev.anchors, resolved_element_ids: ids };
+          // A direction + its city («شمال الرياض») resolves to a zone_union PLUS
+          // the city's own district_union whose single id is the CITY record id —
+          // the city is redundant scope for the zone (its north districts ARE the
+          // zone), so the city-anchor recipe is dropped from the union; keeping it
+          // would carry the city uuid as if it were a district. source_anchors
+          // keeps ALL anchors for provenance either way.
+          const hasZone = recipes.some((r) => r.operation === 'zone_union');
+          const kept = hasZone ? recipes.filter((_, i) => ev.anchors[i]?.anchor_type !== 'city') : recipes;
+          const ids = Array.from(new Set(kept.flatMap((r) => r.resolved_element_ids)));
+          const operation = hasZone && kept.every((r) => r.operation === 'zone_union') ? 'zone_union' : 'district_union';
+          ref.recipe = { ...kept[0]!, operation, source_anchors: ev.anchors, resolved_element_ids: ids };
         } else if (adminIdx.length === 0) {
           // Several element geometries → keep the first (corridor/band already carries its roads).
           ref.recipe = { ...recipes[bandIdx[0]!]!, source_anchors: ev.anchors };

@@ -135,6 +135,11 @@ export default function ConversationGrader({ batchId }: Props) {
     });
     if (!p.resolved) return { text: isAr ? `لم يُحدَّد حي حقيقي لـ «${names.join('، ')}» — يحتاج تأكيدًا` : `no real district picked for “${names.join(', ')}” — needs confirmation`, tone: 'warn' };
     const verb = p.polarity === 'exclude' ? (isAr ? 'استبعد' : 'excluded') : (isAr ? 'حدّد' : 'selected');
+    // A zone (or any big district list) is summarised, not listed — 30+ names is noise.
+    if (p.operation === 'zone_union' || (p.operation === 'district_union' && p.element_ids.length > 6)) {
+      const n = p.element_ids.length;
+      return { text: isAr ? `${verb}: ${p.label || 'منطقة'} — ${n} حيًا` : `${verb}: ${p.label || 'zone'} — ${n} districts`, tone: 'ok' };
+    }
     if (p.operation === 'district_side_clip' && p.side) {
       const SIDE_AR: Record<string, string> = { north: 'شمال', south: 'جنوب', east: 'شرق', west: 'غرب' };
       const roadId = p.element_ids[p.element_ids.length - 1]!;

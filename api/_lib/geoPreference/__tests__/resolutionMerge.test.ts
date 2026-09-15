@@ -71,6 +71,24 @@ describe('mergeResolutionsIntoPreference', () => {
     expect(ref.recipe.resolved_element_ids).toEqual(['المهدية', 'الجبيلة']);
     expect(merged.unresolved_evidence).toBe(1);
   });
+
+  it('a direction + its city («شمال الرياض») is ONE zone_union — the city id is dropped, not unioned in', () => {
+    const e1 = ev('e1', [['شمال', 'direction'], ['الرياض', 'city']]);
+    const { preference } = compile([e1], []);
+    const zone: ResolutionResult = {
+      status: 'resolved', geometry_id: 'geo:fp-zone',
+      recipe: { operation: 'zone_union', source_anchors: [{ anchor_type: 'direction', span: 'شمال', normalized_token: 'شمال' }], resolved_element_ids: ['d-n1', 'd-n2', 'd-n3'], universe_source: 'established_context', geo_data_version: 'districts@test', resolver_version: 'resolver@test', compiled_at: '2026-09-15T00:00:00Z' },
+    };
+    const city: ResolutionResult = {
+      status: 'resolved', geometry_id: 'geo:fp-city',
+      recipe: { operation: 'district_union', source_anchors: [{ anchor_type: 'city', span: 'الرياض', normalized_token: 'الرياض' }], resolved_element_ids: ['city-riyadh'], universe_source: 'established_context', geo_data_version: 'districts@test', resolver_version: 'resolver@test', compiled_at: '2026-09-15T00:00:00Z' },
+    };
+    const merged = mergeResolutionsIntoPreference(preference, [e1], [zone, city]);
+    const ref = merged.preference.groups.flatMap((g) => g.clauses.flatMap((c) => c.anyOf)).find((r) => r.geometry_id === 'geo:e1')!;
+    expect(ref.recipe.operation).toBe('zone_union');
+    expect(ref.recipe.resolved_element_ids).toEqual(['d-n1', 'd-n2', 'd-n3']);
+    expect(ref.recipe.source_anchors.map((a) => a.span)).toEqual(['شمال', 'الرياض']);
+  });
 });
 
 const westBand = (span = 'غرب الملك فهد'): ResolutionResult => ({

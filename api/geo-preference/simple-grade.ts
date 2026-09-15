@@ -62,6 +62,28 @@ function firstName(full: string): string {
   return t.length ? t[0]! : '';
 }
 
+type ChatMessageRow = { chat_wid: string; body: string | null; flow: string | null; date: string | null };
+/**
+ * Page through EVERY chat_messages row for the given wids — never a capped
+ * single query: ordering by date across the whole batch and taking the first
+ * N silently drops whole conversations. Stable tie-break on id so no row is
+ * skipped or duplicated across pages.
+ */
+async function loadChatMessages(sb: NonNullable<ReturnType<typeof makeServiceClient>>, wids: string[]): Promise<{ rows: ChatMessageRow[] | null; error: { message: string } | null }> {
+  const rows: ChatMessageRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from('chat_messages')
+      .select('chat_wid, body, flow, date')
+      .in('chat_wid', wids)
+      .order('date', { ascending: true }).order('id', { ascending: true })
+      .range(from, from + 999);
+    if (error) return { rows: null, error };
+    rows.push(...((data ?? []) as ChatMessageRow[]));
+    if (!data || data.length < 1000) break;
+  }
+  return { rows, error: null };
+}
+
 export default async function handler(req: Request): Promise<Response> {
   return withAuth(req, async (user) => {
     const sb = makeServiceClient('api:geo-simple-grade');
@@ -201,7 +223,8 @@ export default async function handler(req: Request): Promise<Response> {
         const wids = [...widToClient.keys()];
         if (wids.length) {
           // Both sides — the agent's question is what makes a one-word reply gradeable.
-          const { data: msgs } = await sb.from('chat_messages').select('chat_wid, body, flow, date').in('chat_wid', wids).order('date', { ascending: true }).limit(600);
+          const { rows: msgs, error: msgErr } = await loadChatMessages(sb, wids);
+          if (msgErr) return jsonError(500, `chat messages read failed: ${msgErr.message}`);
           for (const m of msgs ?? []) {
             const wid = m.chat_wid as string;
             const cid = widToClient.get(wid);
@@ -214,7 +237,7 @@ export default async function handler(req: Request): Promise<Response> {
         }
       }
       for (const [cid, t] of Object.entries(legacyByClient)) if (!transcripts[cid]) transcripts[cid] = t;
-      for (const k of Object.keys(transcripts)) transcripts[k] = (transcripts[k] ?? '').replace(PHONE, '[رقم]').slice(0, 8000);
+      for (const k of Object.keys(transcripts)) transcripts[k] = (transcripts[k] ?? '').replace(PHONE, '[رقم]').slice(0, 40000);
 
       const items = (evs ?? []).map((e) => ({
         id: e.id,
