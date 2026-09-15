@@ -10,9 +10,23 @@
  *
  * NEEDS AN ADMIN CREDENTIAL, which is NOT your normal API key:
  *   ANTHROPIC_ADMIN_KEY=sk-ant-admin01-...
- * An Admin API key, an OAuth token with `org:admin`, or a personal/service
- * account key that is not scoped to a workspace. A workspace-scoped key is
- * rejected by the endpoint. Create one in Console → Settings → Admin keys.
+ *
+ * TWO separate things have to be true, and they fail differently:
+ *   1. The CREDENTIAL must not be workspace-scoped. An Admin API key, an
+ *      OAuth token with `org:admin`, or an Organization-scoped key all qualify.
+ *      A workspace-scoped key does not.
+ *   2. The ACCOUNT the credential is linked to must have Admin or Owner on the
+ *      organization. An Organization-scoped key grants "any Admin API endpoint
+ *      the linked account has access to" — so a correctly-scoped key held by a
+ *      member account still gets 403 on every admin endpoint.
+ *
+ * Measured 2026-09-15: an org-scoped key created from the Create API key dialog
+ * returned 403 permission_error on cost_report, api_keys, workspaces AND
+ * /organizations/me, while the same key on a bare POST /v1/messages returned 400
+ * demanding an `anthropic-workspace-id` header — proof the scope was right and
+ * the account permission was the blocker. The dedicated Admin-key screen
+ * (Console → Settings → Admin keys) is separate from the Create API key dialog
+ * and is only visible to an Owner.
  *
  * Re-running is safe and expected. Each day is replaced wholesale
  * (`ai_vendor_cost_replace_day`), and Anthropic's figures keep settling for a
@@ -51,9 +65,13 @@ const DAYS = Number(flag('days', '14'));
 const FROM = flag('from');
 const TO = flag('to');
 
+// Sets the exit code rather than calling process.exit(). A hard exit while an
+// undici socket is still open trips a libuv assertion on Windows, and the
+// resulting C-level crash dump prints AFTER the error — burying the one line
+// the operator actually needs to read.
 function fail(msg) {
   console.error(`\n✗ ${msg}\n`);
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 if (!ADMIN_KEY) {
@@ -64,9 +82,11 @@ if (!ADMIN_KEY) {
     '  Create one at Console → Settings → Admin keys (sk-ant-admin01-...),\n' +
     '  then add it to .env.local and re-run `bash scripts/secrets/seal.sh`.',
   );
+  process.exit(1); // nothing is open yet, so a hard exit here is safe
 }
 if (!DRY_RUN && (!SUPABASE_URL || !SERVICE_KEY)) {
   fail('SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are required to write (or pass --dry-run).');
+  process.exit(1); // nothing is open yet, so a hard exit here is safe
 }
 
 // ── window ─────────────────────────────────────────────────────────────────
@@ -96,10 +116,29 @@ async function fetchAllPages() {
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      if (res.status === 401 || res.status === 403) {
+      if (res.status === 401) {
         throw new Error(
-          `HTTP ${res.status} from cost_report. The key was rejected — a workspace-scoped\n` +
-          `  key cannot read org cost data; you need an Admin key or an org:admin token.\n  ${body.slice(0, 300)}`,
+          `HTTP 401 from cost_report — the credential itself was not accepted.\n` +
+          `  Check ANTHROPIC_ADMIN_KEY is present, complete and not revoked.\n  ${body.slice(0, 300)}`,
+        );
+      }
+      if (res.status === 403) {
+        // 403 is NOT a bad key — the key authenticated fine and was then refused.
+        // Measured 2026-09-15: an Organization-scoped key returned 403
+        // permission_error on EVERY admin endpoint including /organizations/me,
+        // while a bare POST /v1/messages with the same key returned 400 demanding
+        // an `anthropic-workspace-id` header — which only an org-scoped key does.
+        // The scope was right; the linked ACCOUNT had no Admin API access.
+        throw new Error(
+          `HTTP 403 from cost_report — the key authenticated, then was refused.\n` +
+          `  This is an ACCOUNT-PERMISSION problem, not a bad key: an Organization-scoped\n` +
+          `  key grants only what the linked account may do, and reading org cost data\n` +
+          `  needs Admin or Owner on the organization.\n` +
+          `  Fix it either way:\n` +
+          `    - have an org Owner grant this account Admin, or\n` +
+          `    - create a dedicated Admin key (sk-ant-admin01-...) at\n` +
+          `      Console -> Settings -> Admin keys — a DIFFERENT screen from the\n` +
+          `      Create API key dialog, and only an Owner sees it.\n  ${body.slice(0, 300)}`,
         );
       }
       throw new Error(`cost_report HTTP ${res.status}: ${body.slice(0, 400)}`);
@@ -132,7 +171,7 @@ async function replaceDay(day, rows) {
   return Number(await res.json());
 }
 
-try {
+async function main() {
   const days = await fetchAllPages();
   const skipped = days.reduce((n, d) => n + d.skipped, 0);
   if (skipped > 0) {
@@ -150,13 +189,17 @@ try {
       console.log(`  ${d.day}  $${t.toFixed(4)}  (${d.rows.length} items)`);
     }
     console.log('\nDry run — nothing written.');
-    process.exit(0);
+    return;
   }
 
   let written = 0;
   for (const d of days) written += await replaceDay(d.day, d.rows);
   console.log(`  wrote ${written} row(s) into ai_vendor_cost`);
   console.log('\nCompare with:  select * from v_ai_cost_reconciliation where provider=\'anthropic\' order by day desc;');
+}
+
+try {
+  await main();
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 }
