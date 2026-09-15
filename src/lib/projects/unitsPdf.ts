@@ -1,8 +1,8 @@
 /**
  * Client-side branded PDF builders for a project — a filterable units TABLE, a
- * single-unit ONE-PAGER, and the project's PAYMENT PLANS — each returned as a
- * `Blob` so the caller can either download it or upload+send it over WhatsApp
- * from a chat.
+ * three-page UNIT SHEET (details → floor plan → payment plans), and the
+ * project's PAYMENT PLANS — each returned as a `Blob` so the caller can either
+ * download it or upload+send it over WhatsApp from a chat.
  *
  * Why client-side (jsPDF + html2canvas) and not the server `document_jobs`
  * engine: that engine stamps scalar `{{tokens}}` into one record's template and
@@ -22,8 +22,10 @@ import { isFileIdValue } from '@/pages/Records/components/useFileRowMap';
 import type { ProjectView } from '@/lib/projects/projectView';
 import type { UnitView } from '@/lib/projects/unitView';
 import {
-  entryDownPayment, formatPlanPriceRange, hasAedPricing, planRowTitle, type PaymentPlanRow,
+  entryDownPayment, formatPlanPriceRange, hasAedPricing, planRowTitle,
+  resolveUnitPaymentPlans, type PaymentPlanRow,
 } from '@/lib/projects/paymentPlans';
+import { resolveProjectDelivery } from '@/lib/projectMessage/delivery';
 
 const BRAND = {
   chocolate: '#4A2C2A',
@@ -128,6 +130,63 @@ export async function rasterizeToPdf(html: string, orientation: 'portrait' | 'la
         pdf.addImage(img, 'JPEG', 0, pos, w, h, undefined, 'FAST');
         rem -= pageH;
         if (rem > 0) {
+          pdf.addPage();
+          pos -= pageH;
+        }
+      }
+    }
+    return pdf.output('blob');
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
+/**
+ * Rasterize SEVERAL branded HTML strings into ONE PDF, each starting on its own
+ * page — the difference from `rasterizeToPdf`, which pours a single tall
+ * document across pages wherever it happens to break.
+ *
+ * Used by the unit sheet, whose pages are a fixed sequence (details → floor
+ * plan → payment plans) that must not bleed into each other. A section still
+ * continues onto extra pages if its own content is taller than A4 (a long
+ * milestone schedule), so nothing is ever cut off; it just never SHARES a page
+ * with the next section. An empty/blank section string is skipped, which is how
+ * "the page is deleted when that information doesn't exist" is implemented.
+ */
+export async function rasterizeSectionsToPdf(
+  sections: Array<string | null | undefined>,
+  orientation: 'portrait' | 'landscape',
+): Promise<Blob> {
+  const present = sections.filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
+  if (present.length === 0) throw new Error('rasterizeSectionsToPdf: nothing to render');
+
+  const pdf = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
+  const pageW = orientation === 'landscape' ? 297 : 210;
+  const pageH = orientation === 'landscape' ? 210 : 297;
+
+  const container = document.createElement('div');
+  container.style.cssText = 'position:absolute;left:-9999px;top:0';
+  document.body.appendChild(container);
+  try {
+    for (const [index, html] of present.entries()) {
+      container.innerHTML = html;
+      await Promise.all(Array.from(container.querySelectorAll('img')).map(imgReady));
+      await new Promise<void>((r) => setTimeout(r, 200));
+      const el = container.firstElementChild as HTMLElement;
+      const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+      const img = canvas.toDataURL('image/jpeg', 0.9); // JPEG for size — see rasterizeToPdf
+      const w = pageW;
+      const h = (canvas.height * w) / canvas.width;
+      if (index > 0) pdf.addPage();
+      if (h <= pageH) {
+        pdf.addImage(img, 'JPEG', 0, 0, w, h, undefined, 'FAST');
+      } else {
+        let pos = 0;
+        let rem = h;
+        for (;;) {
+          pdf.addImage(img, 'JPEG', 0, pos, w, h, undefined, 'FAST');
+          rem -= pageH;
+          if (rem <= 0) break;
           pdf.addPage();
           pos -= pageH;
         }
@@ -270,7 +329,25 @@ function chips(label: string, values: string[]): string {
   </div>`;
 }
 
-/** Branded A4 portrait one-pager for a single unit (facts + floor plan). */
+/**
+ * The unit sheet — a branded A4 portrait document in a FIXED page sequence:
+ *
+ *   page 1   the unit's fields and details
+ *   page 2   the unit's floor plan
+ *   page 3   the unit's detailed payment plans
+ *
+ * A page whose information does not exist is DELETED rather than left blank: a
+ * unit with no floor plan produces details + payment plans, a unit with neither
+ * produces one page. Page 1 is always there. A page never shares a sheet with
+ * the next one; a long milestone schedule simply continues onto an extra sheet
+ * of its own (see `rasterizeSectionsToPdf`).
+ *
+ * Page 3 shows the UNIT's own `payment_plans` cards, through the same shared
+ * resolver the Payment Plans tab and the project PDF use. The project's plan
+ * menu is deliberately NOT substituted when a unit has no cards of its own —
+ * that would put figures on a customer document that the unit's record does not
+ * support. No cards, no page.
+ */
 export async function buildUnitPdf({
   project,
   unit,
@@ -283,8 +360,16 @@ export async function buildUnitPdf({
   const cur = isAr ? 'ر.س' : 'SAR';
   const sar = (n: number | null) => (n != null ? `${fmt(n)} ${cur}` : null);
   const m2 = (n: number | null) => (n != null ? `${fmt(n)} ${isAr ? 'م²' : 'm²'}` : null);
+  const sheet = (body: string) =>
+    `<div dir="${isAr ? 'rtl' : 'ltr'}" style="width:794px;box-sizing:border-box;background:#fff;font-family:Amiri,serif;color:${BRAND.charcoal}">${body}</div>`;
 
   const planUri = await resolvePlanDataUri(unit.planImage);
+  const planRows = resolveUnitPaymentPlans(unit.raw, isAr);
+  // Ready vs off-plan, read off the PARENT PROJECT — a unit inside a project
+  // that is still «على الخارطة» has to say so on its own sheet too.
+  const delivery = resolveProjectDelivery((project.raw.data ?? {}) as Record<string, unknown>);
+  const deliveryPhrase = isAr ? delivery.phrase?.ar ?? null : delivery.phrase?.en ?? null;
+  const unitTitle = esc(unit.code) || `#${unit.id.slice(0, 8)}`;
 
   const left = [
     factRow(isAr ? 'النوع' : 'Type', optLabel(unit.type, isAr), isAr),
@@ -304,15 +389,13 @@ export async function buildUnitPdf({
     factRow(isAr ? 'البلك' : 'Block', unit.block, isAr),
   ].join('');
 
-  const subtitle = isAr ? `بطاقة وحدة · ${today(true)}` : `Unit sheet · ${today(false)}`;
-
-  const html = `
-  <div dir="${isAr ? 'rtl' : 'ltr'}" style="width:794px;box-sizing:border-box;background:#fff;font-family:Amiri,serif;color:${BRAND.charcoal}">
-    ${headerHtml(project, isAr, subtitle)}
+  // ── page 1 — the unit's fields and details ──
+  const detailsPage = sheet(`
+    ${headerHtml(project, isAr, isAr ? `بطاقة وحدة · ${today(true)}` : `Unit sheet · ${today(false)}`)}
     <div style="padding:26px 32px">
       <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-bottom:2px solid ${BRAND.copper};padding-bottom:8px;margin-bottom:14px">
         <div>
-          <div style="font-size:22px;font-weight:700;color:${BRAND.chocolate}">${esc(unit.code) || `#${unit.id.slice(0, 8)}`}</div>
+          <div style="font-size:22px;font-weight:700;color:${BRAND.chocolate}">${unitTitle}</div>
           ${unit.developerCode ? `<div style="font-size:12px;color:${BRAND.charcoal}99;margin-top:2px">${isAr ? 'رمز المطور' : 'Dev. code'}: ${esc(unit.developerCode)}</div>` : ''}
         </div>
         <div style="text-align:${isAr ? 'left' : 'right'}">
@@ -320,6 +403,15 @@ export async function buildUnitPdf({
           <div style="font-size:11px;color:${BRAND.charcoal}99">${isAr ? 'سعر المتر' : 'Price/m²'}: ${esc(sar(unit.pricePerM2)) || '—'}</div>
         </div>
       </div>
+
+      ${
+        deliveryPhrase
+          ? `<div style="margin-bottom:12px;font-size:13px">
+               <span style="color:${BRAND.charcoal}88">${isAr ? 'حالة المشروع' : 'Project status'}:</span>
+               <b style="color:${BRAND.chocolate}">${esc(deliveryPhrase)}</b>
+             </div>`
+          : ''
+      }
 
       <div style="display:flex;gap:26px">
         <div style="flex:1;font-size:13px">${left}</div>
@@ -329,22 +421,108 @@ export async function buildUnitPdf({
       ${chips(isAr ? 'المكونات' : 'Components', optsLabels(unit.components, isAr))}
       ${chips(isAr ? 'الواجهة' : 'Facade', optsLabels(unit.facade, isAr))}
       ${chips(isAr ? 'المواقف' : 'Parking', optsLabels(unit.parking, isAr))}
+    </div>`);
 
-      ${
-        planUri
-          ? `<div style="margin-top:18px">
-              <div style="font-size:11px;font-weight:700;color:${BRAND.copper};margin-bottom:6px">${isAr ? 'المخطط' : 'Floor plan'}</div>
-              <img src="${planUri}" alt="" style="width:100%;max-height:520px;object-fit:contain;border:1px solid ${BRAND.sand}66;border-radius:8px" />
-            </div>`
-          : ''
-      }
-    </div>
-  </div>`;
+  // ── page 2 — the floor plan, given the whole sheet ──
+  const planPage = planUri
+    ? sheet(`
+      ${headerHtml(project, isAr, isAr ? `مخطط الوحدة ${unit.code ?? ''}`.trim() : `Floor plan · ${unit.code ?? ''}`.trim())}
+      <div style="padding:22px 32px">
+        <div style="font-size:16px;font-weight:700;color:${BRAND.chocolate};border-bottom:2px solid ${BRAND.copper};padding-bottom:8px;margin-bottom:14px">
+          ${isAr ? 'المخطط' : 'Floor plan'}
+        </div>
+        <img src="${planUri}" alt="" style="width:100%;max-height:900px;object-fit:contain;border:1px solid ${BRAND.sand}66;border-radius:8px" />
+      </div>`)
+    : null;
 
-  return rasterizeToPdf(html, 'portrait');
+  // ── page 3 — the unit's detailed payment plans ──
+  const entryDown = entryDownPayment(planRows);
+  const paymentsPage = planRows.length
+    ? sheet(`
+      ${headerHtml(project, isAr, isAr ? `خطط سداد الوحدة ${unit.code ?? ''}`.trim() : `Payment plans · ${unit.code ?? ''}`.trim())}
+      <div style="padding:24px 32px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-bottom:2px solid ${BRAND.copper};padding-bottom:8px;margin-bottom:14px">
+          <div style="font-size:20px;font-weight:700;color:${BRAND.chocolate}">${isAr ? 'خطط السداد' : 'Payment plans'}</div>
+          <div style="text-align:${isAr ? 'left' : 'right'};font-size:12px;color:${BRAND.charcoal}99">
+            ${entryDown > 0 ? (isAr ? `تبدأ من ${entryDown}% دفعة مقدمة` : `From ${entryDown}% down payment`) : ''}
+          </div>
+        </div>
+        <div style="margin-bottom:12px;font-size:13px">
+          <span style="color:${BRAND.charcoal}88">${isAr ? 'الوحدة' : 'Unit'}:</span>
+          <b style="color:${BRAND.chocolate}">${unitTitle}</b>
+          ${unit.totalPrice != null ? `<span style="color:${BRAND.charcoal}88"> · ${isAr ? 'السعر' : 'Price'}:</span> <b style="color:${BRAND.copper}">${esc(sar(unit.totalPrice))}</b>` : ''}
+          ${deliveryPhrase ? `<span style="color:${BRAND.charcoal}88"> · ${isAr ? 'الحالة' : 'Status'}:</span> <b style="color:${BRAND.chocolate}">${esc(deliveryPhrase)}</b>` : ''}
+        </div>
+        ${planBlocksHtml(planRows, isAr)}
+        <div style="margin-top:10px;font-size:10.5px;color:${BRAND.charcoal}88;line-height:1.7">
+          ${
+            isAr
+              ? 'كل خطة هي هيكل سداد متاح لهذه الوحدة (نسبة المقدم / أثناء الإنشاء / عند التسليم). قد يُعرض الهيكل نفسه بعدة أسعار.'
+              : 'Each plan is a payment structure offered on this unit (down / during construction / on handover %). The same structure can be offered at several prices.'
+          }
+        </div>
+      </div>`)
+    : null;
+
+  return rasterizeSectionsToPdf([detailsPage, planPage, paymentsPage], 'portrait');
 }
 
 // ─── Payment plans ──────────────────────────────────────────────────────────
+
+/**
+ * The per-plan blocks shared by the project payment-plans PDF and page 3 of the
+ * unit sheet — one bordered card per payment structure with its %-split chips,
+ * the developer's milestone schedule and its price(s). Extracted so the two
+ * documents cannot drift apart.
+ */
+function planBlocksHtml(rows: PaymentPlanRow[], isAr: boolean): string {
+  const sar = isAr ? 'ر.س' : 'SAR';
+  const aed = isAr ? 'د.إ' : 'AED';
+  const showAed = hasAedPricing(rows);
+  return rows
+    .map((r, i) => {
+      const title = planRowTitle(r, isAr);
+      const pct = (label: string, v: number) =>
+        v > 0
+          ? `<span style="display:inline-block;margin:0 0 4px 0;padding:3px 9px;border-radius:6px;background:${BRAND.cream};border:1px solid ${BRAND.sand}77;font-size:11.5px">
+               <b style="color:${BRAND.chocolate}">${v}%</b> <span style="color:${BRAND.charcoal}99">${esc(label)}</span>
+             </span>`
+          : '';
+      const prices = [
+        showAed && r.maxAed > 0
+          ? `<div><span style="color:${BRAND.charcoal}88">${isAr ? 'السعر' : 'Price'}:</span> <b style="color:${BRAND.chocolate}">${esc(formatPlanPriceRange(r.minAed, r.maxAed, aed))}</b></div>`
+          : '',
+        r.maxSar > 0
+          ? `<div><span style="color:${BRAND.charcoal}88">${isAr ? (showAed ? 'بالريال' : 'السعر') : showAed ? 'In SAR' : 'Price'}:</span> <b style="color:${BRAND.copper}">${esc(formatPlanPriceRange(r.minSar, r.maxSar, sar))}</b></div>`
+          : '',
+      ].join('');
+      // The count reads "N units" on a project document (how many units offer
+      // this plan) and "N offers" on a unit document (the same split sold at
+      // several prices); one card with one offer says nothing at all.
+      const count =
+        r.countKind === 'units'
+          ? isAr ? `${r.count} وحدة` : `${r.count} unit${r.count === 1 ? '' : 's'}`
+          : r.count > 1
+            ? isAr ? `${r.count} عروض` : `${r.count} offers`
+            : '';
+      return `
+      <div style="border:1px solid ${BRAND.sand}66;border-radius:10px;padding:12px 14px;margin-bottom:10px;background:${i % 2 ? '#fff' : `${BRAND.cream}33`}">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px">
+          <div style="font-size:15px;font-weight:700;color:${BRAND.chocolate}">${i + 1}. ${esc(title)}</div>
+          <div style="font-size:11px;color:${BRAND.charcoal}88">${esc(count)}</div>
+        </div>
+        ${r.isCash ? '' : `<div style="margin-bottom:4px">
+          ${pct(isAr ? 'مقدم' : 'down', r.down)}
+          ${pct(isAr ? 'أثناء الإنشاء' : 'during construction', r.during)}
+          ${pct(isAr ? 'عند التسليم' : 'on handover', r.onHandover)}
+          ${pct(isAr ? 'بعد التسليم' : 'post-handover', r.postHandover)}
+        </div>`}
+        ${r.schedule ? `<div style="font-size:11.5px;line-height:1.7;color:${BRAND.charcoal}bb;margin:4px 0 6px">${esc(r.schedule)}</div>` : ''}
+        <div style="font-size:12.5px">${prices}</div>
+      </div>`;
+    })
+    .join('');
+}
 
 /**
  * Branded A4 portrait PDF of a project's PAYMENT PLANS — one block per payment
@@ -372,49 +550,9 @@ export async function buildPaymentPlansPdf({
   isAr: boolean;
   deliveryPhrase?: string | null;
 }): Promise<Blob> {
-  const sar = isAr ? 'ر.س' : 'SAR';
-  const aed = isAr ? 'د.إ' : 'AED';
   const showAed = hasAedPricing(rows);
   const entryDown = entryDownPayment(rows);
-
-  const blocks = rows
-    .map((r, i) => {
-      const title = planRowTitle(r, isAr);
-      const pct = (label: string, v: number) =>
-        v > 0
-          ? `<span style="display:inline-block;margin:0 0 4px 0;padding:3px 9px;border-radius:6px;background:${BRAND.cream};border:1px solid ${BRAND.sand}77;font-size:11.5px">
-               <b style="color:${BRAND.chocolate}">${v}%</b> <span style="color:${BRAND.charcoal}99">${esc(label)}</span>
-             </span>`
-          : '';
-      const prices = [
-        showAed && r.maxAed > 0
-          ? `<div><span style="color:${BRAND.charcoal}88">${isAr ? 'السعر' : 'Price'}:</span> <b style="color:${BRAND.chocolate}">${esc(formatPlanPriceRange(r.minAed, r.maxAed, aed))}</b></div>`
-          : '',
-        r.maxSar > 0
-          ? `<div><span style="color:${BRAND.charcoal}88">${isAr ? (showAed ? 'بالريال' : 'السعر') : showAed ? 'In SAR' : 'Price'}:</span> <b style="color:${BRAND.copper}">${esc(formatPlanPriceRange(r.minSar, r.maxSar, sar))}</b></div>`
-          : '',
-      ].join('');
-      return `
-      <div style="border:1px solid ${BRAND.sand}66;border-radius:10px;padding:12px 14px;margin-bottom:10px;background:${i % 2 ? '#fff' : `${BRAND.cream}33`}">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px">
-          <div style="font-size:15px;font-weight:700;color:${BRAND.chocolate}">${i + 1}. ${esc(title)}</div>
-          <div style="font-size:11px;color:${BRAND.charcoal}88">${
-            r.countKind === 'units'
-              ? isAr ? `${r.count} وحدة` : `${r.count} unit${r.count === 1 ? '' : 's'}`
-              : isAr ? `${r.count} عرض` : `${r.count} offer${r.count === 1 ? '' : 's'}`
-          }</div>
-        </div>
-        ${r.isCash ? '' : `<div style="margin-bottom:4px">
-          ${pct(isAr ? 'مقدم' : 'down', r.down)}
-          ${pct(isAr ? 'أثناء الإنشاء' : 'during construction', r.during)}
-          ${pct(isAr ? 'عند التسليم' : 'on handover', r.onHandover)}
-          ${pct(isAr ? 'بعد التسليم' : 'post-handover', r.postHandover)}
-        </div>`}
-        ${r.schedule ? `<div style="font-size:11.5px;line-height:1.7;color:${BRAND.charcoal}bb;margin:4px 0 6px">${esc(r.schedule)}</div>` : ''}
-        <div style="font-size:12.5px">${prices}</div>
-      </div>`;
-    })
-    .join('');
+  const blocks = planBlocksHtml(rows, isAr);
 
   const subtitle = isAr
     ? `خطط السداد · ${rows.length} خطة · ${today(true)}`
