@@ -245,7 +245,7 @@ export const FILE_STATUSES: FileStatus[] = ['draft', 'active', 'superseded', 'ar
 export const FILE_CONFIDENTIALITIES: FileConfidentiality[] = ['public', 'internal', 'restricted'];
 export const FILE_ORIGINS: FileOrigin[] = [
   'user_upload', 'marketing_intake', 'integration_inbound',
-  'generated_document', 'derived_rendition', 'system_artifact',
+  'generated_document', 'derived_rendition', 'system_artifact', 'social_intake',
 ];
 export const FILE_KINDS: FilePreviewKind[] = [
   'image', 'pdf', 'video', 'audio', 'document', 'wassel_doc', 'archive', 'other',

@@ -229,9 +229,16 @@ async function copyAndRegister(
     confidentiality: 'internal',
     acquisition_source: ctx.isOwnDeveloper ? 'developer' : 'competitor',
     usage_rights: ctx.sendable ? 'approved' : 'internal_only',
-    asset_nature: 'real',
+    // NOT raw_*: a competitor's published reel or post image is a FINISHED,
+    // published creative — logo, captions, colour grade — not unedited source
+    // material. Filing 711 of them under «خام» buried the real raw pool (278
+    // photos, 2 videos) under other companies' finished work.
+    // asset_nature is deliberately LEFT EMPTY: off-plan marketing is often a
+    // CGI render, so asserting 'real' was a guess we had no basis for. The
+    // visual-intelligence read can fill it later; an empty field is honest.
+    asset_nature: null,
     production_state: 'published',
-    primary_category: m.media_kind === 'video' ? 'raw_video' : 'raw_photo',
+    primary_category: m.media_kind === 'video' ? 'ready_video' : 'design',
     description: ctx.description,
     ai_description: ctx.description,
     checksum_sha256: m.checksum_sha256,
