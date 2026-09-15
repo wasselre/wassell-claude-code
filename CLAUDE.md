@@ -758,6 +758,36 @@ from it — surfaced at **Settings → AI Usage & Credit**
 12. **A balance resting on unpriced usage is an UPPER BOUND** and must be
     labelled as one (`remaining_is_upper_bound`). Don't present it as fact.
 
+**Reconciling against the real invoice (added 2026-09-15):** `ai_usage` is an
+ESTIMATE — exact provider-reported token counts multiplied by a rate somebody
+typed into `ai_price_book`. It knows nothing about discounts, committed-spend
+pricing, batch rates, credits or minimum charges. `ai_vendor_cost` holds the
+other number: what the vendor says. `scripts/sync-anthropic-cost.mjs` pulls it
+from Anthropic's Usage & Cost Admin API; other providers are entered by hand.
+Compare in `v_ai_cost_reconciliation`.
+
+13. **`ANTHROPIC_ADMIN_KEY` is a DIFFERENT credential** (`sk-ant-admin01-…`,
+    Console → Settings → Admin keys). A normal `ANTHROPIC_API_KEY` — and any
+    workspace-scoped key — is rejected by `/v1/organizations/cost_report`.
+14. **Anthropic reports `amount` in CENTS as a decimal string.** `"123.45"` is
+    $1.2345. `scripts/lib/anthropicCostReport.mjs` divides by 100 exactly once
+    and `ai_vendor_cost.amount_usd` is always dollars; `raw` keeps the vendor
+    item so the conversion stays auditable. Reading cents as dollars inflates
+    everything 100× — an error too big to look like a rounding bug, so it gets
+    believed. Covered by `scripts/lib/__tests__/anthropicCostReport.test.ts`,
+    whose fixture is Anthropic's own reference response.
+15. **Never merge the two numbers.** The estimate and the invoice stay
+    separately visible; averaging or overwriting destroys the only thing the
+    reconciliation carries, which is the DIFFERENCE. Check `coverage` before
+    reading `delta_usd` — only `both` is a real comparison.
+16. **Re-running the sync is safe and expected.** Each day is replaced
+    wholesale (`ai_vendor_cost_replace_day`); Anthropic's figures keep settling
+    after the calls, so re-pull the last couple of weeks rather than fetching a
+    day once and trusting it forever.
+17. **Priority Tier costs are NOT in the cost endpoint** (Anthropic's own
+    caveat). If that tier is ever used, its spend will show as a permanent gap
+    on the vendor side of the reconciliation.
+
 **Where the money actually goes** (measured 2026-09-14, $87.50 all-time before
 this ledger existed): Modal GPU $53.27 (competitor video), Anthropic $25.37,
 fal $8.85. Detail in `docs/prd/ai-usage-tracking.md`.
