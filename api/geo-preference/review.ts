@@ -86,7 +86,7 @@ export const DEFAULT_RADIUS_M = 3000;
 //
 // Operation → item kind:
 //   district_polygon | district_union | pin_containing_district → district item
-//   zone_union                                                   → inside_area rule
+//   zone_union                                     → district item (its ids are district record ids)
 //   within_radius | pin_point                                    → within_radius rule
 //   within_distance | corridor                                   → within_distance rule
 //   directional_band                                             → a cardinal rule
@@ -177,9 +177,8 @@ function anchorRefToItems(
     case 'district_polygon':
     case 'district_union':
     case 'pin_containing_district':
-      return ids.map((id) => newDistrictItem(id, label || id, polarity));
     case 'zone_union':
-      return ids.map((id) => newElementRuleItem(label || id, { rule: 'inside_area', element_id: id }, polarity));
+      return ids.map((id) => newDistrictItem(id, label || id, polarity));
     case 'within_radius':
     case 'pin_point': {
       const d = radiusM(recipe.radius_or_band_m);

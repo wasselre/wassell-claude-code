@@ -5,7 +5,7 @@ import { Loader2, Check, X, HelpCircle, ChevronRight, ChevronLeft, MapPin, Party
 import GeoPrefMap from './GeoPrefMap';
 import {
   authHeader, reading, Bold, Transcript,
-  type Item, type Verdict, type ConversationView, type DistrictInfo, type Placement,
+  type Item, type Verdict, type ConversationView, type DistrictInfo, type Placement, type LocationItemDTO,
 } from '../lib/shared';
 
 /**
@@ -224,11 +224,30 @@ export default function ConversationGrader({ batchId }: Props) {
           <GeoPrefMap items={conv.proposal?.items ?? []} isAr={isAr} />
           {conv.proposal && conv.proposal.items.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {conv.proposal.items.map((li) => {
-                const d = li.kind === 'district' && li.district_id ? districts[li.district_id] : undefined;
-                const name = d ? `${isAr ? d.name_ar : (d.name_en || d.name_ar)}${d.city ? ` (${d.city})` : ''}` : (li.district_label || li.element_label || li.label || li.district_id || '');
-                return <span key={li.id} className={`rounded-full px-2.5 py-0.5 text-xs ${li.polarity === 'exclude' ? 'bg-red-50 text-red-700' : 'bg-copper/15 text-chocolate'}`}>{li.polarity === 'exclude' ? '✕ ' : '✓ '}{name}</span>;
-              })}
+              {(() => {
+                // A zone («شمال الرياض») contributes many district items that all share
+                // one district_label — collapse those into a single chip with a count.
+                const groups = new Map<string, LocationItemDTO[]>();
+                for (const li of conv.proposal.items) {
+                  const key = `${li.polarity}|${li.kind === 'district' ? (li.district_label || '') : ''}`;
+                  const g = groups.get(key);
+                  if (g) g.push(li); else groups.set(key, [li]);
+                }
+                return [...groups.entries()].map(([key, items]) => {
+                  const first = items[0]!;
+                  const mark = first.polarity === 'exclude' ? '✕ ' : '✓ ';
+                  const cls = `rounded-full px-2.5 py-0.5 text-xs ${first.polarity === 'exclude' ? 'bg-red-50 text-red-700' : 'bg-copper/15 text-chocolate'}`;
+                  if (first.kind === 'district' && items.length > 6) {
+                    const groupLabel = first.district_label || (isAr ? 'منطقة' : 'zone');
+                    return <span key={key} className={cls}>{mark}{groupLabel} — {items.length} {isAr ? 'حيًا' : 'districts'}</span>;
+                  }
+                  return items.map((li) => {
+                    const d = li.kind === 'district' && li.district_id ? districts[li.district_id] : undefined;
+                    const name = d ? `${isAr ? d.name_ar : (d.name_en || d.name_ar)}${d.city ? ` (${d.city})` : ''}` : (li.district_label || li.element_label || li.label || li.district_id || '');
+                    return <span key={li.id} className={cls}>{mark}{name}</span>;
+                  });
+                });
+              })()}
             </div>
           )}
           {conv.checkpoint_id ? (

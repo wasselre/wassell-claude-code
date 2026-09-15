@@ -81,6 +81,26 @@ describe('geoPreferenceToLocationItems', () => {
   it('drops a clause whose recipe resolved no ids (nothing to add silently)', () => {
     expect(geoPreferenceToLocationItems(pref([group([clause('include', [anchorRef('district_polygon', [])])])]))).toHaveLength(0);
   });
+
+  it('maps a zone_union recipe to DISTRICT items (its ids are district record ids)', () => {
+    const ref: AnchorRef = {
+      geometry_id: 'geo:11111111-1111-4111-8111-111111111111+22222222-2222-4222-8222-222222222222',
+      recipe: {
+        operation: 'zone_union',
+        source_anchors: [{ anchor_type: 'direction', span: 'شمال الرياض', normalized_token: 'شمال_الرياض' }],
+        resolved_element_ids: ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'],
+        radius_or_band_m: undefined,
+        geo_data_version: 'test',
+        resolver_version: 'test',
+        compiled_at: '',
+      },
+    };
+    const items = geoPreferenceToLocationItems(pref([group([clause('include', [ref])])]));
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ kind: 'district', polarity: 'include', district_id: '11111111-1111-4111-8111-111111111111', district_label: 'شمال الرياض' });
+    expect(items[1]).toMatchObject({ kind: 'district', polarity: 'include', district_id: '22222222-2222-4222-8222-222222222222', district_label: 'شمال الرياض' });
+    expect(items.some((i) => i.kind === 'element_rule')).toBe(false);
+  });
 });
 
 describe('mergeLocationItems', () => {
