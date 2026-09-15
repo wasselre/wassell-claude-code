@@ -24,6 +24,15 @@ const COPPER = '#B8734F';
 const RED = '#B91C1C';
 const CHOCOLATE = '#4A2C2A';
 
+/** Wassel basemap + Google's own district (neighborhood) names forced ON — the
+ *  grader must read district names like a normal map. */
+const GRADER_MAP_STYLE: google.maps.MapTypeStyle[] = [
+  ...WASSEL_MAP_STYLE,
+  { featureType: 'administrative.neighborhood', elementType: 'labels.text', stylers: [{ visibility: 'on' }] },
+  { featureType: 'administrative.neighborhood', elementType: 'labels.text.fill', stylers: [{ color: '#4A2C2A' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text', stylers: [{ visibility: 'on' }] },
+];
+
 interface DistrictShape { district_id: string; name: string; name_en?: string | null; city?: string; geojson: { type: string; coordinates: unknown } }
 interface PreviewRow {
   item_id: string; kind: string; polarity: string; direction: string | null; validation_status: string;
@@ -103,9 +112,13 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
   const labels = useMemo(() => {
     if (!isLoaded) return [] as Array<{ key: string; position: google.maps.LatLngLiteral; icon: google.maps.Icon | undefined }>;
     const out: Array<{ key: string; position: google.maps.LatLngLiteral; icon: google.maps.Icon | undefined }> = [];
+    const seen = new Set<string>(); // the same district can appear twice (two mentions) — one pill
     for (const pg of polygons) {
       const ring = pg.paths[0];
       if (!pg.label || !ring || ring.length === 0) continue;
+      const dedupe = `${pg.polarity}:${pg.label}`;
+      if (seen.has(dedupe)) continue;
+      seen.add(dedupe);
       const b = new google.maps.LatLngBounds();
       for (const pt of ring) b.extend(pt);
       const c = b.getCenter();
@@ -123,14 +136,19 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
     return out;
   }, [previews]);
 
-  // Fit the map to everything drawn.
+  // Fit the map to what the customer WANTS (include shapes). An exclude band
+  // rides a road that can run far outside the city (King Fahd Road's line is
+  // ~40 km), and fitting to it zoomed the map out to the whole region with
+  // every pill piled on one spot (live, 2026-09-15). Excludes stay drawn but
+  // never drive the zoom; they only do when nothing is included.
   useEffect(() => {
     if (!map || !isLoaded) return;
     const b = new google.maps.LatLngBounds();
     let any = false;
-    for (const pg of polygons) for (const ring of pg.paths) for (const pt of ring) { b.extend(pt); any = true; }
-    for (const l of lines) for (const pt of l.path) { b.extend(pt); any = true; }
-    if (any) map.fitBounds(b, 40);
+    const includes = polygons.filter((pg) => pg.polarity !== 'exclude');
+    for (const pg of includes.length ? includes : polygons) for (const ring of pg.paths) for (const pt of ring) { b.extend(pt); any = true; }
+    if (!any) for (const l of lines) for (const pt of l.path) { b.extend(pt); any = true; }
+    if (any) map.fitBounds(b, 48);
   }, [map, isLoaded, polygons, lines]);
 
   if (!isMapsKeyConfigured()) {
@@ -149,7 +167,7 @@ export default function GeoPrefMap({ items, isAr, height = 320 }: Props) {
           center={DEFAULT_MAP_CENTER}
           zoom={11}
           onLoad={setMap}
-          options={{ styles: WASSEL_MAP_STYLE, disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy', clickableIcons: false }}
+          options={{ styles: GRADER_MAP_STYLE, disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy', clickableIcons: false }}
         >
           {polygons.map((pg) => (
             <Polygon
