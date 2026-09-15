@@ -12,6 +12,7 @@ import {
   recordAiUsage,
   anthropicTokens,
   openAiCompatTokens,
+  openAiCompatModel,
   trackAnthropic,
   trackedAnthropic,
 } from '../aiUsage.js';
@@ -76,6 +77,36 @@ describe('token extraction', () => {
       outputTokens: 10,
       cacheReadTokens: 0,
     });
+  });
+});
+
+describe('openAiCompatModel', () => {
+  // The alias we SEND is not always the name the vendor PRICES. Every DeepSeek
+  // call site sends `deepseek-chat`, but DeepSeek's published price list has no
+  // such entry — it prices deepseek-flash and deepseek-v4-pro. Storing the
+  // requested alias is what left 76 metered calls permanently unpriceable and
+  // made the DeepSeek credit balance an upper bound instead of a number.
+  it('prefers the model the provider actually served', () => {
+    expect(openAiCompatModel({ model: 'deepseek-flash' }, 'deepseek-chat')).toBe('deepseek-flash');
+  });
+
+  it('falls back to what we asked for when the body says nothing', () => {
+    // A transport failure or an HTTP error has no body at all, and the row
+    // still has to name a model — an empty model column would be worse than a
+    // slightly-wrong one.
+    expect(openAiCompatModel(null, 'deepseek-chat')).toBe('deepseek-chat');
+    expect(openAiCompatModel({}, 'deepseek-chat')).toBe('deepseek-chat');
+    expect(openAiCompatModel({ model: '' }, 'deepseek-chat')).toBe('deepseek-chat');
+    expect(openAiCompatModel({ model: '   ' }, 'deepseek-chat')).toBe('deepseek-chat');
+  });
+
+  it('ignores a non-string model rather than writing "[object Object]"', () => {
+    expect(openAiCompatModel({ model: 42 }, 'kimi-k3')).toBe('kimi-k3');
+    expect(openAiCompatModel({ model: { name: 'x' } }, 'kimi-k3')).toBe('kimi-k3');
+  });
+
+  it('trims, so the stored name can match a price-book row exactly', () => {
+    expect(openAiCompatModel({ model: '  deepseek-v4-pro ' }, 'deepseek-chat')).toBe('deepseek-v4-pro');
   });
 });
 

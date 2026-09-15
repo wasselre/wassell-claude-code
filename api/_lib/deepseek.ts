@@ -22,7 +22,7 @@
  * compiler is asking you for `track`, that is the point.
  */
 
-import { recordAiUsage, openAiCompatTokens, type AiCallRef } from './aiUsage.js';
+import { recordAiUsage, openAiCompatTokens, openAiCompatModel, type AiCallRef } from './aiUsage.js';
 
 const DEEPSEEK_BASE = 'https://api.deepseek.com';
 const DEEPSEEK_MODEL = 'deepseek-chat';
@@ -53,6 +53,8 @@ export interface DeepseekChatOpts {
 }
 
 interface DeepseekCompletion {
+  /** The model the alias resolved to — this, not DEEPSEEK_MODEL, is what was billed. */
+  model?: string;
   choices?: Array<{ message?: { content?: string } }>;
   error?: { message?: string };
   usage?: {
@@ -75,7 +77,7 @@ export async function deepseekChat(opts: DeepseekChatOpts): Promise<string> {
     await recordAiUsage({
       ...opts.track,
       provider: 'deepseek',
-      model: DEEPSEEK_MODEL,
+      model: openAiCompatModel(body, DEEPSEEK_MODEL),
       status,
       error: error ? (error instanceof Error ? error.message : String(error)) : null,
       latencyMs: Date.now() - started,

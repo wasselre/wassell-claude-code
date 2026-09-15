@@ -18,7 +18,7 @@
  * fails loudly rather than silently storing nothing.
  */
 
-import { recordAiUsage, openAiCompatTokens } from './aiUsage.js';
+import { recordAiUsage, openAiCompatTokens, openAiCompatModel } from './aiUsage.js';
 
 /** The fields the extractor fills, with their allowed values (clients model). */
 export const PREF_FIELDS = {
@@ -199,6 +199,8 @@ export async function callDeepSeek(input: {
       throw err;
     }
     const j = (await res.json()) as {
+      /** What the alias actually resolved to — the name the vendor prices. */
+      model?: string;
       choices?: { message?: { content?: string }; finish_reason?: string }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number };
     };
@@ -206,7 +208,7 @@ export async function callDeepSeek(input: {
     // second real call, and a per-call ledger has to show both.
     await recordAiUsage({
       area: 'sales', callSite: 'api/_lib/prefExtract', operation: 'extract',
-      provider: 'deepseek', model: input.model, status: 'ok',
+      provider: 'deepseek', model: openAiCompatModel(j, input.model), status: 'ok',
       latencyMs: Date.now() - started,
       meta: { max_tokens: maxTokens, fast: Boolean(input.fast) },
       ...openAiCompatTokens(j),

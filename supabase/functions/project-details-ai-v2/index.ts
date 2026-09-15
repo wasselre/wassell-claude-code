@@ -25,7 +25,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk@0.35.0";
-import { recordAiUsage, anthropicTokens, openAiCompatTokens } from "../_shared/aiUsage.ts";
+import { recordAiUsage, anthropicTokens, openAiCompatTokens, openAiCompatModel } from "../_shared/aiUsage.ts";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 8000;
@@ -72,14 +72,14 @@ async function deepseekChat(apiKey: string, system: string, user: string): Promi
     const err = new Error("deepseek returned no content");
     await recordAiUsage({
       area: "website", callSite: "edge/project-details-ai-v2", provider: "deepseek",
-      model: DEEPSEEK_MODEL, status: "error", error: err.message, latencyMs: Date.now() - started,
+      model: openAiCompatModel(json, DEEPSEEK_MODEL), status: "error", error: err.message, latencyMs: Date.now() - started,
       ...openAiCompatTokens(json),
     });
     throw err;
   }
   await recordAiUsage({
     area: "website", callSite: "edge/project-details-ai-v2", provider: "deepseek",
-    model: DEEPSEEK_MODEL, status: "ok", latencyMs: Date.now() - started,
+    model: openAiCompatModel(json, DEEPSEEK_MODEL), status: "ok", latencyMs: Date.now() - started,
     ...openAiCompatTokens(json),
   });
   return content.trim();

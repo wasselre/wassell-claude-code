@@ -136,3 +136,25 @@ export function openAiCompatTokens(body: unknown): TokenFields {
     cacheWriteTokens: 0,
   };
 }
+
+/**
+ * The model an OpenAI-compatible provider actually served, falling back to the
+ * name we asked for.
+ *
+ * Why this matters, found 2026-09-15: every DeepSeek call site sends the alias
+ * `deepseek-chat`, and that is what the ledger stored. But DeepSeek's published
+ * price list does not contain `deepseek-chat` — it prices `deepseek-flash` and
+ * `deepseek-v4-pro`, which the alias resolves to. So 75 metered calls could
+ * never be matched to a citable rate and sat permanently in
+ * `v_ai_usage_unpriced`, which in turn made the DeepSeek credit balance an
+ * upper bound rather than a figure.
+ *
+ * Recording the RESOLVED name fixes that at the source: the row then names a
+ * model that appears on the vendor's price list. Rows written before this
+ * change keep the alias, so seed `deepseek-chat` in `ai_price_book` too if you
+ * want the historical ones costed.
+ */
+export function openAiCompatModel(body: unknown, requested: string): string {
+  const served = (body as { model?: unknown } | null)?.model;
+  return typeof served === 'string' && served.trim() ? served.trim() : requested;
+}

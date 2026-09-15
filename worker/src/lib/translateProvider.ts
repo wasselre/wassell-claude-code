@@ -17,7 +17,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { recordAiUsage, openAiCompatTokens, trackedAnthropic } from './aiUsage.js';
+import { recordAiUsage, openAiCompatTokens, openAiCompatModel, trackedAnthropic } from './aiUsage.js';
 import { createHash } from 'node:crypto';
 
 export type TargetLang = 'ar' | 'en';
@@ -97,7 +97,7 @@ async function deepseekCall(key: string, payload: unknown[]): Promise<Map<number
       callSite: 'worker/translateProvider',
       operation: 'batch',
       provider: 'deepseek',
-      model: 'deepseek-chat',
+      model: openAiCompatModel(body, 'deepseek-chat'),
       status,
       error: error ? (error instanceof Error ? error.message : String(error)) : null,
       latencyMs: Date.now() - started,
