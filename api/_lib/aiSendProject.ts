@@ -41,6 +41,7 @@ const WA_TEMP_BUCKET = 'wassel-files';
  *  the queue drips text → brochure → photo1 → photo2… single-file. Kept above
  *  the worker's ~3s poll (same value the bulk rep flow uses). */
 const SPACING_MS = 4_000;
+const SEND_PROJECT_PHOTOS_AND_VIDEOS = false; // operator 2026-09-15: bot sends the brochure ONLY (no photos/videos) until turned back on
 
 export interface AiSendProjectResult {
   /** True when the text was accepted into the send queue. */
@@ -329,10 +330,15 @@ export async function sendProjectViaAiFlow(
   let mediaQueued = 0;
   let mediaFailed = 0;
   if (allProjectsModelId) {
-    const saved = await resolveSavedSelectionRefs(svc, projectId);
-    const mediaItems = saved
-      ? [...(await resolveBrochureRef(svc, allProjectsModelId, projectId)), ...saved]
-      : await resolveMediaRefs(svc, allProjectsModelId, projectId);
+    let mediaItems: MediaRef[];
+    if (SEND_PROJECT_PHOTOS_AND_VIDEOS) {
+      const saved = await resolveSavedSelectionRefs(svc, projectId);
+      mediaItems = saved
+        ? [...(await resolveBrochureRef(svc, allProjectsModelId, projectId)), ...saved]
+        : await resolveMediaRefs(svc, allProjectsModelId, projectId);
+    } else {
+      mediaItems = await resolveBrochureRef(svc, allProjectsModelId, projectId);
+    }
     const base = Date.now();
     for (const [i, media] of mediaItems.entries()) {
       const deliverAt = new Date(base + (i + 1) * SPACING_MS).toISOString();
