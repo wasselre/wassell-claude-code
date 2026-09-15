@@ -53,6 +53,11 @@ export async function repairMediaDimensions(
     .eq('download_status', 'stored')
     .is('width', null)
     .not('stored_url', 'is', null)
+    // Registered files FIRST: those are the ones visibly missing an aspect
+    // ratio in the Library. 152 stored videos lack geometry but only 63 are
+    // registered, so unordered batches spend most of their budget on media
+    // nobody is looking at yet. The rest still gets done, just after.
+    .order('file_id', { ascending: true, nullsFirst: false })
     .limit(limit);
   if (error) throw new Error(`repair: load media: ${error.message}`);
   if (!rows || rows.length === 0) return stats;
