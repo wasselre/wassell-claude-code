@@ -61,9 +61,20 @@ if [[ ! -f "$CFG_DIR/.claude.json" ]]; then
   else
     PROJ_PATH="$(pwd)"
   fi
-  PY_BIN="$(command -v python3 || command -v python || true)"
+  # Pick a python that actually RUNS, not merely one that exists on PATH.
+  # On Windows, `command -v python3` finds the Microsoft Store app-execution
+  # alias at AppData/Local/Microsoft/WindowsApps/python3 — a stub that prints
+  # "Python was not found..." and exits non-zero. Testing existence alone
+  # selected the stub and every kimi-code run died before reaching Moonshot.
+  PY_BIN=""
+  for cand in python3 python py; do
+    candidate="$(command -v "$cand" || true)"
+    [[ -z "$candidate" ]] && continue
+    if "$candidate" -c "pass" >/dev/null 2>&1; then PY_BIN="$candidate"; break; fi
+  done
   if [[ -z "$PY_BIN" ]]; then
-    echo "kimi-code: need python3 (or python) to seed $CFG_DIR/.claude.json" >&2
+    echo "kimi-code: need a WORKING python3/python to seed $CFG_DIR/.claude.json" >&2
+    echo "  (a Microsoft Store python stub on PATH does not count)" >&2
     exit 1
   fi
   "$PY_BIN" - "$CFG_DIR/.claude.json" "$PROJ_PATH" <<'PY'
