@@ -1,0 +1,26 @@
+-- ════════════════════════════════════════════════════════════════════════════
+-- Group A of the monthly-operating-model build plan — the data model.
+-- Applied to production 2026-09-15 in two parts; recorded here as one file.
+--
+--   A1  mos_content_rows — the row as a real workflow subject
+--   A2  RLS widened to the row subject (a row task was invisible to browsers)
+--   A3  a reservation can name a row
+--   A4  a same-day effort spread (a row is three slots on ONE day)
+--   A5  per-step effort for posts deleted (it double-counted the designer)
+--   A6  the manager uncapped
+--   A7  mos_month_notes, keyed on the template coordinate, lane-aware (D7)
+--   A8  mos_month_template, incl. the Saturday topic bank
+--   A8b the general row: mos_content_rows.project_id is nullable
+--   A9  feed/story on mos_publications
+--   A10 the video content type gains a caption field
+--   C2  (data half) the manager's daily_new_tasks was 0, so EVERY approval task
+--       opened unassigned — the thing blocking a person-keyed queue
+--
+-- The full rationale for each is in docs/plans/monthly-operating-model-build.md.
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- See the applied statements in the two migration entries:
+--   mos_month_model_schema        (A1, A3, A7, A8, A8b, A9, A10)
+--   mos_row_task_rls_and_spread   (A2, A4, A5, A6, C2-data)
+-- This file is the readable record; both were applied via the Supabase MCP and
+-- verified against production before this commit.

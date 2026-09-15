@@ -162,6 +162,28 @@ export function effortWeights(workingDays: number): number[] {
   return out;
 }
 
+/**
+ * The SAME-DAY spread: the whole weight lands on one day.
+ *
+ * `effortWeights` above answers "how long does this take", spreading N across N
+ * consecutive working days. A ROW asks the opposite question. Three posts
+ * written side by side in one sitting are ONE task, ONE submit and THREE slots
+ * **on the same day** — running them through `effortWeights(3)` would reserve
+ * one slot on each of three days, which is not a row at all.
+ *
+ * The SQL twin is `mos_spread_effort_same_day(start, effort)`
+ * (2026-09-15). **Both must agree exactly**: the preview computes load in JS and
+ * `mos_campaign_plan_commit`'s conflict test recomputes it in SQL, so any
+ * divergence surfaces as a WS409 on a plan that actually fits — a bug the
+ * commit's own comment records having happened once already.
+ *
+ *   3    → [3]
+ *   0.25 → [0.25]
+ */
+export function effortWeightsSameDay(slots: number): number[] {
+  return [Math.max(0, Number(slots) || 0)];
+}
+
 /** Rows for the preview's load table: existing vs proposed vs capacity. */
 export function buildLoadCells(
   book: CapacityBook,
