@@ -127,6 +127,22 @@ async function resolveUnitByCode(supa: SupabaseClient, code: string): Promise<{ 
   return row ? { id: row.id } : null;
 }
 
+/** True only when the message is ESSENTIALLY JUST a greeting — nothing substantive
+ *  remains after removing greeting words + politeness/religious filler. So
+ *  «السلام عليكم» / «مساء الخير» → greet, but «السلام عليكم مساحات وأسعار الدور
+ *  الأرضي» → NOT a greeting (the real request wins, and is classified below / by
+ *  Kimi). This fixes the bug where a leading salaam made the bot ignore a buyer's
+ *  actual question and reply only «كيف أقدر أخدمك؟». */
+function isPureGreeting(low: string): boolean {
+  if (!/سلام|هلا|هلو|اهل|أهل|مرحب|صباح|مساء|هاي|\bhi\b|hello|hey|salam|hala/i.test(low)) return false;
+  const rest = low.replace(
+    /وعليكم|السلام|سلام|عليكم|ورحمة|وبركاته|بركاته|الله|هلا|هلاً|هلو|اهلا|أهلا|اهلاً|أهلاً|اهلين|أهلين|مرحبا|مرحباً|مرحبتين|حياكم|حياك|صباح|مساء|الخير|النور|السعادة|هاي|hi|hello|hey|salam|salaam|hala|كيفك|كيف\s*حالك|كيف\s*الحال|اخبارك|أخبارك|عساك|طيبين|طيب|بخير|والله/gi,
+    ' ',
+  );
+  // Count real letters (Arabic + Latin) left. ≤2 ⇒ nothing to act on ⇒ pure greeting.
+  return (rest.match(/[A-Za-zء-ي]/g) ?? []).length <= 2;
+}
+
 /** Deterministic classifier — no LLM. Returns 'kimi' only for the ambiguous tail. */
 function classify(raw: string | null | undefined): Decision {
   const t = foldDigits((raw ?? '').trim());
@@ -154,11 +170,10 @@ function classify(raw: string | null | undefined): Decision {
   if (/مهتم بمشاريع سكني|مشاريع سكنية (?:اخرى|أخرى)|أبحث عن منزل|ابحث عن منزل|استشارة عقاري|متوفر شق|عندكم مشاريع|عندكم شقق|عندكم فلل|ابي اعرف الاسعار|أبي أعرف الأسعار/.test(t))
     return { action: 'qualify' };
 
-  // Greeting — match real greeting words ONLY. (No char-count heuristic: «ليش»
-  // = "why" is 3 letters and is NOT a greeting; short unknowns fall to Kimi,
-  // which hands them off rather than replying «أهلاً» to a question.)
-  if (/^(?:وعليكم\s+)?(?:ال)?سلام|^سلام|^هلا|^هلو|^اهل|^أهل|^مرحب|^صباح|^مساء|^هاي|^أهلين|^اهلين|^hi\b|^hello|^hey|^salam|^hala/.test(low))
-    return { action: 'greet' };
+  // Greeting — ONLY when the whole message is essentially a greeting. A greeting
+  // that is followed by a real request (a salaam + "sizes and prices…") is NOT a
+  // greeting: it falls through to Kimi, which classifies the actual ask.
+  if (isPureGreeting(low)) return { action: 'greet' };
 
   return { action: 'kimi' };
 }
@@ -313,6 +328,11 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     const flow = await sendProjectViaAiFlow(supa, {
       chatWid, projectName: d.projectName, deviceId: body.device_id, jobId: 'basic',
       onlyOurProjects: true, allowAi: false, force: softBypass, lang,
+      // Set the expectation so a follow-up like «بكم التاون هاوس؟» isn't met with
+      // silence: the bot hands specifics to a human, and this line says so.
+      closingNote: lang === 'en'
+        ? 'For exact prices and any details, our consultant will follow up with you shortly 🌟'
+        : 'لأي تفاصيل أو الأسعار النهائية بيتواصل معك مستشارنا قريب 🌟',
     });
     if (flow.blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: flow.reason });
     if (flow.queued) {
@@ -369,6 +389,17 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   // Send the reply (in-process: gate re-check + device + queue + audit).
   // Skipped for a project_sheet that already sent via the flow (sent=true, replyText=null).
   if (replyText) {
+    // Don't repeat ourselves: if our most recent reply in this chat was the exact
+    // same text (e.g. the customer re-sent the same message), re-sending it reads
+    // like a broken bot. Skip and let a human continue. (Audit rows exist since the
+    // job_id fix; a missing row just means no prior reply → send normally.)
+    const { data: last } = await supa
+      .from('whatsapp_ai_replies').select('body')
+      .eq('chat_wid', chatWid).order('sent_at', { ascending: false }).limit(1);
+    const lastBody = ((last?.[0]?.body as string | undefined) ?? '').trim();
+    if (lastBody && lastBody === replyText.trim()) {
+      return jsonRes(nodeRes, 200, { action: d.action, sent: false, skipped: 'duplicate_reply' });
+    }
     const res = await enqueueAiReply(supa, { chatWid, text: replyText, deviceId: body.device_id, jobId: 'basic', force: forceSend });
     if (res.blocked) return jsonRes(nodeRes, 200, { action: d.action, sent: false, blocked: true, reason: res.reason });
     sent = res.queued;

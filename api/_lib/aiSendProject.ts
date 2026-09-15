@@ -219,6 +219,10 @@ export async function sendProjectViaAiFlow(
     allowAi?: boolean;
     /** Language to send the message text in (media is language-agnostic). Default 'ar'. */
     lang?: 'ar' | 'en';
+    /** Optional line appended to the message text — the basic bot uses it to tell
+     *  the customer a consultant will follow up on prices/details, so a follow-up
+     *  question after the sheet isn't met with silence. */
+    closingNote?: string;
   },
 ): Promise<AiSendProjectResult> {
   const chatWid = (input.chatWid ?? '').trim();
@@ -245,10 +249,13 @@ export async function sendProjectViaAiFlow(
   const { data: apModel } = await svc.from('models').select('id').eq('name', 'all_projects').maybeSingle();
   const allProjectsModelId = apModel?.id as string | undefined;
 
-  const { text, source } = await resolveMessageText(
+  const resolved = await resolveMessageText(
     svc, projectId, sheet.body_ar, sheet.body_en, sheet.facts as unknown as ProjectMessageFacts, allowAi, input.lang ?? 'ar',
   );
-  if (!text.trim()) return { queued: false, error: 'resolved an empty message', project_id: projectId };
+  const source = resolved.source;
+  if (!resolved.text.trim()) return { queued: false, error: 'resolved an empty message', project_id: projectId };
+  const note = input.closingNote?.trim();
+  const text = note ? `${resolved.text}\n\n${note}` : resolved.text;
 
   const deviceId = await resolveDevice(svc, input.deviceId);
   if (!deviceId) return { queued: false, error: 'no active WhatsApp device configured', project_id: projectId };
