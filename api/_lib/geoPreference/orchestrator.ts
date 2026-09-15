@@ -35,6 +35,8 @@ import type {
   MaximumSafeAction,
   AmbiguityCondition,
   GeoPreference,
+  GeoClause,
+  GeometryRecipe,
   ResolutionResult,
   SatisfiabilityFlag,
 } from './ontology.js';
@@ -244,6 +246,7 @@ export function mergeResolutionsIntoPreference(
   let resolved = 0;
   let unresolved = 0;
   for (const group of out.groups ?? []) {
+    const added: GeoClause[] = [];
     for (const clause of group.clauses ?? []) {
       for (const ref of clause.anyOf ?? []) {
         const eid = typeof ref.geometry_id === 'string' && ref.geometry_id.startsWith('geo:') ? ref.geometry_id.slice(4) : '';
@@ -253,22 +256,41 @@ export function mergeResolutionsIntoPreference(
         const allResolved = rs.every((r) => r.status === 'resolved' && r.recipe);
         if (!allResolved) { unresolved += 1; continue; }
         const recipes = rs.map((r) => r.recipe!);
+        const adminIdx = recipes.map((r, i) => (ADMIN_UNION_OPS.has(r.operation) ? i : -1)).filter((i) => i >= 0);
+        const bandIdx = recipes.map((r, i) => (ADMIN_UNION_OPS.has(r.operation) ? -1 : i)).filter((i) => i >= 0);
         if (recipes.length === 1) {
           ref.recipe = { ...recipes[0]!, source_anchors: ev.anchors };
-        } else {
+        } else if (bandIdx.length === 0) {
+          // Several admin places in one mention («المهدية أو الجبيلة») → one union.
           const ids = Array.from(new Set(recipes.flatMap((r) => r.resolved_element_ids)));
-          const primary = recipes.find((r) => !ADMIN_UNION_OPS.has(r.operation)) ?? recipes[0]!;
-          const allAdmin = recipes.every((r) => ADMIN_UNION_OPS.has(r.operation));
-          ref.recipe = {
-            ...primary,
-            operation: allAdmin ? 'district_union' : primary.operation,
-            source_anchors: ev.anchors,
-            resolved_element_ids: ids,
+          ref.recipe = { ...recipes[0]!, operation: 'district_union', source_anchors: ev.anchors, resolved_element_ids: ids };
+        } else if (adminIdx.length === 0) {
+          // Several element geometries → keep the first (corridor/band already carries its roads).
+          ref.recipe = { ...recipes[bandIdx[0]!]!, source_anchors: ev.anchors };
+        } else {
+          // MIXED — «العليا (غرب الملك فهد)»: a district AND a side of a road. That
+          // is an intersection, so the mention becomes TWO clauses of the group
+          // (AND): this ref keeps the band, and an extra include clause carries
+          // the district(s). Never merge a district id into a band's road list.
+          const band = recipes[bandIdx[0]!]!;
+          const adminIds = Array.from(new Set(adminIdx.flatMap((i) => recipes[i]!.resolved_element_ids)));
+          const adminRecipe: GeometryRecipe = {
+            ...recipes[adminIdx[0]!]!,
+            operation: adminIds.length > 1 ? 'district_union' : recipes[adminIdx[0]!]!.operation,
+            source_anchors: adminIdx.map((i) => ev.anchors[i]!),
+            resolved_element_ids: adminIds,
           };
+          ref.recipe = { ...band, source_anchors: bandIdx.map((i) => ev.anchors[i]!) };
+          if (clause.op === 'include') {
+            added.push({ op: 'include', anyOf: [{ geometry_id: `${ref.geometry_id}:admin`, recipe: adminRecipe }] });
+          }
+          // An EXCLUDE of «district ∧ band» cannot be split into two excludes
+          // (that over-excludes the whole district); the band alone is kept.
         }
         resolved += 1;
       }
     }
+    if (added.length) group.clauses.push(...added);
   }
   return { preference: out, resolved_evidence: resolved, unresolved_evidence: unresolved };
 }

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { compile } from '../compiler.js';
 import { mergeResolutionsIntoPreference } from '../orchestrator.js';
 import { remapExtractionIds } from '../backfillRunner.js';
+import { lexicalVariants } from '../resolverDb.js';
 import type { Evidence, EvidenceRelation, ResolutionResult } from '../ontology.js';
 
 /**
@@ -69,6 +70,58 @@ describe('mergeResolutionsIntoPreference', () => {
     expect(ref.recipe.geo_data_version).toBe('stub');
     expect(ref.recipe.resolved_element_ids).toEqual(['المهدية', 'الجبيلة']);
     expect(merged.unresolved_evidence).toBe(1);
+  });
+});
+
+describe('mixed mention: district + side of a road', () => {
+  it('«العليا (غرب الملك فهد)» → band ref + an extra include clause with the district (AND), never a district id inside the band', () => {
+    const e1 = ev('e1', [['العليا', 'district'], ['غرب الملك فهد', 'direction']]);
+    const { preference } = compile([e1], []);
+    const band: ResolutionResult = {
+      status: 'resolved', geometry_id: 'geo:fp-band',
+      recipe: { operation: 'directional_band', source_anchors: [], resolved_element_ids: ['RUH-ROAD-0694'], radius_or_band_m: 1500, universe_source: 'organizational_default', geo_data_version: 'roads@test', resolver_version: 'resolver@test', compiled_at: '2026-09-15T00:00:00Z' },
+    };
+    const merged = mergeResolutionsIntoPreference(preference, [e1], [resolvedDistrict('d-olaya', 'العليا'), band]);
+    const clauses = merged.preference.groups[0]!.clauses;
+    expect(clauses).toHaveLength(2);
+    const bandRef = clauses[0]!.anyOf[0]!;
+    expect(bandRef.recipe.operation).toBe('directional_band');
+    expect(bandRef.recipe.resolved_element_ids).toEqual(['RUH-ROAD-0694']);
+    expect(bandRef.recipe.source_anchors.map((a) => a.span)).toEqual(['غرب الملك فهد']);
+    const adminClause = clauses[1]!;
+    expect(adminClause.op).toBe('include');
+    expect(adminClause.anyOf[0]!.geometry_id).toBe('geo:e1:admin');
+    expect(adminClause.anyOf[0]!.recipe.resolved_element_ids).toEqual(['d-olaya']);
+    expect(merged.resolved_evidence).toBe(1);
+  });
+});
+
+describe('compile(): a target-less exception never inverts a member (2026-09-15, فهد)', () => {
+  it('members keep their OWN polarity; needs_confirm is still raised', () => {
+    const west = ev('west', [['غرب الملك فهد', 'direction']], 'positive');
+    const east = ev('east', [['شرق الملك فهد', 'direction']], 'negative');
+    const rel: EvidenceRelation = {
+      id: 'r1', relation: 'exception',
+      members: [{ type: 'evidence', id: 'east' }, { type: 'evidence', id: 'west' }],
+      source_span: 'يستفسر عن شرق الملك فهد ثم يؤكد أنه يبحث عن غرب الملك فهد', explicit_or_inferred: 'explicit',
+    };
+    const { preference, needs_confirm } = compile([west, east], [rel]);
+    expect(needs_confirm).toBe(true);
+    const clauses = preference.groups.flatMap((g) => g.clauses);
+    const opOf = (id: string) => clauses.find((c) => c.anyOf.some((r) => r.geometry_id === `geo:${id}`))!.op;
+    expect(opOf('west')).toBe('include');
+    expect(opOf('east')).toBe('exclude');
+  });
+});
+
+describe('lexicalVariants (resolverDb candidate stage)', () => {
+  it('generates ة/ه, ى/ي, hamza and article variants', () => {
+    const v = lexicalVariants('المحمديه');
+    expect(v).toContain('المحمدية');
+    expect(v).toContain('محمديه');
+    expect(lexicalVariants('نرجس')).toContain('النرجس');
+    expect(lexicalVariants('الياسمين')).toContain('ياسمين');
+    expect(lexicalVariants('  ')).toEqual([]);
   });
 });
 

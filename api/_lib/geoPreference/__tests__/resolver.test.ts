@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveAnchor, type ResolverDb, type ResolutionContext, type DistrictCandidate } from '../resolver.js';
+import { resolveAnchor, parseDirection, placeKey, roadKey, type ResolverDb, type ResolutionContext, type DistrictCandidate, type ElementCandidate } from '../resolver.js';
 import type { AnchorToken } from '../ontology.js';
 
 /**
@@ -22,7 +22,18 @@ const DISTRICTS: DistrictCandidate[] = [
   mkDistrict('d-khalidiyah-jed', 'الخالدية', 'Al Khalidiyah', 'جدة', 'جدة', 'منطقة مكة', 'SA', 21.55, 39.19),
   // The Eastern-Province الجبيل — a NEAR-STRING to الجبيلة that must NEVER be picked.
   mkDistrict('d-jubail', 'الجبيل', 'Al Jubail', 'الجبيل', 'الجبيل', 'المنطقة الشرقية', 'SA', 27.0, 49.66),
+  // Official spellings a customer mangles: «النرجس» said as «نرجس», «المحمدية» typed «المحمديه».
+  mkDistrict('d-narjis-ryd', 'حي النرجس', 'An Narjis', 'الرياض', 'الرياض', 'منطقة الرياض', 'SA', 24.85, 46.65),
+  mkDistrict('d-mohammadiyah', 'حي المحمدية', 'Al Mohammadiyah', 'الرياض', 'الرياض', 'منطقة الرياض', 'SA', 24.73, 46.65),
 ];
+
+const KING_FAHD_ROAD: ElementCandidate = {
+  external_id: 'RUH-ROAD-0694', name_ar: 'طريق الملك فهد', name_en: 'King Fahd Road', aliases: [],
+  geom_kind: 'linestring', category: 'roads_major', type: null, city: 'Riyadh', country_code: 'SA',
+  lat: 24.7, lng: 46.68, confidence_score: 0.8, review_status: 'approved', is_active: true,
+};
+const KING_FAHD_BRANCH: ElementCandidate = { ...KING_FAHD_ROAD, external_id: 'RUH-ROAD-0696', name_ar: 'طريق الملك فهد الفرعي', name_en: 'King Fahad Branch Road' };
+const KING_FAHD_LIBRARY: ElementCandidate = { ...KING_FAHD_ROAD, external_id: 'RUH-METR-0363', name_ar: 'مكتبة الملك فهد', name_en: 'King Fahad Library', geom_kind: 'point', category: 'metro_stations' };
 
 function mkDistrict(
   id: string, name_ar: string, name_en: string, city_name_ar: string, city_id: string,
@@ -228,5 +239,68 @@ describe('resolveAnchor — pin', () => {
     const r = await resolveAnchor(anchor('pin', 'دبوس'), ctx({ pin: { lat: 24.6, lng: 46.5 }, pin_scope_ambiguous: true }));
     expect(r.status).toBe('needs_confirm');
     expect(r.reason).toBe('pin_scope_unclear');
+  });
+});
+
+describe('resolveAnchor — a side of a ROAD («غرب الملك فهد»), not a city zone (2026-09-15)', () => {
+  const roadsDb = () => fakeDb({
+    async findElements(token) {
+      // The live RPC returns roads AND points for «الملك فهد»; the resolver must pick the line.
+      return roadKey(token) === roadKey('طريق الملك فهد') || token.includes('الملك فهد') ? [KING_FAHD_LIBRARY, KING_FAHD_BRANCH, KING_FAHD_ROAD] : [];
+    },
+  });
+
+  it('city lookup is empty for «الملك فهد» → the King Fahd ROAD wins → directional_band (default depth)', async () => {
+    const r = await resolveAnchor(anchor('direction', 'غرب الملك فهد'), ctx({ db: roadsDb(), established_city: 'الرياض' }));
+    expect(r.status).toBe('resolved');
+    expect(r.recipe?.operation).toBe('directional_band');
+    expect(r.recipe?.resolved_element_ids).toEqual(['RUH-ROAD-0694']); // not the branch road, not the library
+    expect(r.recipe?.radius_or_band_m).toBeGreaterThan(0);
+    expect(r.recipe?.universe_source).toBe('organizational_default');
+  });
+
+  it('«شمال الرياض» still resolves as the CITY zone (city before road)', async () => {
+    const r = await resolveAnchor(anchor('direction', 'شمال الرياض'), ctx({ db: roadsDb() }));
+    expect(r.status).toBe('resolved');
+    expect(r.recipe?.operation).toBe('zone_union');
+  });
+
+  it('«الشمال» (article on the direction word) and «شمال_الرياض» (underscore) both parse', async () => {
+    expect(parseDirection('الشمال')).toEqual({ zone: 'north', rest: '' });
+    expect(parseDirection('شمال_الرياض')).toEqual({ zone: 'north', rest: 'الرياض' });
+    const r = await resolveAnchor(anchor('direction', 'الشمال'), ctx({ established_city: 'الرياض' }));
+    expect(r.status).toBe('resolved');
+    expect(r.recipe?.operation).toBe('zone_union');
+  });
+
+  it('a side of something that is neither a city nor a road → needs_confirm(side_of_unknown_referent), never a guess', async () => {
+    const r = await resolveAnchor(anchor('direction', 'غرب المزرعة'), ctx({ established_city: 'الرياض' }));
+    expect(r.status).toBe('needs_confirm');
+    expect(r.reason).toBe('side_of_unknown_referent');
+  });
+});
+
+describe('resolveAnchor — article-insensitive and spelling-tolerant district match', () => {
+  it('«نرجس» (no article) resolves «حي النرجس»', async () => {
+    const r = await resolveAnchor(anchor('district', 'نرجس'), ctx({ established_city: 'الرياض' }));
+    expect(r.status).toBe('resolved');
+    expect(r.recipe?.resolved_element_ids).toEqual(['d-narjis-ryd']);
+  });
+  it('«المحمديه» (ه for ة) resolves «حي المحمدية»', async () => {
+    const r = await resolveAnchor(anchor('district', 'المحمديه'), ctx({ established_city: 'الرياض' }));
+    expect(r.status).toBe('resolved');
+    expect(r.recipe?.resolved_element_ids).toEqual(['d-mohammadiyah']);
+  });
+  it('a mangled normalized_token falls back to the verbatim span', async () => {
+    const r = await resolveAnchor(anchor('district', 'المهدية', 'المهديه_'), ctx());
+    expect(r.status).toBe('resolved');
+    expect(r.recipe?.resolved_element_ids).toEqual(['d-mahdiyah']);
+  });
+  it('keys: placeKey drops «حي» + «ال» and folds; roadKey also drops the road word', () => {
+    expect(placeKey('حي النرجس')).toBe(placeKey('نرجس'));
+    expect(placeKey('المحمديه')).toBe(placeKey('حي المحمدية'));
+    expect(placeKey('الجبيلة')).not.toBe(placeKey('الجبيل'));
+    expect(roadKey('الملك فهد')).toBe(roadKey('طريق الملك فهد'));
+    expect(roadKey('طريق الملك فهد الفرعي')).not.toBe(roadKey('طريق الملك فهد'));
   });
 });

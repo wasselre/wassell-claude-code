@@ -113,6 +113,13 @@ means "names only — the resolver could not pick". The conversation grader
 (`/geo-grade?batch=…&view=chat`) draws these on the map. Run a cohort with
 `CALIB_CLIENTS=<uuid,uuid,…> CALIB_RUN=<run id> CALIB_LABEL=<batch label>`.
 
+**2026-09-15 resolver/compiler fixes** (first calib-003 conversation): side-of-road
+→ `directional_band` (city first, road second, else `side_of_unknown_referent`);
+element search translates the city to English for `wassell_search_geo_elements`;
+district candidates use lexical variants + article-insensitive keys; a target-less
+`exception` keeps members' own polarity. `needs_confirm` reasons still surface
+only in the compile result — not persisted on the proposal.
+
 **Calls are speaker-labelled from Hatif's diarized words (2026-09-13, second pass).**
 `gatherClientConversations` reads `call_logs.transcription.words[]` for each call
 (same id as the phone_calls record) and `hatifDialogue.ts` turns them into

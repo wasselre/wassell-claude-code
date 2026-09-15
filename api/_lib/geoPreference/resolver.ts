@@ -226,17 +226,20 @@ const DIRECTION_WORDS: Record<string, string> = {
   'northeast': 'northeast', 'northwest': 'northwest', 'southeast': 'southeast', 'southwest': 'southwest',
 };
 
-/** Pull a direction zone + the remaining (city) text out of a span/token. */
-function parseDirection(text: string): { zone: string | null; rest: string } {
-  const norm = canonicalPlaceName(text);
+/** Pull a direction zone + the remaining referent text (a city OR a road) out of
+ *  a span/token. Tolerates «الشمال» (article on the direction word) and the
+ *  extractor's «شمال_الرياض» underscore artifact. */
+export function parseDirection(text: string): { zone: string | null; rest: string } {
+  const t = String(text ?? '').replace(/_/g, ' ').replace(/^\s*ال(?=(شمال|جنوب|شرق|غرب|وسط))/, '').trim();
+  const norm = canonicalPlaceName(t);
   // longest match first (diagonals before cardinals)
   const keys = Object.keys(DIRECTION_WORDS).sort((a, b) => b.length - a.length);
   for (const k of keys) {
     const nk = canonicalPlaceName(k);
     if (norm === nk) return { zone: DIRECTION_WORDS[k]!, rest: '' };
-    if (norm.startsWith(nk + ' ')) return { zone: DIRECTION_WORDS[k]!, rest: text.slice(text.length - (norm.length - nk.length - 1)).trim() };
+    if (norm.startsWith(nk + ' ')) return { zone: DIRECTION_WORDS[k]!, rest: t.slice(t.length - (norm.length - nk.length - 1)).trim() };
   }
-  return { zone: null, rest: text };
+  return { zone: null, rest: t };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -294,13 +297,30 @@ interface AdminCandidate {
   lng: number | null;
 }
 
-/** Exact = token equals an official name OR a curated alias, after canonicalization.
- *  This is the SELECTION gate (HARD RULE 1): a fuzzy substring is not exact. */
+/**
+ * Article-insensitive place key: the canonical fold (ة→ه, ى→ي, أإآ→ا, no «حي»)
+ * with the definite article dropped, so «نرجس» ≡ «النرجس» and «المحمديه» ≡
+ * «حي المحمدية». Customers drop «ال» and swap ة/ه constantly; the official name
+ * never does. Still an EXACT key — «الجبيلة» ≠ «الجبيل» — so HARD RULE 1 holds.
+ */
+export function placeKey(s: string): string {
+  return canonicalPlaceName(s).replace(/^ال(?=\S)/, '').trim();
+}
+
+/** Road key: placeKey without a leading road word, so «الملك فهد» ≡ «طريق الملك
+ *  فهد» (but ≠ «طريق الملك فهد الفرعي»). */
+export function roadKey(s: string): string {
+  return placeKey(String(s ?? '').replace(/^\s*(طريق|شارع|محور|الدائري|دائري)\s+/, ''));
+}
+
+/** Exact = token equals an official name OR a curated alias, after canonicalization
+ *  (article-insensitive). This is the SELECTION gate (HARD RULE 1): a fuzzy
+ *  substring is not exact. */
 function isExact(c: AdminCandidate, token: string): boolean {
-  const want = canonicalPlaceName(token);
+  const want = placeKey(token);
   if (!want) return false;
-  if (c.names.some((n) => canonicalPlaceName(n) === want)) return true;
-  return c.aliases.some((a) => canonicalPlaceName(a) === want);
+  if (c.names.some((n) => placeKey(n) === want)) return true;
+  return c.aliases.some((a) => placeKey(a) === want);
 }
 
 /**
@@ -381,14 +401,34 @@ function selectAdmin(
   return { pick: null, result: needsConfirm('ambiguous_entity', margin) };
 }
 
+/**
+ * The extractor's `normalized_token` is model output and occasionally mangled
+ * («طريقالملكفهد», «نفس_المنطقه»); the `span` is verbatim customer text. Try the
+ * normalized form first, then the span, and keep the first that resolves.
+ */
 async function resolveAdminPlace(
   anchor: AnchorToken,
   ctx: ResolutionContext,
   kind: 'district' | 'city' | 'region',
 ): Promise<ResolutionResult> {
+  const tokens = Array.from(new Set([anchor.normalized_token, anchor.span].map((s) => (s ?? '').trim()).filter(Boolean)));
+  if (tokens.length === 0) return unresolvable('outside_admin');
+  let last: ResolutionResult | null = null;
+  for (const token of tokens) {
+    const r = await resolveAdminToken(anchor, token, ctx, kind);
+    if (r.status === 'resolved') return r;
+    last = last ?? r; // report the FIRST failure (the normalized form's), not the retry's
+  }
+  return last!;
+}
+
+async function resolveAdminToken(
+  anchor: AnchorToken,
+  token: string,
+  ctx: ResolutionContext,
+  kind: 'district' | 'city' | 'region',
+): Promise<ResolutionResult> {
   const preferCountry = ctx.preferCountry || DEFAULT_GEO_COUNTRY;
-  const token = (anchor.normalized_token || anchor.span || '').trim();
-  if (!token) return unresolvable('outside_admin');
 
   let candidates: AdminCandidate[];
   let op: GeoOperation;
@@ -447,17 +487,38 @@ async function resolveAdminPlace(
 async function resolveZoneUnion(anchor: AnchorToken, ctx: ResolutionContext): Promise<ResolutionResult> {
   const parsed = parseDirection(anchor.normalized_token || anchor.span || '');
   const zone = ctx.direction ? (parseDirection(ctx.direction).zone ?? ctx.direction) : parsed.zone;
-  const city = (ctx.city || parsed.rest || ctx.established_city || '').trim();
   if (!zone) return needsConfirm('corridor_underspecified'); // no direction word understood
-  if (!city) return needsConfirm('missing_city_for_zone');
 
+  // The referent after the direction word is either a CITY («شمال الرياض» → the
+  // city's northern districts) or a ROAD («غرب الملك فهد» → the band on that side
+  // of King Fahd Road). Riyadh has both a King Fahd Road and a King Fahd District,
+  // but only a line has sides, so: city zone first, then a road, then ASK. A
+  // district is never guessed as the referent of a side.
+  const referent = (ctx.city || parsed.rest || '').trim();
+  if (referent) {
+    const rows = await ctx.db.zoneDistricts(referent, zone);
+    if (rows.length) {
+      const ids = rows.map((r) => r.district_id).filter(Boolean);
+      return resolved(makeRecipe('zone_union', [anchor], ids, ctx, { universe_source: 'explicit' }));
+    }
+    const { pick } = await resolveOneElement(referent, ctx, 'linestring');
+    if (pick) {
+      const band = isNum(ctx.radius_m) ? ctx.radius_m : DIRECTION_DEFAULT_M;
+      return resolved(makeRecipe('directional_band', [anchor], [pick.external_id], ctx, {
+        radius_or_band_m: band,
+        universe_source: isNum(ctx.radius_m) ? 'explicit' : 'organizational_default',
+      }));
+    }
+    return needsConfirm('side_of_unknown_referent');
+  }
+
+  // Bare direction («شمال», «الشمال») → the established city's zone.
+  const city = (ctx.established_city || '').trim();
+  if (!city) return needsConfirm('missing_city_for_zone');
   const rows = await ctx.db.zoneDistricts(city, zone);
   if (!rows.length) return needsConfirm('outside_admin');
   const ids = rows.map((r) => r.district_id).filter(Boolean);
-  const recipe = makeRecipe('zone_union', [anchor], ids, ctx, {
-    universe_source: ctx.city || parsed.rest ? 'explicit' : 'established_context',
-  });
-  return resolved(recipe);
+  return resolved(makeRecipe('zone_union', [anchor], ids, ctx, { universe_source: 'established_context' }));
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -481,12 +542,16 @@ async function resolveOneElement(
   const preferCountry = ctx.preferCountry || DEFAULT_GEO_COUNTRY;
   const rows = await ctx.db.findElements(token, { preferCountry, city: ctx.city || ctx.established_city, kind });
   if (!rows.length) return { pick: null, result: needsConfirm('outside_admin') };
-  const usable = rows.filter(elementUsable).filter((e) => (e.country_code || DEFAULT_GEO_COUNTRY) === preferCountry);
-  const exact = usable.filter((e) => {
-    const w = canonicalPlaceName(token);
-    return !!w && (canonicalPlaceName(e.name_ar) === w || canonicalPlaceName(e.name_en) === w ||
-      e.aliases.some((a) => canonicalPlaceName(a) === w));
-  });
+  const usable = rows
+    .filter(elementUsable)
+    .filter((e) => (e.country_code || DEFAULT_GEO_COUNTRY) === preferCountry)
+    .filter((e) => !e.geom_kind || e.geom_kind === kind); // a road query never picks a point
+  // Roads compare without the road word + article («الملك فهد» ≡ «طريق الملك فهد»);
+  // points/polygons without the article only.
+  const key = kind === 'linestring' ? roadKey : placeKey;
+  const w = key(token);
+  const exact = usable.filter((e) =>
+    !!w && (key(e.name_ar) === w || key(e.name_en) === w || e.aliases.some((a) => key(a) === w)));
   if (exact.length === 0) return { pick: null, result: needsConfirm('outside_admin') };
   if (exact.length > 1) return { pick: null, result: needsConfirm('ambiguous_entity') };
   return { pick: exact[0]! };

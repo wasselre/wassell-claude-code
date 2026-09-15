@@ -36,22 +36,77 @@ async function modelId(supabase: SupabaseClient, name: string): Promise<string |
   return (data?.id as string | undefined) ?? null;
 }
 
-/** ILIKE both name columns for a token; returns raw {id,data} rows (capped). */
+/**
+ * Lexical variants of a customer token so its spelling reaches the ILIKE
+ * candidate stage: ة/ه, ى/ي, أإآ/ا swaps and with/without the leading «ال».
+ * ILIKE is byte-wise — «المحمديه» never matched «حي المحمدية» — while only the
+ * resolver's SELECTION gate folds, so a variant miss here was a silent
+ * needs_confirm. Over-generating is safe: selection still requires an exact
+ * (article-insensitive) key.
+ */
+export function lexicalVariants(token: string): string[] {
+  const base = token.trim().replace(/\s+/g, ' ');
+  if (!base) return [];
+  const out = new Set<string>([base]);
+  const folds: Array<(s: string) => string> = [
+    (s) => s.replace(/ة/g, 'ه'), (s) => s.replace(/ه(?=\s|$)/g, 'ة'),
+    (s) => s.replace(/ى/g, 'ي'), (s) => s.replace(/ي(?=\s|$)/g, 'ى'),
+    (s) => s.replace(/[أإآ]/g, 'ا'),
+  ];
+  for (const f of folds) for (const s of Array.from(out)) out.add(f(s));
+  for (const s of Array.from(out)) {
+    if (/^ال\S/.test(s)) out.add(s.replace(/^ال/, ''));
+    else if (/^[\u0600-\u06FF]/.test(s)) out.add(`ال${s}`);
+  }
+  return Array.from(out).filter(Boolean).slice(0, 16);
+}
+
+/** ILIKE both name columns for a token (and its lexical variants); raw {id,data} rows (capped). */
 async function ilikeModel(
   supabase: SupabaseClient, mId: string, token: string, limit = 60,
 ): Promise<Array<{ id: string; data: Record<string, unknown> }>> {
-  const pat = `%${token.replace(/[%_]/g, '')}%`;
+  const variants = lexicalVariants(token).map((v) => v.replace(/[%_,()]/g, '')).filter(Boolean);
+  if (variants.length === 0) return [];
+  const or = variants.flatMap((v) => [`data->>name_ar.ilike.%${v}%`, `data->>name_en.ilike.%${v}%`]).join(',');
   const { data, error } = await supabase
     .from('unified_records')
     .select('id, data')
     .eq('model_id', mId)
-    .or(`data->>name_ar.ilike.${pat},data->>name_en.ilike.${pat}`)
+    .or(or)
     .limit(limit);
-  if (error || !data) return [];
-  return data as Array<{ id: string; data: Record<string, unknown> }>;
+  if (error) throw new Error(`resolver: ${mId} candidate lookup failed: ${error.message}`);
+  return (data ?? []) as Array<{ id: string; data: Record<string, unknown> }>;
+}
+
+/**
+ * `wassell_search_geo_elements` filters `p_city` against geo_elements.city, which
+ * holds ENGLISH names («Riyadh»); the resolver's established city is Arabic
+ * («الرياض»). Measured 2026-09-15: p_city='الرياض' → 0 rows, 'Riyadh' → rows.
+ * Translate through the cities model (cached per adapter); an unknown city
+ * passes through unchanged.
+ */
+async function cityNameForElements(
+  supabase: SupabaseClient, cache: Map<string, string | null>, city: string | undefined,
+): Promise<string | null> {
+  const c = (city ?? '').trim();
+  if (!c) return null;
+  if (cache.has(c)) return cache.get(c) ?? c;
+  let out: string | null = c;
+  if (/[\u0600-\u06FF]/.test(c)) {
+    const mId = await modelId(supabase, 'cities');
+    if (mId) {
+      const { data, error } = await supabase.from('unified_records').select('data').eq('model_id', mId).eq('data->>name_ar', c).limit(1);
+      if (error) throw new Error(`resolver: city lookup for elements failed: ${error.message}`);
+      const en = asStr((data?.[0]?.data as Record<string, unknown> | undefined)?.name_en);
+      out = en || c;
+    }
+  }
+  cache.set(c, out);
+  return out;
 }
 
 export function createSupabaseResolverDb(supabase: SupabaseClient): ResolverDb {
+  const cityCache = new Map<string, string | null>();
   return {
     async findDistricts(token: string): Promise<DistrictCandidate[]> {
       const mId = await modelId(supabase, 'districts');
@@ -106,12 +161,24 @@ export function createSupabaseResolverDb(supabase: SupabaseClient): ResolverDb {
 
     async findElements(token, opts): Promise<ElementCandidate[]> {
       // wassell_search_geo_elements handles name/alias/category/type/city ranking.
-      const { data, error } = await supabase.rpc('wassell_search_geo_elements', {
-        p_q: token, p_category: null, p_type: null,
-        p_city: opts.city ?? null, p_limit: 30, p_include_unapproved: false,
-      });
-      if (error || !Array.isArray(data)) return [];
-      return (data as Array<Record<string, unknown>>).map((r) => ({
+      // A bare road name («الملك فهد») ranks behind hospitals/parks/metro stops
+      // that share it, so for roads also query the «طريق …» form.
+      const t = token.trim();
+      const queries = opts.kind === 'linestring' && !/^\s*(طريق|شارع|محور|الدائري)\s/.test(t) ? [`طريق ${t}`, t] : [t];
+      const pCity = await cityNameForElements(supabase, cityCache, opts.city);
+      const seen = new Map<string, Record<string, unknown>>();
+      for (const q of queries) {
+        const { data, error } = await supabase.rpc('wassell_search_geo_elements', {
+          p_q: q, p_category: null, p_type: null,
+          p_city: pCity, p_limit: 30, p_include_unapproved: false,
+        });
+        if (error) throw new Error(`resolver: geo element search failed: ${error.message}`);
+        for (const r of (Array.isArray(data) ? data : []) as Array<Record<string, unknown>>) {
+          const id = asStr(r.external_id);
+          if (id && !seen.has(id)) seen.set(id, r);
+        }
+      }
+      return Array.from(seen.values()).map((r) => ({
         external_id: asStr(r.external_id),
         name_ar: asStr(r.name_ar),
         name_en: asStr(r.name_en),

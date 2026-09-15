@@ -371,7 +371,17 @@ function clausesOf(ref: RelationMemberRef, ctx: Ctx): GeoClause[] {
       return clauses;
     }
     case 'exception': {
-      const base = r.target ? clausesOf(r.target, ctx) : [];
+      if (!r.target) {
+        // A target-less exception cannot mean "keep X except Y" — there is no X.
+        // NEVER force the members to 'exclude': that inverted a customer's hard
+        // requirement («غرب الملك فهد» became an exclusion, 2026-09-15). Each
+        // member keeps its OWN polarity; validateDag already set needs_confirm.
+        ctx.advice.push(`relation ${r.id} (exception): no target — members compiled with their own polarity`);
+        const own: GeoClause[] = [];
+        for (const m of r.members) own.push(...clausesOf(m, ctx));
+        return own;
+      }
+      const base = clausesOf(r.target, ctx);
       const excludes: GeoClause[] = [];
       for (const m of r.members) {
         if (m.type === 'evidence') {
@@ -408,6 +418,7 @@ function includeEvidenceOf(ref: RelationMemberRef, ctx: Ctx): Evidence[] {
     if (!r) return;
     if (r.relation === 'exception') {
       if (r.target) walk(r.target); // strength from what's kept, not what's excepted
+      else for (const m of r.members) walk(m); // target-less: members stand on their own
       return;
     }
     for (const m of r.members) walk(m);
