@@ -92,6 +92,25 @@ export function isSendable(file: Pick<Partial<BusinessFileRow>, 'usage_rights'>)
   return !file.usage_rights || !UNSENDABLE_RIGHTS.has(file.usage_rights);
 }
 
+/**
+ * From collected social media, offer VIDEOS ONLY (operator, 2026-09-15).
+ *
+ * A competitor's post image is a finished poster carrying THEIR logo, THEIR
+ * phone number and THEIR call to action — sending one to our customer
+ * advertises them. Their videos are different: a walkthrough of a project we
+ * sell is useful footage, which is why the rights rule already approves
+ * other companies' video about our own projects.
+ *
+ * Scope is deliberately narrow: `origin === 'social_intake'` only. Our OWN
+ * designs (1,632 of them) are unaffected — this hides what we collected, not
+ * what we made.
+ */
+export function isOfferableSocialItem(
+  file: Pick<Partial<BusinessFileRow>, 'origin'> & Pick<BusinessFileRow, 'kind'>,
+): boolean {
+  return file.origin !== 'social_intake' || file.kind === 'video';
+}
+
 /** A document reads as a brochure when its name says so (AR «بروشور»/«كتيّب» or
  *  EN «brochure»). Name is the STRONGEST signal — it's what the rep titled it. */
 const BROCHURE_NAME_RE = /بروشور|كتي(?:ّ)?ب|brochure/i;
@@ -116,6 +135,7 @@ export function buildPickerItems(entries: PickerSource[], externalVideoUrls: str
     if (seen.has(e.file.id)) continue;
     seen.add(e.file.id);
     if (!isSendable(e.file)) continue;
+    if (!isOfferableSocialItem(e.file)) continue;
     const name = e.file.title || e.file.original_name || e.file.id;
     const group = groupOfKind(e.file.kind);
     out.push({

@@ -212,6 +212,13 @@ project file picker, with no extra upload.
   `internal_only` / `do_not_use` / `restricted` are not offered at all (the
   picker checked rights on nothing before); social items carry a «من حسابات
   المطوّر» badge and are never pre-checked by the bulk default.
+- **From social intake the picker offers VIDEOS ONLY** (operator, 2026-09-15,
+  `isOfferableSocialItem`). A collected post image is a finished poster with
+  the other company's logo, phone number and CTA — sending one advertises
+  them. Their video of a project we sell is useful footage, which is why the
+  rights rule already approves it. Scope is `origin='social_intake'` only: our
+  own designs are untouched. The automatic WhatsApp bot shares the helper, so
+  it obeys the same rule.
 - **Folders.** Root «محتوى وسائل التواصل — المطوّرون والمنافسون» with one
   subfolder per publishing company, created lazily. Files are owned by the
   operator account configured in `social_file_settings` (same posture as the

@@ -146,9 +146,11 @@ describe('defaultBulkSelection', () => {
 
 describe('social-intake files (Competitor Watch → Files bridge)', () => {
   it('hides files whose rights forbid sending, keeps the rest', () => {
+    // A collected VIDEO carries the badge and is offered; a collected IMAGE is
+    // not offered at all any more (see "social intake offers videos only").
     const items = buildPickerItems([
-      entry('own', 'image', { origin: 'social_intake', usage_rights: 'approved', acquisition_source: 'developer' } as Partial<BusinessFileRow>),
-      entry('rival', 'image', { origin: 'social_intake', usage_rights: 'internal_only', acquisition_source: 'competitor' } as Partial<BusinessFileRow>),
+      entry('own', 'video', { origin: 'social_intake', usage_rights: 'approved', acquisition_source: 'developer' } as Partial<BusinessFileRow>),
+      entry('rival', 'video', { origin: 'social_intake', usage_rights: 'internal_only', acquisition_source: 'competitor' } as Partial<BusinessFileRow>),
       entry('nope', 'image', { usage_rights: 'do_not_use' } as Partial<BusinessFileRow>),
       entry('plain', 'image'),
     ], []);
@@ -156,10 +158,9 @@ describe('social-intake files (Competitor Watch → Files bridge)', () => {
     expect(items[0]).toMatchObject({ isSocial: true, acquisitionSource: 'developer' });
     expect(items[1]).toMatchObject({ isSocial: false });
   });
-  it('never pre-checks social photos in the bulk default', () => {
+  it('never pre-checks a collected item in the bulk default', () => {
     const items = buildPickerItems([
-      entry('s1', 'image', { origin: 'social_intake', usage_rights: 'approved' } as Partial<BusinessFileRow>),
-      entry('s2', 'image', { origin: 'social_intake', usage_rights: 'approved' } as Partial<BusinessFileRow>),
+      entry('s1', 'video', { origin: 'social_intake', usage_rights: 'approved' } as Partial<BusinessFileRow>),
       entry('g1', 'image'),
       entry('g2', 'image'),
     ], []);
@@ -179,5 +180,28 @@ describe('the bot and the rep share one selection — rights must never be optio
       entry('no', 'image', { usage_rights: 'internal_only' } as Partial<BusinessFileRow>),
     ], []);
     expect(items.map((i) => i.ref)).toEqual(['ok']);
+  });
+});
+
+describe('social intake offers videos only (operator, 2026-09-15)', () => {
+  it('hides a collected post image — it carries the other company\'s logo and number', () => {
+    const items = buildPickerItems([
+      entry('their-poster', 'image', { origin: 'social_intake', usage_rights: 'approved' } as Partial<BusinessFileRow>),
+      entry('their-video', 'video', { origin: 'social_intake', usage_rights: 'approved' } as Partial<BusinessFileRow>),
+    ], []);
+    expect(items.map((i) => i.ref)).toEqual(['their-video']);
+  });
+  it('leaves OUR own designs and photos alone', () => {
+    const items = buildPickerItems([
+      entry('our-design', 'image', { origin: 'user_upload', primary_category: 'design' } as Partial<BusinessFileRow>),
+      entry('our-photo', 'image', { origin: 'marketing_intake' } as Partial<BusinessFileRow>),
+    ], []);
+    expect(items.map((i) => i.ref)).toEqual(['our-design', 'our-photo']);
+  });
+  it('still drops a collected video whose rights forbid sending', () => {
+    const items = buildPickerItems([
+      entry('rival-video', 'video', { origin: 'social_intake', usage_rights: 'internal_only' } as Partial<BusinessFileRow>),
+    ], []);
+    expect(items).toEqual([]);
   });
 });
