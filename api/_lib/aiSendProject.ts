@@ -144,7 +144,13 @@ async function resolveMediaRefs(
   if (ids.length === 0) return [];
 
   const { data: files, error: fileErr } = await svc
-    .from('files').select('id, kind, title, original_name, document_type, primary_category, storage_bucket, storage_path')
+    // `origin` / `usage_rights` / `acquisition_source` are REQUIRED, not extra:
+    // buildPickerItems drops a file whose rights forbid sending and never
+    // pre-checks social-intake photos — but `isSendable` reads an ABSENT
+    // usage_rights as "no restriction", so omitting the column here silently
+    // re-admitted internal-only competitor media into the bot's send (found
+    // 2026-09-15, right after the Competitor Watch → Files bridge went live).
+    .from('files').select('id, kind, title, original_name, document_type, primary_category, origin, usage_rights, acquisition_source, storage_bucket, storage_path')
     .in('id', ids);
   if (fileErr) { console.error('[aiSendProject] files lookup failed:', fileErr.message); return []; }
 

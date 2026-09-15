@@ -167,3 +167,17 @@ describe('social-intake files (Competitor Watch → Files bridge)', () => {
     expect([...sel].sort()).toEqual(['g1', 'g2']);
   });
 });
+
+describe('the bot and the rep share one selection — rights must never be optional', () => {
+  it('a file row WITHOUT usage_rights is treated as unrestricted (why the bot must select the column)', () => {
+    const items = buildPickerItems([entry('unknown-rights', 'image')], []);
+    expect(items.map((i) => i.ref)).toEqual(['unknown-rights']);
+  });
+  it('once the column is present, internal-only never reaches the send list', () => {
+    const items = buildPickerItems([
+      entry('ok', 'image', { usage_rights: 'approved' } as Partial<BusinessFileRow>),
+      entry('no', 'image', { usage_rights: 'internal_only' } as Partial<BusinessFileRow>),
+    ], []);
+    expect(items.map((i) => i.ref)).toEqual(['ok']);
+  });
+});
