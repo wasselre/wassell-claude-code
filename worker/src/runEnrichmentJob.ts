@@ -347,9 +347,27 @@ export async function runEnrichmentJob(
   const pcatMenu = menu(pcatRows);
   let prompt =
     `أنت تصنّف ملفاً تسويقياً عقارياً لشركة وصل العقارية. استدعِ الأداة propose_metadata واملأ كل الحقول.\n` +
-    `- النوع الرئيسي primary_category (إلزامي — قيمة واحدة فقط من القائمة): ${pcatMenu}. اختر الأنسب دائماً — لا تخترع قيمة جديدة خارج القائمة.\n` +
+    // primary_category is the REQUIRED, most consequential field, and until
+    // 2026-09-15 it was the ONLY one handed to the model as a bare list of
+    // labels, while acquisition_source / production_state / usage_rights each
+    // carried an explicit «استدلّ: … → …» rule. With no rule the model read the
+    // label «تصميم / محتوى مصمّم» as "anything that looks designed" and filed
+    // clean 3D interior renders as design: 1,107 design+cgi_render against 68
+    // raw_photo+real across our uploads. The missing discriminator is RENDERED
+    // TEXT on the image, not how polished the picture is.
+    `- النوع الرئيسي primary_category (إلزامي — قيمة واحدة فقط من القائمة): ${pcatMenu}.\n` +
+    `  استدلّ بهذه القاعدة — الفيصل وجود نص أو شعار مركّب على الصورة، لا مدى إتقانها:\n` +
+    `  • صورة بلا نص أو شعار مركّب (لقطة كاميرا أو رندر ثلاثي الأبعاد لمبنى أو غرفة) → raw_photo. الرندر النظيف صورة خام صالحة لإعادة الاستخدام، وطبيعته تُسجَّل في asset_nature = cgi_render.\n` +
+    `  • صورة عليها عنوان أو شعار أو سعر أو دعوة للتواصل — إعلان مركّب جاهز للنشر → design.\n` +
+    `  • رسم هندسي فيه أبعاد أو أسماء غرف أو رقم وحدة/فيلا أو اسم دور → unit_plan.\n` +
+    `  • مستند أو كتيّب متعدد الصفحات → brochure. الصورة التي يتصدّر بها المشروع → hero_image.\n` +
+    `  لا تخترع قيمة جديدة خارج القائمة.\n` +
     `- التصنيفات الفرعية المسموحة (استخدم القيمة الإنجليزية فقط): ${subjectMenu}.\n` +
-    `- طبيعة الأصل المسموحة (القيمة الإنجليزية فقط): ${menu(natureRows)}.\n` +
+    // Same omission, same shape of error: 4,195 floor plans were stamped
+    // asset_nature='real'. «أصلي» means it came out of a camera; a drawing
+    // never did.
+    `- طبيعة الأصل asset_nature (إلزامي — القيمة الإنجليزية فقط): ${menu(natureRows)}.\n` +
+    `  استدلّ: لقطة كاميرا حقيقية → real؛ رسم هندسي أو مخطط أو إنفوجرافيك → graphic_design؛ تصور ثلاثي الأبعاد لمبنى أو حيّز → cgi_render؛ مولّد بالذكاء الاصطناعي → ai_generated؛ لقطة شاشة → screenshot. «أصلي» تعني خرجت من كاميرا — المخطط ليس صورة.\n` +
     (acqValues.length ? `- مصدر الحصول (إلزامي — اختر الأقرب دائماً، لا تتركه فارغاً): ${menu(acqRows)}. استدلّ: تصميم/لقطة من أنظمتنا → internal؛ علامة أو شعار منافس → competitor؛ كتيّب أو رندر أو مخطط مطوّر → developer؛ صورة من عميل → client؛ مصدر عام/سوشيال بلا مالك واضح → public؛ إن لم يتّضح فاختر internal إن بدا من إنتاجنا وإلا unknown.\n` : '') +
     (stateValues.length ? `- حالة الإنتاج (إلزامي — اختر الأقرب دائماً): ${menu(stateRows)}. لقطة شاشة أو ملف غير مصقول → raw؛ تصميم/مخطط مصقول جاهز → final؛ عليه آثار تعديل بيني → edited؛ إن لم يتّضح فاختر raw.\n` : '') +
     (rightsValues.length ? `- حقوق الاستخدام (إلزامي — اختر الأقرب دائماً): ${menu(rightsRows)}. محتوى يبدو من إنتاجنا → approved؛ محتوى منافس أو عليه علامة طرف آخر → do_not_use؛ عند أي شكّ في الملكية → needs_review.\n` : '') +
