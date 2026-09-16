@@ -27,6 +27,8 @@ import http from 'node:http';
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { loadEnv } from './env.js';
 import { makeServiceClient } from './lib/serviceClient.js';
+import { runBrowserBalanceProbes } from './lib/balanceBrowserProbe.js';
+import { tryClaimBalanceProbeHour } from './lib/balanceProbeClaim.js';
 import { runCallAnalysisJob, type CallAnalysisJob } from './runCallAnalysisJob.js';
 import { runCleanTextJob, type CleanTextJob } from './runCleanTextJob.js';
 import { runVideoConvertJob, type VideoConvertJob } from './runVideoConvertJob.js';
@@ -1594,6 +1596,62 @@ async function conflictWatchdogLoop(): Promise<void> {
     while (Date.now() - wokeAt < CONFLICT_SWEEP_INTERVAL_MS && !shuttingDown) {
       await sleep(1000);
     }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Browser balance probes (2026-09-16) — read the Anthropic + Modal dashboards
+// through Browserbase and record what the VENDOR says is left, so the ledger
+// can be checked for spend nobody metered (the two providers with no balance
+// API; the other three are covered hourly by /api/cron/ai-balance-probe).
+// Hourly, NOT on the queue polls: each run costs two Browserbase sessions and
+// this detects drift, so it does not need to be live. Registered at boot only
+// when a console cookie is configured (see the boot gate below).
+const BALANCE_PROBE_INTERVAL_MS = 60 * 60_000;
+
+async function runBalanceProbeTick(): Promise<void> {
+  try {
+    // Single-runner gate: five machines run this timed loop, but only ONE may
+    // probe per hour. The Postgres hour-bucket PRIMARY KEY is the mutex; a lost
+    // or errored claim returns false and we skip — never "probe anyway".
+    //
+    // INSIDE the try on purpose. tryClaimBalanceProbeHour inspects the RPC's
+    // `error` field, but supabase.rpc can also THROW outright (a socket reset,
+    // DNS, a 5xx from PostgREST). balanceProbeLoop does not catch, and its
+    // promise sits in the `loops` array — so a throw escaping here would reject
+    // that array and take the worker down on all five machines over a transient
+    // blip. A failed claim must cost one skipped hour, never the process.
+    if (!(await tryClaimBalanceProbeHour(supabase, env.WORKER_ID))) return;
+
+    const probes = await runBrowserBalanceProbes(supabase);
+    for (const p of probes) {
+      // The probe module redacts cookie material from every error it returns;
+      // never log env values here (or anywhere) — only what it hands back.
+      if (p.status === 'ok') {
+        console.log(`[worker] balance probe ${p.provider}: ${p.balanceUsd} ${p.currency ?? 'USD'}`);
+      } else {
+        console.warn(`[worker] balance probe ${p.provider}: ${p.status} — ${p.error ?? 'no detail'}`);
+      }
+    }
+  } catch (err) {
+    // runBrowserBalanceProbes settles per-provider internally; this boundary is
+    // for the unexpected. Log loudly and swallow — the worker must never die
+    // because a dashboard changed.
+    console.error('[worker] balance probe tick threw:', err);
+  }
+}
+
+async function balanceProbeLoop(): Promise<void> {
+  while (!shuttingDown) {
+    // Sleep FIRST: the worker restarts on every deploy, and an on-boot probe
+    // would open Browserbase sessions on each one. The first run happens after
+    // the first interval elapses.
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < BALANCE_PROBE_INTERVAL_MS && !shuttingDown) {
+      await sleep(1000);
+    }
+    if (shuttingDown) break;
+    await runBalanceProbeTick();
   }
 }
 
@@ -3697,6 +3755,16 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
     loops.push(portalPollLoop());
   } else {
     console.log('[worker] rega lookup + portal registration loops disabled (BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID unset)');
+  }
+  // Browser balance probes (Anthropic + Modal dashboards, hourly). Self-
+  // disabling: with neither console cookie configured there is nothing to
+  // authenticate a Browserbase session with, so the tick is never scheduled —
+  // log ONCE here and stay quiet (no hourly warning, no doomed sessions).
+  if (process.env.ANTHROPIC_CONSOLE_COOKIE || process.env.MODAL_CONSOLE_COOKIE) {
+    console.log('[worker] browser balance probe tick enabled (hourly)');
+    loops.push(balanceProbeLoop());
+  } else {
+    console.log('[worker] browser balance probes disabled (ANTHROPIC_CONSOLE_COOKIE / MODAL_CONSOLE_COOKIE unset)');
   }
   // Scheduled-WhatsApp + WAHA-session-watchdog loop — only when the WAHA gateway
   // is configured (deploying this code is a no-op for the queue until both

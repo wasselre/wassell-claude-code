@@ -403,12 +403,6 @@ async function probeWithBrowser(spec: ProviderSpec, deps: BrowserProbeDeps): Pro
  * A row that cannot be STORED is logged loudly, not swallowed: if the probe
  * cannot be persisted the whole safety net is off, which is worse than a
  * provider being unreachable (same posture as /api/cron/ai-balance-probe).
- *
- * TODO(caller): wire this into a slow worker tick in worker/src/index.ts —
- * the housekeeping cadence used for the watchdog sweeps, NOT the 3-second
- * queue polls. Each run costs two Browserbase sessions; hourly matches the
- * Vercel cron cadence of /api/cron/ai-balance-probe. Left unwired
- * deliberately; the spec owner wires the tick.
  */
 export async function runBrowserBalanceProbes(
   sb: SupabaseClient,
