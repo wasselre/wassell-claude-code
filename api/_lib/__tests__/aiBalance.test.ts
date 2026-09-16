@@ -144,6 +144,35 @@ describe('fal balance', () => {
     expect(p.status).toBe('error');
     expect(calls).toHaveLength(0);
   });
+
+  it('prefers FAL_ADMIN_KEY over FAL_KEY', async () => {
+    // These are DIFFERENT credentials and the split is load-bearing. FAL_KEY
+    // runs every image-generation lane and is REFUSED by the billing endpoint
+    // (measured 2026-09-16: HTTP 403). The admin key reads billing but must
+    // never displace FAL_KEY — swapping them would trade a missing balance
+    // reading for broken image generation.
+    process.env.FAL_ADMIN_KEY = 'fal-admin-key';
+    mockFetch(() => ({ body: { username: 'wasselre', credits: { current_balance: 15.83, currency: 'USD' } } }));
+    const p = await BALANCE_ADAPTERS.fal!();
+    expect(p).toMatchObject({ status: 'ok', balanceUsd: 15.83 });
+    expect(calls[0]!.headers.Authorization).toBe('Key fal-admin-key');
+    delete process.env.FAL_ADMIN_KEY;
+  });
+
+  it('falls back to FAL_KEY when no admin key is configured', async () => {
+    delete process.env.FAL_ADMIN_KEY;
+    mockFetch(() => ({ body: { credits: { current_balance: 1, currency: 'USD' } } }));
+    await BALANCE_ADAPTERS.fal!();
+    expect(calls[0]!.headers.Authorization).toBe('Key fal-key');
+  });
+
+  it('names FAL_ADMIN_KEY in the 403 hint so the fix is obvious', async () => {
+    // A 403 here previously said only "wants an ADMIN fal key", which left the
+    // reader to guess WHERE to put one.
+    mockFetch(() => ({ ok: false, status: 403, body: 'forbidden' }));
+    const p = await BALANCE_ADAPTERS.fal!();
+    expect(p.error).toMatch(/FAL_ADMIN_KEY/);
+  });
 });
 
 describe('providers with no balance endpoint', () => {

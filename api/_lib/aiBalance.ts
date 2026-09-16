@@ -137,14 +137,20 @@ async function probeMoonshot(): Promise<BalanceProbe> {
  * with the vendor's own wording rather than a silent zero.
  */
 async function probeFal(): Promise<BalanceProbe> {
-  const key = process.env.FAL_KEY?.trim();
-  if (!key) return { provider: 'fal', source: 'api', status: 'error', error: 'FAL_KEY is not set' };
-  if (key === 'stub') return { provider: 'fal', source: 'api', status: 'error', error: 'FAL_KEY is the offline stub' };
+  // FAL_ADMIN_KEY first, FAL_KEY only as a fallback. These are DIFFERENT
+  // credentials and the distinction is load-bearing: measured 2026-09-16, the
+  // model key that runs every image lane gets HTTP 403 from the billing
+  // endpoint, which wants an admin key. Never replace FAL_KEY with the admin
+  // key to "simplify" — the generation lanes depend on it, and swapping them
+  // trades a missing balance reading for broken image generation.
+  const key = (process.env.FAL_ADMIN_KEY || process.env.FAL_KEY)?.trim();
+  if (!key) return { provider: 'fal', source: 'api', status: 'error', error: 'neither FAL_ADMIN_KEY nor FAL_KEY is set' };
+  if (key === 'stub') return { provider: 'fal', source: 'api', status: 'error', error: 'the fal key is the offline stub' };
 
   const r = await getJson('https://api.fal.ai/v1/account/billing?expand=credits', { Authorization: `Key ${key}` });
   if (!r.ok) {
     const hint = r.status === 401 || r.status === 403
-      ? ' (the billing endpoint wants an ADMIN fal key; the model key cannot read it)'
+      ? ' (the billing endpoint wants an ADMIN fal key in FAL_ADMIN_KEY; the FAL_KEY model key cannot read it)'
       : '';
     return { provider: 'fal', source: 'api', status: 'error', error: `HTTP ${r.status}${hint}: ${r.text.slice(0, 200)}` };
   }
