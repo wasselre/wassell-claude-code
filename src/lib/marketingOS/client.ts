@@ -3612,9 +3612,34 @@ export interface MosMonthTemplate {
   leaderMarginPct: number;
 }
 
+/** One REMAINING posting day, with the slack production actually has for it. */
+export interface MosMonthPostingDay {
+  day: string;
+  leadWorkingDays: number;
+  /** Below the template's target lead — a warning, never a dropped row. */
+  short: boolean;
+  /** Publishes on the very day the month starts from. */
+}
+
+/**
+ * A posting day (or paid batch day) the month does NOT run, and why.
+ *
+ *   `past` — already behind the day the month is compiled from.
+ *   `lead` — still ahead, but production cannot reach it: fewer working days
+ *            of lead than the production chain itself needs. Not tight —
+ *            impossible, whatever the team's spare capacity.
+ */
+export interface MosMonthSkippedDay {
+  day: string;
+  reason: 'past' | 'lead';
+  /** Working days of lead the day actually had. `null` for a day already gone. */
+  leadWorkingDays: number | null;
+}
+
 export interface MosMonthGeometry {
   month: string;
   weeks: Array<{ index: number; start: string; end: string }>;
+  /** Only the REMAINING posting days when the month is compiled part-way through. */
   postingDays: string[];
   firstPostingDay: string;
   lastPostingDay: string;
@@ -3622,6 +3647,24 @@ export interface MosMonthGeometry {
   productionStart: string;
   nextMonthReminderOn: string;
   campaignEndsOn: string;
+  /** The day the month was ASKED to start from, or `null` for the whole cycle. */
+  startedFrom: string | null;
+  /** The day it ACTUALLY starts — the first posting day production can reach. */
+  startsOn: string | null;
+  /** The minimum-lead rule pushed the start past `startedFrom`. */
+  startMoved: boolean;
+  /** No reachable posting day is left — the month can no longer be started. */
+  exhausted: boolean;
+  isPartial: boolean;
+  skippedPostingDays: MosMonthSkippedDay[];
+  skippedPaidBatchDays: MosMonthSkippedDay[];
+  targetLeadWorkingDays: number;
+  /** Working days of lead a row needs to exist at all — derived from the workflow. */
+  minLeadWorkingDays: number;
+  /** Working days of lead a paid launch slate needs. */
+  minPaidLeadWorkingDays: number;
+  postingDayLeads: MosMonthPostingDay[];
+  productionWorkingDays: number;
 }
 
 /**
@@ -3756,10 +3799,14 @@ export interface MosMonthSummary {
   feedReleases: number;
   storyReleases: number;
   paidCreatives: number;
+  /** Paid batches this compile buys — fewer in a partial month. Reported, never prorated. */
+  paidBatchesRemaining: number;
   items: number;
   firstPostingDay: string;
   lastPostingDay: string;
   productionStart: string;
+  /** Working days the month's work is spread over — the divisor under every average. */
+  productionWorkingDays: number;
   nextMonthReminderOn: string;
   campaignEndsOn: string;
   budgetTotal: number;
@@ -3770,6 +3817,21 @@ export interface MosMonthSummary {
   capacityOk: boolean;
   conflicts: MosPlanResult['conflicts'];
   load: MosMonthCapacityLine[];
+  /** The month runs from `startedFrom`, not from its first week. */
+  isPartial: boolean;
+  startedFrom: string | null;
+  /** The day it actually starts — the first posting day production can reach. */
+  startsOn: string | null;
+  /** The start MOVED forward because the first days could not be produced in time. */
+  startMoved: boolean;
+  /** Nothing reachable is left. `confirmMonth` refuses with `month_not_startable`. */
+  exhausted: boolean;
+  skippedPostingDays: MosMonthSkippedDay[];
+  targetLeadWorkingDays: number;
+  /** Working days of lead a row needs to exist at all — the gate, not the target. */
+  minLeadWorkingDays: number;
+  /** Rows with less slack than the target lead — kept, flagged, never dropped. */
+  shortLeadRows: Array<{ day: string; leadWorkingDays: number }>;
 }
 
 export interface MosMonthCompile {
@@ -3872,17 +3934,34 @@ export interface MosMonthConfirmResult {
 export const fetchMonth = (month?: string): Promise<MosMonthGet> =>
   call('month_get', month ? { month } : {});
 
-/** Compile the whole month against the live workload. Writes NOTHING. */
-export const compileMonthPlan = (month: string, projectIds: string[]): Promise<MosMonthCompile> =>
-  call('month_compile', { month, project_ids: projectIds });
+/**
+ * Compile the month against the live workload. Writes NOTHING.
+ *
+ * `startFrom` (`YYYY-MM-DD`) compiles only what is LEFT of the month. Omitted,
+ * it defaults server-side to today for the current month and to the whole cycle
+ * for any other. **Whatever is passed here must be passed to `confirmMonth`
+ * too** — otherwise the confirm compiles a different month from the one that
+ * was reviewed, and the re-plan gate refuses it.
+ */
+export const compileMonthPlan = (
+  month: string, projectIds: string[], startFrom?: string | null,
+): Promise<MosMonthCompile> =>
+  call('month_compile', {
+    month, project_ids: projectIds, ...(startFrom ? { start_from: startFrom } : {}),
+  });
 
 /**
  * «اعتماد الشهر». A 409 carries `{error, error_ar, error_en}` in
- * `MosApiError.body` — `month_template_disabled`, `month_infeasible`,
+ * `MosApiError.body` — `month_template_disabled`, `month_not_startable`
+ * (nothing reachable is left of the month), `month_infeasible`,
  * `plan_changed` or `capacity_conflict`. Show it; never retry blindly.
  */
-export const confirmMonth = (month: string, projectIds: string[]): Promise<MosMonthConfirmResult> =>
-  call('month_confirm', { month, project_ids: projectIds });
+export const confirmMonth = (
+  month: string, projectIds: string[], startFrom?: string | null,
+): Promise<MosMonthConfirmResult> =>
+  call('month_confirm', {
+    month, project_ids: projectIds, ...(startFrom ? { start_from: startFrom } : {}),
+  });
 
 /** The same page with live numbers. */
 export const fetchMonthReport = (month?: string): Promise<MosMonthReport> =>

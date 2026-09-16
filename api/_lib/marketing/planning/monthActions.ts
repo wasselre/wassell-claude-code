@@ -47,7 +47,7 @@ import {
 import { terminalLostStages } from '../../../../src/lib/salesProcess/qualifiedStages.js';
 import { ourLeadsByProject, type ProjectLeadTotals } from '../ourLeads.js';
 import {
-  compileMonth, parseMonthTemplate, monthGeometry, MONTH_TEMPLATE_DEFAULTS,
+  compileMonth, parseMonthTemplate, monthGeometry, monthStartFrom, MONTH_TEMPLATE_DEFAULTS,
   type CompiledMonth, type MonthProject, type MonthTemplate,
 } from './monthCompiler.js';
 import {
@@ -80,6 +80,30 @@ function monthOf(body: Record<string, unknown>): string | null {
   const raw = str(body.month);
   if (!raw) return riyadhToday().slice(0, 7);
   return MONTH_RE.test(raw) ? raw : null;
+}
+
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * `start_from` — the day the month is compiled FROM.
+ *
+ * Omitted (the normal case) it is DEFAULTED: today for the current month, the
+ * whole cycle for any other. Never backwards: compiling from a past day is what
+ * produced a production start a fortnight behind the clock.
+ *
+ * It does NOT have to be a day the month can start ON. `monthGeometry` advances
+ * past every posting day production cannot reach and reports the move, so the
+ * operator no longer has to work out that answer and pass it back in. Passing
+ * one explicitly still works and means "production begins on this day".
+ *
+ * `'bad'` is a refusal, distinct from "not given".
+ */
+function startFromOf(body: Record<string, unknown>, month: string): string | null | 'bad' {
+  const raw = str(body.start_from);
+  if (!raw) return monthStartFrom(month, riyadhToday());
+  if (!DAY_RE.test(raw)) return 'bad';
+  const today = riyadhToday();
+  return raw < today ? today : raw;
 }
 
 /** The `public.users` row id for the caller — every `*_user_id` FK points there. */
@@ -280,6 +304,13 @@ const slotLetter = (slot: number | null): string | null =>
  * cells for the standing template, matching the 60 creatives. Each carries its
  * own note coordinate (E1/D7), which is why it is a first-class cell here and
  * not a summary line under the organic week.
+ *
+ * A week whose batch day has PASSED (a month compiled part-way through) gets no
+ * paid cells at all. The batch day is matched to the week by DATE — every batch
+ * day is a week start — and never by position: `paidBatchDays[w.index]` was
+ * right only while that list held one entry per week, and a partial month's
+ * shorter list would have dated week 1's cells with week 3's batch and then
+ * repeated that same batch further down the grid.
  */
 export function monthGrid(compiled: CompiledMonth, projects: MonthProject[]): MonthGridWeek[] {
   const slotOfProject = new Map<string, number>();
@@ -288,6 +319,7 @@ export function monthGrid(compiled: CompiledMonth, projects: MonthProject[]): Mo
       slotOfProject.set(r.projectId, r.slot);
     }
   });
+  const batchDays = new Set(compiled.geometry.paidBatchDays);
   return compiled.geometry.weeks.map((w) => ({
     index: w.index,
     start: w.start,
@@ -305,23 +337,26 @@ export function monthGrid(compiled: CompiledMonth, projects: MonthProject[]): Mo
         slotLetter: slotLetter(r.slot),
         posts: r.posts,
       })),
-    paid: projects.map((p) => {
-      const slot = slotOfProject.get(p.projectId) ?? null;
-      return {
-        batchDay: compiled.geometry.paidBatchDays[w.index] ?? w.start,
-        projectId: p.projectId,
-        projectName: p.projectName ?? null,
-        slot: slot ?? 0,
-        slotLetter: slotLetter(slot) ?? '',
-        creatives: compiled.template.creativesPerProjectWeek,
-      };
-    }),
+    paid: batchDays.has(w.start)
+      ? projects.map((p) => {
+        const slot = slotOfProject.get(p.projectId) ?? null;
+        return {
+          batchDay: w.start,
+          projectId: p.projectId,
+          projectName: p.projectName ?? null,
+          slot: slot ?? 0,
+          slotLetter: slotLetter(slot) ?? '',
+          creatives: compiled.template.creativesPerProjectWeek,
+        };
+      })
+      : [],
   }));
 }
 
 /** Compile one month against the LIVE workload. Pure read — writes nothing. */
 async function compile(
   ctx: PlanCtx, month: string, template: MonthTemplate, projects: MonthProject[],
+  startFrom: string | null,
 ): Promise<{ compiled: CompiledMonth; rules: RuleSet } | { error: Response }> {
   const settings = await loadPlanningSettings(ctx.sb);
   let snapshot; let rules: RuleSet | null;
@@ -334,7 +369,7 @@ async function compile(
     return { error: fail('snapshot/rules', { message: e instanceof Error ? e.message : String(e) }) };
   }
   const base: RuleSet = rules ?? DEFAULT_RULES;
-  const compiled = compileMonth({ month, template, projects, snapshot, rules: base });
+  const compiled = compileMonth({ month, template, projects, snapshot, rules: base, startFrom });
   return { compiled, rules: base };
 }
 
@@ -438,6 +473,8 @@ export async function monthCompile(ctx: PlanCtx): Promise<Response> {
     ? (ctx.body.project_ids as unknown[]).map((x) => String(x)).filter(Boolean)
     : [];
   if (ids.length === 0) return jsonError(400, 'project_ids is required');
+  const startFrom = startFromOf(ctx.body, month);
+  if (startFrom === 'bad') return jsonError(400, 'start_from must be YYYY-MM-DD');
 
   const tpl = await loadTemplate(svc);
   if (tpl.error) return fail('mos_month_template', { message: tpl.error });
@@ -445,7 +482,7 @@ export async function monthCompile(ctx: PlanCtx): Promise<Response> {
   const names = await projectNames(ctx.sb, ids);
   const projects: MonthProject[] = ids.map((id) => ({ projectId: id, projectName: names.get(id) }));
 
-  const res = await compile(ctx, month, tpl.row, projects);
+  const res = await compile(ctx, month, tpl.row, projects, startFrom);
   if ('error' in res) return res.error;
   const { compiled } = res;
 
@@ -530,6 +567,8 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
     ? (ctx.body.project_ids as unknown[]).map((x) => String(x)).filter(Boolean)
     : [];
   if (ids.length === 0) return jsonError(400, 'project_ids is required');
+  const startFrom = startFromOf(ctx.body, month);
+  if (startFrom === 'bad') return jsonError(400, 'start_from must be YYYY-MM-DD');
 
   const tpl = await loadTemplate(svc);
   if (tpl.error) return fail('mos_month_template', { message: tpl.error });
@@ -547,9 +586,26 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
   const names = await projectNames(ctx.sb, ids);
   const projects: MonthProject[] = ids.map((id) => ({ projectId: id, projectName: names.get(id) }));
 
-  const res = await compile(ctx, month, template, projects);
+  const res = await compile(ctx, month, template, projects, startFrom);
   if ('error' in res) return res.error;
   const { compiled } = res;
+
+  // A month with nothing reachable left in it. Refused in its OWN words: it is
+  // not that the work does not fit — there is no work, because every remaining
+  // posting day is closer than production can reach. `month_infeasible` below
+  // would send the operator looking for a capacity problem that does not exist.
+  if (compiled.summary.exhausted) {
+    return jsonError(409, JSON.stringify({
+      error: 'month_not_startable',
+      error_ar: `لم يعد بالإمكان بدء ${month}: كل أيام النشر المتبقية أقرب مما يستطيع الإنتاج بلوغه (الصف يحتاج ${compiled.summary.minLeadWorkingDays} أيام عمل قبل النشر). ابدأ الشهر التالي.`,
+      error_en: `${month} can no longer be started: every remaining posting day is closer than production can reach (a row needs ${compiled.summary.minLeadWorkingDays} working days before it publishes). Start the next month instead.`,
+      detail: {
+        start_from: compiled.summary.startedFrom,
+        min_lead_working_days: compiled.summary.minLeadWorkingDays,
+        skipped_posting_days: compiled.summary.skippedPostingDays,
+      },
+    }));
+  }
 
   if (!compiled.summary.feasible) {
     return jsonError(409, JSON.stringify({
@@ -569,7 +625,7 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
   // Refuse if anything the operator saw has moved. This is the same guarantee
   // the per-plan re-plan gave, taken against one snapshot because the commit is
   // now one transaction.
-  const again = await compile(ctx, month, template, projects);
+  const again = await compile(ctx, month, template, projects, startFrom);
   if ('error' in again) return again.error;
   const replanned = again.compiled;
   const moved = replanned.plans.length !== compiled.plans.length

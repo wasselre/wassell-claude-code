@@ -75,6 +75,7 @@ function Pencil({
 
 export default function MonthWeeksGrid({
   weeks, notes, isAr, canEdit, onOpenNote, projects, generalLabel, releaseState, footer,
+  emptyWeekLabel,
 }: {
   weeks: MosMonthGridWeek[];
   notes: MosMonthNote[];
@@ -87,6 +88,16 @@ export default function MonthWeeksGrid({
   /** Report tense only: day → what actually happened. Absent = plan tense. */
   releaseState?: Map<string, DayReleaseState>;
   footer?: React.ReactNode;
+  /**
+   * What an EMPTY week means, said by the caller.
+   *
+   * A month compiled part-way through has weeks with nothing left in them, and
+   * a week card with no cells under it reads as a rendering fault rather than
+   * as "this week has gone". The grid will not guess — in the report tense an
+   * empty week means something else entirely — so the page that knows passes
+   * the words in.
+   */
+  emptyWeekLabel?: string;
 }) {
   const [lane, setLane] = useState<MonthLane>('organic');
 
@@ -203,6 +214,10 @@ export default function MonthWeeksGrid({
                 {isAr ? `الأسبوع ${num(w.index + 1, isAr)}` : `Week ${num(w.index + 1, isAr)}`}
                 <small>{shortDate(w.start, isAr)} — {shortDate(w.end, isAr)}</small>
               </div>
+
+              {emptyWeekLabel && (lane === 'organic' ? w.days.length === 0 : w.paid.length === 0) && (
+                <p className="mth-tiny" style={{ margin: '8px 2px 0' }}>{emptyWeekLabel}</p>
+              )}
 
               {lane === 'organic' ? (
                 <div className="mth-days">

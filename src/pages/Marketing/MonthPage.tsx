@@ -296,6 +296,11 @@ export default function MonthPage() {
   }, [month, selection, addToast, isAr, load, go]);
 
   const summary = compiled?.summary ?? null;
+  // The two reasons a posting day is not in this month, kept apart because they
+  // are different news: one is the calendar, the other is a decision the page
+  // has to explain.
+  const pastDays = summary?.skippedPostingDays.filter((d) => d.reason === 'past') ?? [];
+  const lateDays = summary?.skippedPostingDays.filter((d) => d.reason === 'lead') ?? [];
   const template = data?.template ?? compiled?.template ?? report?.template ?? null;
 
   const gridProjects = useMemo(
@@ -465,7 +470,96 @@ export default function MonthPage() {
 
         {compiling && !compiled && <Skeleton rows={6} />}
 
-        {summary && compiled && (
+        {summary?.exhausted && (
+          /*
+           * The month can no longer be STARTED.
+           *
+           * Not `bad`, and deliberately not the words «الشهر لا يُجدول»: nothing
+           * failed to fit, there is simply no posting day left that production
+           * can reach. The answer is the next month, and the page says so
+           * instead of leaving an operator to work out why every number is zero.
+           */
+          <div className="notice" style={{ marginBlockEnd: 14 }}>
+            <div>
+              {isAr
+                ? `لم يعد بالإمكان بدء ${monthLabel(month, true)}: كل أيام النشر المتبقية أقرب مما يستطيع الإنتاج بلوغه. الصف الواحد يحتاج ${num(summary.minLeadWorkingDays, true)} أيام عمل قبل موعد نشره — كتابة، مراجعة كتابة، تصميم، مراجعة الكاتب، اعتماد نهائي، ثم يوم للنشر — وكل يوم باقٍ أقلّ من ذلك.`
+                : `${monthLabel(month, false)} can no longer be started: every remaining posting day is closer than production can reach. One row needs ${num(summary.minLeadWorkingDays, false)} working days before it publishes — writing, writing review, design, writer review, final approval, then a day to publish — and every day left has less.`}
+            </div>
+            <div>
+              {isAr ? 'ابدأ الشهر التالي.' : 'Start the next month instead.'}
+            </div>
+          </div>
+        )}
+
+        {summary && !summary.exhausted
+          && (summary.isPartial || summary.startMoved || summary.shortLeadRows.length > 0) && (
+          /*
+           * A PARTIAL month, said out loud.
+           *
+           * Warning tone, never `bad`: a month that starts today is a smaller
+           * month, not a broken one, and a row with less slack than the target
+           * lead is still a row the team can make. What must never happen is
+           * the page showing a full month's numbers for a month that has two
+           * weeks left — which is what it did while `productionStart` was
+           * computed as «first posting day − ten working days» whatever the
+           * date, and every row it drew was already in the past.
+           */
+          <div className="notice" style={{ marginBlockEnd: 14 }}>
+            {summary.startMoved && (
+              /*
+               * The START MOVED, and why.
+               *
+               * The month does not begin on the day it was compiled from: the
+               * first posting days after it cannot be PRODUCED in time, and
+               * offering them and then refusing the month is not an answer. The
+               * days are named with the lead each actually had, so the number
+               * is checkable rather than asserted.
+               */
+              <div>
+                {isAr
+                  ? `${monthLabel(month, true)} يبدأ ${dayLabel(summary.startsOn, true)}، لا ${dayLabel(summary.startedFrom, true)}: ${lateDays.map((d) => dayLabel(d.day, true)).join(' و')} لا يمكن إنتاجها في الوقت. الصف يحتاج ${num(summary.minLeadWorkingDays, true)} أيام عمل قبل النشر، وهذه الأيام لديها ${lateDays.map((d) => num(d.leadWorkingDays, true)).join(' و')} على التوالي. العمل يتّسع — الأيام الأولى وحدها لم تتّسع.`
+                  : `${monthLabel(month, false)} starts ${dayLabel(summary.startsOn, false)}, not ${dayLabel(summary.startedFrom, false)}: ${lateDays.map((d) => dayLabel(d.day, false)).join(', ')} cannot be produced in time. A row needs ${num(summary.minLeadWorkingDays, false)} working days before it publishes, and those days have ${lateDays.map((d) => num(d.leadWorkingDays, false)).join(', ')} respectively. The work fits — only the first few days did not.`}
+              </div>
+            )}
+            {summary.isPartial && (
+              <div>
+                {/* Counted nouns are written as LABELS with the number after
+                    them («الصفوف ١٠»), not as «١٠ صفًا»: the count here is
+                    whatever is left of the month, and Arabic changes the noun's
+                    form between 3–10 and 11–99. A label reads correctly at
+                    every number. */}
+                {isAr
+                  ? `هذا الشهر محسوب من ${monthDate(summary.startedFrom, true)}، وما قبله مضى — أيام نشر فائتة: ${num(pastDays.length, true)}. المتبقي — الصفوف: ${num(summary.rows, true)} · المنشورات: ${num(summary.posts, true)} · الدفعات الإعلانية: ${num(summary.paidBatchesRemaining, true)} · أيام العمل: ${num(summary.productionWorkingDays, true)}.`
+                  : `This month is compiled from ${monthDate(summary.startedFrom, false)}; everything before it has passed — posting days missed: ${num(pastDays.length, false)}. What is left — rows: ${num(summary.rows, false)} · posts: ${num(summary.posts, false)} · ad batches: ${num(summary.paidBatchesRemaining, false)} · working days: ${num(summary.productionWorkingDays, false)}.`}
+              </div>
+            )}
+            {summary.isPartial && (
+              <div>
+                {isAr
+                  ? `${money(template.budgetPerProject, true)} لكل مشروع رقم شهري كامل، والشهر الجزئي يشتري دفعات أقل: ${num(summary.paidBatchesRemaining, true)} بدل ${num(compiled?.geometry.weeks.length ?? 0, true)}. الرقم لم يُعدَّل — خفّضه بنفسك إن أردت.`
+                  : `The ${money(template.budgetPerProject, false)} a project is a MONTHLY figure, and a partial month buys fewer batches: ${num(summary.paidBatchesRemaining, false)} instead of ${num(compiled?.geometry.weeks.length ?? 0, false)}. The number has not been changed — lower it yourself if you want to.`}
+              </div>
+            )}
+            {summary.shortLeadRows.length > 0 && (
+              <div>
+                {isAr
+                  ? `مهلة أقصر من المعتاد (المعتاد ${num(summary.targetLeadWorkingDays, true)} أيام عمل) في هذه الصفوف — اليوم ثم أيام العمل المتاحة له: `
+                  : `Less slack than the usual ${num(summary.targetLeadWorkingDays, false)} working days on these rows — the day, then the working days it actually has: `}
+                {summary.shortLeadRows
+                  .map((r) => `${dayLabel(r.day, isAr)} (${num(r.leadWorkingDays, isAr)})`)
+                  .join(' · ')}
+                {isAr
+                  ? '. العمل نفسه لم يكبر — المساحة للمراجعة والتعديل هي التي ضاقت.'
+                  : '. The work itself is no bigger — there is simply less room for a revision.'}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* A month that cannot be started has no numbers worth showing: every
+            stat would be a zero, and the grid four empty weeks. The notice
+            above is the whole answer. */}
+        {summary && compiled && !summary.exhausted && (
           <>
             {/* ── what will be produced ── */}
             <div className="card" style={{ marginBlockEnd: 14 }}>
@@ -497,9 +591,13 @@ export default function MonthPage() {
                     <div className="k">{isAr ? 'تصاميم مدفوعة' : 'Paid creatives'}</div>
                     <div className="v">{num(summary.paidCreatives, isAr)}</div>
                     <div className="d">
+                      {/* Batches REMAINING, not weeks in the cycle: a month
+                          compiled part-way through buys fewer batches, and the
+                          line under the number has to say the same thing the
+                          number does. */}
                       {isAr
-                        ? `${num(selection.length, true)} مشاريع × ${num(template.creativesPerProjectWeek, true)} أسبوعيًا × ${num(compiled.geometry.weeks.length, true)} أسابيع`
-                        : `${num(selection.length, false)} projects × ${num(template.creativesPerProjectWeek, false)} weekly × ${num(compiled.geometry.weeks.length, false)} weeks`}
+                        ? `${num(selection.length, true)} مشاريع × ${num(template.creativesPerProjectWeek, true)} أسبوعيًا × ${num(summary.paidBatchesRemaining, true)} دفعات`
+                        : `${num(selection.length, false)} projects × ${num(template.creativesPerProjectWeek, false)} weekly × ${num(summary.paidBatchesRemaining, false)} batches`}
                     </div>
                   </div>
                   <div className="stat">
@@ -547,9 +645,15 @@ export default function MonthPage() {
                 <div className="card-h">
                   <h4>{isAr ? 'هل يتّسع الفريق؟' : 'Does the team fit?'}</h4>
                   <span className="r">
-                    {summary.capacityOk
-                      ? (isAr ? 'الشهر يتّسع للفريق الحالي' : 'The month fits the current team')
-                      : (isAr ? 'يوم واحد على الأقل يتجاوز الطاقة' : 'At least one day is over capacity')}
+                    {/* An EMPTY load is not a pass. Nothing was placed on
+                        anybody, so «يتّسع» would be a claim about a month the
+                        engine never staffed — exactly the kind of green that
+                        hides a refusal. */}
+                    {summary.load.length === 0
+                      ? (isAr ? 'لم تُقَس الطاقة — لم تُجدول أي خطوة' : 'Capacity not measured — nothing was scheduled')
+                      : summary.capacityOk
+                        ? (isAr ? 'الشهر يتّسع للفريق الحالي' : 'The month fits the current team')
+                        : (isAr ? 'يوم واحد على الأقل يتجاوز الطاقة' : 'At least one day is over capacity')}
                   </span>
                 </div>
                 <div className="card-b">
@@ -611,6 +715,9 @@ export default function MonthPage() {
                 onOpenNote={(coord, body) => setNote({ coord, body })}
                 projects={gridProjects}
                 generalLabel={isAr ? 'السبت — عام' : 'Saturday — general'}
+                emptyWeekLabel={summary.isPartial
+                  ? (isAr ? 'هذا الأسبوع مضى — لا شيء يُنتَج فيه.' : 'This week has passed — nothing is produced in it.')
+                  : undefined}
               />
             </div>
           </>
@@ -646,7 +753,12 @@ export default function MonthPage() {
                 <button
                   type="button"
                   className="btn btn-p"
+                  /* `exhausted` is its own refusal: such a month is feasible
+                     (there is nothing in it to fail), so the feasibility test
+                     alone would leave this button live for a month the server
+                     will refuse with `month_not_startable`. */
                   disabled={!canApprove || !template.enabled || !summary?.feasible
+                    || summary.exhausted
                     || data.state === 'confirmed' || selection.length === 0}
                   onClick={() => setConfirming(true)}
                 >
@@ -656,7 +768,11 @@ export default function MonthPage() {
                 </button>
               )}
               <span className="mth-tiny" style={{ maxWidth: '62ch' }}>
-                {summary
+                {summary?.exhausted
+                  ? (isAr
+                    ? 'لا شيء يُعتمد: لم يبقَ في هذا الشهر يوم نشر يستطيع الإنتاج بلوغه.'
+                    : 'There is nothing to confirm: no posting day is left that production can reach.')
+                  : summary
                   ? (isAr
                     ? `الاعتماد يُنشئ ${num(summary.rows, true)} مهمة كتابة و${num(summary.rows, true)} مهمة تصميم بمواعيدها، و${num(selection.length, true)} حملات على ميتا بميزانية ${money(template.budgetPerProject, true)} لكل واحدة، و${num(compiled?.geometry.paidBatchDays.length ?? 0, true)} دفعات إعلانية. بعد الاعتماد لا يوجد تخطيط — استثناءات فقط.`
                     : `Confirming creates ${num(summary.rows, false)} writing tasks and ${num(summary.rows, false)} design tasks with their dates, ${num(selection.length, false)} Meta campaigns at ${money(template.budgetPerProject, false)} each, and ${num(compiled?.geometry.paidBatchDays.length ?? 0, false)} ad batches. After confirming there is no planning — only exceptions.`)
