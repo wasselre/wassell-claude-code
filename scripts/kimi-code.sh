@@ -118,6 +118,51 @@ cd "$REPO_ROOT"
 # acceptEdits: Kimi may write/modify files autonomously (the planner reviews
 # the diff after). Override by passing your own --permission-mode before the prompt.
 #
+# --- Standing brief ---------------------------------------------------------
+# The coder starts every run with ZERO context: it has never seen this codebase
+# and remembers nothing from the last run. Both defects found in review on
+# 2026-09-16 (an hourly tick that would have run on all five worker machines,
+# and a claim placed outside its try/catch) were CONTEXT failures — the planner
+# forgot to put a standing fact in a one-off spec.
+#
+# So the standing facts are not left to the planner's memory. Every run is
+# prefixed with docs/kimi-coder-brief.md. Keep that file short: it is re-sent on
+# every invocation, and everything in it earns its place by having cost a bug.
+#
+# Prepending (rather than appending) puts the house rules ahead of the task, so
+# a spec that contradicts them reads as the exception it is.
+# Split leading FLAGS from the prompt text: callers may pass their own
+# --permission-mode (or any other claude flag) before the prompt, and those must
+# reach the CLI as flags rather than being swallowed into the prompt string.
+KIMI_FLAGS=()
+while [[ $# -gt 0 && "$1" == -* ]]; do
+  KIMI_FLAGS+=("$1")
+  shift
+  # A flag that takes a value (e.g. --permission-mode plan) consumes the next
+  # arg too, as long as it is not itself a flag.
+  if [[ $# -gt 0 && "$1" != -* ]]; then
+    KIMI_FLAGS+=("$1")
+    shift
+  fi
+done
+KIMI_TASK="$*"
+
+BRIEF_FILE="$REPO_ROOT/docs/kimi-coder-brief.md"
+if [[ -f "$BRIEF_FILE" ]]; then
+  KIMI_PROMPT="$(cat "$BRIEF_FILE")
+
+---
+
+# Your task
+
+$KIMI_TASK"
+else
+  # Loud, not silent: a missing brief means the coder is flying blind, and the
+  # planner should know that before reading the diff.
+  echo "kimi-code: WARNING - $BRIEF_FILE not found; running WITHOUT the standing brief." >&2
+  KIMI_PROMPT="$KIMI_TASK"
+fi
+
 # stdin is redirected from /dev/null: with no terminal attached the CLI waits
 # ~3 s for piped input before giving up. Callers that DO want to pipe context in
 # should use the prompt argument instead.
@@ -128,4 +173,4 @@ exec env "${KIMI_ENV_STRIP[@]}" \
   ANTHROPIC_MODEL="${KIMI_MODEL:-kimi-k3}" \
   ANTHROPIC_SMALL_FAST_MODEL="${KIMI_MODEL:-kimi-k3}" \
   CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1 \
-  claude -p --permission-mode acceptEdits "$@" < /dev/null
+  claude -p --permission-mode acceptEdits "${KIMI_FLAGS[@]}" "$KIMI_PROMPT" < /dev/null

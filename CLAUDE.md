@@ -1015,6 +1015,54 @@ The same "strict schema, not validated by `npm run build`" principle applies to 
 
 **If another agent (or you in a future session) proposes a fix that adds `if (!isSupabaseConfigured()) return;` or any conditional that skips an error-surfacing path:** push back. Verify against `git log` and `git diff origin/main` before merging — a fix that exists only in chat is not a fix.
 
+## Claude plans, Kimi codes — the 200-line rule (added 2026-09-16)
+
+**Standing rule from the user: any work expected to exceed ~200 lines goes to a
+Kimi agent.** Claude writes the spec and reviews the diff; Kimi writes the code.
+Run it with `bash scripts/kimi-code.sh "<spec, or: read .kimi-spec.local.md>"`.
+
+**Below ~200 lines, do it yourself.** Measured on the day this rule was written:
+a one-page spec produced 775 lines of good code (10:1 leverage, clear win), but
+the same one-page spec for a 55-line change was no cheaper than writing it —
+at that size the spec IS the work.
+
+**Never delegate an investigation.** A spec describes a known destination. When
+the task is "find out what is true" — a cost anomaly, a bug hunt, a
+reconciliation — the answer changes five times along the way and there is
+nothing to specify. That work stays with Claude.
+
+**Why it is worth doing.** Measured 2026-09-16 over four runs: Kimi cost **$7.01**
+(kimi-k3 at $3/$15) for work that cost Claude **$19.50** for one comparable task
+(Opus 5 at $5/$25) — ~12x. The gap is NOT the token rate (1.67x); it is context.
+92% of Claude's cost that day was cache-read: re-reading the whole conversation
+every turn. Kimi starts empty and reads a one-page brief.
+
+**Hard rules — never violate:**
+
+1. **Review is not optional, and it is Claude's job.** Kimi's permission gate
+   refuses `npx` / `npm` / `node` / `tsc` / `vitest`, so it CANNOT run a single
+   test. It reports this honestly — take it at its word and run them yourself.
+   Typecheck all three packages, run the suite, and read the security-critical
+   paths rather than trusting the summary.
+2. **Kimi never applies a migration, never commits, never pushes.** It writes
+   the `.sql`; Claude applies it (see the standing migration rule above) and
+   verifies it live.
+3. **`docs/kimi-coder-brief.md` is the standing context**, auto-prepended to
+   every run by `kimi-code.sh`. It carries what a spec should never have to
+   repeat: the five worker machines, the three runtimes, the SQLSTATE rule, the
+   no-silent-catch rule, the degrade-never-lie posture. **When a defect gets
+   through review, add a line to its "Defects this file exists to prevent"
+   section.** That file is the coder's only memory.
+4. **A defect from Kimi is usually a SPEC defect.** Both bugs caught on
+   2026-09-16 — an hourly tick that would have fired on all five machines, and a
+   claim placed outside its try/catch — were facts Kimi had no way to know and
+   the spec never mentioned. Fix the brief, not the coder.
+5. **Kimi spend is NOT in `ai_usage`.** `kimi-code.sh` spawns a separate
+   `claude -p` process that talks to Moonshot directly, so it is not a call site
+   the metering guard can see. It surfaces only as drift in
+   `v_ai_balance_reconciliation` against the Moonshot balance. Do not read that
+   drift as a metering bug.
+
 ## Verifying agent-claimed fixes (CRITICAL)
 
 When any agent (including future Claude sessions) claims to have shipped a fix, verify before believing:
