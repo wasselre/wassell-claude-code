@@ -95,6 +95,18 @@ export default function MonthWeeksGrid({
     [notes, lane],
   );
 
+  /**
+   * A paid cell knows its project but not its SLOT, and the slot is what
+   * carries the colour — أ copper, ب green, ج gold — so the same project reads
+   * the same in both lanes. Without this the paid squares were all one copper,
+   * a leftover from when the paid batch was a single summary strip at the end
+   * of a week rather than one cell per project.
+   */
+  const slotOf = useMemo(() => {
+    const bySlot = new Map(projects.map((p) => [p.project_id, p.slot]));
+    return (projectId: string): number | null => bySlot.get(projectId) ?? null;
+  }, [projects]);
+
   const monthNote = findNote(notes, 'month', null, null, null);
 
   const openNote = (coord: NoteCoord): void => {
@@ -280,7 +292,7 @@ export default function MonthWeeksGrid({
                         </div>
                         <div className="mth-adpips">
                           {Array.from({ length: c.creatives }).map((__, i) => (
-                            <span key={i} className="mth-adpip" />
+                            <span key={i} className={`mth-adpip ${pipClass(slotOf(c.projectId))}`} />
                           ))}
                           <span className="mth-tiny" style={{ marginInlineStart: 6 }}>
                             {num(c.creatives, isAr)} {isAr ? 'تصاميم' : 'creatives'}

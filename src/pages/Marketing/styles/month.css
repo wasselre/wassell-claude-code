@@ -162,8 +162,16 @@
   width: 13px;
   height: 13px;
   border-radius: 3px;
+  /* Default only — a paid square takes its PROJECT's slot colour below, the
+     same one the organic pips use, so أ reads as أ in both lanes. */
   background: color-mix(in srgb, var(--copper) 60%, transparent);
 }
+/* Slot colours, matching .mth-pip.p-* exactly. Held at 60% so a five-square
+   paid cell stays quieter than the organic pips, which carry a letter. */
+.mos-root .mth-adpip.p-a { background: color-mix(in srgb, var(--copper) 60%, transparent); }
+.mos-root .mth-adpip.p-b { background: color-mix(in srgb, var(--go) 60%, transparent); }
+.mos-root .mth-adpip.p-c { background: color-mix(in srgb, var(--gold) 60%, transparent); }
+.mos-root .mth-adpip.p-g { background: color-mix(in srgb, var(--calm) 60%, transparent); }
 .mos-root .mth-adpip.off {
   background: transparent;
   border: 1px dashed var(--line);
