@@ -778,12 +778,36 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
   // publications and the reservations — a month with content but no rows is no
   // longer a state the database can be in, and a post-hoc count of a committed
   // transaction could only ever report something impossible.
+  /*
+   * OPEN TODAY'S WORK NOW, not on the next sweep tick.
+   *
+   * A confirm writes RESERVATIONS. Turning a reserved first step into an open
+   * task is `mos_plan_start_due`, which `/api/cron/planning-sweep` runs every
+   * ten minutes. So on 2026-09-16 the operator confirmed September, went
+   * straight to «مهامي», and found it empty: the first row's writing was due
+   * that very day, but the sweep had not ticked yet. Nothing was broken — and
+   * nothing was there. Running the same idempotent function here closes that
+   * gap; the cron remains the backstop for every later day.
+   *
+   * The month is ALREADY committed at this point, so a failure here must not
+   * turn into a failed confirm. It is surfaced as a warning (rendered in red,
+   * exactly as it arrives) and logged; the next sweep tick opens the work.
+   */
+  const warnings: string[] = [];
+  const opened = await svc.rpc('mos_plan_start_due');
+  if (opened.error) {
+    console.error('[month_confirm] mos_plan_start_due failed after commit',
+      opened.error.code, opened.error.message);
+    warnings.push(`اعتُمد الشهر، لكن فتح مهام اليوم فشل (${opened.error.message}). ستُفتح تلقائيًا خلال عشر دقائق.`);
+  }
+
   return jsonOk({
     ok: true,
     month,
     committed,
     summary: replanned.summary,
-    warnings: [] as string[],
+    opened: opened.error ? null : opened.data,
+    warnings,
   });
 }
 

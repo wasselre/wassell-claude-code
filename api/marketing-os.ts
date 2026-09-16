@@ -1198,6 +1198,18 @@ interface QueueSelector {
   roles: readonly string[];
   /** The whole team's board, not one person's. */
   team: boolean;
+  /**
+   * An administrator PREVIEWING a role. The queue is then that ROLE's whole
+   * queue — every open task on it, whoever holds it — rather than only its
+   * unassigned work.
+   *
+   * Until 2026-09-16 a preview passed `userId: null` into the ordinary "mine"
+   * rule, which left only `assignee_user_id IS NULL AND role_key IN (…)`. Every
+   * real task is assigned, so previewing «الكاتب» after confirming September
+   * showed «لا مهام مفتوحة لديك» while مريم's writing task sat open — and the new
+   * row screens, which open only from a task here, could not be reached at all.
+   */
+  preview?: boolean;
 }
 
 /** Every column the queue screens read off an open task. */
@@ -1240,9 +1252,13 @@ async function readOpenQueueTasks(
   if (!sel.team) {
     const roles = sel.roles.filter((r) => (MOS_ROLE_KEYS as readonly string[]).includes(r));
     const clauses: string[] = [];
-    if (sel.userId) clauses.push(`assignee_user_id.eq.${sel.userId}`);
-    if (roles.length > 0) {
-      clauses.push(`and(assignee_user_id.is.null,role_key.in.(${roles.join(',')}))`);
+    if (sel.preview) {
+      if (roles.length > 0) clauses.push(`role_key.in.(${roles.join(',')})`);
+    } else {
+      if (sel.userId) clauses.push(`assignee_user_id.eq.${sel.userId}`);
+      if (roles.length > 0) {
+        clauses.push(`and(assignee_user_id.is.null,role_key.in.(${roles.join(',')}))`);
+      }
     }
     // No person AND no queue-bearing role → an empty queue, never everyone's.
     if (clauses.length === 0) return { tasks: [] };
@@ -5117,6 +5133,7 @@ export default async function handler(req: Request): Promise<Response> {
           userId: eff.previewRole ? null : meUserId,
           roles: [myRole],
           team: teamBoard,
+          preview: Boolean(eff.previewRole),
         });
         if ('fail' in queue) return queue.fail;
 
