@@ -26,7 +26,20 @@ export type PathRole = 'ceo' | 'marketing_manager' | 'ops_supervisor' | 'writer'
  * the `scheduling` step drew on the writer's `post` slots, so imaginary
  * publishing work displaced real design work. See `releases.ts`.
  */
-export type LoadBucket = 'post' | 'video' | 'approvals' | 'publishing';
+/**
+ * EVERY load bucket, as a value — and the type is DERIVED from it.
+ *
+ * This is one declaration on purpose. `snapshot.ts` kept its own hand-written
+ * copy (`const BUCKETS = ['post','video','approvals']`) which silently fell one
+ * short of the union: `caps.publishing` was therefore never computed for
+ * anybody, and no publish release could ever be assigned to a human
+ * (production, 2026-09-16). A second list that must be remembered is a list
+ * that will be forgotten, so there is no longer a second list — adding a bucket
+ * here adds it everywhere, and forgetting is not possible.
+ */
+export const LOAD_BUCKETS = ['post', 'video', 'approvals', 'publishing'] as const;
+
+export type LoadBucket = typeof LOAD_BUCKETS[number];
 
 /**
  * The buckets a CONTENT TYPE can live in. Deliberately a named alias rather
@@ -598,6 +611,25 @@ export interface PlanConflict {
   messageAr: string;
   messageEn: string;
   detail?: Record<string, unknown>;
+}
+
+/**
+ * Does this conflict REFUSE the plan, or merely report something?
+ *
+ * The distinction is the whole reason a conflict list is readable. Most kinds
+ * are notes: an unassigned release is a late post, not an impossible month.
+ * Three kinds refuse — not enough slots, a platform rule, and a publish time
+ * that would put two posts on the same second.
+ *
+ * ONE definition, used by BOTH the engine (`planCampaign`'s `feasible`) and
+ * the month page's conflict list. They disagreed once already: the page showed
+ * the first six conflicts with no ordering, so six non-blocking release notes
+ * hid the single conflict actually refusing the confirm (2026-09-16). A reader
+ * that ranks conflicts differently from the engine that refuses them is a
+ * reader that lies.
+ */
+export function conflictBlocksPlan(c: PlanConflict): boolean {
+  return c.kind === 'not_enough_slots' || c.kind === 'platform_rule' || c.kind === 'publish_time';
 }
 
 export interface PlanTotals {

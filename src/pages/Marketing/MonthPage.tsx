@@ -38,6 +38,7 @@ import {
   type MosMonthGet, type MosMonthCompile, type MosMonthReport,
   type MosMonthGridWeek, type MosMonthCapacityLine,
 } from '@/lib/marketingOS/client';
+import { conflictBlocksPlan as blocksConfirm } from '@/lib/marketingOS/scheduling/types';
 import { useWorkspace } from './MarketingWorkspace';
 import { LoadError, PageHead, Skeleton } from './components/kit';
 import MonthExceptions from './components/MonthExceptions';
@@ -690,10 +691,32 @@ export default function MonthPage() {
                     </div>
                   )}
                   {summary.conflicts.length > 0 && (
+                    /*
+                     * EVERY conflict, never the first six.
+                     *
+                     * This list was `slice(0, 6)`. On 2026-09-16 that hid the
+                     * only conflict that mattered: six unassignable publish
+                     * releases — which do NOT block a month — filled the whole
+                     * list, while the conflict actually refusing the confirm
+                     * sat below the cut and was never drawn. The operator was
+                     * told to «عالج التعارضات أدناه» about conflicts that were
+                     * not the problem, and the real one was invisible.
+                     *
+                     * Blocking conflicts are listed FIRST so the thing standing
+                     * between the operator and a confirmed month is the thing
+                     * they read first.
+                     */
                     <ul className="mth-tiny" style={{ marginBlockStart: 8, paddingInlineStart: 18 }}>
-                      {summary.conflicts.slice(0, 6).map((c, i) => (
-                        <li key={i}>{isAr ? c.messageAr : c.messageEn}</li>
-                      ))}
+                      {[...summary.conflicts]
+                        .sort((a, b) => Number(blocksConfirm(b)) - Number(blocksConfirm(a)))
+                        .map((c, i) => (
+                          <li key={i} className={blocksConfirm(c) ? 'mth-conflict-blocking' : undefined}>
+                            {isAr ? c.messageAr : c.messageEn}
+                            {blocksConfirm(c) && (
+                              <strong> {isAr ? '— يمنع الاعتماد' : '— blocks confirming'}</strong>
+                            )}
+                          </li>
+                        ))}
                     </ul>
                   )}
                   <p className="mth-tiny" style={{ marginBlockEnd: 0 }}>

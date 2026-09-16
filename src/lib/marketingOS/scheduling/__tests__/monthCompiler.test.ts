@@ -24,7 +24,7 @@ import { rowPublishingFromTemplateRow } from '../../../../../api/_lib/marketing/
 import { toInstant, weekdayOf } from '../calendar';
 import { planCampaign, DEFAULT_RULES, type RuleSet } from '../plan';
 import { DEFAULT_PUBLISHING, DEFAULT_ROW_PUBLISHING } from '../releases';
-import type { PlanInput } from '../types';
+import { conflictBlocksPlan, type PlanInput } from '../types';
 import { CAL, PROJECT_A, PROJECT_B, PROJECT_C, PROJECT_D, snapshot } from './fixtures';
 
 const T = MONTH_TEMPLATE_DEFAULTS;
@@ -828,5 +828,84 @@ describe('`startFrom` defaults from the clock, and only for the current month', 
     expect(oct.summary.paidBatchesRemaining).toBe(4);
     expect(oct.summary.feasible).toBe(true);
     expect(oct.summary.capacityOk).toBe(true);
+  });
+});
+
+describe('a release nobody can publish automatically still gets a PERSON', () => {
+  /*
+   * MEASURED on production 2026-09-16, and the reason this block exists.
+   *
+   * `BUCKETS` in api/_lib/marketing/planning/snapshot.ts listed only
+   * post / video / approvals — three of `LoadBucket`'s FOUR values. So
+   * `caps.publishing` was never computed for anybody, while four real people
+   * had `publishing: 8` in `mos_user_capacity`. `CapacityBook.eligible`
+   * filters on `caps[bucket] > 0`, so it returned an empty list for every
+   * publish release and each one raised «بلا مسؤول متاح».
+   *
+   * It hid because organic platforms are normally automatable: `needsPerson`
+   * is false and no owner is ever looked up. It surfaces the moment a platform
+   * is NOT automatable — an unconnected account, a failed handoff, or
+   * `planning.release_auto_publish = false` — i.e. exactly when a human is
+   * needed. The fixtures had the same gap, which is why no test caught it.
+   */
+  const MANUAL: RuleSet = {
+    ...DEFAULT_RULES,
+    publishing: { ...DEFAULT_PUBLISHING, automatable: { instagram: false } },
+  };
+
+  const out = compileMonth({
+    month: '2026-10', template: T, projects: PROJECTS,
+    snapshot: snapshot(TODAY), rules: MANUAL,
+  });
+
+  it('assigns every manual release instead of opening it unowned', () => {
+    const releases = out.organic.plan.releases ?? [];
+    expect(releases.length).toBeGreaterThan(0);
+    const manual = releases.filter((r) => r.needsPerson);
+    expect(manual.length).toBeGreaterThan(0);
+    expect(manual.filter((r) => r.assigneeUserId === null)).toEqual([]);
+  });
+
+  it('raises no «no available owner» conflict at all', () => {
+    const orphaned = out.summary.conflicts.filter(
+      (c) => c.kind === 'no_capacity' && c.stepKey === 'release',
+    );
+    expect(orphaned).toEqual([]);
+  });
+
+  it('books them in the publishing bucket, never in post or video', () => {
+    const pub = out.summary.load.filter((l) => l.bucket === 'publishing');
+    expect(pub.length).toBeGreaterThan(0);
+    for (const l of pub) expect(l.over).toBe(false);
+  });
+
+  it('and a manual month is still confirmable — publishing is not production', () => {
+    // A release that needs a person is a task, not an impossibility. It must
+    // never be the reason a month cannot be confirmed.
+    expect(out.summary.feasible).toBe(true);
+  });
+});
+
+describe('the conflict list ranks by what actually refuses the plan', () => {
+  it('only three kinds block a confirm; everything else is a note', () => {
+    // ONE definition, shared by the engine and the month page. The page used to
+    // render `conflicts.slice(0, 6)` unsorted, so six non-blocking release notes
+    // could hide the single conflict refusing the month (2026-09-16).
+    expect(conflictBlocksPlan({
+      kind: 'not_enough_slots', itemKey: null, stepKey: null, day: null, messageAr: '', messageEn: '',
+    })).toBe(true);
+    expect(conflictBlocksPlan({
+      kind: 'platform_rule', itemKey: null, stepKey: null, day: null, messageAr: '', messageEn: '',
+    })).toBe(true);
+    expect(conflictBlocksPlan({
+      kind: 'publish_time', itemKey: null, stepKey: null, day: null, messageAr: '', messageEn: '',
+    })).toBe(true);
+    // The one that filled the operator's screen while blocking nothing.
+    expect(conflictBlocksPlan({
+      kind: 'no_capacity', itemKey: null, stepKey: 'release', day: null, messageAr: '', messageEn: '',
+    })).toBe(false);
+    expect(conflictBlocksPlan({
+      kind: 'time_bound', itemKey: null, stepKey: null, day: null, messageAr: '', messageEn: '',
+    })).toBe(false);
   });
 });

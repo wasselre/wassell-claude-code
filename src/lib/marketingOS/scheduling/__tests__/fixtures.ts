@@ -17,10 +17,10 @@ export const MM = 'user-manager';
 export const OPS = 'user-ops';
 
 export const TEAM: PersonCapacity[] = [
-  { userId: W, roles: ['writer'], caps: { post: 10, video: 4, approvals: 20 }, leaves: [] },
-  { userId: M1, roles: ['montage'], caps: { post: 4, video: 4, approvals: 20 }, leaves: [] },
-  { userId: M2, roles: ['montage'], caps: { post: 4, video: 4, approvals: 20 }, leaves: [] },
-  { userId: MM, roles: ['marketing_manager'], caps: { post: 0, video: 0, approvals: 20 }, leaves: [] },
+  { userId: W, roles: ['writer'], caps: { post: 10, video: 4, approvals: 20, publishing: 8 }, leaves: [] },
+  { userId: M1, roles: ['montage'], caps: { post: 4, video: 4, approvals: 20, publishing: 8 }, leaves: [] },
+  { userId: M2, roles: ['montage'], caps: { post: 4, video: 4, approvals: 20, publishing: 8 }, leaves: [] },
+  { userId: MM, roles: ['marketing_manager'], caps: { post: 0, video: 0, approvals: 20, publishing: 8 }, leaves: [] },
   { userId: OPS, roles: ['ops_supervisor'], caps: { post: 4, video: 4, approvals: 20 }, leaves: [] },
 ];
 

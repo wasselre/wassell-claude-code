@@ -28,6 +28,7 @@ import {
   type PlannedPlacement, type PlannedReservation, type PlannedRow, type PlannedStage,
   type RowRequirement, type WorkflowSpec, type WorkloadSnapshot, type PlatformRules,
   type LoadBucket,
+  conflictBlocksPlan,
 } from './types';
 import { CONTENT_TYPE_BUCKET, CONTENT_TYPE_WORKFLOW, DEFAULT_WORKFLOWS } from './defaults';
 import {
@@ -490,8 +491,7 @@ export function planCampaign(
   // publishes two posts at the same second, or at a time the operator never
   // asked for. Committing that is worse than refusing until one number in the
   // month template is fixed.
-  const feasible = sched.ok && conflicts.every((c) =>
-    c.kind !== 'not_enough_slots' && c.kind !== 'platform_rule' && c.kind !== 'publish_time');
+  const feasible = sched.ok && !conflicts.some(conflictBlocksPlan);
 
   const starts = plannedItems.map((i) => i.productionStart).filter(Boolean).sort();
   const ends = plannedItems.flatMap((i) => i.stages.map((s) => s.end)).filter(Boolean).sort();

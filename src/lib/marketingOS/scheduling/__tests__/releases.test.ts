@@ -207,8 +207,26 @@ describe('release load is charged to the publishing budget', () => {
   });
 
   it('no eligible publisher opens the task unassigned and NEVER makes the plan infeasible', () => {
-    // Nobody holds publishing capacity — exactly the live shape that left three
-    // publish checks orphaned since 2026-09-12.
+    /*
+     * A team where NOBODY can publish — built here ON PURPOSE.
+     *
+     * This test used to get that shape for free, because the shared fixture
+     * gave nobody `publishing` capacity. That was not a deliberate scenario: it
+     * MIRRORED a real defect. `BUCKETS` in snapshot.ts listed three of
+     * `LoadBucket`'s four values, so `caps.publishing` was never computed for
+     * anyone in production either — and this test's own comment recorded the
+     * symptom ("three publish checks orphaned since 2026-09-12") as though it
+     * were the intended behaviour. Fixed 2026-09-16; the fixture now carries the
+     * `publishing: 8` four real people actually have.
+     *
+     * The path is still worth covering — an operator CAN leave a role with no
+     * publishing budget — so the zero is now stated rather than inherited.
+     */
+    const base = snapshot('2026-09-14');
+    const noPublishers = {
+      ...base,
+      people: base.people.map((p) => ({ ...p, caps: { ...p.caps, publishing: 0 } })),
+    };
     const res = planCampaign(
       {
         campaignId: null, kind: 'organic',
@@ -217,7 +235,7 @@ describe('release load is charged to the publishing budget', () => {
         frequency: [{ platform: 'tiktok', perDay: 1, weekdays: null }],
         crossPost: false, publishBufferDays: 1,
       },
-      snapshot('2026-09-14'),
+      noPublishers,
       rules({ automatable: { tiktok: false } }),
     );
     expect(res.feasible).toBe(true);

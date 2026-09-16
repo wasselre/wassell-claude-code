@@ -9,6 +9,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   DEFAULT_CALENDAR, DEFAULTS, DEFAULT_WORKFLOWS, DEFAULT_ROW_PUBLISHING,
+  LOAD_BUCKETS,
   type LedgerRow, type LoadBucket, type PathRole, type PersonCapacity,
   type PlatformRules, type RowPublishing, type StepSpec, type WorkCalendar, type WorkflowSpec,
   type WorkloadSnapshot,
@@ -16,7 +17,7 @@ import {
 import type { RuleSet } from '../../../../src/lib/marketingOS/scheduling/plan.js';
 
 const MOS_ROLES: PathRole[] = ['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage'];
-const BUCKETS: LoadBucket[] = ['post', 'video', 'approvals'];
+const BUCKETS = LOAD_BUCKETS;
 
 /** Civil "today" in Riyadh — the same helper `api/marketing-os.ts` already uses. */
 export function riyadhToday(): string {
