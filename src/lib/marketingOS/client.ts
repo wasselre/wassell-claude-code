@@ -3631,7 +3631,7 @@ export interface MosMonthPostingDay {
  */
 export interface MosMonthSkippedDay {
   day: string;
-  reason: 'past' | 'lead';
+  reason: 'past' | 'lead' | 'capacity';
   /** Working days of lead the day actually had. `null` for a day already gone. */
   leadWorkingDays: number | null;
 }
@@ -3780,7 +3780,13 @@ export interface MosMonthGridWeek {
 /** Per-person capacity for the month — one line per (person, bucket). */
 export interface MosMonthCapacityLine {
   userId: string;
-  bucket: 'post' | 'video' | 'approvals';
+  /**
+   * The server's `LoadBucket`, all four values. This read `'post' | 'video' |
+   * 'approvals'` until 2026-09-16 while the server was already sending
+   * `publishing` lines — so the page had no branch for them and printed the
+   * writer's publishing budget as a second «المحتوى» line.
+   */
+  bucket: 'post' | 'video' | 'approvals' | 'publishing';
   capacityPerDay: number;
   totalSlots: number;
   peakDay: string | null;

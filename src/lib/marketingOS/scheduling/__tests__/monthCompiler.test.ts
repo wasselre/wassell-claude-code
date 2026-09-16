@@ -24,8 +24,8 @@ import { rowPublishingFromTemplateRow } from '../../../../../api/_lib/marketing/
 import { toInstant, weekdayOf } from '../calendar';
 import { planCampaign, DEFAULT_RULES, type RuleSet } from '../plan';
 import { DEFAULT_PUBLISHING, DEFAULT_ROW_PUBLISHING } from '../releases';
-import { conflictBlocksPlan, conflictBlocksConfirm, type PlanConflict, type PlanInput } from '../types';
-import { CAL, PROJECT_A, PROJECT_B, PROJECT_C, PROJECT_D, snapshot } from './fixtures';
+import { conflictBlocksPlan, conflictBlocksConfirm, type PlanConflict, type PlanInput, type WorkloadSnapshot } from '../types';
+import { CAL, M1, M2, PROJECT_A, PROJECT_B, PROJECT_C, PROJECT_D, snapshot } from './fixtures';
 
 const T = MONTH_TEMPLATE_DEFAULTS;
 
@@ -928,5 +928,69 @@ describe('what stops a confirm is not only a refusing kind', () => {
     expect(conflictBlocksConfirm(c('not_enough_slots', null))).toBe(true);
     expect(conflictBlocksConfirm(c('platform_rule', null))).toBe(true);
     expect(conflictBlocksConfirm(c('publish_time', null))).toBe(true);
+  });
+});
+
+describe('the ads open at the first batch the team can actually make', () => {
+  /*
+   * MEASURED on production 2026-09-16. September from the 16th put its first ad
+   * batch on Sun 20: fifteen creatives to design by Sat 19, while the ONLY
+   * designer's twelve slots that week were mostly taken by the organic rows
+   * due the same days. Every paid plan was infeasible, the confirm button was
+   * disabled, and the page had no way to move the ads.
+   */
+  const ONE_DESIGNER = (day: string): WorkloadSnapshot => {
+    const base = snapshot(day);
+    return { ...base, people: base.people.filter((p) => p.userId !== M2) };
+  };
+
+  it('skips a leading batch the team cannot staff, names why, and stays confirmable', () => {
+    const out = compileMonth({
+      month: '2026-09', template: T, projects: PROJECTS,
+      snapshot: ONE_DESIGNER('2026-09-16'), rules: RULES, startFrom: '2026-09-16',
+    });
+    expect(out.summary.feasible).toBe(true);
+    expect(out.summary.conflicts).toEqual([]);
+    expect(out.geometry.paidBatchDays).toEqual(['2026-09-27']);
+    expect(out.geometry.skippedPaidBatchDays).toContainEqual(
+      { day: '2026-09-20', reason: 'capacity', leadWorkingDays: null },
+    );
+    expect(out.summary.paidBatchesRemaining).toBe(1);
+    // The POSTS are untouched — only the ad batch moved.
+    expect(out.summary.rows).toBe(10);
+    expect(out.summary.startsOn).toBe('2026-09-17');
+    // What the page offers is what the confirm commits: the returned geometry
+    // IS the adjusted one, so the grid and the summary cannot disagree.
+    expect(out.paid.every((p) => p.input.rangeStart === '2026-09-27')).toBe(true);
+  });
+
+  it('never shrinks a WHOLE month quietly — its conflicts stay in front of the operator', () => {
+    // A month compiled without `startFrom` is a plan, not a catch-up. If its ads
+    // do not fit, that is a real capacity problem to show, not to hide.
+    const out = compileMonth({
+      month: '2026-09', template: T, projects: PROJECTS,
+      snapshot: ONE_DESIGNER('2026-09-16'), rules: RULES, startFrom: null,
+    });
+    expect(out.geometry.skippedPaidBatchDays.some((d) => d.reason === 'capacity')).toBe(false);
+    expect(out.summary.feasible).toBe(false);
+    expect(out.summary.conflicts.length).toBeGreaterThan(0);
+  });
+
+  it('never drops the LAST batch — a month whose ads cannot be made at all keeps its conflict', () => {
+    // A designer with ONE slot a day cannot make even a single five-creative
+    // batch alongside the rows. Dropping batches until none were left would buy
+    // no ads silently; instead the last batch stays and so does its conflict.
+    const base = ONE_DESIGNER('2026-09-16');
+    const starved: WorkloadSnapshot = {
+      ...base,
+      people: base.people.map((p) => (p.userId === M1 ? { ...p, caps: { ...p.caps, post: 1 } } : p)),
+    };
+    const out = compileMonth({
+      month: '2026-09', template: T, projects: PROJECTS,
+      snapshot: starved, rules: RULES, startFrom: '2026-09-16',
+    });
+    expect(out.geometry.paidBatchDays.length).toBeGreaterThanOrEqual(1);
+    expect(out.summary.feasible).toBe(false);
+    expect(out.summary.conflicts.some(conflictBlocksConfirm)).toBe(true);
   });
 });

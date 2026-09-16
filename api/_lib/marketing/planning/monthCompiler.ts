@@ -62,7 +62,7 @@
 import {
   DEFAULTS, DEFAULT_RULES, DEFAULT_CALENDAR, DEFAULT_PUBLISHING, ENGINE_VERSION, POST_WORKFLOW,
   addDays, addWorkingDays, daysBetween, effortWeights, nextWorkingDay, weekdayOf, workingDaysIn,
-  planCampaign,
+  planCampaign, conflictBlocksConfirm,
   type LedgerRow, type LoadBucket, type PlanConflict, type PlanInput, type PlanResult,
   type RowRequirement, type RuleSet, type WorkCalendar, type WorkflowSpec, type WorkloadSnapshot,
 } from '../../../../src/lib/marketingOS/scheduling/index.js';
@@ -305,12 +305,16 @@ export interface MonthPostingDay {
  * The distinction is the whole point of reporting them: one is the calendar,
  * the other is a decision the operator should understand.
  */
-export type MonthSkipReason = 'past' | 'lead';
+export type MonthSkipReason = 'past' | 'lead' | 'capacity';
 
 export interface MonthSkippedDay {
   day: string;
   reason: MonthSkipReason;
-  /** Working days of lead the day actually had. `null` for a day already gone. */
+  /**
+   * Working days of lead the day actually had. `null` for a day already gone
+   * (`'past'`), and for a `'capacity'` skip, whose lead was fine — the team
+   * simply could not make that batch in the days left.
+   */
   leadWorkingDays: number | null;
 }
 
@@ -985,32 +989,86 @@ export function compileMonth(args: CompileMonthArgs): CompiledMonth {
     };
   }
 
-  let ledger = snapshot.ledger;
   const organicPlan = planCampaign(
-    organicInput, { ...snapshot, ledger }, rules, { withAlternatives: false },
+    organicInput, { ...snapshot, ledger: snapshot.ledger }, rules, { withAlternatives: false },
   );
-  ledger = extendLedger(ledger, organicPlan);
+  const afterOrganic = extendLedger(snapshot.ledger, organicPlan);
 
-  const paid: CompiledMonth['paid'] = [];
-  for (const project of running) {
-    const input = paidPlanInput(geometry, template, project);
-    const plan = planCampaign(input, { ...snapshot, ledger }, rules, { withAlternatives: false });
-    ledger = extendLedger(ledger, plan);
-    paid.push({ projectId: project.projectId, input, plan });
+  // The three paid plans, compiled in sequence against a GROWING ledger so each
+  // sees the load the previous ones proposed.
+  const compilePaid = (geo: MonthGeometry): CompiledMonth['paid'] => {
+    let ledger = afterOrganic;
+    const out: CompiledMonth['paid'] = [];
+    for (const project of running) {
+      const input = paidPlanInput(geo, template, project);
+      const plan = planCampaign(input, { ...snapshot, ledger }, rules, { withAlternatives: false });
+      ledger = extendLedger(ledger, plan);
+      out.push({ projectId: project.projectId, input, plan });
+    }
+    return out;
+  };
+
+  /*
+   * THE ADS START AT THE FIRST BATCH THE TEAM CAN ACTUALLY MAKE.
+   *
+   * The posting days already follow this rule: a month begun partway through
+   * opens at the first day production can reach, and says why. Ad batches did
+   * not. Measured on production 2026-09-16: September from the 16th put its
+   * first batch on Sun 20, whose fifteen creatives had to be designed by Sat
+   * 19 while the only designer's twelve slots that week were nine-tenths taken
+   * by the organic rows due the same days. Every paid plan came back
+   * infeasible, `month_confirm` refused, and the operator was told to «move the
+   * first ads to the 27th» by a page with no control to do it.
+   *
+   * So a LEADING batch the team cannot staff is skipped — reason `'capacity'` —
+   * and the ads open at the next one. Deliberately narrow:
+   *
+   *   • only in a month started partway through (`startedFrom` set). A whole
+   *     month that cannot staff its ads has a real capacity problem, and the
+   *     operator must see it, not have it quietly shrunk;
+   *   • only the FIRST batch, and only when EVERY blocking conflict falls before
+   *     the second batch day — i.e. the failure is that batch's own window. A
+   *     later batch that does not fit is still a conflict;
+   *   • never the LAST batch: a month whose ads cannot be made at all keeps its
+   *     conflict rather than silently buying no ads.
+   *
+   * `monthConfirm` compiles through this same function, so what the page
+   * offers is exactly what the confirm commits.
+   */
+  let geo = geometry;
+  let paid = compilePaid(geo);
+  while (geo.startedFrom !== null && geo.paidBatchDays.length > 1) {
+    const failed = paid.filter((x) => !x.plan.feasible);
+    if (failed.length === 0) break;
+    const second = geo.paidBatchDays[1]!;
+    const blocking = failed.flatMap((x) => x.plan.conflicts.filter(conflictBlocksConfirm));
+    const ownWindow = blocking.length > 0
+      && blocking.every((c) => c.day !== null && daysBetween(c.day, second) > 0);
+    if (!ownWindow) break;
+    const first = geo.paidBatchDays[0]!;
+    geo = {
+      ...geo,
+      paidBatchDays: geo.paidBatchDays.slice(1),
+      skippedPaidBatchDays: [
+        ...geo.skippedPaidBatchDays,
+        { day: first, reason: 'capacity', leadWorkingDays: null },
+      ],
+    };
+    paid = compilePaid(geo);
   }
 
   const inputs = [organicInput, ...paid.map((p) => p.input)];
   const plans = [organicPlan, ...paid.map((p) => p.plan)];
   return {
-    month: geometry.month,
+    month: geo.month,
     template,
-    geometry,
+    geometry: geo,
     rows,
     organic: { input: organicInput, plan: organicPlan },
     paid,
     inputs,
     plans,
-    summary: summariseMonth({ geometry, template, projects, rows, organicPlan, paidPlans: paid.map((p) => p.plan), snapshot }),
+    summary: summariseMonth({ geometry: geo, template, projects, rows, organicPlan, paidPlans: paid.map((p) => p.plan), snapshot }),
   };
 }
 

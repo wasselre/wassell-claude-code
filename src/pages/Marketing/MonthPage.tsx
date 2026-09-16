@@ -302,6 +302,10 @@ export default function MonthPage() {
   // has to explain.
   const pastDays = summary?.skippedPostingDays.filter((d) => d.reason === 'past') ?? [];
   const lateDays = summary?.skippedPostingDays.filter((d) => d.reason === 'lead') ?? [];
+  // Ad batches the team could not staff in the days left, so the ads open at the
+  // next batch instead (see `compileMonth`). Said out loud, never skipped quietly.
+  const staffedOutBatches = compiled?.geometry.skippedPaidBatchDays.filter((d) => d.reason === 'capacity') ?? [];
+  const firstAdBatch = compiled?.geometry.paidBatchDays[0] ?? null;
   const template = data?.template ?? compiled?.template ?? report?.template ?? null;
 
   const gridProjects = useMemo(
@@ -328,6 +332,9 @@ export default function MonthPage() {
   const bucketLabel = useCallback((b: MosMonthCapacityLine['bucket']): string => {
     if (b === 'approvals') return isAr ? 'الاعتماد' : 'Approvals';
     if (b === 'video') return isAr ? 'الفيديو' : 'Video';
+    // `publishing` fell through to «المحتوى» until 2026-09-16, so the writer
+    // appeared twice under the same label with two different capacities.
+    if (b === 'publishing') return isAr ? 'النشر' : 'Publishing';
     return isAr ? 'المحتوى' : 'Content';
   }, [isAr]);
 
@@ -506,6 +513,23 @@ export default function MonthPage() {
            * date, and every row it drew was already in the past.
            */
           <div className="notice" style={{ marginBlockEnd: 14 }}>
+            {staffedOutBatches.length > 0 && firstAdBatch && (
+              /*
+               * The ADS moved, and why.
+               *
+               * The posts in these days still run; only the ad batch did not
+               * fit. Its creatives would have had to be designed in the few
+               * days left before it, alongside the posts due the same days, by
+               * the designers there are. Naming the batch and the new first
+               * batch is what lets the operator confirm instead of being told
+               * to «move the ads» by a page with no way to do it.
+               */
+              <div>
+                {isAr
+                  ? `دفعة الإعلانات ${staffedOutBatches.map((d) => dayLabel(d.day, true)).join(' و')} لا تتّسع — تصاميمها تحتاج إنجازها قبلها مع منشورات الأيام نفسها، وهذا أكثر مما يتسع له المصممون. تبدأ الإعلانات ${dayLabel(firstAdBatch, true)}، والمنشورات تبقى في مواعيدها.`
+                  : `The ${staffedOutBatches.map((d) => dayLabel(d.day, false)).join(', ')} ad batch does not fit — its designs would have to be made before it, alongside the posts due the same days, which is more than the designers can carry. The ads start ${dayLabel(firstAdBatch, false)}; the posts keep their dates.`}
+              </div>
+            )}
             {summary.startMoved && (
               /*
                * The START MOVED, and why.
@@ -675,9 +699,18 @@ export default function MonthPage() {
                         <span className="tr">
                           <span className={`fl ${cls}`} style={{ width: `${Math.min(100, Math.max(2, ratio))}%` }} />
                         </span>
+                        {/*
+                          * The percentage is its own ISOLATED run, separated by
+                          * «—». It was `… يوميًا · ٥٠٪` in one string: the bidi
+                          * algorithm set the neutral «·» beside the digits, and a
+                          * middle dot is indistinguishable from the Arabic zero
+                          * «٠». Every meter read ten times too high — 50% as
+                          * «٥٠٠٪», 1% as «١٠٪» — on the one card that answers
+                          * "is the team overloaded?".
+                          */}
                         <span className="vl">
                           {isAr
-                            ? `${num(l.averagePerWorkingDay, true)} من ${num(l.capacityPerDay, true)} يوميًا · ${pct(ratio, true)}`
+                            ? <>{`${num(l.averagePerWorkingDay, true)} من ${num(l.capacityPerDay, true)} يوميًا — `}<bdi>{pct(ratio, true)}</bdi></>
                             : `${num(l.averagePerWorkingDay, false)} of ${num(l.capacityPerDay, false)} a day · ${pct(ratio, false)}`}
                         </span>
                       </div>
