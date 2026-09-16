@@ -131,3 +131,6 @@ vite.config.local.mjs
 .kimi-logs/
 
 .wf-token*.local
+
+# Supabase CLI scratch (written by any `supabase` invocation)
+supabase/.temp/
