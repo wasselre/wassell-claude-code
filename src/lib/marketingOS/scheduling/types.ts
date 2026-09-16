@@ -614,22 +614,46 @@ export interface PlanConflict {
 }
 
 /**
- * Does this conflict REFUSE the plan, or merely report something?
+ * The kinds that refuse a plan OUTRIGHT, whatever the scheduler managed.
  *
- * The distinction is the whole reason a conflict list is readable. Most kinds
- * are notes: an unassigned release is a late post, not an impossible month.
- * Three kinds refuse — not enough slots, a platform rule, and a publish time
- * that would put two posts on the same second.
- *
- * ONE definition, used by BOTH the engine (`planCampaign`'s `feasible`) and
- * the month page's conflict list. They disagreed once already: the page showed
- * the first six conflicts with no ordering, so six non-blocking release notes
- * hid the single conflict actually refusing the confirm (2026-09-16). A reader
- * that ranks conflicts differently from the engine that refuses them is a
- * reader that lies.
+ * This is the engine's own filter — `planCampaign`'s
+ * `feasible = sched.ok && !conflicts.some(conflictBlocksPlan)` — and its
+ * semantics are deliberately unchanged. It answers "does this KIND refuse?",
+ * which is NOT the same question as "is this what stops me confirming?". For
+ * that, read `conflictBlocksConfirm` below.
  */
 export function conflictBlocksPlan(c: PlanConflict): boolean {
   return c.kind === 'not_enough_slots' || c.kind === 'platform_rule' || c.kind === 'publish_time';
+}
+
+/**
+ * Does this conflict stand between the operator and a confirmed month?
+ *
+ * A plan is infeasible for TWO reasons, and a conflict list must show both:
+ *
+ *   1. a refusing KIND (`conflictBlocksPlan`), or
+ *   2. the SCHEDULER FAILED. `scheduleProduction` emits its proof — a
+ *      `no_capacity` or `time_bound` with `stepKey: null` — immediately before
+ *      it returns `ok: false` (schedule.ts: the time bound, the capacity bound,
+ *      and the exhausted search). Such a conflict IS the reason `sched.ok` is
+ *      false, so it blocks just as surely as a refusing kind.
+ *
+ * What never blocks is a RELEASE conflict (`stepKey: 'release'`). An
+ * unassigned publish is a late post, not an impossible month.
+ *
+ * WHY TWO FUNCTIONS. On 2026-09-16 the page's list was `conflicts.slice(0, 6)`,
+ * so six non-blocking release notes hid the one conflict refusing the month.
+ * The first fix ranked by `conflictBlocksPlan` alone — which classes the real
+ * blocker, a scheduler `no_capacity` proof («montage has 6 free slot-days but 10
+ * are required»), as NOT blocking. Measured against live production: the page
+ * would have shown the true reason without its «يمنع الاعتماد» label, the exact
+ * failure the fix existed to end. This one is built ON the engine's rule rather
+ * than beside it, so the two cannot drift apart.
+ */
+export function conflictBlocksConfirm(c: PlanConflict): boolean {
+  if (conflictBlocksPlan(c)) return true;
+  if (c.stepKey === 'release') return false;
+  return c.kind === 'no_capacity' || c.kind === 'time_bound';
 }
 
 export interface PlanTotals {

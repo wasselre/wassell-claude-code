@@ -24,7 +24,7 @@ import { rowPublishingFromTemplateRow } from '../../../../../api/_lib/marketing/
 import { toInstant, weekdayOf } from '../calendar';
 import { planCampaign, DEFAULT_RULES, type RuleSet } from '../plan';
 import { DEFAULT_PUBLISHING, DEFAULT_ROW_PUBLISHING } from '../releases';
-import { conflictBlocksPlan, type PlanInput } from '../types';
+import { conflictBlocksPlan, conflictBlocksConfirm, type PlanConflict, type PlanInput } from '../types';
 import { CAL, PROJECT_A, PROJECT_B, PROJECT_C, PROJECT_D, snapshot } from './fixtures';
 
 const T = MONTH_TEMPLATE_DEFAULTS;
@@ -907,5 +907,32 @@ describe('the conflict list ranks by what actually refuses the plan', () => {
     expect(conflictBlocksPlan({
       kind: 'time_bound', itemKey: null, stepKey: null, day: null, messageAr: '', messageEn: '',
     })).toBe(false);
+  });
+});
+
+describe('what stops a confirm is not only a refusing kind', () => {
+  const c = (kind: PlanConflict['kind'], stepKey: string | null): PlanConflict => ({
+    kind, itemKey: null, stepKey, day: '2026-09-23', messageAr: '', messageEn: '',
+  });
+
+  it('a SCHEDULER proof blocks the confirm even though its kind does not refuse on its own', () => {
+    // MEASURED on live production 2026-09-16: two paid slates failed with
+    // «Role "montage" has 6 free slot-days in "post" up to 2026-09-23 but 10
+    // are required». That is a `no_capacity` with `stepKey: null` — the proof
+    // emitted right before `scheduleProduction` returns `ok: false`. Ranking by
+    // `conflictBlocksPlan` alone called it harmless.
+    expect(conflictBlocksPlan(c('no_capacity', null))).toBe(false);
+    expect(conflictBlocksConfirm(c('no_capacity', null))).toBe(true);
+    expect(conflictBlocksConfirm(c('time_bound', null))).toBe(true);
+  });
+
+  it('a RELEASE conflict never blocks, whatever its kind', () => {
+    expect(conflictBlocksConfirm(c('no_capacity', 'release'))).toBe(false);
+  });
+
+  it('every refusing kind still blocks', () => {
+    expect(conflictBlocksConfirm(c('not_enough_slots', null))).toBe(true);
+    expect(conflictBlocksConfirm(c('platform_rule', null))).toBe(true);
+    expect(conflictBlocksConfirm(c('publish_time', null))).toBe(true);
   });
 });

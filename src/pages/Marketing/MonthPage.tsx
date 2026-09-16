@@ -38,7 +38,7 @@ import {
   type MosMonthGet, type MosMonthCompile, type MosMonthReport,
   type MosMonthGridWeek, type MosMonthCapacityLine,
 } from '@/lib/marketingOS/client';
-import { conflictBlocksPlan as blocksConfirm } from '@/lib/marketingOS/scheduling/types';
+import { conflictBlocksConfirm as blocksConfirm } from '@/lib/marketingOS/scheduling/types';
 import { useWorkspace } from './MarketingWorkspace';
 import { LoadError, PageHead, Skeleton } from './components/kit';
 import MonthExceptions from './components/MonthExceptions';
