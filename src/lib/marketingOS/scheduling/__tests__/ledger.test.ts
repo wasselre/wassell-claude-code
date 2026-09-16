@@ -14,6 +14,7 @@ import { CapacityBook, effortWeights } from '../ledger';
 import { daysBetween } from '../calendar';
 import type { LedgerRow, PlanInput } from '../types';
 import { CAL, M1, M2, W, MM, PROJECT_A, PROJECT_B, PROJECT_C, TEAM, snapshot } from './fixtures';
+import { CLASSIC_RULES } from './classicWorkflow';
 
 const organic = (over: Partial<PlanInput> = {}): PlanInput => ({
   campaignId: 'c',
@@ -125,9 +126,11 @@ describe('leave and holidays are hard constraints', () => {
 
   it('a Friday inside a two-day design is skipped, not stretched over', () => {
     // A design whose window straddles Friday Oct 23 must occupy Oct 22 + Oct 24.
+    // A MULTI-DAY design is what this proves, so it runs on the classic path —
+    // the shipped post design is one day now (see classicWorkflow.ts).
     const res = planCampaign(organic({
       rangeStart: '2026-10-27', rangeEnd: '2026-10-27',
-    }), snapshot('2026-10-19'), DEFAULT_RULES);
+    }), snapshot('2026-10-19'), CLASSIC_RULES);
     const design = res.items[0]!.stages.find((s) => s.stepKey === 'design')!;
     // Whatever window it picked, both ends are working days and the span is 2.
     expect(CAL.weekendDays).toContain(5);

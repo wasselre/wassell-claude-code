@@ -203,9 +203,14 @@ export function parseMonthTemplate(row: Record<string, unknown> | null | undefin
 export function chainWorkingDays(wf: WorkflowSpec, sameDay: boolean): number {
   const steps = wf.steps.filter((s) => !s.afterReady);
   if (steps.length === 0) return 0;
-  return sameDay
-    ? steps.length
-    : steps.reduce((total, s) => total + effortWeights(s.workingDays).length, 0);
+  const spans = steps.map((s) => (sameDay ? 1 : effortWeights(s.workingDays).length));
+  // On a same-day path each step starts the day the previous one ends, so
+  // adjacent steps SHARE a day: the chain is 1 + Σ(span − 1). Otherwise every
+  // step takes its own days in turn: Σ span. This is the forward statement of
+  // exactly what `scheduleProduction`'s `earliestEnds` proves — keep them equal.
+  return wf.sameDayChain === true
+    ? 1 + spans.reduce((total, x) => total + (x - 1), 0)
+    : spans.reduce((total, x) => total + x, 0);
 }
 
 /**

@@ -29,10 +29,23 @@ const s = (
 export const POST_WORKFLOW: WorkflowSpec = {
   workflowKey: 'post_std',
   bucket: 'post',
+  /*
+   * A post is made in ONE DAY, start to finish, and a designer makes FOUR a day
+   * — the operator's figures (2026-09-16), and the capacity rows already say
+   * the same (`mos_user_capacity` montage `post: 4`).
+   *
+   * Until then this path charged `design` as TWO working days and forbade two
+   * steps on the same day. So one design cost two of a designer's four daily
+   * slots, a five-creative ad batch booked TEN designer-days, and the month
+   * reported «montage has 6 free slot-days but 10 are required» — a shortage of
+   * designers that did not exist. Each step is now one slot of its person's
+   * day, and the chain may sit inside a single day.
+   */
+  sameDayChain: true,
   steps: [
     s('writing', 'writer', false, 1, 'كتابة', 'Writing'),
     s('writing_review', 'marketing_manager', true, 1, 'مراجعة الكتابة', 'Writing review'),
-    s('design', 'montage', false, 2, 'تصميم', 'Design'),
+    s('design', 'montage', false, 1, 'تصميم', 'Design'),
     s('design_writer_review', 'writer', true, 1, 'مراجعة الكاتب', 'Writer review'),
     s('design_review', 'marketing_manager', true, 1, 'الاعتماد النهائي', 'Final approval'),
   ],

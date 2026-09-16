@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { planCampaign, DEFAULT_RULES } from '../plan';
 import { computeDeadlines } from '../schedule';
-import { POST_WORKFLOW } from '../defaults';
+import { CLASSIC_POST_WORKFLOW, CLASSIC_RULES } from './classicWorkflow';
 import { daysBetween } from '../calendar';
 import type { PlanInput, PlannedItem } from '../types';
 import {
@@ -31,7 +31,9 @@ const byKey = (items: PlannedItem[], k: string) => items.find((i) => i.key === k
 
 describe('backward deadlines', () => {
   it('walks the post path back from the required-ready day, skipping Friday', () => {
-    const prod = POST_WORKFLOW.steps.filter((s) => !s.afterReady);
+    // The day-by-day walk with a two-day design is what proves the Friday skip,
+    // so this reads the classic multi-day path (see classicWorkflow.ts).
+    const prod = CLASSIC_POST_WORKFLOW.steps.filter((s) => !s.afterReady);
     const dl = computeDeadlines(prod, '2026-10-10', CAL);
     expect(Object.fromEntries(prod.map((s, i) => [s.key, dl[i]]))).toEqual({
       writing: '2026-10-04',
@@ -131,7 +133,9 @@ describe('§22.1 — publishing batches drive production', () => {
   });
 
   it('VARIANT: with M2 also busy on Oct 7, all six still fit without moving a publish date', () => {
-    const res = planCampaign(input, snapshot('2026-10-01', LEDGER_221_TIGHT), DEFAULT_RULES);
+    // "Pulled EARLIER into its slack" needs a design long enough to have slack
+    // to move into, so the variant runs on the classic two-day design.
+    const res = planCampaign(input, snapshot('2026-10-01', LEDGER_221_TIGHT), CLASSIC_RULES);
 
     expect(res.feasible).toBe(true);
     expect(res.infeasibleProof).toBeNull();
@@ -164,7 +168,10 @@ describe('proving infeasibility vs failing to find a schedule', () => {
       projects: [{ ...PROJECT_A, posts: 1, videos: 0 }],
       rangeStart: '2026-10-02',
       rangeEnd: '2026-10-02',
-    }), snapshot('2026-10-01'), DEFAULT_RULES);
+    }), snapshot('2026-10-01'), CLASSIC_RULES);
+    // Classic path: a multi-day chain genuinely cannot fit a one-day range. On
+    // the shipped post path it now CAN — a post is made inside a day — which is
+    // the correct answer, not a lost proof.
     expect(res.feasible).toBe(false);
     expect(res.infeasibleProof).toBe('time_bound');
     expect(res.searchIncomplete).toBe(false);
@@ -210,7 +217,7 @@ describe('proving infeasibility vs failing to find a schedule', () => {
       rangeStart: '2026-10-03',
       rangeEnd: '2026-10-04',
       frequency: IG(3),
-    }), snapshot('2026-10-01'), DEFAULT_RULES);
+    }), snapshot('2026-10-01'), CLASSIC_RULES);
     expect(res.feasible).toBe(false);
     expect(res.alternatives.earliestFeasibleStart).toBeTruthy();
     expect(daysBetween('2026-10-03', res.alternatives.earliestFeasibleStart!)).toBeGreaterThan(0);

@@ -117,6 +117,22 @@ export interface WorkflowSpec {
   workflowKey: string;
   bucket: ProductionBucket;
   steps: StepSpec[];
+  /**
+   * May consecutive steps share a calendar DAY?
+   *
+   * `false` (the default, and right for video): a step must END the working
+   * day BEFORE its successor STARTS. Editing that takes three days really does.
+   *
+   * `true`: a step may finish on the same day the next one begins, so a whole
+   * chain can sit inside one day. The operator's own statement of the post
+   * path (2026-09-16): «a full post takes one day max — writing, designing,
+   * approval, everything — and a designer does four a day». Without this, the
+   * scheduler gave writing, its review, design, the writer's review and final
+   * approval a day EACH, so a post could not exist in under five working days
+   * and September could not start before the 22nd. That was the model's
+   * assumption, never the team's.
+   */
+  sameDayChain?: boolean;
 }
 
 /** The capacity bucket a step consumes: approvals are their own budget. */

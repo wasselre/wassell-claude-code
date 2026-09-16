@@ -260,11 +260,13 @@ describe('October 2026 — compiled', () => {
     // The three paid plans see the organic plan's load, not a fresh ledger, so
     // the production bucket is the sum of both halves counted exactly once:
     //   16 rows × (writing + design) × 3 members            =  96
-    //   60 creatives × (writing 1 day + design 2 days)      = 180
+    //   60 creatives × (writing 1 slot + design 1 slot)     = 120
+    // Design was TWO slots until 2026-09-16 (this line read 180), which is how
+    // a five-creative batch came to book ten designer-days.
     const production = out.summary.load
       .filter((l) => l.bucket === 'post')
       .reduce((a, l) => a + l.totalSlots, 0);
-    expect(production).toBe(96 + 180);
+    expect(production).toBe(96 + 120);
   });
 
   it('answers the month page: dates, budget and nothing left unassigned', () => {
@@ -506,21 +508,23 @@ describe('the commit payload carries both halves of every pair', () => {
 describe('September 2026, compiled on the 16th', () => {
   const SEP = '2026-09-16';
   /*
-   * The month does NOT start on the 17th, and recording why is this block's job.
+   * A post takes ONE DAY, start to finish — so September starts TOMORROW.
    *
-   * A row's production chain is five SEQUENTIAL steps — writing, writing
-   * review, design, writer review, final approval — each sitting on its own
-   * working day, plus one working day of publish buffer. So a row needs five
-   * working days of lead to EXIST, however much spare capacity the team has.
-   * Thu 17 has one, Sat 19 has two, Sun 20 has three. Capacity was never the
-   * blocker here; the LENGTH OF THE CHAIN was.
-   *
-   * So the month opens on Tue 22 Sep and says why. Not an error, not an
-   * infeasible compile, and not a silently shortened list.
+   * This block recorded three different answers on 2026-09-16, and the history
+   * is the point. The first said ten rows from the 17th but came back
+   * infeasible. The second "corrected" that to seven rows from the 22nd,
+   * reasoning that a post's five approval-gated steps each needed a working day
+   * of their own. The operator refused the premise: «a full post process takes
+   * one day max — writing, designing, approval, everything — four designs per
+   * day». They were right. The planner charged `design` as two working days and
+   * forbade two steps on one day; neither was ever true of this team. With the
+   * post path corrected (`sameDayChain`, a one-slot design) a post needs ONE
+   * working day of lead, Thu 17 is reachable, and the original ten rows stand —
+   * feasible.
    */
   const REMAINING = [
-    '2026-09-22', '2026-09-24', '2026-09-26', '2026-09-27', '2026-09-29',
-    '2026-10-01', '2026-10-03',
+    '2026-09-17', '2026-09-19', '2026-09-20', '2026-09-22', '2026-09-24',
+    '2026-09-26', '2026-09-27', '2026-09-29', '2026-10-01', '2026-10-03',
   ];
   const geo = monthGeometry('2026-09', T, CAL, SEP);
   const out = compileMonth({
@@ -529,19 +533,19 @@ describe('September 2026, compiled on the 16th', () => {
   });
 
   it('derives the minimum lead from the workflow instead of hardcoding it', () => {
-    // Five steps plus one working day of publish buffer for an organic row; the
-    // paid slate's design step is two days, so its slate needs six. Shorten the
-    // chain and both of these move on their own.
-    expect(monthLeadFloors()).toEqual({ organic: 5, paid: 6, publishBufferDays: 1 });
-    expect(geo.minLeadWorkingDays).toBe(5);
-    expect(geo.minPaidLeadWorkingDays).toBe(6);
+    // The post chain sits inside one day, plus one working day of publish
+    // buffer: ONE working day of lead, for a row and for a paid creative alike.
+    // Lengthen a step, or turn off `sameDayChain`, and these move on their own.
+    expect(monthLeadFloors()).toEqual({ organic: 1, paid: 1, publishBufferDays: 1 });
+    expect(geo.minLeadWorkingDays).toBe(1);
+    expect(geo.minPaidLeadWorkingDays).toBe(1);
     // The ten-day lead is the TARGET — a different number with a different job.
     expect(geo.targetLeadWorkingDays).toBe(10);
   });
 
-  it('opens on Tue 22 Sep — the first day production can actually reach', () => {
-    expect(geo.startsOn).toBe('2026-09-22');
-    expect(geo.startMoved).toBe(true);
+  it('opens TOMORROW — Thu 17 Sep is reachable, so the start does not move', () => {
+    expect(geo.startsOn).toBe('2026-09-17');
+    expect(geo.startMoved).toBe(false);
     expect(geo.exhausted).toBe(false);
     expect(geo.postingDays).toEqual(REMAINING);
     expect(geo.startedFrom).toBe(SEP);
@@ -553,10 +557,7 @@ describe('September 2026, compiled on the 16th', () => {
     expect(geo.lastPostingDay).toBe('2026-10-03');
   });
 
-  it('names every day it drops, and says whether it was GONE or unreachable', () => {
-    // Two different facts, and the operator must be able to tell them apart:
-    // six days are simply in the past, three are still ahead and cannot be
-    // produced in time. Only the second kind is something anyone could change.
+  it('drops only the days that are GONE — none is unreachable', () => {
     expect(geo.skippedPostingDays).toEqual([
       { day: '2026-09-06', reason: 'past', leadWorkingDays: null },
       { day: '2026-09-08', reason: 'past', leadWorkingDays: null },
@@ -564,10 +565,8 @@ describe('September 2026, compiled on the 16th', () => {
       { day: '2026-09-12', reason: 'past', leadWorkingDays: null },
       { day: '2026-09-13', reason: 'past', leadWorkingDays: null },
       { day: '2026-09-15', reason: 'past', leadWorkingDays: null },
-      { day: '2026-09-17', reason: 'lead', leadWorkingDays: 1 },
-      { day: '2026-09-19', reason: 'lead', leadWorkingDays: 2 },
-      { day: '2026-09-20', reason: 'lead', leadWorkingDays: 3 },
     ]);
+    expect(geo.skippedPostingDays.some((d) => d.reason === 'lead')).toBe(false);
   });
 
   it('starts production TODAY, not ten working days before a day that has passed', () => {
@@ -576,39 +575,32 @@ describe('September 2026, compiled on the 16th', () => {
     expect(geo.productionWorkingDays).toBe(15);
   });
 
-  it('buys ONE paid batch — Sun 20 is unreachable, not merely late', () => {
-    expect(geo.paidBatchDays).toEqual(['2026-09-27']);
+  it('buys TWO paid batches — Sun 20 and Sun 27', () => {
+    expect(geo.paidBatchDays).toEqual(['2026-09-20', '2026-09-27']);
     expect(geo.skippedPaidBatchDays).toEqual([
       { day: '2026-09-06', reason: 'past', leadWorkingDays: null },
       { day: '2026-09-13', reason: 'past', leadWorkingDays: null },
-      { day: '2026-09-20', reason: 'lead', leadWorkingDays: 3 },
     ]);
   });
 
-  it('compiles 7 rows, 21 posts, 42 organic releases, 1 batch, 15 creatives', () => {
-    expect(out.summary.rows).toBe(7);
-    expect(out.summary.templateRows).toBe(7);
-    expect(out.summary.posts).toBe(21);
-    expect(out.summary.organicReleases).toBe(42);
-    expect(out.summary.feedReleases).toBe(21);
-    expect(out.summary.storyReleases).toBe(21);
-    expect(out.summary.paidBatchesRemaining).toBe(1);
-    expect(out.summary.paidCreatives).toBe(15);
-    expect(out.summary.items).toBe(36);
-    expect(out.summary.skippedPostingDays).toHaveLength(9);
+  it('compiles 10 rows, 30 posts, 60 organic releases, 2 batches, 30 creatives', () => {
+    expect(out.summary.rows).toBe(10);
+    expect(out.summary.templateRows).toBe(10);
+    expect(out.summary.posts).toBe(30);
+    expect(out.summary.organicReleases).toBe(60);
+    expect(out.summary.feedReleases).toBe(30);
+    expect(out.summary.storyReleases).toBe(30);
+    expect(out.summary.paidBatchesRemaining).toBe(2);
+    expect(out.summary.paidCreatives).toBe(30);
+    expect(out.summary.items).toBe(60);
+    expect(out.summary.skippedPostingDays).toHaveLength(6);
     expect(out.summary.isPartial).toBe(true);
     expect(out.summary.startedFrom).toBe(SEP);
-    expect(out.summary.startsOn).toBe('2026-09-22');
-    expect(out.summary.startMoved).toBe(true);
+    expect(out.summary.startsOn).toBe('2026-09-17');
+    expect(out.summary.startMoved).toBe(false);
   });
 
   it('a late month is FEASIBLE — it is smaller, not broken', () => {
-    /*
-     * The whole point of the fix. The first cut compiled all ten remaining days
-     * and then returned `feasible: false` with an EMPTY load table, and
-     * `monthConfirm` refused it with `month_infeasible` — an error where the
-     * operator needed a month. A month that starts late is a smaller month.
-     */
     expect(out.summary.feasible).toBe(true);
     expect(out.summary.selectionOk).toBe(true);
     expect(out.summary.capacityOk).toBe(true);
@@ -627,23 +619,23 @@ describe('September 2026, compiled on the 16th', () => {
 
   it('keeps «الأحد أ · الثلاثاء ب · الخميس ج · السبت عام» for what is left', () => {
     const bySlot = (wd: number): typeof out.rows => out.rows.filter((r) => r.weekday === wd);
-    expect(bySlot(0).map((r) => r.day)).toEqual(['2026-09-27']);
+    expect(bySlot(0).map((r) => r.day)).toEqual(['2026-09-20', '2026-09-27']);
     expect(bySlot(0).every((r) => r.projectId === PROJECT_A.projectId)).toBe(true);
     expect(bySlot(2).map((r) => r.day)).toEqual(['2026-09-22', '2026-09-29']);
     expect(bySlot(2).every((r) => r.projectId === PROJECT_B.projectId)).toBe(true);
-    expect(bySlot(4).map((r) => r.day)).toEqual(['2026-09-24', '2026-10-01']);
+    expect(bySlot(4).map((r) => r.day)).toEqual(['2026-09-17', '2026-09-24', '2026-10-01']);
     expect(bySlot(4).every((r) => r.projectId === PROJECT_C.projectId)).toBe(true);
     expect(bySlot(6).every((r) => r.projectId === null)).toBe(true);
-    expect(out.summary.generalRows).toBe(2);
+    expect(out.summary.generalRows).toBe(3);
   });
 
-  it('spreads the work over the REMAINING days — 1.4 design slots a day', () => {
+  it('spreads the work over the REMAINING days — 2.0 design slots a day', () => {
     // A row is three posts worked in ONE sitting, so it charges three design
-    // slots on its own day. Seven rows is twenty-one design slots over fifteen
-    // working days — well under a montage person's floor of four a day.
+    // slots on its own day. Ten rows is thirty design slots over fifteen working
+    // days — half a montage person's floor of four a day.
     expect(out.summary.productionWorkingDays).toBe(15);
     const perDay = (out.summary.rows * T.postsPerRow) / out.summary.productionWorkingDays;
-    expect(Math.round(perDay * 100) / 100).toBe(1.4);
+    expect(Math.round(perDay * 100) / 100).toBe(2);
     // …and that is NOT the whole month's figure: both the rows and the days
     // they are divided by are the remaining month's own.
     const full = compileMonth({
@@ -663,18 +655,20 @@ describe('September 2026, compiled on the 16th', () => {
   });
 
   it('FLAGS the short-lead rows and keeps every one of them', () => {
-    // Above the five-day minimum but below the ten-day target: the row runs,
-    // with less room for a revision, and the page says so rather than dropping
-    // it or pretending the slack is there.
+    // Above the one-day minimum but below the ten-day target: the row runs, with
+    // less room for a revision, and the page says so.
     expect(out.summary.targetLeadWorkingDays).toBe(10);
-    expect(out.summary.minLeadWorkingDays).toBe(5);
+    expect(out.summary.minLeadWorkingDays).toBe(1);
     expect(out.summary.shortLeadRows).toEqual([
+      { day: '2026-09-17', leadWorkingDays: 1 },
+      { day: '2026-09-19', leadWorkingDays: 2 },
+      { day: '2026-09-20', leadWorkingDays: 3 },
       { day: '2026-09-22', leadWorkingDays: 5 },
       { day: '2026-09-24', leadWorkingDays: 7 },
       { day: '2026-09-26', leadWorkingDays: 8 },
       { day: '2026-09-27', leadWorkingDays: 9 },
     ]);
-    // Flagged, never dropped: all seven rows are in the plan, the short ones too.
+    // Flagged, never dropped: all ten rows are in the plan, the short ones too.
     expect(out.organic.plan.rows.map((r) => r.batchDay)).toEqual(REMAINING);
     for (const day of out.summary.shortLeadRows.map((r) => r.day)) {
       expect(out.rows.find((r) => r.day === day)?.shortLead).toBe(true);
@@ -685,14 +679,14 @@ describe('September 2026, compiled on the 16th', () => {
   });
 
   it('carries the remaining range into the four plan inputs', () => {
-    expect(out.organic.input.rangeStart).toBe('2026-09-22');
+    expect(out.organic.input.rangeStart).toBe('2026-09-17');
     expect(out.organic.input.rangeEnd).toBe('2026-10-03');
-    expect(out.organic.input.rows).toHaveLength(7);
+    expect(out.organic.input.rows).toHaveLength(10);
     for (const p of out.paid) {
-      // The one surviving slate lands on Sun 27 — five creatives, not ten.
-      expect(p.input.rangeStart).toBe('2026-09-27');
+      // Two remaining slates of five creatives, the first landing on Sun 20.
+      expect(p.input.rangeStart).toBe('2026-09-20');
       expect(p.input.rangeEnd).toBe('2026-10-03');
-      expect(p.plan.items).toHaveLength(5);
+      expect(p.plan.items).toHaveLength(10);
     }
   });
 
@@ -701,16 +695,17 @@ describe('September 2026, compiled on the 16th', () => {
     // batches; prorating it silently would be the app deciding how much of the
     // operator's money to spend.
     expect(out.summary.budgetTotal).toBe(6000);
-    expect(out.summary.paidBatchesRemaining).toBe(1);
+    expect(out.summary.paidBatchesRemaining).toBe(2);
   });
 
   it('a month with nothing reachable left is a STATE, not an infeasible compile', () => {
-    // From 1 Oct only Oct 1 and Oct 3 remain, with zero and one working day of
-    // lead. There is no work left to fail to fit, so `feasible` stays true and
-    // `exhausted` carries the news — «لم يعد بالإمكان بدء هذا الشهر» on the page.
+    // From Sat 3 Oct only the 3rd itself remains, and it is TODAY: zero working
+    // days of lead, which no chain clears. There is no work left to fail to fit,
+    // so `feasible` stays true and `exhausted` carries the news —
+    // «لم يعد بالإمكان بدء هذا الشهر» on the page.
     const done = compileMonth({
       month: '2026-09', template: T, projects: PROJECTS,
-      snapshot: snapshot('2026-10-01'), rules: RULES, startFrom: '2026-10-01',
+      snapshot: snapshot('2026-10-03'), rules: RULES, startFrom: '2026-10-03',
     });
     expect(done.summary.exhausted).toBe(true);
     expect(done.summary.rows).toBe(0);
@@ -741,39 +736,38 @@ describe('the weeks grid dates a paid batch by its DAY, never by its position', 
 
   it('gives a passed week NO paid cells — and never repeats a live batch on it', () => {
     // `paidBatchDays[w.index]` held one entry per week only while the month was
-    // whole. With ONE batch left it would have dated WEEK 1 (6–12 Sep, long
-    // gone) with Sun 27's batch — a paid cell on a week that is over, and a
-    // note coordinate pointing at the wrong week.
+    // whole. With two batches left it would have dated WEEK 1 (6–12 Sep, gone)
+    // with Sun 20's batch, and then dated week 3 with it again — two grid cells
+    // for one batch, and a note coordinate pointing at the wrong week.
     const weeks = monthGrid(SEP, PROJECTS);
-    expect(weeks.map((w) => w.paid.length)).toEqual([0, 0, 0, 3]);
+    expect(weeks.map((w) => w.paid.length)).toEqual([0, 0, 3, 3]);
+    expect(weeks[2]!.paid[0]!.batchDay).toBe('2026-09-20');
     expect(weeks[3]!.paid[0]!.batchDay).toBe('2026-09-27');
     const dated = weeks.flatMap((w) => w.paid.map((p) => p.batchDay));
-    expect(new Set(dated).size).toBe(1);
-    // The organic side thins out the same way: the first two weeks are gone and
-    // week 3 keeps the three days that are left of it.
-    expect(weeks.map((w) => w.days.length)).toEqual([0, 0, 3, 4]);
+    expect(new Set(dated).size).toBe(2);
+    // The organic side thins out the same way: week 1 is gone, week 2 keeps the
+    // two days left of it (Thu 17, Sat 19).
+    expect(weeks.map((w) => w.days.length)).toEqual([0, 2, 4, 4]);
   });
 });
 
 describe('the minimum lead outranks the clock — a day you cannot make is not a day', () => {
   it('drops TODAY even though its 18:00 slot has not passed yet', () => {
     // Sun 20 Sep is both a posting day and a paid batch day, and at the moment
-    // the month is compiled its slot is still ahead. It is still not a row:
-    // zero working days of lead cannot carry a five-step chain, and neither can
-    // Tue 22's two or Thu 24's four.
+    // the month is compiled its slot is still ahead. It is still not a row: a
+    // post needs ONE working day of lead and today has zero. Tue 22 has one, so
+    // it is the first day the month can reach — the start moves by a single
+    // posting day, not by a week.
     const geo = monthGeometry('2026-09', T, CAL, '2026-09-20');
-    expect(geo.postingDays[0]).toBe('2026-09-26');
-    expect(geo.startsOn).toBe('2026-09-26');
+    expect(geo.postingDays[0]).toBe('2026-09-22');
+    expect(geo.startsOn).toBe('2026-09-22');
     expect(geo.startMoved).toBe(true);
     expect(geo.skippedPostingDays.filter((d) => d.reason === 'lead')).toEqual([
       { day: '2026-09-20', reason: 'lead', leadWorkingDays: 0 },
-      { day: '2026-09-22', reason: 'lead', leadWorkingDays: 2 },
-      { day: '2026-09-24', reason: 'lead', leadWorkingDays: 4 },
     ]);
-    // The paid slate needs six and Sun 20 has none, so the month buys Sun 27.
+    // Sun 20's slate has no lead either, so the month buys Sun 27.
     expect(geo.paidBatchDays).toEqual(['2026-09-27']);
-    // Production still begins the day it is ASKED to — the team starts work on
-    // the 20th, the first thing they finish publishes on the 26th.
+    // Production still begins the day it is ASKED to.
     expect(geo.productionStart).toBe('2026-09-20');
   });
 
@@ -808,8 +802,8 @@ describe('`startFrom` defaults from the clock, and only for the current month', 
       snapshot: snapshot('2026-09-16'), rules: RULES, startFrom: '2026-09-16',
     });
     expect(JSON.stringify(defaulted.summary)).toBe(JSON.stringify(explicit.summary));
-    expect(defaulted.summary.rows).toBe(7);
-    expect(defaulted.summary.startsOn).toBe('2026-09-22');
+    expect(defaulted.summary.rows).toBe(10);
+    expect(defaulted.summary.startsOn).toBe('2026-09-17');
   });
 
   it('a FUTURE month is untouched — the whole cycle, exactly as before', () => {

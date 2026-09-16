@@ -16,6 +16,7 @@ import { effortWeightsSameDay } from '../ledger';
 import { toInstant } from '../calendar';
 import type { PlanInput, PlanResult, PlannedRelease } from '../types';
 import { CAL, PROJECT_A, PROJECT_B, snapshot } from './fixtures';
+import { withClassicPost } from './classicWorkflow';
 
 const rules = (): RuleSet => ({
   ...DEFAULT_RULES,
@@ -397,11 +398,13 @@ describe('a stage records the slots it actually booked', () => {
       expect(s.slotWeights).toEqual([3]);
       expect(s.start).toBe(s.end);
     }
-    // The estimate is still carried, and for `design` it still reads 2 — which
-    // is exactly why nothing may derive the booking from it.
+    // The estimate is still carried, and for `design` it reads 1 (one of a
+    // designer's four daily slots) while the row booked THREE — which is exactly
+    // why nothing may derive the booking from the estimate.
     const design = res.rows[0]!.stages.find((s) => s.stepKey === 'design')!;
-    expect(design.workingDays).toBe(2);
+    expect(design.workingDays).toBe(1);
     expect(design.slotWeights).toEqual([3]);
+    expect(design.slotWeights).not.toEqual([design.workingDays]);
   });
 
   it('every reservation is that stage, named and not re-derived', () => {
@@ -423,7 +426,9 @@ describe('a stage records the slots it actually booked', () => {
         crossPost: false, publishBufferDays: 1,
       },
       snapshot('2026-09-15'),
-      rules(),
+      // Spreading "one slot per working day" needs a step that spans days, so
+      // this runs on the classic two-day design (see classicWorkflow.ts).
+      withClassicPost(rules()),
     );
     expect(loose.feasible).toBe(true);
     const design = loose.reservations.find((r) => r.stepKey === 'design')!;

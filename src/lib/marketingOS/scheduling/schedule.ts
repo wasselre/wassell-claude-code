@@ -119,12 +119,17 @@ function stageWeights(step: StepSpec, sameDaySlots?: number): number[] {
  *
  * `spanOf` overrides how long a step occupies; a ROW passes `() => 1`, because
  * each of its stages is one sitting on one day.
+ *
+ * `sameDayChain` (see `WorkflowSpec.sameDayChain`): the predecessor may END on
+ * the day its successor STARTS, rather than the working day before it. For a
+ * one-day successor that is the same day.
  */
 export function computeDeadlines(
   steps: StepSpec[],
   requiredReadyAt: string,
   cal: WorkCalendar,
   spanOf: (step: StepSpec) => number = (step) => effortWeights(step.workingDays).length,
+  sameDayChain = false,
 ): string[] {
   const out: string[] = new Array<string>(steps.length).fill(requiredReadyAt);
   if (!steps.length) return out;
@@ -133,7 +138,7 @@ export function computeDeadlines(
     const next = steps[i + 1];
     const later = out[i + 1] ?? requiredReadyAt;
     const nextSpan = next ? spanOf(next) : 1;
-    out[i] = addWorkingDays(later, -nextSpan, cal);
+    out[i] = addWorkingDays(later, -(sameDayChain ? nextSpan - 1 : nextSpan), cal);
   }
   return out;
 }
@@ -141,6 +146,7 @@ export function computeDeadlines(
 /** Earliest possible end for each step given `today` and infinite people. */
 function earliestEnds(
   steps: StepSpec[], today: string, cal: WorkCalendar, spanOf: (step: StepSpec) => number,
+  sameDayChain = false,
 ): string[] {
   const out: string[] = new Array<string>(steps.length).fill(today);
   let cursor = nextWorkingDay(today, cal);
@@ -149,7 +155,10 @@ function earliestEnds(
     const span = step ? spanOf(step) : 1;
     const end = addWorkingDays(cursor, span - 1, cal);
     out[i] = end;
-    cursor = addWorkingDays(end, 1, cal);
+    // The mirror of `computeDeadlines`: the next step may start the day this one
+    // ends. Both bounds must move together, or the time proof and the deadlines
+    // disagree about what "fits".
+    cursor = sameDayChain ? end : addWorkingDays(end, 1, cal);
   }
   return out;
 }
@@ -182,11 +191,12 @@ export function scheduleProduction(
     let ready = it.needDay;
     for (let i = 0; i < Math.max(0, it.publishBufferDays); i += 1) ready = addWorkingDays(ready, -1, cal);
     if (it.publishBufferDays <= 0) ready = prevWorkingDay(it.needDay, cal);
-    const deadlines = computeDeadlines(prod, ready, cal, spanOf);
+    const chain = it.workflow.sameDayChain === true;
+    const deadlines = computeDeadlines(prod, ready, cal, spanOf, chain);
     perItem.set(it.key, { requiredReadyAt: ready, prod, deadlines });
 
     // ---- sound bound #1: time. Even with infinite people, does the chain fit?
-    const est = earliestEnds(prod, today, cal, spanOf);
+    const est = earliestEnds(prod, today, cal, spanOf, chain);
     for (let i = 0; i < prod.length; i += 1) {
       const step = prod[i];
       const earliest = est[i];
@@ -254,7 +264,10 @@ export function scheduleProduction(
   const effectiveDeadline = (r: StageReq): string => {
     const succ = chosen.get(`${r.itemKey}|${succKeyOf(r)}`);
     if (!succ) return r.deadline;
-    const cap = addWorkingDays(succ.start, -1, cal);
+    // Same rule as `computeDeadlines`: on a same-day path a step may finish on
+    // the day its successor starts; otherwise it must finish the day before.
+    const chain = itemByKey.get(r.itemKey)?.workflow.sameDayChain === true;
+    const cap = chain ? succ.start : addWorkingDays(succ.start, -1, cal);
     return daysBetween(cap, r.deadline) < 0 ? cap : r.deadline;
   };
 

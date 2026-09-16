@@ -350,7 +350,16 @@ export async function loadRuleSet(
         labelEn: String(s.label_en ?? key),
       };
     }).filter((s) => s.key);
-    if (steps.length) workflows[wfKey] = { workflowKey: wfKey, bucket, steps };
+    // `sameDayChain` is a property of the PATH, and the live row carries no such
+    // field — so it comes from the seed. Dropping it here would silently put
+    // every post back on one-step-per-day in production while tests (which
+    // read the seed directly) kept passing.
+    if (steps.length) {
+      workflows[wfKey] = {
+        workflowKey: wfKey, bucket, steps,
+        ...(seed?.sameDayChain ? { sameDayChain: true } : {}),
+      };
+    }
   }
   // Seeds cover offline / fresh-DB cases; live rows always win.
   for (const [k, v] of Object.entries(DEFAULT_WORKFLOWS)) if (!workflows[k]) workflows[k] = v;
