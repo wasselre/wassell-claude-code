@@ -8,7 +8,7 @@
  * (project opens its detail, where Units live). Every aggregate is a sum of
  * real records; demand uses the one canonical active-client layer.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, MapPin, Building2, Users, ArrowRight } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -27,18 +27,12 @@ interface DistrictNode { id: string; nameAr: string; nameEn: string; cityLookup:
 
 export default function GeographySection({ isAr }: { isAr: boolean }) {
   const navigate = useNavigate();
-  const { models, records, users, loadSummaryRecords, summaryLoadState } = useAppStore();
+  const { models, records, users, initialized } = useAppStore();
   const translationVersion = useRecordTranslationVersion();
   const allModel = modelByName(models, 'all_projects');
   const ourModel = modelByName(models, 'our_projects');
   const clientsModel = modelByName(models, 'clients');
   const districtsModel = modelByName(models, 'districts');
-
-  useEffect(() => {
-    for (const m of [allModel, ourModel, clientsModel, districtsModel]) {
-      if (m && !summaryLoadState[m.id]?.loaded && !summaryLoadState[m.id]?.loading) void loadSummaryRecords(m.id);
-    }
-  }, [allModel, ourModel, clientsModel, districtsModel, summaryLoadState, loadSummaryRecords]);
 
   const [selRegion, setSelRegion] = useState<string | null>(null);
   const [selCity, setSelCity] = useState<string | null>(null);
@@ -80,9 +74,6 @@ export default function GeographySection({ isAr }: { isAr: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allModel, ourModel, clientsModel, districtsModel, models, records, users, isAr, translationVersion]);
 
-  const clientsLoaded = !!(clientsModel && summaryLoadState[clientsModel.id]?.loaded);
-  const districtsLoaded = !!(districtsModel && summaryLoadState[districtsModel.id]?.loaded);
-
   // Region / city aggregates from the relevant districts.
   const regions = useMemo(() => {
     const m = new Map<string, { id: string; name: string; demand: number; available: number; districts: number }>();
@@ -118,8 +109,11 @@ export default function GeographySection({ isAr }: { isAr: boolean }) {
     return model.allRecords.filter((p) => projectDistrictIds(p).includes(selDistrict));
   }, [selDistrict, model]);
 
-  if (!districtsLoaded || !clientsLoaded) {
+  if (!initialized) {
     return <div className="card p-8 text-center text-charcoal/40 text-sm">{isAr ? 'جارٍ تحميل بيانات الجغرافيا والطلب…' : 'Loading geography + demand data…'}</div>;
+  }
+  if (model.districtRecords.length === 0) {
+    return <div className="card p-8 text-center text-charcoal/45 text-sm">{isAr ? 'لا تتوفر بيانات الأحياء.' : 'District data is not available.'}</div>;
   }
 
   const Crumb = ({ label, onClick, active }: { label: string; onClick?: () => void; active?: boolean }) => (

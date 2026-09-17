@@ -10,7 +10,7 @@
  * The full authorized client / project / unit / district sets are explicitly
  * ensured-loaded before aggregating — never a paginated slice.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Building2, Star, CheckCircle2, Clock, BadgeCheck, Hammer, Users, AlertTriangle,
@@ -80,7 +80,7 @@ function Breakdown({ title, rows, isAr }: { title: string; rows: { key: string; 
 
 export default function CommandCenterSection({ isAr }: { isAr: boolean }) {
   const navigate = useNavigate();
-  const { models, records, users, loadSummaryRecords, summaryLoadState } = useAppStore();
+  const { models, records, users, initialized } = useAppStore();
   const translationVersion = useRecordTranslationVersion();
 
   const allModel = modelByName(models, 'all_projects');
@@ -90,15 +90,11 @@ export default function CommandCenterSection({ isAr }: { isAr: boolean }) {
   const districtsModel = modelByName(models, 'districts');
   const unitUpdatesModel = modelByName(models, 'unit_updates');
 
-  // Explicitly ensure the FULL authorized sets are loaded (not a page) before
-  // aggregating — loadSummaryRecords keyset-pages the whole RLS-scoped set.
-  useEffect(() => {
-    for (const m of [allModel, ourModel, unitsModel, clientsModel, districtsModel, unitUpdatesModel]) {
-      if (m && !summaryLoadState[m.id]?.loaded && !summaryLoadState[m.id]?.loading) void loadSummaryRecords(m.id);
-    }
-  }, [allModel, ourModel, unitsModel, clientsModel, districtsModel, unitUpdatesModel, summaryLoadState, loadSummaryRecords]);
-
-  const clientsLoaded = !!(clientsModel && summaryLoadState[clientsModel.id]?.loaded);
+  // Every model here loads its FULL set into the store at boot (units in the
+  // second wave), so once the store is initialized `records[modelId]` is the
+  // complete authorized set — not a page. Gate on `initialized`, not on the
+  // summary-load flag (which only applies to market_listings).
+  const clientsLoaded = initialized;
 
   // District id → { name, city, region } from the districts records.
   const districtInfo = useMemo(() => {
