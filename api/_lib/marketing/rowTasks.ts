@@ -42,8 +42,8 @@ export interface MissingRequirement {
  * a step requires `caption` and the writer has not confirmed THAT EXACT text.
  */
 const REQUIREMENT_LABELS: Record<string, { ar: string; en: string }> = {
-  caption: { ar: 'النص', en: 'the caption' },
-  caption_confirmed: { ar: 'تأكيد النص من الكاتب', en: 'the writer’s caption confirmation' },
+  caption: { ar: 'التعليق', en: 'the caption' },
+  caption_confirmed: { ar: 'تأكيد التعليق من الكاتب', en: 'the writer’s caption confirmation' },
   headlines: { ar: 'أسطر المنشور', en: 'the post lines' },
   design_brief: { ar: 'موجز التصميم', en: 'the design brief' },
   final_square: { ar: 'الملف المربّع ١:١', en: 'the square 1:1 file' },

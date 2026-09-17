@@ -225,11 +225,11 @@ export default function RowWriter({
       {
         key: 'caption',
         ok: noCaption.length === 0,
-        claim_ar: `${all_ar} تحمل نصًا`,
+        claim_ar: `${all_ar} تحمل تعليقًا`,
         claim_en: `${all_en} posts carry a caption`,
         detail_ar: noCaption.length === 0
-          ? 'كل منشور يحمل نصه الذي يُنشر تحت الصورة.'
-          : `${names(noCaption, true)} بلا نص.`,
+          ? 'كل منشور يحمل تعليقه الذي يُنشر تحت الصورة.'
+          : `${names(noCaption, true)} بلا تعليق.`,
         detail_en: noCaption.length === 0
           ? 'Every post carries the caption published under it.'
           : `${names(noCaption, false)} has no caption.`,
@@ -237,11 +237,11 @@ export default function RowWriter({
       {
         key: 'caption_confirmed',
         ok: unconfirmed.length === 0,
-        claim_ar: 'كل نص مؤكَّد من الكاتب',
+        claim_ar: 'كل تعليق مؤكَّد من الكاتب',
         claim_en: 'Every caption is writer-confirmed',
         detail_ar: unconfirmed.length === 0
-          ? 'لا نص هنا كتبه الذكاء ومرّ دون أن يقرأه أحد.'
-          : `${names(unconfirmed, true)} نصه مسودة لم تُؤكَّد — اقرأه ثم أكّده.`,
+          ? 'لا تعليق هنا كتبه الذكاء ومرّ دون أن يقرأه أحد.'
+          : `${names(unconfirmed, true)} تعليقه مسودة لم تُؤكَّد — اقرأه ثم أكّده.`,
         detail_en: unconfirmed.length === 0
           ? 'No caption here was written by the AI and passed unread.'
           : `${names(unconfirmed, false)} still carries an unconfirmed draft — read it, then confirm.`,
@@ -392,7 +392,7 @@ export default function RowWriter({
                       ? (isAr ? 'جاهز' : 'Ready')
                       : !s?.hasLines
                         ? (isAr ? 'بلا أسطر' : 'No lines')
-                        : (isAr ? 'النص غير مؤكَّد' : 'Caption unconfirmed')}
+                        : (isAr ? 'التعليق غير مؤكَّد' : 'Caption unconfirmed')}
                   </span>
                   {/* Order only means something for a row of several posts. */}
                   {canEdit && detail.subject.kind === 'row' && total > 1 && (

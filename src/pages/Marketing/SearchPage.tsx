@@ -51,7 +51,7 @@ const MATCH_FIELD_LABELS: Record<string, { ar: string; en: string }> = {
   ref:      { ar: 'الرقم',     en: 'the reference' },
   goal:     { ar: 'الموجز',    en: 'the brief' },
   body:     { ar: 'النص',      en: 'the text' },
-  caption:  { ar: 'النص',      en: 'the caption' },
+  caption:  { ar: 'التعليق',   en: 'the caption' },
   note:     { ar: 'الملاحظات', en: 'the notes' },
   location: { ar: 'الموقع',    en: 'the location' },
   tag:      { ar: 'الوسوم',    en: 'the tags' },

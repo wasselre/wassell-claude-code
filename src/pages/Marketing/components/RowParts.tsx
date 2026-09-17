@@ -24,12 +24,12 @@ export const SLOT_META: Record<RowSlotRole, {
 }> = {
   final_square: {
     ar: 'مربّع ١:١ · منشور الفيد', en: 'Square 1:1 · the feed post',
-    ratio: '1:1', hintAr: 'وهو وحده الذي يحمل النص والهاشتاقات',
+    ratio: '1:1', hintAr: 'وهو وحده الذي يحمل التعليق والهاشتاقات',
     hintEn: 'the only one that carries the caption and hashtags', vertical: false,
   },
   final_vertical: {
     ar: 'عمودي ٩:١٦ · الستوري', en: 'Vertical 9:16 · the story',
-    ratio: '9:16', hintAr: 'صورة فقط، بلا نص، في نفس الفتحة',
+    ratio: '9:16', hintAr: 'صورة فقط، بلا تعليق، في نفس الفتحة',
     hintEn: 'image only, no caption, in the same slot', vertical: true,
   },
 };
@@ -164,10 +164,10 @@ export function CaptionBlock({
     <div style={{ opacity: dim ? 0.82 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 5 }}>
         <span className="lbl" style={{ margin: 0 }}>
-          {label ?? (isAr ? 'النص — للقراءة فقط' : 'The caption — read only')}
+          {label ?? (isAr ? 'التعليق — للقراءة فقط' : 'The caption — read only')}
         </span>
         {text === '' ? (
-          <Pill tone="late">{isAr ? 'لا نص' : 'no caption'}</Pill>
+          <Pill tone="late">{isAr ? 'لا تعليق' : 'no caption'}</Pill>
         ) : confirmed ? (
           <Pill tone="go">{isAr ? 'أكّده الكاتب' : 'writer-confirmed'}</Pill>
         ) : (

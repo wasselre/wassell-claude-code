@@ -52,8 +52,8 @@ import {
 const REQUIREMENT_LABELS: Record<string, { ar: string; en: string }> = {
   final_square: { ar: 'الملف المربّع ١:١', en: 'the square 1:1 file' },
   final_vertical: { ar: 'الملف العمودي ٩:١٦', en: 'the vertical 9:16 file' },
-  caption: { ar: 'النص', en: 'the caption' },
-  caption_confirmed: { ar: 'تأكيد النص من الكاتب', en: 'the writer’s caption confirmation' },
+  caption: { ar: 'التعليق', en: 'the caption' },
+  caption_confirmed: { ar: 'تأكيد التعليق من الكاتب', en: 'the writer’s caption confirmation' },
   headlines: { ar: 'أسطر المنشور', en: 'the post lines' },
   design_brief: { ar: 'موجز التصميم', en: 'the design brief' },
 };
@@ -65,7 +65,7 @@ const REQUIREMENT_LABELS: Record<string, { ar: string; en: string }> = {
  */
 const ROW_FIELDS: MosFieldDef[] = [
   { key: 'headlines', label_ar: 'أسطر المنشور', label_en: 'The post lines', kind: 'long', required: true },
-  { key: 'caption', label_ar: 'النص', label_en: 'The caption', kind: 'long', required: true },
+  { key: 'caption', label_ar: 'التعليق', label_en: 'The caption', kind: 'long', required: true },
   { key: 'design_brief', label_ar: 'موجز التصميم', label_en: 'The design brief', kind: 'long', required: false },
   { key: 'hashtags', label_ar: 'الهاشتاقات', label_en: 'Hashtags', kind: 'short', required: false },
 ];
@@ -361,12 +361,12 @@ export default function RowApproval({
                   <CaptionBlock
                     member={m}
                     isAr={isAr}
-                    label={isAr ? 'النص المنشور' : 'The published caption'}
+                    label={isAr ? 'التعليق المنشور' : 'The published caption'}
                   />
                   {caption === '' && (
                     <div style={{ fontSize: 11.5, color: 'var(--late)', lineHeight: 1.8 }}>
                       {isAr
-                        ? 'لا يمكن الاعتماد بلا نص.'
+                        ? 'لا يمكن الاعتماد بلا تعليق.'
                         : 'Cannot be approved without a caption.'}
                     </div>
                   )}

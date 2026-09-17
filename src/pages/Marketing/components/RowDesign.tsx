@@ -50,8 +50,8 @@ import {
 const REQUIREMENT_LABELS: Record<string, { ar: string; en: string }> = {
   final_square: { ar: SLOT_META.final_square.ar, en: SLOT_META.final_square.en },
   final_vertical: { ar: SLOT_META.final_vertical.ar, en: SLOT_META.final_vertical.en },
-  caption: { ar: 'النص', en: 'the caption' },
-  caption_confirmed: { ar: 'تأكيد النص من الكاتب', en: 'the writer’s caption confirmation' },
+  caption: { ar: 'التعليق', en: 'the caption' },
+  caption_confirmed: { ar: 'تأكيد التعليق من الكاتب', en: 'the writer’s caption confirmation' },
   headlines: { ar: 'أسطر المنشور', en: 'the post lines' },
   design_brief: { ar: 'موجز التصميم', en: 'the design brief' },
 };
@@ -319,7 +319,7 @@ export default function RowDesign({
                       member={m}
                       isAr={isAr}
                       tone="context"
-                      label={isAr ? 'النص المرافق — سياق، لا يُصمَّم' : 'The caption — context, not the design'}
+                      label={isAr ? 'التعليق — سياق، لا يُصمَّم' : 'The caption — context, not the design'}
                     />
                   </div>
 

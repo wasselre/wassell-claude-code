@@ -537,7 +537,7 @@ export default function WritingFields({
           console.error('[marketing] caption prefill not persisted', res.persist_skipped, res.persist_detail);
           addToast(
             isAr
-              ? 'كُتبت مسودة النص لكنها لم تُحفظ — احفظ الكتابة لتثبيتها.'
+              ? 'كُتبت مسودة التعليق لكنها لم تُحفظ — احفظ الكتابة لتثبيتها.'
               : 'The caption draft was written but not saved — save the writing to keep it.',
             'error',
           );
@@ -548,7 +548,7 @@ export default function WritingFields({
         console.error('[marketing] caption prefill failed', e);
         addToast(
           isAr
-            ? 'تعذّر توليد مسودة النص — اكتبه أو أعد المحاولة بزر التوليد.'
+            ? 'تعذّر توليد مسودة التعليق — اكتبه أو أعد المحاولة بزر التوليد.'
             : 'Could not draft the caption — write it, or retry with the generate button.',
           'error',
         );
@@ -715,7 +715,7 @@ export default function WritingFields({
         <div className="write">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
             <div className="doc-lbl" style={{ margin: 0 }}>
-              {isAr ? 'النص' : 'Caption'}
+              {isAr ? 'التعليق' : 'Caption'}
             </div>
             <span
               className="tag"
@@ -948,7 +948,7 @@ export default function WritingFields({
       <div className="write">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
           <div className="doc-lbl" style={{ margin: 0 }}>
-            {isAr ? 'النص' : 'Caption'}
+            {isAr ? 'التعليق' : 'Caption'}
           </div>
           {captionText.length > 0 && (
             <span
@@ -978,17 +978,12 @@ export default function WritingFields({
                 : (isAr ? 'توليد بالذكاء' : 'Generate with AI')}
           </button>
         </div>
-        <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 8 }}>
-          {isAr
-            ? 'النص يُكتب هنا مع المحتوى ويُعتمد معه، ويُولَّد بالذكاء تلقائيًا عند فتح المهمة. تُنسخ منه نصوص المنصات، ويمكن تعديل كل منصة على حدة لاحقًا.'
-            : 'The caption is written here with the content and approved with it; it is AI-drafted when the task opens. Each platform’s copy is seeded from it and can be tweaked per placement later.'}
-        </div>
         <textarea
           className="inp"
           rows={6}
           style={{ fontSize: 13 }}
           value={str('caption')}
-          placeholder={isAr ? 'اكتب النص، أو ولّده بالذكاء ثم راجعه.' : 'Write the caption, or generate it and review.'}
+          placeholder={isAr ? 'اكتب التعليق، أو ولّده بالذكاء ثم راجعه.' : 'Write the caption, or generate it and review.'}
           onChange={(e) => set('caption', e.target.value)}
         />
         <CaptionSourceNote source={state.captionSource} isAr={isAr} />
@@ -1010,13 +1005,13 @@ export default function WritingFields({
             }))}
           />
           <span>
-            {isAr ? 'أكّد النص — قرأته واعتمدته' : 'Confirm the caption — I read it and approve it'}
+            {isAr ? 'أكّد التعليق — قرأته واعتمدته' : 'Confirm the caption — I read it and approve it'}
           </span>
         </label>
         {!captionConfirmed && (
           <div style={{ fontSize: 11.5, color: 'var(--late)', marginTop: 6 }}>
             {isAr
-              ? 'لا يمكن إرسال الكتابة قبل كتابة النص وتأكيده.'
+              ? 'لا يمكن إرسال الكتابة قبل كتابة التعليق وتأكيده.'
               : 'Writing cannot be sent until the caption is written and confirmed.'}
           </div>
         )}
@@ -1069,7 +1064,7 @@ export default function WritingFields({
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 8 }}>
             {isAr
-              ? 'وسوم مشتركة تُلحَق بنص الفيد وحده — الستوري بلا نص.'
+              ? 'وسوم مشتركة تُلحَق بتعليق الفيد وحده — الستوري بلا تعليق.'
               : 'Shared tags appended to the feed caption only — the story carries no text.'}
           </div>
           <input
