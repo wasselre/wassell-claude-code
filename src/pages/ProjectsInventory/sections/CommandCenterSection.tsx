@@ -43,16 +43,25 @@ export default function CommandCenterSection({ isAr }: { isAr: boolean }) {
     const allRecords = allModel ? records[allModel.id] ?? [] : [];
     const ourRecords = ourModel ? records[ourModel.id] ?? [] : [];
 
-    // Portfolio unit totals — summed from the our_projects stored rollups
-    // (maintained by the same triggers as the master rollups).
-    let available = 0, reserved = 0, sold = 0, total = 0, activePortfolio = 0;
+    // Which all_projects masters are in our Portfolio (linked by an
+    // our_projects record). Portfolio unit totals are summed from those
+    // MASTERS' stored rollups — the same authoritative source the Portfolio
+    // page reads (the slim our_projects summary doesn't carry the rollups).
+    const portfolioMasterIds = new Set<string>();
     for (const r of ourRecords) {
+      const raw = (r.data as Record<string, unknown> | undefined)?.project;
+      const id = Array.isArray(raw) ? raw[0] : raw;
+      if (typeof id === 'string') portfolioMasterIds.add(id);
+    }
+
+    let available = 0, reserved = 0, sold = 0, total = 0;
+    for (const r of allRecords) {
+      if (!portfolioMasterIds.has(r.id)) continue;
       const d = (r.data ?? {}) as Record<string, unknown>;
-      available += asFiniteNumber(d.units_available) ?? 0;
-      reserved += asFiniteNumber(d.units_reserved) ?? 0;
+      available += asFiniteNumber(d.available_units) ?? 0;
+      reserved += asFiniteNumber(d.reserved_units) ?? 0;
       sold += asFiniteNumber(d.sold_units) ?? 0;
-      total += asFiniteNumber(d.total_units) ?? 0;
-      if (d.portfolio_status === 'active') activePortfolio += 1;
+      total += asFiniteNumber(d.unit_count) ?? 0;
     }
     // Under-construction = everything that isn't available/reserved/sold.
     const underConstruction = Math.max(0, total - available - reserved - sold);
@@ -60,7 +69,7 @@ export default function CommandCenterSection({ isAr }: { isAr: boolean }) {
     return {
       knownProjects: allRecords.length,
       portfolioProjects: ourRecords.length,
-      activePortfolio,
+      linkedMasters: portfolioMasterIds.size,
       available,
       reserved,
       sold,
@@ -79,7 +88,7 @@ export default function CommandCenterSection({ isAr }: { isAr: boolean }) {
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           <Kpi icon={<Building2 size={18} />} label={isAr ? 'مشاريع معروفة (السجل)' : 'Known projects (registry)'} value={n(supply.knownProjects)} />
-          <Kpi icon={<Star size={18} />} tone="#C09B5F" label={isAr ? 'مشاريع المحفظة' : 'Portfolio projects'} value={n(supply.portfolioProjects)} hint={isAr ? `${n(supply.activePortfolio)} نشطة` : `${n(supply.activePortfolio)} active`} />
+          <Kpi icon={<Star size={18} />} tone="#C09B5F" label={isAr ? 'مشاريع المحفظة' : 'Portfolio projects'} value={n(supply.portfolioProjects)} hint={isAr ? `${n(supply.linkedMasters)} مرتبطة بمشروع` : `${n(supply.linkedMasters)} linked`} />
           <Kpi icon={<CheckCircle2 size={18} />} tone="#10B981" label={isAr ? 'وحدات متاحة (المحفظة)' : 'Available units (portfolio)'} value={n(supply.available)} />
           <Kpi icon={<Clock size={18} />} tone="#3B82F6" label={isAr ? 'وحدات محجوزة' : 'Reserved units'} value={n(supply.reserved)} />
           <Kpi icon={<BadgeCheck size={18} />} tone="#8B5CF6" label={isAr ? 'وحدات مباعة' : 'Sold units'} value={n(supply.sold)} />
