@@ -320,6 +320,28 @@ const CAPTION_SYSTEM = `أنت كاتب إعلانات عقارية لشركة �
 
 أعد الكابشن فقط، بلا أي مقدمة أو تعليق.`;
 
+/**
+ * The ten competitor captions the operator picked for the AI to learn from
+ * (`mos_caption_examples`). Style only: the heading tells the model never to
+ * lift a name, district, price or number from them, and the invented-number
+ * guard still rejects any figure that is not in THIS project's facts.
+ * A failed read is logged and the caption is written without examples —
+ * examples improve a caption, they are never a reason not to write one.
+ */
+async function captionExamplesBlock(sb: SupabaseClient): Promise<string> {
+  const { data, error } = await sb.from('mos_caption_examples')
+    .select('caption').order('position', { ascending: true }).limit(10);
+  if (error) {
+    console.error('[meta-ad] caption examples read failed', error.code, error.message);
+    return '';
+  }
+  const rows = (data ?? []) as Array<{ caption: string }>;
+  if (rows.length === 0) return '';
+  return 'أمثلة لكابشنات ناجحة من السوق — تعلّم منها الأسلوب والإيقاع والافتتاحية فقط. '
+    + 'لا تنسخ منها أي اسم مشروع أو حي أو سعر أو رقم:\n\n'
+    + rows.map((r, i) => `مثال ${i + 1}:\n${r.caption}`).join('\n\n');
+}
+
 async function deepseekCaption(env: WorkerEnv, userContent: string, extraRule?: string): Promise<string> {
   if (!env.DEEPSEEK_API_KEY) throw new Error('DEEPSEEK_API_KEY is not set');
   const base = env.DEEPSEEK_BASE_URL.replace(/\/$/, '');
@@ -370,7 +392,7 @@ async function deepseekCaption(env: WorkerEnv, userContent: string, extraRule?: 
 }
 
 async function writeCaption(
-  env: WorkerEnv, content: ContentRow, facts: ProjectFacts | null, campaign: { name: string | null; offer: string | null },
+  sb: SupabaseClient, env: WorkerEnv, content: ContentRow, facts: ProjectFacts | null, campaign: { name: string | null; offer: string | null },
   log: Deps['log'],
 ): Promise<{ caption: string; source: 'deepseek' | 'fallback' }> {
   const copy = approvedCopy(content);
@@ -399,10 +421,12 @@ async function writeCaption(
   const offending = (text: string): string[] => [...numbersIn(text)].filter((n) => !allowed.has(n));
 
   if (env.DEEPSEEK_API_KEY) {
+    const examples = await captionExamplesBlock(sb);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const rule = attempt === 0 ? undefined
+        const retry = attempt === 0 ? ''
           : 'تنبيه: محاولتك السابقة احتوت أرقامًا غير موجودة في الحقائق. أعد الكتابة دون أي رقم غير موجود حرفيًا في الحقائق.';
+        const rule = [examples, retry].filter(Boolean).join('\n\n') || undefined;
         const text = await deepseekCaption(env, user, rule);
         const bad = offending(text);
         if (bad.length === 0 && text.length <= 1500) return { caption: text, source: 'deepseek' };
@@ -1122,7 +1146,7 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
 
   /* ════════════ PHASE 1 — caption for the manager's approval ═══════════ */
   if (effectivePhase === 'caption') {
-    const { caption, source: captionSource } = await writeCaption(env, content, facts, { name: camp?.name ?? null, offer: camp?.offer ?? null }, log);
+    const { caption, source: captionSource } = await writeCaption(sb, env, content, facts, { name: camp?.name ?? null, offer: camp?.offer ?? null }, log);
     log(`caption ready (${captionSource}, ${caption.length} chars) — parked for approval`);
     await patchAdRow(sb, adRowId, {
       status: 'waiting',

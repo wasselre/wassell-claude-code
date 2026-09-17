@@ -52,6 +52,28 @@ const CAPTION_SYSTEM = `أنت كاتب محتوى عقاري سعودي لشر�
 - أنهِ بدعوة للتواصل، دون رقم هاتف.
 أعد الكابشن فقط، بلا مقدمات ولا علامات اقتباس.`;
 
+/**
+ * The ten competitor captions the operator picked for the AI to learn from
+ * (`mos_caption_examples`). Style only: the heading tells the model never to
+ * lift a name, district, price or number from them, and the invented-number
+ * guard still rejects any figure that is not in THIS project's facts.
+ * A failed read is logged and the caption is written without examples —
+ * examples improve a caption, they are never a reason not to write one.
+ */
+async function captionExamplesBlock(sb: SupabaseClient): Promise<string> {
+  const { data, error } = await sb.from('mos_caption_examples')
+    .select('caption').order('position', { ascending: true }).limit(10);
+  if (error) {
+    console.error('[planning] caption examples read failed', error.code, error.message);
+    return '';
+  }
+  const rows = (data ?? []) as Array<{ caption: string }>;
+  if (rows.length === 0) return '';
+  return '\n\nأمثلة لكابشنات ناجحة من السوق — تعلّم منها الأسلوب والإيقاع والافتتاحية فقط. '
+    + 'لا تنسخ منها أي اسم مشروع أو حي أو سعر أو رقم:\n\n'
+    + rows.map((r, i) => `مثال ${i + 1}:\n${r.caption}`).join('\n\n');
+}
+
 /** Every digit sequence in a text — used to prove the model invented nothing. */
 function digitsIn(text: string): Set<string> {
   const out = new Set<string>();
@@ -213,6 +235,7 @@ export async function contentCaptionGenerate(ctx: PlanCtx): Promise<Response> {
   ].filter(Boolean).join('\n\n');
 
   const allowed = digitsIn(`${factLines}\n${headlines.join('\n')}\n${brief}`);
+  const system = CAPTION_SYSTEM + await captionExamplesBlock(ctx.sb);
   let caption = '';
   let source: 'ai' | 'fallback' = 'ai';
 
@@ -221,8 +244,8 @@ export async function contentCaptionGenerate(ctx: PlanCtx): Promise<Response> {
     try {
       out = await llmText({
         track: { area: 'marketing', callSite: 'api/_lib/marketing/planning/content', operation: 'caption' },
-        system: attempt === 0 ? CAPTION_SYSTEM
-          : `${CAPTION_SYSTEM}\nتنبيه: المحاولة السابقة احتوت رقمًا غير وارد في الحقائق. لا تذكر أي رقم غير موجود حرفيًا في الحقائق.`,
+        system: attempt === 0 ? system
+          : `${system}\nتنبيه: المحاولة السابقة احتوت رقمًا غير وارد في الحقائق. لا تذكر أي رقم غير موجود حرفيًا في الحقائق.`,
         user: prompt,
         maxTokens: 700,
         temperature: 0.4,
