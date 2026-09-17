@@ -135,6 +135,7 @@ const JobApplicationsPage = lazy(() => import('@/pages/Careers/JobApplicationsPa
 // First content page = HireExperiencePage; the next (video) stage is a stub.
 const HireExperiencePage = lazy(() => import('@/pages/Hire/HireExperiencePage'));
 const HireVideoPage = lazy(() => import('@/pages/Hire/HireVideoPage'));
+const HireTaskPage = lazy(() => import('@/pages/Hire/HireTaskPage'));
 const HireStagePlaceholder = lazy(() => import('@/pages/Hire/HireExperiencePage').then((m) => ({ default: m.HireStagePlaceholder })));
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import RequirePageAccess from '@/components/guards/RequirePageAccess';
@@ -399,7 +400,8 @@ export default function App() {
         <Route path="/careers/experience" element={<HireExperiencePage />} />
         <Route path="/careers/experience/:token" element={<HireExperiencePage />} />
         <Route path="/careers/experience/:token/video" element={<HireVideoPage />} />
-        <Route path="/careers/experience/:token/task" element={<HireStagePlaceholder />} />
+        <Route path="/careers/experience/:token/task" element={<HireTaskPage />} />
+        <Route path="/careers/experience/:token/offer" element={<HireStagePlaceholder />} />
 
         {/* ── Protected app routes (auth required, inside layout) ────── */}
         <Route

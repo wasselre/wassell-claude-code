@@ -146,7 +146,7 @@ export default function HireExperiencePage() {
   );
 }
 
-// ── Stub for the (not-yet-built) practical-task stage of the experience ───────
+// ── Stub for the (not-yet-built) offer stage of the experience ────────────────
 export function HireStagePlaceholder() {
   const navigate = useNavigate();
   const { token } = useParams();
@@ -158,21 +158,21 @@ export function HireStagePlaceholder() {
   }, []);
   return (
     <div className="min-h-screen font-amiri" style={{ background: 'radial-gradient(ellipse at top, #FAF7F2 0%, #F1E6D4 55%, #E4D2B4 100%)' }}>
-      <ProgressRail active={2} />
+      <ProgressRail active={3} />
       <div className="flex min-h-[70vh] items-center justify-center px-4">
         <div className="max-w-md rounded-3xl border bg-white/85 p-9 text-center shadow-xl backdrop-blur" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
           <ClipboardList size={44} className="mx-auto text-copper" />
-          <h1 className="mt-4 text-2xl font-bold" style={{ color: '#4A2C2A' }}>التجربة العملية</h1>
+          <h1 className="mt-4 text-2xl font-bold" style={{ color: '#4A2C2A' }}>العرض</h1>
           <p className="mt-3 text-base leading-loose" style={{ color: '#4A4E54' }}>
-            هنا ستنفّذ تجربة قصيرة مشابهة لما شاهدته، باستخدام عميل تجريبي. سيتم تجهيزها قريبًا.
+            بعد التجربة، ستطّلع هنا على تفاصيل الوظيفة والراتب والعمولة، ثم تقرّر. سيتم تجهيزها قريبًا.
           </p>
           <button
             type="button"
-            onClick={() => navigate(`${base}/video`)}
+            onClick={() => navigate(`${base}/task`)}
             className="mt-6 inline-flex items-center gap-2 rounded-2xl px-6 py-3 font-bold text-white shadow-lg"
             style={{ background: '#B8734F' }}
           >
-            <ChevronRight size={18} /> العودة إلى الفيديو
+            <ChevronRight size={18} /> العودة إلى التجربة
           </button>
         </div>
       </div>
