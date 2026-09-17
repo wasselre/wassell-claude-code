@@ -163,16 +163,15 @@ export default function RowApproval({
         adSetId: autoAd ? autoAdState.adSetId : null,
       });
       const adText = autoAd ? autoAdOutcomeText(res.auto_ad, isAr) : null;
-      addToast(
-        adText ?? (!isRow
-          ? finalFace
-            ? isAr ? 'اعتُمد التصميم.' : 'The design is approved.'
-            : isAr ? 'اعتُمدت الكتابة — انتقل إلى التصميم.' : 'The writing is approved — it moved to design.'
-          : finalFace
-            ? isAr ? 'اعتُمدت الدفعة — تُسلَّم الإصدارات آليًا في موعد النشر.' : 'The batch is approved — its releases go out automatically at the publish time.'
-            : isAr ? 'اعتُمدت كتابة الدفعة — انتقلت إلى التصميم.' : 'The batch’s writing is approved — it moved to design.'),
-        res.auto_ad?.status === 'skipped' ? 'info' : 'success',
-      );
+      const stepKey = detail.task.step_id ?? '';
+      const approvedText = stepKey === 'design_writer_review'
+        ? (isAr ? 'اعتُمد التصميم — انتقل إلى الاعتماد النهائي.' : 'The design is approved — it moved to final approval.')
+        : finalFace
+          ? (isRow
+            ? (isAr ? 'اعتُمدت الدفعة — تُسلَّم الإصدارات آليًا في موعد النشر.' : 'The batch is approved — its releases go out automatically at the publish time.')
+            : (isAr ? 'اعتُمد التصميم.' : 'The design is approved.'))
+          : (isAr ? 'اعتُمدت الكتابة — انتقلت إلى التصميم.' : 'The writing is approved — it moved to design.');
+      addToast(adText ?? approvedText, res.auto_ad?.status === 'skipped' ? 'info' : 'success');
       setMarked([]);
       await onChanged();
     } catch (e) {
@@ -190,6 +189,8 @@ export default function RowApproval({
         addToast(isAr ? 'رُفض الاعتماد — الدفعة ناقصة.' : 'The approval was refused — the batch is incomplete.', 'error');
       } else {
         addToast(e instanceof Error ? e.message : String(e), 'error');
+        // A step that already closed: show where the batch is now.
+        await onChanged();
       }
     } finally {
       setBusy(false);

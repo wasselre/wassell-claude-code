@@ -5647,7 +5647,15 @@ export default async function handler(req: Request): Promise<Response> {
         const cur = await tq.maybeSingle();
         const curFail = dbFail(cur.error);
         if (curFail) return curFail;
-        if (!cur.data) return jsonError(404, 'no open task found for this row');
+        if (!cur.data) {
+          // Almost always a second click on a step that already closed (the
+          // first one went through). Say that, instead of "no open task".
+          return new Response(JSON.stringify({
+            error: 'This step is already done — the batch has moved on. Refresh to see where it is now.',
+            error_ar: 'هذه المرحلة أُنجزت بالفعل وانتقلت الدفعة إلى ما بعدها — حدّث الصفحة لترى مكانها الآن.',
+            code: 'MOS:STEP_ALREADY_CLOSED',
+          }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+        }
         const openTask = cur.data as unknown as {
           id: string; subject_id: string; round: number;
           step_key: string | null; workflow_version_id: string | null;
