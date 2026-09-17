@@ -2530,9 +2530,14 @@ export default async function handler(req: Request): Promise<Response> {
         // is SECURITY DEFINER (the approver may not hold asset-write RLS) and
         // promotes the EXPLICIT selection only — a no-op when nothing was marked.
         if (result === 'approved') {
+          // The approval has ALREADY committed above. A failure here must not
+          // end the request: returning it skipped the auto-Meta-ad block below
+          // and left an approved paid creative with no ad (P-306, 2026-09-17).
           const promo = await sb.rpc('mos_promote_approval_asset', { p_content_id: contentId });
-          const promoFail = dbFail(promo.error);
-          if (promoFail) return promoFail;
+          if (promo.error) {
+            console.error('[marketing-os] approval asset promote failed after approval', contentId,
+              promo.error.code, promo.error.message);
+          }
         }
 
         // The approval committed — now hand the ad to the worker. A failure to
@@ -5742,9 +5747,12 @@ export default async function handler(req: Request): Promise<Response> {
         // resolver reads the two slots directly, this keeps legacy readers fed).
         if (result === 'approved') {
           for (const id of memberIds) {
+            // Same rule as task_complete: the approval already committed.
             const promo = await sb.rpc('mos_promote_approval_asset', { p_content_id: id });
-            const promoFail = dbFail(promo.error);
-            if (promoFail) return promoFail;
+            if (promo.error) {
+              console.error('[marketing-os] row member promote failed after approval', id,
+                promo.error.code, promo.error.message);
+            }
           }
         }
 
