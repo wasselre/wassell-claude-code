@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import {
-  Building2, MapPin, Pencil, Search, ExternalLink, FileText, AlertTriangle,
-  CheckCircle2, Target, Eye, EyeOff, ArrowRight, ChevronLeft, ChevronRight,
+  Building2, MapPin, Pencil, Search, ExternalLink, FileText,
+  ArrowRight, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -13,16 +13,14 @@ import {
   resolveProjectView, modelByName, fieldByCandidates, optionsFor, optionFor,
   formatPriceRange, formatRange, asString, asFiniteNumber, type ProjectView,
 } from '@/lib/projects/projectView';
-import { auditProject } from '@/lib/projects/projectAi';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
-import RecordFilesPanel from '@/pages/Records/components/RecordFilesPanel';
-import { recordFilesEnabled } from '@/lib/files/flags';
 import UnitsInventory from './components/UnitsInventory';
 import MatchClientModal from './components/MatchClientModal';
 import PaymentPlansTabPane from '@/pages/Records/components/PaymentPlansTabPane';
+import { FilesTab, InventoryUpdateTab, CustomerDemandTab, WebsiteTab } from './components/ProjectExtraTabs';
 
-type TabKey = 'overview' | 'units' | 'payments' | 'location' | 'media' | 'sales' | 'quality';
+type TabKey = 'overview' | 'units' | 'payments' | 'location' | 'files' | 'inventory-update' | 'customer-demand' | 'website';
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
@@ -210,9 +208,10 @@ export default function ProjectDetailPage(
       ? ([{ key: 'payments', ar: 'خطط السداد', en: 'Payment Plans' }] as { key: TabKey; ar: string; en: string }[])
       : []),
     { key: 'location', ar: 'الموقع', en: 'Location' },
-    { key: 'media', ar: 'الوسائط', en: 'Media' },
-    { key: 'sales', ar: 'ملاحظات المبيعات', en: 'Sales Notes' },
-    { key: 'quality', ar: 'جودة البيانات', en: 'Data Quality' },
+    { key: 'files', ar: 'الملفات', en: 'Files' },
+    { key: 'inventory-update', ar: 'تحديث المخزون', en: 'Inventory Update' },
+    { key: 'customer-demand', ar: 'طلب العملاء', en: 'Customer Demand' },
+    { key: 'website', ar: 'الموقع الإلكتروني', en: 'Website' },
   ];
 
   return (
@@ -345,27 +344,22 @@ export default function ProjectDetailPage(
         {tab === 'units' && (view ? <UnitsInventory projectId={view.id} projectName={view.name} isAr={isAr} /> : <NoMaster />)}
         {tab === 'payments' && (view ? <PaymentPlansTabPane projectId={view.id} /> : <NoMaster />)}
         {tab === 'location' && (view && record ? <LocationTab view={view} record={record} isAr={isAr} /> : <NoMaster />)}
-        {tab === 'media' && (view && record ? <MediaTab view={view} record={record} model={model} isAr={isAr} /> : <NoMaster />)}
-        {tab === 'sales' && (
-          isPortfolio && portfolioRecord && ourModel ? (
-            <PortfolioNotesTab
-              record={portfolioRecord} model={ourModel} isAr={isAr}
-              onSave={async (data) => {
-                const res = await saveRecord({ ...portfolioRecord, data: { ...portfolioRecord.data, ...data } });
-                addToast(res.status === 'conflict' ? (isAr ? 'تم تعديل السجل في مكان آخر — أعد التحميل' : 'Record changed elsewhere — reload') : (isAr ? 'تم الحفظ' : 'Saved'), res.status === 'conflict' ? 'error' : 'success');
-              }}
-            />
-          ) : record ? (
-            <SalesNotesTab
-              record={record} model={model} isAr={isAr}
-              onSave={async (data) => {
-                const res = await saveRecord({ ...record, data: { ...record.data, ...data } });
-                addToast(res.status === 'conflict' ? (isAr ? 'تم تعديل السجل في مكان آخر — أعد التحميل' : 'Record changed elsewhere — reload') : (isAr ? 'تم الحفظ' : 'Saved'), res.status === 'conflict' ? 'error' : 'success');
-              }}
-            />
-          ) : <NoMaster />
-        )}
-        {tab === 'quality' && (view && record ? <DataQualityTab view={view} record={record} isAr={isAr} /> : <NoMaster />)}
+        {tab === 'files' && (record ? <FilesTab record={record} isAr={isAr} /> : <NoMaster />)}
+        {tab === 'inventory-update' && (view ? <InventoryUpdateTab project={view} isAr={isAr} /> : <NoMaster />)}
+        {tab === 'customer-demand' && (view ? <CustomerDemandTab view={view} isAr={isAr} /> : <NoMaster />)}
+        {tab === 'website' && (view && record ? (
+          <WebsiteTab
+            view={view} record={record} portfolioRecord={isPortfolio ? portfolioRecord : undefined} isAr={isAr}
+            onSaveMaster={async (data) => {
+              const res = await saveRecord({ ...record, data: { ...record.data, ...data } });
+              addToast(res.status === 'conflict' ? (isAr ? 'تم تعديل السجل في مكان آخر — أعد التحميل' : 'Record changed elsewhere — reload') : (isAr ? 'تم الحفظ' : 'Saved'), res.status === 'conflict' ? 'error' : 'success');
+            }}
+            onSavePortfolio={isPortfolio && portfolioRecord ? async (data) => {
+              const res = await saveRecord({ ...portfolioRecord, data: { ...portfolioRecord.data, ...data } });
+              addToast(res.status === 'conflict' ? (isAr ? 'تم تعديل السجل في مكان آخر — أعد التحميل' : 'Record changed elsewhere — reload') : (isAr ? 'تم الحفظ' : 'Saved'), res.status === 'conflict' ? 'error' : 'success');
+            } : undefined}
+          />
+        ) : <NoMaster />)}
       </div>
 
       <MatchClientModal open={matchOpen} onClose={() => setMatchOpen(false)} isAr={isAr} />
@@ -523,249 +517,6 @@ function LocationTab({ view, record, isAr }: { view: ProjectView; record: import
             {view.locationLink && <a href={view.locationLink} target="_blank" rel="noreferrer" className="text-copper hover:underline">{isAr ? 'فتح في الخرائط' : 'Open in Maps'}</a>}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-/** A direct video FILE (our storage or any URL ending in a video extension) —
- *  playable inline, unlike a YouTube/page link. */
-const isDirectVideoUrl = (u: string): boolean => /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(u);
-/** A direct image FILE — renderable inline. */
-const isDirectImageUrl = (u: string): boolean => /\.(png|jpe?g|gif|webp|avif|svg)(\?.*)?$/i.test(u);
-/** The 11-char video id from any YouTube URL shape, or null when it isn't one. */
-const youTubeId = (u: string): string | null => {
-  const m = u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/)|youtu\.be\/)([\w-]{11})/i);
-  return m?.[1] ?? null;
-};
-
-function MediaTab({ view, record, model, isAr }: { view: ProjectView; record: import('@/types').AppRecord; model: import('@/types').AppModel; isAr: boolean }) {
-  const dash = isAr ? 'لا توجد وسائط قابلة للعرض' : 'No directly-viewable media';
-  const gallery = Array.isArray(record.data.project_images)
-    ? (record.data.project_images as unknown[]).filter((x): x is string => typeof x === 'string' && /^https?:\/\//i.test(x))
-    : [];
-  const videos = Array.isArray(record.data.project_videos)
-    ? (record.data.project_videos as unknown[]).filter((x): x is string => typeof x === 'string' && /^https?:\/\//i.test(x))
-    : [];
-  const projectPage = asString(record.data.project_page_url);
-  const heroImg = useSignedImage(view.imageRef);
-  const hasAny = heroImg || gallery.length > 0 || videos.length > 0 || view.brochureOurs || view.brochureDeveloper || projectPage || view.locationLink;
-  return (
-    <div className="space-y-4">
-      {heroImg && <img src={heroImg} alt="" className="rounded-xl border border-sand/50 max-h-80 object-cover" />}
-      {gallery.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          {gallery.map((u, i) => <img key={i} src={u} alt="" className="rounded-lg border border-sand/50 h-32 w-full object-cover" loading="lazy" />)}
-        </div>
-      )}
-      {videos.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {videos.map((u, i) => {
-            // A file we host (or any direct video URL) plays inline; a YouTube
-            // link becomes an embedded player; a stored image renders as a
-            // picture; anything else stays a plain link (it genuinely IS one).
-            if (isDirectVideoUrl(u)) {
-              return <video key={i} src={u} controls preload="metadata" className="rounded-lg border border-sand/50 w-full max-h-96 bg-black" />;
-            }
-            const yt = youTubeId(u);
-            if (yt) {
-              return (
-                <div key={i} className="relative w-full rounded-lg overflow-hidden border border-sand/50" style={{ aspectRatio: '16 / 9' }}>
-                  <iframe
-                    src={`https://www.youtube.com/embed/${yt}`}
-                    title={`${isAr ? 'فيديو' : 'video'} ${i + 1}`}
-                    className="absolute inset-0 h-full w-full"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                    loading="lazy"
-                  />
-                </div>
-              );
-            }
-            if (isDirectImageUrl(u)) {
-              return <img key={i} src={u} alt="" className="rounded-lg border border-sand/50 w-full object-cover" loading="lazy" />;
-            }
-            return <a key={i} href={u} target="_blank" rel="noreferrer" className="text-copper hover:underline text-sm self-center break-all">🎬 {u}</a>;
-          })}
-        </div>
-      )}
-      <div className="flex flex-wrap gap-3 text-sm">
-        {projectPage && <a className="text-copper hover:underline inline-flex items-center gap-1" href={projectPage} target="_blank" rel="noreferrer"><ExternalLink size={13} /> {isAr ? 'صفحة المشروع' : 'Project page'}</a>}
-        {view.locationLink && <a className="text-copper hover:underline inline-flex items-center gap-1" href={view.locationLink} target="_blank" rel="noreferrer"><MapPin size={13} /> {isAr ? 'موقع Google Maps' : 'Google Maps'}</a>}
-        {view.brochureOurs && <a className="text-copper hover:underline inline-flex items-center gap-1" href={view.brochureOurs} target="_blank" rel="noreferrer"><FileText size={13} /> {isAr ? 'بروشورنا' : 'Our brochure'}</a>}
-        {view.brochureDeveloper && <a className="text-copper hover:underline inline-flex items-center gap-1" href={view.brochureDeveloper} target="_blank" rel="noreferrer"><FileText size={13} /> {isAr ? 'بروشور المطور' : 'Developer brochure'}</a>}
-      </div>
-      {!hasAny && (
-        <div className="card p-6 text-center text-charcoal/40 text-sm">
-          {dash}. <button className="text-copper underline" onClick={() => window.open(`/model/${model.name}/${record.id}?generic=1`, '_self')}>{isAr ? 'إدارة الملفات في النموذج' : 'Manage files in the form'}</button>
-        </div>
-      )}
-
-      {/* Phase 3 · B6. Everything ABOVE this line renders the project's media
-        * from RECORD FIELDS — the hero image, the gallery array, the brochure
-        * URLs. The panel below renders the file GRAPH: every file linked to
-        * this project by any mechanism, including the ones no field mentions.
-        *
-        * The two overlap deliberately and are not deduplicated. A gallery image
-        * appears above as a picture and below as a linked file with its role,
-        * because they answer different questions — "what does this project look
-        * like" and "what is attached to it, and can I unlink it".
-        *
-        * Mounted here rather than on the generic form because all_projects
-        * renders THIS page; the generic form is reachable only via ?generic=1
-        * and nobody navigates that way. */}
-      {recordFilesEnabled() && (
-        <RecordFilesPanel modelId={record.model_id} recordId={record.id} />
-      )}
-    </div>
-  );
-}
-
-function SalesNotesTab({ record, model, isAr, onSave }: { record: import('@/types').AppRecord; model: import('@/types').AppModel; isAr: boolean; onSave: (data: Record<string, unknown>) => Promise<void> }) {
-  const priorityField = fieldByCandidates(model, ['sales_priority']);
-  const exclusiveField = fieldByCandidates(model, ['exclusive_status']);
-  const [priority, setPriority] = useState(asString(record.data.sales_priority) ?? '');
-  const [exclusive, setExclusive] = useState(asString(record.data.exclusive_status) ?? '');
-  const [targeted, setTargeted] = useState(record.data.is_targeted === true);
-  const [internal, setInternal] = useState(asString(record.data.internal_sales_notes) ?? '');
-  const [objection, setObjection] = useState(asString(record.data.objection_handling_notes) ?? '');
-  const [busy, setBusy] = useState(false);
-  const save = async () => {
-    setBusy(true);
-    try {
-      await onSave({ sales_priority: priority || null, exclusive_status: exclusive || null, is_targeted: targeted, internal_sales_notes: internal || null, objection_handling_notes: objection || null });
-    } finally { setBusy(false); }
-  };
-  const sel = 'form-input text-sm';
-  return (
-    <div className="card p-4 max-w-2xl space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <label className="text-sm"><span className="text-charcoal/60 block mb-1">{isAr ? 'أولوية المبيعات' : 'Sales priority'}</span>
-          <select className={sel} value={priority} onChange={(e) => setPriority(e.target.value)}>
-            <option value="">—</option>
-            {(priorityField?.options ?? []).map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
-          </select>
-        </label>
-        <label className="text-sm"><span className="text-charcoal/60 block mb-1">{isAr ? 'حالة الحصرية' : 'Exclusive status'}</span>
-          <select className={sel} value={exclusive} onChange={(e) => setExclusive(e.target.value)}>
-            <option value="">—</option>
-            {(exclusiveField?.options ?? []).map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
-          </select>
-        </label>
-      </div>
-      <label className="flex items-center gap-2 text-sm text-charcoal/70">
-        <input type="checkbox" checked={targeted} onChange={(e) => setTargeted(e.target.checked)} className="rounded border-sand text-copper focus:ring-copper/30" />
-        <Target size={14} /> {isAr ? 'مشروع مستهدف' : 'Targeted project'}
-      </label>
-      <label className="text-sm block"><span className="text-charcoal/60 block mb-1">{isAr ? 'ملاحظات مبيعات داخلية' : 'Internal sales notes'}</span>
-        <textarea className={sel} rows={3} value={internal} onChange={(e) => setInternal(e.target.value)} />
-      </label>
-      <label className="text-sm block"><span className="text-charcoal/60 block mb-1">{isAr ? 'التعامل مع الاعتراضات' : 'Objection handling'}</span>
-        <textarea className={sel} rows={3} value={objection} onChange={(e) => setObjection(e.target.value)} />
-      </label>
-      <Button variant="primary" onClick={save} disabled={busy}>{busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'حفظ' : 'Save')}</Button>
-    </div>
-  );
-}
-
-function PortfolioNotesTab({ record, model, isAr, onSave }: { record: import('@/types').AppRecord; model: import('@/types').AppModel; isAr: boolean; onSave: (data: Record<string, unknown>) => Promise<void> }) {
-  const statusField = fieldByCandidates(model, ['portfolio_status']);
-  const priorityField = fieldByCandidates(model, ['sales_priority']);
-  const exclusiveField = fieldByCandidates(model, ['exclusive_status']);
-  const [status, setStatus] = useState(asString(record.data.portfolio_status) ?? '');
-  const [priority, setPriority] = useState(asString(record.data.sales_priority) ?? '');
-  const [exclusive, setExclusive] = useState(asString(record.data.exclusive_status) ?? '');
-  const [order, setOrder] = useState(asFiniteNumber(record.data.website_display_order)?.toString() ?? '');
-  const [showOnWebsite, setShowOnWebsite] = useState(record.data.show_on_website === true);
-  const [pitch, setPitch] = useState(asString(record.data.sales_pitch) ?? '');
-  const [objection, setObjection] = useState(asString(record.data.objection_handling_notes) ?? '');
-  const [commission, setCommission] = useState(asString(record.data.commission_notes) ?? '');
-  const [notes, setNotes] = useState(asString(record.data.portfolio_notes) ?? '');
-  const [busy, setBusy] = useState(false);
-  const sel = 'form-input text-sm';
-  const save = async () => {
-    setBusy(true);
-    try {
-      await onSave({
-        portfolio_status: status || null,
-        sales_priority: priority || null,
-        exclusive_status: exclusive || null,
-        website_display_order: order === '' ? null : Number(order),
-        show_on_website: showOnWebsite,
-        sales_pitch: pitch || null,
-        objection_handling_notes: objection || null,
-        commission_notes: commission || null,
-        portfolio_notes: notes || null,
-      });
-    } finally { setBusy(false); }
-  };
-  const drop = (label: string, val: string, set: (v: string) => void, f: import('@/types').ModelField | undefined) => (
-    <label className="text-sm"><span className="text-charcoal/60 block mb-1">{label}</span>
-      <select className={sel} value={val} onChange={(e) => set(e.target.value)}>
-        <option value="">—</option>
-        {(f?.options ?? []).map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
-      </select>
-    </label>
-  );
-  const area = (label: string, val: string, set: (v: string) => void) => (
-    <label className="text-sm block"><span className="text-charcoal/60 block mb-1">{label}</span>
-      <textarea className={sel} rows={3} value={val} onChange={(e) => set(e.target.value)} />
-    </label>
-  );
-  return (
-    <div className="card p-4 max-w-2xl space-y-3">
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        {drop(isAr ? 'حالة المحفظة' : 'Portfolio status', status, setStatus, statusField)}
-        {drop(isAr ? 'أولوية المبيعات' : 'Sales priority', priority, setPriority, priorityField)}
-        {drop(isAr ? 'حالة الحصرية' : 'Exclusive status', exclusive, setExclusive, exclusiveField)}
-      </div>
-      <div className="grid grid-cols-2 gap-3 items-end">
-        <label className="text-sm"><span className="text-charcoal/60 block mb-1">{isAr ? 'ترتيب العرض على الموقع' : 'Website display order'}</span>
-          <input className={sel} type="number" value={order} onChange={(e) => setOrder(e.target.value)} />
-        </label>
-        <label className="flex items-center gap-2 text-sm text-charcoal/70 pb-2">
-          <input type="checkbox" checked={showOnWebsite} onChange={(e) => setShowOnWebsite(e.target.checked)} className="rounded border-sand text-copper focus:ring-copper/30" />
-          {showOnWebsite ? <Eye size={14} /> : <EyeOff size={14} />} {isAr ? 'عرض على الموقع' : 'Show on website'}
-        </label>
-      </div>
-      {area(isAr ? 'عرض البيع' : 'Sales pitch', pitch, setPitch)}
-      {area(isAr ? 'التعامل مع الاعتراضات' : 'Objection handling', objection, setObjection)}
-      {area(isAr ? 'ملاحظات العمولة' : 'Commission notes', commission, setCommission)}
-      {area(isAr ? 'ملاحظات المحفظة' : 'Portfolio notes', notes, setNotes)}
-      <p className="text-xs text-charcoal/40">{isAr ? 'صورة الغلاف البديلة تُحرَّر من النموذج الكامل.' : 'Hero image override is edited in the full form.'}</p>
-      <Button variant="primary" onClick={save} disabled={busy}>{busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'حفظ' : 'Save')}</Button>
-    </div>
-  );
-}
-
-function DataQualityTab({ view, record, isAr }: { view: ProjectView; record: import('@/types').AppRecord; isAr: boolean }) {
-  const audit = auditProject(view, isAr);
-  const tone = audit.score >= 80 ? '#10B981' : audit.score >= 50 ? '#F59E0B' : '#EF4444';
-  const List = ({ title, items, icon }: { title: string; items: string[]; icon: React.ReactNode }) => (
-    <div className="card p-4">
-      <div className="flex items-center gap-1.5 font-bold text-charcoal mb-2 text-sm">{icon} {title}</div>
-      {items.length === 0 ? <p className="text-sm text-green-600">{isAr ? 'لا شيء' : 'None'}</p> : (
-        <ul className="text-sm text-charcoal/70 space-y-1">{items.map((x, i) => <li key={i} className="flex items-center gap-1.5"><span className="w-1 h-1 rounded-full bg-charcoal/40" /> {x}</li>)}</ul>
-      )}
-    </div>
-  );
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-4">
-        <div className="card p-4 text-center w-32">
-          <div className="text-3xl font-bold" style={{ color: tone }}>{audit.score}</div>
-          <div className="text-xs text-charcoal/50">{isAr ? 'درجة الجودة' : 'Quality score'}</div>
-        </div>
-        <div className="text-sm text-charcoal/60 space-y-1">
-          <div>{isAr ? 'درجة الثقة المسجلة: ' : 'Recorded confidence: '}{view.dataConfidence ?? (isAr ? 'غير متوفر' : 'N/A')}</div>
-          <div>{isAr ? 'آخر تحقق: ' : 'Last verified: '}{asString(record.data.last_verified_at) ?? (isAr ? 'غير متوفر' : 'N/A')}</div>
-        </div>
-      </div>
-      <div className="grid md:grid-cols-2 gap-3">
-        <List title={isAr ? 'حقول مطلوبة ناقصة' : 'Required missing'} items={audit.requiredMissing} icon={<AlertTriangle size={14} className="text-red-500" />} />
-        <List title={isAr ? 'حقول اختيارية ناقصة' : 'Optional missing'} items={audit.optionalMissing} icon={<AlertTriangle size={14} className="text-amber-500" />} />
-        <List title={isAr ? 'يمنع النشر على الموقع' : 'Blocks website publish'} items={audit.blockingWebsite} icon={<AlertTriangle size={14} className="text-red-500" />} />
-        <List title={isAr ? 'يمنع المطابقة' : 'Blocks matching'} items={audit.blockingMatching} icon={<CheckCircle2 size={14} className="text-copper" />} />
       </div>
     </div>
   );
