@@ -405,7 +405,8 @@ export default function RowApproval({
         </div>
       </div>
 
-      {finalFace && membersWithoutDestination.length > 0 && (
+      {/* An ad has no organic destination — the Meta ad IS where it goes. */}
+      {finalFace && detail.row.kind !== 'paid_creative' && membersWithoutDestination.length > 0 && (
         <div className="notice bad" role="alert">
           {isAr
             ? `${num(membersWithoutDestination.length, true)} من المنشورات بلا وجهة نشر — لن يخرج شيء لها.`
