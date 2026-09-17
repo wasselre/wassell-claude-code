@@ -11,10 +11,18 @@
  * else, which is what lets the same approval component be mounted inline and
  * standalone with no simplified copy in between.
  *
- * A WRITING face is deliberately not rendered here: the writer's surface is the
- * writing task's own screen, and a second, thinner copy of it inside the queue
- * is the exact mistake §5.1 deletes. The row is shown read-only with a way into
- * each post instead.
+ * The WRITING face is `RowWriter` — the approved «الصف — كتابة» screen: the
+ * row's three posts side by side, their reading order, one pre-send check and
+ * ONE send.
+ *
+ * Until 2026-09-16 this pane refused to render it ("the writer's surface is the
+ * writing task's own screen … a second copy is the mistake §5.1 deletes") and
+ * showed the row read-only with a link into each post. That reasoning did not
+ * survive contact with the row model: the writing task's subject is the ROW, not
+ * a post, and `content_detail` loads tasks with `subject_table = 'mos_content'`,
+ * so a row member's own screen never sees an open task and is read-only for
+ * EVERYONE — the writer included. Between the two, nobody could write a row at
+ * all, and `RowWriter.tsx` had been built and never mounted.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -28,6 +36,7 @@ import { shortDate } from '../lib/format';
 import MonthBriefPanel from './MonthBriefPanel';
 import RowApproval from './RowApproval';
 import RowDesign from './RowDesign';
+import RowWriter from './RowWriter';
 import { CaptionBlock, PostLines, PostShell } from './RowParts';
 
 export interface RowPaneProps {
@@ -133,11 +142,15 @@ export default function RowPane({ rowId, taskId, onChanged, brief }: RowPaneProp
         <RowApproval detail={detail} isAr={isAr} canAct={canAct} onChanged={changed} brief={briefNode} />
       )}
 
+      {face === 'writing' && (
+        <RowWriter detail={detail} isAr={isAr} canAct={canAct} onChanged={changed} brief={briefNode} />
+      )}
+
       {face === 'design' && (
         <RowDesign detail={detail} isAr={isAr} canAct={canAct} onChanged={changed} brief={briefNode} />
       )}
 
-      {face !== 'writing_review' && face !== 'final_approval' && face !== 'design' && (
+      {face === 'other' && (
         <RowReadOnly detail={detail} isAr={isAr} brief={briefNode} />
       )}
     </div>
@@ -145,9 +158,8 @@ export default function RowPane({ rowId, taskId, onChanged, brief }: RowPaneProp
 }
 
 /**
- * The row at a stage this pane does not own — a writing task, or a row between
- * stages. Everything is shown, nothing is acted on, and each post carries a way
- * into its own screen where the work actually happens.
+ * A row with no stage this pane acts on — between stages, or already through
+ * its chain. Everything is shown, nothing is acted on.
  */
 function RowReadOnly({
   detail, isAr, brief,
@@ -164,14 +176,9 @@ function RowReadOnly({
           </h4>
           <span className="r">
             {detail.task
-              ? (isAr ? 'قيد الكتابة' : 'being written')
+              ? (isAr ? 'لا مرحلة تُنفَّذ هنا' : 'no stage to act on here')
               : (isAr ? 'لا مهمة مفتوحة' : 'no open task')}
           </span>
-        </div>
-        <div className="card-b" style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.9 }}>
-          {isAr
-            ? 'هذه المرحلة تُنجَز على شاشة المنشور نفسه — تُعرض هنا كاملة للقراءة فقط، حتى لا توجد نسختان من نفس المحرّر.'
-            : 'This stage is done on the post’s own screen — shown here in full, read only, so there are never two copies of the same editor.'}
         </div>
       </div>
 
