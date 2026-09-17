@@ -81,6 +81,13 @@ export interface MosSubjectTask {
   round: number;
   opened_at: string;
   due_at: string | null;
+  /** When the current holder received it; its deadline counts from here. */
+  assigned_at?: string | null;
+  /** Capacity units: a row counts its posts, anything else 1. */
+  units?: number | null;
+  /** Open but not handed out yet — nobody eligible has room (see waiting_reason). */
+  waiting_since?: string | null;
+  waiting_reason?: 'capacity' | 'no_holder' | 'inactive' | string | null;
   closed_at: string | null;
   closed_by_user_id?: string | null;
   revision_targets?: string[];

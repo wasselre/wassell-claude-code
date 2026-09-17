@@ -59,11 +59,32 @@ import { IconSearch } from './components/icons';
 import NewTaskModal from './components/NewTaskModal';
 import { usePreview } from './components/ContentPreviewModal';
 import RowPane from './components/RowPane';
-import { dayName, daysAgo, daysFromNow, num, shortDate } from './lib/format';
+import { dateTimeShort, dayName, daysAgo, daysFromNow, num, shortDate } from './lib/format';
 import {
   TASK_ACTION_LABELS, actionOfTask, contentHref, previewTargetOfTask, taskHref,
 } from './lib/contentRoute';
 import './styles/mobile-m1.css';
+
+/**
+ * A task that is open but not handed out: nobody who takes this role's routine
+ * work has room in their last 24 hours. It is NOT late — nobody has received it
+ * yet — so it shows why it waits instead of a deadline.
+ */
+function waitingLabel(
+  task: { step_id: string | null; waiting_reason?: string | null },
+  isAr: boolean,
+): string {
+  if (task.waiting_reason === 'no_holder') {
+    return isAr ? 'بانتظار من يتولّى هذا الدور' : 'Waiting for someone in this role';
+  }
+  if (task.step_id === 'design') {
+    return isAr ? 'بانتظار سعة التصميم' : 'Waiting for design capacity';
+  }
+  if (task.step_id === 'writing') {
+    return isAr ? 'بانتظار سعة الكتابة' : 'Waiting for writing capacity';
+  }
+  return isAr ? 'بانتظار السعة' : 'Waiting for capacity';
+}
 
 /**
  * The shell's phone breakpoint (mobile-shell.css). No shared matchMedia hook
@@ -228,16 +249,18 @@ function RowCardRows({
           </div>
         </td>
         <td style={{ width: 190 }}>
-          {overdue ? (
+          {task.waiting_since ? (
+            <Pill tone="wait">{waitingLabel(task, isAr)}</Pill>
+          ) : overdue ? (
             <Pill tone="late">
               {isAr
-                ? `استحقاق ${shortDate(task.due_at, true)} · متأخر ${daysAgo(task.due_at, true)}`
-                : `due ${shortDate(task.due_at, false)} · ${daysAgo(task.due_at, false)} late`}
+                ? `استحقاق ${dateTimeShort(task.due_at, true)} · متأخر ${daysAgo(task.due_at, true)}`
+                : `due ${dateTimeShort(task.due_at, false)} · ${daysAgo(task.due_at, false)} late`}
             </Pill>
           ) : (
             <Pill tone={tone === 'idle' ? 'wait' : 'now'}>
               {task.due_at
-                ? isAr ? `الاستحقاق ${shortDate(task.due_at, true)}` : `due ${shortDate(task.due_at, false)}`
+                ? isAr ? `الاستحقاق ${dateTimeShort(task.due_at, true)}` : `due ${dateTimeShort(task.due_at, false)}`
                 : isAr ? 'بلا موعد' : 'no due date'}
             </Pill>
           )}
@@ -1028,6 +1051,12 @@ export default function WorkPage() {
                   {isAr
                     ? `${num(it.facts.member_count, true)} منشورات — مهمة واحدة · الأول في الترتيب يُنشر أخيرًا`
                     : `${it.facts.member_count} posts — one task · the first in the order publishes last`}
+                  <br />
+                  {it.task.waiting_since
+                    ? waitingLabel(it.task, isAr)
+                    : it.task.due_at
+                      ? (isAr ? `الاستحقاق ${dateTimeShort(it.task.due_at, true)}` : `due ${dateTimeShort(it.task.due_at, false)}`)
+                      : (isAr ? 'بلا موعد' : 'no due date')}
                 </div>
                 <button
                   type="button"

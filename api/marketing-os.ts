@@ -900,6 +900,12 @@ function mapRoleTask(t: Record<string, unknown>): Record<string, unknown> {
     round: t.round,
     opened_at: t.opened_at,
     due_at: t.due_at ?? null,
+    // When the current holder RECEIVED it (the deadline counts from here), its
+    // capacity units, and — when nobody has room yet — since when it waits.
+    assigned_at: t.assigned_at ?? null,
+    units: t.units ?? null,
+    waiting_since: t.waiting_since ?? null,
+    waiting_reason: t.waiting_reason ?? null,
     closed_at: t.closed_at ?? null,
     // Who closed it + what a rejection targeted — screen 08's «اعتمده ريان · …»
     // meta line and screen 38's revision chips both read these.
@@ -1219,6 +1225,7 @@ const QUEUE_TASK_COLUMNS = [
   'opened_at', 'due_at', 'closed_at', 'closed_by_user_id', 'bucket',
   'blocked', 'blocked_reason', 'late_flag',
   'scheduled_start', 'scheduled_end', 'effort_days', 'progress_days', 'reservation_id',
+  'assigned_at', 'units', 'waiting_since', 'waiting_reason',
 ].join(', ');
 
 /** The row facts the queue needs to render a row card (kind, batch day, members). */
@@ -1257,7 +1264,9 @@ async function readOpenQueueTasks(
     } else {
       if (sel.userId) clauses.push(`assignee_user_id.eq.${sel.userId}`);
       if (roles.length > 0) {
-        clauses.push(`and(assignee_user_id.is.null,role_key.in.(${roles.join(',')}))`);
+        // Waiting work (open, not handed out for lack of room) is nobody's to
+        // claim: taking it would bypass the capacity limit it is waiting on.
+        clauses.push(`and(assignee_user_id.is.null,waiting_since.is.null,role_key.in.(${roles.join(',')}))`);
       }
     }
     // No person AND no queue-bearing role → an empty queue, never everyone's.
@@ -2581,13 +2590,16 @@ export default async function handler(req: Request): Promise<Response> {
             // task silently (it still shows in «my work»); otherwise the step's
             // permitted channels are AND-ed with the recipient's role grid.
             const notifyCfg = await resolveStepNotify(sb, next.workflow_version_id, next.step_key);
-            if (notifyCfg.notify) {
+            // Only the person who RECEIVED the step is interrupted. A step that
+            // opened waiting (no one has room yet) notifies nobody now — the
+            // dispatcher tells its owner at the moment it is handed out.
+            if (notifyCfg.notify && next.assignee_user_id) {
               const itemTitle = ((full.data as { title?: string } | null)?.title) ?? '';
               await emitNotify(sb, result === 'changes_requested'
                 ? {
                     event: 'changes_requested',
-                    roles: [next.role_key],
-                    users: next.assignee_user_id ? [next.assignee_user_id] : [],
+                    roles: [],
+                    users: [next.assignee_user_id],
                     titleAr: 'أُعيد العمل بتعديلات',
                     titleEn: 'Changes requested',
                     bodyAr: `«${itemTitle}» — ${note ?? ''}`,
@@ -2597,8 +2609,8 @@ export default async function handler(req: Request): Promise<Response> {
                   }
                 : {
                     event: 'task_assigned',
-                    roles: [next.role_key],
-                    users: next.assignee_user_id ? [next.assignee_user_id] : [],
+                    roles: [],
+                    users: [next.assignee_user_id],
                     titleAr: 'فُتحت لك مهمة',
                     titleEn: 'A task was assigned to you',
                     bodyAr: `«${itemTitle}» بانتظار خطوتك.`,
@@ -5734,14 +5746,17 @@ export default async function handler(req: Request): Promise<Response> {
               workflow_version_id: string | null; step_key: string | null;
             };
             const notifyCfg = await resolveStepNotify(sb, next.workflow_version_id, next.step_key);
-            if (notifyCfg.notify) {
+            // Only the person who RECEIVED the step is interrupted. A step that
+            // opened waiting (no one has room yet) notifies nobody now — the
+            // dispatcher tells its owner at the moment it is handed out.
+            if (notifyCfg.notify && next.assignee_user_id) {
               const when = facts?.batch_day ?? '';
               const url = `/m/my-work?row=${rowId}`;
               await emitNotify(sb, result === 'changes_requested'
                 ? {
                     event: 'changes_requested',
-                    roles: [next.role_key],
-                    users: next.assignee_user_id ? [next.assignee_user_id] : [],
+                    roles: [],
+                    users: [next.assignee_user_id],
                     titleAr: 'أُعيد صفّ بتعديلات',
                     titleEn: 'Changes requested on a row',
                     bodyAr: `صف ${when} — ${note}`,
@@ -5751,8 +5766,8 @@ export default async function handler(req: Request): Promise<Response> {
                   }
                 : {
                     event: 'task_assigned',
-                    roles: [next.role_key],
-                    users: next.assignee_user_id ? [next.assignee_user_id] : [],
+                    roles: [],
+                    users: [next.assignee_user_id],
                     titleAr: 'فُتح لك صفّ',
                     titleEn: 'A row was assigned to you',
                     bodyAr: `صف ${when} — ثلاثة منشورات بانتظار خطوتك.`,
