@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { LayoutGrid, List, Map as MapIcon, Search, Plus, MapPin, Building2, Target, Globe, AlertTriangle, Send, Check, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -38,8 +38,9 @@ function Kpi({ icon, label, value, tone }: { icon: React.ReactNode; label: strin
 
 export default function ProjectsListPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
-  const { models, records, language, setRecordNavContext } = useAppStore();
+  const { models, records, language } = useAppStore();
   const isAr = language === 'ar';
 
   const model = modelByName(models, 'all_projects');
@@ -123,12 +124,24 @@ export default function ProjectsListPage() {
   const filteredRecords = useMemo(() => filtered.map((v) => v.raw), [filtered]);
   const selectedIds = useMemo(() => filtered.filter((v) => sel.has(v.id)).map((v) => v.id), [filtered, sel]);
 
-  // Publish the currently-visible, sorted project ids so the detail page's
-  // prev/next steps through the same order shown here.
-  useEffect(() => {
-    if (!model) return;
-    setRecordNavContext(model.id, filtered.map((v) => v.id));
-  }, [model, filtered, setRecordNavContext]);
+  // Which all_projects masters are in our Portfolio (linked by an our_projects
+  // record) — powers the "In Portfolio" position badge on Registry cards.
+  const portfolioMasterIds = useMemo(() => {
+    const our = modelByName(models, 'our_projects');
+    const set = new Set<string>();
+    if (our) for (const r of records[our.id] ?? []) {
+      const raw = (r.data as Record<string, unknown> | undefined)?.project;
+      const id = Array.isArray(raw) ? raw[0] : raw;
+      if (typeof id === 'string') set.add(id);
+    }
+    return set;
+  }, [models, records]);
+
+  // Per-navigation scoped context passed into the project drill-in: the exact
+  // visible order + the surface to return to (this list, wherever it's shown —
+  // standalone or inside the Projects & Inventory workspace). Replaces relying
+  // on the mutable global slot, which let one list inherit another's prev/next.
+  const openState = () => ({ state: { nav: { modelId: model?.id, orderedIds: filtered.map((v) => v.id), from: location.pathname + location.search } } });
 
   if (!model) {
     return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
@@ -258,7 +271,7 @@ export default function ProjectsListPage() {
       {/* Body */}
       {view === 'map' ? (
         <div className="card p-2 h-[70vh]">
-          <MapsView model={model} records={filteredRecords} onCardClick={(r) => navigate(`/model/all_projects/${r.id}`)} />
+          <MapsView model={model} records={filteredRecords} onCardClick={(r) => navigate(`/model/all_projects/${r.id}`, openState())} />
         </div>
       ) : filtered.length === 0 ? (
         <div className="card p-16 text-center text-charcoal/40">{isAr ? 'لا توجد مشاريع مطابقة' : 'No matching projects'}</div>
@@ -269,7 +282,8 @@ export default function ProjectsListPage() {
               key={v.id}
               v={v}
               isAr={isAr}
-              onOpen={() => navigate(`/model/all_projects/${v.id}`)}
+              inPortfolio={portfolioMasterIds.has(v.id)}
+              onOpen={() => navigate(`/model/all_projects/${v.id}`, openState())}
               selectable={selectMode}
               selected={sel.has(v.id)}
               onToggleSelect={() => toggleSel(v.id)}
@@ -281,7 +295,7 @@ export default function ProjectsListPage() {
           {filtered.map((v) => (
             <button
               key={v.id}
-              onClick={() => (selectMode ? toggleSel(v.id) : navigate(`/model/all_projects/${v.id}`))}
+              onClick={() => (selectMode ? toggleSel(v.id) : navigate(`/model/all_projects/${v.id}`, openState()))}
               aria-pressed={selectMode ? sel.has(v.id) : undefined}
               className={`w-full text-start p-3 flex items-center gap-4 transition-colors ${selectMode && sel.has(v.id) ? 'bg-copper/5' : 'hover:bg-cream/50'}`}
             >
@@ -336,18 +350,44 @@ export default function ProjectsListPage() {
   );
 }
 
+/** The project's "position" in the market (spec §Market Registry): where it
+ *  sits relative to our Portfolio, the public site, and its inventory state.
+ *  Concise + only the applicable signals so cards don't drown in chips. */
+function positionBadges(v: ProjectView, inPortfolio: boolean, isAr: boolean): { key: string; label: string; color: string }[] {
+  const d = (v.raw.data ?? {}) as Record<string, unknown>;
+  const out: { key: string; label: string; color: string }[] = [];
+  if (inPortfolio) out.push({ key: 'portfolio', label: isAr ? 'في المحفظة' : 'In Portfolio', color: '#B8734F' });
+  if (d.is_public === true) out.push({ key: 'public', label: isAr ? 'منشور' : 'Public', color: '#10B981' });
+  const cls = typeof d.project_classification === 'string' ? d.project_classification : '';
+  const clsLabel: Record<string, { ar: string; en: string }> = {
+    general_project: { ar: 'سوق عام', en: 'General market' },
+    aqar_platform: { ar: 'منصة عقار', en: 'Platform-sourced' },
+    riva_projects: { ar: 'من مسوّق', en: 'Marketer-sourced' },
+  };
+  if (clsLabel[cls]) out.push({ key: 'cls', label: isAr ? clsLabel[cls]!.ar : clsLabel[cls]!.en, color: '#9CA3AF' });
+  const avail = v.availableUnits ?? null;
+  const sold = v.soldUnits ?? 0;
+  const total = v.unitCount ?? 0;
+  const soldOut = (typeof d.project_status === 'string' && d.project_status === 'sold_out') || (total > 0 && avail === 0 && sold > 0);
+  if (soldOut) out.push({ key: 'soldout', label: isAr ? 'مباع بالكامل' : 'Sold out', color: '#EF4444' });
+  else if (avail === 0) out.push({ key: 'noavail', label: isAr ? 'لا وحدات متاحة' : 'No available inventory', color: '#F59E0B' });
+  return out.slice(0, 4);
+}
+
 function ProjectCard({
-  v, isAr, onOpen, selectable = false, selected = false, onToggleSelect,
+  v, isAr, onOpen, inPortfolio = false, selectable = false, selected = false, onToggleSelect,
 }: {
   v: ProjectView;
   isAr: boolean;
   onOpen: () => void;
+  inPortfolio?: boolean;
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
 }) {
   const price = formatPriceRange(v.priceRange, isAr);
   const img = useSignedImage(v.imageRef);
+  const positions = positionBadges(v, inPortfolio, isAr);
   return (
     <div
       className={`card overflow-hidden flex flex-col group cursor-pointer ${selectable && selected ? 'ring-2 ring-copper' : ''}`}
@@ -386,6 +426,16 @@ function ProjectCard({
           <span className="truncate">{[v.district, v.city].filter(Boolean).join(isAr ? '، ' : ', ') || (isAr ? 'موقع غير محدد' : 'No location')}</span>
         </div>
         {v.developer && <div className="text-xs text-charcoal/40 mt-0.5 truncate">{v.developer}</div>}
+
+        {positions.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {positions.map((p) => (
+              <span key={p.key} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: p.color + '1A', color: p.color }}>
+                {p.label}
+              </span>
+            ))}
+          </div>
+        )}
 
         <div className="mt-2 text-sm">
           <span className="text-charcoal/40">{isAr ? 'السعر: ' : 'Price: '}</span>

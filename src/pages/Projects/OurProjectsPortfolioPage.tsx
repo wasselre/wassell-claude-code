@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText, Search, Pencil } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -31,8 +31,9 @@ const STATUS_RANK: Record<string, number> = { active: 0, paused: 1, sold_out: 2,
 
 export default function OurProjectsPortfolioPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
-  const { models, records, language, setRecordNavContext } = useAppStore();
+  const { models, records, language } = useAppStore();
   const isAr = language === 'ar';
 
   const ourModel = modelByName(models, 'our_projects');
@@ -110,12 +111,9 @@ export default function OurProjectsPortfolioPage() {
     });
   }, [items, search, city, developer, pstatus, gap]);
 
-  // Publish the currently-visible, sorted portfolio ids so the detail page can
-  // offer prev/next in the same order the user was browsing here.
-  useEffect(() => {
-    if (!ourModel) return;
-    setRecordNavContext(ourModel.id, filtered.map((i) => i.ourId));
-  }, [ourModel, filtered, setRecordNavContext]);
+  // Per-navigation scoped context for the drill-in: visible portfolio order +
+  // the surface to return to (this page, standalone or inside the workspace).
+  const openState = () => ({ state: { nav: { modelId: ourModel?.id, orderedIds: filtered.map((i) => i.ourId), from: location.pathname + location.search } } });
 
   if (searchParams.get('generic') === '1') return <RecordListPage />;
   if (!ourModel) return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
@@ -192,7 +190,7 @@ export default function OurProjectsPortfolioPage() {
               key={item.ourId}
               item={item}
               isAr={isAr}
-              onOpenDetail={() => navigate(`/model/our_projects/${item.ourId}`)}
+              onOpenDetail={() => navigate(`/model/our_projects/${item.ourId}`, openState())}
               onEdit={() => navigate(`/model/our_projects/${item.ourId}?generic=1`)}
               onEditMaster={item.linkedId ? () => setEditMasterId(item.linkedId!) : undefined}
             />

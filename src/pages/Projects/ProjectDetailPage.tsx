@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import {
   Building2, MapPin, Pencil, Search, ExternalLink, FileText, AlertTriangle,
   CheckCircle2, Target, Eye, EyeOff, ArrowRight, ChevronLeft, ChevronRight,
@@ -49,9 +49,18 @@ export default function ProjectDetailPage(
   const modelName = modelNameProp ?? params.modelName;
   const embedded = !!onClose;
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
-  const { models, records, language, saveRecord, addToast, recordNavContext } = useAppStore();
+  const { models, records, language, saveRecord, addToast, summaryLoadState, loadSummaryRecords } = useAppStore();
   const isAr = language === 'ar';
+
+  // Per-navigation context (scoped, immutable) carried by the surface that
+  // opened this page — replaces the single global `recordNavContext` slot so a
+  // project opened from one list can never inherit another list's prev/next
+  // (the "1027/244" bug). Shape: { modelId, orderedIds, from }. `from` is the
+  // originating surface path so Exit returns there (e.g. a workspace section)
+  // instead of always dumping to the model list.
+  const navState = (location.state as { nav?: { modelId?: string; orderedIds?: string[]; from?: string } } | null)?.nav ?? null;
 
   // Two surfaces share this page: the All Projects master detail and the Our
   // Projects PORTFOLIO detail. In portfolio mode every project FACT comes from
@@ -65,15 +74,37 @@ export default function ProjectDetailPage(
     [isPortfolio, ourModel, records, recordId],
   );
 
+  // The master project id this portfolio record links to (null in master mode
+  // or when genuinely unlinked). Lifted out so we can resolve it by id even
+  // when the all_projects collection hasn't finished paging in.
+  const linkedMasterId = useMemo(() => {
+    if (!isPortfolio) return null;
+    const raw = portfolioRecord?.data?.project;
+    return Array.isArray(raw) ? (typeof raw[0] === 'string' ? raw[0] : null) : (typeof raw === 'string' ? raw : null);
+  }, [isPortfolio, portfolioRecord]);
+
   // The all_projects record that drives every project fact: the routed record
   // (master mode) or the master linked via our_projects.project (portfolio mode).
   const record = useMemo(() => {
     if (!apModel) return undefined;
     if (!isPortfolio) return (records[apModel.id] ?? []).find((r) => r.id === recordId);
-    const raw = portfolioRecord?.data?.project;
-    const linkedId = Array.isArray(raw) ? (typeof raw[0] === 'string' ? raw[0] : null) : (typeof raw === 'string' ? raw : null);
-    return linkedId ? (records[apModel.id] ?? []).find((r) => r.id === linkedId) : undefined;
-  }, [apModel, isPortfolio, records, recordId, portfolioRecord]);
+    return linkedMasterId ? (records[apModel.id] ?? []).find((r) => r.id === linkedMasterId) : undefined;
+  }, [apModel, isPortfolio, records, recordId, linkedMasterId]);
+
+  // Portfolio master-load fix: all_projects pages in as a summary set, so a
+  // portfolio record opened before that finishes would find no master and
+  // wrongly render "unlinked". Ensure the collection is loaded, and treat a
+  // missing master as LOADING (not unlinked) until the load completes — only
+  // then is a still-absent link genuinely missing. (Hooks stay above the
+  // early returns below — React #310.)
+  const apLoad = apModel ? summaryLoadState[apModel.id] : undefined;
+  const apLoaded = !!apLoad?.loaded;
+  useEffect(() => {
+    if (isPortfolio && linkedMasterId && !record && apModel && !apLoaded && !apLoad?.loading) {
+      void loadSummaryRecords(apModel.id);
+    }
+  }, [isPortfolio, linkedMasterId, record, apModel, apLoaded, apLoad?.loading, loadSummaryRecords]);
+  const masterLoading = isPortfolio && !!linkedMasterId && !record && !apLoaded;
 
   const translationVersion = useRecordTranslationVersion();
   const view: ProjectView | null = useMemo(
@@ -100,9 +131,14 @@ export default function ProjectDetailPage(
   const navModel = isPortfolio ? ourModel : apModel;
   const orderedIds = useMemo(() => {
     if (!navModel) return [];
-    if (recordNavContext && recordNavContext.modelId === navModel.id) return recordNavContext.orderedIds;
+    // Prefer the immutable per-navigation snapshot from the opening surface.
+    // This is the ONLY cross-surface ordering source now — no shared global
+    // slot — so a project opened from one list can never inherit another
+    // list's prev/next. A deep link (no state) falls back to the model's own
+    // insertion order, which is never another surface's filtered ordering.
+    if (navState?.orderedIds && navState.modelId === navModel.id) return navState.orderedIds;
     return (records[navModel.id] ?? []).map((r) => r.id);
-  }, [navModel, recordNavContext, records]);
+  }, [navModel, navState, records]);
   const currentIndex = recordId ? orderedIds.indexOf(recordId) : -1;
   const prevId = currentIndex > 0 ? orderedIds[currentIndex - 1] ?? null : null;
   const nextId = currentIndex >= 0 && currentIndex < orderedIds.length - 1 ? orderedIds[currentIndex + 1] ?? null : null;
@@ -135,12 +171,33 @@ export default function ProjectDetailPage(
   const navBtn = 'p-2 rounded-lg hover:bg-sand/30 text-charcoal/40 hover:text-charcoal transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-charcoal/40';
   const heroName = view?.name ?? asString(portfolioRecord?.data?.project_name) ?? `#${recordId?.slice(0, 8) ?? ''}`;
   const portfolioStatus = isPortfolio ? optionFor(fieldByCandidates(ourModel, ['portfolio_status']), portfolioRecord?.data?.portfolio_status) : null;
-  const NoMaster = () => (
-    <div className="card p-10 text-center text-charcoal/50 text-sm">
-      {isAr ? 'هذا السجل غير مرتبط بمشروع رئيسي في «جميع المشاريع».' : 'This record is not linked to a master project in All Projects.'}{' '}
-      <button className="text-copper underline" onClick={() => navigate(editHref)}>{isAr ? 'اربط مشروعاً' : 'Link a project'}</button>
-    </div>
-  );
+  const NoMaster = () => {
+    // Still paging in the all_projects set → this is loading, not unlinked.
+    if (masterLoading) {
+      return (
+        <div className="card p-10 text-center text-charcoal/40 text-sm">
+          {isAr ? 'جارٍ تحميل المشروع الرئيسي…' : 'Loading the master project…'}
+        </div>
+      );
+    }
+    // Link is set but the referenced record genuinely can't be found (deleted
+    // master, or an id no longer in All Projects) — distinct from "no link".
+    if (linkedMasterId) {
+      return (
+        <div className="card p-10 text-center text-charcoal/50 text-sm">
+          {isAr ? 'المشروع الرئيسي المرتبط غير موجود في «جميع المشاريع».' : 'The linked master project could not be found in All Projects.'}{' '}
+          <button className="text-copper underline" onClick={() => navigate(editHref)}>{isAr ? 'أعد الربط' : 'Re-link'}</button>
+        </div>
+      );
+    }
+    // No link at all.
+    return (
+      <div className="card p-10 text-center text-charcoal/50 text-sm">
+        {isAr ? 'هذا السجل غير مرتبط بمشروع رئيسي في «جميع المشاريع».' : 'This record is not linked to a master project in All Projects.'}{' '}
+        <button className="text-copper underline" onClick={() => navigate(editHref)}>{isAr ? 'اربط مشروعاً' : 'Link a project'}</button>
+      </div>
+    );
+  };
   // Payment Plans tab shows only when the project actually has a plan menu
   // (built from its units) — no empty tab on plan-less projects.
   const hasPaymentPlans =
@@ -164,7 +221,7 @@ export default function ProjectDetailPage(
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
-          onClick={embedded ? onClose : () => navigate(listHref)}
+          onClick={embedded ? onClose : () => navigate(navState?.from ?? listHref)}
           title={
             embedded
               ? (isAr ? 'العودة إلى خيارات العميل' : 'Back to Client Options')
@@ -184,7 +241,7 @@ export default function ProjectDetailPage(
             )}
             <button
               type="button"
-              onClick={() => prevId && navigate(`${listHref}/${prevId}`)}
+              onClick={() => prevId && navigate(`${listHref}/${prevId}`, { state: { nav: { modelId: navModel?.id, orderedIds, from: navState?.from } } })}
               disabled={!prevId}
               title={isAr ? 'السجل السابق' : 'Previous record'}
               aria-label={isAr ? 'السجل السابق' : 'Previous record'}
@@ -194,7 +251,7 @@ export default function ProjectDetailPage(
             </button>
             <button
               type="button"
-              onClick={() => nextId && navigate(`${listHref}/${nextId}`)}
+              onClick={() => nextId && navigate(`${listHref}/${nextId}`, { state: { nav: { modelId: navModel?.id, orderedIds, from: navState?.from } } })}
               disabled={!nextId}
               title={isAr ? 'السجل التالي' : 'Next record'}
               aria-label={isAr ? 'السجل التالي' : 'Next record'}

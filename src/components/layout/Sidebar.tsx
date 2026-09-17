@@ -51,7 +51,7 @@ import { useAppStore } from '@/stores/appStore';
 import { hasPermission, canAccessPage, isModelSidebarHidden, resolveEffectiveProfile } from '@/lib/permissions';
 import { CUSTOM_PAGES } from '@/lib/customPages';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
-import { isRetiredModel } from '@/lib/featureFlags';
+import { isRetiredModel, isWorkspaceHiddenModel } from '@/lib/featureFlags';
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
 
@@ -174,12 +174,15 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   // user edits it via /settings/website rather than navigating to a model.
   const SETTINGS_ONLY_MODEL_NAMES = new Set(['site_settings', 'project_details']);
 
-  // Hide retired assistants (Project-Finder-only direction) AND archived
-  // modules (decks, image studio, data migration wizard, Designs suite — see
-  // ARCHIVED_MODULE_MODELS in featureFlags.ts). Non-destructive — the models
-  // and their data still exist; they're just no longer surfaced in nav.
+  // Hide retired assistants (Project-Finder-only direction), archived modules
+  // (decks, image studio, data migration wizard, Designs suite — see
+  // ARCHIVED_MODULE_MODELS in featureFlags.ts), AND workspace-hidden models
+  // (architecture cleanup Phase 1 — raw lookup/lifecycle/geography rows now
+  // surfaced through workspaces + Client 360; see WORKSPACE_HIDDEN_MODEL_NAMES).
+  // All non-destructive — the models, their data, routes, and triggers stay;
+  // only the sidebar button is dropped.
   const navHidden = (m: typeof models[number]) =>
-    SETTINGS_ONLY_MODEL_NAMES.has(m.name) || isRetiredModel(m.name);
+    SETTINGS_ONLY_MODEL_NAMES.has(m.name) || isRetiredModel(m.name) || isWorkspaceHiddenModel(m.name);
 
   const ungroupedModels = models
     .filter((m) => !m.group_id && canView(m.id) && !navHidden(m) && !sidebarHidden(m.id))

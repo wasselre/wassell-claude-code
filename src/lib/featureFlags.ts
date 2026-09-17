@@ -99,6 +99,47 @@ export function isRetiredModel(name: string | null | undefined): boolean {
   return !!name && (ARCHIVED_MODULE_MODELS as readonly string[]).includes(name);
 }
 
+/**
+ * WORKSPACE-HIDDEN MODELS (2026-09-16, architecture cleanup Phase 1 — decisions
+ * D10/D11/D20/D21/D23/D24/D41/D46/D47 in docs/architecture-cleanup-build-plan.md).
+ *
+ * Raw model nav rows hidden from the sidebar because their data is (or will be)
+ * surfaced inside a workspace, a Client 360 tab, or a contextual drill-in —
+ * NOT because the model is retired or archived.
+ *
+ * Deliberately WEAKER than `ARCHIVED_MODULE_MODELS`: this ONLY drops the sidebar
+ * button. The `/model/<name>` route stays fully live (no archived-module
+ * notice), the data still loads, and every workflow trigger / rollup / lookup /
+ * document-template binding keeps working. Reversible with zero data change —
+ * delete the name to restore its nav row.
+ */
+export const WORKSPACE_HIDDEN_MODEL_NAMES = [
+  // D10 — lookup dimensions, surfaced in Projects & Inventory / contextually.
+  'developers', 'marketers', 'project_officers', 'unit_updates',
+  // D11 — units live in a project's Units tab + Project Finder.
+  'units',
+  // D20 — sales-lifecycle milestones, surfaced on Client 360. Models + triggers
+  // + doc-template bindings (offer_prices, reservations) all stay.
+  'offer_prices', 'reservations', 'financing', 'ownership_transfer', 'visits',
+  // D21 — calls shown contextually on Client 360 (Hatif webhook writer stays).
+  'phone_calls',
+  // D23 — lives in Client 360's Options tab.
+  'client_property_options',
+  // D24 — reachable inside Chats as a Templates tab (powers every send flow).
+  'chat_templates',
+  // D41 — geography lookups feeding Project Finder.
+  'countries', 'regions', 'cities', 'districts',
+  // D46 — hidden now; activated later with the unanswered-requests feature (D38).
+  'real_estate_offices',
+  // D47 — data retained, nav off now (shares the market-listings archived state).
+  'advertisers',
+] as const;
+
+/** True when a model's sidebar row is hidden because it's surfaced in a workspace. */
+export function isWorkspaceHiddenModel(name: string | null | undefined): boolean {
+  return !!name && (WORKSPACE_HIDDEN_MODEL_NAMES as readonly string[]).includes(name);
+}
+
 let cache: Promise<Record<string, boolean>> | null = null;
 
 export function loadFeatureFlags(): Promise<Record<string, boolean>> {

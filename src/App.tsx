@@ -57,6 +57,7 @@ const ProjectDetailPage = lazy(() => import('@/pages/Projects/ProjectDetailPage'
 const ClientsListPage = lazy(() => import('@/pages/Clients/ClientsListPage'));
 const ClientDetailPage = lazy(() => import('@/pages/Clients/ClientDetailPage'));
 const OurProjectsPortfolioPage = lazy(() => import('@/pages/Projects/OurProjectsPortfolioPage'));
+const ProjectsInventoryWorkspace = lazy(() => import('@/pages/ProjectsInventory/ProjectsInventoryWorkspace'));
 const SalesValuationReviewPage = lazy(() => import('@/pages/SalesValuation/ReviewDetailPage'));
 const SalesValuationQueuePage = lazy(() => import('@/pages/SalesValuation/QueuePage'));
 const SalesValuationBoardPage = lazy(() => import('@/pages/SalesValuation/CorrectionBoardPage'));
@@ -443,6 +444,10 @@ export default function App() {
           <Route path="/market-automation" element={MARKET_LISTINGS_ARCHIVED ? <RetiredAssistantNotice /> : <RequirePageAccess pageId="market_automation"><MarketAutomationPage /></RequirePageAccess>} />
           <Route path="/marketing-intelligence" element={<RequirePageAccess pageId="marketing_intelligence"><MarketingIntelligencePage /></RequirePageAccess>} />
           <Route path="/competitor-watch" element={<RequirePageAccess pageId="competitor_watch"><CompetitorWatchPage /></RequirePageAccess>} />
+          {/* Projects & Inventory workspace — one entry, section tabs gated by
+              the pi_* access-only page ids (managed in Settings → Profiles). */}
+          <Route path="/projects-inventory" element={<RequirePageAccess pageId="projects_inventory"><ProjectsInventoryWorkspace /></RequirePageAccess>} />
+          <Route path="/projects-inventory/:section" element={<RequirePageAccess pageId="projects_inventory"><ProjectsInventoryWorkspace /></RequirePageAccess>} />
           {/* The old in-Sales marketing page is gone. Anyone with a bookmark
               (or a profile whose sidebar still points here) lands in the new
               workspace instead of on a blank route. */}
@@ -453,7 +458,7 @@ export default function App() {
           {/* Geography Understanding — rep-facing review surface: confirm / edit /
               reject / must-confirm the location preferences the ability proposed
               for a client, before any of it is applied. */}
-          <Route path="/geo-review" element={<GeoReviewPage />} />
+          <Route path="/geo-review" element={<RequireAdmin><GeoReviewPage /></RequireAdmin>} />
           {/* Geography Understanding — gold-set labeling instrument (blind label →
               adjudication → canonical answer key). Internal ability-building tool. */}
           <Route path="/geo-labeling" element={<RequireAdmin><GeoLabelingPage /></RequireAdmin>} />

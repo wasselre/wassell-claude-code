@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench } from 'lucide-react';
 import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 
 /**
@@ -41,7 +41,19 @@ export type CustomPageId =
   | 'financing_calculator'
   | 'market_automation'
   | 'competitor_watch'
-  | 'follow_up_queue';
+  | 'follow_up_queue'
+  // Projects & Inventory workspace (one visible sidebar row) + its sections.
+  // The section ids are access-only (hidden_from_sidebar) — they gate the
+  // section TABS inside the workspace and appear in Settings → Profiles so
+  // access is managed by the existing per-profile system, not hardcoded by
+  // role. Underlying model RLS + field permissions still apply beneath them.
+  | 'projects_inventory'
+  | 'pi_command_center'
+  | 'pi_portfolio'
+  | 'pi_market_registry'
+  | 'pi_customer_demand'
+  | 'pi_update_operations'
+  | 'pi_raw_admin';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -214,6 +226,11 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Financing Calculator',
     icon: Calculator,
     default_access: 'admin',
+    // Architecture cleanup Phase 1 (D22): hidden from the main nav — the
+    // calculator is a contextual tool deep-linked from a client, not a
+    // standalone destination. Route + per-profile access unchanged, so a
+    // direct URL still works. Restore = delete this flag.
+    hidden_from_sidebar: true,
   },
   {
     // The market-ingest cockpit: raw evidence, field decisions, data health, and the
@@ -230,6 +247,78 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     // Archived with the market-listings module (2026-09-14) — the cockpit
     // governs an ingest pipeline that no longer runs.
     archived: MARKET_LISTINGS_ARCHIVED,
+  },
+  // ── Projects & Inventory workspace ───────────────────────────────────────
+  // ONE visible sidebar row. Opens a workspace whose sections (Command Center,
+  // Portfolio, Market Registry, Update Operations) are gated by the access-only
+  // page ids below. All manageable per-profile in Settings → Profiles.
+  {
+    id: 'projects_inventory',
+    route: '/projects-inventory',
+    label_ar: 'المشاريع والمخزون',
+    label_en: 'Projects & Inventory',
+    icon: Boxes,
+    // Broadly useful sales/ops workspace; revoke per profile if needed.
+    default_access: 'all',
+  },
+  // Section access ids — access-only, no sidebar row. Each gates a workspace
+  // section tab (RequirePageAccess also protects the section sub-route).
+  {
+    id: 'pi_command_center',
+    route: '/projects-inventory/command-center',
+    label_ar: 'مركز القيادة — المشاريع والمخزون',
+    label_en: 'Command Center (Projects & Inventory)',
+    icon: LayoutDashboard,
+    default_access: 'all',
+    hidden_from_sidebar: true,
+  },
+  {
+    id: 'pi_portfolio',
+    route: '/projects-inventory/portfolio',
+    label_ar: 'المحفظة — المشاريع والمخزون',
+    label_en: 'Portfolio (Projects & Inventory)',
+    icon: Star,
+    default_access: 'all',
+    hidden_from_sidebar: true,
+  },
+  {
+    id: 'pi_market_registry',
+    route: '/projects-inventory/registry',
+    label_ar: 'سجل السوق — المشاريع والمخزون',
+    label_en: 'Market Registry (Projects & Inventory)',
+    icon: Building2,
+    default_access: 'all',
+    hidden_from_sidebar: true,
+  },
+  {
+    id: 'pi_customer_demand',
+    route: '/projects-inventory/demand',
+    label_ar: 'طلب العملاء — المشاريع والمخزون',
+    label_en: 'Customer Demand (Projects & Inventory)',
+    icon: Users,
+    // Demand analytics land in a later phase; admin-gated until then.
+    default_access: 'admin',
+    hidden_from_sidebar: true,
+  },
+  {
+    id: 'pi_update_operations',
+    route: '/projects-inventory/updates',
+    label_ar: 'عمليات التحديث — المشاريع والمخزون',
+    label_en: 'Update Operations (Projects & Inventory)',
+    icon: RefreshCw,
+    // Provisional read-only shell; admin-gated.
+    default_access: 'admin',
+    hidden_from_sidebar: true,
+  },
+  {
+    id: 'pi_raw_admin',
+    route: '/projects-inventory/admin',
+    label_ar: 'الإدارة المتقدمة — المشاريع والمخزون',
+    label_en: 'Raw Administration (Projects & Inventory)',
+    icon: Wrench,
+    // Reach to the raw supporting model tables (developers/marketers/units…).
+    default_access: 'admin',
+    hidden_from_sidebar: true,
   },
 ];
 

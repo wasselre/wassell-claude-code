@@ -9,6 +9,22 @@ import {
   Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film, Bot, ShieldCheck, Wallet,
 } from 'lucide-react';
 
+// Settings sections (architecture cleanup Phase 1 — D40 System Administration
+// area + D31 Webhooks under Workflow/integrations). Purely a nav grouping of
+// the existing cards; no route or access change. Some sections (Team & Access,
+// Website, WhatsApp) are collapsed into single unified pages in Phase 2 — until
+// then the related cards are grouped here.
+type SectionId = 'system_admin' | 'team_access' | 'whatsapp' | 'website' | 'marketing' | 'documents';
+
+const SECTIONS: { id: SectionId; titleAr: string; titleEn: string }[] = [
+  { id: 'system_admin', titleAr: 'إدارة النظام', titleEn: 'System Administration' },
+  { id: 'team_access', titleAr: 'الفريق والصلاحيات', titleEn: 'Team & Access' },
+  { id: 'whatsapp', titleAr: 'واتساب', titleEn: 'WhatsApp' },
+  { id: 'website', titleAr: 'الموقع الإلكتروني', titleEn: 'Website' },
+  { id: 'marketing', titleAr: 'التسويق', titleEn: 'Marketing' },
+  { id: 'documents', titleAr: 'المستندات والسجلات', titleEn: 'Documents & Records' },
+];
+
 interface SettingsCard {
   titleAr: string;
   titleEn: string;
@@ -19,6 +35,7 @@ interface SettingsCard {
   bg: string;
   route: string;
   adminOnly: boolean;
+  section: SectionId;
 }
 
 const CARDS: SettingsCard[] = [
@@ -31,6 +48,7 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/builder',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
@@ -42,6 +60,7 @@ const CARDS: SettingsCard[] = [
     color: '#C09B5F',
     bg: '#C09B5F14',
     route: '/settings/menu',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
@@ -53,6 +72,7 @@ const CARDS: SettingsCard[] = [
     color: '#059669',
     bg: '#05966914',
     route: '/workflow',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
@@ -64,6 +84,7 @@ const CARDS: SettingsCard[] = [
     color: '#0369A1',
     bg: '#0369A114',
     route: '/workflow/logs',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
@@ -75,6 +96,7 @@ const CARDS: SettingsCard[] = [
     color: '#2563EB',
     bg: '#2563EB14',
     route: '/dashboards',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
@@ -86,6 +108,7 @@ const CARDS: SettingsCard[] = [
     color: '#7C3AED',
     bg: '#7C3AED14',
     route: '/settings/translations',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
@@ -97,6 +120,7 @@ const CARDS: SettingsCard[] = [
     color: '#D97706',
     bg: '#D9770614',
     route: '/settings/profiles',
+    section: 'team_access',
     adminOnly: true,
   },
   {
@@ -108,6 +132,7 @@ const CARDS: SettingsCard[] = [
     color: '#0D9488',
     bg: '#0D948814',
     route: '/settings/roles',
+    section: 'team_access',
     adminOnly: true,
   },
   {
@@ -119,6 +144,7 @@ const CARDS: SettingsCard[] = [
     color: '#4F46E5',
     bg: '#4F46E514',
     route: '/settings/users',
+    section: 'team_access',
     adminOnly: true,
   },
   {
@@ -130,6 +156,7 @@ const CARDS: SettingsCard[] = [
     color: '#DB2777',
     bg: '#DB277714',
     route: '/settings/webhooks',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
@@ -141,6 +168,7 @@ const CARDS: SettingsCard[] = [
     color: '#25D366',
     bg: '#25D36614',
     route: '/settings/whatsapp-numbers',
+    section: 'whatsapp',
     adminOnly: true,
   },
   {
@@ -152,6 +180,7 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/settings/whatsapp-ai',
+    section: 'whatsapp',
     adminOnly: true,
   },
   {
@@ -163,6 +192,7 @@ const CARDS: SettingsCard[] = [
     color: '#25D366',
     bg: '#25D36614',
     route: '/settings/whatsapp-permissions',
+    section: 'team_access',
     adminOnly: true,
   },
   {
@@ -174,6 +204,7 @@ const CARDS: SettingsCard[] = [
     color: '#7C3AED',
     bg: '#7C3AED14',
     route: '/settings/audit-log',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
@@ -185,6 +216,7 @@ const CARDS: SettingsCard[] = [
     color: '#0F766E',
     bg: '#0F766E14',
     route: '/settings/ai-usage',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
@@ -196,6 +228,7 @@ const CARDS: SettingsCard[] = [
     color: '#8E4E3A',
     bg: '#8E4E3A14',
     route: '/careers/applications',
+    section: 'documents',
     adminOnly: true,
   },
   {
@@ -207,6 +240,7 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/settings/website',
+    section: 'website',
     adminOnly: true,
   },
   {
@@ -218,6 +252,7 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/model/lead_portals',
+    section: 'documents',
     adminOnly: true,
   },
   {
@@ -229,6 +264,7 @@ const CARDS: SettingsCard[] = [
     color: '#8E4E3A',
     bg: '#8E4E3A14',
     route: '/settings/document-templates',
+    section: 'documents',
     adminOnly: true,
   },
   {
@@ -240,6 +276,7 @@ const CARDS: SettingsCard[] = [
     color: '#C4754A',
     bg: '#C4754A14',
     route: '/settings/project-details',
+    section: 'website',
     adminOnly: true,
   },
   {
@@ -251,6 +288,7 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/settings/geo-elements',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
@@ -262,6 +300,7 @@ const CARDS: SettingsCard[] = [
     color: '#8E4E3A',
     bg: '#8E4E3A14',
     route: '/settings/marketing-ops',
+    section: 'marketing',
     adminOnly: true,
   },
   {
@@ -273,6 +312,7 @@ const CARDS: SettingsCard[] = [
     color: '#4A2C2A',
     bg: '#4A2C2A14',
     route: '/settings/content-intelligence',
+    section: 'marketing',
     adminOnly: true,
   },
   {
@@ -284,6 +324,7 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/settings/marketing-advertisers',
+    section: 'marketing',
     adminOnly: true,
   },
 ];
@@ -321,35 +362,49 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Cards grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {visibleCards.map((card) => {
-          const Icon = card.icon;
+      {/* Cards grouped by section (D40 System Administration + D31 Webhooks).
+          A section header renders only when it has at least one visible card. */}
+      <div className="space-y-8">
+        {SECTIONS.map((section) => {
+          const sectionCards = visibleCards.filter((c) => c.section === section.id);
+          if (sectionCards.length === 0) return null;
           return (
-            <button
-              key={card.route}
-              onClick={() => navigate(card.route)}
-              className="card p-5 flex items-start gap-4 text-start w-full hover:border-copper/30 transition-all group"
-            >
-              <div
-                className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
-                style={{ backgroundColor: card.bg }}
-              >
-                <Icon size={20} style={{ color: card.color }} />
+            <section key={section.id}>
+              <h2 className="text-[0.6875rem] font-bold text-charcoal/30 uppercase tracking-widest mb-3">
+                {isAr ? section.titleAr : section.titleEn}
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {sectionCards.map((card) => {
+                  const Icon = card.icon;
+                  return (
+                    <button
+                      key={card.route}
+                      onClick={() => navigate(card.route)}
+                      className="card p-5 flex items-start gap-4 text-start w-full hover:border-copper/30 transition-all group"
+                    >
+                      <div
+                        className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: card.bg }}
+                      >
+                        <Icon size={20} style={{ color: card.color }} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-bold text-charcoal group-hover:text-copper transition-colors">
+                          {isAr ? card.titleAr : card.titleEn}
+                        </h3>
+                        <p className="text-xs text-charcoal/40 mt-0.5 leading-relaxed">
+                          {isAr ? card.descAr : card.descEn}
+                        </p>
+                      </div>
+                      <ChevronRight
+                        size={16}
+                        className="text-charcoal/15 group-hover:text-copper/50 transition-colors mt-1 shrink-0 rtl:rotate-180"
+                      />
+                    </button>
+                  );
+                })}
               </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-charcoal group-hover:text-copper transition-colors">
-                  {isAr ? card.titleAr : card.titleEn}
-                </h3>
-                <p className="text-xs text-charcoal/40 mt-0.5 leading-relaxed">
-                  {isAr ? card.descAr : card.descEn}
-                </p>
-              </div>
-              <ChevronRight
-                size={16}
-                className="text-charcoal/15 group-hover:text-copper/50 transition-colors mt-1 shrink-0 rtl:rotate-180"
-              />
-            </button>
+            </section>
           );
         })}
       </div>
