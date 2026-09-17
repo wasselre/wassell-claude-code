@@ -136,6 +136,23 @@ function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): nu
 
 /** Optional geo context passed into scoreProject: the project's own coords and
  *  the requested district's centroid. When absent, scoring is pure text. */
+/** One piece of the client's selected geographical AREA, for the closest-point
+ *  distance RPC (`wassell_area_point_distances`). A district polygon (by records
+ *  id), a hand-drawn area (closed GeoJSON ring), or a geo-element optionally
+ *  buffered into a disk/band by `buffer_m` metres (a "within X of Y" rule). */
+export interface AreaPiece {
+  name?: string | null;
+  kind: 'district' | 'polygon' | 'element';
+  /** kind='district': the districts records.id whose boundary is the area. */
+  district_id?: string;
+  /** kind='polygon': a GeoJSON Polygon geometry (`{type:'Polygon',coordinates}`). */
+  geojson?: unknown;
+  /** kind='element': the geo_elements.external_id of the landmark/road/zone. */
+  external_id?: string;
+  /** kind='element': buffer radius in metres (0/absent ⇒ the raw element geometry). */
+  buffer_m?: number;
+}
+
 export interface GeoContext {
   projLat?: number | null;
   projLng?: number | null;
@@ -161,6 +178,17 @@ export interface GeoContext {
   // `name` labels each reference so results can say "~4 km from X" — the
   // distance shown is always to the NEAREST reference.
   reqCentroids?: Array<{ lat: number; lng: number; name?: string | null }>;
+  // CLOSEST-POINT distance (km) from this project to the boundary of the selected
+  // geographical area, precomputed by the caller via the `wassell_area_point_distances`
+  // RPC (min surface distance to the union of the requested district polygons +
+  // drawn areas + element rules; 0 when the pin is inside). When set it OVERRIDES the
+  // centroid haversine over `reqCentroids` — a project 1 km outside a district reads
+  // "~1 km", not its (larger) distance to the district centre. Null ⇒ fall back to the
+  // centroid haversine (the AI-agent path passes no polygons).
+  areaDistanceKm?: number | null;
+  // Name of the nearest area piece the closest-point distance was measured to
+  // (the "~X km from Y" label), paired with `areaDistanceKm`.
+  areaNearestName?: string | null;
   // The scored record's OWN geography, extracted from its `location` cascade field
   // ({region,city,district} ids) by the caller. The district id drives the exact
   // tier, the city id the same-city tier. Names are resolved (display_name) from the
@@ -829,23 +857,36 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   //    location element). Computed for EVERY candidate with coords — same-city and
   //    broader results still show how far they sit from the closest requested
   //    area, and element-only preferences (no district picked) get distances too. ──
-  const refPoints: Array<{ lat: number; lng: number; name?: string | null }> =
-    geo?.reqCentroids && geo.reqCentroids.length
-      ? geo.reqCentroids
-      : geo?.reqLat != null && geo?.reqLng != null
-        ? [{ lat: geo.reqLat, lng: geo.reqLng }]
-        : [];
   let dist: number | null = null;
-  if (geo?.projLat != null && geo?.projLng != null) {
-    for (const c of refPoints) {
-      const d = haversineKm(geo.projLat, geo.projLng, c.lat, c.lng);
-      if (dist == null || d < dist) {
-        dist = d;
-        nearestRefName = c.name ?? null;
+  if (geo?.areaDistanceKm != null && Number.isFinite(geo.areaDistanceKm)) {
+    // Precomputed CLOSEST-POINT distance to the selected area's boundary (PostGIS,
+    // via wassell_area_point_distances). This is the finder's real metric — how far
+    // the project sits from the nearest EDGE of the wanted area, not its centre.
+    dist = geo.areaDistanceKm;
+    nearestRefName = geo.areaNearestName ?? null;
+  } else {
+    // Fallback (AI-agent path / no polygons available): haversine to the nearest
+    // requested CENTRE point — the requested districts' centroids + selected element
+    // anchors.
+    const refPoints: Array<{ lat: number; lng: number; name?: string | null }> =
+      geo?.reqCentroids && geo.reqCentroids.length
+        ? geo.reqCentroids
+        : geo?.reqLat != null && geo?.reqLng != null
+          ? [{ lat: geo.reqLat, lng: geo.reqLng }]
+          : [];
+    if (geo?.projLat != null && geo?.projLng != null) {
+      for (const c of refPoints) {
+        const d = haversineKm(geo.projLat, geo.projLng, c.lat, c.lng);
+        if (dist == null || d < dist) {
+          dist = d;
+          nearestRefName = c.name ?? null;
+        }
       }
     }
   }
-  distanceKm = dist != null ? Math.round(dist * 10) / 10 : null;
+  // Sub-100 m rounds to 0 → the pin is effectively IN the area, so drop the pill
+  // (an "in the requested district" match shouldn't read "~0 km from it").
+  distanceKm = dist != null ? (Math.round(dist * 10) / 10 || null) : null;
   if (districtRequested || cityRequested) {
     // Lookup-ONLY (no legacy text): a match is authoritative id equality — the
     // project's verified district vs the resolved requested district(s), its city
@@ -1874,6 +1915,13 @@ export interface MatchCoreOptions {
    *  the requested districts' centroids so every result's distance_km is measured
    *  to the NEAREST selected district OR element, labelled by `name`. */
   refPoints?: Array<{ lat: number; lng: number; name?: string | null }>;
+  /** Selected-area pieces (drawn areas + element rules) for the CLOSEST-POINT
+   *  distance RPC. The requested district polygons are added automatically from the
+   *  resolved district ids; the endpoint supplies the non-district pieces (which it
+   *  parses from `location_items`). Every candidate's `distance_km` becomes the min
+   *  surface distance to the boundary of their union (0 when inside), replacing the
+   *  centroid haversine. Omitted ⇒ centroid haversine (unchanged AI-agent behavior). */
+  areaPieces?: AreaPiece[];
   /** Bilingual W6: language for the geography names on result facts
    *  (projCityName / projDistrictName). Default 'ar' keeps the AI sales-agent
    *  match_projects output byte-identical; the finder endpoints pass the caller's
@@ -2145,8 +2193,45 @@ export async function matchProjectsCore(
   const districtNameById = await geoNameMap(supabase, 'districts', [
     ...rows.map((r) => recordLocationIds(r.data).district),
     ...polyDistrictIds,
+    ...reqDistrictIds, // requested districts → names for the closest-point area pieces
   ], geoLocale);
   const cityNameById = await geoNameMap(supabase, 'cities', rows.map((r) => recordLocationIds(r.data).city), geoLocale);
+
+  // ── CLOSEST-POINT distance to the SELECTED AREA (not its centre). Build the
+  //    area's pieces — the requested district polygons + any drawn areas / element
+  //    rules the endpoint parsed from location_items — and ask PostGIS for each
+  //    candidate's min surface distance to their union (0 inside). Injected into
+  //    scoreProject's geo as areaDistanceKm; when this yields nothing (no pieces,
+  //    no coords, or the AI-agent path) the scorer falls back to the centroid
+  //    haversine. Best-effort: an RPC failure logs and falls back, never sinks the
+  //    search. ──
+  const areaDistById = new Map<string, { km: number; name: string | null }>();
+  {
+    const areaPieces: AreaPiece[] = [
+      ...reqDistrictIds.map((did): AreaPiece => ({ kind: 'district', district_id: did, name: districtNameById.get(did) ?? null })),
+      ...(opts.areaPieces ?? []),
+    ];
+    if (areaPieces.length) {
+      const pts = rows
+        .map((r) => ({ id: r.id, lat: asNum(r.data.latitude), lng: asNum(r.data.longitude) }))
+        .filter((p): p is { id: string; lat: number; lng: number } => p.lat != null && p.lng != null);
+      if (pts.length) {
+        const { data: distRows, error: distErr } = await supabase.rpc('wassell_area_point_distances', {
+          p_points: pts,
+          p_pieces: areaPieces,
+        });
+        if (distErr) {
+          console.error('[matchProjectsCore] area distance RPC failed (non-fatal, centroid fallback):', distErr.message);
+        } else {
+          for (const d of (distRows ?? []) as Array<{ id: string; distance_km: number | null; nearest_name: string | null }>) {
+            if (typeof d.distance_km === 'number' && Number.isFinite(d.distance_km)) {
+              areaDistById.set(d.id, { km: d.distance_km, name: d.nearest_name ?? null });
+            }
+          }
+        }
+      }
+    }
+  }
 
   // Rank by BAND first, then score — so a genuine good/strong match always
   // outranks a 'partial' one even if the partial has a higher raw score (e.g. a
@@ -2270,6 +2355,7 @@ export async function matchProjectsCore(
       // development stock by definition, so an age-capped client never sees it
       // penalized as "age unknown". A real data.unit_age (if ever added to the
       // schema) overrides via the spread.
+      const ad = areaDistById.get(r.id);
       const s = scoreProject({ unit_age: 0, ...r.data }, req, {
         projLat: g.projLat,
         projLng: g.projLng,
@@ -2280,6 +2366,8 @@ export async function matchProjectsCore(
         reqDistrictIds,
         reqCityIds,
         reqCentroids,
+        areaDistanceKm: ad ? ad.km : null,
+        areaNearestName: ad ? ad.name : null,
         geoConfidence: g.geoConfidence,
         projDistrictId: g.projDistrictId,
         projCityId: loc.city || null,
@@ -2437,7 +2525,7 @@ export async function matchProjectsCore(
   const notes: string[] = [];
   if (req.district && !anyDistrictExact) {
     if (anyNearby) {
-      notes.push(`No project in "${req.district}" exactly. Showing NEARBY-district alternatives ranked by real distance to ${req.district}'s centre (each result carries distance_km) plus same-city options.`);
+      notes.push(`No project in "${req.district}" exactly. Showing NEARBY-district alternatives ranked by real distance to the edge of "${req.district}" (each result carries distance_km) plus same-city options.`);
     } else if (reqLat == null) {
       notes.push(`No project in "${req.district}", and no coordinates for that district — showing same-city text alternatives (distance could not be computed).`);
     } else {

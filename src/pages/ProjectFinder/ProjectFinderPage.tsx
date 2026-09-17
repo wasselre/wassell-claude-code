@@ -207,6 +207,9 @@ export default function ProjectFinderPage() {
   const [confirmLeave, setConfirmLeave] = useState(false);
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
+  // The requirements AS SEARCHED (captured with the results so the per-card unit
+  // ranking matches the projects that were actually returned, not a later draft edit).
+  const [searchedRequirements, setSearchedRequirements] = useState<MatchRequirementsInput | null>(null);
   // The client's selected area AS SEARCHED (captured with the results, so the map
   // highlights the area that produced the pins, not a draft edited afterwards).
   const [searchedAreaItems, setSearchedAreaItems] = useState<LocationItem[]>([]);
@@ -363,10 +366,12 @@ export default function ProjectFinderPage() {
     // A fresh search resets the refinement controls so the full ≥ floor set is shown.
     setScoreThreshold(FETCH_FLOOR);
     setRefine(REFINE_DEFAULT);
+    const reqs = buildRequirements();
+    setSearchedRequirements(reqs);
     try {
       const r = await fetchProjectFinder(
         {
-          requirements: buildRequirements(),
+          requirements: reqs,
           // A selected client geo-gates the search (client_id + their current
           // location_items) and lets us attach options; without one it's pure
           // discovery pulling EVERYTHING ≥ floor (score slider refines upward).
@@ -612,6 +617,7 @@ export default function ProjectFinderPage() {
       existingStatus={selectedClientId ? existingStatusFor(item) : null}
       hideClientActions={!selectedClientId}
       clientId={selectedClientId}
+      requirements={searchedRequirements ?? undefined}
     />
   );
 

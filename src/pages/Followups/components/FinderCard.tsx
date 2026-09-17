@@ -5,8 +5,10 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import ProjectUnitsModal from './ProjectUnitsModal';
+import SuggestedUnits from './SuggestedUnits';
 import DeliveryPill from '@/components/matching/DeliveryPill';
 import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus, OurFit } from '@/lib/matching/projectFinder';
+import type { MatchRequirementsInput } from '@/lib/matching/requirements';
 import { dealBadgeLabel, dealBadgeTone, type DealBadge } from '@/lib/market/dealBadge';
 import { CLIENT_OPTION_STATUS_META, CLIENT_OPTION_STATUS_ORDER, type ClientOptionStatus } from '@/lib/matching/clientOptions';
 import type { ChatPdfContext } from '@/lib/projects/sendPdfToChat';
@@ -63,6 +65,10 @@ interface Props {
    *  gains a "Save to client options" action per unit (saving the unit + its
    *  parent project). Absent (standalone discovery) → no unit-save action. */
   clientId?: string | null;
+  /** The requirements THIS search ran with. When present, the card ranks the
+   *  project's units against them and shows the best 3 inline (catalog projects
+   *  only). Absent → no suggested-units section. */
+  requirements?: MatchRequirementsInput;
 }
 
 const fmtNum = (n: number) => n.toLocaleString('en-US');
@@ -122,7 +128,7 @@ const asCoord = (v: unknown): number | null => {
 
 export default function FinderCard({
   item, isAr, onOpenDetails, selected, onToggleSelect, saveState, existingStatus,
-  onSetStatus, onSendToClient, onShowOnMap, hideClientActions, chatPdf, clientId,
+  onSetStatus, onSendToClient, onShowOnMap, hideClientActions, chatPdf, clientId, requirements,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
@@ -291,6 +297,18 @@ export default function FinderCard({
           <Spec icon={<BedDouble size={12} />} label={L('الغرف', 'Bedrooms')} value={beds} />
           <Spec icon={<Bath size={12} />} label={L('دورات المياه', 'Bathrooms')} value={baths} />
         </div>
+
+        {/* Suggested units — the project's best-fitting units for this search,
+            ranked against the client requirements (catalog projects only; a market
+            listing is itself a single unit). */}
+        {hasUnits && requirements && (
+          <SuggestedUnits
+            item={item}
+            requirements={requirements}
+            isAr={isAr}
+            onSeeAll={() => setShowUnits(true)}
+          />
+        )}
 
         {/* Data gaps */}
         {item.data_gaps.length > 0 && (

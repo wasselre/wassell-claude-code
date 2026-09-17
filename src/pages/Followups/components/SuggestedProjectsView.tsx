@@ -325,6 +325,14 @@ export default function SuggestedProjectsView({
     return draftToMatchRequirements({ clientsModel, prefDraft: d, savedClientData: clientRec?.data ?? null, resolveLookupName });
   }
 
+  // The requirements the current results were searched with — fed to each card so
+  // it can rank the project's units against the same criteria (suggested units).
+  const searchedRequirements = useMemo(
+    () => buildReqs(searchedDraft),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [searchedDraft, clientRec?.data, resolveLookupName, clientsModel],
+  );
+
   const refinedGroups = useMemo(
     () => refineGroups(resp?.groups, scoreThreshold, refine, sortKey),
     [resp, scoreThreshold, refine, sortKey],
@@ -1329,6 +1337,7 @@ export default function SuggestedProjectsView({
                   existingStatus={existingStatusFor(item)}
                   chatPdf={chatPdf}
                   clientId={clientRec?.id ?? null}
+                  requirements={searchedRequirements}
                 />
               )}
             />
@@ -1357,6 +1366,7 @@ export default function SuggestedProjectsView({
                     existingStatus={existingStatusFor(item)}
                     chatPdf={chatPdf}
                     clientId={clientRec?.id ?? null}
+                    requirements={searchedRequirements}
                   />
                 ))}
               </div>
@@ -1386,6 +1396,7 @@ export default function SuggestedProjectsView({
                     existingStatus={existingStatusFor(item)}
                     chatPdf={chatPdf}
                     clientId={clientRec?.id ?? null}
+                    requirements={searchedRequirements}
                   />
                 ))}
               </div>

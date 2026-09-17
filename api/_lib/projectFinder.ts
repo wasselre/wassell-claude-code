@@ -124,6 +124,12 @@ export interface FinderOptions {
    *  (landmark anchors), resolved from location_items → geo_elements. Every
    *  result's distance_km is measured to the NEAREST selected district OR element. */
   refPoints?: Array<{ lat: number; lng: number; name?: string | null }>;
+  /** Selected-area pieces (drawn areas + element rules from the client's
+   *  location_items) for the CLOSEST-POINT distance metric. The requested district
+   *  polygons are added by the core from the resolved district ids. Passed straight
+   *  through to matchProjectsCore; every result's distance_km becomes the distance to
+   *  the nearest EDGE of the selected area instead of its centroid. */
+  areaPieces?: import('./matchAgent.js').AreaPiece[];
 }
 
 /** Default finder sources — the verified project catalog, market opt-in. */
@@ -488,6 +494,7 @@ export async function findMatchingProjects(
     verifyGeo: true,
     geoMatchIds: opts.geoMatchIds ?? null,
     refPoints: opts.refPoints,
+    areaPieces: opts.areaPieces,
     // W6: geography names on result facts render in the caller's UI language.
     locale: opts.locale ?? 'ar',
   });

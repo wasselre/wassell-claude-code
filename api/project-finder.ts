@@ -28,7 +28,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
-import type { MatchRequirements } from './_lib/matchAgent.js';
+import type { MatchRequirements, AreaPiece } from './_lib/matchAgent.js';
 import {
   findMatchingProjects,
   hasAnyCriteria,
@@ -359,6 +359,12 @@ export default async function handler(req: Request): Promise<Response> {
     //      (within_radius / within_distance / inside_area) to their centroids.
     //      Best-effort: a failure here only costs the distance labels, never results.
     const refPoints: Array<{ lat: number; lng: number; name: string | null }> = [];
+    // Selected-area pieces for the CLOSEST-POINT distance metric (feature: distance
+    // to the nearest EDGE of the wanted area, not its centre). District polygons are
+    // added by the engine from the resolved district ids; here we add the drawn
+    // areas + element rules parsed from location_items. This is the PRIMARY distance
+    // path — refPoints (centroids) remain only as the engine's fallback.
+    const areaPieces: AreaPiece[] = [];
     try {
       let items: unknown = Array.isArray(body.location_items) ? body.location_items : null;
       if (!items && clientId) {
@@ -368,22 +374,35 @@ export default async function handler(req: Request): Promise<Response> {
         if (d && Array.isArray(d.location_items)) items = d.location_items;
       }
       if (Array.isArray(items)) {
-        // Hand-drawn areas: the polygon itself IS the wanted area but carries no
-        // named district/element, so nothing above feeds it into the distance
-        // references. Use each include polygon's centroid so out-of-area matches
-        // still get "~X km from the requested area" labels AND rank by that distance.
+        // Selected DISTRICT items → the district's polygon is a closest-point area
+        // piece. (Districts may ALSO arrive via requirements.district_ids, which the
+        // engine turns into pieces too; the RPC unions them, so overlap is harmless.)
+        for (const it of items) {
+          if (!it || typeof it !== 'object') continue;
+          const rec = it as Record<string, unknown>;
+          if (rec.kind !== 'district' || rec.polarity === 'exclude') continue;
+          const did = typeof rec.district_id === 'string' && rec.district_id.trim() ? rec.district_id.trim() : '';
+          if (!did) continue;
+          const label = typeof rec.district_label === 'string' && rec.district_label.trim() ? rec.district_label.trim() : null;
+          areaPieces.push({ kind: 'district', district_id: did, name: label });
+        }
+        // Hand-drawn areas: the polygon itself IS the wanted area. Its closed ring
+        // becomes a polygon piece (closest-point distance), and — for the fallback
+        // path only — its centroid becomes a ref point.
         for (const it of items) {
           if (!it || typeof it !== 'object') continue;
           const rec = it as Record<string, unknown>;
           if (rec.kind !== 'drawn_area' || rec.polarity === 'exclude') continue;
-          const c = polygonCentroid(rec.coordinates);
-          if (!c) continue;
           const label = typeof rec.label === 'string' && rec.label.trim()
             ? rec.label.trim()
             : (locale === 'ar' ? 'المنطقة المطلوبة' : 'the requested area');
-          refPoints.push({ lat: c.lat, lng: c.lng, name: label });
+          if (Array.isArray(rec.coordinates) && rec.coordinates.length >= 4) {
+            areaPieces.push({ kind: 'polygon', name: label, geojson: { type: 'Polygon', coordinates: [rec.coordinates] } });
+          }
+          const c = polygonCentroid(rec.coordinates);
+          if (c) refPoints.push({ lat: c.lat, lng: c.lng, name: label });
         }
-        const wanted = new Map<string, string | null>(); // external_id → stashed label
+        const wanted = new Map<string, { label: string | null; buffer_m: number }>(); // external_id → label + buffer
         for (const it of items) {
           if (!it || typeof it !== 'object') continue;
           const rec = it as Record<string, unknown>;
@@ -397,8 +416,18 @@ export default async function handler(req: Request): Promise<Response> {
             // road") has no meaningful single distance point.
             if (cc.rule !== 'within_radius' && cc.rule !== 'within_distance' && cc.rule !== 'inside_area') continue;
             const eid = typeof cc.element_id === 'string' ? cc.element_id.trim() : '';
-            if (eid && !wanted.has(eid)) wanted.set(eid, label);
+            if (!eid) continue;
+            // within_radius / within_distance carry a metre band → buffer the element
+            // into a disk; inside_area is the raw polygon (buffer 0).
+            const buf = num(cc.distance_m) ?? 0;
+            const prev = wanted.get(eid);
+            if (!prev) wanted.set(eid, { label, buffer_m: buf });
+            else wanted.set(eid, { label: prev.label ?? label, buffer_m: Math.max(prev.buffer_m, buf) });
           }
+        }
+        // Element pieces (closest-point): the RPC resolves the geometry by external_id.
+        for (const [eid, meta] of wanted) {
+          areaPieces.push({ kind: 'element', external_id: eid, name: meta.label, buffer_m: meta.buffer_m });
         }
         if (wanted.size) {
           const { data: els, error: elErr } = await supabase
@@ -412,7 +441,7 @@ export default async function handler(req: Request): Promise<Response> {
             if (lat == null || lng == null) continue;
             const eid = typeof e.external_id === 'string' ? e.external_id : '';
             const dbName = [e.display_name, e.name_ar, e.name_en].find((n): n is string => typeof n === 'string' && n.trim() !== '') ?? null;
-            refPoints.push({ lat, lng, name: wanted.get(eid) ?? dbName });
+            refPoints.push({ lat, lng, name: wanted.get(eid)?.label ?? dbName });
           }
         }
       }
@@ -433,6 +462,7 @@ export default async function handler(req: Request): Promise<Response> {
       // The gate as a PROMISE — the core awaits it after its model loads.
       geoMatchIds: geoGatePromise.then((g) => g.gate),
       refPoints: refPoints.length ? refPoints : undefined,
+      areaPieces: areaPieces.length ? areaPieces : undefined,
     });
     if (!finder.ok) {
       console.error('[project-finder] engine failed:', finder.error);
