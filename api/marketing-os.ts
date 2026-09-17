@@ -390,6 +390,16 @@ function platformSettingsError(platform: string | null, raw: unknown): { en: str
 function translateDbError(error: PostgrestError): { status: number; en: string; ar: string } {
   console.error('[marketing-os] db error', error.code, error.message, error.details, error.hint);
 
+  // A locked post raises 42501 too, but its reason is the lock, not the role.
+  // Saying "your role does not allow this" sent people hunting for a
+  // permission problem that did not exist (2026-09-17, design uploads).
+  if (error.message.includes('MOS:LOCKED')) {
+    return {
+      status: 409,
+      en: 'This post is approved and locked — open a revision to change it.',
+      ar: 'هذا المنشور معتمد ومقفل — يلزم فتح تعديل لتغييره.',
+    };
+  }
   if (error.code === '42501' || /row-level security/i.test(error.message)) {
     return {
       status: 403,
