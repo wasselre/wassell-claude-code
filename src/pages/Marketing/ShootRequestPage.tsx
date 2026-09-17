@@ -339,7 +339,7 @@ export default function ShootRequestPage() {
                     >
                       <td style={{ textAlign: 'center', color: 'var(--mute)' }}>+</td>
                       <td className="ttl" style={{ color: 'var(--mute)' }}>
-                        {isAr ? 'أي شيء آخر ما دمتِ هناك' : 'Anything else while you are there'}
+                        {isAr ? 'أي لقطة أخرى أثناء التصوير' : 'Anything else while you are there'}
                       </td>
                       <td colSpan={3} style={{ fontSize: 11, color: 'var(--mute)' }}>
                         {isAr
@@ -484,7 +484,7 @@ function AddShotModal({
     <Modal
       title={isAr ? 'إضافة لقطة' : 'Add a shot'}
       sub={isAr
-        ? 'لقطة يدوية فوق المُجمَّعة تلقائيًا — «أي شيء آخر ما دمتِ هناك».'
+        ? 'لقطة يدوية فوق المُجمَّعة تلقائيًا — «أي لقطة أخرى أثناء التصوير».'
         : 'A manual shot on top of the auto-assembled list — anything else while you are there.'}
       onClose={onClose}
       footer={
@@ -570,7 +570,7 @@ function offlinePhrase(n: number, isAr: boolean): string {
     if (n === 0) return 'No network — what you capture is saved on the phone and uploads on Wi-Fi';
     return `No network — ${n} saved on the phone, uploading when Wi-Fi is back`;
   }
-  if (n === 0) return 'بلا شبكة — ما تسجّلينه يُحفظ على الجوال ويُرفع على الواي فاي';
+  if (n === 0) return 'بلا شبكة — ما يُسجَّل يُحفظ على الجوال ويُرفع على الواي فاي';
   if (n === 1) return 'بلا شبكة — عنصر واحد محفوظ على الجوال، سيُرفع على الواي فاي';
   if (n === 2) return 'بلا شبكة — عنصران محفوظان على الجوال، سيُرفعان على الواي فاي';
   if (n <= 10) return `بلا شبكة — ${num(n, true)} عناصر محفوظة على الجوال، ستُرفع على الواي فاي`;
@@ -910,7 +910,7 @@ function SiteModeView({ requestId }: { requestId: string }) {
                       <button
                         type="button"
                         className="m3-cam"
-                        aria-label={isAr ? 'صوّري هذه اللقطة' : 'Capture this shot'}
+                        aria-label={isAr ? 'تصوير هذه اللقطة' : 'Capture this shot'}
                         onClick={() => {
                           pendingItemRef.current = item;
                           inputRef.current?.click();
@@ -1048,7 +1048,7 @@ function SiteModeView({ requestId }: { requestId: string }) {
             }}
           >
             <IconShoot />
-            {isAr ? 'صوّري شيئًا إضافيًا' : 'Shoot something extra'}
+            {isAr ? 'تصوير لقطة إضافية' : 'Shoot something extra'}
           </button>
         </div>
       )}

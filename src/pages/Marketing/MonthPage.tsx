@@ -342,9 +342,6 @@ export default function MonthPage() {
   const head = (
     <PageHead
       title={isAr ? 'الشهر' : 'The month'}
-      sub={isAr
-        ? 'صفحة واحدة: قبل بداية الشهر هي الخطة التي تعتمدها مرة واحدة، وبعدها هي التقرير نفسه بنفس الشبكة.'
-        : 'One page: before the month starts it is the plan you confirm once; after it starts it is the report, on the same grid.'}
     >
       <div className="seg">
         <button type="button" className={tense === 'plan' ? 'on' : ''} onClick={() => go({ view: 'plan' })}>
@@ -490,8 +487,8 @@ export default function MonthPage() {
           <div className="notice" style={{ marginBlockEnd: 14 }}>
             <div>
               {isAr
-                ? `لم يعد بالإمكان بدء ${monthLabel(month, true)}: كل أيام النشر المتبقية أقرب مما يستطيع الإنتاج بلوغه. الصف الواحد يحتاج ${num(summary.minLeadWorkingDays, true)} أيام عمل قبل موعد نشره — كتابة، مراجعة كتابة، تصميم، مراجعة الكاتب، اعتماد نهائي، ثم يوم للنشر — وكل يوم باقٍ أقلّ من ذلك.`
-                : `${monthLabel(month, false)} can no longer be started: every remaining posting day is closer than production can reach. One row needs ${num(summary.minLeadWorkingDays, false)} working days before it publishes — writing, writing review, design, writer review, final approval, then a day to publish — and every day left has less.`}
+                ? `لم يعد بالإمكان بدء ${monthLabel(month, true)}: كل أيام النشر المتبقية أقرب مما يستطيع الإنتاج بلوغه. الدفعة تحتاج ${num(summary.minLeadWorkingDays, true)} أيام عمل قبل موعد نشرها.`
+                : `${monthLabel(month, false)} can no longer be started: every remaining posting day is closer than production can reach. A batch needs ${num(summary.minLeadWorkingDays, false)} working days before it publishes.`}
             </div>
             <div>
               {isAr ? 'ابدأ الشهر التالي.' : 'Start the next month instead.'}
@@ -542,8 +539,8 @@ export default function MonthPage() {
                */
               <div>
                 {isAr
-                  ? `${monthLabel(month, true)} يبدأ ${dayLabel(summary.startsOn, true)}، لا ${dayLabel(summary.startedFrom, true)}: ${lateDays.map((d) => dayLabel(d.day, true)).join(' و')} لا يمكن إنتاجها في الوقت. الصف يحتاج ${num(summary.minLeadWorkingDays, true)} أيام عمل قبل النشر، وهذه الأيام لديها ${lateDays.map((d) => num(d.leadWorkingDays, true)).join(' و')} على التوالي. العمل يتّسع — الأيام الأولى وحدها لم تتّسع.`
-                  : `${monthLabel(month, false)} starts ${dayLabel(summary.startsOn, false)}, not ${dayLabel(summary.startedFrom, false)}: ${lateDays.map((d) => dayLabel(d.day, false)).join(', ')} cannot be produced in time. A row needs ${num(summary.minLeadWorkingDays, false)} working days before it publishes, and those days have ${lateDays.map((d) => num(d.leadWorkingDays, false)).join(', ')} respectively. The work fits — only the first few days did not.`}
+                  ? `${monthLabel(month, true)} يبدأ ${dayLabel(summary.startsOn, true)}، لا ${dayLabel(summary.startedFrom, true)}: ${lateDays.map((d) => dayLabel(d.day, true)).join(' و')} لا يمكن إنتاجها في الوقت. الدفعة تحتاج ${num(summary.minLeadWorkingDays, true)} أيام عمل قبل النشر، وهذه الأيام لديها ${lateDays.map((d) => num(d.leadWorkingDays, true)).join(' و')} على التوالي.`
+                  : `${monthLabel(month, false)} starts ${dayLabel(summary.startsOn, false)}, not ${dayLabel(summary.startedFrom, false)}: ${lateDays.map((d) => dayLabel(d.day, false)).join(', ')} cannot be produced in time. A batch needs ${num(summary.minLeadWorkingDays, false)} working days before it publishes, and those days have ${lateDays.map((d) => num(d.leadWorkingDays, false)).join(', ')} respectively.`}
               </div>
             )}
             {summary.isPartial && (
@@ -554,8 +551,8 @@ export default function MonthPage() {
                     form between 3–10 and 11–99. A label reads correctly at
                     every number. */}
                 {isAr
-                  ? `هذا الشهر محسوب من ${monthDate(summary.startedFrom, true)}، وما قبله مضى — أيام نشر فائتة: ${num(pastDays.length, true)}. المتبقي — الصفوف: ${num(summary.rows, true)} · المنشورات: ${num(summary.posts, true)} · الدفعات الإعلانية: ${num(summary.paidBatchesRemaining, true)} · أيام العمل: ${num(summary.productionWorkingDays, true)}.`
-                  : `This month is compiled from ${monthDate(summary.startedFrom, false)}; everything before it has passed — posting days missed: ${num(pastDays.length, false)}. What is left — rows: ${num(summary.rows, false)} · posts: ${num(summary.posts, false)} · ad batches: ${num(summary.paidBatchesRemaining, false)} · working days: ${num(summary.productionWorkingDays, false)}.`}
+                  ? `هذا الشهر محسوب من ${monthDate(summary.startedFrom, true)}، وما قبله مضى — أيام نشر فائتة: ${num(pastDays.length, true)}. المتبقي — دفعات السوشيال ميديا: ${num(summary.rows, true)} · المنشورات: ${num(summary.posts, true)} · الدفعات الإعلانية: ${num(summary.paidBatchesRemaining, true)} · أيام العمل: ${num(summary.productionWorkingDays, true)}.`
+                  : `This month is compiled from ${monthDate(summary.startedFrom, false)}; everything before it has passed — posting days missed: ${num(pastDays.length, false)}. What is left — social media batches: ${num(summary.rows, false)} · posts: ${num(summary.posts, false)} · ad batches: ${num(summary.paidBatchesRemaining, false)} · working days: ${num(summary.productionWorkingDays, false)}.`}
               </div>
             )}
             {summary.isPartial && (
@@ -568,8 +565,8 @@ export default function MonthPage() {
             {summary.shortLeadRows.length > 0 && (
               <div>
                 {isAr
-                  ? `مهلة أقصر من المعتاد (المعتاد ${num(summary.targetLeadWorkingDays, true)} أيام عمل) في هذه الصفوف — اليوم ثم أيام العمل المتاحة له: `
-                  : `Less slack than the usual ${num(summary.targetLeadWorkingDays, false)} working days on these rows — the day, then the working days it actually has: `}
+                  ? `مهلة أقصر من المعتاد (المعتاد ${num(summary.targetLeadWorkingDays, true)} أيام عمل) في هذه الدفعات — اليوم ثم أيام العمل المتاحة له: `
+                  : `Less slack than the usual ${num(summary.targetLeadWorkingDays, false)} working days on these batches — the day, then the working days it actually has: `}
                 {summary.shortLeadRows
                   .map((r) => `${dayLabel(r.day, isAr)} (${num(r.leadWorkingDays, isAr)})`)
                   .join(' · ')}
@@ -599,8 +596,8 @@ export default function MonthPage() {
                     <div className="v">{num(summary.posts, isAr)}</div>
                     <div className="d">
                       {isAr
-                        ? `${num(summary.rows, true)} صفًا × ${num(template.postsPerRow, true)} — منها ${num(summary.generalRows, true)} صفوف عامة`
-                        : `${num(summary.rows, false)} rows × ${num(template.postsPerRow, false)} — ${num(summary.generalRows, false)} of them general`}
+                        ? `${num(summary.rows, true)} دفعة سوشيال ميديا × ${num(template.postsPerRow, true)} — منها ${num(summary.generalRows, true)} عامة`
+                        : `${num(summary.rows, false)} social media batches × ${num(template.postsPerRow, false)} — ${num(summary.generalRows, false)} of them general`}
                     </div>
                   </div>
                   <div className="stat">
@@ -752,11 +749,6 @@ export default function MonthPage() {
                         ))}
                     </ul>
                   )}
-                  <p className="mth-tiny" style={{ marginBlockEnd: 0 }}>
-                    {isAr
-                      ? 'الصف بطاقة واحدة وإرسال واحد، لكنه يُحسب ثلاث فتحات كتابة وثلاث فتحات تصميم في الدفتر.'
-                      : 'A row is one card and one submit, but it counts as three writing slots and three design slots in the ledger.'}
-                  </p>
                 </div>
               </div>
             </div>

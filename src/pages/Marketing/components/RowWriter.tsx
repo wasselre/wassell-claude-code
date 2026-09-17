@@ -217,10 +217,10 @@ export default function RowWriter({
         claim_en: `${all_en} posts carry lines`,
         detail_ar: noLines.length === 0
           ? 'كل منشور يحمل النص الذي يظهر على تصميمه.'
-          : `${names(noLines, true)} بلا أسطر — والصف لا يخرج ناقصًا.`,
+          : `${names(noLines, true)} بلا أسطر.`,
         detail_en: noLines.length === 0
           ? 'Every post carries the copy that lands on its design.'
-          : `${names(noLines, false)} has no lines — and the row does not go out short.`,
+          : `${names(noLines, false)} has no lines.`,
       },
       {
         key: 'caption',
@@ -283,7 +283,7 @@ export default function RowWriter({
     try {
       await saveDrafts();
       addToast(
-        isAr ? 'حُفظت مسودات الصف' : 'The row’s drafts were saved',
+        isAr ? 'حُفظت مسودات الدفعة' : 'The batch’s drafts were saved',
         'success',
       );
       await onChanged?.();
@@ -303,7 +303,7 @@ export default function RowWriter({
       // the requirement check runs server-side over all three members.
       await saveDrafts();
       await completeSubjectTask(detail, { taskId: task?.id ?? null, result: 'submitted' });
-      addToast(isAr ? 'أُرسل الصف للمراجعة' : 'The row was sent for review', 'success');
+      addToast(isAr ? 'أُرسلت الدفعة للمراجعة' : 'The batch was sent for review', 'success');
       await onChanged?.();
     } catch (e) {
       const named = missingRequirementsOf(e);
@@ -317,7 +317,7 @@ export default function RowWriter({
   const row = detail.row;
   const project = row.project_id
     ? projectName(row.project_id)
-    : (isAr ? 'صف عام — بلا مشروع' : 'General row — no project');
+    : (isAr ? 'عام — بلا مشروع' : 'General — no project');
   const total = members.length;
 
   return (
@@ -327,8 +327,8 @@ export default function RowWriter({
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div className="doc-lbl" style={{ margin: 0, fontSize: 13 }}>
             {isAr
-              ? `صف ${dayLabel(row.batch_day, true)} — ${project}`
-              : `${dayLabel(row.batch_day, false)} row — ${project}`}
+              ? `دفعة سوشيال ميديا ${dayLabel(row.batch_day, true)} — ${project}`
+              : `Social media batch · ${dayLabel(row.batch_day, false)} — ${project}`}
           </div>
           <span className="tag tag-t">{fullDate(row.batch_day, isAr)}</span>
           <span className="tag tag-t">
@@ -345,11 +345,6 @@ export default function RowWriter({
         <div style={{ marginTop: 10 }}>
           <RowTimeline steps={detail.steps} currentKey={task?.step_id ?? null} isAr={isAr} />
         </div>
-        <p style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 10, lineHeight: 1.85 }}>
-          {isAr
-            ? 'هذا الصف بطاقة واحدة وإرسال واحد، لكنه يُحسب ثلاث فتحات كتابة في السجل وثلاثًا في التصميم. وكل منشور يخرج بإصدارين في الوقت نفسه: مربّع يحمل النص والوسوم، وستوري رأسي بلا نص.'
-            : 'This row is one card and one submit, but three writing slots in the ledger and three in design. Each post goes out as two releases at once: a square that carries the caption and hashtags, and a vertical story with no text.'}
-        </p>
       </div>
 
       {/* ── the resolved brief — ORGANIC lane only (D7), mounted by the
@@ -361,10 +356,7 @@ export default function RowWriter({
         <MissingCard
           missing={missing}
           isAr={isAr}
-          title={isAr ? 'الصف لم يُرسل — بنود ناقصة' : 'The row was not sent — missing requirements'}
-          why={isAr
-            ? 'الصف يخرج كاملًا أو لا يخرج. أكمل ما يلي ثم أعد الإرسال؛ ما كتبتَه محفوظ.'
-            : 'A row goes out whole or not at all. Fill these in and send again — what you wrote is saved.'}
+          title={isAr ? 'الدفعة لم تُرسل — بنود ناقصة' : 'The batch was not sent — missing requirements'}
         />
       )}
 
@@ -447,7 +439,7 @@ export default function RowWriter({
       <div className="write">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
           <div className="doc-lbl" style={{ margin: 0 }}>
-            {isAr ? 'فحص الصف قبل الإرسال' : 'The row check, before it is sent'}
+            {isAr ? 'فحص قبل الإرسال' : 'Check before sending'}
           </div>
           <span
             className="tag"
@@ -487,7 +479,7 @@ export default function RowWriter({
             disabled={!canSend}
             onClick={() => { void submit(); }}
           >
-            {busy ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : isAr ? 'إرسال الصف' : 'Send the row'}
+            {busy ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : isAr ? 'إرسال الدفعة' : 'Send the batch'}
           </button>
           <button
             type="button"
@@ -499,12 +491,9 @@ export default function RowWriter({
           </button>
           <span style={{ fontSize: 11.5, color: failing.length > 0 ? 'var(--late)' : 'var(--mute)' }}>
             {failing.length > 0
-              ? (isAr
-                ? `لا يمكن الإرسال: ${failing[0]?.detail_ar ?? ''} الصف يُرسل مرة واحدة وكاملًا — أكمل الناقص أو انقل الصف إلى الفتحة التالية.`
-                : `Cannot send: ${failing[0]?.detail_en ?? ''} The row is sent once and whole — finish it, or move the row to the next slot.`)
-              : (isAr
-                ? 'الصف يُرسل مرة واحدة وكاملًا — الثلاثة معًا، بترتيبها.'
-                : 'The row is sent once and whole — all three, in this order.')}
+              && (isAr
+                ? `لا يمكن الإرسال: ${failing[0]?.detail_ar ?? ''}`
+                : `Cannot send: ${failing[0]?.detail_en ?? ''}`)}
           </span>
         </div>
       </div>
@@ -546,11 +535,6 @@ export default function RowWriter({
             );
           })}
         </div>
-        <p style={{ fontSize: 11, color: 'var(--mute)', marginTop: 10, lineHeight: 1.8 }}>
-          {isAr
-            ? 'الترتيب يُحرَّر هنا وفي مراجعة الكتابة فقط. بعد ذلك يصبح التصميم مبنيًّا عليه، فيُعرض للقراءة فقط ويرفض الخادم تغييره.'
-            : 'Order is editable here and at the writing review only. After that the design is keyed to it, so it is shown read-only and the server refuses the change.'}
-        </p>
       </div>
 
       {/* ── last week's row of the same project ──────────────────── */}
@@ -558,7 +542,7 @@ export default function RowWriter({
         <div className="write">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
             <div className="doc-lbl" style={{ margin: 0 }}>
-              {isAr ? 'آخر صف نُشر لهذا المشروع' : 'The last row published for this project'}
+              {isAr ? 'آخر دفعة نُشرت لهذا المشروع' : 'This project’s last published batch'}
             </div>
             <span className="tag tag-t" style={{ marginInlineStart: 'auto' }}>
               {isAr ? 'للاطّلاع فقط' : 'For reference only'}
@@ -579,11 +563,6 @@ export default function RowWriter({
               </div>
             ))}
           </div>
-          <p style={{ fontSize: 11, color: 'var(--mute)', marginTop: 8, lineHeight: 1.8 }}>
-            {isAr
-              ? 'لا تُعاد الزاوية نفسها بصياغة جديدة فحسب — ابدأ من سطر أول مختلف.'
-              : 'Do not re-run the same angle in new words — start from a different opening line.'}
-          </p>
         </div>
       )}
     </div>

@@ -343,11 +343,6 @@ export default function RequestChangesModal({
               );
             })}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 6 }}>
-            {isAr
-              ? 'ما لم تختره يبقى كما هو — اعتماده لا يُلغى، ولا يُعاد كتابته. الصف نفسه يعود مرّة واحدة حاملًا ما اخترته.'
-              : 'Anything you do not pick is left exactly as it is — its approval stands and nobody rewrites it. The row returns once, carrying what you picked.'}
-          </div>
         </div>
       )}
 
@@ -372,11 +367,6 @@ export default function RequestChangesModal({
             );
           })}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 6 }}>
-          {isAr
-            ? 'المحدَّد يظهر في مهمة التعديل، فيعرف الكاتب أين ينظر دون قراءة كل شيء من جديد.'
-            : 'The selection shows on the revision task, so the writer knows where to look without re-reading everything.'}
-        </div>
       </div>
 
       {/* ── الملاحظة · إلزامية ── */}
@@ -392,14 +382,9 @@ export default function RequestChangesModal({
           onChange={(e) => setNote(e.target.value)}
           autoFocus={!isMobile} /* on the phone, autofocus would pop the keyboard over the sheet */
           placeholder={isAr
-            ? 'المشهد ٣ ما زال يشرح الموقع بدل أن يُظهره — اجعليه لقطة خريطة متحركة بلا تعليق.'
+            ? 'المشهد ٣ ما زال يشرح الموقع بدل أن يُظهره — المطلوب لقطة خريطة متحركة بلا تعليق.'
             : 'Scene 3 still explains the location instead of showing it — make it an animated map shot with no voice-over.'}
         />
-        <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 6 }}>
-          {isAr
-            ? `تُحفظ على النسخة ${num(round, true)} للأبد، وتظهر أعلى شاشة ${returnRoleLabel} حتى يعالجها.`
-            : `Saved on version ${round} forever, and pinned to the top of the ${returnRoleLabel}’s screen until addressed.`}
-        </div>
       </div>
 
       {/* ── إلى من تعود؟ — قابل للاختيار الآن ── */}
@@ -440,13 +425,6 @@ export default function RequestChangesModal({
               );
             })}
           </div>
-          {returnChoices.length > 1 && (
-            <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 6 }}>
-              {isAr
-                ? 'اختر الخطوة التي فيها المشكلة فعلًا — إن كان الخلل في النص فأعِدها للكاتب، لا للمصمم.'
-                : 'Pick the step where the problem actually is — if the copy is wrong, send it to the writer, not the designer.'}
-            </div>
-          )}
         </div>
       )}
 

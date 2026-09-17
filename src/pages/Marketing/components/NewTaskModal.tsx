@@ -157,7 +157,7 @@ export default function NewTaskModal({
         .filter((w): w is (typeof WEEKDAYS)[number] => Boolean(w))
         .map((w) => (isAr ? w.ar : w.en))
         .join(isAr ? ' و' : ', ');
-      if (!days) return isAr ? 'اختاري يومًا واحدًا على الأقل.' : 'Pick at least one weekday.';
+      if (!days) return isAr ? 'يلزم اختيار يوم واحد على الأقل.' : 'Pick at least one weekday.';
       body = isAr
         ? `${every} ${intervalN === 1 ? 'أسبوع' : 'أسابيع'} — ${days}`
         : `${every} week${intervalN === 1 ? '' : 's'} on ${days}`;
@@ -174,7 +174,7 @@ export default function NewTaskModal({
 
   const submit = async (): Promise<void> => {
     if (!title.trim()) {
-      addToast(isAr ? 'اكتبي عنوان المهمة.' : 'Give the task a title.', 'error');
+      addToast(isAr ? 'عنوان المهمة مطلوب.' : 'Give the task a title.', 'error');
       return;
     }
     if (repeat === 'weekly' && byweekday.length === 0) {
@@ -255,7 +255,7 @@ export default function NewTaskModal({
           className="inp"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder={isAr ? 'مثال: اعرضي حملة مينا ٥٢ على الإدارة' : 'e.g. Present the Mina 52 campaign'}
+          placeholder={isAr ? 'مثال: عرض حملة مينا ٥٢ على الإدارة' : 'e.g. Present the Mina 52 campaign'}
           autoFocus
         />
       </Field>
@@ -273,7 +273,7 @@ export default function NewTaskModal({
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
         <Field
           label={isAr ? 'المسؤول' : 'Assigned to'}
-          hint={mayAssignOthers ? undefined : (isAr ? 'لكِ' : 'yourself')}
+          hint={mayAssignOthers ? undefined : (isAr ? 'لك' : 'yourself')}
         >
           {mayAssignOthers ? (
             <select className="inp" value={assignee} onChange={(e) => setAssignee(e.target.value)}>
@@ -286,7 +286,7 @@ export default function NewTaskModal({
             // name the save would refuse.
             <div className="inp" style={{ display: 'flex', alignItems: 'center', color: 'var(--mute)' }}>
               {isAr
-                ? `${appUserId ? personName(appUserId) : ''} — إسناد المهام لغيركِ يحتاج صلاحية`
+                ? `${appUserId ? personName(appUserId) : ''} — إسناد المهام لغيرك يحتاج صلاحية`
                 : `${appUserId ? personName(appUserId) : ''} — assigning to others needs permission`}
             </div>
           )}

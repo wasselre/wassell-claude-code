@@ -143,11 +143,11 @@ export function resolveMonthBrief(
       key: cell.id,
       kind: cellKind,
       source_ar: coord.lane === 'paid'
-        ? `ملاحظة الدفعة — ${fullDate(day, true)}`
-        : `ملاحظة الصف — ${fullDate(day, true)}`,
+        ? `ملاحظة الدفعة الإعلانية — ${fullDate(day, true)}`
+        : `ملاحظة دفعة السوشيال ميديا — ${fullDate(day, true)}`,
       source_en: coord.lane === 'paid'
-        ? `Batch note — ${fullDate(day, false)}`
-        : `Row note — ${fullDate(day, false)}`,
+        ? `Ad batch note — ${fullDate(day, false)}`
+        : `Social media batch note — ${fullDate(day, false)}`,
       body: cell.body,
       author_name: cell.author_name ?? null,
       at: cell.updated_at ?? cell.created_at ?? null,

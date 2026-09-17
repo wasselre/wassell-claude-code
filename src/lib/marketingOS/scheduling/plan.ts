@@ -245,8 +245,8 @@ export function planCampaign(
     if (pubCheck.clamped) {
       conflicts.push({
         kind: 'publish_time', itemKey: null, stepKey: null, day: null,
-        messageAr: `صف من ${widest} منشورات يبدأ ${pubCheck.publishTime} بفاصل ${pubCheck.gap} دقيقة ينتهي ${pubCheck.wouldEndAt} — بعد منتصف الليل، فيتكدّس منشوران على 23:59 ويضيع ترتيب النشر. قلّل الفاصل أو قدّم وقت النشر.`,
-        messageEn: `A row of ${widest} posts starting at ${pubCheck.publishTime} with a ${pubCheck.gap}-minute gap ends at ${pubCheck.wouldEndAt} — past midnight, so two posts collide on 23:59 and the publish order is lost. Reduce the gap or move the publishing time earlier.`,
+        messageAr: `دفعة من ${widest} منشورات يبدأ ${pubCheck.publishTime} بفاصل ${pubCheck.gap} دقيقة ينتهي ${pubCheck.wouldEndAt} — بعد منتصف الليل، فيتكدّس منشوران على 23:59 ويضيع ترتيب النشر. قلّل الفاصل أو قدّم وقت النشر.`,
+        messageEn: `A batch of ${widest} posts starting at ${pubCheck.publishTime} with a ${pubCheck.gap}-minute gap ends at ${pubCheck.wouldEndAt} — past midnight, so two posts collide on 23:59 and the publish order is lost. Reduce the gap or move the publishing time earlier.`,
         detail: {
           rowSize: widest, publishTime: pubCheck.publishTime,
           intraRowGapMinutes: pubCheck.gap, wouldEndAt: pubCheck.wouldEndAt,

@@ -161,8 +161,8 @@ export function MonthProjectSlots({
                 <div className="nm">{isAr ? 'خانة فارغة' : 'Empty slot'}</div>
                 <div className="mt">
                   {isAr
-                    ? 'لا مشروع في هذه الخانة — ستتحوّل أيام نشرها إلى صفوف «عام» بلا مشروع.'
-                    : 'No project here — its posting days become general rows with no project.'}
+                    ? 'لا مشروع في هذه الخانة — ستصبح دفعاتها «عامة» بلا مشروع.'
+                    : 'No project here — its batches become general, with no project.'}
                 </div>
                 <div className="mth-row">
                   <button type="button" className="btn btn-sm" disabled={!canEdit}

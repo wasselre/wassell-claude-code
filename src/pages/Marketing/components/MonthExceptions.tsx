@@ -33,16 +33,16 @@ function decisionOf(
     case 'move_row_or_drop_late_post':
       return {
         text: isAr
-          ? 'تأجيل الصف إلى الفتحة التالية، أو استبعاد المنشور المتأخّر وإطلاق منشور جديد بدلًا منه. الصف لا يخرج منشورين.'
-          : 'move the row to the next slot, or drop the late post and run a new one in its place. The row never goes out as two posts.',
+          ? 'تأجيل الدفعة إلى الموعد التالي، أو استبعاد المنشور المتأخّر وإطلاق منشور جديد بدلًا منه.'
+          : 'move the batch to the next slot, or drop the late post and run a new one in its place.',
         href: null,
         cta: null,
       };
     case 'replace_or_move_row':
       return {
         text: isAr
-          ? 'استبدال المنشور بواحد جديد، أو تأجيل الصف إلى الفتحة التالية.'
-          : 'replace the post with a new one, or move the row to the next slot.',
+          ? 'استبدال المنشور بواحد جديد، أو تأجيل الدفعة إلى الموعد التالي.'
+          : 'replace the post with a new one, or move the batch to the next slot.',
         href: exc.subject_kind === 'content' && exc.subject_id ? `/m/content/${exc.subject_id}` : null,
         cta: isAr ? 'افتح المحتوى' : 'Open the content',
       };
@@ -81,8 +81,8 @@ function decisionOf(
     case 'pick_replacement_project':
       return {
         text: isAr
-          ? 'اختر مشروعًا بديلًا يتسلّم بقية صفوف الخانة ودفعاتها المدفوعة.'
-          : 'pick a replacement project to take over the slot’s remaining rows and paid batches.',
+          ? 'اختيار مشروع بديل يتسلّم بقية دفعات السوشيال ميديا والدفعات الإعلانية في هذه الخانة.'
+          : 'pick a replacement project to take over the slot’s remaining social media and ad batches.',
         href: null,
         cta: null,
       };

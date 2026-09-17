@@ -549,7 +549,7 @@ const CONFLICT_HEADLINES: Record<ConflictKind, BiText> = {
   platform_rule: bi('قاعدة المنصة تمنع هذا الترتيب', 'A platform rule blocks this arrangement'),
   search_incomplete: bi('توقّف البحث عند حدّه', 'The search stopped at its budget'),
   range_in_past: bi('المدى المطلوب في الماضي', 'The requested range is in the past'),
-  publish_time: bi('وقت نشر الصف غير صالح', 'The row’s publishing time is unusable'),
+  publish_time: bi('وقت نشر الدفعة غير صالح', 'The batch’s publishing time is unusable'),
 };
 
 export interface ConflictLine {

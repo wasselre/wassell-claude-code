@@ -288,7 +288,7 @@ export type TaskAction =
   | 'view';
 
 export const TASK_ACTION_LABELS: Record<TaskAction, { ar: string; en: string }> = {
-  work:             { ar: 'ابدئي',             en: 'Start' },
+  work:             { ar: 'بدء',               en: 'Start' },
   review:           { ar: 'مراجعة',            en: 'Review' },
   caption_review:   { ar: 'مراجعة الكابشن',    en: 'Review caption' },
   refresh_decision: { ar: 'قرار التجديد',      en: 'Refresh decision' },

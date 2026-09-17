@@ -384,7 +384,7 @@ export function ReadinessMeter({
   const done = filled === total;
   return (
     <div style={{ display: 'grid', gap: 6, minWidth: 190 }}>
-      <div className="lbl" style={{ margin: 0 }}>{isAr ? 'جاهزية الصف' : 'Row readiness'}</div>
+      <div className="lbl" style={{ margin: 0 }}>{isAr ? 'جاهزية الدفعة' : 'Batch readiness'}</div>
       <div style={{ height: 7, borderRadius: 999, background: 'var(--line)', overflow: 'hidden' }}>
         <div
           style={{

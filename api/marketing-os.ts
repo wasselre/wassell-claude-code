@@ -257,7 +257,7 @@ const DB_MESSAGES: Record<string, { en: string; ar: string }> = {
   },
   'MOS:TASK_FIELD_LOCKED': {
     en: 'You can complete this task, but only the person who assigned it can change it.',
-    ar: 'يمكنكِ إنهاء المهمة، لكن تعديلها يعود لمن أسندها.',
+    ar: 'يمكن إنهاء المهمة، لكن تعديلها يعود لمن أسندها.',
   },
   'MOS:TASK_CANCEL_DENIED': {
     en: 'Only the person who assigned this task can cancel it.',
@@ -5757,10 +5757,10 @@ export default async function handler(req: Request): Promise<Response> {
                     event: 'changes_requested',
                     roles: [],
                     users: [next.assignee_user_id],
-                    titleAr: 'أُعيد صفّ بتعديلات',
-                    titleEn: 'Changes requested on a row',
-                    bodyAr: `صف ${when} — ${note}`,
-                    bodyEn: `Row ${when}`,
+                    titleAr: 'أُعيدت دفعة سوشيال ميديا بتعديلات',
+                    titleEn: 'Changes requested on a social media batch',
+                    bodyAr: `دفعة ${when} — ${note}`,
+                    bodyEn: `Batch ${when}`,
                     url,
                     channels: notifyCfg.channels,
                   }
@@ -5768,10 +5768,10 @@ export default async function handler(req: Request): Promise<Response> {
                     event: 'task_assigned',
                     roles: [],
                     users: [next.assignee_user_id],
-                    titleAr: 'فُتح لك صفّ',
-                    titleEn: 'A row was assigned to you',
-                    bodyAr: `صف ${when} — ثلاثة منشورات بانتظار خطوتك.`,
-                    bodyEn: `Row ${when} — three posts await your stage.`,
+                    titleAr: 'دفعة سوشيال ميديا جديدة لك',
+                    titleEn: 'A social media batch was assigned to you',
+                    bodyAr: `دفعة ${when} — بانتظار خطوتك.`,
+                    bodyEn: `Batch ${when} — waiting on your step.`,
                     url,
                     channels: notifyCfg.channels,
                   });

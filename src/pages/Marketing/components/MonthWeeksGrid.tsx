@@ -135,7 +135,7 @@ export default function MonthWeeksGrid({
         <div className="mth-row r" style={{ marginInlineStart: 'auto' }}>
           <span className="tag">
             {num(weeks.reduce((a, w) => a + w.days.length, 0), isAr)}{' '}
-            {isAr ? 'صفًا' : 'rows'}
+            {isAr ? 'دفعة سوشيال ميديا' : 'social media batches'}
           </span>
           <span className="tag">
             {num(weeks.length, isAr)} {isAr ? 'دفعات إعلانية' : 'ad batches'}
@@ -189,8 +189,8 @@ export default function MonthWeeksGrid({
                     project_id: p.project_id,
                     batch_date: null,
                     label: isAr
-                      ? `عمود ${p.project_name ?? ''} · ${lane === 'organic' ? 'الصفوف العضوية' : 'التصاميم المدفوعة'} — لا تصل اللين الآخر`
-                      : `${p.project_name ?? ''} column · ${lane} only — it does not reach the other lane`,
+                      ? `عمود ${p.project_name ?? ''} · ${lane === 'organic' ? 'دفعات السوشيال ميديا' : 'الدفعات الإعلانية'}`
+                      : `${p.project_name ?? ''} column · ${lane === 'organic' ? 'social media batches' : 'ad batches'}`,
                   })}
                 />
               </span>
@@ -237,8 +237,8 @@ export default function MonthWeeksGrid({
                             title={isAr
                               ? (d.kind === 'general_row'
                                 ? `موضوع ${dayLabel(d.day, isAr)}`
-                                : `ملاحظة على صف ${dayLabel(d.day, isAr)}`)
-                              : `Note on the ${dayLabel(d.day, isAr)} row`}
+                                : `ملاحظة على دفعة ${dayLabel(d.day, isAr)}`)
+                              : `Note on the ${dayLabel(d.day, isAr)} batch`}
                             onClick={() => openNote({
                               kind: 'row',
                               lane: 'organic',
@@ -247,10 +247,10 @@ export default function MonthWeeksGrid({
                               label: isAr
                                 ? (d.kind === 'general_row'
                                   ? `${dayLabel(d.day, isAr)} · ${generalLabel} — الملاحظة هي موضوع اليوم`
-                                  : `صف ${dayLabel(d.day, isAr)} · ${d.projectName ?? ''}`)
+                                  : `دفعة سوشيال ميديا ${dayLabel(d.day, isAr)} · ${d.projectName ?? ''}`)
                                 : (d.kind === 'general_row'
                                   ? `${dayLabel(d.day, isAr)} · ${generalLabel} — the note is the day’s topic`
-                                  : `${dayLabel(d.day, isAr)} row · ${d.projectName ?? ''}`),
+                                  : `Social media batch · ${dayLabel(d.day, isAr)} · ${d.projectName ?? ''}`),
                             })}
                           />
                         </div>
@@ -322,15 +322,6 @@ export default function MonthWeeksGrid({
           ))}
         </div>
 
-        <p className="mth-tiny" style={{ marginBlockStart: 10 }}>
-          {lane === 'organic'
-            ? (isAr
-              ? 'الرقم داخل المربّع هو ترتيب القراءة على البروفايل. إنستقرام يعرض الأحدث أولًا، فالمنشور رقم ١ يُنشر آخرًا داخل صفه. وكل منشور يخرج مرتين: مربّع للفيد وعمودي للستوري بلا كابشن.'
-              : 'The number in the square is the reading order on the profile. Instagram shows the newest first, so post 1 publishes LAST within its row. Every post goes out twice: a square feed post and a vertical story with no caption.')
-            : (isAr
-              ? 'كل خلية دفعة واحدة لمشروع واحد في أسبوع واحد: خمسة تصاميم تُفعَّل يوم الدفعة، ثم تُحكَم كل منها على أيامها السبعة الأولى وحدها.'
-              : 'Each cell is one project’s batch for one week: five creatives activated on the batch date, each then judged on its own first seven days.')}
-        </p>
 
         {footer}
 
@@ -345,7 +336,7 @@ export default function MonthWeeksGrid({
                     ? `ملاحظة على عمود ${projectLabel(n.project_id ?? '')} · ${n.lane === 'paid' ? 'المدفوع' : 'العضوي'}`
                     : `${projectLabel(n.project_id ?? '')} column · ${n.lane}`)
                   : n.kind === 'row'
-                    ? (isAr ? `ملاحظة على صف ${dayLabel(n.batch_date, isAr)}` : `${dayLabel(n.batch_date, isAr)} row`)
+                    ? (isAr ? `ملاحظة على دفعة ${dayLabel(n.batch_date, isAr)}` : `${dayLabel(n.batch_date, isAr)} batch`)
                     : (isAr
                       ? `ملاحظة على دفعة ${dayLabel(n.batch_date, isAr)} · ${projectLabel(n.project_id ?? '')}`
                       : `${dayLabel(n.batch_date, isAr)} batch · ${projectLabel(n.project_id ?? '')}`)}

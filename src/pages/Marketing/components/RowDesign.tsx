@@ -223,7 +223,7 @@ export default function RowDesign({
     try {
       await completeSubjectTask(detail, { taskId: view.task.id, result: 'submitted' });
       addToast(
-        isAr ? 'أُرسل الصف كاملًا للاعتماد النهائي.' : 'The whole row went to the final approval.',
+        isAr ? 'أُرسلت الدفعة للاعتماد النهائي.' : 'The batch went to final approval.',
         'success',
       );
       await onChanged();
@@ -232,7 +232,7 @@ export default function RowDesign({
       if (missing) {
         setRefused(missing);
         addToast(
-          isAr ? 'رُفض الإرسال — الصف ناقص.' : 'The submit was refused — the row is incomplete.',
+          isAr ? 'رُفض الإرسال — الدفعة ناقصة.' : 'The submit was refused — the batch is incomplete.',
           'error',
         );
       } else {
@@ -266,8 +266,8 @@ export default function RowDesign({
         <div className="card-h">
           <h4>
             {isAr
-              ? 'ملفات الصف — ثلاثة منشورات × خانتان'
-              : 'The row’s files — three posts × two slots'}
+              ? 'ملفات الدفعة'
+              : 'The batch’s files'}
           </h4>
           <span className="r">
             <Pill tone={filled === total ? 'go' : 'late'}>
@@ -278,11 +278,6 @@ export default function RowDesign({
           </span>
         </div>
         <div className="card-b" style={{ display: 'grid', gap: 14 }}>
-          <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.85 }}>
-            {isAr
-              ? 'ما تحتاجه النسخة يقرّره مكان نشرها لا نوعها: المربّع يذهب إلى الفيد ويحمل النص، والعمودي يذهب إلى الستوري بلا نص. النص والأسطر تأتي من مهمة الكتابة ولا تُعدَّل من هنا.'
-              : 'What a release needs is decided by where it is going, not what it is: the square goes to the feed and carries the caption, the vertical goes to the story with none. The lines and the caption come from the writing task and cannot be edited here.'}
-          </div>
 
           {view.members.map((m, i) => {
             const slots = slotsOfMember(view, m.id);
@@ -413,11 +408,8 @@ export default function RowDesign({
           missing={shown}
           isAr={isAr}
           title={isAr
-            ? 'لا يمكن إرسال الصف — ما زال ناقصًا'
-            : 'This row cannot be sent — it is still incomplete'}
-          why={isAr
-            ? 'الصف يخرج كاملًا أو لا يخرج: لن يُرسَل منشوران وينتظر الثالث، ولن ينشر النظام صفًّا ناقصًا. لا يوجد خيار «إرسال جزئي» — بالتصميم، لا بالخطأ.'
-            : 'The row goes out whole or not at all: two posts are never sent while the third waits, and an incomplete row is never published. There is no partial send — by design, not by omission.'}
+            ? 'لا يمكن إرسال الدفعة — ما زالت ناقصة'
+            : 'This batch cannot be sent — it is still incomplete'}
         />
       )}
 
@@ -425,11 +417,6 @@ export default function RowDesign({
       <div className="card">
         <div className="card-b" style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
           <ReadinessMeter filled={filled} total={total} isAr={isAr} />
-          <div style={{ flex: 1, minWidth: 220, fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.85 }}>
-            {isAr
-              ? 'كل ملف يُحفظ لحظة رفعه — لا حاجة لحفظ مسودة. يُفتح زر الإرسال في اللحظة التي تمتلئ فيها الخانة الأخيرة، ويُرفض الإرسال في الخادم أيضًا إن نقص شيء.'
-              : 'Every file is saved the moment it is uploaded — there is no draft to save. The send button opens when the last slot fills, and the server refuses an incomplete row independently.'}
-          </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {canAct && view.task ? (
               <button
@@ -438,10 +425,10 @@ export default function RowDesign({
                 disabled={busy || !ready}
                 title={ready
                   ? undefined
-                  : isAr ? 'الصف ناقص — انظر القائمة أعلاه' : 'The row is incomplete — see the list above'}
+                  : isAr ? 'الدفعة ناقصة' : 'The batch is incomplete'}
                 onClick={() => void submit()}
               >
-                {busy ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : isAr ? 'إرسال الصف' : 'Send the row'}
+                {busy ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : isAr ? 'إرسال الدفعة' : 'Send the batch'}
               </button>
             ) : (
               <span style={{ fontSize: 12, color: 'var(--mute)' }}>
@@ -458,8 +445,8 @@ export default function RowDesign({
           <div className="card-h">
             <h4>
               {isAr
-                ? 'للمقارنة البصرية — آخر صف نُشر لهذا المشروع'
-                : 'For visual comparison — this project’s last row'}
+                ? 'آخر دفعة نُشرت لهذا المشروع'
+                : 'This project’s last published batch'}
             </h4>
             <span className="r">{isAr ? 'للنظر فقط' : 'look only'}</span>
           </div>
@@ -484,11 +471,6 @@ export default function RowDesign({
                   </span>
                 </div>
               )))}
-            </div>
-            <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.85, marginTop: 10 }}>
-              {isAr
-                ? 'الغرض أن يبتعد صفّ اليوم عن سابقه في اللون والتكوين والزاوية، لا أن يُعاد استخدام ملفاته — لا يمكن سحب ملف من هنا إلى خانة.'
-                : 'It is here so today’s row differs from the last in colour, composition and angle — not as a source to reuse. No file can be dragged from here into a slot.'}
             </div>
           </div>
         </div>

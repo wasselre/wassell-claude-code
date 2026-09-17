@@ -171,8 +171,8 @@ export default function RowApproval({
             ? isAr ? 'اعتُمد التصميم.' : 'The design is approved.'
             : isAr ? 'اعتُمدت الكتابة — انتقل إلى التصميم.' : 'The writing is approved — it moved to design.'
           : finalFace
-            ? isAr ? 'اعتُمد الصف — ستة إصدارات تُسلَّم آليًا في لحظة الدفعة.' : 'The row is approved — six releases go out automatically at the batch moment.'
-            : isAr ? 'اعتُمدت كتابة الصف — انتقل إلى التصميم.' : 'The row’s writing is approved — it moved to design.'),
+            ? isAr ? 'اعتُمدت الدفعة — تُسلَّم الإصدارات آليًا في موعد النشر.' : 'The batch is approved — its releases go out automatically at the publish time.'
+            : isAr ? 'اعتُمدت كتابة الدفعة — انتقلت إلى التصميم.' : 'The batch’s writing is approved — it moved to design.'),
         res.auto_ad?.status === 'skipped' ? 'info' : 'success',
       );
       setMarked([]);
@@ -189,7 +189,7 @@ export default function RowApproval({
       const missing = missingRequirementsOf(e);
       if (missing) {
         setRefused(missing);
-        addToast(isAr ? 'رُفض الاعتماد — الصف ناقص.' : 'The approval was refused — the row is incomplete.', 'error');
+        addToast(isAr ? 'رُفض الاعتماد — الدفعة ناقصة.' : 'The approval was refused — the batch is incomplete.', 'error');
       } else {
         addToast(e instanceof Error ? e.message : String(e), 'error');
       }
@@ -247,8 +247,8 @@ export default function RowApproval({
         <div className="card-h">
           <h4>
             {isAr
-              ? `صف ${batchDay ? shortDate(batchDay, true) : 'بلا يوم'}`
-              : `Row of ${batchDay ? shortDate(batchDay, false) : 'no day'}`}
+              ? `دفعة سوشيال ميديا ${batchDay ? shortDate(batchDay, true) : 'بلا يوم'}`
+              : `Social media batch · ${batchDay ? shortDate(batchDay, false) : 'no day'}`}
           </h4>
           <span className="r" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <Pill tone={finalFace ? 'now' : 'wait'}>
@@ -291,7 +291,7 @@ export default function RowApproval({
       {finalFace && previousMembers.length > 0 && (
         <div className="card">
           <div className="card-h">
-            <h4>{isAr ? 'صف الأسبوع الماضي — للمقارنة البصرية' : 'Last week’s row — for visual comparison'}</h4>
+            <h4>{isAr ? 'دفعة الأسبوع الماضي' : 'Last week’s batch'}</h4>
             <span className="r">{isAr ? 'منشور، للنظر فقط' : 'published, look only'}</span>
           </div>
           <div className="card-b">
@@ -312,11 +312,6 @@ export default function RowApproval({
                   </div>
                 );
               })}
-            </div>
-            <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 9 }}>
-              {isAr
-                ? 'السؤال الوحيد هنا: هل يبدو الصفّان معًا كحساب واحد، أم كحملتين مختلفتين؟'
-                : 'The only question here: do the two rows together still read as one account, or as two campaigns?'}
             </div>
           </div>
         </div>
@@ -407,8 +402,8 @@ export default function RowApproval({
                   {caption === '' && (
                     <div style={{ fontSize: 11.5, color: 'var(--late)', lineHeight: 1.8 }}>
                       {isAr
-                        ? 'لا يمكن اعتماد الصف بلا نص — كل عنصر يحمل نصًا، والكاتب هو من يؤكّده.'
-                        : 'The row cannot be approved with no caption — every item carries one, confirmed by the writer.'}
+                        ? 'لا يمكن الاعتماد بلا نص.'
+                        : 'Cannot be approved without a caption.'}
                     </div>
                   )}
                 </div>
@@ -433,11 +428,6 @@ export default function RowApproval({
       {/* ── the order rule, stated once ────────────────────────────── */}
       <div className="card">
         <div className="card-b" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ flex: 1, minWidth: 240, fontSize: 12, color: 'var(--mute)', lineHeight: 1.9 }}>
-            {isAr
-              ? 'الترتيب أعلاه هو ترتيب القراءة على الحساب. إنستقرام يعرض الأحدث أولًا، لذلك المنشور الأول في الترتيب يُنشر أخيرًا داخل يوم الصف.'
-              : 'The order above is the reading order on the profile. Instagram shows the newest first, so the first post in the order publishes LAST inside the row’s day.'}
-          </div>
           <span className="tag">
             {isAr
               ? `النشر: ${members.map((_, i) => num(publishPosition(i, members.length), true)).reverse().join(' ثم ')}`
@@ -490,11 +480,6 @@ export default function RowApproval({
             />
           </div>
           <div className="card-b" style={{ borderTop: '1px solid var(--line)' }}>
-            <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.9 }}>
-              {isAr
-                ? 'بصمة الاعتماد: تُحسب بصمة النص والملفات في لحظة الاعتماد وتُراجَع في لحظة النشر. لو تغيّر ملف أو نص بعدها يتحوّل المنشور إلى استثناء بدل أن يُنشر بشيء لم يُعتمد.'
-                : 'The approval fingerprint: text and files are fingerprinted at approval and re-checked at publish. A file or caption changed afterwards becomes an exception, never an unapproved post.'}
-            </div>
             {batchMoments.length > 0 && (
               <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 7 }}>
                 {isAr ? 'لحظة الدفعة: ' : 'Batch moment: '}
@@ -519,10 +504,7 @@ export default function RowApproval({
         <MissingCard
           missing={shownMissing}
           isAr={isAr}
-          title={isAr ? 'لا يمكن اعتماد الصف — ما زال ناقصًا' : 'This row cannot be approved — it is still incomplete'}
-          why={isAr
-            ? 'الجاهزية تُرفض عند تسليم المصمِّمة، لا هنا — فإن ظهرت هنا فالنقص حدث بعد التسليم.'
-            : 'Readiness is refused at the designer’s submit, not here — seeing it here means something went missing after the hand-off.'}
+          title={isAr ? 'لا يمكن اعتماد الدفعة — ما زالت ناقصة' : 'This batch cannot be approved — it is still incomplete'}
         />
       )}
 
@@ -532,11 +514,9 @@ export default function RowApproval({
           <div style={{ flex: 1, minWidth: 250, fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.9 }}>
             {finalFace
               ? isAr
-                ? `الاعتماد ينشئ ${num(members.length * 2, true)} إصدارات — ${num(members.length, true)} في الخلاصة (مربّع، مع النص والوسوم) و${num(members.length, true)} في الستوري (عمودي، صورة فقط) — تُسلَّم آليًا في لحظة الدفعة. لا تُنشأ مهمة جدولة أو نشر لأحد.`
-                : `Approving creates ${members.length * 2} releases — ${members.length} in the feed (square, with caption and tags) and ${members.length} stories (vertical, image only) — delivered automatically at the batch moment. No scheduling or publishing task is opened for anyone.`
-              : isAr
-                ? 'إعادة منشور واحد لا تُلغي اعتماد الآخرين: ما لم تعلّمه يبقى كما هو، والصف يعود مرّة واحدة حاملًا ما علّمته. الصف الناقص ينتظر، ولا يخرج أبدًا كمنشورين.'
-                : 'Sending one post back does not undo the others: anything you did not mark stays as it is, and the row returns once carrying what you marked. An incomplete row waits; it never goes out as two posts.'}
+                ? `${num(members.length * 2, true)} إصدارات: ${num(members.length, true)} للخلاصة و${num(members.length, true)} للستوري`
+                : `${members.length * 2} releases: ${members.length} feed, ${members.length} stories`
+              : null}
           </div>
           {autoAd && (
             <div style={{ flexBasis: '100%', display: 'grid', gap: 10 }}>
@@ -565,7 +545,7 @@ export default function RowApproval({
                 title={marked.length > 0
                   ? (isAr ? 'أزل التعليم أولًا، أو أرسل الإعادة' : 'Unmark first, or send the changes')
                   : predicted.length > 0
-                    ? (isAr ? 'الصف ناقص — انظر القائمة أعلاه' : 'The row is incomplete — see the list above')
+                    ? (isAr ? 'الدفعة ناقصة' : 'The batch is incomplete')
                     : undefined}
                 onClick={() => void approve()}
               >
@@ -577,15 +557,15 @@ export default function RowApproval({
                       ? (isAr ? 'اعتماد التصميم' : 'Approve the design')
                       : (isAr ? 'اعتماد الكتابة' : 'Approve the writing')
                     : finalFace
-                      ? (isAr ? 'اعتماد الصف' : 'Approve the row')
-                      : (isAr ? 'اعتماد كتابة الصف' : 'Approve the row’s writing')}
+                      ? (isAr ? 'اعتماد الدفعة' : 'Approve the batch')
+                      : (isAr ? 'اعتماد كتابة الدفعة' : 'Approve the batch’s writing')}
               </button>
             </div>
           ) : (
             <span style={{ fontSize: 12, color: 'var(--mute)' }}>
               {detail.task
                 ? (isAr ? 'هذه المرحلة ليست لك — عرض فقط.' : 'This stage is not yours — view only.')
-                : (isAr ? 'لا مهمة مفتوحة على هذا الصف.' : 'This row has no open task.')}
+                : (isAr ? 'لا مهمة مفتوحة على هذه الدفعة.' : 'This batch has no open task.')}
             </span>
           )}
         </div>
@@ -603,8 +583,8 @@ export default function RowApproval({
           members={members.map((m) => ({ id: m.id, ref: m.ref, title: m.title }))}
           initialMembers={marked}
           subjectLabel={isAr
-            ? `صف ${batchDay ? shortDate(batchDay, true) : ''}`
-            : `Row of ${batchDay ? shortDate(batchDay, false) : ''}`}
+            ? `دفعة سوشيال ميديا ${batchDay ? shortDate(batchDay, true) : ''}`
+            : `Social media batch · ${batchDay ? shortDate(batchDay, false) : ''}`}
           sendChanges={async ({ note, targets, returnTo }) => {
             const res = await completeSubjectTask(detail, {
               taskId: detail.task?.id, result: 'changes_requested', note, targets, returnTo,

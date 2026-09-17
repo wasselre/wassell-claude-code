@@ -65,6 +65,16 @@ import {
 } from './lib/contentRoute';
 import './styles/mobile-m1.css';
 
+/** Social media (organic) or an ad — stated on every card, never inferred. */
+function LaneTag({ purpose, isAr }: { purpose: 'organic' | 'paid' | 'both'; isAr: boolean }) {
+  const label = purpose === 'paid'
+    ? (isAr ? 'إعلان' : 'Ad')
+    : purpose === 'both'
+      ? (isAr ? 'سوشيال ميديا + إعلان' : 'Social media + ad')
+      : (isAr ? 'سوشيال ميديا' : 'Social media');
+  return <span className="tag">{label}</span>;
+}
+
 /**
  * A task that is open but not handed out: nobody who takes this role's routine
  * work has room in their last 24 hours. It is NOT late — nobody has received it
@@ -141,12 +151,12 @@ function rowActionLabel(stepKey: string | null, isAr: boolean): string {
     return isAr ? 'مراجعة الكتابة' : 'Review the writing';
   }
   if (key.includes('design') || key.includes('edit') || key.includes('version')) {
-    return isAr ? 'ابدئي التصميم' : 'Start the design';
+    return isAr ? 'بدء التصميم' : 'Start the design';
   }
   if (key.includes('writ') || key.includes('script') || key.includes('caption')) {
-    return isAr ? 'اكتبي الصف' : 'Write the row';
+    return isAr ? 'كتابة الدفعة' : 'Write the batch';
   }
-  return isAr ? 'افتح الصف' : 'Open the row';
+  return isAr ? 'فتح الدفعة' : 'Open the batch';
 }
 
 /**
@@ -158,14 +168,14 @@ function actionLabel(row: MosContentRow, isAr: boolean): string {
   const key = row.status_key;
   if (key.includes('approve') || key.includes('review')) return isAr ? 'مراجعة' : 'Review';
   if (key.includes('write') || key.includes('script') || key.includes('caption')) {
-    return isAr ? 'ابدئي الكتابة' : 'Start writing';
+    return isAr ? 'بدء الكتابة' : 'Start writing';
   }
   if (key.includes('design') || key.includes('edit') || key.includes('montage')) {
-    return isAr ? 'ابدئي التنفيذ' : 'Start work';
+    return isAr ? 'بدء التنفيذ' : 'Start work';
   }
   if (key.includes('schedule') || key.includes('publish')) return isAr ? 'جدولة' : 'Schedule';
   if (key.includes('shoot') || key.includes('footage') || key.includes('material')) {
-    return isAr ? 'جهّزي المواد' : 'Gather material';
+    return isAr ? 'تجهيز المواد' : 'Gather material';
   }
   return isAr ? 'فتح' : 'Open';
 }
@@ -224,12 +234,12 @@ function RowCardRows({
           <div className="ttl" style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="tag">
               {isAr
-                ? `صف · ${num(facts.member_count, true)} منشورات`
-                : `Row · ${facts.member_count} posts`}
+                ? `سوشيال ميديا · ${num(facts.member_count, true)} منشورات`
+                : `Social media · ${facts.member_count} posts`}
             </span>
             {isAr
-              ? `صف ${day ? shortDate(day, true) : 'بلا يوم'} — ${general ? 'عام' : projectLabel}`
-              : `Row of ${day ? shortDate(day, false) : 'no day'} — ${general ? 'general' : projectLabel}`}
+              ? `دفعة سوشيال ميديا ${day ? shortDate(day, true) : 'بلا يوم'} — ${general ? 'عام' : projectLabel}`
+              : `Social media batch · ${day ? shortDate(day, false) : 'no day'} — ${general ? 'general' : projectLabel}`}
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
             {members.map((m, i) => (
@@ -241,11 +251,6 @@ function RowCardRows({
             {task.round > 1 && (
               <> · {isAr ? `الجولة ${num(task.round, true)}` : `round ${task.round}`}</>
             )}
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 2 }}>
-            {isAr
-              ? 'الاعتماد للصف كله، والإعادة لمنشور واحد — والأول في الترتيب يُنشر أخيرًا.'
-              : 'Approval is for the whole row, a send-back is for one post — and the first in the order publishes last.'}
           </div>
         </td>
         <td style={{ width: 190 }}>
@@ -271,7 +276,7 @@ function RowCardRows({
               ? (isAr ? 'طيّ' : 'Collapse')
               : isMine
                 ? rowActionLabel(task.step_id, isAr)
-                : (isAr ? 'عرض الصف' : 'View the row')}
+                : (isAr ? 'عرض الدفعة' : 'View the batch')}
           </span>
         </td>
       </tr>
@@ -389,7 +394,10 @@ function QueueGroup({
                         <KindCell typeKey={r.content_type_key} />
                       </td>
                       <td>
-                        <div className="ttl">{statusLabel(r, isAr)} — {r.title}</div>
+                        <div className="ttl" style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <LaneTag purpose={r.purpose} isAr={isAr} />
+                          {statusLabel(r, isAr)} — {r.title}
+                        </div>
                         <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
                           <span className="ltr">{r.ref}</span> · {typeLabel(r.content_type_key)}
                           {r.project_id && <> · <ProjectLink projectIds={[r.project_id]} variant="link" /></>}
@@ -402,15 +410,15 @@ function QueueGroup({
                         {isOverdue(r) ? (
                           <Pill tone="late">
                             {isAr
-                              ? `استحقاق ${shortDate(r.current_task_due_at ?? r.due_at, true)} · متأخر ${daysAgo(r.current_task_due_at ?? r.due_at, true)}`
-                              : `due ${shortDate(r.current_task_due_at ?? r.due_at, false)} · ${daysAgo(r.current_task_due_at ?? r.due_at, false)} late`}
+                              ? `استحقاق ${dateTimeShort(r.current_task_due_at ?? r.due_at, true)} · متأخر ${daysAgo(r.current_task_due_at ?? r.due_at, true)}`
+                              : `due ${dateTimeShort(r.current_task_due_at ?? r.due_at, false)} · ${daysAgo(r.current_task_due_at ?? r.due_at, false)} late`}
                           </Pill>
                         ) : (
                           <Pill tone={tone === 'idle' ? 'wait' : 'now'}>
                             {r.current_task_due_at
                               ? isAr
-                                ? `الاستحقاق ${shortDate(r.current_task_due_at, true)}`
-                                : `due ${shortDate(r.current_task_due_at, false)}`
+                                ? `الاستحقاق ${dateTimeShort(r.current_task_due_at, true)}`
+                                : `due ${dateTimeShort(r.current_task_due_at, false)}`
                               : isAr ? 'بلا موعد' : 'no due date'}
                           </Pill>
                         )}
@@ -647,7 +655,7 @@ export default function WorkPage() {
   const linkedRow = linkedRowOutsideQueue ? (
     <>
       <div className="lbl" style={{ marginBottom: 9 }}>
-        {isAr ? 'الصف المفتوح من الرابط' : 'The row this link opened'}
+        {isAr ? 'الدفعة المفتوحة من الرابط' : 'The batch this link opened'}
       </div>
       <div style={{ marginBottom: 22 }}>
         <RowPane rowId={openRowId} taskId={openTaskId} onChanged={() => void load()} />
@@ -788,14 +796,14 @@ export default function WorkPage() {
   /**
    * Hand-assigned work, in its own block. It is deliberately NOT merged into the
    * workflow groups: those rows open a stage, these ones just get done, and
-   * blurring the two would make «ابدئي الكتابة» and «تم» look interchangeable.
+   * blurring the two would make «بدء الكتابة» and «تم» look interchangeable.
    */
   const ManualBlock = () => {
     if (manualSorted.length === 0) return null;
     return (
       <>
         <div className="lbl" style={{ marginBottom: 9, color: manualLateCount > 0 ? 'var(--late)' : undefined }}>
-          {isAr ? 'مهام مُسندة إليكِ' : 'Assigned to you'}
+          {isAr ? 'مهام مُسندة إليك' : 'Assigned to you'}
         </div>
         <div className="card" style={{ marginBottom: 22 }}>
           <div className="tbl-wrap">
@@ -1018,15 +1026,12 @@ export default function WorkPage() {
             && upcoming.length === 0 && manualSorted.length === 0 && (
             <Empty
               title={isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'}
-              body={isAr
-                ? 'حين تصل خطوة إلى دورك ستظهر هنا مباشرة، مرتبة حسب الاستحقاق.'
-                : 'When a stage reaches your role it appears here, ordered by what is due first.'}
             />
           )}
 
           {/* الصفوف — بطاقة واحدة لثلاثة منشورات، تتوسّع في مكانها. */}
           {mobileRowItems.length > 0 && (
-            <div className="m1-lbl">{isAr ? 'صفوف — ثلاثة منشورات معًا' : 'Rows — three posts together'}</div>
+            <div className="m1-lbl">{isAr ? 'دفعات سوشيال ميديا' : 'Social media batches'}</div>
           )}
           {mobileRowItems.map((it) => {
             const open = openRowId === it.facts.row_id;
@@ -1044,8 +1049,8 @@ export default function WorkPage() {
                   onKeyDown={(e) => { if (e.key === 'Enter') expandRow(open ? null : it.facts.row_id); }}
                 >
                   {isAr
-                    ? `صف ${day ? shortDate(day, true) : 'بلا يوم'} — ${it.facts.project_id ? projectName(it.facts.project_id) : 'عام'}`
-                    : `Row of ${day ? shortDate(day, false) : 'no day'} — ${it.facts.project_id ? projectName(it.facts.project_id) : 'general'}`}
+                    ? `دفعة سوشيال ميديا ${day ? shortDate(day, true) : 'بلا يوم'} — ${it.facts.project_id ? projectName(it.facts.project_id) : 'عام'}`
+                    : `Social media batch · ${day ? shortDate(day, false) : 'no day'} — ${it.facts.project_id ? projectName(it.facts.project_id) : 'general'}`}
                 </div>
                 <div className="m1-m">
                   {isAr
@@ -1067,7 +1072,7 @@ export default function WorkPage() {
                     ? (isAr ? 'طيّ' : 'Collapse')
                     : itemMine(it)
                       ? rowActionLabel(it.task.step_id, isAr)
-                      : (isAr ? 'عرض الصف' : 'View the row')}
+                      : (isAr ? 'عرض الدفعة' : 'View the batch')}
                 </button>
                 {open && (
                   <div style={{ marginTop: 12 }}>
@@ -1094,7 +1099,7 @@ export default function WorkPage() {
                 <span className="m1-pill late">
                   {lateBy(r.current_task_due_at ?? r.due_at, isAr)}
                 </span>
-                <div className="m1-t" style={{ marginTop: 9 }}>{statusLabel(r, isAr)}</div>
+                <div className="m1-t" style={{ marginTop: 9 }}><LaneTag purpose={r.purpose} isAr={isAr} /> {statusLabel(r, isAr)}</div>
                 <div className="m1-m">
                   <span className="ltr">{r.ref}</span> · {r.title}
                   {r.project_id && <> · <ProjectLink projectIds={[r.project_id]} variant="link" /></>}
@@ -1120,7 +1125,7 @@ export default function WorkPage() {
 
           {/* Hand-assigned work — one full-width card each, one verb: «تم». */}
           {manualSorted.length > 0 && (
-            <div className="m1-lbl">{isAr ? 'مهام مُسندة إليكِ' : 'Assigned to you'}</div>
+            <div className="m1-lbl">{isAr ? 'مهام مُسندة إليك' : 'Assigned to you'}</div>
           )}
           {manualSorted.map((t) => {
             const projectId = manualProjectId(t);
@@ -1169,7 +1174,7 @@ export default function WorkPage() {
           })}
 
           {mMine.length > 0 && (
-            <div className="m1-lbl">{isAr ? 'مطلوب منكِ اليوم' : 'Yours today'}</div>
+            <div className="m1-lbl">{isAr ? 'مطلوب منك اليوم' : 'Yours today'}</div>
           )}
           {mMine.map((r, i) => (
             <div
@@ -1182,7 +1187,7 @@ export default function WorkPage() {
             >
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <ContentThumb row={r} size="md" />
-                <div className="m1-t" style={{ minWidth: 0 }}>{statusLabel(r, isAr)}</div>
+                <div className="m1-t" style={{ minWidth: 0 }}><LaneTag purpose={r.purpose} isAr={isAr} /> {statusLabel(r, isAr)}</div>
               </div>
               <div className="m1-m">
                 <span className="ltr">{r.ref}</span> · {r.title} · {dueText(r)}
@@ -1306,21 +1311,18 @@ export default function WorkPage() {
           && manualSorted.length === 0 && !error && (
           <Empty
             title={isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'}
-            body={isAr
-              ? 'حين تصل خطوة إلى دورك ستظهر هنا مباشرة، مرتبة حسب الاستحقاق. ويمكنكِ إضافة مهمة بنفسك.'
-              : 'When a stage reaches your role it appears here, ordered by what is due first. You can also add a task yourself.'}
           />
         )}
 
         <QueueGroup
-          label={isAr ? 'متأخر · ابدئي بهذا' : 'Late · start here'}
+          label={isAr ? 'متأخر' : 'Late'}
           tone="late"
           items={late}
           ctx={groupCtx}
         />
         <ManualBlock />
         <QueueGroup
-          label={isAr ? 'مطلوب منكِ اليوم' : 'Yours today'}
+          label={isAr ? 'مطلوب منك اليوم' : 'Yours today'}
           tone="now"
           items={mine}
           ctx={groupCtx}
@@ -1334,11 +1336,6 @@ export default function WorkPage() {
             </div>
             <div className="card" style={{ marginBottom: 22 }}>
               <div className="card-b" style={{ padding: '10px 14px 12px' }}>
-                <div style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.8, marginBottom: 8 }}>
-                  {isAr
-                    ? 'خطوات قادمة لدورك في محتوى يعمل عليه غيرك الآن — تظهر هنا لتستعد، وتنتقل إلى مهامك حين تصل إليك.'
-                    : 'Upcoming steps for your role on items others are working on now — shown so you can prepare; they become tasks when they reach you.'}
-                </div>
                 {upcoming.map((u) => (
                   <button
                     key={`${u.content_id}:${u.step_key}`}
@@ -1368,7 +1365,7 @@ export default function WorkPage() {
         )}
 
         <QueueGroup
-          label={isAr ? 'بانتظار شخص آخر — لا إجراء منكِ' : 'Waiting on someone else — no action from you'}
+          label={isAr ? 'بانتظار شخص آخر — لا إجراء منك' : 'Waiting on someone else — no action from you'}
           tone="idle"
           items={others}
           faded

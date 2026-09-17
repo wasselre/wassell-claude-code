@@ -174,8 +174,8 @@ export default function RowPane({ rowId, taskId, contentId, onChanged, brief }: 
     <div className="card">
       <div className="card-b" style={{ fontSize: 12.5, color: 'var(--mute)', lineHeight: 1.9 }}>
         {isAr
-          ? 'هذا صف عام لا يخصّ مشروعًا بعينه، فلا معلومات ولا ملفات مشروع له.'
-          : 'This is a general row that belongs to no project, so it has no project information or files.'}
+          ? 'دفعة عامة لا تخصّ مشروعًا، فلا معلومات ولا ملفات مشروع لها.'
+          : 'A general batch with no project, so there is no project information or files.'}
       </div>
     </div>
   );
@@ -245,8 +245,8 @@ function RowReadOnly({
         <div className="card-h">
           <h4>
             {isAr
-              ? `صف ${batchDay ? shortDate(batchDay, true) : 'بلا يوم'}`
-              : `Row of ${batchDay ? shortDate(batchDay, false) : 'no day'}`}
+              ? `دفعة سوشيال ميديا ${batchDay ? shortDate(batchDay, true) : 'بلا يوم'}`
+              : `Social media batch · ${batchDay ? shortDate(batchDay, false) : 'no day'}`}
           </h4>
           <span className="r">
             {detail.task
