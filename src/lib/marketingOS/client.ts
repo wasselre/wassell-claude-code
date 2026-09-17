@@ -3631,7 +3631,7 @@ export interface MosMonthPostingDay {
  */
 export interface MosMonthSkippedDay {
   day: string;
-  reason: 'past' | 'lead' | 'capacity';
+  reason: 'past' | 'lead' | 'capacity' | 'operator';
   /** Working days of lead the day actually had. `null` for a day already gone. */
   leadWorkingDays: number | null;
 }

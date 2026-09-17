@@ -84,6 +84,9 @@ function waitingLabel(
   task: { step_id: string | null; waiting_reason?: string | null },
   isAr: boolean,
 ): string {
+  if (task.waiting_reason === 'day_off') {
+    return isAr ? 'الجمعة إجازة — تُسلَّم يوم السبت' : 'Friday is off — handed out on Saturday';
+  }
   if (task.waiting_reason === 'no_holder') {
     return isAr ? 'بانتظار من يتولّى هذا الدور' : 'Waiting for someone in this role';
   }

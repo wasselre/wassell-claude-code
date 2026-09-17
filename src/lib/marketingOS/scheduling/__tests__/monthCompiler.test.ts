@@ -994,3 +994,27 @@ describe('the ads open at the first batch the team can actually make', () => {
     expect(out.summary.conflicts.some(conflictBlocksConfirm)).toBe(true);
   });
 });
+
+describe('monthGeometry — the operator’s start for one month (month_starts)', () => {
+  const SEPT: MonthTemplate = {
+    ...T,
+    monthStarts: { '2026-09': { organicFrom: '2026-09-22', paidFrom: '2026-09-20', adsLiveWhenReady: true } },
+  };
+
+  it('September 2026: organic from Tue 22, ads from Sun 20, the dropped day named as the operator’s', () => {
+    const geo = monthGeometry('2026-09', SEPT, CAL, '2026-09-17');
+    expect(geo.postingDays[0]).toBe('2026-09-22');
+    expect(geo.postingDays.every((d) => d >= '2026-09-22')).toBe(true);
+    expect(geo.paidBatchDays).toEqual(['2026-09-20', '2026-09-27']);
+    expect(geo.skippedPostingDays.filter((d) => d.reason === 'operator').map((d) => d.day)).toEqual(['2026-09-19', '2026-09-20']);
+  });
+
+  it('parses the jsonb shape and drops a malformed day instead of guessing', () => {
+    const t = parseMonthTemplate({ month_starts: { '2026-09': { organic_from: '2026-09-22', paid_from: 'soon', ads_live_when_ready: true }, bad: {} } });
+    expect(t.monthStarts).toEqual({ '2026-09': { organicFrom: '2026-09-22', paidFrom: undefined, adsLiveWhenReady: true } });
+  });
+
+  it('another month is untouched', () => {
+    expect(monthGeometry('2026-10', SEPT, CAL).postingDays).toEqual(monthGeometry('2026-10', T, CAL).postingDays);
+  });
+});

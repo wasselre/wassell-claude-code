@@ -27,7 +27,9 @@
  * create-and-roll-back loop every ten minutes.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { ensureMetaSkeleton } from '../metaSkeleton.js';
+import { ensureMetaSkeleton, metaErr } from '../metaSkeleton.js';
+import { loadMetaConfig, MetaMarketingClient } from '../metaMarketingApi.js';
+import { parseMonthStarts } from './monthCompiler.js';
 
 /** The plan C-042 ran on (2026-08-28): Click-to-WhatsApp conversations. */
 const META_PLAN_DEFAULTS = Object.freeze({
@@ -52,7 +54,7 @@ export async function ensureMonthMetaCampaigns(
   opts: { month?: string; force?: boolean } = {},
 ): Promise<{ results: MonthMetaResult[]; error?: string }> {
   const tplRes = await svc.from('mos_month_template')
-    .select('enabled, budget_per_project, campaign_length_days, meta_template').limit(1).maybeSingle();
+    .select('enabled, budget_per_project, campaign_length_days, meta_template, month_starts').limit(1).maybeSingle();
   if (tplRes.error) {
     console.error('[month-meta] template read failed', tplRes.error.code, tplRes.error.message);
     return { results: [], error: tplRes.error.message };
@@ -60,6 +62,7 @@ export async function ensureMonthMetaCampaigns(
   const tpl = tplRes.data as {
     enabled: boolean; budget_per_project: number | string | null;
     campaign_length_days: number | null; meta_template: Record<string, unknown> | null;
+    month_starts: unknown;
   } | null;
   if (!tpl || tpl.enabled !== true) return { results: [] };
 
@@ -157,7 +160,37 @@ export async function ensureMonthMetaCampaigns(
         const clr = await svc.from('mos_campaign_executions').update({ platform_settings: clean }).eq('id', e.id);
         if (clr.error) console.error('[month-meta] clearing the build error failed', e.id, clr.error.message);
       }
-      results.push({ execution_id: e.id, campaign: label, outcome: 'built', platform_campaign_id: built.campaign.platform_campaign_id });
+      // A month whose ads run the moment each is ready (month_starts): switch
+      // the campaign + both ad sets ON now. Meta still delivers nothing before
+      // the ad sets' start date (the month's first paid day), and each ad is
+      // created ACTIVE on its final approval — so it goes live when it is ready.
+      const monthKey = (camp?.ref ?? '').slice(0, 7);
+      const liveNow = parseMonthStarts(tpl.month_starts)[monthKey]?.adsLiveWhenReady === true;
+      let activation: string | null = null;
+      if (liveNow && built.campaign.platform_campaign_id) {
+        const cfg = loadMetaConfig();
+        if (!cfg) activation = 'Meta not configured';
+        else {
+          const client = new MetaMarketingClient(cfg);
+          try {
+            await client.setStatus(built.campaign.platform_campaign_id, 'ACTIVE');
+            const setIds = built.ad_sets.map((s) => s.platform_adset_id).filter((id) => id && id !== '(validated)');
+            for (const id of setIds) await client.setStatus(id, 'ACTIVE');
+            const now = new Date().toISOString();
+            const ex = await svc.from('mos_campaign_executions').update({ status: 'running', updated_at: now }).eq('id', e.id);
+            if (ex.error) console.error('[month-meta] execution status write failed', e.id, ex.error.message);
+            const st = await svc.from('mos_ad_sets').update({ status: 'active', updated_at: now }).in('platform_adset_id', setIds);
+            if (st.error) console.error('[month-meta] ad set status write failed', e.id, st.error.message);
+          } catch (err) {
+            activation = metaErr(err);
+            console.error('[month-meta] activating the month campaign failed', e.id, activation);
+          }
+        }
+      }
+      results.push(activation
+        ? { execution_id: e.id, campaign: label, outcome: 'failed', platform_campaign_id: built.campaign.platform_campaign_id,
+            error: `built but not switched on: ${activation}`, error_ar: `أُنشئت الحملة لكن تعذّر تشغيلها: ${activation}` }
+        : { execution_id: e.id, campaign: label, outcome: 'built', platform_campaign_id: built.campaign.platform_campaign_id });
     } else {
       console.error('[month-meta] Meta build failed', e.id, built.status, built.error);
       const fresh = await svc.from('mos_campaign_executions').select('platform_settings').eq('id', e.id).maybeSingle();

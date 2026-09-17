@@ -62,7 +62,7 @@
 import {
   DEFAULTS, DEFAULT_RULES, DEFAULT_CALENDAR, DEFAULT_PUBLISHING, ENGINE_VERSION, POST_WORKFLOW,
   addDays, addWorkingDays, daysBetween, effortWeights, nextWorkingDay, weekdayOf, workingDaysIn,
-  planCampaign, conflictBlocksConfirm,
+  planCampaign, conflictBlocksConfirm, conflictBlocksPlan,
   type LedgerRow, type LoadBucket, type PlanConflict, type PlanInput, type PlanResult,
   type RowRequirement, type RuleSet, type WorkCalendar, type WorkflowSpec, type WorkloadSnapshot,
 } from '../../../../src/lib/marketingOS/scheduling/index.js';
@@ -104,6 +104,22 @@ export interface MonthTemplate {
   generalTopicBank: string[];
   organicPlatform: string;
   paidPlatform: string;
+  /**
+   * One-off starts per month (`mos_month_template.month_starts`, keyed `YYYY-MM`)
+   * — the operator's call for a month that does not begin on the template's own
+   * rhythm. September 2026, the first real month: organic from Tue 22, ads from
+   * Sun 20, and ads switched on as soon as each is ready.
+   */
+  monthStarts: Record<string, MonthStart>;
+}
+
+export interface MonthStart {
+  /** No organic row publishes before this day. */
+  organicFrom?: string;
+  /** No paid batch before this day. */
+  paidFrom?: string;
+  /** The Meta campaign + ad sets go ACTIVE when built: each ad runs the moment it is approved. */
+  adsLiveWhenReady?: boolean;
 }
 
 export const MONTH_TEMPLATE_DEFAULTS: MonthTemplate = {
@@ -120,6 +136,7 @@ export const MONTH_TEMPLATE_DEFAULTS: MonthTemplate = {
   generalTopicBank: [],
   organicPlatform: 'instagram',
   paidPlatform: 'meta',
+  monthStarts: {},
 };
 
 /**
@@ -178,7 +195,26 @@ export function parseMonthTemplate(row: Record<string, unknown> | null | undefin
     generalTopicBank: bank,
     organicPlatform: asStr(r.organic_platform, MONTH_TEMPLATE_DEFAULTS.organicPlatform),
     paidPlatform: asStr(r.paid_platform, MONTH_TEMPLATE_DEFAULTS.paidPlatform),
+    monthStarts: parseMonthStarts(r.month_starts),
   };
+}
+
+/** `month_starts` jsonb → typed map. Bad days are dropped, never guessed. */
+export function parseMonthStarts(v: unknown): Record<string, MonthStart> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, MonthStart> = {};
+  for (const [month, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (!/^\d{4}-\d{2}$/.test(month) || !raw || typeof raw !== 'object') continue;
+    const o = raw as Record<string, unknown>;
+    const day = (x: unknown): string | undefined =>
+      (typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : undefined);
+    out[month] = {
+      organicFrom: day(o.organic_from),
+      paidFrom: day(o.paid_from),
+      adsLiveWhenReady: o.ads_live_when_ready === true,
+    };
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -305,7 +341,7 @@ export interface MonthPostingDay {
  * The distinction is the whole point of reporting them: one is the calendar,
  * the other is a decision the operator should understand.
  */
-export type MonthSkipReason = 'past' | 'lead' | 'capacity';
+export type MonthSkipReason = 'past' | 'lead' | 'capacity' | 'operator';
 
 export interface MonthSkippedDay {
   day: string;
@@ -472,29 +508,43 @@ export function monthGeometry(
     ? (everyPostingDay[0] ?? null)
     : (ahead.find((d) => leadFromFloor(d) >= leads.organic) ?? null);
 
-  const postingDays = from === null
+  const override = template.monthStarts?.[month.trim()];
+  const organicFrom = override?.organicFrom ?? null;
+  const paidFrom = override?.paidFrom ?? null;
+  const postingDaysByClock = from === null
     ? everyPostingDay
     : (startsOn === null ? [] : ahead.filter((d) => d >= startsOn));
-  const skippedPostingDays: MonthSkippedDay[] = from === null ? [] : [
-    ...everyPostingDay.filter((d) => d < from)
-      .map((day): MonthSkippedDay => ({ day, reason: 'past', leadWorkingDays: null })),
-    ...ahead.filter((d) => startsOn === null || d < startsOn)
-      .map((day): MonthSkippedDay => ({ day, reason: 'lead', leadWorkingDays: leadFromFloor(day) })),
+  // The operator's start for this month: nothing publishes before it.
+  const postingDays = organicFrom ? postingDaysByClock.filter((d) => d >= organicFrom) : postingDaysByClock;
+  const skippedPostingDays: MonthSkippedDay[] = [
+    ...(from === null ? [] : [
+      ...everyPostingDay.filter((d) => d < from)
+        .map((day): MonthSkippedDay => ({ day, reason: 'past', leadWorkingDays: null })),
+      ...ahead.filter((d) => startsOn === null || d < startsOn)
+        .map((day): MonthSkippedDay => ({ day, reason: 'lead', leadWorkingDays: leadFromFloor(day) })),
+    ]),
+    ...(organicFrom ? postingDaysByClock.filter((d) => d < organicFrom)
+      .map((day): MonthSkippedDay => ({ day, reason: 'operator', leadWorkingDays: null })) : []),
   ];
 
   // A paid batch is bound by its OWN minimum, which is larger: a launch slate
   // runs the classic path, where design alone is two working days.
-  const paidBatchDays = from === null
+  const paidBatchDaysByClock = from === null
     ? everyBatchDay
     : (startsOn === null
       ? []
       : everyBatchDay.filter((d) => d >= startsOn && leadFromFloor(d) >= leads.paid));
+  const paidBatchDays = paidFrom ? paidBatchDaysByClock.filter((d) => d >= paidFrom) : paidBatchDaysByClock;
   const keptBatch = new Set(paidBatchDays);
-  const skippedPaidBatchDays: MonthSkippedDay[] = from === null ? [] : everyBatchDay
+  const skippedPaidBatchDays: MonthSkippedDay[] = everyBatchDay
     .filter((d) => !keptBatch.has(d))
-    .map((day): MonthSkippedDay => (day < from
-      ? { day, reason: 'past', leadWorkingDays: null }
-      : { day, reason: 'lead', leadWorkingDays: leadFromFloor(day) }));
+    .filter((d) => from !== null || (paidFrom !== null && d < paidFrom))
+    .map((day): MonthSkippedDay => (paidFrom !== null && day < paidFrom && (from === null || day >= from)
+      && paidBatchDaysByClock.includes(day)
+      ? { day, reason: 'operator', leadWorkingDays: null }
+      : from !== null && day < from
+        ? { day, reason: 'past', leadWorkingDays: null }
+        : { day, reason: from === null ? 'operator' : 'lead', leadWorkingDays: from === null ? null : leadFromFloor(day) }));
 
   const firstPostingDay = postingDays[0] ?? from ?? weeks[0]?.start ?? first;
   const lastPostingDay = postingDays[postingDays.length - 1]
@@ -1037,7 +1087,11 @@ export function compileMonth(args: CompileMonthArgs): CompiledMonth {
    */
   let geo = geometry;
   let paid = compilePaid(geo);
-  while (geo.startedFrom !== null && geo.paidBatchDays.length > 1) {
+  // A month whose ads go live as each is ready (month_starts) keeps the
+  // operator's first batch: an ad not finished by the batch day simply goes
+  // live when it is — that is the rule, not a capacity failure.
+  const liveWhenReady = template.monthStarts?.[geometry.month]?.adsLiveWhenReady === true;
+  while (!liveWhenReady && geo.startedFrom !== null && geo.paidBatchDays.length > 1) {
     const failed = paid.filter((x) => !x.plan.feasible);
     if (failed.length === 0) break;
     const second = geo.paidBatchDays[1]!;
@@ -1055,6 +1109,26 @@ export function compileMonth(args: CompileMonthArgs): CompiledMonth {
       ],
     };
     paid = compilePaid(geo);
+  }
+
+  // Ads that go live as each is ready: an ad the forecast cannot fit before its
+  // batch day is not an impossible month — it starts as early as the team can
+  // and goes live when finished (the dispatcher hands work out by capacity, in
+  // publish order). Such an item keeps its need date, starts at the month's
+  // production start, and carries no booked stages; the capacity conflicts that
+  // said "not all by the batch day" are dropped, because under this rule they
+  // are not a refusal. Only no_capacity / time_bound are forgiven — a platform
+  // or publishing-time conflict still blocks.
+  if (liveWhenReady) {
+    paid = paid.map((p) => {
+      if (p.plan.feasible) return p;
+      if (p.plan.conflicts.some(conflictBlocksPlan)) return p;
+      const items = p.plan.items.map((it) => (it.productionStart
+        ? it
+        : { ...it, productionStart: geo.productionStart, requiredReadyAt: it.requiredReadyAt || it.needAt.slice(0, 10) }));
+      const conflicts = p.plan.conflicts.filter((c) => c.kind !== 'no_capacity' && c.kind !== 'time_bound');
+      return { ...p, plan: { ...p.plan, items, conflicts, feasible: true } };
+    });
   }
 
   const inputs = [organicInput, ...paid.map((p) => p.input)];
