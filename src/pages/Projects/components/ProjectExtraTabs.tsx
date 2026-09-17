@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ExternalLink, FileText, Film, Image as ImageIcon, Globe, RefreshCw, Users,
-  Eye, EyeOff, AlertTriangle, CheckCircle2, MapPin, ArrowLeftRight,
+  Eye, EyeOff, AlertTriangle, CheckCircle2, ArrowLeftRight,
 } from 'lucide-react';
 import type { AppModel, AppRecord } from '@/types';
 import { useAppStore } from '@/stores/appStore';
@@ -19,9 +19,7 @@ import {
 import { auditProject } from '@/lib/projects/projectAi';
 import RecordFilesPanel from '@/pages/Records/components/RecordFilesPanel';
 import { recordFilesEnabled } from '@/lib/files/flags';
-import { resolveClientView } from '@/pages/Clients/lib/clientView';
-import { isActive, EMPTY_RELATED } from '@/pages/Sales/lib/salesClients';
-import { emptyFollowupSummary } from '@/pages/Sales/lib/myWork';
+import { buildActiveClientDemand, clientsInterestedInProject, projectDistrictIds } from '@/lib/demand/demandAggregation';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
 
 // ── Files tab (replaces Media) ──────────────────────────────────────────────
@@ -168,33 +166,27 @@ export function CustomerDemandTab({ view, isAr }: { view: ProjectView; isAr: boo
   const { models, records, users } = useAppStore();
   const translationVersion = useRecordTranslationVersion();
   const clientsModel = modelByName(models, 'clients');
+  const allModel = modelByName(models, 'all_projects');
 
   const matched = useMemo(() => {
     if (!clientsModel) return [];
+    // Same canonical active-client + demand layer the Command Center uses.
     const ctx = { models, records, users, language: (isAr ? 'ar' : 'en') as 'ar' | 'en', translate: getEntityFieldText };
-    const projDistrict = (view.district ?? '').trim().toLowerCase();
-    const out: { id: string; name: string | null; stage: string | null; status: string | null; budget: string | null; district: string | null; reason: string }[] = [];
-    for (const rec of records[clientsModel.id] ?? []) {
-      const cv = resolveClientView(rec, ctx);
-      // Canonical active filter (reused, not reimplemented).
-      if (!isActive({ view: cv, code: null, related: EMPTY_RELATED, followup: emptyFollowupSummary() })) continue;
-      const inPreferred = cv.preferredProjects.some((p) => p.id === view.id);
-      const districtNames = (cv.preferredDistrict ?? '').split(/،|,/).map((s) => s.trim().toLowerCase()).filter(Boolean);
-      const inDistrict = !!projDistrict && districtNames.includes(projDistrict);
-      if (!inPreferred && !inDistrict) continue;
-      out.push({
-        id: cv.id,
-        name: cv.name,
-        stage: cv.stage,
-        status: cv.status,
-        budget: fmtBudget(cv.budget, isAr),
-        district: cv.preferredDistrict,
-        reason: inPreferred ? (isAr ? 'في مشاريعه المفضلة' : 'In their preferred projects') : (isAr ? 'نفس الحي المطلوب' : 'Same requested district'),
-      });
-    }
-    return out;
+    const allProjects = allModel ? records[allModel.id] ?? [] : [];
+    const demand = buildActiveClientDemand(records[clientsModel.id] ?? [], ctx, allProjects);
+    const projDistricts = view.raw ? projectDistrictIds(view.raw) : [];
+    return clientsInterestedInProject(demand, view.id, projDistricts).map(({ client, reason }) => ({
+      id: client.clientId,
+      name: client.name,
+      stage: client.stage,
+      status: client.status,
+      budget: fmtBudget(client.budget, isAr),
+      reason: reason === 'preferred'
+        ? (isAr ? 'في مشاريعه المفضلة' : 'In their preferred projects')
+        : (isAr ? 'نفس الحي المطلوب' : 'Same requested district'),
+    }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientsModel, models, records, users, isAr, view.id, view.district, translationVersion]);
+  }, [clientsModel, allModel, models, records, users, isAr, view.id, view.raw, translationVersion]);
 
   return (
     <div className="space-y-3">
@@ -220,7 +212,6 @@ export function CustomerDemandTab({ view, isAr }: { view: ProjectView; isAr: boo
               </div>
               {(c.stage || c.status) && <div className="text-[11px] text-charcoal/45 mt-0.5 truncate">{[c.stage, c.status].filter(Boolean).join(' · ')}</div>}
               {c.budget && <div className="text-[11px] text-charcoal/55 mt-0.5">{isAr ? 'الميزانية: ' : 'Budget: '}{c.budget}</div>}
-              {c.district && <div className="text-[11px] text-charcoal/45 mt-0.5 truncate inline-flex items-center gap-1"><MapPin size={10} /> {c.district}</div>}
             </button>
           ))}
         </div>
