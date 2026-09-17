@@ -231,7 +231,7 @@ describe('tasks', () => {
     expect(taskHref({ kind: 'refresh_decision', entity_kind: 'refresh_cycle', entity_id: 'r1', status: 'open' }))
       .toBe('/m/my-work?task=r1');
     expect(taskHref({ kind: 'plan_conflict', entity_kind: 'campaign', entity_id: 'k1', status: 'open' }))
-      .toBe('/m/campaigns/k1?tab=tasks');
+      .toBe('/m/month');
     expect(taskHref({ kind: 'ad_failed', entity_kind: 'content', entity_id: 'c8', status: 'open' }))
       .toBe('/m/content/c8?tab=placements&step=publish_check');
     expect(previewTargetOfTask({ kind: 'ad_failed', entity_kind: 'content', entity_id: 'c8', status: 'open' }))

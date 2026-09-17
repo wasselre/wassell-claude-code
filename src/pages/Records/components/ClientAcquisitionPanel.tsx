@@ -125,14 +125,11 @@ function AcquisitionRow({
   const platform = platformLabel(touch.platform);
   const offer = touch.offer?.trim() || null;
 
-  // Deep link into Marketing: prefer the execution (where the ad lives), else
-  // the campaign. Reps without Marketing access see the workspace's own gate.
-  const marketingHref =
-    touch.campaign_id && touch.execution_id
-      ? `/m/campaigns/${touch.campaign_id}/exec/${touch.execution_id}`
-      : touch.campaign_id
-        ? `/m/campaigns/${touch.campaign_id}`
-        : null;
+  // The campaign and execution pages this used to deep-link into were deleted
+  // with the old Marketing pages (2026-09-16); a campaign is planned on the
+  // month page now, which is not a per-campaign destination. So no link — the
+  // touch still shows its channel, platform and offer.
+  const marketingHref: string | null = null;
 
   return (
     <li className="rounded-xl border border-sand/40 bg-cream/30 p-3.5">

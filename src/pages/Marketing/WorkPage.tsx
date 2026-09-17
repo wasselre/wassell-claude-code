@@ -57,7 +57,7 @@ import {
 import ProjectLink from './components/ProjectLink';
 import { IconSearch } from './components/icons';
 import NewTaskModal from './components/NewTaskModal';
-import ContentPreview, { usePreview } from './components/ContentPreviewModal';
+import { usePreview } from './components/ContentPreviewModal';
 import RowPane from './components/RowPane';
 import { dayName, daysAgo, daysFromNow, num, shortDate } from './lib/format';
 import {
@@ -306,7 +306,7 @@ function QueueGroup({
 }) {
   const {
     isAr, myRole, typeLabel, projectName, openRowId, openPostId,
-    expandRow, expandPost, taskFor, itemLate, itemMine, reload, navigate,
+    expandRow, expandPost, taskFor, itemLate, itemMine, reload,
   } = ctx;
   if (groupItems.length === 0) return null;
   return (
@@ -407,14 +407,11 @@ function QueueGroup({
                     {open && (
                       <tr>
                         <td colSpan={5} style={{ padding: '4px 10px 14px' }}>
-                          <ContentPreview
-                            contentId={r.id}
-                            isAr={isAr}
-                            variant="inline"
-                            onClose={() => expandPost(null)}
-                            onChanged={reload}
-                            onNavigate={navigate}
-                          />
+                          {/* The single item's own working screen — the same
+                              faces as a row, with one post. It replaced an
+                              inline preview whose buttons led to the old
+                              per-item content page (deleted 2026-09-16). */}
+                          <RowPane contentId={r.id} onChanged={reload} />
                         </td>
                       </tr>
                     )}
@@ -448,6 +445,13 @@ export default function WorkPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState('');
+  /*
+   * «مهامي» or «الجميع». «الجميع» used to NAVIGATE to the team page, which was
+   * deleted with the other old pages (2026-09-16). It is a switch on this page
+   * now: the same queue, the same row and item screens, over the whole team's
+   * open work (`work_list` scope 'team' — the server already served it).
+   */
+  const [scope, setScope] = useState<'mine' | 'team'>('mine');
   const [newTask, setNewTask] = useState(false);
   const [closing, setClosing] = useState<string | null>(null);
   // A task row opens the item's PREVIEW POPUP (the same one every other list
@@ -466,32 +470,34 @@ export default function WorkPage() {
 
   // The expanded card — one at a time, and mirrored into the URL so the thing
   // you are looking at can be linked to. `?row=` is what a row notification
-  // carries; `?task=` is the task id, for a row you cannot name yet.
+  // carries; `?task=` is the task id, for a row you cannot name yet; `?item=` is
+  // ONE content item (a paid creative) — what `/m/content/:id` forwards to now
+  // that the old per-item page is gone.
   const [params, setParams] = useSearchParams();
   const openRowId = params.get('row');
   const openTaskId = params.get('task');
-  const [openPostId, setOpenPostId] = useState<string | null>(null);
+  const openPostId = params.get('item');
 
   const expandRow = (rowId: string | null): void => {
-    setOpenPostId(null);
     const next = new URLSearchParams(params);
     if (rowId) next.set('row', rowId); else next.delete('row');
     next.delete('task');
+    next.delete('item');
     setParams(next, { replace: true });
   };
   const expandPost = (contentId: string | null): void => {
     const next = new URLSearchParams(params);
     next.delete('row');
     next.delete('task');
+    if (contentId) next.set('item', contentId); else next.delete('item');
     setParams(next, { replace: true });
-    setOpenPostId(contentId);
   };
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWorkQueue('mine');
+      const res = await fetchWorkQueue(scope);
       setRows(res.content);
       setTasks(res.tasks ?? []);
       setRowFacts(res.rows ?? []);
@@ -504,13 +510,14 @@ export default function WorkPage() {
       const rowTaskCount = (res.rows ?? []).length;
       const postTaskCount = (res.tasks ?? [])
         .filter((t) => t.subject_table !== 'mos_content_rows').length;
-      setBadge('mywork', rowTaskCount + postTaskCount + (res.manual_tasks?.length ?? 0));
+      // The rail badge is MY count — never the team's, or it would read as my backlog.
+      if (scope === 'mine') setBadge('mywork', rowTaskCount + postTaskCount + (res.manual_tasks?.length ?? 0));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [setBadge]);
+  }, [setBadge, scope]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -580,6 +587,12 @@ export default function WorkPage() {
    */
   const [arrivedWithRow] = useState(() => params.get('row'));
   const [arrivedWithTask] = useState(() => params.get('task'));
+  const [arrivedWithItem] = useState(() => params.get('item'));
+  // Same permalink rule for a single item: opened by link, not in this queue.
+  const linkedItemOutsideQueue = Boolean(
+    openPostId && openPostId === arrivedWithItem
+    && !items.some((it) => it.kind === 'post' && it.id === openPostId),
+  );
   const linkedRowOutsideQueue = Boolean(
     ((openRowId && openRowId === arrivedWithRow) || (!openRowId && openTaskId && openTaskId === arrivedWithTask))
     && !items.some((it) => it.kind === 'row' && it.id === openRowId),
@@ -589,6 +602,25 @@ export default function WorkPage() {
      inside this function gets a new identity on every render, which would
      unmount and remount `RowPane` — and re-fetch the row — on every keystroke
      in the search box. */
+  const linkedItem = linkedItemOutsideQueue && openPostId ? (
+    <>
+      <div className="lbl" style={{ marginBottom: 9 }}>
+        {isAr ? 'العنصر المفتوح من الرابط' : 'The item this link opened'}
+      </div>
+      <div style={{ marginBottom: 22 }}>
+        <RowPane contentId={openPostId} onChanged={() => void load()} />
+        <button
+          type="button"
+          className="btn btn-d btn-sm"
+          style={{ marginTop: 10 }}
+          onClick={() => expandPost(null)}
+        >
+          {isAr ? 'إغلاق' : 'Close'}
+        </button>
+      </div>
+    </>
+  ) : null;
+
   const linkedRow = linkedRowOutsideQueue ? (
     <>
       <div className="lbl" style={{ marginBottom: 9 }}>
@@ -925,6 +957,7 @@ export default function WorkPage() {
           {loading && rows.length === 0 && <Skeleton rows={5} />}
 
           {linkedRow}
+          {linkedItem}
 
           {rows.length > 0 && (
             <div className="m1-chips">
@@ -1210,10 +1243,10 @@ export default function WorkPage() {
       >
         {canSeeTeam && (
           <div className="seg">
-            <button type="button" className="on">
+            <button type="button" className={scope === 'mine' ? 'on' : ''} onClick={() => setScope('mine')}>
               {isAr ? 'مهامي' : 'Mine'}
             </button>
-            <button type="button" onClick={() => navigate('/m/team')}>
+            <button type="button" className={scope === 'team' ? 'on' : ''} onClick={() => setScope('team')}>
               {isAr ? 'الجميع' : 'Everyone'}
             </button>
           </div>
@@ -1238,6 +1271,7 @@ export default function WorkPage() {
         {loading && rows.length === 0 && <Skeleton rows={5} />}
 
         {linkedRow}
+          {linkedItem}
 
         {!loading && filtered.length === 0 && upcoming.length === 0
           && manualSorted.length === 0 && !error && (

@@ -13,7 +13,6 @@
  * empty state and the metric cards show real totals.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   PaidAnalytics, PaidAnalyticsWindow, PLATFORM_LABELS, fetchPaidAnalytics,
 } from '@/lib/marketingOS/client';
@@ -57,7 +56,6 @@ function Delta({ cur, prev, invert, isAr }: { cur: number; prev: number; invert?
 
 export default function AnalyticsPage() {
   const { isAr } = useWorkspace();
-  const navigate = useNavigate();
   const [sel, setSel] = useState<DateSel>({ period: 'month', anchorIso: todayIso() });
   const [data, setData] = useState<PaidAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -199,7 +197,7 @@ export default function AnalyticsPage() {
                 <div className="card-b">
                   {hasDaily && bk
                     ? <TrendChart points={bk.items.map((b) => ({ label: b.label, value: b.spend }))} color="var(--copper)" fmt={(v) => num(Math.round(v), isAr)} />
-                    : <DailyEmpty isAr={isAr} onGo={() => navigate('/m/campaigns')} />}
+                    : <DailyEmpty isAr={isAr} />}
                 </div>
               </div>
               <div className="card">
@@ -207,7 +205,7 @@ export default function AnalyticsPage() {
                 <div className="card-b">
                   {hasDaily && bk
                     ? <TrendChart points={cplSeries} color="var(--go)" area={false} fmt={(v) => num(Math.round(v), isAr)} />
-                    : <DailyEmpty isAr={isAr} onGo={() => navigate('/m/campaigns')} />}
+                    : <DailyEmpty isAr={isAr} />}
                 </div>
               </div>
             </div>
@@ -258,7 +256,7 @@ export default function AnalyticsPage() {
                         const ctr = c.impressions > 0 ? (c.clicks / c.impressions) * 100 : 0;
                         const cpl = c.leads > 0 ? c.spend / c.leads : null;
                         return (
-                          <tr key={c.id} className="click" onClick={() => navigate(`/m/campaigns/${c.id}`)}>
+                          <tr key={c.id}>
                             <td className="ttl">{c.name}</td>
                             <td className="n">{num(Math.round(c.spend), isAr)}</td>
                             <td className="n">{ctr > 0 ? pct(Number(ctr.toFixed(2)), isAr, 2) : '—'}</td>
@@ -285,7 +283,7 @@ export default function AnalyticsPage() {
 }
 
 
-function DailyEmpty({ isAr, onGo }: { isAr: boolean; onGo: () => void }) {
+function DailyEmpty({ isAr }: { isAr: boolean }) {
   return (
     <div style={{ padding: '18px 4px' }}>
       <Empty
@@ -293,9 +291,7 @@ function DailyEmpty({ isAr, onGo }: { isAr: boolean; onGo: () => void }) {
         body={isAr
           ? 'تظهر السلسلة الزمنية فور إدخال الأرقام اليومية للحملات (الإنفاق والعملاء لكل يوم).'
           : 'The time series appears once daily campaign figures (spend and leads per day) are entered.'}
-      >
-        <button type="button" className="btn btn-sm" onClick={onGo}>{isAr ? 'إلى الحملات' : 'Go to campaigns'}</button>
-      </Empty>
+      />
     </div>
   );
 }

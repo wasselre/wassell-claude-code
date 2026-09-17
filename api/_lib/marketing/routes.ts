@@ -107,13 +107,18 @@ export function contentUrl(contentId: string, opts: ContentUrlOpts = {}): string
   return `/m/content/${contentId}?${qs.toString()}`;
 }
 
-export function campaignUrl(campaignId: string, tab?: string): string {
-  return tab ? `/m/campaigns/${campaignId}?tab=${tab}` : `/m/campaigns/${campaignId}`;
+/**
+ * Campaign and execution pages were deleted with the old Marketing pages
+ * (2026-09-16) — a campaign is planned on the month page now. The signatures
+ * are kept so no producer breaks; every such link lands on the month, and the
+ * client routes redirect any `/m/campaigns/...` link already sent.
+ */
+export function campaignUrl(_campaignId: string, _tab?: string): string {
+  return '/m/month';
 }
 
-export function executionUrl(campaignId: string, executionId: string, tab?: string): string {
-  const base = `/m/campaigns/${campaignId}/exec/${executionId}`;
-  return tab ? `${base}?tab=${tab}` : base;
+export function executionUrl(_campaignId: string, _executionId: string, _tab?: string): string {
+  return '/m/month';
 }
 
 export const myWorkUrl = (): string => '/m/my-work';

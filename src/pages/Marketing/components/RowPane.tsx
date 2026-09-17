@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MosMonthNote, fetchMonth } from '@/lib/marketingOS/client';
-import { MosRowDetail, fetchRowDetail, rowFaceOf } from '@/lib/marketingOS/rowClient';
+import { MosRowDetail, fetchItemDetail, fetchRowDetail, rowFaceOf } from '@/lib/marketingOS/rowClient';
 import { useWorkspace } from '../MarketingWorkspace';
 import { LoadError, Skeleton } from './kit';
 import { stageIsMine } from '../lib/stagePhase';
@@ -44,13 +44,19 @@ export interface RowPaneProps {
   /** Address by row, or by the task id a notification carried. */
   rowId?: string | null;
   taskId?: string | null;
+  /**
+   * Address ONE content item instead — a paid creative or any single item,
+   * shown through the same faces as a row of one (`item_detail`). Takes
+   * precedence over `rowId` / `taskId`.
+   */
+  contentId?: string | null;
   /** Fired after anything moved, so the list behind the pane refreshes too. */
   onChanged?: () => void | Promise<void>;
   /** The resolved-brief panel, when the caller has one to mount. */
   brief?: React.ReactNode;
 }
 
-export default function RowPane({ rowId, taskId, onChanged, brief }: RowPaneProps) {
+export default function RowPane({ rowId, taskId, contentId, onChanged, brief }: RowPaneProps) {
   const { isAr, roles, projectName } = useWorkspace();
   const [detail, setDetail] = useState<MosRowDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,20 +80,20 @@ export default function RowPane({ rowId, taskId, onChanged, brief }: RowPaneProp
    * is pointed at a different row, so opening the next row starts on the work.
    */
   const [pane, setPane] = useState<'work' | 'info' | 'files'>('work');
-  useEffect(() => { setPane('work'); }, [rowId, taskId]);
+  useEffect(() => { setPane('work'); }, [rowId, taskId, contentId]);
 
   const load = useCallback(async () => {
-    if (!rowId && !taskId) return;
+    if (!contentId && !rowId && !taskId) return;
     setLoading(true);
     setError(null);
     try {
-      setDetail(await fetchRowDetail({ rowId, taskId }));
+      setDetail(contentId ? await fetchItemDetail(contentId) : await fetchRowDetail({ rowId, taskId }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [rowId, taskId]);
+  }, [rowId, taskId, contentId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -134,7 +140,8 @@ export default function RowPane({ rowId, taskId, onChanged, brief }: RowPaneProp
     <MonthBriefPanel
       notes={notes ?? []}
       coord={{
-        lane: 'organic',
+        // A paid creative reads the PAID lane's notes (D7); everything else organic.
+        lane: detail.row.kind === 'paid_creative' ? 'paid' : 'organic',
         projectId: detail.row.project_id,
         batchDate: detail.row.batch_day,
         projectName: detail.row.project_id ? projectName(detail.row.project_id) : null,

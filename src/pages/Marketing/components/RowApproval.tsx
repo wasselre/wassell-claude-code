@@ -26,12 +26,14 @@
  */
 import { useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { MosFieldDef, MosPublication } from '@/lib/marketingOS/client';
+import { MosFieldDef, MosPublication, adSetRequiredChoices } from '@/lib/marketingOS/client';
 import {
   MosRowDetail, MosRowMember,
-  captionStateOf, completeRowTask, missingForStep, missingRequirementsOf,
+  captionStateOf, completeSubjectTask, missingForStep, missingRequirementsOf,
   publishPosition, rowFaceOf, saveRowOrder,
 } from '@/lib/marketingOS/rowClient';
+import AdReadinessPanel, { hasAdBlockers, useAdReadiness } from './AdReadinessPanel';
+import { AutoAdPanel, autoAdOutcomeText, useAutoAdPreview } from './AutoAdApproval';
 import { useAssetUrls } from '../lib/assetUrls';
 import { dateTimeShort, num, shortDate } from '../lib/format';
 import { Pill } from './kit';
@@ -89,6 +91,23 @@ export default function RowApproval({
   const face = rowFaceOf(detail.steps, detail.task?.step_id ?? null);
   const finalFace = face === 'final_approval';
 
+  /*
+   * A SINGLE item (a paid creative) can carry `auto_meta_ad` on its final
+   * approval: approving it creates the Meta ad, server-side, inside
+   * `task_complete`. The manager must see WHICH campaign and ad set before the
+   * tap, pick one when several are linked, and be stopped when the ad cannot be
+   * built — exactly what the old content page's approval did. Rows never carry
+   * it (organic), so this is inert for them.
+   */
+  const itemId = detail.subject.kind === 'item' ? detail.subject.content_id : null;
+  const autoAd = !!itemId && finalFace
+    && detail.steps.find((s) => s.key === detail.task?.step_id)?.auto_meta_ad === true;
+  const autoAdState = useAutoAdPreview(itemId ?? '', autoAd);
+  const adReadiness = useAdReadiness(itemId, autoAd);
+  const adBlocked = autoAd && hasAdBlockers(adReadiness);
+  const needsAdSet = autoAd && autoAdState.preview?.kind === 'choose' && !autoAdState.adSetId;
+  const isRow = detail.subject.kind === 'row';
+
   const members: MosRowMember[] = useMemo(() => {
     if (!order) return detail.members;
     const by = new Map(detail.members.map((m) => [m.id, m]));
@@ -140,16 +159,33 @@ export default function RowApproval({
     setBusy(true);
     setRefused(null);
     try {
-      await completeRowTask({ taskId: detail.task.id, result: 'approved' });
+      const res = await completeSubjectTask(detail, {
+        taskId: detail.task.id,
+        result: 'approved',
+        adSetId: autoAd ? autoAdState.adSetId : null,
+      });
+      const adText = autoAd ? autoAdOutcomeText(res.auto_ad, isAr) : null;
       addToast(
-        finalFace
-          ? isAr ? 'اعتُمد الصف — ستة إصدارات تُسلَّم آليًا في لحظة الدفعة.' : 'The row is approved — six releases go out automatically at the batch moment.'
-          : isAr ? 'اعتُمدت كتابة الصف — انتقل إلى التصميم.' : 'The row’s writing is approved — it moved to design.',
-        'success',
+        adText ?? (!isRow
+          ? finalFace
+            ? isAr ? 'اعتُمد التصميم.' : 'The design is approved.'
+            : isAr ? 'اعتُمدت الكتابة — انتقل إلى التصميم.' : 'The writing is approved — it moved to design.'
+          : finalFace
+            ? isAr ? 'اعتُمد الصف — ستة إصدارات تُسلَّم آليًا في لحظة الدفعة.' : 'The row is approved — six releases go out automatically at the batch moment.'
+            : isAr ? 'اعتُمدت كتابة الصف — انتقل إلى التصميم.' : 'The row’s writing is approved — it moved to design.'),
+        res.auto_ad?.status === 'skipped' ? 'info' : 'success',
       );
       setMarked([]);
       await onChanged();
     } catch (e) {
+      // The server refuses an ambiguous ad set with the choices attached; offer
+      // them in the panel rather than showing a raw error.
+      const choices = autoAd ? adSetRequiredChoices(e) : null;
+      if (choices) {
+        autoAdState.offerChoices(choices);
+        addToast(isAr ? 'اختر المجموعة الإعلانية أولًا.' : 'Pick the ad set first.', 'error');
+        return;
+      }
       const missing = missingRequirementsOf(e);
       if (missing) {
         setRefused(missing);
@@ -307,7 +343,7 @@ export default function RowApproval({
               tone={isMarked || (!finalFace && !confirmed) ? 'gap' : 'ok'}
               right={
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                  {!finalFace && canAct && (
+                  {!finalFace && canAct && isRow && members.length > 1 && (
                     <>
                       <button
                         type="button"
@@ -502,6 +538,12 @@ export default function RowApproval({
                 ? 'إعادة منشور واحد لا تُلغي اعتماد الآخرين: ما لم تعلّمه يبقى كما هو، والصف يعود مرّة واحدة حاملًا ما علّمته. الصف الناقص ينتظر، ولا يخرج أبدًا كمنشورين.'
                 : 'Sending one post back does not undo the others: anything you did not mark stays as it is, and the row returns once carrying what you marked. An incomplete row waits; it never goes out as two posts.'}
           </div>
+          {autoAd && (
+            <div style={{ flexBasis: '100%', display: 'grid', gap: 10 }}>
+              <AdReadinessPanel state={adReadiness} isAr={isAr} />
+              <AutoAdPanel state={autoAdState} isAr={isAr} compact />
+            </div>
+          )}
           {canAct && detail.task ? (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
@@ -519,7 +561,7 @@ export default function RowApproval({
               <button
                 type="button"
                 className="btn btn-go"
-                disabled={busy || marked.length > 0 || predicted.length > 0}
+                disabled={busy || marked.length > 0 || predicted.length > 0 || adBlocked || needsAdSet}
                 title={marked.length > 0
                   ? (isAr ? 'أزل التعليم أولًا، أو أرسل الإعادة' : 'Unmark first, or send the changes')
                   : predicted.length > 0
@@ -530,9 +572,13 @@ export default function RowApproval({
                 <IconCheck />
                 {busy
                   ? (isAr ? 'جارٍ…' : 'Working…')
-                  : finalFace
-                    ? (isAr ? 'اعتماد الصف' : 'Approve the row')
-                    : (isAr ? 'اعتماد كتابة الصف' : 'Approve the row’s writing')}
+                  : !isRow
+                    ? finalFace
+                      ? (isAr ? 'اعتماد التصميم' : 'Approve the design')
+                      : (isAr ? 'اعتماد الكتابة' : 'Approve the writing')
+                    : finalFace
+                      ? (isAr ? 'اعتماد الصف' : 'Approve the row')
+                      : (isAr ? 'اعتماد كتابة الصف' : 'Approve the row’s writing')}
               </button>
             </div>
           ) : (
@@ -560,7 +606,7 @@ export default function RowApproval({
             ? `صف ${batchDay ? shortDate(batchDay, true) : ''}`
             : `Row of ${batchDay ? shortDate(batchDay, false) : ''}`}
           sendChanges={async ({ note, targets, returnTo }) => {
-            const res = await completeRowTask({
+            const res = await completeSubjectTask(detail, {
               taskId: detail.task?.id, result: 'changes_requested', note, targets, returnTo,
             });
             return { opened_task_id: res.opened_task_id };

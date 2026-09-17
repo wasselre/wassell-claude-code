@@ -16,8 +16,16 @@
  */
 import {
   MosApiError, MosAsset, MosAssetLink, MosContentRow, MosManualTask, MosPublication,
-  MosRole, MosStep, MosUpcoming, mosCall,
+  MosRole, MosStep, MosUpcoming, mosCall, completeTask,
+  type AutoAdOutcome,
 } from './client';
+
+/**
+ * What a row pane is showing: a whole ROW, or ONE content item treated as a row
+ * of one (a paid creative, or any single item). The faces are the same; what
+ * differs is how the work is completed — see `completeSubjectTask`.
+ */
+export type MosRowSubject = { kind: 'row'; row_id: string } | { kind: 'item'; content_id: string };
 
 /* ------------------------------------------------------------------ */
 /* shapes                                                             */
@@ -95,6 +103,7 @@ export interface MosContentApproval {
 }
 
 export interface MosRowDetail {
+  subject: MosRowSubject;
   row: MosRowFacts;
   /** In the WRITER's reading order. Publish order is its reverse. */
   members: MosRowMember[];
@@ -129,6 +138,10 @@ export const fetchRowDetail = (ref: { rowId?: string | null; taskId?: string | n
  * Fix the reading order. Refused server-side once the designs are keyed to it,
  * so the final-approval pane's read-only order is enforced, not just drawn.
  */
+/** One content item in the row screens' shape (`item_detail`). */
+export const fetchItemDetail = (contentId: string) =>
+  mosCall<MosRowDetail>('item_detail', { content_id: contentId });
+
 export const saveRowOrder = (rowId: string, orderedIds: string[]) =>
   mosCall<{ row_id: string; ordered_ids: string[] }>('row_order_save', {
     row_id: rowId, ordered_ids: orderedIds,
@@ -195,6 +208,68 @@ export const completeRowTask = (
   ...(args.targets && args.targets.length > 0 ? { targets: args.targets } : {}),
   ...(args.returnTo ? { return_to: args.returnTo } : {}),
 });
+
+/** What every face needs back from a completion, whichever subject it was. */
+export interface SubjectAdvanceResult {
+  opened_task_id: string | null;
+  done: boolean;
+  /** Present only when a single item's approved step carried `auto_meta_ad`. */
+  auto_ad?: AutoAdOutcome | null;
+}
+
+/**
+ * Complete the open task of whatever the pane is showing.
+ *
+ *   • a ROW → `row_task_complete` (the subject is `mos_content_rows`);
+ *   • an ITEM → `task_complete` (the subject is `mos_content`).
+ *
+ * The item path is LOAD-BEARING, not a convenience: `task_complete` is where
+ * the Meta ad is created when the approved step carries `auto_meta_ad`, and
+ * `adSetId` is how the manager's ad-set choice reaches it. An item must never be
+ * completed through the row action.
+ *
+ * Send-back targets arrive in the row dialog's shape — `post:<id>` for a whole
+ * post, `post:<id>:<field>` for one field. A single task names FIELDS, so the
+ * field is kept and a whole-post target (which, for one item, is the item
+ * itself) contributes nothing. A target already in field form passes through.
+ */
+export async function completeSubjectTask(
+  detail: Pick<MosRowDetail, 'subject' | 'task'>,
+  args: {
+    taskId?: string | null;
+    result: 'submitted' | 'approved' | 'changes_requested';
+    note?: string;
+    targets?: string[];
+    returnTo?: string | null;
+    adSetId?: string | null;
+  },
+): Promise<SubjectAdvanceResult> {
+  const taskId = args.taskId ?? detail.task?.id ?? null;
+  if (detail.subject.kind === 'row') {
+    const r = await completeRowTask({
+      rowId: detail.subject.row_id,
+      taskId,
+      result: args.result,
+      note: args.note,
+      targets: args.targets,
+      returnTo: args.returnTo,
+    });
+    return { opened_task_id: r.opened_task_id, done: r.done };
+  }
+  if (!taskId) throw new Error('This item has no open task to complete.');
+  const fields = (args.targets ?? [])
+    .map((t) => {
+      if (!t.startsWith('post:')) return t;
+      const parts = t.split(':');
+      return parts.length >= 3 ? parts.slice(2).join(':') : null;
+    })
+    .filter((x): x is string => !!x);
+  const r = await completeTask(
+    taskId, args.result, args.note, fields.length > 0 ? fields : undefined,
+    { adSetId: args.adSetId ?? null, returnTo: args.returnTo ?? null },
+  );
+  return { opened_task_id: r.opened_task_id, done: r.done, auto_ad: r.auto_ad ?? null };
+}
 
 /* ------------------------------------------------------------------ */
 /* the refusal                                                        */
@@ -272,11 +347,16 @@ export function rowFaceOf(steps: MosStep[], stepKey: string | null | undefined):
   if (idx < 0) return 'other';
   const step = ordered[idx];
   if (!step) return 'other';
-  const designBefore = ordered.slice(0, idx)
-    .some((s) => !s.is_approval && (s.required_files ?? []).length > 0);
+  // A version pinned before steps carried requirement lists (a legacy item
+  // still walking its old chain) has neither list, so its design and writing
+  // steps are recognised by KEY as well — otherwise it would fall to 'other' and
+  // the only screen left for it would be read-only.
+  const isDesign = (s: MosStep): boolean =>
+    !s.is_approval && ((s.required_files ?? []).length > 0 || s.key === 'design');
+  const designBefore = ordered.slice(0, idx).some(isDesign);
   if (step.is_approval) return designBefore ? 'final_approval' : 'writing_review';
-  if ((step.required_files ?? []).length > 0) return 'design';
-  if ((step.required_fields ?? []).length > 0) return 'writing';
+  if (isDesign(step)) return 'design';
+  if ((step.required_fields ?? []).length > 0 || step.key === 'writing') return 'writing';
   return 'other';
 }
 

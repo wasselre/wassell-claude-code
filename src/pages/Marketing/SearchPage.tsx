@@ -164,7 +164,8 @@ export default function SearchPage() {
       // A content hit lands where its work is (or on its final materials when
       // it is finished) - the same resolver every other surface uses.
       case 'content':  return contentHref(contentById.get(h.id) ?? { id: h.id });
-      case 'campaign': return `/m/campaigns/${h.id}`;
+      // Campaign pages were replaced by the month (2026-09-16).
+      case 'campaign': return '/m/month';
       case 'asset':    return `/m/library/${h.id}`;
       case 'shoot':    return `/m/shoots/${h.id}`;
     }

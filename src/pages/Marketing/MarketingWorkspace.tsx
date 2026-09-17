@@ -38,9 +38,9 @@ import {
 } from '@/lib/marketingOS/client';
 import { initial, num } from './lib/format';
 import {
-  IconCalendar, IconCampaigns, IconCheck, IconClock, IconContent, IconGoals, IconInventory,
+  IconCalendar, IconCheck, IconContent, IconGoals, IconInventory,
   IconLibrary, IconMenu, IconMetrics, IconMyWork, IconOverview, IconPulse, IconSearch, IconSend,
-  IconSettings, IconShoot, IconTeam,
+  IconSettings, IconShoot,
 } from './components/icons';
 import NotificationBell from './components/NotificationBell';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
@@ -200,16 +200,11 @@ const NAV: NavGroup[] = [
     items: [
       { to: '/m', ar: 'نظرة عامة', en: 'Overview', Icon: IconOverview, end: true, surface: 'overview' },
       { to: '/m/analytics', ar: 'التحليلات', en: 'Analytics', Icon: IconMetrics, surface: 'analytics' },
-      { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', Icon: IconCampaigns, badge: 'campaigns', surface: 'campaigns' },
-      { to: '/m/goals', ar: 'الأهداف', en: 'Goals', Icon: IconGoals, surface: 'goals' },
-      { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', Icon: IconMetrics, surface: 'numbers' },
       { to: '/m/organic', ar: 'نبض المنصات', en: 'Platform pulse', Icon: IconPulse, surface: 'organic' },
-      { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', Icon: IconClock, surface: 'calendar' },
       { to: '/m/search', ar: 'البحث', en: 'Search', Icon: IconSearch, surface: 'always' },
       { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', Icon: IconShoot, surface: 'shoots' },
       { to: '/m/content-inventory', ar: 'جرد المحتوى', en: 'Content inventory', Icon: IconInventory, surface: 'content_inventory' },
       { to: '/m/content-readiness', ar: 'جاهزية المحتوى', en: 'Content readiness', Icon: IconCheck, surface: 'content_readiness' },
-      { to: '/m/team', ar: 'متابعة الفريق', en: 'Team work', Icon: IconTeam, surface: 'team' },
       { to: '/m/me', ar: 'ملفي', en: 'My profile', Icon: IconGoals, surface: 'myperf' },
       { to: '/m/performance', ar: 'مكتب الأداء', en: 'Performance', Icon: IconMetrics, surface: 'performance' },
     ],

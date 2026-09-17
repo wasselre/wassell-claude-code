@@ -57,9 +57,6 @@ const iconOverview = (
     <rect x="3" y="16" width="7" height="5" rx="1.5" />
   </svg>
 );
-const iconTeam = (
-  <svg {...base}><circle cx="9" cy="8" r="3" /><path d="M3 20a6 6 0 0112 0M16 11a3 3 0 100-6M18 20a5 5 0 00-2-4" /></svg>
-);
 const iconSearch = (
   <svg {...base}><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
 );
@@ -75,9 +72,6 @@ const iconInventory = (
 const iconNumbers = <svg {...base}><path d="M3 17l5-6 4 3 4-6 5 5" /><path d="M3 21h18" /></svg>;
 const iconGoals = (
   <svg {...base}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.4" /></svg>
-);
-const iconCampaigns = (
-  <svg {...base}><path d="M3 11v3l14 5V6L3 11z" /><path d="M17 9a3 3 0 010 6" /></svg>
 );
 const iconSettings = (
   <svg {...base}>
@@ -145,16 +139,11 @@ const SHEET_GROUPS: SheetGroup[] = [
     items: [
       { to: '/m', ar: 'نظرة عامة', en: 'Overview', surface: 'overview', icon: iconOverview },
       { to: '/m/analytics', ar: 'التحليلات', en: 'Analytics', surface: 'analytics', icon: iconNumbers },
-      { to: '/m/campaigns', ar: 'الحملات', en: 'Campaigns', surface: 'campaigns', icon: iconCampaigns },
-      { to: '/m/goals', ar: 'الأهداف', en: 'Goals', surface: 'goals', icon: iconGoals },
-      { to: '/m/numbers', ar: 'أرقام الأسبوع', en: 'Weekly numbers', surface: 'numbers', icon: iconNumbers },
       { to: '/m/organic', ar: 'نبض المنصات', en: 'Platform pulse', surface: 'organic', icon: iconPulse },
-      { to: '/m/calendar', ar: 'التقويم', en: 'Calendar', surface: 'calendar', icon: iconCalendar },
       { to: '/m/search', ar: 'البحث', en: 'Search', surface: 'always', icon: iconSearch },
       { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', surface: 'shoots', icon: iconShoot },
       { to: '/m/content-inventory', ar: 'جرد المحتوى', en: 'Content inventory', surface: 'content_inventory', icon: iconInventory },
       { to: '/m/content-readiness', ar: 'جاهزية المحتوى', en: 'Content readiness', surface: 'content_readiness', icon: iconInventory },
-      { to: '/m/team', ar: 'متابعة الفريق', en: 'Team work', surface: 'team', icon: iconTeam },
       { to: '/m/me', ar: 'ملفي', en: 'My profile', surface: 'myperf', icon: iconGoals },
       { to: '/m/performance', ar: 'مكتب الأداء', en: 'Performance', surface: 'performance', icon: iconNumbers },
     ],

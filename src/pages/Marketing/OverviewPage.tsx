@@ -583,7 +583,6 @@ function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
  * shape as the التحليلات page's building blocks, so the two never drift.
  */
 function OverviewPaidExtras({ data, isAr }: { data: MosOverview; isAr: boolean }) {
-  const navigate = useNavigate();
   const daily = data.paid?.daily ?? [];
   const camps = (data.paid?.by_campaign ?? []).filter((c) => c.spend > 0 || c.impressions > 0);
   const bk = daily.length > 0 ? bucketDaily(daily, data.week_start, data.week_end, isAr) : null;
@@ -632,7 +631,7 @@ function OverviewPaidExtras({ data, isAr }: { data: MosOverview; isAr: boolean }
                   const ctr = c.impressions > 0 ? (c.clicks / c.impressions) * 100 : 0;
                   const cpl = c.leads > 0 ? c.spend / c.leads : null;
                   return (
-                    <tr key={c.id} className="click" onClick={() => navigate(`/m/campaigns/${c.id}`)}>
+                    <tr key={c.id}>
                       <td className="ttl">{c.name}</td>
                       <td className="num">{num(Math.round(c.spend), isAr)}</td>
                       <td className="num">{ctr > 0 ? pct(Number(ctr.toFixed(2)), isAr, 2) : '—'}</td>
@@ -728,7 +727,8 @@ function CeoOverview() {
           : `CEO · ${monthName(now.getMonth(), false)} ${now.getFullYear()} · read view`}
       >
         <DateControl sel={sel} periods={['month', 'quarter', 'year']} isAr={isAr} onChange={setSel} showCustom={false} />
-        <button type="button" className="btn btn-d" onClick={() => navigate('/m/numbers')}>
+        {/* The monthly report is the month page's report tense now. */}
+        <button type="button" className="btn btn-d" onClick={() => navigate('/m/month')}>
           {isAr ? 'تقرير شهري' : 'Monthly report'}
         </button>
       </PageHead>
@@ -874,9 +874,7 @@ function CeoOverview() {
                             return (
                               <tr
                                 key={c.id}
-                                className="click"
                                 style={ended ? { opacity: 0.7 } : undefined}
-                                onClick={() => navigate(`/m/campaigns/${c.id}`)}
                               >
                                 <td className="ttl">
                                   {c.name}
@@ -1051,14 +1049,6 @@ function CeoOverview() {
                                 onClick={() => void sign(c.id)}
                               >
                                 {isAr ? 'توقيع' : 'Sign'}
-                              </button>
-                              <button
-                                type="button"
-                                className="btn"
-                                style={{ flex: 1, justifyContent: 'center' }}
-                                onClick={() => navigate(`/m/campaigns/${c.id}`)}
-                              >
-                                {isAr ? 'أسئلة' : 'Questions'}
                               </button>
                             </div>
                           </div>

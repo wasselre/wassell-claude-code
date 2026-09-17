@@ -82,29 +82,22 @@ import MarketingWorkspace, { RequireMarketingWorkspace } from '@/pages/Marketing
 const MarketingOverviewPage = lazy(() => import('@/pages/Marketing/OverviewPage'));
 const MarketingMonthPage = lazy(() => import('@/pages/Marketing/MonthPage'));
 const MarketingWorkPage = lazy(() => import('@/pages/Marketing/WorkPage'));
-const MarketingTeamPage = lazy(() => import('@/pages/Marketing/TeamPage'));
 const MarketingAssetDetailPage = lazy(() => import('@/pages/Marketing/AssetDetailPage'));
 const MarketingShootRequestPage = lazy(() => import('@/pages/Marketing/ShootRequestPage'));
 const MarketingLibraryUnusedPage = lazy(() => import('@/pages/Marketing/LibraryUnusedPage'));
 const MarketingAccountPage = lazy(() => import('@/pages/Marketing/AccountPage'));
 const MarketingContentListPage = lazy(() => import('@/pages/Marketing/ContentListPage'));
 const MarketingSearchPage = lazy(() => import('@/pages/Marketing/SearchPage'));
-const MarketingContentDetailPage = lazy(() => import('@/pages/Marketing/ContentDetailPage'));
+const MarketingContentRedirect = lazy(() => import('@/pages/Marketing/ContentRedirect'));
 // The publication task (2026-09-14): ONE finished creative, ONE destination,
 // ONE date. Its own screen, never a tab on the content record — see ReleasePage.
 const MarketingReleasePage = lazy(() => import('@/pages/Marketing/ReleasePage'));
-const MarketingCalendarPage = lazy(() => import('@/pages/Marketing/CalendarPage'));
 const MarketingMyPerfPage = lazy(() => import('@/pages/Marketing/MyPerfPage'));
 const MarketingPerformanceDeskPage = lazy(() => import('@/pages/Marketing/PerformanceDeskPage'));
-const MarketingCampaignsPage = lazy(() => import('@/pages/Marketing/CampaignsPage'));
-const MarketingGoalsPage = lazy(() => import('@/pages/Marketing/GoalsPage'));
 const MarketingContentInventoryPage = lazy(() => import('@/pages/Marketing/ContentInventoryPage'));
 const MarketingContentReadinessPage = lazy(() => import('@/pages/Marketing/ContentReadinessPage'));
-const MarketingCampaignDetailPage = lazy(() => import('@/pages/Marketing/CampaignDetailPage'));
-const MarketingExecutionDetailPage = lazy(() => import('@/pages/Marketing/ExecutionDetailPage'));
 const MarketingUploadPage = lazy(() => import('@/pages/Marketing/UploadPage'));
 const MarketingShootsPage = lazy(() => import('@/pages/Marketing/ShootsPage'));
-const MarketingNumbersPage = lazy(() => import('@/pages/Marketing/NumbersPage'));
 const MarketingAnalyticsPage = lazy(() => import('@/pages/Marketing/AnalyticsPage'));
 const MarketingOrganicPulsePage = lazy(() => import('@/pages/Marketing/OrganicPulsePage'));
 const MarketingPublishingBoardPage = lazy(() => import('@/pages/Marketing/PublishingBoardPage'));
@@ -562,14 +555,18 @@ export default function App() {
           {/* The month — one page in two tenses (?view=plan|report&month=YYYY-MM). */}
           <Route path="/m/month" element={<MarketingMonthPage />} />
           <Route path="/m/my-work" element={<MarketingWorkPage />} />
-          <Route path="/m/team" element={<MarketingTeamPage />} />
+          {/* Old pages the month model replaced (deleted 2026-09-16). Their
+              addresses redirect so bookmarks and sent links still land. */}
+          <Route path="/m/team" element={<Navigate to="/m/month" replace />} />
           <Route path="/m/search" element={<MarketingSearchPage />} />
           <Route path="/m/content" element={<MarketingContentListPage />} />
-          <Route path="/m/content/:contentId" element={<MarketingContentDetailPage />} />
+          {/* Kept as an ADDRESS, not a page: forwards to the row or item screen
+              in «مهامي». The old per-item content page was deleted 2026-09-16. */}
+          <Route path="/m/content/:contentId" element={<MarketingContentRedirect />} />
           {/* The publication task — the destination `taskHref` sends a
               `publication` task to. One release per screen. */}
           <Route path="/m/releases/:releaseId" element={<MarketingReleasePage />} />
-          <Route path="/m/calendar" element={<MarketingCalendarPage />} />
+          <Route path="/m/calendar" element={<Navigate to="/m/month" replace />} />
           <Route path="/m/me" element={<MarketingMyPerfPage />} />
           <Route path="/m/performance" element={<MarketingPerformanceDeskPage />} />
           <Route path="/m/library" element={<MarketingAssetLibrary />} />
@@ -579,13 +576,11 @@ export default function App() {
           <Route path="/m/shoots" element={<MarketingShootsPage />} />
           <Route path="/m/shoots/:requestId" element={<MarketingShootRequestPage />} />
           <Route path="/m/account" element={<MarketingAccountPage />} />
-          <Route path="/m/goals" element={<MarketingGoalsPage />} />
-          <Route path="/m/campaigns" element={<MarketingCampaignsPage />} />
-          <Route path="/m/campaigns/:campaignId" element={<MarketingCampaignDetailPage />} />
-          {/* The bottom layer — screen 21. Literal "exec" segment keeps it
-              from ever being read as a campaign id. */}
-          <Route path="/m/campaigns/:campaignId/exec/:executionId" element={<MarketingExecutionDetailPage />} />
-          <Route path="/m/numbers" element={<MarketingNumbersPage />} />
+          <Route path="/m/goals" element={<Navigate to="/m/month" replace />} />
+          <Route path="/m/campaigns" element={<Navigate to="/m/month" replace />} />
+          <Route path="/m/campaigns/:campaignId" element={<Navigate to="/m/month" replace />} />
+          <Route path="/m/campaigns/:campaignId/*" element={<Navigate to="/m/month" replace />} />
+          <Route path="/m/numbers" element={<Navigate to="/m/month" replace />} />
           <Route path="/m/analytics" element={<MarketingAnalyticsPage />} />
           <Route path="/m/organic" element={<MarketingOrganicPulsePage />} />
           <Route path="/m/publishing" element={<MarketingPublishingBoardPage />} />

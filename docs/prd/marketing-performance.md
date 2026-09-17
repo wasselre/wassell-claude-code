@@ -1,6 +1,6 @@
 # Marketing Performance & Load
 
-**Last updated:** 2026-08-30
+**Last updated:** 2026-09-16 (the calendar and the per-item content page were deleted with the other old Marketing pages, so the **coverage strip** and the **creative rating card** below no longer have a screen)
 **Design/decision source:** `docs/marketing-task-load-plan.md` (the approved build spec — every number and rule)
 
 ## What it is
@@ -27,7 +27,7 @@ Consequences ship **dark**: `discipline_observe=true`, `deductions_enabled=false
 - **Rewards**: seeded "Day off = 250 XP". Claim reserves nothing until **approval**, which spends the XP. Manager approves/rejects on the desk.
 - **Discipline decisions**: approve/reject on the desk; approving a deduction is refused while observe mode is on or deductions are off (`MOS:DEDUCTIONS_DISABLED`). Employees can dispute a pending action with a note.
 - **KPI bonuses**: `mos_perf_kpi_goals` per month (metric cpl/ctr/cpc/leads/spend, comparator, target, bonus %, recipients = users or roles; optional campaign scope). Evaluated from **`mos_perf_paid_monthly`** — a monthly snapshot written by the daily 04:0x-Riyadh cron run via a **ranged** Meta insights pull (`getInsightsRange`), because the live `mos_campaign_executions` numbers are lifetime totals. CPL = spend/leads (SAR), CTR = clicks/impressions (0–1).
-- **Coverage strip** on `/m/calendar`: **follows the calendar's view** — this week in week view, else this month — published (+scheduled) vs target-to-date per platform × bucket, with «ناقص N» shortfall flags + a «التفاصيل ←» link to the Organic page. Assists; never auto-schedules.
+- *(DELETED 2026-09-16 with `/m/calendar` — `CoverageStrip` was removed.)* **Coverage strip** on `/m/calendar`: **follows the calendar's view** — this week in week view, else this month — published (+scheduled) vs target-to-date per platform × bucket, with «ناقص N» shortfall flags + a «التفاصيل ←» link to the Organic page. Assists; never auto-schedules.
 - **Distribution vs production demand (CRITICAL — corrected 2026-08-30).** Two distinct figures the reporting must never conflate, labeled in Arabic **احتياج النشر** (distribution) and **احتياج الإنتاج الفعلي** (production):
   - **Distribution demand (احتياج النشر)** = every required platform PLACEMENT, **summed** across platforms. The same video on Instagram + TikTok is TWO placements. This is what platform coverage counts.
   - **Production demand (احتياج الإنتاج الفعلي)** = the UNIQUE creatives to actually produce, the **max** across platforms per bucket — because the same video is reused on every platform (and in paid ads), so a creative reused on IG + TikTok + several paid ads counts ONCE in production but separately in every placement. Paid placements reuse existing `content_id`s and never raise production demand unless they reference a genuinely new content.
@@ -41,7 +41,7 @@ Consequences ship **dark**: `discipline_observe=true`, `deductions_enabled=false
 - **Employee** → `/m/me` (surface `myperf`, all marketing roles): XP + reward progress + claim, open tasks with SLA dues + late/blocked state, this-month late counter + "next miss = …", warnings/deductions + dispute box, leave requests, KPI-bonus status.
 - **Manager** → `/m/performance` (surface `performance`; cap `manage_performance`, seeded to marketing_manager + ceo): pending discipline/leave/reward decisions, late+blocked tasks (block/unblock), team table (XP, late counts), load heatmap (opened-today vs capacity), KPI goal editor, and the six system toggles.
 - **Manager** → Settings → **Load & SLA** (`/m/settings/load`) and **Posting cadence** (`/m/settings/cadence`), both `manage_roles`-gated.
-- **Rating** → on a done creative's overview (`ContentDetailPage`), the `PerfRatingCard` appears for `rate_creative` holders.
+- *(DELETED 2026-09-16 with `ContentDetailPage` — `PerfRatingCard` was removed; the `rate_creative` capability and its data remain.)* **Rating** → on a done creative's overview (`ContentDetailPage`), the `PerfRatingCard` appears for `rate_creative` holders.
 
 ## Data touched
 
@@ -69,7 +69,7 @@ Deliberate separations: employee-bonus goals are `mos_perf_kpi_goals`, NOT the c
 | Coverage strip | `src/pages/Marketing/components/CoverageStrip.tsx` |
 | Coverage panel (Organic) | `src/pages/Marketing/components/CoveragePanel.tsx` (+ `OrganicPulsePage.tsx`) |
 | Coverage API (from/to + capacity) | `api/marketing-os.ts` `perf_calendar` |
-| Wiring | `src/pages/Marketing/{MarketingWorkspace,SettingsPage,CalendarPage,ContentDetailPage}.tsx`, `src/App.tsx` |
+| Wiring | `src/pages/Marketing/{MarketingWorkspace,SettingsPage}.tsx`, `src/App.tsx` (`CalendarPage` / `ContentDetailPage` deleted 2026-09-16) |
 
 ## Non-goals / guardrails
 

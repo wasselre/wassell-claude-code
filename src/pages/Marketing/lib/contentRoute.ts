@@ -431,14 +431,11 @@ export function taskHref(
         { section },
       );
     }
+    // Campaign and execution pages were replaced by the month (2026-09-16).
     case 'campaign':
-      return `/m/campaigns/${entityId}?tab=tasks`;
+      return '/m/month';
     case 'execution':
-      // Without the parent campaign id the execution route cannot be built;
-      // the campaign's own tasks tab is the closest honest destination.
-      return task.campaign_id
-        ? `/m/campaigns/${task.campaign_id}/exec/${entityId}`
-        : '/m/campaigns';
+      return '/m/month';
     case 'refresh_cycle':
       return `/m/my-work?task=${entityId}`;
     // ONE release to ONE destination. It opens on its own screen rather than

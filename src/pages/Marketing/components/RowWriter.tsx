@@ -38,7 +38,7 @@ import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { fieldSchemaKeys, updateContent } from '@/lib/marketingOS/client';
 import {
-  completeRowTask, headlinesOf, missingRequirementsOf, publishPosition,
+  completeSubjectTask, headlinesOf, missingRequirementsOf, publishPosition,
   rowFaceOf, saveRowOrder,
   type MosMissingRequirement, type MosRowDetail, type MosRowMember,
 } from '@/lib/marketingOS/rowClient';
@@ -302,11 +302,7 @@ export default function RowWriter({
       // The writing has to be ON the records before the engine reads them —
       // the requirement check runs server-side over all three members.
       await saveDrafts();
-      await completeRowTask({
-        rowId: detail.row.row_id,
-        taskId: task?.id ?? null,
-        result: 'submitted',
-      });
+      await completeSubjectTask(detail, { taskId: task?.id ?? null, result: 'submitted' });
       addToast(isAr ? 'أُرسل الصف للمراجعة' : 'The row was sent for review', 'success');
       await onChanged?.();
     } catch (e) {
@@ -406,7 +402,8 @@ export default function RowWriter({
                         ? (isAr ? 'بلا أسطر' : 'No lines')
                         : (isAr ? 'النص غير مؤكَّد' : 'Caption unconfirmed')}
                   </span>
-                  {canEdit && (
+                  {/* Order only means something for a row of several posts. */}
+                  {canEdit && detail.subject.kind === 'row' && total > 1 && (
                     <>
                       <button
                         type="button"

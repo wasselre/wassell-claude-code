@@ -27,7 +27,7 @@ import {
 } from '@/lib/marketingOS/client';
 import {
   MosMissingRequirement, MosRowDetail, MosRowMember, RowSlotRole,
-  completeRowTask, missingForStep, missingRequirementsOf,
+  completeSubjectTask, missingForStep, missingRequirementsOf,
 } from '@/lib/marketingOS/rowClient';
 import { useAssetUrls } from '../lib/assetUrls';
 import { assetErrorText, canonicalAssetFields, uploadCanonicalAsset } from '../lib/canonicalUpload';
@@ -221,7 +221,7 @@ export default function RowDesign({
     setBusy(true);
     setRefused(null);
     try {
-      await completeRowTask({ taskId: view.task.id, result: 'submitted' });
+      await completeSubjectTask(detail, { taskId: view.task.id, result: 'submitted' });
       addToast(
         isAr ? 'أُرسل الصف كاملًا للاعتماد النهائي.' : 'The whole row went to the final approval.',
         'success',

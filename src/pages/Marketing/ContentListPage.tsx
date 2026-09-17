@@ -401,9 +401,6 @@ export default function ContentListPage() {
           <button type="button" className={view === 'board' ? 'on' : ''} onClick={() => setParam('view', 'board')}>
             {isAr ? 'لوحة' : 'Board'}
           </button>
-          <button type="button" onClick={() => navigate('/m/calendar')}>
-            {isAr ? 'تقويم' : 'Calendar'}
-          </button>
         </div>
         {view === 'board' && workflows.length > 0 && (
           <div className="seg">

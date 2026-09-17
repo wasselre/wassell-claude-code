@@ -1110,7 +1110,7 @@ async function notifyCommentMentions(
       subjectAr = row.name ?? '';
       subjectEn = row.name ?? '';
     }
-    url = `/m/campaigns/${a.campaignId}`;
+    url = '/m/month'; // campaign pages replaced by the month (2026-09-16)
   }
 
   // A short excerpt of the comment gives the notification its own context.
@@ -5402,6 +5402,7 @@ export default async function handler(req: Request): Promise<Response> {
         }
 
         return jsonOk({
+          subject: { kind: 'row', row_id: rowId },
           row: facts,
           members,
           steps,
@@ -5416,6 +5417,110 @@ export default async function handler(req: Request): Promise<Response> {
           previous_row: previousRowId
             ? { row_id: previousRowId, members: previousMembers }
             : null,
+        });
+      }
+
+      /* -------------------------------------------------------- */
+      /* ONE content item in the row screens' shape.               */
+      /* -------------------------------------------------------- */
+      case 'item_detail': {
+        /*
+         * A paid creative — or any single content item — is "a row of one".
+         * This returns exactly `row_detail`'s shape for it, so the SAME
+         * RowWriter / RowDesign / RowApproval faces render it: no second
+         * editor. It exists so the old per-item content page could be deleted
+         * (2026-09-16) without leaving single items without a screen.
+         *
+         * The differences that matter are all in `subject`: a single item's
+         * task lives on `mos_content` (not `mos_content_rows`), so the faces
+         * must complete it through `task_complete` — which is also where the
+         * Meta ad is created on an `auto_meta_ad` step. Never `row_task_complete`.
+         */
+        const contentId = str(body.content_id);
+        if (!contentId) return jsonError(400, 'content_id is required');
+
+        const [itemRes, taskRes] = await Promise.all([
+          sb.from('mos_content_v').select(ROW_MEMBER_COLUMNS).eq('id', contentId).maybeSingle(),
+          sb.from('workflow_role_tasks').select(QUEUE_TASK_COLUMNS)
+            .eq('subject_table', 'mos_content').eq('subject_id', contentId)
+            .order('opened_at', { ascending: false }).limit(20),
+        ]);
+        const itemFail = dbFail(itemRes.error) ?? dbFail(taskRes.error);
+        if (itemFail) return itemFail;
+        const item = itemRes.data as unknown as (Record<string, unknown> & {
+          id: string; project_id?: string | null; campaign_id?: string | null;
+          workflow_version_id?: string | null; target_publish_at?: string | null; row_id?: string | null;
+        }) | null;
+        if (!item) return jsonError(404, 'content item not found');
+
+        const itemTasks = (taskRes.data ?? []) as unknown as Array<Record<string, unknown>>;
+        const openItemTask = itemTasks.find((t) => t.status === 'open') ?? null;
+        // The version the item actually walks: its open task's, then its newest
+        // task's, then the pin on the item itself.
+        const versionId = (openItemTask?.workflow_version_id as string | null | undefined)
+          ?? (itemTasks[0]?.workflow_version_id as string | null | undefined)
+          ?? item.workflow_version_id ?? null;
+
+        const [versionRes, campaignRes, itemLinkRes, itemApprovalRes, itemPubRes] = await Promise.all([
+          versionId
+            ? sb.from('workflow_versions').select('definition').eq('id', versionId).maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
+          item.campaign_id
+            ? sb.from('mos_campaigns').select('kind').eq('id', item.campaign_id).maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
+          sb.from('mos_asset_links').select('asset_id, content_id, role')
+            .eq('content_id', contentId).is('superseded_at', null).limit(100),
+          sb.from('mos_content_approvals')
+            .select('id, content_id, step_key, round, approved_by_user_id, approved_at, writing_hash, design_hash, caption_hash, package_hash')
+            .eq('content_id', contentId)
+            .order('approved_at', { ascending: false }).limit(20),
+          sb.from('mos_publication_v').select('*').eq('content_id', contentId).limit(20),
+        ]);
+        const detailFail = dbFail(versionRes.error) ?? dbFail(campaignRes.error)
+          ?? dbFail(itemLinkRes.error) ?? dbFail(itemApprovalRes.error) ?? dbFail(itemPubRes.error);
+        if (detailFail) return detailFail;
+
+        const itemSteps = mapStepDefs(
+          '',
+          stepsOf((versionRes.data as { definition?: { metadata?: unknown } } | null)?.definition?.metadata ?? null),
+        );
+        const itemLinks = (itemLinkRes.data ?? []) as unknown as Array<{ asset_id: string; content_id: string; role: string }>;
+        const itemAssetIds = Array.from(new Set(itemLinks.map((l) => l.asset_id)));
+        let itemAssets: unknown[] = [];
+        if (itemAssetIds.length > 0) {
+          const a = await sb.from('mos_assets').select('*').in('id', itemAssetIds).limit(100);
+          const af = dbFail(a.error);
+          if (af) return af;
+          itemAssets = a.data ?? [];
+        }
+
+        const campaignKind = (campaignRes.data as { kind?: string } | null)?.kind ?? null;
+        const itemFacts: RowFacts = {
+          row_id: contentId,
+          kind: campaignKind === 'paid' ? 'paid_creative' : 'single',
+          batch_day: item.target_publish_at ? String(item.target_publish_at).slice(0, 10) : null,
+          row_key: null,
+          campaign_id: item.campaign_id ?? null,
+          project_id: item.project_id ?? null,
+          plan_id: null,
+          workflow_version_id: versionId,
+          member_count: 1,
+          member_ids: [contentId],
+        };
+
+        return jsonOk({
+          subject: { kind: 'item', content_id: contentId },
+          row: itemFacts,
+          members: [item],
+          steps: itemSteps,
+          task: openItemTask ? mapRoleTask(openItemTask) : null,
+          row_tasks: itemTasks.map((t) => mapRoleTask(t)),
+          member_tasks: [],
+          assets: itemAssets,
+          links: itemLinks,
+          approvals: itemApprovalRes.data ?? [],
+          publications: itemPubRes.data ?? [],
+          previous_row: null,
         });
       }
 
@@ -6179,7 +6284,7 @@ export default async function handler(req: Request): Promise<Response> {
               titleEn: 'A budget awaits your signature',
               bodyAr: `حملة تجاوزت ميزانيتها حد التوقيع (${threshold} ر.س).`,
               bodyEn: `A campaign budget crossed the signature threshold (${threshold} SAR).`,
-              url: `/m/campaigns/${id}`,
+              url: '/m/month',
             });
           }
 
@@ -6260,7 +6365,7 @@ export default async function handler(req: Request): Promise<Response> {
             titleEn: 'A budget awaits your signature',
             bodyAr: `حملة جديدة تجاوزت ميزانيتها حد التوقيع (${threshold} ر.س).`,
             bodyEn: `A new campaign budget crossed the signature threshold (${threshold} SAR).`,
-            url: `/m/campaigns/${created.id}`,
+            url: '/m/month',
           });
         }
 
