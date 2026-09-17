@@ -35,9 +35,9 @@ import { heicToJpeg, isHeic, kindFromFile } from '../lib/upload';
 import { formatBytes } from '../lib/upload';
 import { num, pct } from '../lib/format';
 import { Pill } from './kit';
-import { IconLibrary, IconTrash } from './icons';
+import { IconTrash } from './icons';
 import {
-  CaptionBlock, DesignBrief, MissingCard, PostLines, PostShell, ReadinessMeter,
+  CaptionBlock, DesignBrief, MissingCard, PostLines, PostShell, ReadinessMeter, RowTimeline,
   SLOTS, SLOT_META, SlotFrame, slotsFilled, slotsOfMember,
 } from './RowParts';
 
@@ -80,7 +80,6 @@ export default function RowDesign({
     [detail, extraLinks],
   );
 
-  const previousMembers = view.previous_row?.members ?? [];
   const { urlFor, thumbFor, error: signError, retry: retrySign } = useAssetUrls([
     ...view.assets,
   ]);
@@ -247,6 +246,12 @@ export default function RowDesign({
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
+      <div className="card">
+        <div className="card-b">
+          <RowTimeline steps={view.steps} currentKey={view.task?.step_id ?? null} isAr={isAr} />
+        </div>
+      </div>
+
       {brief}
 
       {signError && (
@@ -439,42 +444,6 @@ export default function RowDesign({
         </div>
       </div>
 
-      {/* ── last week's row, inert ─────────────────────────────────── */}
-      {previousMembers.length > 0 && (
-        <div className="card">
-          <div className="card-h">
-            <h4>
-              {isAr
-                ? 'آخر دفعة نُشرت لهذا المشروع'
-                : 'This project’s last published batch'}
-            </h4>
-            <span className="r">{isAr ? 'للنظر فقط' : 'look only'}</span>
-          </div>
-          <div className="card-b">
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', opacity: 0.55 }}>
-              {previousMembers.flatMap((pm) => slotsOfMember(view, pm.id).map((s) => (
-                <div key={`${pm.id}:${s.role}`} style={{ display: 'grid', gap: 4, justifyItems: 'center' }}>
-                  <div
-                    style={{
-                      width: SLOT_META[s.role].vertical ? 54 : 78,
-                      aspectRatio: SLOT_META[s.role].vertical ? '9 / 16' : '1 / 1',
-                      borderRadius: 8, overflow: 'hidden', background: 'var(--line)',
-                      display: 'grid', placeItems: 'center',
-                    }}
-                  >
-                    {thumbFor(s.asset)
-                      ? <img src={thumbFor(s.asset) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      : <IconLibrary />}
-                  </div>
-                  <span style={{ fontSize: 10.5, color: 'var(--mute)' }}>
-                    {SLOT_META[s.role].vertical ? (isAr ? 'عمودي' : 'vertical') : (isAr ? 'مربّع' : 'square')}
-                  </span>
-                </div>
-              )))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

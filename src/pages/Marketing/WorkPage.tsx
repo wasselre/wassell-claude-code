@@ -147,6 +147,9 @@ function rowActionLabel(stepKey: string | null, isAr: boolean): string {
   if (key.includes('design_review') || key.includes('final')) {
     return isAr ? 'الاعتماد النهائي' : 'Final approval';
   }
+  if (key.includes('design_writer') || key.includes('writer_review')) {
+    return isAr ? 'مراجعة التصميم' : 'Review the design';
+  }
   if (key.includes('review') || key.includes('approve')) {
     return isAr ? 'مراجعة الكتابة' : 'Review the writing';
   }

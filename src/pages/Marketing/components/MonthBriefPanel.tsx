@@ -66,7 +66,7 @@ export interface BriefCoord {
 
 export interface BriefLine {
   key: string;
-  kind: MonthNoteKind | 'topic_bank';
+  kind: MonthNoteKind;
   /** Where this line came from, already worded. */
   source_ar: string;
   source_en: string;
@@ -82,14 +82,12 @@ const ymd = (v: string | null | undefined): string => (v ?? '').slice(0, 10);
  * instruction first, the most specific last, so a later line overrides an
  * earlier one by being read after it.
  *
- * `topicBank` supplies the LAST resort and ONLY for the general row: a Saturday
- * cell left blank falls back to the standing topic list rather than reaching the
- * writer with nothing at all.
+ * A day with no note has no brief: a Saturday is like any other day (operator,
+ * 2026-09-17 — the standing topic bank is no longer shown to anyone).
  */
 export function resolveMonthBrief(
   notes: MonthNote[],
   coord: BriefCoord,
-  topicBank?: string[],
 ): BriefLine[] {
   const out: BriefLine[] = [];
   const day = ymd(coord.batchDate);
@@ -154,18 +152,6 @@ export function resolveMonthBrief(
     });
   }
 
-  // 4 — the general row's fallback. ONLY when it has no project AND no cell
-  //     note: a topic bank is a standing list, not an instruction, so it must
-  //     never sit beside a real one.
-  if (!coord.projectId && !cell && topicBank && topicBank.length > 0) {
-    out.push({
-      key: 'topic-bank',
-      kind: 'topic_bank',
-      source_ar: 'بنك مواضيع السبت — لم تُكتب ملاحظة على هذه الخلية',
-      source_en: 'Saturday topic bank — no note was written on this cell',
-      body: topicBank.join('\n'),
-    });
-  }
 
   return out;
 }
@@ -192,12 +178,10 @@ const srcLabel = {
 };
 
 export default function MonthBriefPanel({
-  notes, coord, topicBank, isAr, loading = false, error = null, compact = false,
+  notes, coord, isAr, loading = false, error = null, compact = false,
 }: {
   notes: MonthNote[];
   coord: BriefCoord;
-  /** `mos_month_template.general_topic_bank` — used by the general row only. */
-  topicBank?: string[];
   isAr: boolean;
   loading?: boolean;
   /** A read that FAILED is not an empty brief — say so instead of showing none. */
@@ -206,8 +190,8 @@ export default function MonthBriefPanel({
   compact?: boolean;
 }) {
   const lines = useMemo(
-    () => resolveMonthBrief(notes, coord, topicBank),
-    [notes, coord, topicBank],
+    () => resolveMonthBrief(notes, coord),
+    [notes, coord],
   );
 
   const title = isAr ? 'الموجز المجمَّع' : 'The resolved brief';
@@ -232,15 +216,7 @@ export default function MonthBriefPanel({
         </div>
       );
     }
-    if (lines.length === 0) {
-      return (
-        <div style={{ fontSize: 12.5, color: 'var(--mute)' }}>
-          {isAr
-            ? 'لا ملاحظات على هذا العمل — لا على الشهر ولا على المشروع ولا على الخلية.'
-            : 'No notes reach this work — none on the month, the project, or the cell.'}
-        </div>
-      );
-    }
+    if (lines.length === 0) return null;
     return (
       <div style={{ display: 'grid', gap: 8 }}>
         {lines.map((l) => (
@@ -261,15 +237,9 @@ export default function MonthBriefPanel({
     );
   })();
 
-  const footnote = (
-    <p style={{ fontSize: 11, color: 'var(--mute)', marginTop: 10, lineHeight: 1.8 }}>
-      {isAr
-        ? 'تُكتب هذه الملاحظات على شبكة الشهر، لا من هنا، وتُقرأ حيًّا — فتعديلها يظهر فورًا. المستويات الفارغة لا تظهر أصلًا. '
-          + `ملاحظات ${laneWord} وحده تصل هذا العمل؛ ملاحظة الشهر تصل الجانبين.`
-        : 'These notes are written on the month grid, not here, and are read live — an edit shows immediately. '
-          + `Empty levels never render. Only ${laneWord.toLowerCase()} notes reach this work; the month note reaches both.`}
-    </p>
-  );
+
+  // Nothing written for this work: no panel at all.
+  if (!body) return null;
 
   if (compact) {
     return (
@@ -292,7 +262,6 @@ export default function MonthBriefPanel({
         </span>
       </div>
       {body}
-      {footnote}
     </div>
   );
 }

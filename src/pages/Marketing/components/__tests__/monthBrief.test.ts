@@ -127,21 +127,19 @@ describe('resolveMonthBrief — empty levels and wrong coordinates', () => {
 
 describe('resolveMonthBrief — the Saturday general row', () => {
   const coord = { lane: 'organic' as const, projectId: null, batchDate: '2026-10-24' };
-  const BANK = ['نصائح شراء العقار', 'أسئلة التمويل العقاري'];
 
-  it('has no project column at all — month → cell → topic bank', () => {
-    const lines = resolveMonthBrief(ALL, coord, BANK);
-    expect(lines.map((l) => l.kind)).toEqual(['month', 'topic_bank']);
+  it('is like any other day — only notes someone wrote, never a standing topic list', () => {
+    const lines = resolveMonthBrief(ALL, coord);
+    expect(lines.map((l) => l.kind)).toEqual(['month']);
   });
 
-  it('falls back to the topic bank only when its own cell note is missing', () => {
+  it('shows its own cell note when one was written', () => {
     const cell = note({
       kind: 'row', lane: 'organic', project_id: null,
       batch_date: '2026-10-24', body: 'موضوع السبت: مقارنة أحياء.',
     });
-    const lines = resolveMonthBrief([MONTH, cell], coord, BANK);
+    const lines = resolveMonthBrief([MONTH, cell], coord);
     expect(lines.map((l) => l.kind)).toEqual(['month', 'row']);
-    expect(lines.map((l) => l.body)).not.toContain(BANK.join('\n'));
   });
 
   it('does not borrow a project row’s cell note that falls on the same day', () => {
@@ -149,12 +147,12 @@ describe('resolveMonthBrief — the Saturday general row', () => {
       kind: 'row', lane: 'organic', project_id: PROJ,
       batch_date: '2026-10-24', body: 'ملاحظة صف أكنان.',
     });
-    const lines = resolveMonthBrief([projectCell], coord, BANK);
+    const lines = resolveMonthBrief([projectCell], coord);
     expect(lines.map((l) => l.body)).not.toContain(projectCell.body);
   });
 
-  it('shows nothing rather than an empty bank when the bank is empty', () => {
-    expect(resolveMonthBrief([], coord, [])).toEqual([]);
+  it('is empty when nothing was written', () => {
+    expect(resolveMonthBrief([], coord)).toEqual([]);
   });
 });
 

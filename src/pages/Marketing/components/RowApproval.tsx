@@ -35,12 +35,12 @@ import {
 import AdReadinessPanel, { hasAdBlockers, useAdReadiness } from './AdReadinessPanel';
 import { AutoAdPanel, autoAdOutcomeText, useAutoAdPreview } from './AutoAdApproval';
 import { useAssetUrls } from '../lib/assetUrls';
-import { dateTimeShort, num, shortDate } from '../lib/format';
+import { num, shortDate } from '../lib/format';
 import { Pill } from './kit';
-import { IconCheck, IconLibrary } from './icons';
+import { IconCheck } from './icons';
 import RequestChangesModal from './RequestChangesModal';
 import {
-  CaptionBlock, CheckLine, MissingCard, PostLines, PostShell,
+  CaptionBlock, MissingCard, PostLines, PostShell, RowTimeline,
   SLOTS, SLOT_META, SlotFrame, slotsFilled, slotsOfMember,
 } from './RowParts';
 
@@ -119,7 +119,6 @@ export default function RowApproval({
 
   const { urlFor, thumbFor } = useAssetUrls(detail.assets);
   const { filled, total } = slotsFilled(detail);
-  const previousMembers = detail.previous_row?.members ?? [];
 
   /**
    * What the ENGINE would refuse THIS step for — read off the step's own
@@ -129,7 +128,6 @@ export default function RowApproval({
    */
   const step = detail.steps.find((s) => s.key === (detail.task?.step_id ?? ''));
   const predicted = missingForStep(detail, step);
-  const unconfirmed = members.filter((m) => !captionStateOf(m).confirmed);
 
   /* ── the order, editable at the writing review only ───────────────── */
 
@@ -224,13 +222,6 @@ export default function RowApproval({
     .map((p) => p.account_handle)
     .filter((h): h is string => !!h);
   const uniqueAccounts = Array.from(new Set(accounts));
-  const accountsConnected = detail.publications
-    .filter((p) => p.status !== 'cancelled')
-    .every((p) => p.account_connected !== false);
-  const batchMoments = detail.publications
-    .map((p) => p.scheduled_at)
-    .filter((v): v is string => !!v)
-    .sort();
 
   /* ── heading facts ────────────────────────────────────────────────── */
 
@@ -262,6 +253,7 @@ export default function RowApproval({
           </span>
         </div>
         <div className="card-b" style={{ display: 'grid', gap: 10 }}>
+          <RowTimeline steps={detail.steps} currentKey={detail.task?.step_id ?? null} isAr={isAr} />
           <div style={{ display: 'grid', gap: 4, gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))' }}>
             <div style={{ fontSize: 12.5 }}>
               <span style={{ color: 'var(--mute)' }}>{isAr ? 'المحتوى: ' : 'Content: '}</span>
@@ -287,35 +279,6 @@ export default function RowApproval({
 
       {brief}
 
-      {/* ── last week's row, dimmed, above the three (final face) ───── */}
-      {finalFace && previousMembers.length > 0 && (
-        <div className="card">
-          <div className="card-h">
-            <h4>{isAr ? 'دفعة الأسبوع الماضي' : 'Last week’s batch'}</h4>
-            <span className="r">{isAr ? 'منشور، للنظر فقط' : 'published, look only'}</span>
-          </div>
-          <div className="card-b">
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', opacity: 0.45 }}>
-              {previousMembers.map((pm) => {
-                const square = slotsOfMember(detail, pm.id).find((s) => s.role === 'final_square');
-                return (
-                  <div
-                    key={pm.id}
-                    style={{
-                      width: 96, aspectRatio: '1 / 1', borderRadius: 8, overflow: 'hidden',
-                      background: 'var(--line)', display: 'grid', placeItems: 'center',
-                    }}
-                  >
-                    {thumbFor(square?.asset ?? null)
-                      ? <img src={thumbFor(square?.asset ?? null) ?? undefined} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      : <IconLibrary />}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── the three posts ────────────────────────────────────────── */}
       <div
@@ -441,63 +404,14 @@ export default function RowApproval({
         </div>
       </div>
 
-      {/* ── preflight — final face only ────────────────────────────── */}
-      {finalFace && (
-        <div className="card">
-          <div className="card-h">
-            <h4>{isAr ? 'فحص ما قبل النشر' : 'Pre-publish check'}</h4>
-            <span className="r">
-              <Pill tone={filled === total && accountsConnected && unconfirmed.length === 0 ? 'go' : 'late'}>
-                {isAr
-                  ? `${num([filled === total, accountsConnected, unconfirmed.length === 0].filter(Boolean).length, true)} من ٣`
-                  : `${[filled === total, accountsConnected, unconfirmed.length === 0].filter(Boolean).length} of 3`}
-              </Pill>
-            </span>
-          </div>
-          <div className="card-b" style={{ display: 'grid' }}>
-            <CheckLine
-              ok={filled === total}
-              label={isAr ? 'الملفات من خانتي التصميم' : 'Files come from the two design slots'}
-              value={isAr
-                ? `${num(filled, true)} ملفات — ${num(members.length, true)} مربّع و${num(members.length, true)} عمودي`
-                : `${filled} files — ${members.length} square, ${members.length} vertical`}
-            />
-            <CheckLine
-              ok={unconfirmed.length === 0}
-              label={isAr ? 'النص هو ما أكّده الكاتب' : 'The caption is what the writer confirmed'}
-              value={unconfirmed.length === 0
-                ? (isAr ? 'مؤكَّد' : 'confirmed')
-                : isAr ? `${num(unconfirmed.length, true)} بلا تأكيد` : `${unconfirmed.length} unconfirmed`}
-            />
-            <CheckLine
-              ok={accountsConnected && detail.publications.length > 0}
-              label={isAr ? 'الحساب موصول' : 'The account is connected'}
-              value={detail.publications.length === 0
-                ? (isAr ? 'لا وجهة بعد' : 'no destination yet')
-                : accountsConnected
-                  ? (isAr ? 'يستطيع النشر' : 'can publish')
-                  : (isAr ? 'غير موصول' : 'not connected')}
-            />
-          </div>
-          <div className="card-b" style={{ borderTop: '1px solid var(--line)' }}>
-            {batchMoments.length > 0 && (
-              <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 7 }}>
-                {isAr ? 'لحظة الدفعة: ' : 'Batch moment: '}
-                <b className="ltr">
-                  {batchMoments.map((b) => dateTimeShort(b, isAr)).join(' · ')}
-                </b>
-              </div>
-            )}
-            {membersWithoutDestination.length > 0 && (
-              <div style={{ fontSize: 11.5, color: 'var(--late)', marginTop: 7, lineHeight: 1.85 }}>
-                {isAr
-                  ? `${num(membersWithoutDestination.length, true)} من المنشورات بلا وجهة نشر — لن يخرج شيء لها في لحظة الدفعة.`
-                  : `${membersWithoutDestination.length} post(s) have no destination — nothing goes out for them at the batch moment.`}
-              </div>
-            )}
-          </div>
+      {finalFace && membersWithoutDestination.length > 0 && (
+        <div className="notice bad" role="alert">
+          {isAr
+            ? `${num(membersWithoutDestination.length, true)} من المنشورات بلا وجهة نشر — لن يخرج شيء لها.`
+            : `${membersWithoutDestination.length} post(s) have no destination — nothing will go out for them.`}
         </div>
       )}
+
 
       {/* ── the engine's own refusal, or the same answer predicted ─── */}
       {shownMissing && (

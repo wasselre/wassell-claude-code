@@ -38,12 +38,12 @@ import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { fieldSchemaKeys, updateContent } from '@/lib/marketingOS/client';
 import {
-  completeSubjectTask, headlinesOf, missingRequirementsOf, publishPosition,
+  completeSubjectTask, missingRequirementsOf,
   rowFaceOf, saveRowOrder,
   type MosMissingRequirement, type MosRowDetail, type MosRowMember,
 } from '@/lib/marketingOS/rowClient';
 import { useWorkspace } from '../MarketingWorkspace';
-import { CheckLine, MissingCard, PostShell, RowTimeline } from './RowParts';
+import { MissingCard, PostShell, RowTimeline } from './RowParts';
 import { dayLabel, fullDate, num } from '../lib/format';
 import WritingFields, { postWritingState } from './WritingFields';
 
@@ -435,44 +435,9 @@ export default function RowWriter({
         })}
       </div>
 
-      {/* ── the check, and the one submit ────────────────────────── */}
+      {/* ── the one submit ───────────────────────────────────────── */}
       <div className="write">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
-          <div className="doc-lbl" style={{ margin: 0 }}>
-            {isAr ? 'فحص قبل الإرسال' : 'Check before sending'}
-          </div>
-          <span
-            className="tag"
-            style={{
-              marginInlineStart: 'auto',
-              color: failing.length === 0 ? 'var(--go)' : 'var(--late)',
-              borderColor: failing.length === 0 ? 'var(--go)' : 'var(--late)',
-              background: 'transparent', fontWeight: 700,
-            }}
-          >
-            {failing.length === 0
-              ? (isAr ? 'كل البنود مستوفاة' : 'Everything holds')
-              : isAr
-                ? `${num(failing.length, true)} بند غير مستوفٍ`
-                : `${failing.length} item${failing.length === 1 ? '' : 's'} unmet`}
-          </span>
-        </div>
-        {checks.map((c) => (
-          <CheckLine
-            key={c.key}
-            ok={c.ok}
-            label={(
-              <>
-                <b>{isAr ? c.claim_ar : c.claim_en}</b>
-                <span style={{ display: 'block', fontSize: 11.5, color: 'var(--mute)' }}>
-                  {isAr ? c.detail_ar : c.detail_en}
-                </span>
-              </>
-            )}
-            value={c.ok ? (isAr ? 'مستوفٍ' : 'met') : (isAr ? 'ناقص' : 'missing')}
-          />
-        ))}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <button
             type="button"
             className="btn btn-p"
@@ -498,73 +463,7 @@ export default function RowWriter({
         </div>
       </div>
 
-      {/* ── why the first one publishes last ─────────────────────── */}
-      <div className="write">
-        <div className="doc-lbl">
-          {isAr ? 'لماذا يُنشر الأول أخيرًا' : 'Why the first one publishes last'}
-        </div>
-        <p style={{ fontSize: 13.5, lineHeight: 1.9 }}>
-          {isAr
-            ? 'إنستقرام يعرض الأحدث أولًا. لذلك يُقلب ترتيبك عند النشر داخل الدفعة نفسها: المنشور الذي وضعتَه أولًا يُنشر أخيرًا، فيستقرّ أعلى الحساب ويقرؤه الزائر أولًا. الفارق بين منشور وآخر دقائق معدودة داخل فتحة اليوم نفسه.'
-            : 'Instagram shows the newest first. So publish reverses your order inside the same batch: the post you put FIRST goes out LAST, lands on top of the profile, and is the one a visitor reads first. The gap between them is a few minutes inside the same day’s slot.'}
-        </p>
-        <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
-          {members.map((m, i) => {
-            const pos = publishPosition(i, total);
-            return (
-              <div
-                key={m.id}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                  fontSize: 12.5, padding: '6px 10px',
-                  border: '1px solid var(--line-soft)', borderRadius: 7,
-                }}
-              >
-                <span style={{ color: 'var(--mute)' }}>
-                  {isAr ? `القراءة ${num(i + 1, true)}` : `read #${i + 1}`}
-                </span>
-                <span style={{ flex: 1, minWidth: 140 }}>
-                  {headlinesOf(m)[0] ?? m.title}
-                </span>
-                <span style={{ color: 'var(--mute)' }}>
-                  {isAr
-                    ? `النشر ${num(pos, true)}${pos === total ? ' — أولًا' : pos === 1 ? ' — أخيرًا' : ''}`
-                    : `publish #${pos}${pos === total ? ' — first out' : pos === 1 ? ' — last out' : ''}`}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
 
-      {/* ── last week's row of the same project ──────────────────── */}
-      {detail.previous_row && detail.previous_row.members.length > 0 && (
-        <div className="write">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-            <div className="doc-lbl" style={{ margin: 0 }}>
-              {isAr ? 'آخر دفعة نُشرت لهذا المشروع' : 'This project’s last published batch'}
-            </div>
-            <span className="tag tag-t" style={{ marginInlineStart: 'auto' }}>
-              {isAr ? 'للاطّلاع فقط' : 'For reference only'}
-            </span>
-          </div>
-          <div style={{ display: 'grid', gap: 6 }}>
-            {detail.previous_row.members.map((m, i) => (
-              <div
-                key={m.id}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                  fontSize: 12.5, padding: '6px 10px', color: 'var(--mute)',
-                  border: '1px solid var(--line-soft)', borderRadius: 7,
-                }}
-              >
-                <span>{num(i + 1, isAr)}</span>
-                <span style={{ flex: 1, minWidth: 140 }}>{headlinesOf(m)[0] ?? m.title}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

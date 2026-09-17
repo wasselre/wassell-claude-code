@@ -46,7 +46,7 @@ export const POST_WORKFLOW: WorkflowSpec = {
     s('writing', 'writer', false, 1, 'كتابة', 'Writing'),
     s('writing_review', 'marketing_manager', true, 1, 'مراجعة الكتابة', 'Writing review'),
     s('design', 'montage', false, 1, 'تصميم', 'Design'),
-    s('design_writer_review', 'writer', true, 1, 'مراجعة الكاتب', 'Writer review'),
+    s('design_writer_review', 'writer', true, 1, 'مراجعة التصميم', 'Design review'),
     s('design_review', 'marketing_manager', true, 1, 'الاعتماد النهائي', 'Final approval'),
   ],
 };

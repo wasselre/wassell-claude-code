@@ -66,7 +66,7 @@ export const SECTION_LABELS: Record<ContentSection, { ar: string; en: string }> 
   writing:              { ar: 'الكتابة',              en: 'Writing' },
   writing_review:       { ar: 'مراجعة النص',          en: 'Copy review' },
   design_upload:        { ar: 'رفع التصميم',          en: 'Design upload' },
-  design_review_writer: { ar: 'مراجعة الكاتب للتصميم', en: 'Writer’s design review' },
+  design_review_writer: { ar: 'مراجعة التصميم', en: 'Design review' },
   final_review:         { ar: 'الاعتماد النهائي',      en: 'Final approval' },
   caption:              { ar: 'الكابشن',              en: 'Caption' },
   schedule:             { ar: 'الجدولة',              en: 'Scheduling' },

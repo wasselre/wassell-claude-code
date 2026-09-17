@@ -65,7 +65,6 @@ export default function RowPane({ rowId, taskId, contentId, onChanged, brief }: 
   // notes live on the MONTH GRID, not on the records — they are written before
   // the records exist, which is the whole point of them.
   const [notes, setNotes] = useState<MosMonthNote[] | null>(null);
-  const [topicBank, setTopicBank] = useState<string[]>([]);
   const [notesError, setNotesError] = useState<string | null>(null);
   /*
    * THREE TABS, always at the top: the work itself, the project's information,
@@ -109,7 +108,6 @@ export default function RowPane({ rowId, taskId, contentId, onChanged, brief }: 
       .then((res) => {
         if (!alive) return;
         setNotes(res.notes ?? []);
-        setTopicBank(res.template?.generalTopicBank ?? []);
       })
       .catch((e: unknown) => {
         console.error('[marketing] row brief — month notes unavailable', e);
@@ -146,7 +144,6 @@ export default function RowPane({ rowId, taskId, contentId, onChanged, brief }: 
         batchDate: detail.row.batch_day,
         projectName: detail.row.project_id ? projectName(detail.row.project_id) : null,
       }}
-      topicBank={topicBank}
       isAr={isAr}
       loading={notes === null && !notesError}
       error={notesError}
