@@ -1,176 +1,130 @@
 /**
- * Demand-vs-supply district choropleth (Phase 4, layer B).
+ * Demand-vs-supply district map (Phase 4, layer B).
  *
- * Reuses the proven MarketMap rendering (google.maps.Data, one Feature per
- * district) but is fully decoupled from the archived market-listings engine:
- * geometry comes from the listing-independent `wassell_city_district_shapes`
- * RPC, and the shading METRIC is the shared canonical demand-vs-supply severity
- * (unmet active clients) — NOT any benchmark table. District polygons are the
- * only truthful geographic layer (region/city are navigation, handled by the
- * parent drill component).
+ * Renders one PIN per relevant district, keyed by the districts RECORD id —
+ * the same id `location.district` uses on clients + projects — so the demand /
+ * supply metric joins EXACTLY. (District polygons were attempted via
+ * wassell_city_district_shapes, but that RPC keys geometry by a separate code
+ * space, the records carry no boundary_geojson, and the city records are
+ * fragmented — none of which can color a polygon correctly. A centroid pin from
+ * the record's own center_lat/lng is the truthful, reliable visualization.)
+ *
+ * Pin colour = demand-vs-supply severity (covered → undersupplied); pin size
+ * scales with demand. No fake data.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
-import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { GEO_MAP_STYLE } from '@/lib/locationUtils';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 
-interface DistrictShape { district_id: string; name: string; name_en?: string; geojson: unknown }
-
-/** Per-district demand/supply the parent computed from the shared layer. */
 export interface DistrictMetric { demand: number; available: number; severity: number }
-
-/** The RPC keys geometry by a `district_id` CODE that does NOT match the
- *  districts record id (which is what location.district uses). So the demand
- *  metric is joined to the polygons by normalized district NAME within the
- *  selected city (names are distinct per city). */
-export const normName = (s: string | null | undefined): string => (s ?? '').trim().toLowerCase();
+export interface DistrictPin { id: string; label: string; lat: number; lng: number; metric: DistrictMetric }
 
 interface Props {
-  cityId: string | null;
-  /** metric keyed by BOTH normalized name_ar and name_en. */
-  metricByName: Map<string, DistrictMetric>;
-  selectedName: string | null;
-  onDistrictClick: (normalizedName: string) => void;
+  pins: DistrictPin[];
+  selectedId: string | null;
+  onDistrictClick: (districtId: string) => void;
   isAr: boolean;
   language: 'ar' | 'en';
   heightClass?: string;
 }
 
 const RIYADH = { lat: 24.7136, lng: 46.6753 };
-// Green (demand covered) → amber → red (undersupplied), by unmet-client severity.
 const RAMP = ['#10B981', '#84CC16', '#F59E0B', '#EF4444', '#B91C1C'];
-const NO_DATA = '#E5E7EB';
-const COPPER = '#B8734F';
+const COVERED = '#10B981';
+const NO_DEMAND = '#9CA3AF';
 
-function severityColor(m: DistrictMetric | undefined): string {
-  if (!m || m.demand === 0) return NO_DATA;
+function severityColor(m: DistrictMetric): string {
+  if (m.demand === 0) return NO_DEMAND;
   const s = m.severity;
-  if (s <= 0) return RAMP[0]!;
+  if (s <= 0) return COVERED;
   if (s <= 1) return RAMP[1]!;
   if (s <= 3) return RAMP[2]!;
   if (s <= 6) return RAMP[3]!;
   return RAMP[4]!;
 }
+const pinScale = (demand: number): number => Math.min(22, 6 + demand * 1.6);
 
-export default function DemandSupplyMap({ cityId, metricByName, selectedName, onDistrictClick, isAr, language, heightClass = 'h-[26rem]' }: Props) {
+export default function DemandSupplyMap({ pins, selectedId, onDistrictClick, isAr, language, heightClass = 'h-[28rem]' }: Props) {
   const { isLoaded } = useJsApiLoader(getMapsLoaderOptions(language));
   const divRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
-  const dataRef = useRef<google.maps.Data | null>(null);
+  const markersRef = useRef<google.maps.Marker[]>([]);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
-  const [shapes, setShapes] = useState<DistrictShape[] | null>(null);
-  const [hover, setHover] = useState<{ nm: string; label: string } | null>(null);
-  useGeoBoundaryLayer(mapInstance, { boundaries: false });
-
-  // Fetch the city's district polygons (listing-independent).
-  useEffect(() => {
-    if (!cityId || !supabase) { setShapes(cityId ? null : []); return; }
-    let cancelled = false;
-    setShapes(null);
-    supabase.rpc('wassell_city_district_shapes', { p_city_id: cityId }).then(({ data, error }) => {
-      if (cancelled) return;
-      setShapes(error || !Array.isArray(data) ? [] : (data as DistrictShape[]));
-    });
-    return () => { cancelled = true; };
-  }, [cityId]);
+  const [hover, setHover] = useState<DistrictPin | null>(null);
+  useGeoBoundaryLayer(mapInstance, { boundaries: true });
 
   const onClickRef = useRef(onDistrictClick);
   useEffect(() => { onClickRef.current = onDistrictClick; }, [onDistrictClick]);
+
+  const validPins = useMemo(() => pins.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng) && (p.lat !== 0 || p.lng !== 0)), [pins]);
 
   // Map init (once).
   useEffect(() => {
     if (!isLoaded || !divRef.current || mapRef.current) return;
     const map = new google.maps.Map(divRef.current, {
-      center: RIYADH, zoom: 10, styles: GEO_MAP_STYLE,
+      center: RIYADH, zoom: 6, styles: GEO_MAP_STYLE,
       mapTypeControl: false, streetViewControl: false, fullscreenControl: false, clickableIcons: false,
     });
     mapRef.current = map;
     setMapInstance(map);
-    const data = new google.maps.Data({ map });
-    dataRef.current = data;
-    data.addListener('click', (e: google.maps.Data.MouseEvent) => {
-      const nm = e.feature.getProperty('nm') as string;
-      if (nm) onClickRef.current(nm);
-    });
-    data.addListener('mouseover', (e: google.maps.Data.MouseEvent) => setHover({ nm: e.feature.getProperty('nm') as string, label: e.feature.getProperty('label') as string }));
-    data.addListener('mouseout', () => setHover(null));
   }, [isLoaded]);
 
-  // Load features + fit bounds when shapes change. Each feature carries the
-  // normalized name (join key) + a display label.
+  // Draw pins + fit bounds when the set changes.
   useEffect(() => {
-    const data = dataRef.current, map = mapRef.current;
-    if (!data || !map) return;
-    data.forEach((f) => data.remove(f));
+    const map = mapRef.current;
+    if (!map) return;
+    markersRef.current.forEach((m) => m.setMap(null));
+    markersRef.current = [];
     const bounds = new google.maps.LatLngBounds();
-    let any = false;
-    for (const s of shapes ?? []) {
-      if (!s.geojson) continue;
-      const label = isAr ? s.name : (s.name_en || s.name);
-      const nm = normName(s.name_en || s.name);
-      try {
-        data.addGeoJson({ type: 'Feature', geometry: s.geojson, properties: { nm, nmAr: normName(s.name), label } } as unknown as object);
-        any = true;
-      } catch { /* a malformed geometry must not take the map down */ }
+    for (const p of validPins) {
+      const sel = p.id === selectedId;
+      const marker = new google.maps.Marker({
+        position: { lat: p.lat, lng: p.lng }, map,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: pinScale(p.metric.demand) * (sel ? 1.3 : 1),
+          fillColor: severityColor(p.metric), fillOpacity: 0.82,
+          strokeColor: sel ? '#4A2C2A' : '#FFFFFF', strokeWeight: sel ? 2.5 : 1,
+        },
+        zIndex: sel ? 1000 : Math.round(p.metric.demand),
+      });
+      marker.addListener('click', () => onClickRef.current(p.id));
+      marker.addListener('mouseover', () => setHover(p));
+      marker.addListener('mouseout', () => setHover(null));
+      markersRef.current.push(marker);
+      bounds.extend({ lat: p.lat, lng: p.lng });
     }
-    if (any) {
-      data.forEach((f) => f.getGeometry()?.forEachLatLng((ll) => bounds.extend(ll)));
-      if (!bounds.isEmpty()) map.fitBounds(bounds);
+    if (validPins.length > 0 && !bounds.isEmpty()) {
+      map.fitBounds(bounds);
+      if (validPins.length === 1) map.setZoom(12);
     }
-  }, [shapes, isAr]);
-
-  const metricOf = (f: google.maps.Data.Feature): DistrictMetric | undefined =>
-    metricByName.get(f.getProperty('nm') as string) ?? metricByName.get(f.getProperty('nmAr') as string);
-
-  // Style by severity + selection.
-  useEffect(() => {
-    const data = dataRef.current;
-    if (!data) return;
-    data.setStyle((feature) => {
-      const m = metricOf(feature);
-      const isSel = (feature.getProperty('nm') as string) === selectedName;
-      return {
-        fillColor: severityColor(m),
-        fillOpacity: m?.demand ? 0.7 : 0.25,
-        strokeColor: isSel ? COPPER : '#FFFFFF',
-        strokeWeight: isSel ? 3 : 0.8,
-        strokeOpacity: isSel ? 1 : 0.6,
-        zIndex: isSel ? 10 : 1,
-      };
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metricByName, selectedName]);
+  }, [validPins, selectedId]);
 
   if (!isMapsKeyConfigured()) return <div className={`grid ${heightClass} place-items-center rounded-xl bg-cream text-sm text-charcoal/50`}>{isAr ? 'مفتاح خرائط Google غير مُعد' : 'Google Maps key not configured'}</div>;
   if (!isLoaded) return <div className={`grid ${heightClass} place-items-center rounded-xl bg-cream text-sm text-charcoal/40`}>{isAr ? 'جارٍ تحميل الخريطة…' : 'Loading map…'}</div>;
-  if (!cityId) return <div className={`grid ${heightClass} place-items-center rounded-xl bg-cream text-sm text-charcoal/40`}>{isAr ? 'اختر مدينة لعرض الخريطة' : 'Select a city to view the map'}</div>;
 
-  const hv = hover ? (metricByName.get(hover.nm) ?? undefined) : undefined;
   return (
     <div className={`relative ${heightClass} w-full overflow-hidden rounded-xl`}>
       <div ref={divRef} className="h-full w-full" />
-      {shapes === null && <div className="absolute inset-0 grid place-items-center bg-cream/60 text-sm text-charcoal/40">{isAr ? 'جارٍ تحميل الأحياء…' : 'Loading districts…'}</div>}
+      {validPins.length === 0 && <div className="absolute inset-0 grid place-items-center bg-cream/60 text-sm text-charcoal/40">{isAr ? 'لا توجد أحياء بإحداثيات لعرضها' : 'No districts with coordinates to plot'}</div>}
       {/* Legend */}
       <div className="absolute bottom-3 start-3 rounded-lg bg-white/95 px-3 py-2 text-[11px] shadow-sm">
-        <div className="mb-1 font-bold text-charcoal">{isAr ? 'فجوة الطلب مقابل المعروض' : 'Demand vs supply gap'}</div>
+        <div className="mb-1 font-bold text-charcoal">{isAr ? 'فجوة الطلب مقابل المعروض' : 'Demand vs supply'}</div>
         <div className="flex items-center gap-1">
           <span className="text-charcoal/50">{isAr ? 'مغطّى' : 'Covered'}</span>
           {RAMP.map((c) => <span key={c} className="h-3 w-4 rounded-[2px]" style={{ background: c }} />)}
           <span className="text-charcoal/50">{isAr ? 'نقص' : 'Undersupplied'}</span>
         </div>
+        <div className="mt-1 flex items-center gap-1 text-charcoal/45"><span className="h-3 w-3 rounded-full" style={{ background: NO_DEMAND }} /> {isAr ? 'معروض بلا طلب مسجّل' : 'Supply, no recorded demand'}</div>
       </div>
       {/* Hover card */}
       {hover && (
         <div className="pointer-events-none absolute top-3 end-3 max-w-[220px] rounded-lg bg-white/97 px-3 py-2 text-[12px] shadow-md">
-          <div className="font-bold text-charcoal">{hover.label || '—'}</div>
-          {hv ? (
-            <>
-              <div className="mt-1 text-charcoal/70">{isAr ? `${hv.demand} طلب · ${hv.available} متاحة` : `${hv.demand} demand · ${hv.available} available`}</div>
-              <div className="text-charcoal/50">{isAr ? `${hv.severity} بلا مخزون مناسب` : `${hv.severity} unmet`}</div>
-            </>
-          ) : <div className="mt-1 text-charcoal/40">{isAr ? 'لا طلب مسجّل' : 'No recorded demand'}</div>}
+          <div className="font-bold text-charcoal">{hover.label}</div>
+          <div className="mt-1 text-charcoal/70">{isAr ? `${hover.metric.demand} طلب · ${hover.metric.available} متاحة` : `${hover.metric.demand} demand · ${hover.metric.available} available`}</div>
+          {hover.metric.severity > 0 && <div className="text-charcoal/50">{isAr ? `${hover.metric.severity} بلا مخزون مناسب` : `${hover.metric.severity} unmet`}</div>}
         </div>
       )}
     </div>
