@@ -69,7 +69,7 @@ export default function HireExperiencePage() {
         <OpeningSummary />
 
         {/* The seven steps as one connected journey (the evidence) */}
-        <div className="mt-14">
+        <div id="hire-workflow" className="mt-14 scroll-mt-20">
           <Reveal>
             <p className="mb-2 text-center text-sm font-bold uppercase tracking-wider text-copper">رحلة عميل واحدة داخل وصل</p>
           </Reveal>

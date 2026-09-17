@@ -1,182 +1,248 @@
 import type { ReactNode } from 'react';
 import {
-  ChevronLeft, Building2, Users, TrendingUp, MapPin, Globe2, Sparkles,
-  CheckCircle2, HelpCircle,
+  Wallet, BedDouble, Home, MapPin, Globe2, MessageCircle, FileText,
+  Sparkles, Phone, CalendarClock, ArrowDown, Building2,
 } from 'lucide-react';
 import { Reveal } from './hireUi';
+import { CAROUSEL_PROJECTS, OVERVIEW_RECS, OVERVIEW_SEND_PROJECT } from './hireProjects';
+import { CLIENT } from './hireScenario';
 
 /**
- * The opening value summary — shown BEFORE the workflow steps.
- *
- * The central idea the candidate must grasp first: at Wassel a salesperson isn't
- * limited to one project / city / country — they can sell across 100+ current
- * projects, and the system makes that possible without memorizing everything.
- * This section is intentionally the visual anchor of the page (stronger than the
- * individual workflow steps, which are the evidence below it).
+ * Recruitment intro — phone-first, three visually distinct sections that explain
+ * the opportunity (100+ projects → more customers → more sales & commission),
+ * how the system makes it manageable, and how follow-up is auto-organized.
+ * Approved Arabic copy is kept exactly; visuals carry the rest. Real Wassel
+ * project photos (Riyadh + Dubai) power the carousel and the overview.
  */
-
-const NEEDS = [
-  'ما المشاريع المناسبة لهذا العميل؟',
-  'ما المعلومات التي يجب عرضها؟',
-  'ما الوحدات المتاحة؟',
-  'ما الملفات التي يمكن إرسالها؟',
-  'ماذا حدث في التواصل السابق؟',
-  'متى يجب متابعة العميل؟',
-  'ما الخطوة التالية؟',
-];
-
 export default function OpeningSummary() {
   return (
-    <div className="space-y-10 sm:space-y-14">
-      {/* ── 1. The framing: one project → 100+ ─────────────────────────── */}
+    <div className="space-y-8 sm:space-y-12">
+      <style>{`
+        .hire-carousel { scrollbar-width: none; -ms-overflow-style: none; }
+        .hire-carousel::-webkit-scrollbar { display: none; }
+      `}</style>
+
+      <SectionScale />
+      <SectionHow />
+      <SectionFollowup />
+
+      {/* transition into the existing workflow */}
       <Reveal>
-        <div className="rounded-3xl border bg-white/85 p-7 shadow-xl backdrop-blur sm:p-11" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
-          <h1 className="text-center text-3xl font-extrabold leading-snug sm:text-5xl" style={{ color: '#4A2C2A' }}>
-            من مشروع واحد إلى أكثر من 100 مشروع
-          </h1>
-
-          <div className="mx-auto mt-6 max-w-2xl space-y-4 text-base leading-loose sm:text-lg" style={{ color: '#4A4E54' }}>
-            <p>عادةً يعمل موظف المبيعات العقارية على مشروع واحد فقط.</p>
-            <p>
-              السبب ليس عدم وجود مشاريع أخرى يمكنه بيعها، بل لأن كل مشروع يحتوي على كمية كبيرة من المعلومات:
-              الأسعار، المواقع، أنواع الوحدات، المساحات، المخططات، الصور، الفيديوهات، البروشورات، والمخزون المتاح.
-            </p>
-            <p>
-              من الصعب على أي شخص أن يحفظ معلومات عدد كبير من المشاريع، ويتابع تحديثاتها، ويعرف المشروع المناسب لكل عميل.
-              لذلك ينتهي به الأمر إلى بيع المشروع الذي يعرفه فقط.
-            </p>
-            <p className="font-semibold" style={{ color: '#4A2C2A' }}>
-              وهذا يحد من عدد العملاء الذين يستطيع خدمتهم، وعدد فرص البيع التي يستطيع الاستفادة منها.
-            </p>
-          </div>
-
-          {/* the value sequence */}
-          <div className="mt-8">
-            <SequenceBand />
-          </div>
-        </div>
+        <a
+          href="#hire-workflow"
+          className="mx-auto flex max-w-2xl items-center justify-center gap-2 rounded-2xl bg-copper px-5 py-4 text-center text-base font-bold text-white shadow-lg sm:text-lg"
+          style={{ minHeight: 56 }}
+        >
+          شاهد كيف يحدث ذلك أثناء مكالمة واحدة
+          <ArrowDown size={20} className="animate-bounce" />
+        </a>
       </Reveal>
+    </div>
+  );
+}
 
-      {/* ── 2. In Wassel you don't work on one project ─────────────────── */}
-      <Reveal>
-        <div className="rounded-3xl border bg-chocolate p-7 text-cream shadow-xl sm:p-11" style={{ borderColor: 'rgba(212,184,150,0.4)' }}>
-          <h2 className="text-center text-2xl font-bold sm:text-4xl">في وصل، أنت لا تعمل على مشروع واحد</h2>
-          <div className="mx-auto mt-5 max-w-2xl space-y-4 text-base leading-loose text-cream/90 sm:text-lg">
-            <p>
-              يوجد حاليًا في وصل أكثر من 100 مشروع يمكنك بيعها. أنت لا ترتبط بمشروع واحد، أو مدينة واحدة، أو دولة واحدة.
-              تستطيع العمل على مشاريعنا الحالية، ومع توسع وصل وإضافة مشاريع وأسواق جديدة، تتوسع معك الخيارات التي تستطيع تقديمها للعملاء.
-            </p>
-            <p>
-              قد يتواصل معك عميل يبحث في الرياض، وعميل آخر يبحث في دبي، ومستقبلًا يمكن أن يتواصل معك عميل يبحث عن عقار في سوق آخر.
-              قدرتك على البيع لا تعتمد على عدد المشاريع التي تستطيع حفظها.
-            </p>
+// ── Section 1 — the scale of the opportunity ──────────────────────────────────
+function SectionScale() {
+  return (
+    <Reveal>
+      <section className="overflow-hidden rounded-3xl border bg-white/85 shadow-xl backdrop-blur" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
+        <div className="p-6 sm:p-9">
+          {/* prominent 100+ */}
+          <div className="flex items-end justify-center gap-3">
+            <span className="text-6xl font-extrabold leading-none sm:text-8xl" style={{ color: '#B8734F' }}>+100</span>
+            <span className="pb-1.5 text-lg font-bold text-chocolate sm:text-2xl">مشروع</span>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-xs font-semibold sm:text-sm">
+            <span className="rounded-full bg-copper/10 px-2.5 py-1 text-copper">الرياض</span>
+            <span className="rounded-full bg-copper/10 px-2.5 py-1 text-copper">دبي</span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-sand/30 px-2.5 py-1 text-charcoal/70">
+              <Globe2 size={12} /> أسواق جديدة قادمة
+            </span>
           </div>
 
-          {/* stat figures */}
-          <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat icon={<Building2 size={18} />} big="+100" label="مشروع متاح" />
-            <Stat icon={<MapPin size={18} />} big="الرياض ودبي" label="حاليًا" />
-            <Stat icon={<Globe2 size={18} />} big="أسواق جديدة" label="مع توسع وصل" />
-            <Stat icon={<TrendingUp size={18} />} big="لا مشروع واحد" label="يحدد فرصك" />
-          </div>
-        </div>
-      </Reveal>
-
-      {/* ── 3. How can you work on all of these? ───────────────────────── */}
-      <Reveal>
-        <div className="rounded-3xl border bg-white/85 p-7 shadow-xl backdrop-blur sm:p-11" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
-          <h2 className="text-center text-2xl font-bold sm:text-4xl" style={{ color: '#4A2C2A' }}>
-            كيف تستطيع العمل على كل هذه المشاريع؟
+          <h2 className="mt-6 text-center text-2xl font-bold leading-snug sm:text-4xl" style={{ color: '#4A2C2A' }}>
+            أكثر من 100 مشروع يمكنك بيعها
           </h2>
-          <div className="mx-auto mt-5 max-w-2xl space-y-4 text-base leading-loose sm:text-lg" style={{ color: '#4A4E54' }}>
-            <p className="text-center text-xl font-bold" style={{ color: '#B8734F' }}>لا تحتاج إلى حفظ معلوماتها.</p>
-            <p>
-              نظام وصل يحفظ بيانات المشاريع والوحدات، ويطابق احتياجات العميل مع الخيارات المتاحة، ويعرض لك المشاريع المناسبة أثناء المكالمة.
-            </p>
-            <p>
-              كما يحفظ النظام سجل كل عميل، وينظم المتابعات المطلوبة، ويحدد موعد التواصل القادم، ويجهز لك ملخصًا قبل كل متابعة.
-            </p>
-            <p>لذلك لا تحتاج إلى معرفة كل مشروع مسبقًا، أو تذكر كل ما حدث مع كل عميل.</p>
+          <p className="mx-auto mt-4 max-w-2xl text-center text-base leading-loose sm:text-lg" style={{ color: '#4A4E54' }}>
+            العمل على مشروع واحد يحصر فرصك مع العميل ويحد من مبيعاتك. في وصل، لديك أكثر من 100 مشروع في الرياض ودبي،
+            وأسواق جديدة مع توسّعنا. خيارات أوسع لعملائك تعني فرصًا أكثر للبيع والعمولة.
+          </p>
+        </div>
+
+        {/* swipeable real-project carousel (RTL; one card + peek of next) */}
+        <div className="hire-carousel flex snap-x snap-mandatory gap-3 overflow-x-auto px-6 pb-6 sm:px-9" dir="rtl">
+          {CAROUSEL_PROJECTS.map((p) => (
+            <figure key={p.name} className="relative shrink-0 basis-[82%] snap-start overflow-hidden rounded-2xl border border-sand/40 bg-white shadow-md sm:basis-[300px]">
+              <img src={p.url} alt={p.name} loading="lazy" className="h-52 w-full object-cover sm:h-56" />
+              <figcaption className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/70 to-transparent p-3">
+                <span className="text-base font-bold text-white sm:text-lg">{p.name}</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-0.5 text-xs font-bold text-chocolate">
+                  <MapPin size={11} /> {p.city}
+                </span>
+              </figcaption>
+            </figure>
+          ))}
+          {/* expansion end-card */}
+          <div className="flex shrink-0 basis-[70%] snap-start flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-copper/30 bg-copper/5 p-5 text-center sm:basis-[220px]">
+            <Globe2 size={30} className="text-copper" />
+            <span className="text-base font-bold text-chocolate">أسواق جديدة</span>
+            <span className="text-sm text-charcoal/60">تتوسّع خياراتك مع توسّع وصل</span>
           </div>
         </div>
-      </Reveal>
+      </section>
+    </Reveal>
+  );
+}
 
-      {/* ── 4. What do YOU need? ───────────────────────────────────────── */}
-      <Reveal>
-        <div className="rounded-3xl border bg-white/85 p-7 shadow-xl backdrop-blur sm:p-11" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
-          <h2 className="text-center text-2xl font-bold sm:text-4xl" style={{ color: '#4A2C2A' }}>ما الذي تحتاج إليه أنت؟</h2>
+// ── Section 2 — how the system makes it possible ──────────────────────────────
+function SectionHow() {
+  const chips = [
+    { icon: <Wallet size={13} />, text: 'حتى 2.1م ر.س' },
+    { icon: <BedDouble size={13} />, text: '4–5 غرف' },
+    { icon: <Home size={13} />, text: 'فيلا' },
+    { icon: <MapPin size={13} />, text: 'شمال الرياض' },
+  ];
+  return (
+    <Reveal>
+      <section className="rounded-3xl border bg-cream/60 p-6 shadow-xl backdrop-blur sm:p-9" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
+        <h2 className="text-center text-2xl font-bold sm:text-4xl" style={{ color: '#4A2C2A' }}>كيف تعمل على كل هذه المشاريع؟</h2>
+        <p className="mx-auto mt-4 max-w-2xl text-center text-base leading-loose sm:text-lg" style={{ color: '#4A4E54' }}>
+          تسجّل احتياجات العميل، فيرشّح نظام وصل المشاريع المناسبة ويجهّز معلومات المشروع وملف الوحدة للإرسال عبر واتساب.
+          لا تحتاج إلى حفظ تفاصيل المشاريع أو البحث عنها.
+        </p>
 
-          <div className="mx-auto mt-6 max-w-3xl rounded-2xl bg-copper/10 p-6 text-center sm:p-8">
-            <p className="text-xl font-bold leading-relaxed sm:text-2xl" style={{ color: '#4A2C2A' }}>
-              تحتاج إلى أن تعرف كيف تتواصل مع العميل، وتفهم احتياجه، وتبني معه علاقة قائمة على الثقة.
-            </p>
-          </div>
-
-          <p className="mt-6 text-center text-base font-semibold sm:text-lg" style={{ color: '#4A4E54' }}>
-            ثم يساعدك وصل في كل ما تحتاج إليه أثناء هذا التواصل:
-          </p>
-
-          <div className="mx-auto mt-4 grid max-w-3xl grid-cols-1 gap-2.5 sm:grid-cols-2">
-            {NEEDS.map((q) => (
-              <div key={q} className="flex items-center gap-2.5 rounded-xl border border-sand/50 bg-white px-4 py-3">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-copper/10 text-copper">
-                  <HelpCircle size={15} />
+        <div className="mx-auto mt-7 max-w-md space-y-3">
+          {/* 1. preferences */}
+          <Panel label="احتياجات العميل" icon={<Sparkles size={14} />}>
+            <div className="flex flex-wrap gap-1.5">
+              {chips.map((c) => (
+                <span key={c.text} className="inline-flex items-center gap-1 rounded-full border border-sand/50 bg-white px-2.5 py-1 text-xs font-semibold text-charcoal/80 sm:text-sm">
+                  <span className="text-copper">{c.icon}</span> {c.text}
                 </span>
-                <span className="flex-1 text-sm font-medium sm:text-base" style={{ color: '#4A4E54' }}>{q}</span>
-                <CheckCircle2 size={17} className="shrink-0 text-green-600" />
+              ))}
+            </div>
+          </Panel>
+
+          <Flow>يرشّح وصل المشاريع المناسبة</Flow>
+
+          {/* 2. two recommendations */}
+          <div className="grid grid-cols-1 gap-2.5">
+            {OVERVIEW_RECS.map((r) => (
+              <div key={r.name} className="flex items-center gap-3 rounded-2xl border border-sand/40 bg-white p-2.5 shadow-sm">
+                <img src={r.url} alt={r.name} loading="lazy" className="h-16 w-20 shrink-0 rounded-xl object-cover" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-base font-bold text-charcoal">{r.name}</span>
+                    <span className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-bold text-green-700">{r.band}</span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1 text-xs text-charcoal/55">
+                    <MapPin size={11} className="text-copper" /> {r.district}، {r.city}
+                  </div>
+                  <div className="mt-0.5 text-sm font-semibold text-copper">{r.price}</div>
+                </div>
               </div>
             ))}
           </div>
 
-          {/* bridge into the workflow */}
-          <div className="mt-8 flex items-center justify-center gap-2 text-center">
-            <Sparkles size={16} className="text-copper" />
-            <p className="max-w-2xl text-base font-semibold leading-relaxed sm:text-lg" style={{ color: '#4A2C2A' }}>
-              في الخطوات التالية، سترى كيف يدير وصل هذه التفاصيل أثناء عملك، من أول مكالمة مع العميل وحتى المتابعة التالية.
-            </p>
+          <Flow>يجهّز رسالة واتساب وملف الوحدة</Flow>
+
+          {/* 3. prepared WhatsApp message */}
+          <div className="flex justify-end">
+            <div className="max-w-[92%] overflow-hidden rounded-2xl rounded-br-md bg-[#D9FDD3] shadow-sm">
+              <div className="flex items-center gap-1.5 border-b border-black/5 bg-white/50 px-3 py-1.5 text-[11px] font-semibold text-green-700">
+                <MessageCircle size={12} className="text-[#128C7E]" /> رسالة جاهزة للإرسال
+              </div>
+              <img src={OVERVIEW_SEND_PROJECT.url} alt={OVERVIEW_SEND_PROJECT.name} loading="lazy" className="h-28 w-full object-cover" />
+              <div className="px-3 py-2">
+                <p className="text-sm leading-relaxed text-charcoal">مشروع {OVERVIEW_SEND_PROJECT.name} — فلل شمال الرياض، تبدأ من 1,900,000 ر.س 🌿</p>
+                <span className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold text-charcoal/80">
+                  <FileText size={13} className="text-copper" /> ملف الوحدة — U-1207.pdf
+                </span>
+              </div>
+            </div>
           </div>
         </div>
-      </Reveal>
-    </div>
+
+        <p className="mt-6 text-center text-xs text-charcoal/50 sm:text-sm">نظرة عامة — التفاصيل خطوة بخطوة في الأسفل.</p>
+      </section>
+    </Reveal>
   );
 }
 
-// ── The value sequence: one project → 100+ → more clients → more sales ────────
-function SequenceBand() {
-  const nodes = [
-    { label: 'مشروع واحد', icon: <Building2 size={18} />, tone: 'muted' },
-    { label: 'أكثر من 100 مشروع', icon: <Building2 size={18} />, tone: 'sand' },
-    { label: 'فرص عملاء أكثر', icon: <Users size={18} />, tone: 'gold' },
-    { label: 'فرص بيع أكثر', icon: <TrendingUp size={18} />, tone: 'copper' },
-  ] as const;
-  const toneCls: Record<string, string> = {
-    muted: 'bg-white text-charcoal/50 border-sand/50',
-    sand: 'bg-sand/25 text-chocolate border-sand',
-    gold: 'bg-gold/20 text-chocolate border-gold/50',
-    copper: 'bg-copper text-white border-copper shadow-md',
-  };
+// ── Section 3 — follow-up is already organized ────────────────────────────────
+function SectionFollowup() {
   return (
-    <div className="flex flex-wrap items-stretch justify-center gap-2 sm:gap-3">
-      {nodes.map((n, i) => (
-        <div key={n.label} className="flex items-center gap-2 sm:gap-3">
-          <div className={`flex min-w-[8.5rem] flex-col items-center gap-1.5 rounded-2xl border px-3 py-3 text-center sm:min-w-[10rem] sm:py-4 ${toneCls[n.tone]}`}>
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-black/5">{n.icon}</span>
-            <span className="text-sm font-bold sm:text-base">{n.label}</span>
+    <Reveal>
+      <section className="rounded-3xl border bg-white/85 p-6 shadow-xl backdrop-blur sm:p-9" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
+        <h2 className="text-center text-2xl font-bold sm:text-4xl" style={{ color: '#4A2C2A' }}>ركّز على العميل، والنظام ينظّم المتابعة</h2>
+        <p className="mx-auto mt-4 max-w-2xl text-center text-base leading-loose sm:text-lg" style={{ color: '#4A4E54' }}>
+          وصل يجدول متابعاتك تلقائيًا ويلخّص لك حالة العميل قبل كل تواصل. دورك هو فهم العميل، وبناء ثقته، ومساعدته على اتخاذ القرار.
+        </p>
+
+        <div className="mx-auto mt-7 max-w-md space-y-3">
+          {/* follow-up task */}
+          <div className="overflow-hidden rounded-2xl border border-sand/40 bg-white p-4 shadow-sm" style={{ borderInlineStartWidth: 5, borderInlineStartColor: '#25D366' }}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-base font-bold text-chocolate">{CLIENT.name}</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#10B981]/15 px-2.5 py-1 text-[11px] font-bold text-[#0f7a52]">
+                <CalendarClock size={12} /> مجدولة تلقائيًا
+              </span>
+            </div>
+            <div className="mt-1.5 text-sm font-bold text-copper">اتصال لحجز موعد · سكن</div>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <span className="text-xs text-charcoal/60">الموعد: غدًا · 11:00 صباحًا</span>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-copper px-4 text-sm font-bold text-white"
+                style={{ minHeight: 44 }}
+              >
+                <Phone size={15} /> اتصال
+              </button>
+            </div>
           </div>
-          {i < nodes.length - 1 && <ChevronLeft size={20} className="shrink-0 text-copper/50" />}
+
+          {/* connector */}
+          <div className="flex items-center justify-center">
+            <span className="rounded-full bg-copper/10 px-3 py-1 text-xs font-semibold text-copper">مع ملخّص جاهز قبل الاتصال</span>
+          </div>
+
+          {/* client summary */}
+          <div className="rounded-2xl border border-sand/40 bg-cream/40 p-4">
+            <div className="mb-2 flex items-center gap-2">
+              <Sparkles size={15} className="text-copper" />
+              <span className="text-sm font-bold text-chocolate">ملخّص العميل</span>
+            </div>
+            <ul className="list-disc space-y-1 ps-5 text-sm leading-relaxed text-charcoal/85 marker:text-copper">
+              <li>مهتم بفلل شمال الرياض، ميزانية حتى 2.1 مليون ر.س.</li>
+              <li>أُرسلت له تفاصيل مشروع صفا 20 عبر واتساب، وطلب موعد زيارة.</li>
+              <li>الخطوة التالية: تأكيد موعد الزيارة نهاية الأسبوع.</li>
+            </ul>
+          </div>
         </div>
-      ))}
-    </div>
+      </section>
+    </Reveal>
   );
 }
 
-function Stat({ icon, big, label }: { icon: ReactNode; big: string; label: string }) {
+// ── small helpers ─────────────────────────────────────────────────────────────
+function Panel({ label, icon, children }: { label: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <div className="rounded-2xl bg-white/10 p-4 text-center ring-1 ring-white/15">
-      <span className="mx-auto mb-1.5 flex h-9 w-9 items-center justify-center rounded-xl bg-white/15 text-cream">{icon}</span>
-      <div className="text-lg font-extrabold text-white sm:text-2xl">{big}</div>
-      <div className="mt-0.5 text-xs text-cream/70 sm:text-sm">{label}</div>
+    <div className="rounded-2xl border border-sand/40 bg-white p-3.5 shadow-sm">
+      <div className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-copper">
+        {icon} {label}
+      </div>
+      {children}
     </div>
   );
 }
 
+function Flow({ children }: { children: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1 py-0.5">
+      <ArrowDown size={18} className="text-copper/60" />
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-copper/10 px-3 py-1 text-xs font-semibold text-copper sm:text-sm">
+        <Building2 size={12} /> {children}
+      </span>
+    </div>
+  );
+}
