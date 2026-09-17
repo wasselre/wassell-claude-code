@@ -38,6 +38,7 @@
  *
  * Plan: docs/plans/monthly-operating-model-build.md §4 Group F (F1, F2).
  */
+import { ensureMonthMetaCampaigns } from './monthMeta.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { jsonOk, jsonError } from '../../auth.js';
 import {
@@ -801,12 +802,25 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
     warnings.push(`اعتُمد الشهر، لكن فتح مهام اليوم فشل (${opened.error.message}). ستُفتح تلقائيًا خلال عشر دقائق.`);
   }
 
+  // E6 — the month's paid campaigns in Meta: campaign + feed/story ad-set pair
+  // per project, PAUSED, so a creative's final approval has an ad set to land
+  // in. The month is already committed: a Meta refusal is a warning, and the
+  // planning sweep retries it (hourly at most).
+  const meta = await ensureMonthMetaCampaigns(svc, { month, force: true });
+  if (meta.error) warnings.push(`اعتُمد الشهر، لكن تعذّر تجهيز حملات ميتا (${meta.error}). ستُعاد المحاولة تلقائيًا.`);
+  for (const r of meta.results) {
+    if (r.outcome === 'failed') {
+      warnings.push(`لم تُنشأ حملة ميتا لـ«${r.campaign ?? ''}»: ${r.error_ar ?? r.error ?? ''} — ستُعاد المحاولة تلقائيًا.`);
+    }
+  }
+
   return jsonOk({
     ok: true,
     month,
     committed,
     summary: replanned.summary,
     opened: opened.error ? null : opened.data,
+    meta: meta.results,
     warnings,
   });
 }

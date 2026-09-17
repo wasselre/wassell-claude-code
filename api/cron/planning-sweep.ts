@@ -40,6 +40,7 @@
  */
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { monthGeometry, parseMonthTemplate } from '../_lib/marketing/planning/monthCompiler.js';
+import { ensureMonthMetaCampaigns } from '../_lib/marketing/planning/monthMeta.js';
 import {
   loadPlanningSettings, loadWorkCalendar, riyadhToday,
 } from '../_lib/marketing/planning/snapshot.js';
@@ -262,6 +263,18 @@ export default async function handler(req: Request): Promise<Response> {
   } catch (e) {
     console.error('[planning-sweep] next-month reminder threw', e);
     out.next_month_reminder = { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  // 4 — E6: the month's paid campaigns in Meta (campaign + feed/story pair).
+  //     Normally built at confirm; this is the retry for a Meta refusal
+  //     (hourly per execution at most) and the backfill for a month confirmed
+  //     before E6 existed.
+  try {
+    const meta = await ensureMonthMetaCampaigns(sb);
+    out.month_meta = meta.error ? { error: meta.error } : meta.results.filter((r) => r.outcome !== 'already_linked');
+  } catch (e) {
+    console.error('[planning-sweep] month Meta build threw', e);
+    out.month_meta = { error: e instanceof Error ? e.message : String(e) };
   }
 
   out.ms = Date.now() - startedAt;

@@ -28,10 +28,7 @@ import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import { makeServiceClient } from './_lib/serviceClient.js';
 import { runMetaSync } from './_lib/marketing/metaSync.js';
 import { loadMetaConfig, MetaMarketingClient, MetaApiError } from './_lib/marketing/metaMarketingApi.js';
-import {
-  buildCampaignPayload, buildAdSetPayload,
-  type PushCampaign, type PushExecution,
-} from './_lib/marketing/metaPush.js';
+import { ensureMetaSkeleton } from './_lib/marketing/metaSkeleton.js';
 import { resolveAutoAdTarget, enqueueMetaAdJob, approveMetaAdCaption, autoAdSkipText } from './_lib/marketing/metaAutoAd.js';
 import {
   loadBundleConfig, getPost, getTeam, extractPermalink, mapBundleStatus,
@@ -7162,179 +7159,23 @@ export default async function handler(req: Request): Promise<Response> {
         const executionId = str(body.execution_id);
         const validateOnly = body.validate_only === true;
         if (!executionId) return jsonError(400, 'execution_id is required');
-        const cfg = loadMetaConfig(); if (!cfg) return jsonError(400, 'Meta not configured');
-
-        const execRes = await sb.from('mos_campaign_executions')
-          .select('id, campaign_id, platform, label, budget, starts_on, ends_on, targeting, platform_settings, platform_campaign_id')
-          .eq('id', executionId).maybeSingle();
-        const ef = dbFail(execRes.error); if (ef) return ef;
-        const execRow = execRes.data as (PushExecution & { campaign_id: string; platform_campaign_id: string | null }) | null;
-        if (!execRow) return jsonError(404, 'execution not found');
-        if (execRow.platform !== 'meta' && execRow.platform !== 'instagram') {
-          return jsonError(400, 'Only Meta/Instagram executions can be pushed to Meta.');
+        // The campaign + feed/story ad-set pair — one implementation shared
+        // with the month model's automatic build (metaSkeleton.ts).
+        const skeleton = await ensureMetaSkeleton(sb, executionId, { validateOnly });
+        if (!skeleton.ok) {
+          return new Response(JSON.stringify({ error: skeleton.error, error_ar: skeleton.error_ar }),
+            { status: skeleton.status, headers: { 'Content-Type': 'application/json' } });
         }
-
-        const campRes = await sb.from('mos_campaigns')
-          .select('id, ref, name, objective, audience_id').eq('id', execRow.campaign_id).maybeSingle();
-        const cf = dbFail(campRes.error); if (cf) return cf;
-        const campaign = campRes.data as (PushCampaign & { audience_id: string | null }) | null;
-        if (!campaign) return jsonError(404, 'campaign not found');
-
-        const client = new MetaMarketingClient(cfg);
-
-        // ---- Saved audience (REQUIRED) ---------------------------------------
-        // Resolution: the campaign's linked Wassel audience → its Meta Saved
-        // Audience; else mos_settings.meta_push.saved_audience_id; else the
-        // account's ONLY saved audience. Several and none chosen → refuse with
-        // the names, so a broad audience can never slip through. The spec is
-        // always read FRESH from Graph (a cached copy could drift from what the
-        // buyer edited in Ads Manager).
-        let wantedAudienceId: string | null = null;
-        let audienceSource = '';
-        if (campaign.audience_id) {
-          const audRes = await sb.from('mos_audiences')
-            .select('name, meta_saved_audience_id').eq('id', campaign.audience_id).maybeSingle();
-          const af = dbFail(audRes.error); if (af) return af;
-          const a = audRes.data as { name?: string; meta_saved_audience_id?: string | null } | null;
-          if (a?.meta_saved_audience_id) { wantedAudienceId = a.meta_saved_audience_id; audienceSource = `campaign audience «${a.name ?? ''}»`; }
-        }
-        if (!wantedAudienceId) {
-          const st = await sb.from('mos_settings').select('value').eq('key', 'meta_push').maybeSingle();
-          const stf = dbFail(st.error); if (stf) return stf;
-          const v = (st.data as { value?: { saved_audience_id?: unknown } } | null)?.value;
-          if (typeof v?.saved_audience_id === 'string' && v.saved_audience_id) { wantedAudienceId = v.saved_audience_id; audienceSource = 'settings default'; }
-        }
-        let savedAudienceTargeting: Record<string, unknown> | null = null;
-        let savedAudienceName: string | null = null;
-        try {
-          const audiences = await client.listSavedAudiences();
-          const pick = wantedAudienceId
-            ? audiences.find((a) => a.id === wantedAudienceId) ?? null
-            : audiences.length === 1 ? audiences[0] ?? null : null;
-          if (!pick) {
-            const names = audiences.map((a) => `«${a.name}»`).join('، ');
-            const why = wantedAudienceId
-              ? `saved audience ${wantedAudienceId} (${audienceSource}) no longer exists in the ad account`
-              : audiences.length === 0
-                ? 'the ad account has no saved audience — create one in Ads Manager first'
-                : `the ad account has ${audiences.length} saved audiences (${names}) — pick the default in Settings → Platforms → Meta, or link one to the campaign audience`;
-            return new Response(JSON.stringify({
-              error: `Refusing to create an ad set without a saved audience: ${why}.`,
-              error_ar: `لن تُنشأ مجموعة إعلانية بدون جمهور محفوظ: ${why}.`,
-            }), { status: 422, headers: { 'Content-Type': 'application/json' } });
-          }
-          if (!pick.targeting || typeof pick.targeting !== 'object') {
-            return jsonError(422, `saved audience «${pick.name}» carries no targeting spec`);
-          }
-          savedAudienceTargeting = pick.targeting as Record<string, unknown>;
-          savedAudienceName = pick.name;
-          if (!audienceSource) audienceSource = 'the account’s only saved audience';
-        } catch (e) {
-          return jsonError(502, `Meta saved audiences failed: ${metaErr(e)}`);
-        }
-
-        const setsRes = await sb.from('mos_ad_sets')
-          .select('id, name, platform_adset_id, sort_order, placement_variant, pair_id').eq('execution_id', executionId)
-          .is('archived_at', null).order('sort_order', { ascending: true });
-        const sf = dbFail(setsRes.error); if (sf) return sf;
-        type LinkedSet = { id: string | null; name: string | null; platform_adset_id: string | null };
-        type PlannedSet = { id: string; name: string | null; platform_adset_id: string | null; sort_order: number | null; placement_variant: string | null; pair_id: string | null };
-        // Story rows are the push's own shadows — never a plan of their own.
-        const adSets = ((setsRes.data ?? []) as PlannedSet[]).filter((x) => x.placement_variant !== 'story');
-
-        // ---- 1) Skeleton: campaign + ad sets ---------------------------------
-        let metaCampaignId: string | null = execRow.platform_campaign_id;
-        const campaignCreated = !metaCampaignId;
-        let campaignName: string | null = null;
-        const createdSets: Array<{ wassell_ad_set_id: string | null; platform_adset_id: string; name: string; variant: 'feed' | 'story'; pair_id: string; sort_order: number }> = [];
+        const campaign = skeleton.campaign_row;
+        const metaCampaignId = skeleton.campaign.platform_campaign_id;
+        const campaignName = skeleton.campaign.name;
+        const campaignCreated = skeleton.campaign.created;
+        const createdSets = skeleton.ad_sets;
+        const linkedSets = skeleton.linked_sets;
         const errors: Array<{ ad_set: string; error: string }> = [];
-        // The ad sets as the ads phase sees them (existing links + this call's).
-        const linkedSets: LinkedSet[] = adSets.map((s) => ({ ...s }));
-        try {
-          if (!metaCampaignId) {
-            // We do NOT write platform_campaign_id yet — the execution is only
-            // "linked" once the WHOLE skeleton (campaign + every ad set)
-            // succeeds. Writing it here is what left a failed push showing a
-            // false "linked to Meta" badge over a half-built campaign.
-            const campaignPayload = buildCampaignPayload(campaign, execRow);
-            const campaignResult = await client.createCampaign(campaignPayload, validateOnly);
-            metaCampaignId = campaignResult.id ?? null;
-            campaignName = String(campaignPayload.name);
-          }
-
-          // A Wassel ad set = a PAIR of Meta ad sets (feed + story) on the
-          // saved audience — one per planned row (a single default if none).
-          type PlanRow = { id: string | null; name: string | null; platform_adset_id: string | null; sort_order: number | null; pair_id: string | null };
-          const plan: PlanRow[] = adSets.length
-            ? adSets.map((x) => ({ id: x.id, name: x.name, platform_adset_id: x.platform_adset_id, sort_order: x.sort_order, pair_id: x.pair_id }))
-            : [{ id: null, name: execRow.label ?? 'Ad set', platform_adset_id: null, sort_order: 0, pair_id: null }];
-          for (const s of plan) {
-            if (s.platform_adset_id) continue; // already linked — don't duplicate
-            const pairId = s.pair_id ?? crypto.randomUUID();
-            for (const variant of ['feed', 'story'] as const) {
-              try {
-                const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId ?? '', cfg.pageId, savedAudienceTargeting, variant);
-                const asResult = await client.createAdSet(p, validateOnly);
-                createdSets.push({ wassell_ad_set_id: s.id, platform_adset_id: asResult.id ?? '(validated)', name: String(p.name), variant, pair_id: pairId, sort_order: s.sort_order ?? 0 });
-              } catch (e) {
-                errors.push({ ad_set: `${s.name ?? '(unnamed)'} (${variant})`, error: metaErr(e) });
-              }
-            }
-          }
-
-          // ANY ad set failed → all-or-nothing on what THIS call built: undo a
-          // campaign we just created (deleting it cascades its ad sets) and
-          // link NOTHING. The buyer gets the real Meta rejection.
-          if (errors.length > 0) {
-            if (campaignCreated && !validateOnly && metaCampaignId) {
-              try { await client.deleteNode(metaCampaignId); }
-              catch (delErr) { console.error('[marketing-os] rollback delete failed:', metaErr(delErr)); }
-            }
-            const first = errors[0];
-            return new Response(
-              JSON.stringify({
-                error: `Meta rejected the ad set "${first?.ad_set}": ${first?.error}. Nothing was created — fix the plan and try again.`,
-                error_ar: `رفضت ميتا المجموعة الإعلانية «${first?.ad_set}»: ${first?.error}. لم يُنشأ شيء — صحّح الخطة وأعد المحاولة.`,
-              }),
-              { status: 422, headers: { 'Content-Type': 'application/json' } },
-            );
-          }
-
-          // All succeeded → NOW persist the links (campaign + each ad set).
-          if (!validateOnly && metaCampaignId) {
-            if (campaignCreated) {
-              const up = await sb.from('mos_campaign_executions')
-                .update({ platform_campaign_id: metaCampaignId, updated_at: new Date().toISOString() })
-                .eq('id', executionId);
-              const uf = dbFail(up.error); if (uf) return uf;
-            }
-            for (const c of createdSets) {
-              if (c.platform_adset_id === '(validated)') continue;
-              if (c.wassell_ad_set_id && c.variant === 'feed') {
-                // The planned row becomes the FEED (primary) half of the pair.
-                const su = await sb.from('mos_ad_sets')
-                  .update({ platform_adset_id: c.platform_adset_id, placement_variant: 'feed', pair_id: c.pair_id, updated_at: new Date().toISOString() })
-                  .eq('id', c.wassell_ad_set_id);
-                if (su.error) console.error('[marketing-os] ad set link write failed:', su.error.message);
-                const ls = linkedSets.find((s) => s.id === c.wassell_ad_set_id);
-                if (ls) ls.platform_adset_id = c.platform_adset_id;
-              } else {
-                // The STORY half (always a new row), or both halves of the
-                // default set — real Wassell rows so the worker finds the
-                // pair and the sync matches by platform id instead of minting
-                // a second row.
-                const ins = await sb.from('mos_ad_sets')
-                  .insert({ execution_id: executionId, name: c.name, platform_adset_id: c.platform_adset_id, status: 'paused',
-                    sort_order: c.sort_order, placement_variant: c.variant, pair_id: c.pair_id })
-                  .select('id').maybeSingle();
-                if (ins.error) console.error('[marketing-os] ad set row insert failed:', ins.error.message);
-                if (c.variant === 'feed') linkedSets.push({ id: (ins.data as { id?: string } | null)?.id ?? null, name: c.name, platform_adset_id: c.platform_adset_id });
-              }
-            }
-          }
-        } catch (e) {
-          return jsonError(502, `Meta push failed at campaign: ${metaErr(e)}`);
-        }
+        const wantedAudienceId = skeleton.audience.id;
+        const savedAudienceName = skeleton.audience.name;
+        const audienceSource = skeleton.audience.source;
 
         // ---- 2) Ads: hand every planned ad to the worker (caption phase) ------
         // A planned ad = mos_execution_ads row with no platform_ad_id. Rows the
