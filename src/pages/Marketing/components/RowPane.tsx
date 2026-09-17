@@ -34,6 +34,7 @@ import { stageIsMine } from '../lib/stagePhase';
 import { contentHref } from '../lib/contentRoute';
 import { shortDate } from '../lib/format';
 import MonthBriefPanel from './MonthBriefPanel';
+import { ProjectAssetsTab, ProjectInfoTab } from './ProjectPanels';
 import RowApproval from './RowApproval';
 import RowDesign from './RowDesign';
 import RowWriter from './RowWriter';
@@ -60,6 +61,20 @@ export default function RowPane({ rowId, taskId, onChanged, brief }: RowPaneProp
   const [notes, setNotes] = useState<MosMonthNote[] | null>(null);
   const [topicBank, setTopicBank] = useState<string[]>([]);
   const [notesError, setNotesError] = useState<string | null>(null);
+  /*
+   * THREE TABS, always at the top: the work itself, the project's information,
+   * and the project's files. The operator (2026-09-16): a writer writing a row,
+   * or a designer designing it, needs the project's facts and the project's
+   * files every single time — and until now they only lived on the old per-post
+   * content page, one post at a time. They are the SAME two panels that page
+   * rendered (`ProjectInfoTab` / `ProjectAssetsTab`), mounted here, so there is
+   * one implementation of each.
+   *
+   * Declared above every early return (hooks rule), and reset whenever the pane
+   * is pointed at a different row, so opening the next row starts on the work.
+   */
+  const [pane, setPane] = useState<'work' | 'info' | 'files'>('work');
+  useEffect(() => { setPane('work'); }, [rowId, taskId]);
 
   const load = useCallback(async () => {
     if (!rowId && !taskId) return;
@@ -132,12 +147,63 @@ export default function RowPane({ rowId, taskId, onChanged, brief }: RowPaneProp
     />
   );
 
+  // The first tab is named for what this person is actually doing at this stage.
+  const workLabel = face === 'writing'
+    ? (isAr ? 'الكتابة' : 'Writing')
+    : face === 'design'
+      ? (isAr ? 'التصميم' : 'Design')
+      : face === 'writing_review' || face === 'final_approval'
+        ? (isAr ? 'الاعتماد' : 'Approval')
+        : (isAr ? 'العمل' : 'Work');
+  const projectId = detail.row.project_id;
+  const tabs: Array<{ key: 'work' | 'info' | 'files'; label: string }> = [
+    { key: 'work', label: workLabel },
+    { key: 'info', label: isAr ? 'معلومات المشروع' : 'Project information' },
+    { key: 'files', label: isAr ? 'ملفات المشروع' : 'Project files' },
+  ];
+  // The Saturday general row belongs to no project by design, so its project
+  // tabs say so instead of rendering an empty panel that reads as "no data".
+  const noProject = (
+    <div className="card">
+      <div className="card-b" style={{ fontSize: 12.5, color: 'var(--mute)', lineHeight: 1.9 }}>
+        {isAr
+          ? 'هذا صف عام لا يخصّ مشروعًا بعينه، فلا معلومات ولا ملفات مشروع له.'
+          : 'This is a general row that belongs to no project, so it has no project information or files.'}
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ display: 'grid', gap: 14 }}>
+      <div className="tabs" role="tablist">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={pane === t.key}
+            className={pane === t.key ? 'on' : ''}
+            onClick={() => setPane(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {/* A load failure AFTER the first successful read must still be seen —
           the pane keeps rendering what it has, and says what broke. */}
       {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}
 
+      {pane === 'info' && (projectId ? <ProjectInfoTab projectId={projectId} isAr={isAr} /> : noProject)}
+      {pane === 'files' && (projectId ? <ProjectAssetsTab projectId={projectId} isAr={isAr} /> : noProject)}
+
+      {/*
+        * The work stays MOUNTED while another tab is open — hidden, never
+        * unmounted. The whole point of the project tabs is to glance at a fact
+        * or a file mid-draft; unmounting the writer would throw away whatever
+        * the writer had typed and not yet saved, at exactly that moment.
+        */}
+      <div style={{ display: pane === 'work' ? 'grid' : 'none', gap: 14 }}>
       {(face === 'writing_review' || face === 'final_approval') && (
         <RowApproval detail={detail} isAr={isAr} canAct={canAct} onChanged={changed} brief={briefNode} />
       )}
@@ -153,6 +219,7 @@ export default function RowPane({ rowId, taskId, onChanged, brief }: RowPaneProp
       {face === 'other' && (
         <RowReadOnly detail={detail} isAr={isAr} brief={briefNode} />
       )}
+      </div>
     </div>
   );
 }
